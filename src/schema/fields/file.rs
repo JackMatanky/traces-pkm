@@ -9,6 +9,8 @@
 //!
 //! [`file_filter`]: super::SchemaFieldDef::file_filter
 
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
@@ -94,11 +96,11 @@ impl SchemaFileField {
         let ext = parser.string(options, "ext", base_ext);
         let class = parser.string_list(options, "class", base_class);
 
-        SchemaFieldType::File(Self {
+        SchemaFieldType::File(Arc::new(Self {
             folders,
             ext,
             class,
-        })
+        }))
     }
 }
 
@@ -210,11 +212,11 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(
             field_type,
-            SchemaFieldType::File(SchemaFileField::for_test(
+            SchemaFieldType::File(Arc::new(SchemaFileField::for_test(
                 vec!["assets".to_owned()],
                 Some("png".to_owned()),
                 vec!["image".to_owned()],
-            ))
+            )))
         );
     }
 
@@ -240,11 +242,11 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(
             field_type,
-            SchemaFieldType::File(SchemaFileField::for_test(
+            SchemaFieldType::File(Arc::new(SchemaFileField::for_test(
                 vec!["raw-folder".to_owned()],
                 Some("base-ext".to_owned()),
                 vec!["base-class".to_owned()],
-            ))
+            )))
         );
     }
 

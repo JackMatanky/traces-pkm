@@ -24,16 +24,20 @@ use crate::{
     },
 };
 
-/// Base field, resolved tag, and degrade flag from
-/// [`SchemaFieldBuilder::resolve_from_raw`].
-type ResolvedRawField<'a> =
-    (Option<&'a SchemaFieldDef>, SchemaFieldTypeTag, bool);
+/// [`SchemaFieldBuilder::resolve_from_raw`]'s result: the inherited base field
+/// (if any), the effective type tag to parse against, and whether parser errors
+/// on this field degrade to warnings rather than failing.
+struct ResolvedBase<'a> {
+    field: Option<&'a SchemaFieldDef>,
+    tag: SchemaFieldTypeTag,
+    degrade_on_error: bool,
+}
 
 /// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`
 /// targets against already-resolved Schemas.
 ///
-/// `$ref` targets are bounded to the Global Schema or the referencing
-/// Schema's transitive `extends` ancestors.
+/// `$ref` targets are bounded to the Global Schema or the referencing Schema's
+/// transitive `extends` ancestors.
 pub(crate) struct SchemaFieldBuilder<'a> {
     ancestors: &'a IndexSet<SchemaName>,
     resolved: &'a IndexMap<SchemaName, Schema>,
@@ -50,8 +54,8 @@ impl<'a> SchemaFieldBuilder<'a> {
         }
     }
 
-    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside
-    /// any warnings a bare `$ref` override's degraded validation raised.
+    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside any
+    /// warnings a bare `$ref` override's degraded validation raised.
     ///
     /// - `Direct(kind)` or `Ref` with a `type` override: builds fresh from
     ///   `raw.options` against the resolved kind.
@@ -83,8 +87,11 @@ impl<'a> SchemaFieldBuilder<'a> {
         raw: &RawSchemaFieldDef,
     ) -> Result<(SchemaFieldDef, Vec<SchemaWarning>), SchemaError> {
         let mut warnings = Vec::new();
-        let (base, tag, degrade_on_error) =
-            self.resolve_from_raw(address, raw)?;
+        let ResolvedBase {
+            field: base,
+            tag,
+            degrade_on_error,
+        } = self.resolve_from_raw(address, raw)?;
         let (field_type, errors) = Self::parse_options(
             address,
             tag,
@@ -127,7 +134,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         &self,
         address: FieldAddressRef<'_>,
         raw: &RawSchemaFieldDef,
-    ) -> Result<ResolvedRawField<'a>, SchemaError> {
+    ) -> Result<ResolvedBase<'a>, SchemaError> {
         let (base, degrade_on_error) = match &raw.source {
             RawSchemaFieldSource::Ref {
                 address: base_address,
@@ -148,8 +155,8 @@ impl<'a> SchemaFieldBuilder<'a> {
                 override_type: None,
                 ..
             } => {
-                // `base` is always `Some` here: the `Ref` arms above only
-                // reach this point after `self.resolve_ref` succeeded.
+                // `base` is always `Some` here: the `Ref` arms above only reach
+                // this point after `self.resolve_ref` succeeded.
                 #[expect(
                     clippy::expect_used,
                     reason = "the Ref match arm above already resolved base \
@@ -161,7 +168,11 @@ impl<'a> SchemaFieldBuilder<'a> {
                 base.kind().kind()
             }
         };
-        Ok((base, tag, degrade_on_error))
+        Ok(ResolvedBase {
+            field: base,
+            tag,
+            degrade_on_error,
+        })
     }
 
     /// Parse `options` into a [`SchemaFieldType`], returning the resolved type

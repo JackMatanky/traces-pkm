@@ -18,6 +18,8 @@
 //! - [`mod@file`] parses `folders`/`ext`/`class` and provides
 //!   [`SchemaFileFieldRef`] for `FileIndex` queries.
 
+use std::sync::Arc;
+
 use super::RawSchemaFieldType;
 
 mod address;
@@ -109,7 +111,7 @@ impl SchemaFieldDef {
     #[must_use]
     pub(crate) fn file_filter(&self) -> Option<file::SchemaFileFieldRef<'_>> {
         match &self.kind {
-            SchemaFieldType::File(def) => Some(def.as_ref()),
+            SchemaFieldType::File(def) => Some(SchemaFileField::as_ref(def)),
             SchemaFieldType::Input
             | SchemaFieldType::Select(_)
             | SchemaFieldType::Boolean
@@ -147,7 +149,7 @@ pub(crate) enum SchemaFieldType {
     /// Free-form text input.
     Input,
     /// One value from a configured list of [`SchemaSelectFieldEntry`]s.
-    Select(SchemaSelectField),
+    Select(Arc<SchemaSelectField>),
     /// Boolean value.
     Boolean,
     /// Numeric value with optional bounds ([`SchemaNumberField::min`],
@@ -160,7 +162,7 @@ pub(crate) enum SchemaFieldType {
     ///
     /// Class matching happens at query time via
     /// [`super::service::SchemaService::matches`], not here.
-    File(SchemaFileField),
+    File(Arc<SchemaFileField>),
 }
 
 impl std::fmt::Display for SchemaFieldType {
@@ -187,9 +189,9 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaSelectField`] if this is a
     /// [`Select`][Self::Select] variant.
-    pub(super) const fn as_select(&self) -> Option<&SchemaSelectField> {
+    pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
         match self {
-            Self::Select(inner) => Some(inner),
+            Self::Select(inner) => Some(inner.as_ref()),
             _ => None,
         }
     }
@@ -214,9 +216,9 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaFileField`] if this is a [`File`][Self::File]
     /// variant.
-    pub(super) const fn as_file(&self) -> Option<&SchemaFileField> {
+    pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
         match self {
-            Self::File(inner) => Some(inner),
+            Self::File(inner) => Some(inner.as_ref()),
             _ => None,
         }
     }
@@ -285,7 +287,9 @@ mod tests {
             let entries =
                 vec![SchemaSelectFieldEntry::literal("draft".to_owned())];
             let def = SchemaFieldDef::new(
-                SchemaFieldType::Select(SchemaSelectField::for_test(entries)),
+                SchemaFieldType::Select(Arc::new(SchemaSelectField::for_test(
+                    entries,
+                ))),
                 false,
                 false,
             );
@@ -301,7 +305,7 @@ mod tests {
         #[test]
         fn file_filter_returns_some_for_file_type() {
             let def = SchemaFieldDef::new(
-                SchemaFieldType::File(SchemaFileField::default()),
+                SchemaFieldType::File(Arc::new(SchemaFileField::default())),
                 false,
                 false,
             );
@@ -343,7 +347,9 @@ mod tests {
             let cases = vec![
                 (SchemaFieldType::Input, "input"),
                 (
-                    SchemaFieldType::Select(SchemaSelectField::default()),
+                    SchemaFieldType::Select(Arc::new(
+                        SchemaSelectField::default(),
+                    )),
                     "select",
                 ),
                 (SchemaFieldType::Boolean, "boolean"),
@@ -352,7 +358,10 @@ mod tests {
                     "number",
                 ),
                 (SchemaFieldType::Date(SchemaDateField::default()), "date"),
-                (SchemaFieldType::File(SchemaFileField::default()), "file"),
+                (
+                    SchemaFieldType::File(Arc::new(SchemaFileField::default())),
+                    "file",
+                ),
             ];
             for (kind, expected) in cases {
                 assert_eq!(kind.to_string(), expected, "Display for {kind:?}");
@@ -365,7 +374,8 @@ mod tests {
 
         #[test]
         fn as_select_returns_some_for_select_variant() {
-            let kind = SchemaFieldType::Select(SchemaSelectField::default());
+            let kind =
+                SchemaFieldType::Select(Arc::new(SchemaSelectField::default()));
             assert!(kind.as_select().is_some());
         }
 
@@ -401,7 +411,8 @@ mod tests {
 
         #[test]
         fn as_file_returns_some_for_file_variant() {
-            let kind = SchemaFieldType::File(SchemaFileField::default());
+            let kind =
+                SchemaFieldType::File(Arc::new(SchemaFileField::default()));
             assert!(kind.as_file().is_some());
         }
 

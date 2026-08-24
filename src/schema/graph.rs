@@ -10,67 +10,94 @@
 //!
 //! A Schema is yielded only after every one of its present `extends` parents
 //! has already been yielded. Schemas whose in-degree reaches zero
-//! simultaneously yield in raw-map insertion order. The resolver strips the
-//! Global Schema from the graph, so it never competes for queue position.
+//! simultaneously yield in raw-map insertion order.
+//! [`SchemaGraphBuilder::new`]'s `excluded` parameter keeps the Global Schema
+//! out of the graph entirely, so it never competes for queue position.
 //!
 //! # Driving resolution
 //!
-//! 1. Build with [`SchemaGraph::new`].
-//! 2. Loop [`next_ready`]/[`parents_of`]/[`mark_resolved`] in [`Building`]
-//!    state.
-//! 3. Call [`into_resolved`] to check for cycles and transition to
-//!    [`Resolved`].
-//! 4. Query [`children_by_name`]/[`descendants_by_name`] for hierarchy sets.
+//! 1. [`SchemaGraphBuilder::new`] validates every `extends` edge; `excluded`
+//!    (the Global Schema) never becomes a node.
+//! 2. [`SchemaGraphBuilder::build`] runs Kahn's topological sort to completion
+//!    and checks for a cycle, entirely internally — there is no stepwise
+//!    driving API. Returns a [`SchemaGraph`] on success, or the list of cyclic
+//!    Schemas on failure.
+//! 3. Query the resulting [`SchemaGraph`]: [`topological_order`],
+//!    [`parents_of`], [`children_by_name`], [`descendants_by_name`].
 //!
-//! [`SchemaGraph::new`]: SchemaGraph::new
-//! [`next_ready`]: SchemaGraph::next_ready
+//! [`topological_order`]: SchemaGraph::topological_order
 //! [`parents_of`]: SchemaGraph::parents_of
-//! [`mark_resolved`]: SchemaGraph::mark_resolved
-//! [`into_resolved`]: SchemaGraph::into_resolved
 //! [`children_by_name`]: SchemaGraph::children_by_name
 //! [`descendants_by_name`]: SchemaGraph::descendants_by_name
 
-use std::{cell::OnceCell, collections::VecDeque};
+use std::collections::VecDeque;
 
 use bit_vec::BitVec;
 use indexmap::{IndexMap, IndexSet};
 
 use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
-/// Building state: Kahn's-sort scratch (in-degree counters and the ready
-/// queue). Dropped on transition to [`Resolved`].
-#[derive(Debug)]
-pub(super) struct Building {
-    /// Index -> remaining unresolved-parent count.
-    in_degree: Vec<u32>,
-    /// Ready queue, dense-indexed.
-    queue: VecDeque<DenseIndex>,
-}
-
-/// Resolved state: the DAG is confirmed acyclic. Retains the topological order
-/// [`descendants_by_name`](SchemaGraph::descendants_by_name)'s reverse-order
-/// pass needs.
-#[derive(Debug)]
-pub(super) struct Resolved<'a> {
-    /// Topological order, parents before children.
-    order: Vec<DenseIndex>,
-    /// Lazily built, cached on first [`children_by_name`] call.
-    ///
-    /// [`children_by_name`]: SchemaGraph::children_by_name
-    children_by_name:
-        OnceCell<IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>>,
-}
-
-/// Kahn's-algorithm state machine for linearizing the `extends` DAG.
+/// Dense per-schema array index, assigned once at construction in raw-map
+/// insertion order. Array indexing replaces string-hashed
+/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
 ///
-/// `State` enforces valid transitions at compile time:
-/// - [`Building`] for the resolution loop
-/// - [`Resolved`] for hierarchy queries after cycle-check.
+/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
+/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
+/// registry.
+///
+/// [`HashMap`]: std::collections::HashMap
+/// [`IndexMap`]: indexmap::IndexMap
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+struct DenseIndex(u32);
+
+impl DenseIndex {
+    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values this
+    /// module narrows stay far below `u32::MAX` for any real schema registry.
+    fn saturating_u32(n: usize) -> u32 {
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
+    /// platform this crate targets, so `try_from` failing here is unreachable
+    /// in practice; it saturates to `usize::MAX` rather than panicking.
+    fn widen_usize(n: u32) -> usize {
+        usize::try_from(n).unwrap_or(usize::MAX)
+    }
+
+    /// Builds a dense index from an array position, saturating per
+    /// [`Self::saturating_u32`].
+    fn from_usize(n: usize) -> Self {
+        Self(Self::saturating_u32(n))
+    }
+
+    /// Widens back to `usize` for indexing. See [`Self::widen_usize`].
+    fn index(self) -> usize {
+        Self::widen_usize(self.0)
+    }
+}
+
+/// `extends` adjacency between Schemas, stored as a CSR (compressed sparse row)
+/// graph over dense [`DenseIndex`]es: array accesses replace hash-keyed lookups
+/// on every graph operation.
+///
+/// `excluded` is never assigned a node: the Global Schema participates via
+/// `$ref`, never `extends`, so it must never compete for topological position
+/// or appear in any hierarchy query.
 #[derive(Debug)]
-pub(super) struct SchemaGraph<'a, State> {
-    /// Borrowed raw schemas: the source of truth for `extends` parents.
+struct SchemaAdjacency<'a> {
+    /// Every raw Schema, including `excluded` — kept unfiltered (not a
+    /// clone-then-strip copy) so building this adjacency never deep-clones
+    /// the registry; `excluded` is skipped by index, not by omission from
+    /// this map. [`parents_of`](Self::parents_of) guards against `excluded`
+    /// explicitly, since a lookup here would otherwise still find its raw
+    /// `extends` list.
     raw: &'a IndexMap<SchemaName, RawSchema>,
-    /// Dense index -> name, in raw-map insertion order.
+    /// The one Schema name that never receives a [`DenseIndex`]. Checked by
+    /// [`parents_of`](Self::parents_of) directly, since `raw` stays
+    /// unfiltered and would otherwise still yield `excluded`'s own raw
+    /// `extends` list.
+    excluded: SchemaNameRef<'a>,
+    /// Dense index -> name, in raw-map insertion order, `excluded` skipped.
     names: Vec<SchemaNameRef<'a>>,
     /// Name -> dense index, built once at construction.
     index_of: IndexMap<SchemaNameRef<'a>, DenseIndex>,
@@ -80,71 +107,39 @@ pub(super) struct SchemaGraph<'a, State> {
     /// CSR adjacency (parent -> children) targets, indexed via
     /// [`child_offsets`](Self::child_offsets).
     child_targets: Vec<DenseIndex>,
-    /// Schemas already popped by [`next_ready`](Self::next_ready).
-    visited: IndexSet<SchemaNameRef<'a>>,
-    /// [`Building`] scratch or [`Resolved`] output, per `State`.
-    state: State,
 }
 
-impl<State> SchemaGraph<'_, State> {
-    /// Returns `v`'s CSR children slice (its direct `extends`
-    /// reverse-adjacency), or an empty slice if `v` is out of range.
-    ///
-    /// `v` is the dense index of the parent node whose children to retrieve.
-    fn children_slice(&self, v: DenseIndex) -> &[DenseIndex] {
-        let idx = v.index();
-        let bounds = self
-            .child_offsets
-            .get(idx)
-            .zip(self.child_offsets.get(idx.saturating_add(1)));
-        let Some((&start, &end)) = bounds else {
-            return &[];
-        };
-        self.child_targets
-            .get(DenseIndex::widen_usize(start)..DenseIndex::widen_usize(end))
-            .unwrap_or(&[])
-    }
-
-    /// Mutable counterpart of [`children_slice`](Self::children_slice), used
-    /// only to sort a node's children in place.
-    fn children_slice_mut(&mut self, v: DenseIndex) -> &mut [DenseIndex] {
-        let idx = v.index();
-        let start = self.child_offsets.get(idx).copied();
-        let end = self.child_offsets.get(idx.saturating_add(1)).copied();
-        match (start, end) {
-            (Some(s), Some(e)) => self
-                .child_targets
-                .get_mut(DenseIndex::widen_usize(s)..DenseIndex::widen_usize(e))
-                .unwrap_or(&mut []),
-            _ => &mut [],
-        }
-    }
-}
-
-impl<'a> SchemaGraph<'a, Building> {
-    /// Build the `extends` adjacency (as CSR) and seed the ready queue.
-    ///
-    /// Validates each schema's `extends` targets, emitting warnings for absent
-    /// targets and repeated targets.
+impl<'a> SchemaAdjacency<'a> {
+    /// Build the `extends` adjacency, skipping `excluded` entirely: it never
+    /// becomes a node, and an edge naming it as an `extends` target is silently
+    /// ignored — never a [`MissingExtendsTarget`] warning — since the Global
+    /// Schema is referenced via `$ref`, never `extends`.
     ///
     /// # Warnings
     ///
-    /// - [`MissingExtendsTarget`] if an `extends` target has no corresponding
-    ///   Schema file
     /// - [`DuplicateExtendsTarget`] if the same `extends` target appears more
-    ///   than once
+    ///   than once, checked before target-existence — a repeated unresolvable
+    ///   target warns `Missing` on its first occurrence and `Duplicate` on
+    ///   every occurrence after
+    /// - [`MissingExtendsTarget`] if an `extends` target has no corresponding
+    ///   Schema file (other than `excluded`)
     ///
     /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
     /// [`DuplicateExtendsTarget`]: SchemaWarning::DuplicateExtendsTarget
-    pub(super) fn new(
-        raw_schemas: &'a IndexMap<SchemaName, RawSchema>,
+    fn build(
+        raw: &'a IndexMap<SchemaName, RawSchema>,
+        excluded: SchemaNameRef<'a>,
     ) -> (Self, Vec<SchemaWarning>) {
-        let count = raw_schemas.len();
         let mut warnings = Vec::new();
 
-        // Assign dense indices in raw-map insertion order.
-        let names: Vec<SchemaNameRef<'a>> =
-            raw_schemas.keys().map(SchemaName::as_ref).collect();
+        // Assign dense indices in raw-map insertion order, `excluded` never
+        // receiving one.
+        let names: Vec<SchemaNameRef<'a>> = raw
+            .keys()
+            .map(SchemaName::as_ref)
+            .filter(|&name| name != excluded)
+            .collect();
+        let count = names.len();
         let index_of: IndexMap<SchemaNameRef<'a>, DenseIndex> = names
             .iter()
             .enumerate()
@@ -152,31 +147,34 @@ impl<'a> SchemaGraph<'a, Building> {
             .collect();
 
         // Validate + dedup each schema's `extends` targets, accumulating
-        // in-degree (parent count) and out-degree (child count) per node, and
-        // the validated edge list the CSR fill pass needs.
-        let mut in_degree: Vec<u32> = vec![0; count];
+        // out-degree (child count) per node (in-degree is derived separately by
+        // `SchemaGraphBuilder::new` from the CSR adjacency itself), and the
+        // validated edge list the CSR fill pass needs.
         let mut out_degree: Vec<u32> = vec![0; count];
         let mut valid_edges: Vec<(DenseIndex, DenseIndex)> = Vec::new();
-        for (i, (name, raw)) in raw_schemas.iter().enumerate() {
+        for (i, &name) in names.iter().enumerate() {
+            let Some(raw_schema) = raw.get(name.as_str()) else {
+                continue;
+            };
             let mut seen_targets = IndexSet::new();
-            for target in &raw.extends {
+            for target in &raw_schema.extends {
+                if target.as_str() == excluded.as_str() {
+                    continue;
+                }
+                if !seen_targets.insert(target.as_str()) {
+                    warnings.push(SchemaWarning::DuplicateExtendsTarget {
+                        schema: SchemaName::from(name),
+                        target: target.clone(),
+                    });
+                    continue;
+                }
                 let Some(&target_index) = index_of.get(target.as_str()) else {
                     warnings.push(SchemaWarning::MissingExtendsTarget {
-                        schema: name.clone(),
+                        schema: SchemaName::from(name),
                         target: target.clone(),
                     });
                     continue;
                 };
-                if !seen_targets.insert(target.as_str()) {
-                    warnings.push(SchemaWarning::DuplicateExtendsTarget {
-                        schema: name.clone(),
-                        target: target.clone(),
-                    });
-                    continue;
-                }
-                if let Some(degree) = in_degree.get_mut(i) {
-                    *degree = degree.saturating_add(1);
-                }
                 if let Some(degree) = out_degree.get_mut(target_index.index()) {
                     *degree = degree.saturating_add(1);
                 }
@@ -184,7 +182,6 @@ impl<'a> SchemaGraph<'a, Building> {
             }
         }
 
-        // Prefix-sum out-degrees into CSR offsets.
         let mut child_offsets: Vec<u32> =
             Vec::with_capacity(count.saturating_add(1));
         let mut running: u32 = 0;
@@ -212,627 +209,658 @@ impl<'a> SchemaGraph<'a, Building> {
             *slot = slot.saturating_add(1);
         }
 
-        let queue: VecDeque<DenseIndex> =
-            (0..DenseIndex::saturating_u32(count))
-                .map(DenseIndex)
-                .filter(|idx| in_degree.get(idx.index()).copied() == Some(0))
-                .collect();
-
         (
             Self {
-                raw: raw_schemas,
+                raw,
+                excluded,
                 names,
                 index_of,
                 child_offsets,
                 child_targets,
-                visited: IndexSet::new(),
-                state: Building {
-                    in_degree,
-                    queue,
-                },
             },
             warnings,
         )
     }
 
-    /// Pop the next Schema whose in-degree reached zero, marking it visited.
-    ///
-    /// Returns `None` once the ready queue drains.
-    pub(super) fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
-        let index = self.state.queue.pop_front()?;
-        let name = *self.names.get(index.index())?;
-        self.visited.insert(name);
-        Some(name)
-    }
-
-    /// Borrow `name`'s raw `extends` parent list.
-    ///
-    /// Returns an empty slice if `name` is not a known Schema.
-    pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
-        self.raw.get(name.as_str()).map_or(&[], |s| s.extends.as_slice())
-    }
-
-    /// Record `name` as resolved, releasing children whose in-degree hit zero
-    /// into the ready queue.
-    pub(super) fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
-        let Some(&index) = self.index_of.get(name.as_str()) else {
-            return;
-        };
-        let idx = index.index();
-        // Reads child_offsets/child_targets directly (not through
-        // children_slice, which borrows all of `self`) so the borrow checker
-        // can see this as disjoint from the `self.state` mutation below,
-        // avoiding a per-call Vec allocation.
+    /// `node`'s CSR children slice (its direct `extends` reverse-adjacency), or
+    /// an empty slice if `node` is out of range.
+    fn children_slice(&self, node: DenseIndex) -> &[DenseIndex] {
+        let idx = node.index();
         let bounds = self
             .child_offsets
             .get(idx)
             .zip(self.child_offsets.get(idx.saturating_add(1)));
         let Some((&start, &end)) = bounds else {
-            return;
+            return &[];
         };
-        let Some(children) = self
-            .child_targets
+        self.child_targets
             .get(DenseIndex::widen_usize(start)..DenseIndex::widen_usize(end))
-        else {
+            .unwrap_or(&[])
+    }
+
+    /// Mutable counterpart of [`children_slice`](Self::children_slice), used
+    /// only to sort a node's children in place.
+    fn children_slice_mut(&mut self, node: DenseIndex) -> &mut [DenseIndex] {
+        let idx = node.index();
+        let start = self.child_offsets.get(idx).copied();
+        let end = self.child_offsets.get(idx.saturating_add(1)).copied();
+        match (start, end) {
+            (Some(s), Some(e)) => self
+                .child_targets
+                .get_mut(DenseIndex::widen_usize(s)..DenseIndex::widen_usize(e))
+                .unwrap_or(&mut []),
+            _ => &mut [],
+        }
+    }
+
+    /// Borrow `name`'s raw `extends` parent list. Returns an empty slice if
+    /// `name` is not a known Schema, or is `excluded`.
+    fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
+        if name == self.excluded {
+            return &[];
+        }
+        self.raw.get(name.as_str()).map_or(&[], |s| s.extends.as_slice())
+    }
+
+    /// `name`'s dense index, or `None` if unknown or `excluded`.
+    fn index_of(&self, name: SchemaNameRef<'_>) -> Option<DenseIndex> {
+        self.index_of.get(name.as_str()).copied()
+    }
+
+    /// The name at dense index `node`, or `None` if out of range.
+    fn name_of(&self, node: DenseIndex) -> Option<SchemaNameRef<'a>> {
+        self.names.get(node.index()).copied()
+    }
+
+    /// Number of nodes (Schemas excluding `excluded`).
+    fn node_count(&self) -> usize {
+        self.names.len()
+    }
+}
+
+/// Drives Kahn's topological sort over a [`SchemaAdjacency`], internally, to
+/// completion. Build with [`new`](Self::new), then call [`build`](Self::build)
+/// once — there is no stepwise driving API; Kahn's sort and cycle detection are
+/// this type's private implementation, not its interface.
+pub(super) struct SchemaGraphBuilder<'a> {
+    adjacency: SchemaAdjacency<'a>,
+    /// Per-node count of parents not yet resolved (Kahn's "in-degree").
+    unresolved_parent_count: Vec<u32>,
+    /// Nodes whose `unresolved_parent_count` reached zero, dense-indexed.
+    ready_queue: VecDeque<DenseIndex>,
+    /// Schemas already popped from `ready_queue`, in topological order.
+    visited: IndexSet<SchemaNameRef<'a>>,
+}
+
+impl<'a> SchemaGraphBuilder<'a> {
+    /// Build the adjacency and seed the ready queue. See
+    /// [`SchemaAdjacency::build`] for the warnings this can return.
+    pub(super) fn new(
+        raw: &'a IndexMap<SchemaName, RawSchema>,
+        excluded: SchemaNameRef<'a>,
+    ) -> (Self, Vec<SchemaWarning>) {
+        let (adjacency, warnings) = SchemaAdjacency::build(raw, excluded);
+        let node_count = adjacency.node_count();
+
+        // Derive each node's in-degree from the CSR adjacency itself
+        // (occurrences of a node across every parent's children list) rather
+        // than re-scanning raw `extends` lists a second time.
+        let mut unresolved_parent_count: Vec<u32> = vec![0; node_count];
+        for &child in &adjacency.child_targets {
+            if let Some(count) = unresolved_parent_count.get_mut(child.index())
+            {
+                *count = count.saturating_add(1);
+            }
+        }
+
+        let ready_queue: VecDeque<DenseIndex> = (0
+            ..DenseIndex::saturating_u32(node_count))
+            .map(DenseIndex)
+            .filter(|idx| {
+                unresolved_parent_count.get(idx.index()).copied() == Some(0)
+            })
+            .collect();
+
+        (
+            Self {
+                adjacency,
+                unresolved_parent_count,
+                ready_queue,
+                visited: IndexSet::new(),
+            },
+            warnings,
+        )
+    }
+
+    /// Pop the next Schema whose `unresolved_parent_count` reached zero,
+    /// marking it visited. `None` once `ready_queue` drains.
+    fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
+        let index = self.ready_queue.pop_front()?;
+        let name = self.adjacency.name_of(index)?;
+        self.visited.insert(name);
+        Some(name)
+    }
+
+    /// Record `name` as resolved, releasing children whose
+    /// `unresolved_parent_count` hit zero into `ready_queue`.
+    ///
+    /// `adjacency` now lives in its own field (not folded into this builder's
+    /// struct like the old single-struct typestate was), so borrowing it here
+    /// is already disjoint from the `unresolved_parent_count`/`ready_queue`
+    /// mutations below — no borrow-avoidance workaround needed.
+    fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
+        let Some(index) = self.adjacency.index_of(name) else {
             return;
         };
-        for &child in children {
-            let Some(degree) = self.state.in_degree.get_mut(child.index())
+        for &child in self.adjacency.children_slice(index) {
+            let Some(count) =
+                self.unresolved_parent_count.get_mut(child.index())
             else {
                 continue;
             };
-            *degree = degree.saturating_sub(1);
-            if *degree == 0 {
-                self.state.queue.push_back(child);
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.ready_queue.push_back(child);
             }
         }
     }
 
-    /// Consume the building graph, returning a resolved graph if the DAG is
-    /// acyclic, or the cyclic Schemas if a cycle exists.
-    ///
-    /// Drives any remaining [`next_ready`] / [`mark_resolved`] steps before
-    /// checking for cycles, so callers get correct results even if the loop was
-    /// not fully exhausted.
+    /// Drain any remaining `next_ready`/`mark_resolved` steps, check for a
+    /// cycle via [`CycleDetector`], and — if acyclic — sort every node's CSR
+    /// children into topological-rank order (a precondition
+    /// [`SchemaGraph::descendants_by_name`]'s closure sweep relies on).
     ///
     /// # Errors
     ///
-    /// - Returns `Err(`[`Vec<SchemaName>`]`)` if the `extends` DAG contains a
-    ///   cycle, listing every Schema that participates in it. A Schema that
+    /// - Returns `Err(`[`Vec<SchemaName>`]`)` listing every Schema that
+    ///   participates in an `extends` cycle, if one exists. A Schema that
     ///   merely `extends` into a cycle without being part of one itself is
     ///   excluded.
-    ///
-    /// [`next_ready`]: SchemaGraph::next_ready
-    /// [`mark_resolved`]: SchemaGraph::mark_resolved
-    pub(super) fn into_resolved(
-        mut self,
-    ) -> Result<SchemaGraph<'a, Resolved<'a>>, Vec<SchemaName>> {
-        while let Some(parent) = self.next_ready() {
-            self.mark_resolved(parent);
+    pub(super) fn build(mut self) -> Result<SchemaGraph<'a>, Vec<SchemaName>> {
+        while let Some(name) = self.next_ready() {
+            self.mark_resolved(name);
         }
-        let cyclic = self.cyclic_schemas();
+        let cyclic = CycleDetector::new(&self.adjacency, &self.visited).find();
         if !cyclic.is_empty() {
             return Err(cyclic);
         }
 
-        // Kahn's sort fully drained: `visited` holds every schema in
-        // topological order. Rank each node, then sort every CSR children slice
-        // into rank order before dropping `in_degree`/`queue`.
-        let order: Vec<DenseIndex> = self
-            .visited
-            .iter()
-            .filter_map(|&name| self.index_of.get(name.as_str()).copied())
-            .collect();
-        let mut topo_rank: Vec<u32> = vec![0; self.names.len()];
-        for (rank, &idx) in order.iter().enumerate() {
-            if let Some(slot) = topo_rank.get_mut(idx.index()) {
+        let mut topo_rank: Vec<u32> = vec![0; self.adjacency.node_count()];
+        for (rank, &name) in self.visited.iter().enumerate() {
+            if let Some(index) = self.adjacency.index_of(name)
+                && let Some(slot) = topo_rank.get_mut(index.index())
+            {
                 *slot = DenseIndex::saturating_u32(rank);
             }
         }
         let rank_of = |c: &DenseIndex| {
             topo_rank.get(c.index()).copied().unwrap_or(u32::MAX)
         };
-        for i in 0..DenseIndex::saturating_u32(self.names.len()) {
-            self.children_slice_mut(DenseIndex(i)).sort_by_key(rank_of);
+        for i in 0..DenseIndex::saturating_u32(self.adjacency.node_count()) {
+            self.adjacency
+                .children_slice_mut(DenseIndex(i))
+                .sort_by_key(rank_of);
         }
 
         Ok(SchemaGraph {
-            raw: self.raw,
-            names: self.names,
-            index_of: self.index_of,
-            child_offsets: self.child_offsets,
-            child_targets: self.child_targets,
-            visited: self.visited,
-            state: Resolved {
-                order,
-                children_by_name: OnceCell::new(),
-            },
+            adjacency: self.adjacency,
+            topological_order: self.visited,
         })
     }
+}
 
-    /// Whether `v` was already resolved by Kahn's sort.
-    fn is_kahn_visited(&self, v: DenseIndex) -> bool {
-        self.names
-            .get(v.index())
-            .is_some_and(|name| self.visited.contains(name.as_str()))
+/// A validated, acyclic `extends` DAG in topological order. Only constructible
+/// via [`SchemaGraphBuilder::build`] succeeding, so querying hierarchy is
+/// impossible before cycle-checking — the same compile-time guarantee the
+/// former typestate gave, now via two concrete types instead of a phantom
+/// generic.
+#[derive(Debug)]
+pub(super) struct SchemaGraph<'a> {
+    adjacency: SchemaAdjacency<'a>,
+    /// Every Schema Kahn's sort resolved, in topological order (parents before
+    /// children; simultaneous roots in raw-map insertion order).
+    topological_order: IndexSet<SchemaNameRef<'a>>,
+}
+
+impl<'a> SchemaGraph<'a> {
+    /// Every resolved Schema, in topological order.
+    pub(super) fn topological_order(
+        &self,
+    ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
+        self.topological_order.iter().copied()
     }
 
-    /// Scan `v`'s raw `extends` list starting at position `from`, skipping
-    /// unknown or Kahn-visited targets, returning the first unvisited-and-known
-    /// target alongside the position to resume from. `None` once exhausted.
-    ///
-    /// `v` is the node whose parents to scan; `from` is the index to resume
-    /// scanning from (monotonically increasing).
-    ///
-    /// Each raw `extends` entry is examined at most once per
-    /// [`run_tarjan_from`](Self::run_tarjan_from) call. `from` advances
-    /// monotonically: `O(V + E)` total work instead of `O(degree²)`.
+    /// Borrow `name`'s raw `extends` parent list. Empty slice if `name` is not
+    /// a known Schema.
+    pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
+        self.adjacency.parents_of(name)
+    }
+
+    /// Every Schema's direct `extends` children, keyed by parent name. Only
+    /// Schemas with at least one child appear. Computed fresh on every call
+    /// (single production call site; no caching — see
+    /// [`descendants_by_name`](Self::descendants_by_name), which has never
+    /// needed it either).
+    #[must_use]
+    pub(super) fn children_by_name(
+        &self,
+    ) -> IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
+        let mut map: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> =
+            IndexMap::new();
+        for (i, &name) in self.adjacency.names.iter().enumerate() {
+            let slice =
+                self.adjacency.children_slice(DenseIndex::from_usize(i));
+            if slice.is_empty() {
+                continue;
+            }
+            let children: Vec<SchemaNameRef<'a>> = slice
+                .iter()
+                .filter_map(|&child| self.adjacency.names.get(child.index()))
+                .copied()
+                .collect();
+            map.insert(name, children);
+        }
+        map
+    }
+
+    /// Every Schema's transitive `extends` descendants, keyed by ancestor name.
+    /// Output-sensitive Habib-Morvan-Rampon transitive closure, `O(V + E +
+    /// Σ|closure(x)|)`, proportional to the closure's actual size rather than
+    /// the `O(V²/w)` a bitset DP pays unconditionally. Precondition: requires
+    /// children iterated in topological-rank order, which
+    /// [`SchemaGraphBuilder::build`] already sorted `child_targets` into.
+    #[must_use]
+    pub(super) fn descendants_by_name(
+        &self,
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        let count = self.adjacency.node_count();
+        let mut topo_rank: Vec<u32> = vec![0; count];
+        for (rank, &name) in self.topological_order.iter().enumerate() {
+            if let Some(index) = self.adjacency.index_of(name)
+                && let Some(slot) = topo_rank.get_mut(index.index())
+            {
+                *slot = DenseIndex::saturating_u32(rank);
+            }
+        }
+
+        // Leaves first, roots last: each child's closure is already finalized
+        // (later topological position) before its parent runs.
+        let mut accumulator = DescendantAccumulator::new(count, topo_rank);
+        for &name in self.topological_order.iter().rev() {
+            let Some(node) = self.adjacency.index_of(name) else {
+                continue;
+            };
+            accumulator.accumulate(node, self.adjacency.children_slice(node));
+        }
+
+        let descendant_lists = accumulator.into_descendant_lists();
+        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
+        for (i, &name) in self.adjacency.names.iter().enumerate() {
+            let Some(node_descendants) = descendant_lists.get(i) else {
+                continue;
+            };
+            if node_descendants.is_empty() {
+                continue;
+            }
+            let descendants: IndexSet<SchemaName> = node_descendants
+                .iter()
+                .filter_map(|&d| self.adjacency.names.get(d.index()))
+                .map(|&n| SchemaName::from(n))
+                .collect();
+            result.insert(SchemaName::from(name), descendants);
+        }
+        result
+    }
+}
+
+/// Finds every Schema participating in an `extends` cycle, restricted to the
+/// subgraph Kahn's sort never resolved (a resolved node is provably acyclic,
+/// since it reached in-degree zero).
+///
+/// Iterative Tarjan strongly-connected-components search (explicit work-stack,
+/// no recursion) over that unvisited subgraph, walking `extends` *backward*
+/// (parent-direction, via [`SchemaAdjacency::parents_of`]) rather than the
+/// forward CSR the rest of the graph uses — this avoids building a second
+/// adjacency structure just for cycle detection. `O(V + E)` over the unvisited
+/// subgraph.
+struct CycleDetector<'a, 'b> {
+    adjacency: &'b SchemaAdjacency<'a>,
+    /// The Schemas Kahn's sort already resolved; the search only explores
+    /// what's left.
+    visited: &'b IndexSet<SchemaNameRef<'a>>,
+    search: CycleSearchState,
+    cyclic: Vec<SchemaName>,
+}
+
+impl<'a> CycleDetector<'a, '_> {
+    fn new<'b>(
+        adjacency: &'b SchemaAdjacency<'a>,
+        visited: &'b IndexSet<SchemaNameRef<'a>>,
+    ) -> CycleDetector<'a, 'b> {
+        CycleDetector {
+            adjacency,
+            visited,
+            search: CycleSearchState::new(adjacency.node_count()),
+            cyclic: Vec::new(),
+        }
+    }
+
+    /// Return every unvisited Schema that participates in a cycle. Empty if
+    /// `visited` already covers every node (no cycle exists).
+    fn find(mut self) -> Vec<SchemaName> {
+        if self.visited.len() == self.adjacency.node_count() {
+            return Vec::new();
+        }
+        for start in 0..DenseIndex::saturating_u32(self.adjacency.node_count())
+        {
+            let start = DenseIndex(start);
+            if self.is_kahn_visited(start) || self.search.is_discovered(start) {
+                continue;
+            }
+            self.explore_from(start);
+        }
+        self.cyclic
+    }
+
+    /// Whether `node` was already resolved by Kahn's sort.
+    fn is_kahn_visited(&self, node: DenseIndex) -> bool {
+        self.adjacency
+            .name_of(node)
+            .is_some_and(|name| self.visited.contains(&name))
+    }
+
+    /// Explicit work-stack DFS (no recursion) rooted at `start`, extracting
+    /// every nontrivial strongly-connected component (or self-loop) into
+    /// `self.cyclic`.
+    fn explore_from(&mut self, start: DenseIndex) {
+        let mut work_stack: Vec<(DenseIndex, usize)> = vec![(start, 0)];
+        while let Some(&(node, scan_pos)) = work_stack.last() {
+            if scan_pos == 0 {
+                self.search.discover(node);
+            }
+            match self.next_unvisited_parent(node, scan_pos) {
+                Some((parent, next_pos)) => {
+                    self.advance(&mut work_stack, node, parent, next_pos);
+                }
+                None => self.finish_node(&mut work_stack, node),
+            }
+        }
+    }
+
+    /// Scan `node`'s raw `extends` list from `from`, skipping unknown or
+    /// Kahn-visited targets, returning the first unvisited-and-known parent and
+    /// the position to resume from. `O(V + E)` total via the
+    /// monotonically-advancing `from`.
     fn next_unvisited_parent(
         &self,
-        v: DenseIndex,
+        node: DenseIndex,
         from: usize,
     ) -> Option<(DenseIndex, usize)> {
-        let &name = self.names.get(v.index())?;
-        let parents = self.parents_of(name);
+        let name = self.adjacency.name_of(node)?;
+        let parents = self.adjacency.parents_of(name);
         let mut pos = from;
         while let Some(parent) = parents.get(pos) {
             pos = pos.saturating_add(1);
             if self.visited.contains(parent.as_str()) {
                 continue;
             }
-            if let Some(&target) = self.index_of.get(parent.as_str()) {
+            if let Some(target) = self.adjacency.index_of(parent.as_ref()) {
                 return Some((target, pos));
             }
         }
         None
     }
 
-    /// Whether `v`'s raw `extends` list contains a valid, unvisited
-    /// reference back to itself.
-    fn has_self_extend(&self, v: DenseIndex) -> bool {
-        let Some(&name) = self.names.get(v.index()) else {
+    /// Whether `node`'s raw `extends` list contains a valid, unvisited
+    /// self-reference.
+    fn has_self_extend(&self, node: DenseIndex) -> bool {
+        let Some(name) = self.adjacency.name_of(node) else {
             return false;
         };
-        self.parents_of(name).iter().any(|parent| {
+        self.adjacency.parents_of(name).iter().any(|parent| {
             !self.visited.contains(parent.as_str())
-                && self.index_of.get(parent.as_str()) == Some(&v)
+                && self.adjacency.index_of(parent.as_ref()) == Some(node)
         })
     }
 
-    /// Return every unvisited Schema that participates in a cycle: every member
-    /// of a nontrivial strongly-connected component in the unvisited subgraph,
-    /// plus any node with a direct self-`extends`.
-    ///
-    /// Excludes Schemas that never reached in-degree zero only because they
-    /// `extends` into a cycle without being cyclic themselves. Returns an empty
-    /// `Vec` if every Schema was visited (no cycle).
-    ///
-    /// Iterative Tarjan's SCC (explicit work-stack, no recursion), scoped to
-    /// the unvisited node subset: visited nodes are provably acyclic (Kahn's
-    /// convergence to in-degree zero). `O(V + E)` over the unvisited subgraph.
-    fn cyclic_schemas(&self) -> Vec<SchemaName> {
-        if self.visited.len() == self.raw.len() {
-            return Vec::new();
-        }
-        let count = self.names.len();
-        let mut tarjan = TarjanState::new(count);
-        let mut cyclic: Vec<SchemaName> = Vec::new();
-
-        for start in 0..DenseIndex::saturating_u32(count) {
-            let start = DenseIndex(start);
-            if self.is_kahn_visited(start) || tarjan.is_discovered(start) {
-                continue;
-            }
-            self.run_tarjan_from(start, &mut tarjan, &mut cyclic);
-        }
-        cyclic
-    }
-
-    /// Explicit work-stack DFS (no recursion) rooted at `start`, extracting
-    /// every nontrivial SCC (or self-loop) into `cyclic`.
-    ///
-    /// # Arguments
-    ///
-    /// * `start` - Root node for this DFS traversal
-    /// * `tarjan` - SCC bookkeeping state (discovery indices, lowlinks, stack)
-    /// * `cyclic` - Output buffer for cyclic [`SchemaName`]s found
-    fn run_tarjan_from(
-        &self,
-        start: DenseIndex,
-        tarjan: &mut TarjanState,
-        cyclic: &mut Vec<SchemaName>,
-    ) {
-        let mut work_stack: Vec<(DenseIndex, usize)> = vec![(start, 0)];
-        while let Some(&(v, scan_pos)) = work_stack.last() {
-            if scan_pos == 0 {
-                tarjan.discover(v);
-            }
-            match self.next_unvisited_parent(v, scan_pos) {
-                Some((w, next_pos)) => {
-                    Self::advance_child(
-                        &mut work_stack,
-                        tarjan,
-                        v,
-                        w,
-                        next_pos,
-                    );
-                }
-                None => self.finish_node(&mut work_stack, tarjan, v, cyclic),
-            }
-        }
-    }
-
-    /// Advance `v`'s frame to scan position `next_pos`, then descend into `w`
-    /// if undiscovered, or fold `w`'s index into `v`'s lowlink if `w` is a live
-    /// back edge.
-    ///
-    /// # Arguments
-    ///
-    /// * `work_stack` - DFS traversal stack of `(node, scan_position)` frames
-    /// * `tarjan` - SCC bookkeeping state
-    /// * `v` - Current node being explored
-    /// * `w` - Child node to descend into or fold
-    /// * `next_pos` - Updated scan position for `v`'s frame
-    fn advance_child(
+    /// Advance `node`'s frame to `resume_at`, then descend into `parent` if
+    /// undiscovered, or fold `parent`'s discovery order into `node`'s
+    /// lowest-reachable rank if `parent` is a live back edge.
+    fn advance(
+        &mut self,
         work_stack: &mut Vec<(DenseIndex, usize)>,
-        tarjan: &mut TarjanState,
-        v: DenseIndex,
-        w: DenseIndex,
-        next_pos: usize,
+        node: DenseIndex,
+        parent: DenseIndex,
+        resume_at: usize,
     ) {
         if let Some(frame) = work_stack.last_mut() {
-            frame.1 = next_pos;
+            frame.1 = resume_at;
         }
-        if !tarjan.is_discovered(w) {
-            work_stack.push((w, 0));
+        if !self.search.is_discovered(parent) {
+            work_stack.push((parent, 0));
             return;
         }
-        if !tarjan.is_on_stack(w) {
+        if !self.search.is_on_stack(parent) {
             return;
         }
-        if let Some(w_index) = tarjan.index_of(w) {
-            tarjan.merge_lowlink(v, w_index);
+        if let Some(parent_order) = self.search.discovery_order_of(parent) {
+            self.search.lower_reachable(node, parent_order);
         }
     }
 
-    /// `v` is fully explored: if it is an SCC root, pop and record its
-    /// component (if nontrivial), then propagate its lowlink to its caller.
-    ///
-    /// # Arguments
-    ///
-    /// * `work_stack` - DFS traversal stack (popped after processing)
-    /// * `tarjan` - SCC bookkeeping state
-    /// * `v` - Node whose exploration is complete
-    /// * `cyclic` - Output buffer for cyclic [`SchemaName`]s
+    /// `node` is fully explored: if it is a component root, pop and record its
+    /// strongly-connected component (if nontrivial or self-looping) into
+    /// `self.cyclic` in insertion order (matching the resolver's
+    /// error-reporting convention), then propagate its lowest-reachable rank to
+    /// its caller.
     fn finish_node(
-        &self,
+        &mut self,
         work_stack: &mut Vec<(DenseIndex, usize)>,
-        tarjan: &mut TarjanState,
-        v: DenseIndex,
-        cyclic: &mut Vec<SchemaName>,
+        node: DenseIndex,
     ) {
-        let v_index = tarjan.index_of(v);
-        if v_index.is_some() && v_index == tarjan.lowlink_of(v) {
-            let mut scc = tarjan.pop_scc(v);
-            let is_cyclic = scc.len() > 1 || self.has_self_extend(v);
+        let node_order = self.search.discovery_order_of(node);
+        if node_order.is_some()
+            && node_order == self.search.lowest_reachable_of(node)
+        {
+            let mut component = self.search.pop_component(node);
+            let is_cyclic = component.len() > 1 || self.has_self_extend(node);
             if is_cyclic {
-                // Insertion order, not Tarjan pop order: matches the resolver's
-                // error-reporting convention.
-                scc.sort_by_key(|idx| idx.0);
-                cyclic.extend(scc.iter().filter_map(|&idx| {
-                    self.names
-                        .get(idx.index())
-                        .map(|&name| SchemaName::from(name))
-                }));
+                // Insertion order, not Tarjan pop order: matches the
+                // resolver's error-reporting convention.
+                component.sort_by_key(|idx| idx.0);
+                let adjacency = &self.adjacency;
+                self.cyclic.extend(
+                    component
+                        .iter()
+                        .filter_map(|&idx| adjacency.name_of(idx))
+                        .map(SchemaName::from),
+                );
             }
         }
         work_stack.pop();
         let Some(&(parent, _)) = work_stack.last() else {
             return;
         };
-        if let Some(v_lowlink) = tarjan.lowlink_of(v) {
-            tarjan.merge_lowlink(parent, v_lowlink);
+        if let Some(node_lowest) = self.search.lowest_reachable_of(node) {
+            self.search.lower_reachable(parent, node_lowest);
         }
     }
 }
 
-impl<'a> SchemaGraph<'a, Resolved<'a>> {
-    /// Return every Schema's direct `extends` children, keyed by parent name.
-    ///
-    /// Only Schemas with at least one child appear in the returned map. Built
-    /// lazily from the CSR adjacency on first call and cached for the lifetime
-    /// of this resolved graph.
-    #[must_use]
-    pub(super) fn children_by_name(
-        &self,
-    ) -> &IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
-        self.state.children_by_name.get_or_init(|| {
-            let mut map: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> =
-                IndexMap::new();
-            for (i, &name) in self.names.iter().enumerate() {
-                let slice = self.children_slice(DenseIndex::from_usize(i));
-                if slice.is_empty() {
-                    continue;
-                }
-                let children: Vec<SchemaNameRef<'a>> = slice
-                    .iter()
-                    .filter_map(|&child| self.names.get(child.index()).copied())
-                    .collect();
-                map.insert(name, children);
-            }
-            map
-        })
-    }
-
-    /// Return every Schema's transitive `extends` descendants, keyed by
-    /// ancestor name.
-    ///
-    /// Output-sensitive transitive closure using the Habib-Morvan-Rampon
-    /// algorithm.
-    ///
-    /// - Complexity: `O(V + E + Σ|closure(x)|)`, proportional to the closure's
-    ///   actual size, rather than the `O(V²/w)` a bitset DP pays
-    ///   unconditionally.
-    /// - Precondition: requires children iterated in topological-rank order,
-    ///   which [`into_resolved`](SchemaGraph::into_resolved) already sorted
-    ///   `child_targets` into.
-    #[must_use]
-    pub(super) fn descendants_by_name(
-        &self,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let count = self.names.len();
-        let mut topo_rank: Vec<u32> = vec![0; count];
-        for (rank, &idx) in self.state.order.iter().enumerate() {
-            if let Some(slot) = topo_rank.get_mut(idx.index()) {
-                *slot = DenseIndex::saturating_u32(rank);
-            }
-        }
-
-        // Scratch, reused across the whole outer loop: `mark[y]` is only ever
-        // `true` transiently while `closure[i]` is being built, then cleared,
-        // bounded by `|closure[i]|` rather than a full-array clear per node.
-        let mut mark = BitVec::from_elem(count, false);
-        let mut closure: Vec<Vec<DenseIndex>> = vec![Vec::new(); count];
-
-        // Leaves first, roots last: each child's closure is already finalized
-        // (later topological position) before its parent runs.
-        for &i in self.state.order.iter().rev() {
-            self.accumulate_descendants(i, &mut mark, &mut closure);
-            // Required: without this, closure[i]'s order is
-            // child-processing-interleaved, not globally topological, and
-            // downstream callers observe this order directly.
-            if let Some(node_closure) = closure.get_mut(i.index()) {
-                node_closure.sort_by_key(|d| {
-                    topo_rank.get(d.index()).copied().unwrap_or(u32::MAX)
-                });
-            }
-        }
-
-        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
-        for (i, &name) in self.names.iter().enumerate() {
-            let Some(node_closure) = closure.get(i) else {
-                continue;
-            };
-            if node_closure.is_empty() {
-                continue;
-            }
-            let descendants: IndexSet<SchemaName> = node_closure
-                .iter()
-                .filter_map(|&d| {
-                    self.names.get(d.index()).map(|&n| SchemaName::from(n))
-                })
-                .collect();
-            result.insert(SchemaName::from(name), descendants);
-        }
-        result
-    }
-
-    /// Accumulate node `i`'s direct-plus-inherited descendants into
-    /// `closure[i]`. `mark` is scratch, cleared before returning.
-    ///
-    /// # Arguments
-    ///
-    /// * `i` - Node whose descendants to accumulate
-    /// * `mark` - Scratch [`BitVec`] for deduplication, cleared before return
-    /// * `closure` - Per-node descendant sets; `closure[i]` is written
-    fn accumulate_descendants(
-        &self,
-        i: DenseIndex,
-        mark: &mut BitVec,
-        closure: &mut [Vec<DenseIndex>],
-    ) {
-        for &x in self.children_slice(i) {
-            Self::merge_child_closure(i, x, mark, closure);
-        }
-        let Some(node_closure) = closure.get(i.index()) else {
-            return;
-        };
-        for &y in node_closure {
-            mark.set(y.index(), false);
-        }
-    }
-
-    /// Fold child `x`'s already-finalized closure into `closure[i]`,
-    /// deduplicating via `mark`.
-    ///
-    /// # Arguments
-    ///
-    /// * `i` - Parent node receiving the merged descendants
-    /// * `x` - Child node whose closure to merge
-    /// * `mark` - Scratch [`BitVec`] tracking which nodes are already in
-    ///   `closure[i]`
-    /// * `closure` - Per-node descendant sets
-    fn merge_child_closure(
-        i: DenseIndex,
-        x: DenseIndex,
-        mark: &mut BitVec,
-        closure: &mut [Vec<DenseIndex>],
-    ) {
-        if mark.get(x.index()) == Some(true) {
-            return;
-        }
-        mark.set(x.index(), true);
-        push_descendant(closure, i, x);
-        let child_descendants: Vec<DenseIndex> =
-            closure.get(x.index()).cloned().unwrap_or_default();
-        for y in child_descendants {
-            if mark.get(y.index()) == Some(true) {
-                continue;
-            }
-            mark.set(y.index(), true);
-            push_descendant(closure, i, y);
-        }
-    }
-}
-
-/// Iterative Tarjan's-SCC bookkeeping over the unvisited dense-index subgraph.
-/// Arrays sized to the full node count; entries for unreached nodes stay at
-/// their initial value.
-struct TarjanState {
-    /// Discovery order, assigned once per node on first visit.
-    index: Vec<Option<u32>>,
-    /// Lowest discovery index reachable from each node.
-    lowlink: Vec<u32>,
-    /// Whether each node is currently on [`stack`](Self::stack).
+/// Per-node Tarjan bookkeeping for [`CycleDetector`]'s
+/// strongly-connected-components search, sized to the full unvisited-subgraph
+/// node count; entries for unreached nodes stay at their initial value.
+struct CycleSearchState {
+    /// Discovery order, assigned once per node on first visit. (Renamed from
+    /// `index` to avoid colliding with [`DenseIndex::index`]'s meaning.)
+    discovery_order: Vec<Option<u32>>,
+    /// Lowest discovery order reachable from each node via tree or back edges
+    /// (Tarjan's "lowlink").
+    lowest_reachable: Vec<u32>,
+    /// Whether each node is currently on `component_stack`.
     on_stack: Vec<bool>,
-    /// SCC-accumulation stack, in discovery order.
-    stack: Vec<DenseIndex>,
-    /// Next discovery index to assign.
-    counter: u32,
+    /// Strongly-connected-component-accumulation stack, in discovery order.
+    /// (Renamed from `stack` to distinguish it from the DFS traversal
+    /// work-stack in `CycleDetector::explore_from`, a separate stack.)
+    component_stack: Vec<DenseIndex>,
+    /// Next discovery order to assign.
+    next_discovery_order: u32,
 }
 
-impl TarjanState {
-    /// Allocates per-node bookkeeping for `count` nodes, all initially
-    /// undiscovered.
-    fn new(count: usize) -> Self {
+impl CycleSearchState {
+    fn new(node_count: usize) -> Self {
         Self {
-            index: vec![None; count],
-            lowlink: vec![0; count],
-            on_stack: vec![false; count],
-            stack: Vec::new(),
-            counter: 0,
+            discovery_order: vec![None; node_count],
+            lowest_reachable: vec![0; node_count],
+            on_stack: vec![false; node_count],
+            component_stack: Vec::new(),
+            next_discovery_order: 0,
         }
     }
 
-    /// Whether `v` has been assigned a Tarjan discovery index.
-    fn is_discovered(&self, v: DenseIndex) -> bool {
-        self.index.get(v.index()).copied().flatten().is_some()
+    /// Whether `node` has been assigned a Tarjan discovery order.
+    fn is_discovered(&self, node: DenseIndex) -> bool {
+        self.discovery_order.get(node.index()).copied().flatten().is_some()
     }
 
-    /// `v`'s Tarjan discovery index, or `None` if undiscovered.
-    fn index_of(&self, v: DenseIndex) -> Option<u32> {
-        self.index.get(v.index()).copied().flatten()
+    /// `node`'s discovery order, or `None` if undiscovered.
+    fn discovery_order_of(&self, node: DenseIndex) -> Option<u32> {
+        self.discovery_order.get(node.index()).copied().flatten()
     }
 
-    /// `v`'s current lowlink value, or `None` if undiscovered.
-    fn lowlink_of(&self, v: DenseIndex) -> Option<u32> {
-        self.lowlink.get(v.index()).copied()
+    /// `node`'s current lowest-reachable rank, or `None` if undiscovered.
+    fn lowest_reachable_of(&self, node: DenseIndex) -> Option<u32> {
+        self.lowest_reachable.get(node.index()).copied()
     }
 
-    /// Whether `v` is currently on the Tarjan stack (SCC-accumulation
-    /// stack, not the traversal work-stack).
-    fn is_on_stack(&self, v: DenseIndex) -> bool {
-        self.on_stack.get(v.index()).copied().unwrap_or(false)
+    /// Whether `node` is currently on the strongly-connected-component stack
+    /// (not the traversal work-stack).
+    fn is_on_stack(&self, node: DenseIndex) -> bool {
+        self.on_stack.get(node.index()).copied().unwrap_or(false)
     }
 
-    /// Assign `v` its Tarjan discovery index/lowlink and push it onto the
-    /// SCC stack.
-    fn discover(&mut self, v: DenseIndex) {
-        let rank = self.counter;
-        self.counter = self.counter.saturating_add(1);
-        if let Some(slot) = self.index.get_mut(v.index()) {
+    /// Assign `node` its discovery order/lowest-reachable rank and push it onto
+    /// `component_stack`.
+    fn discover(&mut self, node: DenseIndex) {
+        let rank = self.next_discovery_order;
+        self.next_discovery_order = self.next_discovery_order.saturating_add(1);
+        if let Some(slot) = self.discovery_order.get_mut(node.index()) {
             *slot = Some(rank);
         }
-        if let Some(slot) = self.lowlink.get_mut(v.index()) {
+        if let Some(slot) = self.lowest_reachable.get_mut(node.index()) {
             *slot = rank;
         }
-        self.stack.push(v);
-        if let Some(slot) = self.on_stack.get_mut(v.index()) {
+        self.component_stack.push(node);
+        if let Some(slot) = self.on_stack.get_mut(node.index()) {
             *slot = true;
         }
     }
 
-    /// Fold `candidate` into `v`'s lowlink, keeping the smaller value.
-    fn merge_lowlink(&mut self, v: DenseIndex, candidate: u32) {
-        if let Some(slot) = self.lowlink.get_mut(v.index()) {
+    /// Fold `candidate` into `node`'s lowest-reachable rank, keeping the
+    /// smaller value.
+    fn lower_reachable(&mut self, node: DenseIndex, candidate: u32) {
+        if let Some(slot) = self.lowest_reachable.get_mut(node.index()) {
             *slot = (*slot).min(candidate);
         }
     }
 
-    /// Pop the SCC rooted at `root` off the stack (most-recently-discovered
-    /// first).
-    fn pop_scc(&mut self, root: DenseIndex) -> Vec<DenseIndex> {
-        let mut scc = Vec::new();
-        while let Some(popped) = self.stack.pop() {
+    /// Pop the strongly-connected component rooted at `root` off
+    /// `component_stack` (most-recently-discovered first).
+    fn pop_component(&mut self, root: DenseIndex) -> Vec<DenseIndex> {
+        let mut component = Vec::new();
+        while let Some(popped) = self.component_stack.pop() {
             if let Some(slot) = self.on_stack.get_mut(popped.index()) {
                 *slot = false;
             }
             let is_root = popped == root;
-            scc.push(popped);
+            component.push(popped);
             if is_root {
                 break;
             }
         }
-        scc
+        component
     }
 }
 
-/// Dense per-schema array index, assigned once at construction in raw-map
-/// insertion order. Array indexing replaces string-hashed
-/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
-///
-/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
-/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
-/// registry.
-///
-/// [`HashMap`]: std::collections::HashMap
-/// [`IndexMap`]: indexmap::IndexMap
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-struct DenseIndex(u32);
-
-impl DenseIndex {
-    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values
-    /// this module narrows stay far below `u32::MAX` for any real schema
-    /// registry.
-    fn saturating_u32(n: usize) -> u32 {
-        u32::try_from(n).unwrap_or(u32::MAX)
-    }
-
-    /// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
-    /// platform this crate targets, so `try_from` failing here is
-    /// unreachable in practice; it saturates to `usize::MAX` rather than
-    /// panicking.
-    fn widen_usize(n: u32) -> usize {
-        usize::try_from(n).unwrap_or(usize::MAX)
-    }
-
-    /// Builds a dense index from an array position, saturating per
-    /// [`Self::saturating_u32`].
-    fn from_usize(n: usize) -> Self {
-        Self(Self::saturating_u32(n))
-    }
-
-    /// Widens back to `usize` for indexing. See [`Self::widen_usize`].
-    fn index(self) -> usize {
-        Self::widen_usize(self.0)
-    }
+/// Per-node transitive-descendant accumulator for
+/// [`SchemaGraph::descendants_by_name`]'s reverse-topological sweep. `seen` is
+/// scratch, cleared before each node's `accumulate` call returns, so
+/// deduplication costs `O(|descendants(node)|)` rather than a full-array clear
+/// per node.
+struct DescendantAccumulator {
+    seen: BitVec,
+    /// `descendants[i]` is dense index `i`'s accumulated descendant list,
+    /// finalized once every node in topological order has been swept
+    /// (leaves first).
+    descendants: Vec<Vec<DenseIndex>>,
+    /// Topological rank per node, used to keep each finalized descendant
+    /// list in globally topological order rather than
+    /// child-processing-interleaved order — downstream callers (e.g.
+    /// Template `.descendants() | map(attribute='name') | join(',')`)
+    /// observe this order directly.
+    rank: Vec<u32>,
 }
 
-/// Append `value` to `closure[i]`, a no-op if `i` is out of range.
-///
-/// # Arguments
-///
-/// * `closure` - Per-node descendant sets
-/// * `i` - Parent node receiving the descendant
-/// * `value` - Dense index of the descendant to append
-fn push_descendant(
-    closure: &mut [Vec<DenseIndex>],
-    i: DenseIndex,
-    value: DenseIndex,
-) {
-    if let Some(node_closure) = closure.get_mut(i.index()) {
-        node_closure.push(value);
+impl DescendantAccumulator {
+    fn new(node_count: usize, rank: Vec<u32>) -> Self {
+        Self {
+            seen: BitVec::from_elem(node_count, false),
+            descendants: vec![Vec::new(); node_count],
+            rank,
+        }
+    }
+
+    /// Accumulate `node`'s direct-plus-inherited descendants from its
+    /// already-topological-rank-sorted `children`.
+    fn accumulate(&mut self, node: DenseIndex, children: &[DenseIndex]) {
+        for &child in children {
+            self.merge_child(node, child);
+        }
+        let Some(node_descendants) = self.descendants.get_mut(node.index())
+        else {
+            return;
+        };
+        // Required: without this, node_descendants' order is
+        // child-processing-interleaved, not globally topological.
+        let rank = &self.rank;
+        node_descendants
+            .sort_by_key(|d| rank.get(d.index()).copied().unwrap_or(u32::MAX));
+        for &descendant in node_descendants.iter() {
+            self.seen.set(descendant.index(), false);
+        }
+    }
+
+    /// Fold `child`'s already-finalized descendant list into `node`'s,
+    /// deduplicating via `self.seen`.
+    fn merge_child(&mut self, node: DenseIndex, child: DenseIndex) {
+        if self.seen.get(child.index()) == Some(true) {
+            return;
+        }
+        self.seen.set(child.index(), true);
+        self.record(node, child);
+        let child_descendants: Vec<DenseIndex> =
+            self.descendants.get(child.index()).cloned().unwrap_or_default();
+        for descendant in child_descendants {
+            if self.seen.get(descendant.index()) == Some(true) {
+                continue;
+            }
+            self.seen.set(descendant.index(), true);
+            self.record(node, descendant);
+        }
+    }
+
+    /// Append `descendant` to `node`'s list. No-op if `node` is out of range.
+    fn record(&mut self, node: DenseIndex, descendant: DenseIndex) {
+        if let Some(list) = self.descendants.get_mut(node.index()) {
+            list.push(descendant);
+        }
+    }
+
+    /// Consume the accumulator, returning every node's finalized descendant
+    /// list.
+    fn into_descendant_lists(self) -> Vec<Vec<DenseIndex>> {
+        self.descendants
     }
 }
 
@@ -858,7 +886,10 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
-            let (_graph, warnings) = SchemaGraph::new(&raw);
+            let (_builder, warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
             assert_eq!(warnings, vec![SchemaWarning::DuplicateExtendsTarget {
                 schema: SchemaName::from("child"),
@@ -870,7 +901,10 @@ mod tests {
         fn returns_missing_extends_target_warning() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("child"), schema(&["nonexistent"]));
-            let (_graph, warnings) = SchemaGraph::new(&raw);
+            let (_builder, warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
             assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
                 schema: SchemaName::from("child"),
@@ -879,9 +913,36 @@ mod tests {
         }
 
         #[test]
+        fn returns_missing_then_duplicate_for_a_repeated_unresolvable_target() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("child"),
+                schema(&["missing", "missing"]),
+            );
+            let (_builder, warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+
+            assert_eq!(warnings, vec![
+                SchemaWarning::MissingExtendsTarget {
+                    schema: SchemaName::from("child"),
+                    target: SchemaName::from("missing"),
+                },
+                SchemaWarning::DuplicateExtendsTarget {
+                    schema: SchemaName::from("child"),
+                    target: SchemaName::from("missing"),
+                },
+            ]);
+        }
+
+        #[test]
         fn returns_no_warnings_for_empty_input() {
             let raw = IndexMap::new();
-            let (_graph, warnings) = SchemaGraph::new(&raw);
+            let (_builder, warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
             assert!(warnings.is_empty());
         }
@@ -891,9 +952,17 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let (_graph, warnings) = SchemaGraph::new(&raw);
-
+            let (builder, warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
             assert!(warnings.is_empty());
+
+            let graph = builder.build().expect("acyclic fixture resolves");
+            let order: Vec<SchemaNameRef<'_>> =
+                graph.topological_order().collect();
+            assert!(order.contains(&SchemaNameRef::from("book")));
+            assert!(!order.contains(&SchemaNameRef::from(GLOBAL_SCHEMA_NAME)));
         }
     }
 
@@ -907,7 +976,11 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+            let graph = builder.build().expect("acyclic fixture resolves");
 
             assert_eq!(graph.parents_of(SchemaNameRef::from("book")), &[
                 SchemaName::from(GLOBAL_SCHEMA_NAME)
@@ -919,7 +992,11 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+            let graph = builder.build().expect("acyclic fixture resolves");
 
             assert_eq!(graph.parents_of(SchemaNameRef::from("child")), &[
                 SchemaName::from("book"),
@@ -931,13 +1008,35 @@ mod tests {
         fn returns_empty_slice_for_unknown_schema() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+            let graph = builder.build().expect("acyclic fixture resolves");
 
             assert_eq!(graph.parents_of(SchemaNameRef::from("missing")), &[]);
         }
+
+        #[test]
+        fn returns_empty_slice_for_the_excluded_schema_even_with_its_own_extends()
+         {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&["book"]));
+            raw.insert(SchemaName::from("book"), schema(&[]));
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+            let graph = builder.build().expect("acyclic fixture resolves");
+
+            assert_eq!(
+                graph.parents_of(SchemaNameRef::from(GLOBAL_SCHEMA_NAME)),
+                &[]
+            );
+        }
     }
 
-    mod state {
+    mod topological_order {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -947,12 +1046,16 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("author"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["author"]));
-            let (mut graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+            let graph = builder.build().expect("acyclic fixture resolves");
 
-            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("author")));
-            graph.mark_resolved(SchemaNameRef::from("author"));
-            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("book")));
-            assert_eq!(graph.next_ready(), None);
+            assert_eq!(graph.topological_order().collect::<Vec<_>>(), vec![
+                SchemaNameRef::from("author"),
+                SchemaNameRef::from("book"),
+            ]);
         }
 
         #[test]
@@ -961,12 +1064,17 @@ mod tests {
             raw.insert(SchemaName::from("zebra"), schema(&[]));
             raw.insert(SchemaName::from("apple"), schema(&[]));
             raw.insert(SchemaName::from("mango"), schema(&[]));
-            let (mut graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
+            let graph = builder.build().expect("acyclic fixture resolves");
 
-            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("zebra")));
-            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("apple")));
-            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("mango")));
-            assert_eq!(graph.next_ready(), None);
+            assert_eq!(graph.topological_order().collect::<Vec<_>>(), vec![
+                SchemaNameRef::from("zebra"),
+                SchemaNameRef::from("apple"),
+                SchemaNameRef::from("mango"),
+            ]);
         }
     }
 
@@ -983,7 +1091,13 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("memoir"), schema(&["book"]));
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let children = graph.children_by_name();
 
             let thing_children: Vec<&str> = children
@@ -1015,7 +1129,13 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let children = graph.children_by_name();
 
             let book_children: Vec<&str> = children
@@ -1046,7 +1166,13 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&[]));
             raw.insert(SchemaName::from("b"), schema(&[]));
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let children = graph.children_by_name();
 
             assert!(children.is_empty());
@@ -1073,7 +1199,13 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let descendants = graph.descendants_by_name();
 
             assert_eq!(
@@ -1089,7 +1221,13 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("space_opera"), schema(&["sci_fi"]));
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let descendants = graph.descendants_by_name();
 
             assert_eq!(
@@ -1109,7 +1247,13 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let descendants = graph.descendants_by_name();
 
             assert_eq!(descendants.get("sci_fi"), None);
@@ -1122,7 +1266,13 @@ mod tests {
             raw.insert(SchemaName::from("b"), schema(&["a"]));
             raw.insert(SchemaName::from("c"), schema(&[]));
             raw.insert(SchemaName::from("d"), schema(&["c"]));
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let descendants = graph.descendants_by_name();
 
             assert_eq!(descendants.get("a"), Some(&set(&["b"])));
@@ -1145,7 +1295,13 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
             let descendants = graph.descendants_by_name();
 
             let expected: IndexSet<SchemaName> = ["adaptation", "book", "film"]
@@ -1167,12 +1323,36 @@ mod tests {
             raw.insert(SchemaName::from("alpha"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&[]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
-            assert_eq!(graph.index_of.get("alpha").map(|i| i.0), Some(0));
-            assert_eq!(graph.index_of.get("book").map(|i| i.0), Some(1));
-            assert_eq!(graph.index_of.get("sci_fi").map(|i| i.0), Some(2));
-            assert_eq!(graph.index_of.get("missing"), None);
+            assert_eq!(
+                builder
+                    .adjacency
+                    .index_of(SchemaNameRef::from("alpha"))
+                    .map(|i| i.0),
+                Some(0)
+            );
+            assert_eq!(
+                builder
+                    .adjacency
+                    .index_of(SchemaNameRef::from("book"))
+                    .map(|i| i.0),
+                Some(1)
+            );
+            assert_eq!(
+                builder
+                    .adjacency
+                    .index_of(SchemaNameRef::from("sci_fi"))
+                    .map(|i| i.0),
+                Some(2)
+            );
+            assert_eq!(
+                builder.adjacency.index_of(SchemaNameRef::from("missing")),
+                None
+            );
         }
 
         #[test]
@@ -1180,14 +1360,20 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("alpha"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
             assert_eq!(
-                graph.names.first(),
-                Some(&SchemaNameRef::from("alpha"))
+                builder.adjacency.name_of(DenseIndex(0)),
+                Some(SchemaNameRef::from("alpha"))
             );
-            assert_eq!(graph.names.get(1), Some(&SchemaNameRef::from("book")));
-            assert_eq!(graph.names.get(2), None);
+            assert_eq!(
+                builder.adjacency.name_of(DenseIndex(1)),
+                Some(SchemaNameRef::from("book"))
+            );
+            assert_eq!(builder.adjacency.name_of(DenseIndex(2)), None);
         }
 
         #[test]
@@ -1196,9 +1382,12 @@ mod tests {
             raw.insert(SchemaName::from("a"), schema(&[]));
             raw.insert(SchemaName::from("b"), schema(&[]));
             raw.insert(SchemaName::from("c"), schema(&[]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
-            assert_eq!(graph.names.len(), 3);
+            assert_eq!(builder.adjacency.node_count(), 3);
         }
     }
 
@@ -1208,37 +1397,46 @@ mod tests {
         use super::*;
 
         #[test]
-        fn into_resolved_rejects_a_direct_two_node_cycle() {
+        fn rejects_a_direct_two_node_cycle() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&["b"]));
             raw.insert(SchemaName::from("b"), schema(&["a"]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
-            let err = graph.into_resolved().expect_err("cycle rejected");
+            let err = builder.build().expect_err("cycle rejected");
             assert_eq!(err, vec![SchemaName::from("a"), SchemaName::from("b")]);
         }
 
         #[test]
-        fn into_resolved_excludes_a_schema_that_only_extends_into_the_cycle() {
+        fn excludes_a_schema_that_only_extends_into_the_cycle() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&["b"]));
             raw.insert(SchemaName::from("b"), schema(&["a"]));
             raw.insert(SchemaName::from("c"), schema(&["a"]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
-            let err = graph.into_resolved().expect_err("cycle rejected");
+            let err = builder.build().expect_err("cycle rejected");
             assert_eq!(err, vec![SchemaName::from("a"), SchemaName::from("b")]);
         }
 
         #[test]
-        fn into_resolved_rejects_a_three_node_cycle_in_declaration_order() {
+        fn rejects_a_three_node_cycle_in_declaration_order() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&["b"]));
             raw.insert(SchemaName::from("b"), schema(&["c"]));
             raw.insert(SchemaName::from("c"), schema(&["a"]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
-            let err = graph.into_resolved().expect_err("cycle rejected");
+            let err = builder.build().expect_err("cycle rejected");
             assert_eq!(err, vec![
                 SchemaName::from("a"),
                 SchemaName::from("b"),
@@ -1247,12 +1445,15 @@ mod tests {
         }
 
         #[test]
-        fn into_resolved_rejects_a_self_loop() {
+        fn rejects_a_self_loop() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&["a"]));
-            let (graph, _warnings) = SchemaGraph::new(&raw);
+            let (builder, _warnings) = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            );
 
-            let err = graph.into_resolved().expect_err("self-loop rejected");
+            let err = builder.build().expect_err("self-loop rejected");
             assert_eq!(err, vec![SchemaName::from("a")]);
         }
     }

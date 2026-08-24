@@ -1,5 +1,7 @@
 //! `select` field type definition, entry type, and parsing.
 
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
@@ -47,9 +49,9 @@ impl SchemaSelectField {
             values.into_iter().map(SchemaSelectFieldEntry::literal).collect()
         };
 
-        SchemaFieldType::Select(Self {
+        SchemaFieldType::Select(Arc::new(Self {
             values,
-        })
+        }))
     }
 }
 
@@ -182,7 +184,7 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(
             field_type,
-            SchemaFieldType::Select(SchemaSelectField::default())
+            SchemaFieldType::Select(Arc::new(SchemaSelectField::default()))
         );
     }
 
@@ -222,7 +224,7 @@ mod tests {
         let errors = parser.finish(&IndexMap::new());
 
         assert!(errors.is_empty());
-        assert_eq!(field_type, SchemaFieldType::Select(base));
+        assert_eq!(field_type, SchemaFieldType::Select(Arc::new(base)));
     }
 
     #[test]

@@ -1,17 +1,19 @@
 //! Schema resolution: linearize the `extends` DAG, merge inherited fields,
 //! and compute hierarchy sets.
 //!
-//! [`SchemaSetResolver`] is the single-method entry point. Internally it:
+//! [`SchemaBuilder`] is the single-method entry point. Internally it:
 //!
-//! 1. Strips the Global Schema (a `$ref` target, not an `extends` target) and
-//!    resolves it first so later `$ref` lookups find it.
-//! 2. Drives [`SchemaGraph`]'s typestate protocol: Kahn topological sort yields
-//!    schemas in dependency order.
+//! 1. Resolves the Global Schema first (a `$ref` target, not an `extends`
+//!    target) so later `$ref` lookups find it.
+//! 2. Drives [`SchemaGraphBuilder`]/[`SchemaGraph`]: Kahn topological sort
+//!    yields schemas in dependency order, with the Global Schema excluded from
+//!    the graph entirely.
 //! 3. Delegates per-Schema field merging to [`SchemaMerger`], which applies
 //!    first-listed-wins inheritance, `excludes`, and `$ref` resolution.
 //! 4. Filters hierarchy sets against resolution failures so broken links do not
 //!    propagate downstream.
 //!
+//! [`SchemaGraphBuilder`]: super::graph::SchemaGraphBuilder
 //! [`SchemaGraph`]: super::graph::SchemaGraph
 
 use std::collections::HashMap;
@@ -22,7 +24,7 @@ use super::{
     GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
     fields::{FieldAddressRef, SchemaFieldBuilder},
-    graph::{Building, Resolved, SchemaGraph},
+    graph::{SchemaGraph, SchemaGraphBuilder},
     model::Schema,
 };
 use crate::field::{FieldKey, FieldName};
@@ -38,40 +40,50 @@ pub(crate) struct SchemaFailure {
 
 /// Output of a successful resolution pass.
 ///
-/// Contains every Schema that resolved without error, alongside warnings
-/// for recoverable defects and failures for hard errors.
+/// Contains every Schema that resolved without error, alongside warnings for
+/// recoverable defects and failures for hard errors.
 #[derive(Debug)]
 pub(super) struct ResolvedSchemas {
     /// Every Schema that resolved without error.
     pub(super) schemas: IndexMap<SchemaName, Schema>,
     /// Recoverable defects encountered across the whole set.
     pub(super) warnings: Vec<SchemaWarning>,
-    /// Schemas that failed to resolve, each paired with the error that
-    /// caused the failure.
+    /// Schemas that failed to resolve, each paired with the error that caused
+    /// the failure.
     pub(super) failures: Vec<SchemaFailure>,
 }
 
 /// Entry point for resolving a set of raw schemas into [`Schema`] values.
 ///
-/// Build with [`new`](Self::new), then call [`resolve`](Self::resolve).
-pub(super) struct SchemaSetResolver<'a> {
+/// Build with [`new`](Self::new), then call [`build`](Self::build).
+pub(super) struct SchemaBuilder<'a> {
     /// Raw schemas to resolve, keyed by name.
     raw: &'a IndexMap<SchemaName, RawSchema>,
+    /// Schemas resolved so far.
+    resolved: IndexMap<SchemaName, Schema>,
+    /// Recoverable defects accumulated across the whole set.
+    warnings: Vec<SchemaWarning>,
+    /// Schemas that failed to resolve, accumulated across the whole set.
+    failures: Vec<SchemaFailure>,
 }
 
-impl<'a> SchemaSetResolver<'a> {
-    /// Create a resolver from a borrowed raw-schema map.
-    pub(super) const fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
+impl<'a> SchemaBuilder<'a> {
+    /// Create a builder from a borrowed raw-schema map.
+    pub(super) fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
         Self {
             raw,
+            resolved: IndexMap::new(),
+            warnings: Vec::new(),
+            failures: Vec::new(),
         }
     }
 
-    /// Resolve all schemas, returning successes, warnings, and failures.
+    /// Resolve every Schema, returning successes, warnings, and failures.
     ///
-    /// The Global Schema is stripped from the raw map, resolved first (with its
-    /// `extends` ignored), and reinserted so `$ref` lookups find it. Remaining
-    /// schemas are resolved in Kahn topological order.
+    /// The Global Schema is resolved first (with its `extends` ignored) so
+    /// later `$ref` lookups find it. Remaining schemas are resolved in Kahn
+    /// topological order, with the Global Schema excluded from the graph
+    /// entirely.
     ///
     /// # Errors
     ///
@@ -98,146 +110,151 @@ impl<'a> SchemaSetResolver<'a> {
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
     /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
-    pub(super) fn resolve(self) -> Result<ResolvedSchemas, SchemaError> {
-        let mut warnings = Vec::new();
-        let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
-        let mut failures: Vec<SchemaFailure> = Vec::new();
-
-        // Strip the Global Schema so the graph never sees it, then resolve it
-        // first so later $ref lookups find it in `resolved`.
-        let mut raw = self.raw.clone();
-        let global_raw = raw.shift_remove(GLOBAL_SCHEMA_NAME);
-        if let Some(global) = global_raw {
-            let (schema, w) = SchemaMerger::merge(
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-                &global,
-                &[],
-                &resolved,
-            )?;
-            warnings.extend(w);
-            resolved.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema);
-        }
-
-        let (mut graph, graph_warnings) = SchemaGraph::new(&raw);
-        warnings.extend(graph_warnings);
-
-        Self::resolve_in_topological_order(
-            &mut graph,
-            &raw,
-            &mut resolved,
-            &mut warnings,
-            &mut failures,
+    pub(super) fn build(mut self) -> Result<ResolvedSchemas, SchemaError> {
+        self.resolve_global()?;
+        let (graph_builder, graph_warnings) = SchemaGraphBuilder::new(
+            self.raw,
+            SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
         );
-
+        self.warnings.extend(graph_warnings);
         let graph =
-            graph.into_resolved().map_err(|schemas| SchemaError::Cycle {
+            graph_builder.build().map_err(|schemas| SchemaError::Cycle {
                 schemas,
             })?;
-
-        Self::compute_hierarchy_sets(&graph, &mut resolved);
-
-        Ok(ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            failures,
-        })
+        self.merge_in_topological_order(&graph);
+        self.compute_hierarchy(&graph);
+        Ok(self.finish())
     }
 
-    /// Drive the Kahn topological sort: pop ready schemas, merge their fields,
-    /// mark them resolved, and collect warnings and failures.
+    /// Merge the Global Schema first (its `extends`, if declared, is ignored —
+    /// it is a `$ref` target, never a DAG participant), so later `$ref` lookups
+    /// against it succeed regardless of raw-map order.
+    fn resolve_global(&mut self) -> Result<(), SchemaError> {
+        let Some(global_raw) = self.raw.get(GLOBAL_SCHEMA_NAME) else {
+            return Ok(());
+        };
+        let (schema, warnings) = SchemaMerger::merge(
+            SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            global_raw,
+            &[],
+            &self.resolved,
+        )?;
+        self.warnings.extend(warnings);
+        self.resolved.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema);
+        Ok(())
+    }
+
+    /// Merge every non-Global Schema's fields in `graph`'s topological order,
+    /// so each Schema's `extends` parents are already in `self.resolved` when
+    /// it merges.
     ///
     /// # Panics
     ///
-    /// Never in practice. [`SchemaGraph::new`](super::graph::SchemaGraph::new)
-    /// builds the queue exclusively from `raw`'s own keys, so every name
-    /// [`next_ready`](super::graph::SchemaGraph::next_ready) yields is present
-    /// in `raw`.
-    fn resolve_in_topological_order(
-        graph: &mut SchemaGraph<'_, Building>,
-        raw: &IndexMap<SchemaName, RawSchema>,
-        resolved: &mut IndexMap<SchemaName, Schema>,
-        warnings: &mut Vec<SchemaWarning>,
-        failures: &mut Vec<SchemaFailure>,
-    ) {
-        while let Some(name) = graph.next_ready() {
+    /// Never in practice: `graph` is built exclusively from `self.raw`'s own
+    /// keys (minus the excluded Global Schema), so every name
+    /// `graph.topological_order()` yields is present in `self.raw`.
+    fn merge_in_topological_order(&mut self, graph: &SchemaGraph<'a>) {
+        for name in graph.topological_order() {
             #[expect(
                 clippy::expect_used,
-                reason = "SchemaGraph::new builds \
-                          in_degree/children_by_name/queue exclusively from \
-                          raw's own keys, so next_ready() can never yield a \
-                          name absent from raw; failure here means the graph \
-                          itself is broken, not a recoverable caller error"
+                reason = "SchemaGraphBuilder::new/build build every node \
+                          exclusively from self.raw's own keys minus the \
+                          excluded Global Schema, so topological_order() can \
+                          never yield a name absent from self.raw; failure \
+                          here means the graph itself is broken, not a \
+                          recoverable caller error"
             )]
-            let raw_schema = raw.get(name.as_str()).expect(
-                "SchemaGraph::next_ready only ever yields names present in raw",
+            let raw_schema = self.raw.get(name.as_str()).expect(
+                "SchemaGraph::topological_order only yields names present in \
+                 raw",
             );
             match SchemaMerger::merge(
                 name,
                 raw_schema,
                 graph.parents_of(name),
-                resolved,
+                &self.resolved,
             ) {
                 Ok((schema, schema_warnings)) => {
-                    warnings.extend(schema_warnings);
-                    resolved.insert(SchemaName::from(name), schema);
+                    self.warnings.extend(schema_warnings);
+                    self.resolved.insert(SchemaName::from(name), schema);
                 }
                 Err(error) => {
-                    failures.push(SchemaFailure {
+                    self.failures.push(SchemaFailure {
                         schema: SchemaName::from(name),
                         error,
                     });
                 }
             }
-            graph.mark_resolved(name);
         }
     }
 
     /// Assign direct children and transitive descendants to each resolved
-    /// Schema.
-    ///
-    /// Filters out schemas that are not structural descendants due to failed
-    /// resolution links, so broken parent chains do not propagate.
-    fn compute_hierarchy_sets<'b>(
-        graph: &SchemaGraph<'b, Resolved<'b>>,
-        resolved: &mut IndexMap<SchemaName, Schema>,
-    ) {
+    /// Schema, filtering out schemas that are not structural descendants due to
+    /// failed resolution links. Two passes (compute, then apply) avoid needing
+    /// a full-registry ancestor-set snapshot: the first pass only reads
+    /// `self.resolved`, the second only writes to it.
+    fn compute_hierarchy(&mut self, graph: &SchemaGraph<'a>) {
         let children_by_name = graph.children_by_name();
         let descendants_by_name = graph.descendants_by_name();
-        let resolved_ancestors: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            resolved
-                .iter()
-                .map(|(name, schema)| {
-                    (name.clone(), schema.ancestors().clone())
-                })
-                .collect();
-        for (name, schema) in resolved {
-            let still_descends_from = |candidate: &SchemaName| {
-                resolved_ancestors
-                    .get(candidate)
-                    .is_some_and(|ancestors| ancestors.contains(name))
-            };
-            let children: IndexSet<SchemaName> = children_by_name
-                .get(name.as_str())
-                .into_iter()
-                .flatten()
-                .map(|&child| SchemaName::from(child))
-                .filter(|child| still_descends_from(child))
-                .collect();
-            let descendants = descendants_by_name
-                .get(name)
-                .into_iter()
-                .flatten()
-                .filter(|descendant| still_descends_from(descendant))
-                .cloned()
-                .collect();
-            schema.set_hierarchy(children, descendants);
+        /// One resolved Schema's recomputed direct children and transitive
+        /// descendants, staged before being written back to `self.resolved`.
+        type HierarchyUpdate =
+            (SchemaName, IndexSet<SchemaName>, IndexSet<SchemaName>);
+        let hierarchy: Vec<HierarchyUpdate> = self
+            .resolved
+            .keys()
+            .map(|name| {
+                let children: IndexSet<SchemaName> = children_by_name
+                    .get(name.as_str())
+                    .into_iter()
+                    .flatten()
+                    .map(|&child| SchemaName::from(child))
+                    .filter(|child| self.still_descends_from(child, name))
+                    .collect();
+                let descendants: IndexSet<SchemaName> = descendants_by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .filter(|descendant| {
+                        self.still_descends_from(descendant, name)
+                    })
+                    .cloned()
+                    .collect();
+                (name.clone(), children, descendants)
+            })
+            .collect();
+        for (name, children, descendants) in hierarchy {
+            if let Some(schema) = self.resolved.get_mut(&name) {
+                schema.set_hierarchy(children, descendants);
+            }
+        }
+    }
+
+    /// Whether `candidate` still structurally descends from `name` (its
+    /// resolved `ancestors` still contains `name`) — a failed parent link can
+    /// drop a Schema from a hierarchy set it would otherwise belong to.
+    fn still_descends_from(
+        &self,
+        candidate: &SchemaName,
+        name: &SchemaName,
+    ) -> bool {
+        self.resolved
+            .get(candidate)
+            .is_some_and(|schema| schema.ancestors().contains(name))
+    }
+
+    fn finish(self) -> ResolvedSchemas {
+        ResolvedSchemas {
+            schemas: self.resolved,
+            warnings: self.warnings,
+            failures: self.failures,
         }
     }
 }
 
 /// Merges one schema's effective field map: parent inheritance
 /// (first-listed-wins), `excludes`, and own `$ref`-resolved fields, into a
-/// resolved [`Schema`]. Contrast with [`SchemaSetResolver`], which orchestrates
+/// resolved [`Schema`]. Contrast with [`SchemaBuilder`], which orchestrates
 /// every schema in the set.
 struct SchemaMerger<'a> {
     /// The Schema being merged.
@@ -402,6 +419,8 @@ impl<'a> SchemaMerger<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{super::GLOBAL_SCHEMA_NAME, *};
     use crate::{
         field::FieldValue,
@@ -418,7 +437,7 @@ mod tests {
     fn resolve(
         raw: &IndexMap<SchemaName, RawSchema>,
     ) -> Result<ResolvedSchemas, SchemaError> {
-        SchemaSetResolver::new(raw).resolve()
+        SchemaBuilder::new(raw).build()
     }
 
     fn field_name(name: &str) -> FieldName {
@@ -536,8 +555,10 @@ mod tests {
             let status = book.field("status").expect("status field");
             assert_eq!(
                 status.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["draft", "done"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&[
+                        "draft", "done"
+                    ]))
                 ))
             );
             assert!(!status.is_required());
@@ -570,8 +591,10 @@ mod tests {
                 .expect("status field");
             assert_eq!(
                 status.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["outline", "shipped"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&[
+                        "outline", "shipped"
+                    ]))
                 ))
             );
         }
@@ -600,8 +623,8 @@ mod tests {
                 .expect("shared field");
             assert_eq!(
                 shared.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["from-a"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&["from-a"]))
                 ))
             );
         }
@@ -685,7 +708,9 @@ mod tests {
         #[case::select(
             select_field(&["draft", "done"]),
             SchemaFieldType::Select(
-                SchemaSelectField::for_test(select_entries(&["draft", "done"])),
+                Arc::new(SchemaSelectField::for_test(select_entries(&[
+                    "draft", "done",
+                ]))),
             ),
         )]
         #[case::boolean(
@@ -704,11 +729,11 @@ mod tests {
         )]
         #[case::file(
             file_field(&["assets/covers"], Some("png"), &["image"]),
-            SchemaFieldType::File(SchemaFileField::for_test(
+            SchemaFieldType::File(Arc::new(SchemaFileField::for_test(
                 vec!["assets/covers".to_owned()],
                 Some("png".to_owned()),
                 vec!["image".to_owned()],
-            ))
+            )))
         )]
         fn each_field_type_resolves_its_own_options(
             #[case] field_def: RawSchemaFieldDef,
@@ -870,8 +895,10 @@ mod tests {
                 .expect("priority field resolves via $ref to global");
             assert_eq!(
                 priority.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["low", "high"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&[
+                        "low", "high"
+                    ]))
                 ))
             );
         }
@@ -935,8 +962,10 @@ mod tests {
                 .expect("status field");
             assert_eq!(
                 status.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["draft", "done"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&[
+                        "draft", "done"
+                    ]))
                 ))
             );
             assert!(status.is_required());
@@ -968,8 +997,10 @@ mod tests {
                 .expect("priority field");
             assert_eq!(
                 priority.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["low", "high"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&[
+                        "low", "high"
+                    ]))
                 ))
             );
             assert!(priority.is_required());
@@ -998,8 +1029,8 @@ mod tests {
                 .expect("name field resolves via $ref to global");
             assert_eq!(
                 name.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["anon"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&["anon"]))
                 ))
             );
         }
@@ -1034,11 +1065,11 @@ mod tests {
                 .expect("status field");
             assert_eq!(
                 status.kind(),
-                &SchemaFieldType::File(SchemaFileField::for_test(
+                &SchemaFieldType::File(Arc::new(SchemaFileField::for_test(
                     vec!["assets".to_owned()],
                     None,
                     Vec::new(),
-                ))
+                )))
             );
         }
 
@@ -1076,11 +1107,11 @@ mod tests {
 
             assert_eq!(
                 cover.kind(),
-                &SchemaFieldType::File(SchemaFileField::for_test(
+                &SchemaFieldType::File(Arc::new(SchemaFileField::for_test(
                     vec!["assets/covers".to_owned()],
                     Some("png".to_owned()),
                     vec!["image".to_owned()],
-                ))
+                )))
             );
         }
 
@@ -1113,8 +1144,10 @@ mod tests {
                 .expect("status field still resolves from the base");
             assert_eq!(
                 status.kind(),
-                &SchemaFieldType::Select(SchemaSelectField::for_test(
-                    select_entries(&["draft", "done"])
+                &SchemaFieldType::Select(Arc::new(
+                    SchemaSelectField::for_test(select_entries(&[
+                        "draft", "done"
+                    ]))
                 ))
             );
             assert_eq!(warnings.len(), 1);
@@ -1205,11 +1238,11 @@ mod tests {
                 .expect("cover field still resolves from the base");
             assert_eq!(
                 cover.kind(),
-                &SchemaFieldType::File(SchemaFileField::for_test(
+                &SchemaFieldType::File(Arc::new(SchemaFileField::for_test(
                     vec!["assets/covers".to_owned()],
                     Some("png".to_owned()),
                     vec!["image".to_owned()],
-                ))
+                )))
             );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
