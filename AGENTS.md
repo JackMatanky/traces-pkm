@@ -48,7 +48,7 @@ Multi-context — `CONTEXT-MAP.md` + per-module `CONTEXT.md` under `src/`. See `
 | `lint` | `l` | Strict clippy: workspace, all targets, all features. `--fix` applies known lints; depends on `fmt` |
 | `fmt` | `f` | Format before diffing/committing |
 | `fix` | — | Auto-fix hygiene/formatting `hk` catches; `-- --unstaged` scopes to files just edited |
-| `verify` | `v` | Full gate (fmt→lint→clippy→test-all) — run before yielding/committing non-trivial changes |
+| `verify` | `v` | Full gate (fmt→lint→clippy→test --all) — run before yielding/committing non-trivial changes |
 <!-- mise:end -->
 
 <!-- hk:start -->
