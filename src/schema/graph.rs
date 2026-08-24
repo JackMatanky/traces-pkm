@@ -303,9 +303,9 @@ struct SchemaAdjacency<'a> {
 
 impl<'a> SchemaAdjacency<'a> {
     /// Build the `extends` adjacency, skipping `excluded` entirely: it never
-    /// becomes a node, and an edge naming it as an `extends` target is
-    /// silently ignored. This is never a [`MissingExtendsTarget`] warning,
-    /// since the Global Schema is referenced via `$ref`, never `extends`.
+    /// becomes a node, and an edge naming it as an `extends` target is silently
+    /// ignored. This is never a [`MissingExtendsTarget`] warning, since the
+    /// Global Schema is referenced via `$ref`, never `extends`.
     ///
     /// # Warnings
     ///
@@ -740,20 +740,19 @@ impl CycleSearchState {
 /// Per-node transitive-descendant accumulator for
 /// [`SchemaGraph::descendants_by_name`]'s reverse-topological sweep.
 ///
-/// `seen` is scratch, cleared before each node's `accumulate` call returns,
-/// so deduplication costs `O(|descendants(node)|)` rather than a
-/// full-array clear per node.
+/// `seen` is scratch, cleared before each node's `accumulate` call returns, so
+/// deduplication costs `O(|descendants(node)|)` rather than a full-array clear
+/// per node.
 struct DescendantAccumulator {
     seen: BitVec,
     /// `descendants[i]` is dense index `i`'s accumulated descendant list,
-    /// finalized once every node in topological order has been swept
-    /// (leaves first).
+    /// finalized once every node in topological order has been swept (leaves
+    /// first).
     descendants: Vec<Vec<DenseIndex>>,
-    /// Topological rank per node, used to keep each finalized descendant
-    /// list in globally topological order rather than
-    /// child-processing-interleaved order. Downstream callers (e.g.
-    /// Template `.descendants() | map(attribute='name') | join(',')`)
-    /// observe this order directly.
+    /// Topological rank per node, used to keep each finalized descendant list
+    /// in globally topological order rather than child-processing-interleaved
+    /// order. Downstream callers (e.g. Template `.descendants() |
+    /// map(attribute='name') | join(',')`) observe this order directly.
     rank: Vec<u32>,
 }
 
