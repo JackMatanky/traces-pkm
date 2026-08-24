@@ -37,45 +37,6 @@ use indexmap::{IndexMap, IndexSet};
 
 use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
-/// Dense per-schema array index, assigned once at construction in raw-map
-/// insertion order. Array indexing replaces string-hashed
-/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
-///
-/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
-/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
-/// registry.
-///
-/// [`HashMap`]: std::collections::HashMap
-/// [`IndexMap`]: indexmap::IndexMap
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-struct DenseIndex(u32);
-
-/// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values this
-/// module narrows stay far below `u32::MAX` for any real schema registry.
-fn saturating_u32(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-/// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
-/// platform this crate targets, so `try_from` failing here is unreachable in
-/// practice; it saturates to `usize::MAX` rather than panicking.
-fn widen_usize(n: u32) -> usize {
-    usize::try_from(n).unwrap_or(usize::MAX)
-}
-
-impl DenseIndex {
-    /// Builds a dense index from an array position, saturating per
-    /// [`saturating_u32`].
-    fn from_usize(n: usize) -> Self {
-        Self(saturating_u32(n))
-    }
-
-    /// Widens back to `usize` for indexing. See [`widen_usize`].
-    fn index(self) -> usize {
-        widen_usize(self.0)
-    }
-}
-
 /// Building state: Kahn's-sort scratch (in-degree counters and the ready
 /// queue). Dropped on transition to [`Resolved`].
 #[derive(Debug)]
@@ -140,7 +101,7 @@ impl<State> SchemaGraph<'_, State> {
             return &[];
         };
         self.child_targets
-            .get(widen_usize(start)..widen_usize(end))
+            .get(DenseIndex::widen_usize(start)..DenseIndex::widen_usize(end))
             .unwrap_or(&[])
     }
 
@@ -153,7 +114,7 @@ impl<State> SchemaGraph<'_, State> {
         match (start, end) {
             (Some(s), Some(e)) => self
                 .child_targets
-                .get_mut(widen_usize(s)..widen_usize(e))
+                .get_mut(DenseIndex::widen_usize(s)..DenseIndex::widen_usize(e))
                 .unwrap_or(&mut []),
             _ => &mut [],
         }
@@ -232,7 +193,7 @@ impl<'a> SchemaGraph<'a, Building> {
             running = running.saturating_add(out);
             child_offsets.push(running);
         }
-        let edge_count = widen_usize(running);
+        let edge_count = DenseIndex::widen_usize(running);
 
         // Fill CSR targets via a scratch write cursor per node.
         let mut cursor: Vec<u32> =
@@ -243,17 +204,19 @@ impl<'a> SchemaGraph<'a, Building> {
             let Some(slot) = cursor.get_mut(target_index.index()) else {
                 continue;
             };
-            if let Some(target_slot) = child_targets.get_mut(widen_usize(*slot))
+            if let Some(target_slot) =
+                child_targets.get_mut(DenseIndex::widen_usize(*slot))
             {
                 *target_slot = schema_index;
             }
             *slot = slot.saturating_add(1);
         }
 
-        let queue: VecDeque<DenseIndex> = (0..saturating_u32(count))
-            .map(DenseIndex)
-            .filter(|idx| in_degree.get(idx.index()).copied() == Some(0))
-            .collect();
+        let queue: VecDeque<DenseIndex> =
+            (0..DenseIndex::saturating_u32(count))
+                .map(DenseIndex)
+                .filter(|idx| in_degree.get(idx.index()).copied() == Some(0))
+                .collect();
 
         (
             Self {
@@ -307,8 +270,9 @@ impl<'a> SchemaGraph<'a, Building> {
         let Some((&start, &end)) = bounds else {
             return;
         };
-        let Some(children) =
-            self.child_targets.get(widen_usize(start)..widen_usize(end))
+        let Some(children) = self
+            .child_targets
+            .get(DenseIndex::widen_usize(start)..DenseIndex::widen_usize(end))
         else {
             return;
         };
@@ -362,13 +326,13 @@ impl<'a> SchemaGraph<'a, Building> {
         let mut topo_rank: Vec<u32> = vec![0; self.names.len()];
         for (rank, &idx) in order.iter().enumerate() {
             if let Some(slot) = topo_rank.get_mut(idx.index()) {
-                *slot = saturating_u32(rank);
+                *slot = DenseIndex::saturating_u32(rank);
             }
         }
         let rank_of = |c: &DenseIndex| {
             topo_rank.get(c.index()).copied().unwrap_or(u32::MAX)
         };
-        for i in 0..saturating_u32(self.names.len()) {
+        for i in 0..DenseIndex::saturating_u32(self.names.len()) {
             self.children_slice_mut(DenseIndex(i)).sort_by_key(rank_of);
         }
 
@@ -454,7 +418,7 @@ impl<'a> SchemaGraph<'a, Building> {
         let mut tarjan = TarjanState::new(count);
         let mut cyclic: Vec<SchemaName> = Vec::new();
 
-        for start in 0..saturating_u32(count) {
+        for start in 0..DenseIndex::saturating_u32(count) {
             let start = DenseIndex(start);
             if self.is_kahn_visited(start) || tarjan.is_discovered(start) {
                 continue;
@@ -572,98 +536,6 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 }
 
-/// Iterative Tarjan's-SCC bookkeeping over the unvisited dense-index subgraph.
-/// Arrays sized to the full node count; entries for unreached nodes stay at
-/// their initial value.
-struct TarjanState {
-    /// Discovery order, assigned once per node on first visit.
-    index: Vec<Option<u32>>,
-    /// Lowest discovery index reachable from each node.
-    lowlink: Vec<u32>,
-    /// Whether each node is currently on [`stack`](Self::stack).
-    on_stack: Vec<bool>,
-    /// SCC-accumulation stack, in discovery order.
-    stack: Vec<DenseIndex>,
-    /// Next discovery index to assign.
-    counter: u32,
-}
-
-impl TarjanState {
-    /// Allocates per-node bookkeeping for `count` nodes, all initially
-    /// undiscovered.
-    fn new(count: usize) -> Self {
-        Self {
-            index: vec![None; count],
-            lowlink: vec![0; count],
-            on_stack: vec![false; count],
-            stack: Vec::new(),
-            counter: 0,
-        }
-    }
-
-    /// Whether `v` has been assigned a Tarjan discovery index.
-    fn is_discovered(&self, v: DenseIndex) -> bool {
-        self.index.get(v.index()).copied().flatten().is_some()
-    }
-
-    /// `v`'s Tarjan discovery index, or `None` if undiscovered.
-    fn index_of(&self, v: DenseIndex) -> Option<u32> {
-        self.index.get(v.index()).copied().flatten()
-    }
-
-    /// `v`'s current lowlink value, or `None` if undiscovered.
-    fn lowlink_of(&self, v: DenseIndex) -> Option<u32> {
-        self.lowlink.get(v.index()).copied()
-    }
-
-    /// Whether `v` is currently on the Tarjan stack (SCC-accumulation
-    /// stack, not the traversal work-stack).
-    fn is_on_stack(&self, v: DenseIndex) -> bool {
-        self.on_stack.get(v.index()).copied().unwrap_or(false)
-    }
-
-    /// Assign `v` its Tarjan discovery index/lowlink and push it onto the
-    /// SCC stack.
-    fn discover(&mut self, v: DenseIndex) {
-        let rank = self.counter;
-        self.counter = self.counter.saturating_add(1);
-        if let Some(slot) = self.index.get_mut(v.index()) {
-            *slot = Some(rank);
-        }
-        if let Some(slot) = self.lowlink.get_mut(v.index()) {
-            *slot = rank;
-        }
-        self.stack.push(v);
-        if let Some(slot) = self.on_stack.get_mut(v.index()) {
-            *slot = true;
-        }
-    }
-
-    /// Fold `candidate` into `v`'s lowlink, keeping the smaller value.
-    fn merge_lowlink(&mut self, v: DenseIndex, candidate: u32) {
-        if let Some(slot) = self.lowlink.get_mut(v.index()) {
-            *slot = (*slot).min(candidate);
-        }
-    }
-
-    /// Pop the SCC rooted at `root` off the stack (most-recently-discovered
-    /// first).
-    fn pop_scc(&mut self, root: DenseIndex) -> Vec<DenseIndex> {
-        let mut scc = Vec::new();
-        while let Some(popped) = self.stack.pop() {
-            if let Some(slot) = self.on_stack.get_mut(popped.index()) {
-                *slot = false;
-            }
-            let is_root = popped == root;
-            scc.push(popped);
-            if is_root {
-                break;
-            }
-        }
-        scc
-    }
-}
-
 impl<'a> SchemaGraph<'a, Resolved<'a>> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
     ///
@@ -712,7 +584,7 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
         let mut topo_rank: Vec<u32> = vec![0; count];
         for (rank, &idx) in self.state.order.iter().enumerate() {
             if let Some(slot) = topo_rank.get_mut(idx.index()) {
-                *slot = saturating_u32(rank);
+                *slot = DenseIndex::saturating_u32(rank);
             }
         }
 
@@ -811,6 +683,139 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
             mark.set(y.index(), true);
             push_descendant(closure, i, y);
         }
+    }
+}
+
+/// Iterative Tarjan's-SCC bookkeeping over the unvisited dense-index subgraph.
+/// Arrays sized to the full node count; entries for unreached nodes stay at
+/// their initial value.
+struct TarjanState {
+    /// Discovery order, assigned once per node on first visit.
+    index: Vec<Option<u32>>,
+    /// Lowest discovery index reachable from each node.
+    lowlink: Vec<u32>,
+    /// Whether each node is currently on [`stack`](Self::stack).
+    on_stack: Vec<bool>,
+    /// SCC-accumulation stack, in discovery order.
+    stack: Vec<DenseIndex>,
+    /// Next discovery index to assign.
+    counter: u32,
+}
+
+impl TarjanState {
+    /// Allocates per-node bookkeeping for `count` nodes, all initially
+    /// undiscovered.
+    fn new(count: usize) -> Self {
+        Self {
+            index: vec![None; count],
+            lowlink: vec![0; count],
+            on_stack: vec![false; count],
+            stack: Vec::new(),
+            counter: 0,
+        }
+    }
+
+    /// Whether `v` has been assigned a Tarjan discovery index.
+    fn is_discovered(&self, v: DenseIndex) -> bool {
+        self.index.get(v.index()).copied().flatten().is_some()
+    }
+
+    /// `v`'s Tarjan discovery index, or `None` if undiscovered.
+    fn index_of(&self, v: DenseIndex) -> Option<u32> {
+        self.index.get(v.index()).copied().flatten()
+    }
+
+    /// `v`'s current lowlink value, or `None` if undiscovered.
+    fn lowlink_of(&self, v: DenseIndex) -> Option<u32> {
+        self.lowlink.get(v.index()).copied()
+    }
+
+    /// Whether `v` is currently on the Tarjan stack (SCC-accumulation
+    /// stack, not the traversal work-stack).
+    fn is_on_stack(&self, v: DenseIndex) -> bool {
+        self.on_stack.get(v.index()).copied().unwrap_or(false)
+    }
+
+    /// Assign `v` its Tarjan discovery index/lowlink and push it onto the
+    /// SCC stack.
+    fn discover(&mut self, v: DenseIndex) {
+        let rank = self.counter;
+        self.counter = self.counter.saturating_add(1);
+        if let Some(slot) = self.index.get_mut(v.index()) {
+            *slot = Some(rank);
+        }
+        if let Some(slot) = self.lowlink.get_mut(v.index()) {
+            *slot = rank;
+        }
+        self.stack.push(v);
+        if let Some(slot) = self.on_stack.get_mut(v.index()) {
+            *slot = true;
+        }
+    }
+
+    /// Fold `candidate` into `v`'s lowlink, keeping the smaller value.
+    fn merge_lowlink(&mut self, v: DenseIndex, candidate: u32) {
+        if let Some(slot) = self.lowlink.get_mut(v.index()) {
+            *slot = (*slot).min(candidate);
+        }
+    }
+
+    /// Pop the SCC rooted at `root` off the stack (most-recently-discovered
+    /// first).
+    fn pop_scc(&mut self, root: DenseIndex) -> Vec<DenseIndex> {
+        let mut scc = Vec::new();
+        while let Some(popped) = self.stack.pop() {
+            if let Some(slot) = self.on_stack.get_mut(popped.index()) {
+                *slot = false;
+            }
+            let is_root = popped == root;
+            scc.push(popped);
+            if is_root {
+                break;
+            }
+        }
+        scc
+    }
+}
+
+/// Dense per-schema array index, assigned once at construction in raw-map
+/// insertion order. Array indexing replaces string-hashed
+/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
+///
+/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
+/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
+/// registry.
+///
+/// [`HashMap`]: std::collections::HashMap
+/// [`IndexMap`]: indexmap::IndexMap
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+struct DenseIndex(u32);
+
+impl DenseIndex {
+    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values
+    /// this module narrows stay far below `u32::MAX` for any real schema
+    /// registry.
+    fn saturating_u32(n: usize) -> u32 {
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
+    /// platform this crate targets, so `try_from` failing here is
+    /// unreachable in practice; it saturates to `usize::MAX` rather than
+    /// panicking.
+    fn widen_usize(n: u32) -> usize {
+        usize::try_from(n).unwrap_or(usize::MAX)
+    }
+
+    /// Builds a dense index from an array position, saturating per
+    /// [`Self::saturating_u32`].
+    fn from_usize(n: usize) -> Self {
+        Self(Self::saturating_u32(n))
+    }
+
+    /// Widens back to `usize` for indexing. See [`Self::widen_usize`].
+    fn index(self) -> usize {
+        Self::widen_usize(self.0)
     }
 }
 
