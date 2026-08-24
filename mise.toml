@@ -69,7 +69,7 @@ flag "--sweep-days <days>" help="Use cargo-sweep to remove target artifacts olde
 flag "--sweep-max-size <size>" help="Use cargo-sweep to shrink target below SIZE, e.g. 10GiB"
 '''
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 target_dir="${usage_target_dir?}"
@@ -91,9 +91,9 @@ if [[ -n "${usage_if_over_gib:-}" && -d "${target_dir}" ]]; then
   limit_kib="$(( usage_if_over_gib * 1024 * 1024 ))"
 
   if (( target_kib <= limit_kib )); then
+    target_gib="$(awk "BEGIN { print ${target_kib} / 1024 / 1024 }")"
     printf 'target is %.1f GiB; below %s GiB, skipping target clean\n' \
-      "$(awk "BEGIN { print ${target_kib} / 1024 / 1024 }")" \
-      "${usage_if_over_gib}"
+      "${target_gib}" "${usage_if_over_gib}"
     clean_target=false
   fi
 fi
@@ -121,7 +121,7 @@ if [[ "${clean_target}" == "true" ]]; then
 fi
 
 if [[ "${clean_reports}" == "true" ]]; then
-  reports=(lcov.info tarpaulin-report.html mutants.out mutants.out.old mutants-report.md)
+  readonly -a reports=(lcov.info tarpaulin-report.html mutants.out mutants.out.old mutants-report.md)
   if [[ "${usage_dry_run:-false}" == "true" ]]; then
     printf 'would remove generated reports: %s\n' "${reports[*]}"
   else
@@ -162,7 +162,7 @@ description = "Format all Rust code (nightly)"
 alias = "f"
 usage = 'flag "--check" help="Check formatting without modifying files"'
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 args=(--all)
@@ -185,7 +185,7 @@ flag "--deny-warnings" negate="--no-deny-warnings" default=#true help="Treat Cli
 flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" help="Override fix lint list (comma-separated)"
 '''
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 declare -a cargo_args=(--workspace --all-targets --all-features)
@@ -219,7 +219,9 @@ if [[ "${usage_fix?}" == "true" ]]; then
 
   declare -a fix_lints=("${default_fix_lints[@]}")
   if [[ -n "${usage_fix_lints:-}" ]]; then
+    _old_ifs="${IFS}"
     IFS=',' read -ra fix_lints <<< "${usage_fix_lints}"
+    IFS="${_old_ifs}"
   fi
 
   for lint in "${fix_lints[@]}"; do
@@ -278,7 +280,7 @@ arg "[args]" var=#true {
 }
 '''
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 if [[ "${usage_all:-false}" == "true" ]]; then
@@ -317,7 +319,7 @@ flag "--mod <module>" {
 }
 '''
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 args=(--workspace --out html)
@@ -347,7 +349,7 @@ flag "--mod <module>" {
 }
 '''
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 declare -a args=()
@@ -375,7 +377,7 @@ flag "-i --input <input>" help="Path to missed.txt input file" default="mutants.
 flag "-o --output <output>" help="Path to mutants-report.md output file" default="mutants-report.md"
 '''
 run = '''
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 readonly missed_file="${usage_input:-mutants.out/missed.txt}"
