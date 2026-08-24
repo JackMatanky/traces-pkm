@@ -242,18 +242,13 @@ run = "cargo deny check"
 # ------------------------------------------------------------- #
 
 [tasks.test]
-description = "Run tests with nextest"
+description = "Run tests with nextest (+ doc-tests by default)"
 usage = '''
-flag "--all" {
-  help "Run all tests including doc-tests with cargo test"
-  long_help """
-  Switches from nextest to `cargo test` with the `test-utils` feature,
-  which exercises doc-tests and integration/e2e test suites.
-
-  Use this after public API changes or when nextest skips a test.
-  """
+flag "--feature <feature>" help="Enable a specific feature" default="all"
+flag "--docs" negate="--no-docs" default=#true {
+  help "Also run doc-tests via cargo test after nextest"
 }
-flag "--mod <module>" {
+flag "-m --mod <module>" {
   help "Run tests for a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
@@ -273,15 +268,25 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
-if [[ "${usage_all:-false}" == "true" ]]; then
-  cargo test --workspace --features test-utils
-else
-  eval "args=(${usage_args:-})"
-  if [[ -n "${usage_mod:-}" ]]; then
-    cargo nextest run -E "test(/^${usage_mod}::/)" "${args[@]}"
-  else
-    cargo nextest run "${args[@]}"
-  fi
+nextest_args=(-p traces-pkm --all-features)
+cargo_test_args=(--workspace --all-features --features test-utils)
+
+if [[ -n "${usage_mod:-}" ]]; then
+  nextest_args+=(-E "test(/^${usage_mod}::/)")
+  cargo_test_args=(-p traces-pkm --all-features --features test-utils)
+fi
+
+if [[ "${usage_feature?}" != "all" ]]; then
+  cargo_test_args=(--workspace --features "${usage_feature?}")
+fi
+
+eval "nextest_extra=(${usage_args:-})"
+nextest_args+=("${nextest_extra[@]+"${nextest_extra[@]}"}")
+
+cargo nextest run "${nextest_args[@]}"
+
+if [[ "${usage_docs?}" == "true" ]]; then
+  cargo test "${cargo_test_args[@]}" --doc
 fi
 '''
 alias = "t"
@@ -289,7 +294,7 @@ alias = "t"
 [tasks.test-all]
 description = "Run all tests including doc-tests"
 hide = true
-run = "mise run test --all"
+run = "mise run test"
 
 [tasks.bench]
 raw_args = true
@@ -303,7 +308,7 @@ run = "cargo bench --features test-utils"
 [tasks.coverage]
 description = "Code coverage with tarpaulin (outputs tarpaulin-report.html)"
 usage = '''
-flag "--mod <module>" {
+flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
@@ -333,7 +338,7 @@ usage = '''
 flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
 flag "-f --file <file>" help="Run mutants in a specific file only"
 flag "--iterate" help="Skip mutants that were caught in previous runs"
-flag "--mod <module>" {
+flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
