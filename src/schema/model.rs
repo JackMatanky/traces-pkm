@@ -26,6 +26,12 @@ impl Schema {
     /// [`descendants`](Self::descendants)) are empty until
     /// [`set_hierarchy`](Self::set_hierarchy) is called after full DAG
     /// resolution.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Schema name derived from the source file stem.
+    /// * `fields` - Effective Field Definitions after merge and excludes.
+    /// * `ancestors` - Transitive `extends` targets that resolved.
     pub(super) fn new(
         name: SchemaName,
         fields: IndexMap<FieldName, SchemaFieldDef>,

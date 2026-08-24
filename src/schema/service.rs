@@ -27,21 +27,19 @@ pub struct SchemaService {
     schemas: IndexMap<SchemaName, Arc<Schema>>,
 }
 
-/// The triple [`SchemaService::new`] returns: the constructed service, any
-/// warnings degraded resolution accumulated along the way, and every Schema
-/// whose own build failed alongside the error it failed with.
+/// The triple [`SchemaService::new`] returns: the constructed service,
+/// accumulated resolution warnings, and per-Schema build failures.
 type SchemaConstruction =
     (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 impl SchemaService {
-    /// Load every Schema TOML file under `directory`, linearize the `extends`
-    /// DAG, and resolve every Schema's effective fields, alongside any
-    /// [`SchemaWarning`]s degraded resolution accumulated and any per-Schema
-    /// [`SchemaError`] failures that excluded that Schema from the result (see
-    /// [`ParentFailedToResolve`]: dependents of a failed Schema still resolve,
-    /// without its fields).
+    /// Load every Schema TOML file under `directory` and resolve their
+    /// effective fields, building a single read-only [`SchemaService`].
     ///
-    /// A missing directory resolves to an empty registry.
+    /// The `extends` DAG is linearized and each Schema's fields are merged from
+    /// its parents. A missing directory resolves to an empty registry.
+    /// Per-Schema [`SchemaError`]s exclude that Schema from the result; its
+    /// dependents still resolve without its fields ([`ParentFailedToResolve`]).
     ///
     /// # Errors
     ///
@@ -245,8 +243,8 @@ fn is_missing_root(error: &walkdir::Error) -> bool {
 /// Wrap a [`walkdir::Error`] with path context as a
 /// [`SchemaError::ReadDirectory`].
 ///
-/// Falls back to `root` if the underlying error carries no path of its own
-/// (some I/O errors surface without `DirEntry` context).
+/// Falls back to `root` when the error carries no path of its own (some I/O
+/// errors surface without [`DirEntry`] context).
 fn walk_error(root: &Path, source: walkdir::Error) -> SchemaError {
     let path = source.path().unwrap_or(root).to_path_buf();
     SchemaError::ReadDirectory {

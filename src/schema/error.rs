@@ -21,7 +21,7 @@ use crate::field::FieldName;
 /// Deliberately `pub(crate)`, not `pub`: [`TemplateError::SchemaLoad`]
 /// wraps this transparently for its `Display`/`Error` chain without
 /// exposing the concrete type, via a scoped
-/// `#[expect(private_interfaces)]` — do not "fix" that by making this
+/// `#[expect(private_interfaces)]`; do not "fix" that by making this
 /// `pub`, which would cascade the same requirement onto every field type
 /// below (`SchemaName`, `FieldName`, `SchemaFieldBuilderError`, …), all
 /// otherwise intentionally crate-internal.

@@ -86,7 +86,6 @@ impl TryFrom<String> for FieldAddress {
 }
 
 impl From<FieldAddressRef<'_>> for FieldAddress {
-    /// Convert a borrowed [`FieldAddressRef`] into an owned [`FieldAddress`].
     fn from(address: FieldAddressRef<'_>) -> Self {
         Self {
             schema: SchemaName::from(address.schema),
@@ -109,21 +108,18 @@ impl FromStr for FieldAddress {
 }
 
 impl fmt::Display for FieldAddress {
-    /// Display as `#<schema>/<field>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{}/{}", self.schema, self.field)
     }
 }
 
 impl fmt::Debug for FieldAddress {
-    /// Debug as the quoted display form (e.g. `"#book/status"`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.to_string(), f)
     }
 }
 
 impl<'de> Deserialize<'de> for FieldAddress {
-    /// Deserialize a string into a [`FieldAddress`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

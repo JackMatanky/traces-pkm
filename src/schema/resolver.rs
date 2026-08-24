@@ -1,5 +1,5 @@
-//! Schema resolution: linearize the `extends` DAG, merge inherited fields,
-//! and compute hierarchy sets.
+//! Schema resolution: linearize the `extends` DAG, merge inherited fields, and
+//! compute hierarchy sets.
 //!
 //! [`SchemaBuilder`] is the single-method entry point. Internally it:
 //!
@@ -32,9 +32,7 @@ use crate::field::{FieldKey, FieldName};
 /// A Schema that failed to resolve, with its [`SchemaError`].
 #[derive(Debug)]
 pub(crate) struct SchemaFailure {
-    /// The Schema that failed to resolve.
     pub(crate) schema: SchemaName,
-    /// Why it failed.
     pub(crate) error: SchemaError,
 }
 
@@ -55,8 +53,8 @@ pub(super) struct ResolvedSchemas {
 
 /// Entry point for resolving a set of raw schemas into [`Schema`] values.
 ///
-/// Build with [`new`](Self::new), then call [`build`](Self::build) to
-/// produce [`ResolvedSchemas`].
+/// Build with [`new`](Self::new), then call [`build`](Self::build) to produce
+/// [`ResolvedSchemas`].
 pub(super) struct SchemaBuilder<'a> {
     /// Raw schemas to resolve, keyed by name.
     raw: &'a IndexMap<SchemaName, RawSchema>,
@@ -127,7 +125,7 @@ impl<'a> SchemaBuilder<'a> {
         Ok(self.finish())
     }
 
-    /// Merge the Global Schema first (its `extends`, if declared, is ignored —
+    /// Merge the Global Schema first (its `extends`, if declared, is ignored;
     /// it is a `$ref` target, never a DAG participant), so later `$ref` lookups
     /// against it succeed regardless of raw-map order.
     fn resolve_global(&mut self) -> Result<(), SchemaError> {
@@ -232,7 +230,7 @@ impl<'a> SchemaBuilder<'a> {
     }
 
     /// Whether `candidate` still structurally descends from `name` (its
-    /// resolved `ancestors` still contains `name`) — a failed parent link can
+    /// resolved `ancestors` still contains `name`); a failed parent link can
     /// drop a Schema from a hierarchy set it would otherwise belong to.
     fn still_descends_from(
         &self,
@@ -255,7 +253,8 @@ impl<'a> SchemaBuilder<'a> {
 
 /// Merges one schema's effective field map: parent inheritance
 /// (first-listed-wins), `excludes`, and own `$ref`-resolved fields, into a
-/// resolved [`Schema`].
+/// resolved [`Schema`]. Contrast with [`SchemaBuilder`], which orchestrates
+/// every schema in the set.
 struct SchemaMerger<'a> {
     /// The Schema being merged.
     name: SchemaNameRef<'a>,
@@ -317,8 +316,8 @@ impl<'a> SchemaMerger<'a> {
         }
     }
 
-    /// First-listed-wins inheritance from `parents`, each already resolved
-    /// in `resolved`.
+    /// First-listed-wins inheritance from `parents`, each already resolved in
+    /// `resolved`.
     fn inherit_from(
         &mut self,
         parents: &[SchemaName],
@@ -353,6 +352,11 @@ impl<'a> SchemaMerger<'a> {
     ///
     /// Must run after [`Self::inherit_from`] (reads `self.ancestors` for `$ref`
     /// bounds-checking).
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - the raw Schema definition whose fields to resolve
+    /// * `resolved` - all Schema names resolved so far (for `$ref` lookups)
     ///
     /// # Errors
     ///

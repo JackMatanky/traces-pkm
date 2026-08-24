@@ -228,11 +228,8 @@ impl SchemaFieldType {
 /// payload.
 ///
 /// Constructible from a [`RawSchemaFieldType`][super::RawSchemaFieldType]
-/// (deserialized wire data, via [`From`]) or projected from an
-/// already-resolved [`SchemaFieldType`] (via [`SchemaFieldType::kind`]) --
-/// never the reverse: this is a domain-layer tag, not a DTO, so it is never
-/// reconstructed back into
-/// [`RawSchemaFieldType`][super::RawSchemaFieldType].
+/// (via [`From`]) or projected from an already-resolved
+/// [`SchemaFieldType`] (via [`SchemaFieldType::kind`]), never the reverse.
 /// Used by [`super::error::SchemaFieldParserError`],
 /// [`super::error::SchemaWarning`], and [`parser::SchemaFieldParser`] to name
 /// a field's kind in diagnostics without carrying its resolved options.

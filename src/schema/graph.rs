@@ -18,10 +18,10 @@
 //!
 //! 1. [`SchemaGraphBuilder::new`] validates every `extends` edge; `excluded`
 //!    (the Global Schema) never becomes a node.
-//! 2. [`SchemaGraphBuilder::build`] runs Kahn's topological sort to completion
-//!    and checks for a cycle, entirely internally — there is no stepwise
-//!    driving API. Returns a [`SchemaGraph`] on success, or the list of cyclic
-//!    Schemas on failure.
+//! 2. [`SchemaGraphBuilder::build`] runs topological sort to completion and
+//!    checks for a cycle, entirely internally; there is no stepwise driving
+//!    API. Returns a [`SchemaGraph`] on success, or the list of cyclic Schemas
+//!    on failure.
 //! 3. Query the resulting [`SchemaGraph`]: [`topological_order`],
 //!    [`parents_of`], [`children_by_name`], [`descendants_by_name`].
 //!
@@ -38,15 +38,13 @@ use indexmap::{IndexMap, IndexSet};
 use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
 /// A validated, acyclic `extends` DAG in topological order. Only constructible
-/// via [`SchemaGraphBuilder::build`] succeeding, so querying hierarchy is
-/// impossible before cycle-checking — the same compile-time guarantee the
-/// former typestate gave, now via two concrete types instead of a phantom
-/// generic.
+/// via [`SchemaGraphBuilder::build`], so querying hierarchy is impossible
+/// before cycle-checking.
 #[derive(Debug)]
 pub(super) struct SchemaGraph<'a> {
     adjacency: SchemaAdjacency<'a>,
-    /// Every Schema Kahn's sort resolved, in topological order (parents before
-    /// children; simultaneous roots in raw-map insertion order).
+    /// Every resolved Schema, in topological order (parents before children;
+    /// simultaneous roots in raw-map insertion order).
     topological_order: IndexSet<SchemaNameRef<'a>>,
 }
 
@@ -67,10 +65,7 @@ impl<'a> SchemaGraph<'a> {
     }
 
     /// Every Schema's direct `extends` children, keyed by parent name. Only
-    /// Schemas with at least one child appear. Computed fresh on every call
-    /// (single production call site; no caching — see
-    /// [`descendants_by_name`](Self::descendants_by_name), which has never
-    /// needed it either).
+    /// Schemas with at least one child appear.
     #[must_use]
     pub(super) fn children_by_name(
         &self,
@@ -96,9 +91,9 @@ impl<'a> SchemaGraph<'a> {
     /// Every Schema's transitive `extends` descendants, keyed by ancestor name.
     /// Output-sensitive Habib-Morvan-Rampon transitive closure, `O(V + E +
     /// Σ|closure(x)|)`, proportional to the closure's actual size rather than
-    /// the `O(V²/w)` a bitset DP pays unconditionally. Precondition: requires
-    /// children iterated in topological-rank order, which
-    /// [`SchemaGraphBuilder::build`] already sorted `child_targets` into.
+    /// the `O(V²/w)` a bitset DP pays unconditionally. Requires children
+    /// iterated in topological-rank order, which [`SchemaGraphBuilder::build`]
+    /// already sorted `child_targets` into.
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
@@ -144,13 +139,11 @@ impl<'a> SchemaGraph<'a> {
     }
 }
 
-/// Drives Kahn's topological sort over a [`SchemaAdjacency`], internally, to
-/// completion. Build with [`new`](Self::new), then call [`build`](Self::build)
-/// once — there is no stepwise driving API; Kahn's sort and cycle detection are
-/// this type's private implementation, not its interface.
+/// Drives topological sort over a [`SchemaAdjacency`] to completion. Build with
+/// [`new`](Self::new), then call [`build`](Self::build) once.
 pub(super) struct SchemaGraphBuilder<'a> {
     adjacency: SchemaAdjacency<'a>,
-    /// Per-node count of parents not yet resolved (Kahn's "in-degree").
+    /// Per-node count of parents not yet resolved.
     unresolved_parent_count: Vec<u32>,
     /// Nodes whose `unresolved_parent_count` reached zero, dense-indexed.
     ready_queue: VecDeque<DenseIndex>,
@@ -161,6 +154,11 @@ pub(super) struct SchemaGraphBuilder<'a> {
 impl<'a> SchemaGraphBuilder<'a> {
     /// Build the adjacency and seed the ready queue. See
     /// [`SchemaAdjacency::build`] for the warnings this can return.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - All raw Schemas, keyed by name.
+    /// * `excluded` - The Global Schema name, excluded from the graph.
     pub(super) fn new(
         raw: &'a IndexMap<SchemaName, RawSchema>,
         excluded: SchemaNameRef<'a>,
@@ -208,8 +206,8 @@ impl<'a> SchemaGraphBuilder<'a> {
     /// # Errors
     ///
     /// Returns every Schema that participates in an `extends` cycle, in
-    /// declaration order. A Schema that merely `extends` into a cycle
-    /// without being part of one itself is excluded.
+    /// declaration order. A Schema that merely `extends` into a cycle without
+    /// being part of one itself is excluded.
     pub(super) fn build(mut self) -> Result<SchemaGraph<'a>, Vec<SchemaName>> {
         while let Some(name) = self.next_ready() {
             self.mark_resolved(name);
@@ -253,11 +251,6 @@ impl<'a> SchemaGraphBuilder<'a> {
 
     /// Record `name` as resolved, releasing children whose
     /// `unresolved_parent_count` hit zero into `ready_queue`.
-    ///
-    /// `adjacency` now lives in its own field (not folded into this builder's
-    /// struct like the old single-struct typestate was), so borrowing it here
-    /// is already disjoint from the `unresolved_parent_count`/`ready_queue`
-    /// mutations below — no borrow-avoidance workaround needed.
     fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         let Some(index) = self.adjacency.index_of(name) else {
             return;
@@ -285,7 +278,7 @@ impl<'a> SchemaGraphBuilder<'a> {
 /// or appear in any hierarchy query.
 #[derive(Debug)]
 struct SchemaAdjacency<'a> {
-    /// Every raw Schema, including `excluded` — kept unfiltered (not a
+    /// Every raw Schema, including `excluded`, kept unfiltered (not a
     /// clone-then-strip copy) so building this adjacency never deep-clones the
     /// registry; `excluded` is skipped by index, not by omission from this
     /// map. [`parents_of`](Self::parents_of) guards against `excluded`
@@ -311,13 +304,13 @@ struct SchemaAdjacency<'a> {
 impl<'a> SchemaAdjacency<'a> {
     /// Build the `extends` adjacency, skipping `excluded` entirely: it never
     /// becomes a node, and an edge naming it as an `extends` target is silently
-    /// ignored — never a [`MissingExtendsTarget`] warning — since the Global
+    /// ignored, never a [`MissingExtendsTarget`] warning, since the Global
     /// Schema is referenced via `$ref`, never `extends`.
     ///
     /// # Warnings
     ///
     /// - [`DuplicateExtendsTarget`] if the same `extends` target appears more
-    ///   than once, checked before target-existence — a repeated unresolvable
+    ///   than once, checked before target-existence; a repeated unresolvable
     ///   target warns `Missing` on its first occurrence and `Duplicate` on
     ///   every occurrence after
     /// - [`MissingExtendsTarget`] if an `extends` target has no corresponding
@@ -478,15 +471,12 @@ impl<'a> SchemaAdjacency<'a> {
 }
 
 /// Finds every Schema participating in an `extends` cycle, restricted to the
-/// subgraph Kahn's sort never resolved (a resolved node is provably acyclic,
-/// since it reached in-degree zero).
-///
-/// Iterative Tarjan strongly-connected-components search (explicit work-stack,
-/// no recursion) over that unvisited subgraph, walking `extends` *backward*
-/// (parent-direction, via [`SchemaAdjacency::parents_of`]) rather than the
-/// forward CSR the rest of the graph uses — this avoids building a second
-/// adjacency structure just for cycle detection. `O(V + E)` over the unvisited
-/// subgraph.
+/// subgraph the topological sort never resolved (a resolved node is provably
+/// acyclic, since it reached in-degree zero). Iterative
+/// strongly-connected-components search (explicit work-stack, no recursion)
+/// over that unvisited subgraph, walking `extends` backward (parent-direction,
+/// via [`SchemaAdjacency::parents_of`]) rather than the forward adjacency the
+/// rest of the graph uses. `O(V + E)` over the unvisited subgraph.
 struct CycleDetector<'a, 'b> {
     adjacency: &'b SchemaAdjacency<'a>,
     /// The Schemas Kahn's sort already resolved; the search only explores
@@ -652,9 +642,9 @@ impl<'a> CycleDetector<'a, '_> {
     }
 }
 
-/// Per-node Tarjan bookkeeping for [`CycleDetector`]'s
-/// strongly-connected-components search, sized to the full unvisited-subgraph
-/// node count; entries for unreached nodes stay at their initial value.
+/// Per-node bookkeeping for [`CycleDetector`]'s strongly-connected-components
+/// search, sized to the full unvisited-subgraph node count; entries for
+/// unreached nodes stay at their initial value.
 struct CycleSearchState {
     /// Discovery order, assigned once per node on first visit. (Renamed from
     /// `index` to avoid colliding with [`DenseIndex::index`]'s meaning.)
@@ -760,7 +750,7 @@ struct DescendantAccumulator {
     descendants: Vec<Vec<DenseIndex>>,
     /// Topological rank per node, used to keep each finalized descendant
     /// list in globally topological order rather than
-    /// child-processing-interleaved order — downstream callers (e.g.
+    /// child-processing-interleaved order; downstream callers (e.g.
     /// Template `.descendants() | map(attribute='name') | join(',')`)
     /// observe this order directly.
     rank: Vec<u32>,

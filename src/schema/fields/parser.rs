@@ -57,6 +57,12 @@ impl<'a> SchemaFieldParser<'a> {
     /// Marks `key` as claimed. Returns `fallback` if `key` is not present in
     /// `options`.
     ///
+    /// # Arguments
+    ///
+    /// * `options` - the raw key-value options to extract from.
+    /// * `key` - the attribute key to look up.
+    /// * `fallback` - value to return when `key` is absent.
+    ///
     /// # Errors
     ///
     /// - [`TypeMismatch`] if `key` is present but the corresponding
@@ -89,6 +95,12 @@ impl<'a> SchemaFieldParser<'a> {
     ///
     /// Marks `key` as claimed. Returns `fallback` if `key` is not present in
     /// `options`.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - the raw key-value options to extract from.
+    /// * `key` - the attribute key to look up.
+    /// * `fallback` - value to return when `key` is absent.
     ///
     /// # Errors
     ///
@@ -135,6 +147,12 @@ impl<'a> SchemaFieldParser<'a> {
     ///
     /// Marks `key` as claimed. Returns `fallback` if `key` is not present in
     /// `options`.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - the raw key-value options to extract from.
+    /// * `key` - the attribute key to look up.
+    /// * `fallback` - value to return when `key` is absent.
     ///
     /// # Errors
     ///
@@ -192,6 +210,12 @@ impl<'a> SchemaFieldParser<'a> {
 
     /// Constructs a [`SchemaFieldParserError::TypeMismatch`] for an unexpected
     /// value.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - the attribute key whose value was unexpected.
+    /// * `value` - the actual value encountered.
+    /// * `expected` - a human-readable description of the expected shape.
     fn type_mismatch(
         &self,
         key: &str,
