@@ -37,42 +37,239 @@ use indexmap::{IndexMap, IndexSet};
 
 use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
-/// Dense per-schema array index, assigned once at construction in raw-map
-/// insertion order. Array indexing replaces string-hashed
-/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
-///
-/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
-/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
-/// registry.
-///
-/// [`HashMap`]: std::collections::HashMap
-/// [`IndexMap`]: indexmap::IndexMap
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-struct DenseIndex(u32);
+/// A validated, acyclic `extends` DAG in topological order. Only constructible
+/// via [`SchemaGraphBuilder::build`] succeeding, so querying hierarchy is
+/// impossible before cycle-checking — the same compile-time guarantee the
+/// former typestate gave, now via two concrete types instead of a phantom
+/// generic.
+#[derive(Debug)]
+pub(super) struct SchemaGraph<'a> {
+    adjacency: SchemaAdjacency<'a>,
+    /// Every Schema Kahn's sort resolved, in topological order (parents before
+    /// children; simultaneous roots in raw-map insertion order).
+    topological_order: IndexSet<SchemaNameRef<'a>>,
+}
 
-impl DenseIndex {
-    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values this
-    /// module narrows stay far below `u32::MAX` for any real schema registry.
-    fn saturating_u32(n: usize) -> u32 {
-        u32::try_from(n).unwrap_or(u32::MAX)
+impl<'a> SchemaGraph<'a> {
+    /// Every resolved Schema, in topological order.
+    pub(super) fn topological_order(
+        &self,
+    ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
+        self.topological_order.iter().copied()
     }
 
-    /// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
-    /// platform this crate targets, so `try_from` failing here is unreachable
-    /// in practice; it saturates to `usize::MAX` rather than panicking.
-    fn widen_usize(n: u32) -> usize {
-        usize::try_from(n).unwrap_or(usize::MAX)
+    /// Borrow `name`'s raw `extends` parent list. Empty slice if `name` is not
+    /// a known Schema.
+    pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
+        self.adjacency.parents_of(name)
     }
 
-    /// Builds a dense index from an array position, saturating per
-    /// [`Self::saturating_u32`].
-    fn from_usize(n: usize) -> Self {
-        Self(Self::saturating_u32(n))
+    /// Every Schema's direct `extends` children, keyed by parent name. Only
+    /// Schemas with at least one child appear. Computed fresh on every call
+    /// (single production call site; no caching — see
+    /// [`descendants_by_name`](Self::descendants_by_name), which has never
+    /// needed it either).
+    #[must_use]
+    pub(super) fn children_by_name(
+        &self,
+    ) -> IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
+        let mut map: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> =
+            IndexMap::new();
+        for (i, &name) in self.adjacency.names.iter().enumerate() {
+            let slice =
+                self.adjacency.children_slice(DenseIndex::from_usize(i));
+            if slice.is_empty() {
+                continue;
+            }
+            let children: Vec<SchemaNameRef<'a>> = slice
+                .iter()
+                .filter_map(|&child| self.adjacency.names.get(child.index()))
+                .copied()
+                .collect();
+            map.insert(name, children);
+        }
+        map
     }
 
-    /// Widens back to `usize` for indexing. See [`Self::widen_usize`].
-    fn index(self) -> usize {
-        Self::widen_usize(self.0)
+    /// Every Schema's transitive `extends` descendants, keyed by ancestor name.
+    /// Output-sensitive Habib-Morvan-Rampon transitive closure, `O(V + E +
+    /// Σ|closure(x)|)`, proportional to the closure's actual size rather than
+    /// the `O(V²/w)` a bitset DP pays unconditionally. Precondition: requires
+    /// children iterated in topological-rank order, which
+    /// [`SchemaGraphBuilder::build`] already sorted `child_targets` into.
+    #[must_use]
+    pub(super) fn descendants_by_name(
+        &self,
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        let count = self.adjacency.node_count();
+        let mut topo_rank: Vec<u32> = vec![0; count];
+        for (rank, &name) in self.topological_order.iter().enumerate() {
+            if let Some(index) = self.adjacency.index_of(name)
+                && let Some(slot) = topo_rank.get_mut(index.index())
+            {
+                *slot = DenseIndex::saturating_u32(rank);
+            }
+        }
+
+        // Leaves first, roots last: each child's closure is already finalized
+        // (later topological position) before its parent runs.
+        let mut accumulator = DescendantAccumulator::new(count, topo_rank);
+        for &name in self.topological_order.iter().rev() {
+            let Some(node) = self.adjacency.index_of(name) else {
+                continue;
+            };
+            accumulator.accumulate(node, self.adjacency.children_slice(node));
+        }
+
+        let descendant_lists = accumulator.into_descendant_lists();
+        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
+        for (i, &name) in self.adjacency.names.iter().enumerate() {
+            let Some(node_descendants) = descendant_lists.get(i) else {
+                continue;
+            };
+            if node_descendants.is_empty() {
+                continue;
+            }
+            let descendants: IndexSet<SchemaName> = node_descendants
+                .iter()
+                .filter_map(|&d| self.adjacency.names.get(d.index()))
+                .map(|&n| SchemaName::from(n))
+                .collect();
+            result.insert(SchemaName::from(name), descendants);
+        }
+        result
+    }
+}
+
+/// Drives Kahn's topological sort over a [`SchemaAdjacency`], internally, to
+/// completion. Build with [`new`](Self::new), then call [`build`](Self::build)
+/// once — there is no stepwise driving API; Kahn's sort and cycle detection are
+/// this type's private implementation, not its interface.
+pub(super) struct SchemaGraphBuilder<'a> {
+    adjacency: SchemaAdjacency<'a>,
+    /// Per-node count of parents not yet resolved (Kahn's "in-degree").
+    unresolved_parent_count: Vec<u32>,
+    /// Nodes whose `unresolved_parent_count` reached zero, dense-indexed.
+    ready_queue: VecDeque<DenseIndex>,
+    /// Schemas already popped from `ready_queue`, in topological order.
+    visited: IndexSet<SchemaNameRef<'a>>,
+}
+
+impl<'a> SchemaGraphBuilder<'a> {
+    /// Build the adjacency and seed the ready queue. See
+    /// [`SchemaAdjacency::build`] for the warnings this can return.
+    pub(super) fn new(
+        raw: &'a IndexMap<SchemaName, RawSchema>,
+        excluded: SchemaNameRef<'a>,
+    ) -> (Self, Vec<SchemaWarning>) {
+        let (adjacency, warnings) = SchemaAdjacency::build(raw, excluded);
+        let node_count = adjacency.node_count();
+
+        // Derive each node's in-degree from the CSR adjacency itself
+        // (occurrences of a node across every parent's children list) rather
+        // than re-scanning raw `extends` lists a second time.
+        let mut unresolved_parent_count: Vec<u32> = vec![0; node_count];
+        for &child in &adjacency.child_targets {
+            if let Some(count) = unresolved_parent_count.get_mut(child.index())
+            {
+                *count = count.saturating_add(1);
+            }
+        }
+
+        let ready_queue: VecDeque<DenseIndex> = (0
+            ..DenseIndex::saturating_u32(node_count))
+            .map(DenseIndex)
+            .filter(|idx| {
+                unresolved_parent_count.get(idx.index()).copied() == Some(0)
+            })
+            .collect();
+
+        (
+            Self {
+                adjacency,
+                unresolved_parent_count,
+                ready_queue,
+                visited: IndexSet::new(),
+            },
+            warnings,
+        )
+    }
+
+    /// Drain any remaining `next_ready`/`mark_resolved` steps, check for a
+    /// cycle via [`CycleDetector`], and — if acyclic — sort every node's CSR
+    /// children into topological-rank order (a precondition
+    /// [`SchemaGraph::descendants_by_name`]'s closure sweep relies on).
+    ///
+    /// # Errors
+    ///
+    /// - Returns `Err(`[`Vec<SchemaName>`]`)` listing every Schema that
+    ///   participates in an `extends` cycle, if one exists. A Schema that
+    ///   merely `extends` into a cycle without being part of one itself is
+    ///   excluded.
+    pub(super) fn build(mut self) -> Result<SchemaGraph<'a>, Vec<SchemaName>> {
+        while let Some(name) = self.next_ready() {
+            self.mark_resolved(name);
+        }
+        let cyclic = CycleDetector::new(&self.adjacency, &self.visited).find();
+        if !cyclic.is_empty() {
+            return Err(cyclic);
+        }
+
+        let mut topo_rank: Vec<u32> = vec![0; self.adjacency.node_count()];
+        for (rank, &name) in self.visited.iter().enumerate() {
+            if let Some(index) = self.adjacency.index_of(name)
+                && let Some(slot) = topo_rank.get_mut(index.index())
+            {
+                *slot = DenseIndex::saturating_u32(rank);
+            }
+        }
+        let rank_of = |c: &DenseIndex| {
+            topo_rank.get(c.index()).copied().unwrap_or(u32::MAX)
+        };
+        for i in 0..DenseIndex::saturating_u32(self.adjacency.node_count()) {
+            self.adjacency
+                .children_slice_mut(DenseIndex(i))
+                .sort_by_key(rank_of);
+        }
+
+        Ok(SchemaGraph {
+            adjacency: self.adjacency,
+            topological_order: self.visited,
+        })
+    }
+
+    /// Pop the next Schema whose `unresolved_parent_count` reached zero,
+    /// marking it visited. `None` once `ready_queue` drains.
+    fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
+        let index = self.ready_queue.pop_front()?;
+        let name = self.adjacency.name_of(index)?;
+        self.visited.insert(name);
+        Some(name)
+    }
+
+    /// Record `name` as resolved, releasing children whose
+    /// `unresolved_parent_count` hit zero into `ready_queue`.
+    ///
+    /// `adjacency` now lives in its own field (not folded into this builder's
+    /// struct like the old single-struct typestate was), so borrowing it here
+    /// is already disjoint from the `unresolved_parent_count`/`ready_queue`
+    /// mutations below — no borrow-avoidance workaround needed.
+    fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
+        let Some(index) = self.adjacency.index_of(name) else {
+            return;
+        };
+        for &child in self.adjacency.children_slice(index) {
+            let Some(count) =
+                self.unresolved_parent_count.get_mut(child.index())
+            else {
+                continue;
+            };
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.ready_queue.push_back(child);
+            }
+        }
     }
 }
 
@@ -275,242 +472,6 @@ impl<'a> SchemaAdjacency<'a> {
     /// Number of nodes (Schemas excluding `excluded`).
     fn node_count(&self) -> usize {
         self.names.len()
-    }
-}
-
-/// Drives Kahn's topological sort over a [`SchemaAdjacency`], internally, to
-/// completion. Build with [`new`](Self::new), then call [`build`](Self::build)
-/// once — there is no stepwise driving API; Kahn's sort and cycle detection are
-/// this type's private implementation, not its interface.
-pub(super) struct SchemaGraphBuilder<'a> {
-    adjacency: SchemaAdjacency<'a>,
-    /// Per-node count of parents not yet resolved (Kahn's "in-degree").
-    unresolved_parent_count: Vec<u32>,
-    /// Nodes whose `unresolved_parent_count` reached zero, dense-indexed.
-    ready_queue: VecDeque<DenseIndex>,
-    /// Schemas already popped from `ready_queue`, in topological order.
-    visited: IndexSet<SchemaNameRef<'a>>,
-}
-
-impl<'a> SchemaGraphBuilder<'a> {
-    /// Build the adjacency and seed the ready queue. See
-    /// [`SchemaAdjacency::build`] for the warnings this can return.
-    pub(super) fn new(
-        raw: &'a IndexMap<SchemaName, RawSchema>,
-        excluded: SchemaNameRef<'a>,
-    ) -> (Self, Vec<SchemaWarning>) {
-        let (adjacency, warnings) = SchemaAdjacency::build(raw, excluded);
-        let node_count = adjacency.node_count();
-
-        // Derive each node's in-degree from the CSR adjacency itself
-        // (occurrences of a node across every parent's children list) rather
-        // than re-scanning raw `extends` lists a second time.
-        let mut unresolved_parent_count: Vec<u32> = vec![0; node_count];
-        for &child in &adjacency.child_targets {
-            if let Some(count) = unresolved_parent_count.get_mut(child.index())
-            {
-                *count = count.saturating_add(1);
-            }
-        }
-
-        let ready_queue: VecDeque<DenseIndex> = (0
-            ..DenseIndex::saturating_u32(node_count))
-            .map(DenseIndex)
-            .filter(|idx| {
-                unresolved_parent_count.get(idx.index()).copied() == Some(0)
-            })
-            .collect();
-
-        (
-            Self {
-                adjacency,
-                unresolved_parent_count,
-                ready_queue,
-                visited: IndexSet::new(),
-            },
-            warnings,
-        )
-    }
-
-    /// Pop the next Schema whose `unresolved_parent_count` reached zero,
-    /// marking it visited. `None` once `ready_queue` drains.
-    fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
-        let index = self.ready_queue.pop_front()?;
-        let name = self.adjacency.name_of(index)?;
-        self.visited.insert(name);
-        Some(name)
-    }
-
-    /// Record `name` as resolved, releasing children whose
-    /// `unresolved_parent_count` hit zero into `ready_queue`.
-    ///
-    /// `adjacency` now lives in its own field (not folded into this builder's
-    /// struct like the old single-struct typestate was), so borrowing it here
-    /// is already disjoint from the `unresolved_parent_count`/`ready_queue`
-    /// mutations below — no borrow-avoidance workaround needed.
-    fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
-        let Some(index) = self.adjacency.index_of(name) else {
-            return;
-        };
-        for &child in self.adjacency.children_slice(index) {
-            let Some(count) =
-                self.unresolved_parent_count.get_mut(child.index())
-            else {
-                continue;
-            };
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.ready_queue.push_back(child);
-            }
-        }
-    }
-
-    /// Drain any remaining `next_ready`/`mark_resolved` steps, check for a
-    /// cycle via [`CycleDetector`], and — if acyclic — sort every node's CSR
-    /// children into topological-rank order (a precondition
-    /// [`SchemaGraph::descendants_by_name`]'s closure sweep relies on).
-    ///
-    /// # Errors
-    ///
-    /// - Returns `Err(`[`Vec<SchemaName>`]`)` listing every Schema that
-    ///   participates in an `extends` cycle, if one exists. A Schema that
-    ///   merely `extends` into a cycle without being part of one itself is
-    ///   excluded.
-    pub(super) fn build(mut self) -> Result<SchemaGraph<'a>, Vec<SchemaName>> {
-        while let Some(name) = self.next_ready() {
-            self.mark_resolved(name);
-        }
-        let cyclic = CycleDetector::new(&self.adjacency, &self.visited).find();
-        if !cyclic.is_empty() {
-            return Err(cyclic);
-        }
-
-        let mut topo_rank: Vec<u32> = vec![0; self.adjacency.node_count()];
-        for (rank, &name) in self.visited.iter().enumerate() {
-            if let Some(index) = self.adjacency.index_of(name)
-                && let Some(slot) = topo_rank.get_mut(index.index())
-            {
-                *slot = DenseIndex::saturating_u32(rank);
-            }
-        }
-        let rank_of = |c: &DenseIndex| {
-            topo_rank.get(c.index()).copied().unwrap_or(u32::MAX)
-        };
-        for i in 0..DenseIndex::saturating_u32(self.adjacency.node_count()) {
-            self.adjacency
-                .children_slice_mut(DenseIndex(i))
-                .sort_by_key(rank_of);
-        }
-
-        Ok(SchemaGraph {
-            adjacency: self.adjacency,
-            topological_order: self.visited,
-        })
-    }
-}
-
-/// A validated, acyclic `extends` DAG in topological order. Only constructible
-/// via [`SchemaGraphBuilder::build`] succeeding, so querying hierarchy is
-/// impossible before cycle-checking — the same compile-time guarantee the
-/// former typestate gave, now via two concrete types instead of a phantom
-/// generic.
-#[derive(Debug)]
-pub(super) struct SchemaGraph<'a> {
-    adjacency: SchemaAdjacency<'a>,
-    /// Every Schema Kahn's sort resolved, in topological order (parents before
-    /// children; simultaneous roots in raw-map insertion order).
-    topological_order: IndexSet<SchemaNameRef<'a>>,
-}
-
-impl<'a> SchemaGraph<'a> {
-    /// Every resolved Schema, in topological order.
-    pub(super) fn topological_order(
-        &self,
-    ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
-        self.topological_order.iter().copied()
-    }
-
-    /// Borrow `name`'s raw `extends` parent list. Empty slice if `name` is not
-    /// a known Schema.
-    pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
-        self.adjacency.parents_of(name)
-    }
-
-    /// Every Schema's direct `extends` children, keyed by parent name. Only
-    /// Schemas with at least one child appear. Computed fresh on every call
-    /// (single production call site; no caching — see
-    /// [`descendants_by_name`](Self::descendants_by_name), which has never
-    /// needed it either).
-    #[must_use]
-    pub(super) fn children_by_name(
-        &self,
-    ) -> IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
-        let mut map: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> =
-            IndexMap::new();
-        for (i, &name) in self.adjacency.names.iter().enumerate() {
-            let slice =
-                self.adjacency.children_slice(DenseIndex::from_usize(i));
-            if slice.is_empty() {
-                continue;
-            }
-            let children: Vec<SchemaNameRef<'a>> = slice
-                .iter()
-                .filter_map(|&child| self.adjacency.names.get(child.index()))
-                .copied()
-                .collect();
-            map.insert(name, children);
-        }
-        map
-    }
-
-    /// Every Schema's transitive `extends` descendants, keyed by ancestor name.
-    /// Output-sensitive Habib-Morvan-Rampon transitive closure, `O(V + E +
-    /// Σ|closure(x)|)`, proportional to the closure's actual size rather than
-    /// the `O(V²/w)` a bitset DP pays unconditionally. Precondition: requires
-    /// children iterated in topological-rank order, which
-    /// [`SchemaGraphBuilder::build`] already sorted `child_targets` into.
-    #[must_use]
-    pub(super) fn descendants_by_name(
-        &self,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let count = self.adjacency.node_count();
-        let mut topo_rank: Vec<u32> = vec![0; count];
-        for (rank, &name) in self.topological_order.iter().enumerate() {
-            if let Some(index) = self.adjacency.index_of(name)
-                && let Some(slot) = topo_rank.get_mut(index.index())
-            {
-                *slot = DenseIndex::saturating_u32(rank);
-            }
-        }
-
-        // Leaves first, roots last: each child's closure is already finalized
-        // (later topological position) before its parent runs.
-        let mut accumulator = DescendantAccumulator::new(count, topo_rank);
-        for &name in self.topological_order.iter().rev() {
-            let Some(node) = self.adjacency.index_of(name) else {
-                continue;
-            };
-            accumulator.accumulate(node, self.adjacency.children_slice(node));
-        }
-
-        let descendant_lists = accumulator.into_descendant_lists();
-        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
-        for (i, &name) in self.adjacency.names.iter().enumerate() {
-            let Some(node_descendants) = descendant_lists.get(i) else {
-                continue;
-            };
-            if node_descendants.is_empty() {
-                continue;
-            }
-            let descendants: IndexSet<SchemaName> = node_descendants
-                .iter()
-                .filter_map(|&d| self.adjacency.names.get(d.index()))
-                .map(|&n| SchemaName::from(n))
-                .collect();
-            result.insert(SchemaName::from(name), descendants);
-        }
-        result
     }
 }
 
@@ -861,6 +822,45 @@ impl DescendantAccumulator {
     /// list.
     fn into_descendant_lists(self) -> Vec<Vec<DenseIndex>> {
         self.descendants
+    }
+}
+
+/// Dense per-schema array index, assigned once at construction in raw-map
+/// insertion order. Array indexing replaces string-hashed
+/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
+///
+/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
+/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
+/// registry.
+///
+/// [`HashMap`]: std::collections::HashMap
+/// [`IndexMap`]: indexmap::IndexMap
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+struct DenseIndex(u32);
+
+impl DenseIndex {
+    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values this
+    /// module narrows stay far below `u32::MAX` for any real schema registry.
+    fn saturating_u32(n: usize) -> u32 {
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Builds a dense index from an array position, saturating per
+    /// [`Self::saturating_u32`].
+    fn from_usize(n: usize) -> Self {
+        Self(Self::saturating_u32(n))
+    }
+
+    /// Widens back to `usize` for indexing. See [`Self::widen_usize`].
+    fn index(self) -> usize {
+        Self::widen_usize(self.0)
+    }
+
+    /// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
+    /// platform this crate targets, so `try_from` failing here is unreachable
+    /// in practice; it saturates to `usize::MAX` rather than panicking.
+    fn widen_usize(n: u32) -> usize {
+        usize::try_from(n).unwrap_or(usize::MAX)
     }
 }
 

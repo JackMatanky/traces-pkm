@@ -115,6 +115,7 @@ pub(crate) struct SchemaFileFieldRef<'a> {
     pub(crate) ext: Option<&'a str>,
     pub(crate) class: &'a [String],
 }
+
 #[cfg(test)]
 mod tests {
     use indexmap::IndexMap;

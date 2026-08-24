@@ -172,21 +172,6 @@ impl std::fmt::Display for SchemaFieldType {
 }
 
 impl SchemaFieldType {
-    /// Return this type's tag: which of the six variants it is, without its
-    /// payload.
-    #[inline]
-    #[must_use]
-    pub(super) const fn kind(&self) -> SchemaFieldTypeTag {
-        match self {
-            Self::Input => SchemaFieldTypeTag::Input,
-            Self::Select(_) => SchemaFieldTypeTag::Select,
-            Self::Boolean => SchemaFieldTypeTag::Boolean,
-            Self::Number(_) => SchemaFieldTypeTag::Number,
-            Self::Date(_) => SchemaFieldTypeTag::Date,
-            Self::File(_) => SchemaFieldTypeTag::File,
-        }
-    }
-
     /// Return the inner [`SchemaSelectField`] if this is a
     /// [`Select`][Self::Select] variant.
     pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
@@ -220,6 +205,21 @@ impl SchemaFieldType {
         match self {
             Self::File(inner) => Some(inner.as_ref()),
             _ => None,
+        }
+    }
+
+    /// Return this type's tag: which of the six variants it is, without its
+    /// payload.
+    #[inline]
+    #[must_use]
+    pub(super) const fn kind(&self) -> SchemaFieldTypeTag {
+        match self {
+            Self::Input => SchemaFieldTypeTag::Input,
+            Self::Select(_) => SchemaFieldTypeTag::Select,
+            Self::Boolean => SchemaFieldTypeTag::Boolean,
+            Self::Number(_) => SchemaFieldTypeTag::Number,
+            Self::Date(_) => SchemaFieldTypeTag::Date,
+            Self::File(_) => SchemaFieldTypeTag::File,
         }
     }
 }
