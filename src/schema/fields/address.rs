@@ -9,6 +9,8 @@ use super::super::{SchemaName, SchemaNameRef};
 use crate::field::{FieldName, FieldNameError, FieldNameRef};
 
 /// An owned `#<schema>/<field>` coordinate parsed from a `$ref` string.
+///
+/// Constructed via [`TryFrom<&str>`](TryFrom) or [`FromStr`].
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct FieldAddress {
     schema: SchemaName,
@@ -73,12 +75,18 @@ impl TryFrom<&str> for FieldAddress {
 impl TryFrom<String> for FieldAddress {
     type Error = FieldAddressError;
 
+    /// Parse an owned string into a field address.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`TryFrom<&str>`](TryFrom) for [`FieldAddress`].
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         Self::try_from(raw.as_str())
     }
 }
 
 impl From<FieldAddressRef<'_>> for FieldAddress {
+    /// Convert a borrowed [`FieldAddressRef`] into an owned [`FieldAddress`].
     fn from(address: FieldAddressRef<'_>) -> Self {
         Self {
             schema: SchemaName::from(address.schema),
@@ -90,24 +98,32 @@ impl From<FieldAddressRef<'_>> for FieldAddress {
 impl FromStr for FieldAddress {
     type Err = FieldAddressError;
 
+    /// Parse a string slice into a [`FieldAddress`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`TryFrom<&str>`] for [`FieldAddress`].
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw)
     }
 }
 
 impl fmt::Display for FieldAddress {
+    /// Display as `#<schema>/<field>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{}/{}", self.schema, self.field)
     }
 }
 
 impl fmt::Debug for FieldAddress {
+    /// Debug as the quoted display form (e.g. `"#book/status"`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.to_string(), f)
     }
 }
 
 impl<'de> Deserialize<'de> for FieldAddress {
+    /// Deserialize a string into a [`FieldAddress`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

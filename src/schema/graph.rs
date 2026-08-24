@@ -52,14 +52,16 @@ pub(super) struct SchemaGraph<'a> {
 
 impl<'a> SchemaGraph<'a> {
     /// Every resolved Schema, in topological order.
+    #[must_use]
     pub(super) fn topological_order(
         &self,
     ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
         self.topological_order.iter().copied()
     }
 
-    /// Borrow `name`'s raw `extends` parent list. Empty slice if `name` is not
-    /// a known Schema.
+    /// Borrow `name`'s raw `extends` parent list. Returns an empty slice if
+    /// `name` is not a known Schema or is the excluded Global Schema.
+    #[must_use]
     pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
         self.adjacency.parents_of(name)
     }
@@ -197,16 +199,17 @@ impl<'a> SchemaGraphBuilder<'a> {
     }
 
     /// Drain any remaining `next_ready`/`mark_resolved` steps, check for a
-    /// cycle via [`CycleDetector`], and — if acyclic — sort every node's CSR
+    /// cycle via [`CycleDetector`], and, if acyclic, sort every node's CSR
     /// children into topological-rank order (a precondition
     /// [`SchemaGraph::descendants_by_name`]'s closure sweep relies on).
     ///
+    /// Returns the completed [`SchemaGraph`] when no cycle exists.
+    ///
     /// # Errors
     ///
-    /// - Returns `Err(`[`Vec<SchemaName>`]`)` listing every Schema that
-    ///   participates in an `extends` cycle, if one exists. A Schema that
-    ///   merely `extends` into a cycle without being part of one itself is
-    ///   excluded.
+    /// Returns every Schema that participates in an `extends` cycle, in
+    /// declaration order. A Schema that merely `extends` into a cycle
+    /// without being part of one itself is excluded.
     pub(super) fn build(mut self) -> Result<SchemaGraph<'a>, Vec<SchemaName>> {
         while let Some(name) = self.next_ready() {
             self.mark_resolved(name);
@@ -283,16 +286,15 @@ impl<'a> SchemaGraphBuilder<'a> {
 #[derive(Debug)]
 struct SchemaAdjacency<'a> {
     /// Every raw Schema, including `excluded` — kept unfiltered (not a
-    /// clone-then-strip copy) so building this adjacency never deep-clones
-    /// the registry; `excluded` is skipped by index, not by omission from
-    /// this map. [`parents_of`](Self::parents_of) guards against `excluded`
+    /// clone-then-strip copy) so building this adjacency never deep-clones the
+    /// registry; `excluded` is skipped by index, not by omission from this
+    /// map. [`parents_of`](Self::parents_of) guards against `excluded`
     /// explicitly, since a lookup here would otherwise still find its raw
     /// `extends` list.
     raw: &'a IndexMap<SchemaName, RawSchema>,
     /// The one Schema name that never receives a [`DenseIndex`]. Checked by
-    /// [`parents_of`](Self::parents_of) directly, since `raw` stays
-    /// unfiltered and would otherwise still yield `excluded`'s own raw
-    /// `extends` list.
+    /// [`parents_of`](Self::parents_of) directly, since `raw` stays unfiltered
+    /// and would otherwise still yield `excluded`'s own raw `extends` list.
     excluded: SchemaNameRef<'a>,
     /// Dense index -> name, in raw-map insertion order, `excluded` skipped.
     names: Vec<SchemaNameRef<'a>>,
@@ -507,8 +509,9 @@ impl<'a> CycleDetector<'a, '_> {
         }
     }
 
-    /// Return every unvisited Schema that participates in a cycle. Empty if
-    /// `visited` already covers every node (no cycle exists).
+    /// Return every unvisited Schema that participates in a cycle, in
+    /// declaration order. Empty if `visited` already covers every node (no
+    /// cycle exists).
     fn find(mut self) -> Vec<SchemaName> {
         if self.visited.len() == self.adjacency.node_count() {
             return Vec::new();

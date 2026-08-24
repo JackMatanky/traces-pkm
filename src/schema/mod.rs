@@ -1,4 +1,5 @@
-//! Typed frontmatter Schema resolution.
+//! Schema resolution, field merging, and hierarchy queries for
+//! frontmatter-driven file classification.
 //!
 //! Reads `.traces/schemas/*.toml` files, linearizes the `extends` DAG via
 //! Kahn's topological sort ([`graph::SchemaGraph`]), and resolves each Schema's

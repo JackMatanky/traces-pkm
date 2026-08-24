@@ -55,7 +55,8 @@ pub(super) struct ResolvedSchemas {
 
 /// Entry point for resolving a set of raw schemas into [`Schema`] values.
 ///
-/// Build with [`new`](Self::new), then call [`build`](Self::build).
+/// Build with [`new`](Self::new), then call [`build`](Self::build) to
+/// produce [`ResolvedSchemas`].
 pub(super) struct SchemaBuilder<'a> {
     /// Raw schemas to resolve, keyed by name.
     raw: &'a IndexMap<SchemaName, RawSchema>,
@@ -103,7 +104,7 @@ impl<'a> SchemaBuilder<'a> {
     /// - [`OverrideValueTypeMismatch`] if a `$ref` override attribute has the
     ///   wrong value type
     ///
-    /// [`Cycle`]: super::error::SchemaError::Cycle
+    /// [`Cycle`]: SchemaError::Cycle
     /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
     /// [`DuplicateExtendsTarget`]: SchemaWarning::DuplicateExtendsTarget
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
@@ -254,8 +255,7 @@ impl<'a> SchemaBuilder<'a> {
 
 /// Merges one schema's effective field map: parent inheritance
 /// (first-listed-wins), `excludes`, and own `$ref`-resolved fields, into a
-/// resolved [`Schema`]. Contrast with [`SchemaBuilder`], which orchestrates
-/// every schema in the set.
+/// resolved [`Schema`].
 struct SchemaMerger<'a> {
     /// The Schema being merged.
     name: SchemaNameRef<'a>,
@@ -275,6 +275,14 @@ impl<'a> SchemaMerger<'a> {
     ///
     /// `parents` must already be resolved in `resolved`: the Kahn topological
     /// sort guarantees this ordering.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - the Schema being merged
+    /// * `raw` - the raw Schema definition to resolve
+    /// * `parents` - already-resolved parent Schema names in extend order
+    /// * `resolved` - all Schema names resolved so far (parents must be
+    ///   present)
     ///
     /// # Errors
     ///

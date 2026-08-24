@@ -18,6 +18,7 @@ use crate::field::{FieldName, FieldValue};
 /// One `.traces/schemas/<name>.toml` file, parsed but not yet resolved.
 ///
 /// The filename stem (not any field on this type) is the Schema name.
+/// Unknown keys at any level are rejected by `#[serde(deny_unknown_fields)]`.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchema {
@@ -33,6 +34,13 @@ pub(crate) struct RawSchema {
 }
 
 /// A field definition parsed from TOML, before `$ref` resolution.
+///
+/// Exactly one of [`RawSchemaFieldSource::Direct`] or
+/// [`RawSchemaFieldSource::Ref`] is set, determined by the presence of
+/// `type` and/or `$ref` in the TOML table. Type-specific keys land in
+/// [`options`](Self::options) as generic [`FieldValue`]s; their shape
+/// validation is deferred to
+/// [`SchemaFieldBuilder::build`](super::fields::SchemaFieldBuilder::build).
 #[derive(Clone, Debug)]
 pub(crate) struct RawSchemaFieldDef {
     /// The field's source: a direct `type` or a `$ref` with optional override.
@@ -86,9 +94,13 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     ///
     /// # Errors
     ///
-    /// Fails when neither `type` nor `$ref` is present, when `$ref` is not
-    /// shaped `#<schema>/<field>`, or when any other key fails to parse (an
-    /// unknown key, per `#[serde(deny_unknown_fields)]` on the wire shape).
+    /// - [`RawFieldDefError::MissingSource`] if neither `type` nor `$ref` is
+    ///   present.
+    /// - Serde deserialization error if `$ref` is not shaped
+    ///   `#<schema>/<field>` or if any unknown key is present (per
+    ///   `#[serde(deny_unknown_fields)]` on the wire shape).
+    ///
+    /// [`RawFieldDefError::MissingSource`]: RawFieldDefError::MissingSource
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -189,7 +201,8 @@ pub(crate) enum RawFieldDefError {
 
 /// Wire shape for one `[fields.<name>]` TOML table.
 ///
-/// `type`/`$ref` are optional and separate; every type-specific key
+/// `type` and `$ref` are optional and separate. Every type-specific key
+/// (`values`, `folders`, `ext`, `class`, `min`, `max`, `step`, `format`)
 /// deserializes as a generic [`FieldValue`]. Converts into a validated
 /// [`RawSchemaFieldSource`] plus [`RawSchemaFieldDef::options`] during
 /// deserialization.

@@ -160,8 +160,7 @@ pub(crate) enum SchemaFieldType {
     Date(SchemaDateField),
     /// A link to files matched by folder, extension, and class filters.
     ///
-    /// Class matching happens at query time via
-    /// [`super::service::SchemaService::matches`], not here.
+    /// Class matching happens at query time, not here.
     File(Arc<SchemaFileField>),
 }
 
@@ -225,12 +224,15 @@ impl SchemaFieldType {
 }
 
 /// Which of the six field kinds a [`SchemaFieldType`] or
-/// [`RawSchemaFieldType`] is, without either's payload.
+/// [`RawSchemaFieldType`][super::RawSchemaFieldType] is, without either's
+/// payload.
 ///
-/// Constructible from a [`RawSchemaFieldType`] (deserialized wire data, via
-/// [`From`]) or projected from an already-resolved [`SchemaFieldType`] (via
-/// [`SchemaFieldType::tag`]) — never the reverse: this is a domain-layer tag,
-/// not a DTO, so it is never reconstructed back into [`RawSchemaFieldType`].
+/// Constructible from a [`RawSchemaFieldType`][super::RawSchemaFieldType]
+/// (deserialized wire data, via [`From`]) or projected from an
+/// already-resolved [`SchemaFieldType`] (via [`SchemaFieldType::kind`]) --
+/// never the reverse: this is a domain-layer tag, not a DTO, so it is never
+/// reconstructed back into
+/// [`RawSchemaFieldType`][super::RawSchemaFieldType].
 /// Used by [`super::error::SchemaFieldParserError`],
 /// [`super::error::SchemaWarning`], and [`parser::SchemaFieldParser`] to name
 /// a field's kind in diagnostics without carrying its resolved options.

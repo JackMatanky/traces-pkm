@@ -1,4 +1,7 @@
 //! `number` field type definition and parsing.
+//!
+//! Parses the optional `min`, `max`, and `step` attributes for `number`
+//! fields.
 
 use indexmap::IndexMap;
 

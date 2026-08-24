@@ -104,6 +104,7 @@ impl SchemaService {
     ///
     /// Empty iterator, not an error, if `name` has no Schema or nothing extends
     /// it.
+    #[must_use]
     pub(crate) fn children_names_of<'a>(
         &'a self,
         name: &str,

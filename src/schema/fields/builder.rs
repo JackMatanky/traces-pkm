@@ -26,7 +26,7 @@ use crate::{
 
 /// [`SchemaFieldBuilder::resolve_from_raw`]'s result: the inherited base field
 /// (if any), the effective type tag to parse against, and whether parser errors
-/// on this field degrade to warnings rather than failing.
+/// on this field degrade to warnings rather than failing hard.
 struct ResolvedBase<'a> {
     field: Option<&'a SchemaFieldDef>,
     tag: SchemaFieldTypeTag,
@@ -44,6 +44,7 @@ pub(crate) struct SchemaFieldBuilder<'a> {
 }
 
 impl<'a> SchemaFieldBuilder<'a> {
+    /// Create a builder scoped to the given ancestors and resolved schemas.
     pub(crate) const fn new(
         ancestors: &'a IndexSet<SchemaName>,
         resolved: &'a IndexMap<SchemaName, Schema>,
@@ -222,6 +223,10 @@ impl<'a> SchemaFieldBuilder<'a> {
 
     /// Degrade `required` to `false` for Global Schema fields, which can never
     /// be required.
+    ///
+    /// Returns the adjusted `required` value and a
+    /// [`SchemaWarning::StrayGlobalRequired`] when the field lives in the
+    /// Global Schema and was marked required.
     fn handle_global_required_value(
         address: FieldAddressRef<'_>,
         required: bool,

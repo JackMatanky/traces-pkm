@@ -106,9 +106,8 @@ impl SchemaFileField {
 
 /// A borrowed view of a resolved `file` field's filter parts.
 ///
-/// Returned by [`file_filter`].
-///
-/// [`file_filter`]: super::SchemaFieldDef::file_filter
+/// Returned by
+/// [`SchemaFieldDef::file_filter`](super::SchemaFieldDef::file_filter).
 #[derive(Clone, Copy)]
 pub(crate) struct SchemaFileFieldRef<'a> {
     pub(crate) folders: &'a [String],

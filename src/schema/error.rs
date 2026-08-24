@@ -86,37 +86,46 @@ impl From<SchemaFieldBuilderError> for SchemaError {
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.
     ///
-    /// Resolution skips the missing parent; the Schema's own fields still
-    /// resolve, and other valid parents still contribute.
+    /// Resolution skips the missing parent. The Schema's own fields still
+    /// resolve, and other valid parents still contribute their fields.
     MissingExtendsTarget {
         schema: SchemaName,
         target: SchemaName,
     },
     /// The same `extends` target is declared more than once.
+    ///
+    /// Duplicates are ignored; only the first occurrence contributes fields.
     DuplicateExtendsTarget {
         schema: SchemaName,
         target: SchemaName,
     },
     /// A declared `extends` parent exists but failed to build its own
-    /// fields; this Schema still resolves without that parent's
-    /// contribution.
+    /// fields. This Schema resolves without that parent's contribution;
+    /// other valid parents still contribute.
     ParentFailedToResolve {
         schema: SchemaName,
         parent: SchemaName,
     },
-    /// `required = true` on the Global Schema, which is ignored.
+    /// `required = true` on the Global Schema, which is always ignored.
+    ///
+    /// Global Schema fields can never be required; a referencing Schema may
+    /// mark the field required locally instead.
     StrayGlobalRequired {
         field: String,
     },
     /// A bare `$ref` override declares an attribute key that does not belong
-    /// to the resolved base field's type. The key is dropped.
+    /// to the resolved base field's type.
+    ///
+    /// The key is dropped and the base field's attribute is used as-is.
     UnknownOverrideKey {
         address: FieldAddress,
         kind: SchemaFieldTypeTag,
         key: String,
     },
     /// A bare `$ref` override declares a valid attribute key with a
-    /// wrongly-shaped value. The key is dropped, falling back to the base.
+    /// wrongly-shaped value.
+    ///
+    /// The key is dropped and the base field's attribute is used as-is.
     OverrideValueTypeMismatch {
         address: FieldAddress,
         kind: SchemaFieldTypeTag,

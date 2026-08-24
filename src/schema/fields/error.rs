@@ -22,7 +22,8 @@ use crate::schema::error::SchemaWarning;
 /// - [`Self::RefFieldNotFound`]
 ///
 /// Hard failures for `Direct` fields and `$ref` with a `type` override,
-/// degraded to [`SchemaWarning`] for bare `$ref` overrides:
+/// degraded to [`SchemaWarning`][super::super::error::SchemaWarning] for bare
+/// `$ref` overrides:
 /// - [`Self::Parser`]
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFieldBuilderError {
@@ -59,7 +60,8 @@ pub(crate) enum SchemaFieldBuilderError {
 /// Converts into:
 /// - [`SchemaFieldBuilderError::Parser`] (hard failure) for `Direct` fields and
 ///   `$ref` with a `type` override.
-/// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
+/// - [`SchemaWarning`][super::super::error::SchemaWarning] (degraded) for bare
+///   `$ref` overrides.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFieldParserError {
     /// An attribute key was not claimed by any typed extractor.

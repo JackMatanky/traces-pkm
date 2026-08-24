@@ -1,4 +1,6 @@
 //! `date` field type definition and parsing.
+//!
+//! Parses the optional `format` attribute for `date` fields.
 
 use indexmap::IndexMap;
 

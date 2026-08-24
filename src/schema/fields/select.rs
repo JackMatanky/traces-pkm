@@ -1,4 +1,7 @@
 //! `select` field type definition, entry type, and parsing.
+//!
+//! Parses the `values` attribute for `select` fields into
+//! [`SchemaSelectFieldEntry`]s.
 
 use std::sync::Arc;
 
@@ -30,7 +33,7 @@ impl SchemaSelectField {
     }
 
     /// Parse `options` against `select`'s `values` attribute, merging with
-    /// `base` when present. Returns the effective [`SchemaFieldType::Select`].
+    /// `base` when present.
     ///
     /// # Arguments
     ///
@@ -98,6 +101,7 @@ impl SchemaSelectFieldEntry {
     }
 
     #[cfg(test)]
+    /// Build an entry with a distinct label and extra passthrough keys.
     pub(crate) fn with_label(
         value: String,
         label: String,
