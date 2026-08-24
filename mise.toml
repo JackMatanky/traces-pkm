@@ -30,10 +30,20 @@ gitleaks = "latest"
 # into mise.lock so installs are reproducible across machines and CI.
 lockfile = true
 task.disable_spec_from_run_scripts = true
+experimental = true
 
 [env]
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
+
+[task_config]
+global_inputs = ["mise.toml"]
+
+[task_config.cache]
+enabled = true
+
+[task_config.input_groups]
+rust = ["Cargo.toml", "Cargo.lock", "src/**/*.rs"]
 
 # ------------------------------------------------------------- #
 #                      Setup & Maintenance                      #
@@ -45,6 +55,7 @@ run = "hk install --mise"
 
 [tasks.clean]
 description = "Clean Cargo artifacts and optional generated reports"
+confirm = "Clean Cargo artifacts and reports?"
 usage = '''
 flag "--dry-run" help="Show what would be deleted"
 flag "--release" help="Clean release artifacts only"
@@ -134,11 +145,11 @@ raw_args = true
 description = "Debug build"
 run = "cargo build"
 alias = "b"
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
+rust_cache = true
 
 [tasks.watch]
-raw_args = true
 description = "Watch Cargo check/test on changes"
 run = "cargo watch -x check -x test"
 
@@ -234,6 +245,10 @@ flag "--all" {
   Use this after public API changes or when nextest skips a test.
   """
 }
+flag "--mod <module>" {
+  help "Run tests for a specific module only"
+  choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
+}
 arg "[args]" var=#true {
   help "Filter expression forwarded to cargo nextest run"
   long_help """
@@ -263,7 +278,11 @@ if [[ "${usage_all:-false}" == "true" ]]; then
   cargo test --workspace --features test-utils
 else
   eval "args=(${usage_args:-})"
-  cargo nextest run "${args[@]}"
+  if [[ -n "${usage_mod:-}" ]]; then
+    cargo nextest run -E "test(/^${usage_mod}::/)" "${args[@]}"
+  else
+    cargo nextest run "${args[@]}"
+  fi
 fi
 '''
 alias = "t"
@@ -283,15 +302,31 @@ run = "cargo bench --features test-utils"
 # ------------------------------------------------------------- #
 
 [tasks.coverage]
-raw_args = true
 description = "Code coverage with tarpaulin"
-run = "cargo tarpaulin --workspace --out Html"
+usage = '''
+flag "--mod <module>" {
+  help "Run coverage for a specific module only"
+  choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
+}
+'''
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=(--workspace --out html)
+if [[ -n "${usage_mod:-}" ]]; then
+  args=(--include "src/${usage_mod}/**" --out html)
+fi
+cargo tarpaulin "${args[@]}"
+'''
+sources = ["@group:rust"]
+outputs = ["tarpaulin-report.html"]
 
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
 run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 outputs = ["lcov.info"]
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock", "tarpaulin.toml"]
+sources = ["@group:rust", "tarpaulin.toml"]
 
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
@@ -299,6 +334,10 @@ usage = '''
 flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
 flag "-f --file <file>" help="Examine only mutants in this file"
 flag "--iterate" help="Skip mutants that were caught in previous runs"
+flag "--mod <module>" {
+  help "Examine mutants in a specific module only"
+  choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
+}
 '''
 run = '''
 #!/usr/bin/env bash
@@ -313,6 +352,9 @@ if [[ -n "${usage_file:-}" ]]; then
 fi
 if [[ "${usage_iterate:-false}" == "true" ]]; then
   args+=(--iterate)
+fi
+if [[ -n "${usage_mod:-}" ]]; then
+  args+=(--file "src/${usage_mod}/")
 fi
 
 cargo mutants "${args[@]}"
@@ -366,16 +408,18 @@ raw_args = true
 description = "Release build"
 run = "cargo build --release"
 alias = "r"
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
+rust_cache = true
 
 [tasks.doc]
 raw_args = true
 description = "Build documentation (warnings as errors)"
 run = "cargo doc --no-deps"
 env = { RUSTDOCFLAGS = "-D warnings" }
-sources = ["src/**/*.rs", "Cargo.toml"]
+sources = ["@group:rust"]
 outputs = ["target/doc"]
+rust_cache = true
 
 [tasks.verify]
 description = "Full verification gate: check, lint, all tests"
