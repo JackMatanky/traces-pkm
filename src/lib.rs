@@ -76,7 +76,7 @@ pub use config::{
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
-pub use file::FileRecord;
+pub use file::FileBase;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{
     FileStateStore, FileStateStoreError, FileStoreCleanMode,

@@ -1,5 +1,5 @@
 //! Benches `traces_pkm::parse_markdown`, the crate's markdown/frontmatter/task
-//! lexer. Every indexed file passes through this on `FileIndex::build` and
+//! lexer. Every indexed base passes through this on `FileIndex::build` and
 //! `FileIndex::refresh`, so its cost sets a floor under indexing throughput.
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
@@ -39,7 +39,7 @@ fn large() -> String {
 
 /// Parses small, medium, and large synthetic notes through `parse_markdown`.
 ///
-/// Every indexed file passes through this lexer (see module docs); scaling by
+/// Every indexed base passes through this lexer (see module docs); scaling by
 /// field/task density, not just byte count, catches a cost regression that a
 /// correctness test — which only checks the parsed result — would miss.
 fn bench_parse_markdown(c: &mut Criterion) {

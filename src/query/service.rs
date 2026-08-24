@@ -109,7 +109,7 @@ impl<'a> QueryService<'a> {
             .entries()
             .filter(move |entry| {
                 source.is_match(
-                    entry.file(),
+                    entry.base(),
                     entry.note(),
                     &self.class_field_canonical,
                 )
@@ -195,15 +195,15 @@ mod tests {
 
             assert_eq!(outcome.len(), 3);
             assert_eq!(
-                outcome.get(0).map(|r| r.file().path()),
+                outcome.get(0).map(|r| r.base().path()),
                 Some(Path::new("a.md"))
             );
             assert_eq!(
-                outcome.get(1).map(|r| r.file().path()),
+                outcome.get(1).map(|r| r.base().path()),
                 Some(Path::new("b.md"))
             );
             assert_eq!(
-                outcome.get(2).map(|r| r.file().path()),
+                outcome.get(2).map(|r| r.base().path()),
                 Some(Path::new("readme.txt"))
             );
             assert!(outcome.get(3).is_none());
@@ -328,7 +328,7 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one record");
 
-            assert_eq!(record.file().path(), Path::new("book.md"));
+            assert_eq!(record.base().path(), Path::new("book.md"));
         }
 
         #[test]
@@ -394,7 +394,7 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
+                .find(|record| record.base().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(target.inlinks(), [
@@ -418,7 +418,7 @@ mod tests {
             );
             let target = outcome.iter().next().expect("target record");
 
-            assert_eq!(target.file().path(), Path::new("target.md"));
+            assert_eq!(target.base().path(), Path::new("target.md"));
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
         }
 
@@ -437,7 +437,7 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
+                .find(|record| record.base().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
@@ -452,7 +452,7 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let source = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("b.md"))
+                .find(|record| record.base().path() == Path::new("b.md"))
                 .expect("self-linking record");
 
             assert_eq!(source.inlinks(), [PathBuf::from("b.md")]);
@@ -471,7 +471,7 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|r| r.file().path() == Path::new("target.md"))
+                .find(|r| r.base().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
@@ -542,7 +542,7 @@ mod tests {
             let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
-            assert_eq!(record.file().path(), Path::new("project.md"));
+            assert_eq!(record.base().path(), Path::new("project.md"));
         }
 
         #[test]
@@ -599,7 +599,7 @@ mod tests {
             let outcome = query_tasks(&index, &SourceSelector::All);
             let task = outcome.iter().next().expect("one task row");
 
-            assert_eq!(task.file().path(), Path::new("target.md"));
+            assert_eq!(task.base().path(), Path::new("target.md"));
             assert_eq!(task.inlinks(), [PathBuf::from("linker.md")]);
         }
 

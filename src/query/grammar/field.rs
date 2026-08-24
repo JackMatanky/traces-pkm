@@ -7,7 +7,7 @@
 //!
 //! # Supported Accessors
 //!
-//! - `file.<field>`: [`FileField`] accessors backed by [`FileRecord`] metadata
+//! - `file.<field>`: [`FileField`] accessors backed by [`FileBase`] metadata
 //!   (path, name, folder, size, timestamps).
 //! - `task.<field>`: [`TaskField`] accessors valid on task-level records only
 //!   (completed, text).
@@ -16,41 +16,41 @@
 //! - Bare keys: frontmatter or inline metadata field keys.
 //!
 //! [`NoteFieldValue`]: crate::note::NoteFieldValue
-//! [`FileRecord`]: crate::file::FileRecord
+//! [`FileBase`]: crate::file::FileBase
 
 use crate::{field, field::FieldKey, query::error::FieldPathError};
 
-/// A `file.<field>` accessor backed by [`FileRecord`] metadata.
+/// A `file.<field>` accessor backed by [`FileBase`] metadata.
 ///
 /// Each variant maps to a specific accessor name (for example, `file.name`,
 /// `file.mtime`) and resolves to a [`NoteFieldValue`] by reading the
-/// corresponding [`FileRecord`] method.
+/// corresponding [`FileBase`] method.
 ///
 /// The full set of accepted accessor names (including aliases like `ctime`
 /// for `created_at`) is listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
-/// [`FileRecord`]: crate::file::FileRecord
+/// [`FileBase`]: crate::file::FileBase
 /// [`NoteFieldValue`]: crate::note::NoteFieldValue
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
-    /// Accesses [`crate::file::FileRecord::path`].
+    /// Accesses [`crate::file::FileBase::path`].
     Path,
-    /// Accesses [`crate::file::FileRecord::name`].
+    /// Accesses [`crate::file::FileBase::name`].
     Name,
-    /// Accesses [`crate::file::FileRecord::folder`].
+    /// Accesses [`crate::file::FileBase::folder`].
     Folder,
-    /// Accesses [`crate::file::FileRecord::size`].
+    /// Accesses [`crate::file::FileBase::size`].
     Size,
-    /// Accesses [`crate::file::FileRecord::created_at_or_modified`] as a
+    /// Accesses [`crate::file::FileBase::created_at_or_modified`] as a
     /// datetime without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`crate::file::FileRecord::created_at_or_modified`] as a bare
+    /// Accesses [`crate::file::FileBase::created_at_or_modified`] as a bare
     /// date.
     CreatedDate,
-    /// Accesses [`crate::file::FileRecord::modified_at`] as a datetime without
+    /// Accesses [`crate::file::FileBase::modified_at`] as a datetime without
     /// a UTC offset.
     ModifiedDateTime,
-    /// Accesses [`crate::file::FileRecord::modified_at`] as a bare date.
+    /// Accesses [`crate::file::FileBase::modified_at`] as a bare date.
     ModifiedDate,
 }
 

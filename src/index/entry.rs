@@ -3,18 +3,18 @@
 use std::path::{Path, PathBuf};
 
 use super::InlinkMap;
-use crate::{file::FileRecord, note::Note};
+use crate::{file::FileBase, note::Note};
 
 /// Persisted cache of file records, parsed Note metadata, and derived inbound
 /// links.
 ///
-/// Every regular file under the project root contributes a [`FileRecord`].
+/// Every regular file under the project root contributes a [`FileBase`].
 /// Markdown files also contribute a [`Note`], accessible through
 /// [`Self::notes`]. A pure value type: [`super::IndexerService`] produces,
 /// persists, and loads it; `FileIndex` itself carries no `&Path`.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
-    pub(super) records: Vec<FileRecord>,
+    pub(super) bases: Vec<FileBase>,
     pub(super) notes: Vec<Note>,
     pub(super) inlinks: InlinkMap,
 }
@@ -22,22 +22,22 @@ pub struct FileIndex {
 impl FileIndex {
     /// Creates an index from its constituent parts.
     pub(crate) fn new(
-        records: Vec<FileRecord>,
+        bases: Vec<FileBase>,
         notes: Vec<Note>,
         inlinks: InlinkMap,
     ) -> Self {
         Self {
-            records,
+            bases,
             notes,
             inlinks,
         }
     }
 
-    /// Returns indexed [`FileRecord`]s, sorted by path.
+    /// Returns indexed [`FileBase`]s, sorted by path.
     #[inline]
     #[must_use]
-    pub fn records(&self) -> &[FileRecord] {
-        &self.records
+    pub fn bases(&self) -> &[FileBase] {
+        &self.bases
     }
 
     /// Returns indexed [`Note`] records, sorted by path.
@@ -88,7 +88,7 @@ pub(super) fn find_by_path<'a>(
 /// Borrowed file row paired with optional parsed Note data and inbound links.
 #[derive(Copy, Clone)]
 pub(crate) struct FileIndexEntry<'a> {
-    file: &'a FileRecord,
+    base: &'a FileBase,
     note: Option<&'a Note>,
     inlinks: &'a [PathBuf],
 }
@@ -96,8 +96,8 @@ pub(crate) struct FileIndexEntry<'a> {
 impl<'a> FileIndexEntry<'a> {
     /// Returns the indexed file record.
     #[inline]
-    pub(crate) const fn file(&self) -> &'a FileRecord {
-        self.file
+    pub(crate) const fn base(&self) -> &'a FileBase {
+        self.base
     }
 
     /// Returns parsed Note data when this entry is a Markdown file.
@@ -115,7 +115,7 @@ impl<'a> FileIndexEntry<'a> {
 
 /// Iterator over [`FileIndexEntry`] values.
 struct FileIndexEntryIter<'a> {
-    records: std::slice::Iter<'a, FileRecord>,
+    bases: std::slice::Iter<'a, FileBase>,
     notes: std::iter::Peekable<std::slice::Iter<'a, Note>>,
     inlinks: &'a InlinkMap,
 }
@@ -123,7 +123,7 @@ struct FileIndexEntryIter<'a> {
 impl<'a> FileIndexEntryIter<'a> {
     fn new(index: &'a FileIndex) -> Self {
         Self {
-            records: index.records.iter(),
+            bases: index.bases.iter(),
             notes: index.notes.iter().peekable(),
             inlinks: &index.inlinks,
         }
@@ -134,7 +134,7 @@ impl<'a> Iterator for FileIndexEntryIter<'a> {
     type Item = FileIndexEntry<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let file = self.records.next()?;
+        let file = self.bases.next()?;
         while self.notes.peek().is_some_and(|note| note.path() < file.path()) {
             self.notes.next();
         }
@@ -145,7 +145,7 @@ impl<'a> Iterator for FileIndexEntryIter<'a> {
             .map(Vec::as_slice)
             .unwrap_or_default();
         Some(FileIndexEntry {
-            file,
+            base: file,
             note,
             inlinks,
         })

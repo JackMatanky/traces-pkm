@@ -3,7 +3,7 @@
 //! This module provides two families of types for working with files in a
 //! project:
 //!
-//! - [`FileRecord`] captures filesystem metadata (path, timestamps, size) for
+//! - [`FileBase`] captures filesystem metadata (path, timestamps, size) for
 //!   every regular file under a project root.
 //! - The file-name newtypes ([`FileName`], [`BaseName`], [`BaseNameRef`])
 //!   represent different views of a path's final component: full name, owned
@@ -44,7 +44,7 @@ use thiserror::Error;
 /// Stored paths are project-root-relative so the index can move with the
 /// project directory.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct FileRecord {
+pub struct FileBase {
     path: PathBuf,
     name: BaseName,
     folder: PathBuf,
@@ -54,8 +54,8 @@ pub struct FileRecord {
     size: u64,
 }
 
-impl FileRecord {
-    /// Builds a [`FileRecord`] from filesystem metadata.
+impl FileBase {
+    /// Builds a [`FileBase`] from filesystem metadata.
     ///
     /// `path` is the absolute file path under `root`; both are used to store a
     /// project-relative path in the record. The modification time is read from
@@ -268,7 +268,7 @@ impl std::borrow::Borrow<str> for BaseNameRef<'_> {
 /// Coarse file classification used by the two-tier index.
 ///
 /// Markdown notes get parsed [`Note`] metadata in addition to their
-/// [`FileRecord`]. Other files only keep general file metadata.
+/// [`FileBase`]. Other files only keep general file metadata.
 ///
 /// [`Note`]: crate::note::Note
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -399,13 +399,13 @@ impl From<SystemTime> for Timestamp {
 mod tests {
     use super::*;
 
-    /// Builds a `FileRecord` with `created_at`/`modified_at` set directly, for
+    /// Builds a `FileBase` with `created_at`/`modified_at` set directly, for
     /// exercising timestamp accessor behavior without touching the filesystem.
     fn record_with(
         created_at: Option<Timestamp>,
         modified_at: Timestamp,
-    ) -> FileRecord {
-        FileRecord {
+    ) -> FileBase {
+        FileBase {
             path: PathBuf::from("note.md"),
             name: BaseName::from(
                 &FileName::try_from(Path::new("note.md"))
@@ -439,7 +439,7 @@ mod tests {
                     .expect("mkdir");
                 fs::write(&file, "content").expect("write file");
 
-                let record = FileRecord::from_metadata(
+                let record = FileBase::from_metadata(
                     &file,
                     temp.path(),
                     &metadata_for(&file),
@@ -460,7 +460,7 @@ mod tests {
                 let file = temp.path().join("readme.md");
                 fs::write(&file, "hi").expect("write file");
 
-                let record = FileRecord::from_metadata(
+                let record = FileBase::from_metadata(
                     &file,
                     temp.path(),
                     &metadata_for(&file),

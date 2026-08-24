@@ -53,7 +53,7 @@ impl IndexerService {
     ///
     /// Re-scans the root and compares each current file's `(created_at,
     /// modified_at, size)` tuple against the previously persisted
-    /// [`crate::file::FileRecord`]:
+    /// [`crate::file::FileBase`]:
     ///
     /// - Unchanged markdown Notes reuse their parsed [`crate::note::Note`].
     /// - Added or changed markdown Notes are parsed from disk.
@@ -87,7 +87,7 @@ impl IndexerService {
     /// Persists `index` to this service's root, replacing any existing index
     /// contents.
     ///
-    /// [`crate::file::FileRecord`], [`crate::note::Note`], and derived inlink
+    /// [`crate::file::FileBase`], [`crate::note::Note`], and derived inlink
     /// records are all written atomically.
     ///
     /// # Errors
@@ -99,7 +99,7 @@ impl IndexerService {
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> Result<(), IndexError> {
         IndexStore::open(&self.root)?.replace_all(
-            index.records(),
+            index.bases(),
             index.notes(),
             index.inlinks(),
         )
@@ -127,7 +127,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        file::FileRecord,
+        file::FileBase,
         note::Note,
         query::{QueryRecordSet, QueryRequest, QueryService, SourceSelector},
     };
@@ -158,7 +158,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
 
-            assert_eq!(index.records().len(), 2);
+            assert_eq!(index.bases().len(), 2);
             assert_eq!(index.notes().len(), 1);
             assert_eq!(
                 index.notes().first().map(Note::path),
@@ -262,7 +262,7 @@ mod tests {
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.records(), built.records());
+            assert_eq!(loaded.bases(), built.bases());
         }
 
         #[test]
@@ -427,7 +427,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).load().expect("load index");
 
-            assert_eq!(index.records().len(), 0);
+            assert_eq!(index.bases().len(), 0);
             assert_eq!(index.notes().len(), 0);
         }
 
@@ -450,10 +450,10 @@ mod tests {
                 .expect("persist second index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.records().len(), 1);
+            assert_eq!(loaded.bases().len(), 1);
             assert_eq!(loaded.notes().len(), 1);
             assert_eq!(
-                loaded.records().first().map(FileRecord::path),
+                loaded.bases().first().map(FileBase::path),
                 Some(Path::new("second.md"))
             );
             assert_eq!(
@@ -554,7 +554,7 @@ mod tests {
 
             let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(refreshed.notes().len(), 0);
-            assert_eq!(refreshed.records().len(), 0);
+            assert_eq!(refreshed.bases().len(), 0);
         }
 
         #[test]
@@ -576,7 +576,7 @@ mod tests {
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome.iter().next().expect("target record");
 
-            assert_eq!(target.file().path(), Path::new("target.md"));
+            assert_eq!(target.base().path(), Path::new("target.md"));
             assert!(target.inlinks().is_empty());
         }
 
@@ -602,13 +602,13 @@ mod tests {
             let old_target = outcome
                 .iter()
                 .find(|record| {
-                    record.file().path() == Path::new("old-target.md")
+                    record.base().path() == Path::new("old-target.md")
                 })
                 .expect("old target record");
             let new_target = outcome
                 .iter()
                 .find(|record| {
-                    record.file().path() == Path::new("new-target.md")
+                    record.base().path() == Path::new("new-target.md")
                 })
                 .expect("new target record");
 
@@ -664,7 +664,7 @@ mod tests {
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
+                .find(|record| record.base().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
@@ -739,7 +739,7 @@ mod tests {
             let target = outcome
                 .iter()
                 .find(|record| {
-                    record.file().path() == Path::new("notes/foo.md")
+                    record.base().path() == Path::new("notes/foo.md")
                 })
                 .expect("notes/foo.md record");
 

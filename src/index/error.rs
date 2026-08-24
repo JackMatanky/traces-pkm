@@ -80,7 +80,7 @@ pub enum IndexError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// A [`super::FileRecord`] or [`super::Note`] could not be serialized.
+    /// A [`super::FileBase`] or [`super::Note`] could not be serialized.
     #[error("failed to serialize the record for {path}")]
     Serialize {
         /// The record's project-relative path.

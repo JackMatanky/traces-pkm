@@ -16,7 +16,7 @@ use super::{
     inlinks::{InlinkMap, derive_inlinks},
     scan,
 };
-use crate::{file::FileRecord, note::parse_markdown};
+use crate::{file::FileBase, note::parse_markdown};
 
 /// Build plan for a [`super::FileIndex`].
 ///
@@ -34,7 +34,7 @@ use crate::{file::FileRecord, note::parse_markdown};
 ///   notes, and correctly derived inlinks (reused when nothing changed,
 ///   recomputed otherwise).
 pub(crate) struct IndexBuilder {
-    records: Vec<FileRecord>,
+    bases: Vec<FileBase>,
     /// `None` = fresh build (parse all notes at build time).
     /// `Some(records, notes, inlinks)` = refresh (reuse moved notes for
     /// unchanged records, parse only changed ones at build time).
@@ -49,9 +49,9 @@ impl IndexBuilder {
     /// - [`super::IndexError::Io`] if a directory cannot be read or a file's
     ///   metadata cannot be inspected.
     pub(super) fn from_scan(root: &Path) -> Result<Self, super::IndexError> {
-        let records = scan::scan_root(root)?;
+        let bases = scan::scan_root(root)?;
         Ok(Self {
-            records,
+            bases,
             reuse: None,
         })
     }
@@ -68,7 +68,7 @@ impl IndexBuilder {
     /// Parsing of changed or newly added notes is deferred to [`Self::build`].
     pub(super) fn reuse_unchanged(self, cache: super::FileIndex) -> Self {
         let super::FileIndex {
-            records: previous,
+            bases: previous,
             notes: notes_vec,
             inlinks,
         } = cache;
@@ -77,7 +77,7 @@ impl IndexBuilder {
             .map(|n| (n.path().to_path_buf(), n))
             .collect();
         Self {
-            records: self.records,
+            bases: self.bases,
             reuse: Some(RefreshCache {
                 previous,
                 notes,
@@ -105,23 +105,23 @@ impl IndexBuilder {
         root: &Path,
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let Self {
-            records,
+            bases,
             reuse,
         } = self;
         match reuse {
-            None => Self::build_fresh(records, root),
-            Some(reuse) => Self::build_with_reuse(records, root, reuse),
+            None => Self::build_fresh(bases, root),
+            Some(reuse) => Self::build_with_reuse(bases, root, reuse),
         }
     }
 
     fn build_fresh(
-        records: Vec<FileRecord>,
+        bases: Vec<FileBase>,
         root: &Path,
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let mut notes = Vec::new();
-        for record in &records {
-            if record.format() == FileFormat::Note {
-                notes.push(parse_note(root, record)?);
+        for base in &bases {
+            if base.format() == FileFormat::Note {
+                notes.push(parse_note(root, base)?);
             }
         }
         debug_assert!(
@@ -136,29 +136,29 @@ impl IndexBuilder {
              Note-format entries"
         );
         let inlinks = derive_inlinks(&notes);
-        Ok(super::FileIndex::new(records, notes, inlinks))
+        Ok(super::FileIndex::new(bases, notes, inlinks))
     }
 
     fn build_with_reuse(
-        records: Vec<FileRecord>,
+        bases: Vec<FileBase>,
         root: &Path,
         mut reuse: RefreshCache,
     ) -> Result<super::FileIndex, IndexBuilderError> {
-        let mut notes = Vec::with_capacity(records.len());
+        let mut notes = Vec::with_capacity(bases.len());
         let mut dirty = false;
         // Precondition: records and reuse.previous are path-sorted
         // (guaranteed by scan_root).
         let mut prev_iter = reuse.previous.iter().peekable();
 
-        for record in &records {
-            dirty |= Self::has_deleted_note(&mut prev_iter, record.path());
+        for base in &bases {
+            dirty |= Self::has_deleted_note(&mut prev_iter, base.path());
 
-            if record.format() != FileFormat::Note {
+            if base.format() != FileFormat::Note {
                 continue;
             }
 
             let (note, reparsed) = Self::reconcile_note(
-                record,
+                base,
                 &mut prev_iter,
                 &mut reuse.notes,
                 root,
@@ -194,7 +194,7 @@ impl IndexBuilder {
             reuse.inlinks
         };
 
-        Ok(super::FileIndex::new(records, notes, inlinks))
+        Ok(super::FileIndex::new(bases, notes, inlinks))
     }
 
     /// Advances `prev_iter` past every previously-indexed record with a path
@@ -203,7 +203,7 @@ impl IndexBuilder {
     /// deleted Note changes the inbound-link graph; a deleted non-Markdown
     /// file (image, PDF, ...) never contributed outlinks.
     fn has_deleted_note(
-        prev_iter: &mut std::iter::Peekable<std::slice::Iter<'_, FileRecord>>,
+        prev_iter: &mut std::iter::Peekable<std::slice::Iter<'_, FileBase>>,
         current_path: &Path,
     ) -> bool {
         let mut deleted_note = false;
@@ -229,35 +229,35 @@ impl IndexBuilder {
     /// spuriously counted as deleted on the next call, forcing an
     /// unnecessary `derive_inlinks` recompute on almost every refresh.
     fn reconcile_note(
-        record: &FileRecord,
-        prev_iter: &mut std::iter::Peekable<std::slice::Iter<'_, FileRecord>>,
+        base: &FileBase,
+        prev_iter: &mut std::iter::Peekable<std::slice::Iter<'_, FileBase>>,
         prev_notes: &mut HashMap<PathBuf, crate::note::Note>,
         root: &Path,
     ) -> Result<(crate::note::Note, bool), IndexBuilderError> {
         let previous_matches_path =
-            prev_iter.peek().is_some_and(|p| p.path() == record.path());
+            prev_iter.peek().is_some_and(|p| p.path() == base.path());
         let unchanged = previous_matches_path
-            && prev_iter.peek().is_some_and(|p| **p == *record);
+            && prev_iter.peek().is_some_and(|p| **p == *base);
 
         if previous_matches_path {
             prev_iter.next();
         }
 
         if unchanged {
-            let note = prev_notes.remove(record.path()).ok_or_else(|| {
+            let note = prev_notes.remove(base.path()).ok_or_else(|| {
                 IndexBuilderError::MissingNote {
-                    path: record.path().to_path_buf(),
+                    path: base.path().to_path_buf(),
                 }
             })?;
             Ok((note, false))
         } else {
-            Ok((parse_note(root, record)?, true))
+            Ok((parse_note(root, base)?, true))
         }
     }
 }
 
 struct RefreshCache {
-    previous: Vec<FileRecord>,
+    previous: Vec<FileBase>,
     notes: HashMap<PathBuf, crate::note::Note>,
     inlinks: InlinkMap,
 }
@@ -265,16 +265,16 @@ struct RefreshCache {
 /// Reads and parses the markdown file for `record`.
 fn parse_note(
     root: &Path,
-    record: &FileRecord,
+    base: &FileBase,
 ) -> Result<crate::note::Note, IndexBuilderError> {
-    let full_path = root.join(record.path());
+    let full_path = root.join(base.path());
     let content = std::fs::read_to_string(&full_path).map_err(|source| {
         IndexBuilderError::NoteParse {
             path: full_path,
             source,
         }
     })?;
-    Ok(parse_markdown(record.path(), &content))
+    Ok(parse_markdown(base.path(), &content))
 }
 
 #[cfg(test)]
@@ -282,7 +282,7 @@ mod tests {
     use std::{fs, path::Path};
 
     use super::*;
-    use crate::{file::FileRecord, index::IndexerService, note::Note};
+    use crate::{file::FileBase, index::IndexerService, note::Note};
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -301,11 +301,7 @@ mod tests {
                 .expect("build");
 
             assert_eq!(
-                index
-                    .records()
-                    .iter()
-                    .map(FileRecord::path)
-                    .collect::<Vec<_>>(),
+                index.bases().iter().map(FileBase::path).collect::<Vec<_>>(),
                 [Path::new("a.md"), Path::new("b.md")]
             );
         }
@@ -323,7 +319,7 @@ mod tests {
                 .build(temp.path())
                 .expect("build");
 
-            assert_eq!(index.records().len(), 2);
+            assert_eq!(index.bases().len(), 2);
             assert_eq!(index.notes().len(), 1);
             assert_eq!(
                 index.note(Path::new("note.md")).map(Note::path),

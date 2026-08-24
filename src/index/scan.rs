@@ -1,7 +1,7 @@
 //! Recursive filesystem scan for a project root.
 //!
 //! [`scan_root`] walks the directory tree, collects every regular file as a
-//! [`FileRecord`], and returns them sorted by project-relative path. Skipped:
+//! [`FileBase`], and returns them sorted by project-relative path. Skipped:
 //!
 //! - `.git` directories and their descendants
 //! - The index database file (`.traces/index.redb`)
@@ -15,7 +15,7 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use super::{INDEX_FILE, error::IndexError};
-use crate::file::FileRecord;
+use crate::file::FileBase;
 
 /// Recursively scans `root` for regular files and returns sorted records.
 ///
@@ -25,9 +25,9 @@ use crate::file::FileRecord;
 ///
 /// - [`IndexError::Io`] if a directory cannot be read or a file's metadata
 ///   cannot be inspected.
-pub(super) fn scan_root(root: &Path) -> Result<Vec<FileRecord>, IndexError> {
+pub(super) fn scan_root(root: &Path) -> Result<Vec<FileBase>, IndexError> {
     let index_db = root.join(INDEX_FILE);
-    let mut records = Vec::new();
+    let mut bases = Vec::new();
 
     let entries = WalkDir::new(root).into_iter().filter_entry(|entry| {
         !(entry.file_type().is_dir() && is_git_dir(entry.path()))
@@ -40,18 +40,16 @@ pub(super) fn scan_root(root: &Path) -> Result<Vec<FileRecord>, IndexError> {
         }
         let metadata =
             entry.metadata().map_err(|source| io_error(root, source))?;
-        records.push(
-            FileRecord::from_metadata(path, root, &metadata).map_err(
-                |source| IndexError::Io {
-                    path: path.to_path_buf(),
-                    source,
-                },
-            )?,
-        );
+        bases.push(FileBase::from_metadata(path, root, &metadata).map_err(
+            |source| IndexError::Io {
+                path: path.to_path_buf(),
+                source,
+            },
+        )?);
     }
 
-    records.sort_by(|a, b| a.path().cmp(b.path()));
-    Ok(records)
+    bases.sort_by(|a, b| a.path().cmp(b.path()));
+    Ok(bases)
 }
 
 /// Wraps a [`walkdir::Error`] with path context as a [`IndexError::Io`].
@@ -84,8 +82,8 @@ mod tests {
 
         use super::*;
 
-        fn names(records: &[FileRecord]) -> Vec<&Path> {
-            records.iter().map(FileRecord::path).collect()
+        fn names(bases: &[FileBase]) -> Vec<&Path> {
+            bases.iter().map(FileBase::path).collect()
         }
 
         #[test]
@@ -96,9 +94,9 @@ mod tests {
             fs::write(root.join("b/one.md"), "1").expect("write b/one.md");
             fs::write(root.join("a.md"), "2").expect("write a.md");
 
-            let records = scan_root(root).expect("scan root");
+            let bases = scan_root(root).expect("scan root");
 
-            assert_eq!(names(&records), vec![
+            assert_eq!(names(&bases), vec![
                 Path::new("a.md"),
                 Path::new("b/one.md")
             ]);
@@ -113,9 +111,9 @@ mod tests {
                 .expect("write .git/HEAD");
             fs::write(root.join("note.md"), "content").expect("write note.md");
 
-            let records = scan_root(root).expect("scan root");
+            let bases = scan_root(root).expect("scan root");
 
-            assert_eq!(names(&records), vec![Path::new("note.md")]);
+            assert_eq!(names(&bases), vec![Path::new("note.md")]);
         }
 
         #[test]
@@ -127,9 +125,9 @@ mod tests {
                 .expect("write index db");
             fs::write(root.join("note.md"), "content").expect("write note.md");
 
-            let records = scan_root(root).expect("scan root");
+            let bases = scan_root(root).expect("scan root");
 
-            assert_eq!(names(&records), vec![Path::new("note.md")]);
+            assert_eq!(names(&bases), vec![Path::new("note.md")]);
         }
 
         #[cfg(unix)]
@@ -145,18 +143,18 @@ mod tests {
             symlink(&target, root.join("link.md")).expect("create symlink");
             fs::write(root.join("note.md"), "content").expect("write note.md");
 
-            let records = scan_root(root).expect("scan root");
+            let bases = scan_root(root).expect("scan root");
 
-            assert_eq!(names(&records), vec![Path::new("note.md")]);
+            assert_eq!(names(&bases), vec![Path::new("note.md")]);
         }
 
         #[test]
         fn empty_root_yields_no_records() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            let records = scan_root(temp.path()).expect("scan root");
+            let bases = scan_root(temp.path()).expect("scan root");
 
-            assert_eq!(records.len(), 0);
+            assert_eq!(bases.len(), 0);
         }
 
         #[cfg(unix)]

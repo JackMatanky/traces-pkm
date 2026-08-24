@@ -2,7 +2,7 @@
 //!
 //! [`IndexerService`] owns a project root and drives the index lifecycle:
 //! build, persist, load, and refresh. [`FileIndex`] is the value it
-//! produces — a snapshot of every indexed [`FileRecord`] (from
+//! produces — a snapshot of every indexed [`FileBase`] (from
 //! [`crate::file`]), each Markdown file's parsed [`Note`], and derived
 //! inbound links. `FileIndex` carries no `&Path` of its own; construction and
 //! persistence flow entirely through [`IndexerService`].

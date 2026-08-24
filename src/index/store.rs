@@ -1,4 +1,4 @@
-//! Redb persistence for [`FileRecord`], [`Note`], and derived inlink records.
+//! Redb persistence for [`FileBase`], [`Note`], and derived inlink records.
 //!
 //! [`IndexStore`] adapts [`DbStore`] for the file-index schema
 //! (`FILES`, `NOTES`, `LINKS` tables). Callers use [`super::IndexerService`]
@@ -18,7 +18,7 @@ use redb::{
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{INDEX_FILE, error::DbError, inlinks::InlinkMap};
-use crate::{file::FileRecord, index::error::IndexError, note::Note};
+use crate::{file::FileBase, index::error::IndexError, note::Note};
 
 /// Redb database handle for a project root.
 ///
@@ -229,7 +229,7 @@ impl DbStore {
     }
 }
 
-/// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
+/// Postcard-encoded [`FileBase`] bytes keyed by project-relative path.
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
 
 /// Postcard-encoded [`Note`] bytes keyed by project-relative path.
@@ -241,9 +241,9 @@ const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 const LINKS: MultimapTableDefinition<&str, &str> =
     MultimapTableDefinition::new("links");
 
-/// Atomically read snapshot of persisted [`FileRecord`] and [`Note`] records
+/// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
 /// (sorted by path) plus derived inlink edges (target-keyed, unordered).
-type IndexSnapshot = (Vec<FileRecord>, Vec<Note>, InlinkMap);
+type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
 
 /// Redb-backed handle to one project root's index database.
 ///
@@ -270,7 +270,7 @@ impl IndexStore {
         })
     }
 
-    /// Atomically replaces every stored [`FileRecord`], [`Note`], and derived
+    /// Atomically replaces every stored [`FileBase`], [`Note`], and derived
     /// inlink edge.
     ///
     /// All three redb tables are cleared and rewritten in one write
@@ -283,7 +283,7 @@ impl IndexStore {
     /// - [`IndexError::Serialize`] if a record cannot be encoded.
     pub(super) fn replace_all(
         &self,
-        records: &[FileRecord],
+        bases: &[FileBase],
         notes: &[Note],
         links: &InlinkMap,
     ) -> Result<(), IndexError> {
@@ -297,14 +297,14 @@ impl IndexStore {
         write_txn
             .delete_multimap_table(LINKS)
             .map_err(|source| self.db.store_error(source))?;
-        self.db.store_table(&write_txn, FILES, records, FileRecord::path)?;
+        self.db.store_table(&write_txn, FILES, bases, FileBase::path)?;
         self.db.store_table(&write_txn, NOTES, notes, Note::path)?;
         self.db.store_links(&write_txn, LINKS, links)?;
         write_txn.commit().map_err(|source| self.db.store_error(source))?;
         Ok(())
     }
 
-    /// Loads every stored [`FileRecord`] and [`Note`] (sorted by path) and
+    /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and
     /// every derived inlink edge (target-keyed, unordered).
     ///
     /// # Errors
@@ -313,10 +313,10 @@ impl IndexStore {
     /// - [`IndexError::Deserialize`] if stored bytes are not a valid record.
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, IndexError> {
         let read_txn = self.db.begin_read()?;
-        let records = self.db.load_table(&read_txn, FILES, FileRecord::path)?;
+        let bases = self.db.load_table(&read_txn, FILES, FileBase::path)?;
         let notes = self.db.load_table(&read_txn, NOTES, Note::path)?;
         let links = self.db.load_links(&read_txn, LINKS)?;
-        Ok((records, notes, links))
+        Ok((bases, notes, links))
     }
 }
 
@@ -388,10 +388,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            let (records, notes, links) =
+            let (bases, notes, links) =
                 store.load_all().expect("load empty database");
 
-            assert_eq!(records.len(), 0);
+            assert_eq!(bases.len(), 0);
             assert_eq!(notes.len(), 0);
             assert_eq!(links.len(), 0);
         }
@@ -404,7 +404,7 @@ mod tests {
                 "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
             )
             .expect("write note");
-            let records = scan_root(temp.path()).expect("scan root");
+            let bases = scan_root(temp.path()).expect("scan root");
             let note = parse_markdown(
                 "note.md",
                 "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
@@ -413,12 +413,12 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             store
-                .replace_all(&records, &notes, &HashMap::new())
+                .replace_all(&bases, &notes, &HashMap::new())
                 .expect("persist records");
             let (loaded_records, loaded_notes, _) =
                 store.load_all().expect("load records");
 
-            assert_eq!(loaded_records, records);
+            assert_eq!(loaded_records, bases);
             assert_eq!(loaded_notes, notes);
         }
 
@@ -505,15 +505,15 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("café ☕.md"), "content")
                 .expect("write unicode-named file");
-            let records = scan_root(temp.path()).expect("scan root");
+            let bases = scan_root(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
 
             store
-                .replace_all(&records, &[], &HashMap::new())
+                .replace_all(&bases, &[], &HashMap::new())
                 .expect("persist records");
             let (loaded_records, ..) = store.load_all().expect("load records");
 
-            assert_eq!(loaded_records, records);
+            assert_eq!(loaded_records, bases);
         }
 
         #[test]
@@ -524,15 +524,15 @@ mod tests {
             fs::write(temp.path().join("a-b/c.md"), "1")
                 .expect("write a-b/c.md");
             fs::write(temp.path().join("a/z.md"), "2").expect("write a/z.md");
-            let records = scan_root(temp.path()).expect("scan root");
+            let bases = scan_root(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             store
-                .replace_all(&records, &[], &HashMap::new())
+                .replace_all(&bases, &[], &HashMap::new())
                 .expect("persist records");
 
             let (loaded_records, ..) = store.load_all().expect("load records");
 
-            assert_eq!(loaded_records, records);
+            assert_eq!(loaded_records, bases);
         }
     }
 
@@ -614,10 +614,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write note");
-            let records = scan_root(temp.path()).expect("scan root");
+            let bases = scan_root(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             store
-                .replace_all(&records, &[], &HashMap::new())
+                .replace_all(&bases, &[], &HashMap::new())
                 .expect("persist records");
 
             let read_txn = store.db.begin_read().expect("begin read txn");
@@ -628,10 +628,10 @@ mod tests {
                 .expect("value present");
             let raw_bytes = raw.value().to_vec();
 
-            assert!(postcard::from_bytes::<FileRecord>(&raw_bytes).is_ok());
+            assert!(postcard::from_bytes::<FileBase>(&raw_bytes).is_ok());
             let decodes_as_toml = str::from_utf8(&raw_bytes)
                 .ok()
-                .and_then(|text| toml::from_str::<FileRecord>(text).ok());
+                .and_then(|text| toml::from_str::<FileBase>(text).ok());
             assert!(decodes_as_toml.is_none());
         }
     }

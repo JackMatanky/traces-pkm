@@ -2,7 +2,7 @@
 //!
 //! [`QueryService`] powers page-level and task-level results by borrowing a
 //! [`FileIndex`] and executing a [`QueryRequest`]. The pipeline selects Notes
-//! via [`SourceSelector`], pairs each matching Note with its [`FileRecord`] as
+//! via [`SourceSelector`], pairs each matching Note with its [`FileBase`] as
 //! a [`QueryRecord`], and applies chained transformations through
 //! [`QueryRecordSet`].
 //!
@@ -38,8 +38,8 @@
 //! - [`SourceSelector`] is the top-level entry point: either all Notes or a
 //!   parsed expression.
 //! - [`SourceExpr`] wraps the expression AST.
-//! - [`QueryRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
+//! - [`QueryRecord`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
+//!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QueryRecordSet`] stores result rows and provides chained transformation
 //!   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and terminal
 //!   rendering methods (`table`, `list`, `task_list`).
@@ -47,7 +47,7 @@
 //!   transformation constraint violations.
 //!
 //! [`NoteFieldValue`]: crate::note::NoteFieldValue
-//! [`FileRecord`]: crate::file::FileRecord
+//! [`FileBase`]: crate::file::FileBase
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`Note`]: crate::note::Note
 
@@ -112,12 +112,12 @@ mod tests {
             outcome_for_files(temp, &[("note.md", content)])
         }
 
-        /// Finds a [`FileRecord`] by path in a sorted records slice.
-        pub(super) fn find_record<'a>(
-            records: &'a [crate::file::FileRecord],
+        /// Finds a [`FileBase`] by path in a sorted records slice.
+        pub(super) fn find_base<'a>(
+            bases: &'a [crate::file::FileBase],
             path: &Path,
-        ) -> &'a crate::file::FileRecord {
-            records.iter().find(|r| r.path() == path).expect("record not found")
+        ) -> &'a crate::file::FileBase {
+            bases.iter().find(|r| r.path() == path).expect("base not found")
         }
     }
     use fixtures::*;
@@ -134,11 +134,11 @@ mod tests {
                 .expect("write file");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md"));
+            let file = find_base(index.bases(), Path::new("a.md"));
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-            assert_eq!(record.file(), file);
+            assert_eq!(record.base(), file);
         }
 
         #[test]
@@ -201,7 +201,7 @@ mod tests {
             ]);
             let record = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
+                .find(|record| record.base().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(record.inlinks(), [PathBuf::from("b.md")]);
@@ -244,7 +244,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "body");
             let record = outcome.get(0).expect("record");
-            let file = record.file();
+            let file = record.base();
 
             assert_eq!(
                 record.field("file.mtime"),
@@ -332,7 +332,7 @@ mod tests {
             ]);
             let record = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
+                .find(|record| record.base().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(

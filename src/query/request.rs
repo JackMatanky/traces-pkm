@@ -166,7 +166,7 @@ mod tests {
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
-                outcome.get(0).expect("row").file().path(),
+                outcome.get(0).expect("row").base().path(),
                 Path::new("b.md")
             );
         }

@@ -211,7 +211,7 @@ impl Source<'_> {
 /// tie-break for ambiguous wikilink stem matches.
 ///
 /// Reads folder placement from each Note's own `path()` rather than
-/// [`super::FileRecord`]'s precomputed `folder`/`name` fields, because
+/// [`super::FileBase`]'s precomputed `folder`/`name` fields, because
 /// this resolution pass only needs `&[Note]` and pulling in a second
 /// sorted collection for folder data that `Note::path()` already provides
 /// would be redundant.

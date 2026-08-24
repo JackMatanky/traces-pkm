@@ -1,6 +1,6 @@
 //! Query rows and result set types for [`QueryRecordSet`].
 //!
-//! This module implements [`QueryRecord`], which pairs a [`FileRecord`] with
+//! This module implements [`QueryRecord`], which pairs a [`FileBase`] with
 //! its parsed [`Note`] and resolves field paths for template rendering and CLI
 //! output. Each record resolves `file.*`, `task.*`, frontmatter, inline fields,
 //! `tags`, and derived inlinks.
@@ -24,7 +24,7 @@
 //!     .execute(&index, QueryRequest::pages(SourceSelector::All));
 //! ```
 //!
-//! [`FileRecord`]: crate::file::FileRecord
+//! [`FileBase`]: crate::file::FileBase
 //! [`Note`]: crate::note::Note
 
 use std::{path::PathBuf, sync::Arc};
@@ -37,12 +37,12 @@ use super::{
     value::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::{
-    file::FileRecord,
+    file::FileBase,
     index::FileIndexEntry,
     note::{ListItem, Note, NoteFieldValue, TaskStatus},
 };
 
-/// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
+/// A query row pairing a [`FileBase`] with parsed [`Note`] metadata.
 ///
 /// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
 /// and derived inlinks for template rendering and CLI output.
@@ -57,7 +57,7 @@ pub struct QueryRecord {
 
 #[derive(Clone, Debug, PartialEq)]
 struct RecordBase {
-    file: FileRecord,
+    base: FileBase,
     note: Option<Arc<Note>>,
     inlinks: Box<[PathBuf]>,
 }
@@ -79,7 +79,7 @@ impl QueryRecord {
     pub(super) fn from_entry(entry: FileIndexEntry<'_>) -> Self {
         Self {
             base: Arc::new(RecordBase {
-                file: entry.file().clone(),
+                base: entry.base().clone(),
                 note: entry.note().cloned().map(Arc::new),
                 inlinks: Box::<[PathBuf]>::from(entry.inlinks()),
             }),
@@ -129,8 +129,8 @@ impl QueryRecord {
     /// Returns general metadata for the indexed file.
     #[inline]
     #[must_use]
-    pub fn file(&self) -> &FileRecord {
-        &self.base.file
+    pub fn base(&self) -> &FileBase {
+        &self.base.base
     }
 
     /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
@@ -217,7 +217,7 @@ impl QueryRecord {
     }
 
     fn resolve_file_ref(&self, field: FileField) -> QueryFieldValueRef<'_> {
-        let file = self.file();
+        let file = self.base();
         match field {
             FileField::Path => file.path().to_str().map_or_else(
                 || {
