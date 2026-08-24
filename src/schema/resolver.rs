@@ -47,154 +47,6 @@ pub(super) struct ResolvedSchemas {
     pub(super) failures: Vec<SchemaFailure>,
 }
 
-/// Merges one schema's effective field map: parent inheritance
-/// (first-listed-wins), `excludes`, and own `$ref`-resolved fields, into a
-/// resolved [`Schema`]. Scoped to a single schema. Contrast with
-/// [`SchemaSetResolver`], which orchestrates every schema in the set.
-struct SchemaMerger<'a> {
-    name: SchemaNameRef<'a>,
-    fields: IndexMap<FieldName, super::fields::SchemaFieldDef>,
-    ancestors: IndexSet<SchemaName>,
-    warnings: Vec<SchemaWarning>,
-}
-
-impl<'a> SchemaMerger<'a> {
-    fn new(name: SchemaNameRef<'a>) -> Self {
-        Self {
-            name,
-            fields: IndexMap::new(),
-            ancestors: IndexSet::new(),
-            warnings: Vec::new(),
-        }
-    }
-
-    /// First-listed-wins inheritance from `parents`, each already resolved
-    /// in `resolved`.
-    fn inherit_from(
-        &mut self,
-        parents: &[SchemaName],
-        resolved: &IndexMap<SchemaName, Schema>,
-    ) {
-        for parent in parents {
-            let Some(parent_schema) = resolved.get(parent.as_str()) else {
-                self.warnings.push(SchemaWarning::ParentFailedToResolve {
-                    schema: SchemaName::from(self.name),
-                    parent: parent.clone(),
-                });
-                continue;
-            };
-            for (field_name, field) in parent_schema.fields() {
-                self.fields
-                    .entry(field_name.clone())
-                    .or_insert_with(|| field.clone());
-            }
-            self.ancestors.insert(parent.clone());
-            self.ancestors.extend(parent_schema.ancestors().iter().cloned());
-        }
-    }
-
-    /// Removes `excludes` from the inherited field map.
-    fn exclude(&mut self, excludes: &[FieldName]) {
-        for excluded in excludes {
-            self.fields.shift_remove(excluded);
-        }
-    }
-
-    /// `$ref`-resolves and validates own fields via [`SchemaFieldBuilder`].
-    ///
-    /// Must run after [`Self::inherit_from`] (reads `self.ancestors` for
-    /// `$ref` bounds-checking).
-    ///
-    /// # Errors
-    ///
-    /// Propagates any [`SchemaFieldBuilderError`] a `$ref` in `raw.fields`
-    /// fails to resolve or validate.
-    ///
-    /// [`SchemaFieldBuilderError`]: super::fields::SchemaFieldBuilderError
-    fn resolve_own_fields(
-        &mut self,
-        raw: &RawSchema,
-        resolved: &IndexMap<SchemaName, Schema>,
-    ) -> Result<(), SchemaError> {
-        let field_builder = SchemaFieldBuilder::new(&self.ancestors, resolved);
-        for (field_name, raw_field) in &raw.fields {
-            let address = FieldAddressRef::new(self.name, field_name.as_ref());
-            let (field, warnings) = field_builder.build(address, raw_field)?;
-            self.warnings.extend(warnings);
-            self.fields.insert(field_name.clone(), field);
-        }
-        Ok(())
-    }
-
-    /// Rejects a field map where two entries share a canonical
-    /// ([`FieldKey`]) form.
-    ///
-    /// Ambiguous field identities would make later note-vs-schema field
-    /// matching and unknown-field suggestions unreliable.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SchemaError::AmbiguousFieldName`] if two fields canonicalize
-    /// to the same [`FieldKey`].
-    fn reject_ambiguous_canonical_names(&self) -> Result<(), SchemaError> {
-        let mut seen: HashMap<String, &FieldName> = HashMap::new();
-        for field_name in self.fields.keys() {
-            let canonical = FieldKey::canonicalize(field_name.as_str());
-            if let Some(&first) = seen.get(&canonical) {
-                return Err(SchemaError::AmbiguousFieldName {
-                    schema: SchemaName::from(self.name),
-                    first: first.clone(),
-                    second: Box::new(field_name.clone()),
-                });
-            }
-            seen.insert(canonical, field_name);
-        }
-        Ok(())
-    }
-
-    /// Consumes the merger, rejecting ambiguous field names and yielding the
-    /// resolved [`Schema`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SchemaError::AmbiguousFieldName`]; see
-    /// [`Self::reject_ambiguous_canonical_names`].
-    fn into_schema(self) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
-        self.reject_ambiguous_canonical_names()?;
-        Ok((
-            Schema::new(
-                SchemaName::from(self.name),
-                self.fields,
-                self.ancestors,
-            ),
-            self.warnings,
-        ))
-    }
-
-    /// One-shot entry point: inherit from `parents`, apply `raw.excludes`,
-    /// resolve `raw`'s own fields, and yield the merged [`Schema`].
-    ///
-    /// `parents` must already be resolved in `resolved`: the Kahn topological
-    /// sort guarantees this ordering.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Self::resolve_own_fields`]'s and
-    /// [`Self::into_schema`]'s errors.
-    fn merge(
-        name: SchemaNameRef<'a>,
-        raw: &RawSchema,
-        parents: &[SchemaName],
-        resolved: &IndexMap<SchemaName, Schema>,
-    ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
-        let mut merger = Self::new(name);
-        merger.inherit_from(parents, resolved);
-        merger.exclude(&raw.excludes);
-        merger.resolve_own_fields(raw, resolved)?;
-        merger.into_schema()
-    }
-}
-
 /// Entry point for resolving a set of raw schemas into [`Schema`] values.
 ///
 /// Build with [`new`](Self::new), then call [`resolve`](Self::resolve).
@@ -370,6 +222,154 @@ impl<'a> SchemaSetResolver<'a> {
                 .collect();
             schema.set_hierarchy(children, descendants);
         }
+    }
+}
+
+/// Merges one schema's effective field map: parent inheritance
+/// (first-listed-wins), `excludes`, and own `$ref`-resolved fields, into a
+/// resolved [`Schema`]. Scoped to a single schema. Contrast with
+/// [`SchemaSetResolver`], which orchestrates every schema in the set.
+struct SchemaMerger<'a> {
+    name: SchemaNameRef<'a>,
+    fields: IndexMap<FieldName, super::fields::SchemaFieldDef>,
+    ancestors: IndexSet<SchemaName>,
+    warnings: Vec<SchemaWarning>,
+}
+
+impl<'a> SchemaMerger<'a> {
+    /// One-shot entry point: inherit from `parents`, apply `raw.excludes`,
+    /// resolve `raw`'s own fields, and yield the merged [`Schema`].
+    ///
+    /// `parents` must already be resolved in `resolved`: the Kahn topological
+    /// sort guarantees this ordering.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Self::resolve_own_fields`]'s and
+    /// [`Self::into_schema`]'s errors.
+    fn merge(
+        name: SchemaNameRef<'a>,
+        raw: &RawSchema,
+        parents: &[SchemaName],
+        resolved: &IndexMap<SchemaName, Schema>,
+    ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
+        let mut merger = Self::new(name);
+        merger.inherit_from(parents, resolved);
+        merger.exclude(&raw.excludes);
+        merger.resolve_own_fields(raw, resolved)?;
+        merger.into_schema()
+    }
+
+    fn new(name: SchemaNameRef<'a>) -> Self {
+        Self {
+            name,
+            fields: IndexMap::new(),
+            ancestors: IndexSet::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// First-listed-wins inheritance from `parents`, each already resolved
+    /// in `resolved`.
+    fn inherit_from(
+        &mut self,
+        parents: &[SchemaName],
+        resolved: &IndexMap<SchemaName, Schema>,
+    ) {
+        for parent in parents {
+            let Some(parent_schema) = resolved.get(parent.as_str()) else {
+                self.warnings.push(SchemaWarning::ParentFailedToResolve {
+                    schema: SchemaName::from(self.name),
+                    parent: parent.clone(),
+                });
+                continue;
+            };
+            for (field_name, field) in parent_schema.fields() {
+                self.fields
+                    .entry(field_name.clone())
+                    .or_insert_with(|| field.clone());
+            }
+            self.ancestors.insert(parent.clone());
+            self.ancestors.extend(parent_schema.ancestors().iter().cloned());
+        }
+    }
+
+    /// Removes `excludes` from the inherited field map.
+    fn exclude(&mut self, excludes: &[FieldName]) {
+        for excluded in excludes {
+            self.fields.shift_remove(excluded);
+        }
+    }
+
+    /// `$ref`-resolves and validates own fields via [`SchemaFieldBuilder`].
+    ///
+    /// Must run after [`Self::inherit_from`] (reads `self.ancestors` for
+    /// `$ref` bounds-checking).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`SchemaFieldBuilderError`] a `$ref` in `raw.fields`
+    /// fails to resolve or validate.
+    ///
+    /// [`SchemaFieldBuilderError`]: super::fields::SchemaFieldBuilderError
+    fn resolve_own_fields(
+        &mut self,
+        raw: &RawSchema,
+        resolved: &IndexMap<SchemaName, Schema>,
+    ) -> Result<(), SchemaError> {
+        let field_builder = SchemaFieldBuilder::new(&self.ancestors, resolved);
+        for (field_name, raw_field) in &raw.fields {
+            let address = FieldAddressRef::new(self.name, field_name.as_ref());
+            let (field, warnings) = field_builder.build(address, raw_field)?;
+            self.warnings.extend(warnings);
+            self.fields.insert(field_name.clone(), field);
+        }
+        Ok(())
+    }
+
+    /// Rejects a field map where two entries share a canonical
+    /// ([`FieldKey`]) form.
+    ///
+    /// Ambiguous field identities would make later note-vs-schema field
+    /// matching and unknown-field suggestions unreliable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaError::AmbiguousFieldName`] if two fields canonicalize
+    /// to the same [`FieldKey`].
+    fn reject_ambiguous_canonical_names(&self) -> Result<(), SchemaError> {
+        let mut seen: HashMap<String, &FieldName> = HashMap::new();
+        for field_name in self.fields.keys() {
+            let canonical = FieldKey::canonicalize(field_name.as_str());
+            if let Some(&first) = seen.get(&canonical) {
+                return Err(SchemaError::AmbiguousFieldName {
+                    schema: SchemaName::from(self.name),
+                    first: first.clone(),
+                    second: Box::new(field_name.clone()),
+                });
+            }
+            seen.insert(canonical, field_name);
+        }
+        Ok(())
+    }
+
+    /// Consumes the merger, rejecting ambiguous field names and yielding the
+    /// resolved [`Schema`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaError::AmbiguousFieldName`]; see
+    /// [`Self::reject_ambiguous_canonical_names`].
+    fn into_schema(self) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
+        self.reject_ambiguous_canonical_names()?;
+        Ok((
+            Schema::new(
+                SchemaName::from(self.name),
+                self.fields,
+                self.ancestors,
+            ),
+            self.warnings,
+        ))
     }
 }
 

@@ -40,7 +40,7 @@ use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 /// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not
 /// a real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
 /// registry.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 struct DenseIndex(u32);
 
 /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values this
@@ -170,8 +170,8 @@ impl<'a> SchemaGraph<'a, Building> {
     pub(super) fn new(
         raw_schemas: &'a IndexMap<SchemaName, RawSchema>,
     ) -> (Self, Vec<SchemaWarning>) {
-        let mut warnings = Vec::new();
         let count = raw_schemas.len();
+        let mut warnings = Vec::new();
 
         // Assign dense indices in raw-map insertion order.
         let names: Vec<SchemaNameRef<'a>> =
@@ -314,6 +314,69 @@ impl<'a> SchemaGraph<'a, Building> {
                 self.state.queue.push_back(child);
             }
         }
+    }
+
+    /// Consume the building graph, returning a resolved graph if the DAG is
+    /// acyclic, or the cyclic Schemas if a cycle exists.
+    ///
+    /// Drives any remaining [`next_ready`] / [`mark_resolved`] steps before
+    /// checking for cycles, so callers get correct results even if the loop was
+    /// not fully exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Vec<SchemaName>)` listing only the Schemas that participate
+    /// in a cycle. A Schema that merely `extends` into a cycle without being
+    /// part of one itself is excluded.
+    ///
+    /// [`next_ready`]: SchemaGraph::next_ready
+    /// [`mark_resolved`]: SchemaGraph::mark_resolved
+    pub(super) fn into_resolved(
+        mut self,
+    ) -> Result<SchemaGraph<'a, Resolved<'a>>, Vec<SchemaName>> {
+        while let Some(parent) = self.next_ready() {
+            self.mark_resolved(parent);
+        }
+        let cyclic = self.cyclic_schemas();
+        if !cyclic.is_empty() {
+            return Err(cyclic);
+        }
+
+        // Kahn's sort fully drained (no cycle): `self.visited` holds every
+        // schema in topological order (parents before children). Rank each
+        // node, then sort every CSR children slice into rank order (the
+        // precondition `descendants_by_name`'s closure algorithm requires)
+        // before dropping `in_degree`/`queue` by not carrying them forward.
+        let order: Vec<DenseIndex> = self
+            .visited
+            .iter()
+            .filter_map(|&name| self.index_of.get(name.as_str()).copied())
+            .collect();
+        let mut topo_rank: Vec<u32> = vec![0; self.names.len()];
+        for (rank, &idx) in order.iter().enumerate() {
+            if let Some(slot) = topo_rank.get_mut(idx.index()) {
+                *slot = saturating_u32(rank);
+            }
+        }
+        let rank_of = |c: &DenseIndex| {
+            topo_rank.get(c.index()).copied().unwrap_or(u32::MAX)
+        };
+        for i in 0..saturating_u32(self.names.len()) {
+            self.children_slice_mut(DenseIndex(i)).sort_by_key(rank_of);
+        }
+
+        Ok(SchemaGraph {
+            raw: self.raw,
+            names: self.names,
+            index_of: self.index_of,
+            child_offsets: self.child_offsets,
+            child_targets: self.child_targets,
+            visited: self.visited,
+            state: Resolved {
+                order,
+                children_by_name: OnceCell::new(),
+            },
+        })
     }
 
     /// Whether `v` was already resolved by Kahn's sort (provably acyclic).
@@ -491,69 +554,6 @@ impl<'a> SchemaGraph<'a, Building> {
         if let Some(v_lowlink) = tarjan.lowlink_of(v) {
             tarjan.merge_lowlink(parent, v_lowlink);
         }
-    }
-
-    /// Consume the building graph, returning a resolved graph if the DAG is
-    /// acyclic, or the cyclic Schemas if a cycle exists.
-    ///
-    /// Drives any remaining [`next_ready`] / [`mark_resolved`] steps before
-    /// checking for cycles, so callers get correct results even if the loop was
-    /// not fully exhausted.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(Vec<SchemaName>)` listing only the Schemas that participate
-    /// in a cycle. A Schema that merely `extends` into a cycle without being
-    /// part of one itself is excluded.
-    ///
-    /// [`next_ready`]: SchemaGraph::next_ready
-    /// [`mark_resolved`]: SchemaGraph::mark_resolved
-    pub(super) fn into_resolved(
-        mut self,
-    ) -> Result<SchemaGraph<'a, Resolved<'a>>, Vec<SchemaName>> {
-        while let Some(parent) = self.next_ready() {
-            self.mark_resolved(parent);
-        }
-        let cyclic = self.cyclic_schemas();
-        if !cyclic.is_empty() {
-            return Err(cyclic);
-        }
-
-        // Kahn's sort fully drained (no cycle): `self.visited` holds every
-        // schema in topological order (parents before children). Rank each
-        // node, then sort every CSR children slice into rank order (the
-        // precondition `descendants_by_name`'s closure algorithm requires)
-        // before dropping `in_degree`/`queue` by not carrying them forward.
-        let order: Vec<DenseIndex> = self
-            .visited
-            .iter()
-            .filter_map(|&name| self.index_of.get(name.as_str()).copied())
-            .collect();
-        let mut topo_rank: Vec<u32> = vec![0; self.names.len()];
-        for (rank, &idx) in order.iter().enumerate() {
-            if let Some(slot) = topo_rank.get_mut(idx.index()) {
-                *slot = saturating_u32(rank);
-            }
-        }
-        let rank_of = |c: &DenseIndex| {
-            topo_rank.get(c.index()).copied().unwrap_or(u32::MAX)
-        };
-        for i in 0..saturating_u32(self.names.len()) {
-            self.children_slice_mut(DenseIndex(i)).sort_by_key(rank_of);
-        }
-
-        Ok(SchemaGraph {
-            raw: self.raw,
-            names: self.names,
-            index_of: self.index_of,
-            child_offsets: self.child_offsets,
-            child_targets: self.child_targets,
-            visited: self.visited,
-            state: Resolved {
-                order,
-                children_by_name: OnceCell::new(),
-            },
-        })
     }
 }
 
