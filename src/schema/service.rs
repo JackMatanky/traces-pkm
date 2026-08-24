@@ -13,7 +13,7 @@ use super::{
     RawSchema, SchemaName,
     error::{SchemaError, SchemaWarning},
     model::Schema,
-    resolver::{SchemaFailure, SchemaResolver},
+    resolver::{SchemaFailure, SchemaSetResolver},
 };
 use crate::BaseNameRef;
 
@@ -60,7 +60,7 @@ impl SchemaService {
         directory: &Path,
     ) -> Result<SchemaConstruction, SchemaError> {
         let raw = read_raw_schemas(directory)?;
-        let resolved = SchemaResolver::new(&raw).resolve()?;
+        let resolved = SchemaSetResolver::new(&raw).resolve()?;
         let schemas = resolved
             .schemas
             .into_iter()

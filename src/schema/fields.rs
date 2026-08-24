@@ -21,27 +21,24 @@
 use super::RawSchemaFieldType;
 
 mod address;
-pub(crate) use address::{FieldAddress, FieldAddressRef};
-
+mod builder;
+mod date;
 mod error;
+mod file;
+mod number;
+mod parser;
+mod select;
+
+pub(crate) use address::{FieldAddress, FieldAddressRef};
+pub(crate) use builder::SchemaFieldBuilder;
+pub(crate) use date::SchemaDateField;
 pub(crate) use error::SchemaFieldBuilderError;
 // Needed by schema::error's tests (which can't reach the private
 // fields::error module directly).
 #[cfg(test)]
 pub(crate) use error::SchemaFieldParserError;
-
-mod builder;
-pub(crate) use builder::{RefAddressResolver, SchemaFieldBuilder};
-
-mod date;
-pub(crate) use date::SchemaDateField;
-mod file;
 pub(crate) use file::{SchemaFileField, SchemaFileFieldRef};
-mod number;
 pub(crate) use number::SchemaNumberField;
-mod parser;
-mod select;
-
 pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
 
 /// A resolved field definition after inheritance and `$ref` application.

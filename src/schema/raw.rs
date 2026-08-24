@@ -200,7 +200,7 @@ struct RawFieldDefToml {
     #[serde(rename = "type")]
     kind: Option<RawSchemaFieldType>,
     /// A parsed `$ref` address. Resolution happens in
-    /// [`super::fields::RefAddressResolver`].
+    /// [`super::fields::SchemaFieldBuilder`].
     #[serde(rename = "$ref")]
     reference: Option<FieldAddress>,
     required: Option<bool>,
