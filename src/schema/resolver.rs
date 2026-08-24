@@ -195,12 +195,13 @@ impl<'a> SchemaBuilder<'a> {
     /// ancestor-set snapshot: the first pass only reads `self.resolved`,
     /// the second only writes to it.
     fn compute_hierarchy(&mut self, graph: &SchemaGraph<'a>) {
-        let children_by_name = graph.children_by_name();
-        let descendants_by_name = graph.descendants_by_name();
         /// One resolved Schema's recomputed direct children and transitive
         /// descendants, staged before being written back to `self.resolved`.
         type HierarchyUpdate =
             (SchemaName, IndexSet<SchemaName>, IndexSet<SchemaName>);
+
+        let children_by_name = graph.children_by_name();
+        let descendants_by_name = graph.descendants_by_name();
         let hierarchy: Vec<HierarchyUpdate> = self
             .resolved
             .keys()

@@ -50,7 +50,6 @@ pub(super) struct SchemaGraph<'a> {
 
 impl<'a> SchemaGraph<'a> {
     /// Every resolved Schema, in topological order.
-    #[must_use]
     pub(super) fn topological_order(
         &self,
     ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
