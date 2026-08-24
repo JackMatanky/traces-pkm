@@ -59,7 +59,7 @@ pub struct QueryRecord {
 struct RecordBase {
     file: FileRecord,
     note: Option<Arc<Note>>,
-    inlinks: Arc<[PathBuf]>,
+    inlinks: Box<[PathBuf]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -81,7 +81,7 @@ impl QueryRecord {
             base: Arc::new(RecordBase {
                 file: entry.file().clone(),
                 note: entry.note().cloned().map(Arc::new),
-                inlinks: Arc::<[PathBuf]>::from(entry.inlinks()),
+                inlinks: Box::<[PathBuf]>::from(entry.inlinks()),
             }),
             flattened: Vec::new(),
             kind: RowKind::Page,
