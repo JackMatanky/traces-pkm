@@ -268,16 +268,17 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
-nextest_args=(-p traces-pkm --all-features)
-cargo_test_args=(--workspace --all-features)
+if [[ "${usage_feature?}" == "all" ]]; then
+  nextest_args=(-p traces-pkm --all-features)
+  cargo_test_args=(--workspace --all-features)
+else
+  nextest_args=(-p traces-pkm --features "${usage_feature?}")
+  cargo_test_args=(--workspace --features "${usage_feature?}")
+fi
 
 if [[ -n "${usage_mod:-}" ]]; then
   nextest_args+=(-E "test(/^${usage_mod}::/)")
-  cargo_test_args=(-p traces-pkm --all-features)
-fi
-
-if [[ "${usage_feature?}" != "all" ]]; then
-  cargo_test_args=(--workspace --features "${usage_feature?}")
+  cargo_test_args=(-p traces-pkm --features "${usage_feature?}")
 fi
 
 eval "nextest_extra=(${usage_args:-})"
