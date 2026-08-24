@@ -1,15 +1,233 @@
 //! Redb persistence for [`FileRecord`], [`Note`], and derived inlink records.
 //!
-//! [`IndexStore`] adapts [`crate::store::DbStore`] for the file-index schema
+//! [`IndexStore`] adapts [`DbStore`] for the file-index schema
 //! (`FILES`, `NOTES`, `LINKS` tables). Callers use [`super::IndexerService`]
 //! methods instead of interacting with redb tables directly.
 
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
-use redb::{MultimapTableDefinition, TableDefinition};
+use redb::{
+    MultimapTableDefinition, ReadTransaction, ReadableDatabase as _,
+    ReadableMultimapTable as _, ReadableTable as _, TableDefinition,
+    WriteTransaction,
+};
+use serde::{Serialize, de::DeserializeOwned};
 
-use super::{INDEX_FILE, error::FileIndexError, inlinks::InlinkMap};
-use crate::{file::FileRecord, note::Note, store::DbStore};
+use super::{INDEX_FILE, error::DbError, inlinks::InlinkMap};
+use crate::{file::FileRecord, index::error::IndexError, note::Note};
+
+/// Redb database handle for a project root.
+///
+/// Owns one redb connection under a project root and the generic table
+/// store/load mechanics every domain module builds its own table-specific
+/// persistence on top of. Table definitions and their read/write semantics
+/// stay with the domain that owns them (this module owns File/Note/Inlink
+/// tables); this struct owns only "open the file, run a transaction,
+/// serialize/deserialize a value or multimap table" — mechanics with no domain
+/// knowledge.
+#[derive(Debug)]
+pub(super) struct DbStore {
+    db: redb::Database,
+    path: PathBuf,
+}
+
+impl DbStore {
+    /// Opens or creates a redb database at `root.join(relative_path)`.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Io`] if the database's parent directory cannot be created.
+    /// - [`DbError::Redb`] if the database file cannot be opened or created.
+    pub(super) fn open(
+        root: &Path,
+        relative_path: &str,
+    ) -> Result<Self, DbError> {
+        let path = root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| DbError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let db =
+            redb::Database::create(&path).map_err(|source| DbError::Redb {
+                path: path.clone(),
+                source: Box::new(source.into()),
+            })?;
+        Ok(Self {
+            db,
+            path,
+        })
+    }
+
+    /// Returns a reference to the database path.
+    #[inline]
+    #[expect(
+        dead_code,
+        reason = "documented API for future domain table stores (e.g. \
+                  task-system LISTS table)"
+    )]
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Begins a read transaction.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the transaction cannot be started.
+    pub(super) fn begin_read(&self) -> Result<ReadTransaction, DbError> {
+        self.db.begin_read().map_err(|source| self.store_error(source))
+    }
+
+    /// Begins a write transaction.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the transaction cannot be started.
+    pub(super) fn begin_write(&self) -> Result<WriteTransaction, DbError> {
+        self.db.begin_write().map_err(|source| self.store_error(source))
+    }
+
+    /// Serializes `items` with postcard into `table`, keyed by `path_of`.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be opened or written.
+    /// - [`DbError::Serialize`] if an item cannot be postcard-encoded.
+    pub(super) fn store_table<T: Serialize>(
+        &self,
+        write_txn: &WriteTransaction,
+        table: TableDefinition<&str, &[u8]>,
+        items: &[T],
+        path_of: impl Fn(&T) -> &Path,
+    ) -> Result<(), DbError> {
+        let mut table = write_txn
+            .open_table(table)
+            .map_err(|source| self.store_error(source))?;
+        for item in items {
+            let path = path_of(item);
+            let key = path.to_string_lossy();
+            let value = postcard::to_allocvec(item).map_err(|source| {
+                DbError::Serialize {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })?;
+            table
+                .insert(&*key, value.as_slice())
+                .map_err(|source| self.store_error(source))?;
+        }
+        Ok(())
+    }
+
+    /// Deserializes every postcard value in `table` and sorts by `path_of`.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be read.
+    /// - [`DbError::Deserialize`] if stored bytes are corrupt or incompatible.
+    pub(super) fn load_table<T: DeserializeOwned>(
+        &self,
+        read_txn: &ReadTransaction,
+        table: TableDefinition<&str, &[u8]>,
+        path_of: impl Fn(&T) -> &Path,
+    ) -> Result<Vec<T>, DbError> {
+        let mut items: Vec<T> = match read_txn.open_table(table) {
+            Ok(table) => {
+                let mut items = Vec::new();
+                for entry in
+                    table.iter().map_err(|source| self.store_error(source))?
+                {
+                    let (key, value) =
+                        entry.map_err(|source| self.store_error(source))?;
+                    items.push(postcard::from_bytes(value.value()).map_err(
+                        |source| DbError::Deserialize {
+                            path: PathBuf::from(key.value()),
+                            source,
+                        },
+                    )?);
+                }
+                items
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => Vec::new(),
+            Err(source) => return Err(self.store_error(source)),
+        };
+        items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
+        Ok(items)
+    }
+
+    /// Serializes every `target -> sources` edge into the `links` multimap
+    /// table.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be opened or written.
+    pub(super) fn store_links(
+        &self,
+        write_txn: &WriteTransaction,
+        table: MultimapTableDefinition<&str, &str>,
+        links: &HashMap<PathBuf, Vec<PathBuf>>,
+    ) -> Result<(), DbError> {
+        let mut table = write_txn
+            .open_multimap_table(table)
+            .map_err(|source| self.store_error(source))?;
+        for (target, sources) in links {
+            let target_key = target.to_string_lossy();
+            for source in sources {
+                table
+                    .insert(&*target_key, &*source.to_string_lossy())
+                    .map_err(|source| self.store_error(source))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Deserializes every `target -> sources` edge from the `links` multimap
+    /// table.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be read.
+    pub(super) fn load_links(
+        &self,
+        read_txn: &ReadTransaction,
+        table: MultimapTableDefinition<&str, &str>,
+    ) -> Result<HashMap<PathBuf, Vec<PathBuf>>, DbError> {
+        let table = match read_txn.open_multimap_table(table) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Ok(HashMap::new());
+            }
+            Err(source) => return Err(self.store_error(source)),
+        };
+        let mut links = HashMap::new();
+        for entry in table.iter().map_err(|source| self.store_error(source))? {
+            let (target, sources) =
+                entry.map_err(|source| self.store_error(source))?;
+            let mut values = Vec::new();
+            for source in sources {
+                let source =
+                    source.map_err(|source| self.store_error(source))?;
+                values.push(PathBuf::from(source.value()));
+            }
+            links.insert(PathBuf::from(target.value()), values);
+        }
+        Ok(links)
+    }
+
+    /// Wraps a redb error with this store's database path.
+    fn store_error(&self, source: impl Into<redb::Error>) -> DbError {
+        DbError::Redb {
+            path: self.path.clone(),
+            source: Box::new(source.into()),
+        }
+    }
+}
 
 /// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
@@ -42,10 +260,10 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Io`] if the database's parent directory cannot be
+    /// - [`IndexError::Io`] if the database's parent directory cannot be
     ///   created.
-    /// - [`FileIndexError::Store`] if the database file cannot be opened.
-    pub(super) fn open(root: &Path) -> Result<Self, FileIndexError> {
+    /// - [`IndexError::Store`] if the database file cannot be opened.
+    pub(super) fn open(root: &Path) -> Result<Self, IndexError> {
         let db = DbStore::open(root, INDEX_FILE)?;
         Ok(Self {
             db,
@@ -61,14 +279,14 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the transaction fails.
-    /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
+    /// - [`IndexError::Store`] if the transaction fails.
+    /// - [`IndexError::Serialize`] if a record cannot be encoded.
     pub(super) fn replace_all(
         &self,
         records: &[FileRecord],
         notes: &[Note],
         links: &InlinkMap,
-    ) -> Result<(), FileIndexError> {
+    ) -> Result<(), IndexError> {
         let write_txn = self.db.begin_write()?;
         write_txn
             .delete_table(FILES)
@@ -91,10 +309,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if a table cannot be read.
-    /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
-    ///   record.
-    pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
+    /// - [`IndexError::Store`] if a table cannot be read.
+    /// - [`IndexError::Deserialize`] if stored bytes are not a valid record.
+    pub(super) fn load_all(&self) -> Result<IndexSnapshot, IndexError> {
         let read_txn = self.db.begin_read()?;
         let records = self.db.load_table(&read_txn, FILES, FileRecord::path)?;
         let notes = self.db.load_table(&read_txn, NOTES, Note::path)?;
@@ -115,6 +332,52 @@ mod tests {
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
     use crate::{index::scan::scan_root, note::parse_markdown};
+
+    const TEST_TABLE: TableDefinition<&str, &[u8]> =
+        TableDefinition::new("test_table");
+
+    #[test]
+    fn persists_records_as_postcard_bytes_not_toml_text() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let db = DbStore::open(temp.path(), "test.redb").expect("open db");
+        let write_txn = db.begin_write().expect("begin write");
+        db.store_table(&write_txn, TEST_TABLE, &["hello".to_owned()], |s| {
+            Path::new(s.as_str())
+        })
+        .expect("store table");
+        write_txn.commit().expect("commit");
+
+        let read_txn = db.begin_read().expect("begin read");
+        let loaded: Vec<String> = db
+            .load_table(&read_txn, TEST_TABLE, |s: &String| {
+                Path::new(s.as_str())
+            })
+            .expect("load table");
+        assert_eq!(loaded, vec!["hello".to_owned()]);
+    }
+
+    #[test]
+    fn returns_deserialize_error_when_stored_bytes_are_invalid() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let db = DbStore::open(temp.path(), "test.redb").expect("open db");
+        let write_txn = db.begin_write().expect("begin write");
+        {
+            let mut table =
+                write_txn.open_table(TEST_TABLE).expect("open table");
+            table
+                .insert("corrupt.md", [0xFF, 0xFF].as_slice())
+                .expect("insert corrupt");
+        }
+        write_txn.commit().expect("commit");
+
+        let read_txn = db.begin_read().expect("begin read");
+        let result: Result<Vec<String>, DbError> =
+            db.load_table(&read_txn, TEST_TABLE, |s: &String| {
+                Path::new(s.as_str())
+            });
+
+        assert!(matches!(result, Err(DbError::Deserialize { .. })));
+    }
 
     mod persistence {
         use pretty_assertions::assert_eq;
@@ -286,7 +549,7 @@ mod tests {
             let error = IndexStore::open(root)
                 .expect_err("directory at db path fails to open");
 
-            assert!(matches!(error, FileIndexError::Store { .. }));
+            assert!(matches!(error, IndexError::Store { .. }));
         }
 
         #[cfg(unix)]
@@ -303,7 +566,7 @@ mod tests {
             let error = IndexStore::open(root)
                 .expect_err("unwritable root fails to open store");
 
-            assert!(matches!(error, FileIndexError::Io { .. }));
+            assert!(matches!(error, IndexError::Io { .. }));
         }
     }
 
@@ -342,7 +605,7 @@ mod tests {
 
             assert!(matches!(
                 &error,
-                FileIndexError::Deserialize { path, .. } if path == Path::new("bad.md")
+                IndexError::Deserialize { path, .. } if path == Path::new("bad.md")
             ));
         }
 

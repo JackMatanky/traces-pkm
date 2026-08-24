@@ -49,7 +49,7 @@ mod store;
 pub use entry::FileIndex;
 pub(crate) use entry::FileIndexEntry;
 #[allow(unused_imports, reason = "re-exported for downstream callers")]
-pub use error::{FileIndexError, IndexBuilderError};
+pub use error::{IndexBuilderError, IndexError};
 pub(crate) use inlinks::InlinkMap;
 pub use service::IndexerService;
 

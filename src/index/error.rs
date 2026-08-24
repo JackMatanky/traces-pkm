@@ -1,22 +1,61 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`FileIndexError`] covers persistence failures (database, serialization).
+//! [`IndexError`] covers persistence failures (database, serialization).
 //! [`IndexBuilderError`] covers build-pipeline failures (scan, parse).
-//! The [`From`] impl converts builder errors into file index errors for
+//! The [`From`] impl converts builder errors into index errors for
 //! callers that use the unified [`super::FileIndex`] API.
 
 use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
-use crate::store::StoreError;
+/// Generic error type for low-level redb persistence operations.
+#[derive(Debug, Error)]
+pub(crate) enum DbError {
+    /// A filesystem operation failed during directory creation or file setup.
+    #[error("failed to access {path}")]
+    Io {
+        /// The path that could not be accessed.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Opening, reading, or writing the redb-backed database failed.
+    #[error("failed to access the database at {path}")]
+    Redb {
+        /// The database file path.
+        path: PathBuf,
+        /// Source redb error.
+        #[source]
+        source: Box<redb::Error>,
+    },
+    /// A record could not be serialized.
+    #[error("failed to serialize the record for {path}")]
+    Serialize {
+        /// The record's project-relative path.
+        path: PathBuf,
+        /// Source postcard serialization error.
+        #[source]
+        source: postcard::Error,
+    },
+    /// A stored record could not be deserialized.
+    #[error("failed to deserialize the record for {path}")]
+    Deserialize {
+        /// The record's project-relative path.
+        path: PathBuf,
+        /// Source postcard deserialization error.
+        #[source]
+        source: postcard::Error,
+    },
+}
 
 /// Error type for [`super::FileIndex`] persistence operations.
 ///
 /// Variants distinguish database access, and postcard encoding failures.
 /// Build-time failures are covered by [`IndexBuilderError`].
 #[derive(Debug, Error)]
-pub enum FileIndexError {
+pub enum IndexError {
     /// A filesystem operation failed during a scan or directory setup.
     ///
     /// Occurs while scanning a project root or preparing the index database's
@@ -66,9 +105,45 @@ pub enum FileIndexError {
     },
 }
 
+impl From<DbError> for IndexError {
+    #[inline]
+    fn from(err: DbError) -> Self {
+        match err {
+            DbError::Io {
+                path,
+                source,
+            } => Self::Io {
+                path,
+                source,
+            },
+            DbError::Redb {
+                path,
+                source,
+            } => Self::Store {
+                path,
+                source,
+            },
+            DbError::Serialize {
+                path,
+                source,
+            } => Self::Serialize {
+                path,
+                source,
+            },
+            DbError::Deserialize {
+                path,
+                source,
+            } => Self::Deserialize {
+                path,
+                source,
+            },
+        }
+    }
+}
+
 /// Error type for the [`super::builder::IndexBuilder`] build pipeline.
 ///
-/// Distinct from [`FileIndexError`] to separate build-time failures
+/// Distinct from [`IndexError`] to separate build-time failures
 /// (filesystem scan, markdown parse) from persistence failures (database,
 /// serialization).
 #[derive(Debug, Error)]
@@ -104,7 +179,7 @@ pub enum IndexBuilderError {
     },
 }
 
-impl From<IndexBuilderError> for FileIndexError {
+impl From<IndexBuilderError> for IndexError {
     #[inline]
     fn from(err: IndexBuilderError) -> Self {
         match err {
@@ -127,42 +202,6 @@ impl From<IndexBuilderError> for FileIndexError {
                     io::ErrorKind::NotFound,
                     "note missing for matched record",
                 ),
-            },
-        }
-    }
-}
-
-impl From<StoreError> for FileIndexError {
-    #[inline]
-    fn from(err: StoreError) -> Self {
-        match err {
-            StoreError::Io {
-                path,
-                source,
-            } => Self::Io {
-                path,
-                source,
-            },
-            StoreError::Redb {
-                path,
-                source,
-            } => Self::Store {
-                path,
-                source,
-            },
-            StoreError::Serialize {
-                path,
-                source,
-            } => Self::Serialize {
-                path,
-                source,
-            },
-            StoreError::Deserialize {
-                path,
-                source,
-            } => Self::Deserialize {
-                path,
-                source,
             },
         }
     }
@@ -205,12 +244,12 @@ mod tests {
         }
     }
 
-    mod file_index_error_display {
+    mod index_error_display {
         use super::*;
 
         #[test]
         fn io_includes_path_in_message() {
-            let err = FileIndexError::Io {
+            let err = IndexError::Io {
                 path: PathBuf::from("data.csv"),
                 source: io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -223,7 +262,7 @@ mod tests {
 
         #[test]
         fn store_includes_path_in_message() {
-            let err = FileIndexError::Store {
+            let err = IndexError::Store {
                 path: PathBuf::from(".traces/index.redb"),
                 source: Box::new(redb::Error::DatabaseAlreadyOpen),
             };
@@ -233,7 +272,7 @@ mod tests {
 
         #[test]
         fn serialize_includes_path_in_message() {
-            let err = FileIndexError::Serialize {
+            let err = IndexError::Serialize {
                 path: PathBuf::from("note.md"),
                 source: postcard::Error::DeserializeUnexpectedEnd,
             };
@@ -243,7 +282,7 @@ mod tests {
 
         #[test]
         fn deserialize_includes_path_in_message() {
-            let err = FileIndexError::Deserialize {
+            let err = IndexError::Deserialize {
                 path: PathBuf::from("note.md"),
                 source: postcard::Error::DeserializeUnexpectedEnd,
             };
@@ -266,10 +305,10 @@ mod tests {
                 source,
             };
 
-            let converted: FileIndexError = err.into();
+            let converted: IndexError = err.into();
 
             assert!(
-                matches!(converted, FileIndexError::Io { path, .. } if path == Path::new("missing.rs"))
+                matches!(converted, IndexError::Io { path, .. } if path == Path::new("missing.rs"))
             );
         }
 
@@ -281,10 +320,10 @@ mod tests {
                 source,
             };
 
-            let converted: FileIndexError = err.into();
+            let converted: IndexError = err.into();
 
             assert!(
-                matches!(converted, FileIndexError::Io { path, .. } if path == Path::new("notes/bad.md"))
+                matches!(converted, IndexError::Io { path, .. } if path == Path::new("notes/bad.md"))
             );
         }
 
@@ -294,9 +333,9 @@ mod tests {
                 path: PathBuf::from("orphan.md"),
             };
 
-            let converted: FileIndexError = err.into();
+            let converted: IndexError = err.into();
 
-            assert!(matches!(converted, FileIndexError::Io { path, source }
+            assert!(matches!(converted, IndexError::Io { path, source }
                 if path == Path::new("orphan.md")
                     && source.kind() == io::ErrorKind::NotFound));
         }
@@ -310,7 +349,7 @@ mod tests {
         #[test]
         fn io_preserves_source() {
             let source = io::Error::new(io::ErrorKind::BrokenPipe, "pipe");
-            let err = FileIndexError::Io {
+            let err = IndexError::Io {
                 path: PathBuf::from("x"),
                 source,
             };
@@ -328,7 +367,7 @@ mod tests {
 
         #[test]
         fn store_preserves_source() {
-            let err = FileIndexError::Store {
+            let err = IndexError::Store {
                 path: PathBuf::from("db"),
                 source: Box::new(redb::Error::DatabaseAlreadyOpen),
             };
@@ -338,7 +377,7 @@ mod tests {
 
         #[test]
         fn serialize_preserves_source() {
-            let err = FileIndexError::Serialize {
+            let err = IndexError::Serialize {
                 path: PathBuf::from("x"),
                 source: postcard::Error::DeserializeUnexpectedEnd,
             };
@@ -348,7 +387,7 @@ mod tests {
 
         #[test]
         fn deserialize_preserves_source() {
-            let err = FileIndexError::Deserialize {
+            let err = IndexError::Deserialize {
                 path: PathBuf::from("x"),
                 source: postcard::Error::DeserializeUnexpectedEnd,
             };

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use super::{FileIndex, FileIndexError, builder, store::IndexStore};
+use super::{FileIndex, IndexError, builder, store::IndexStore};
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
@@ -41,10 +41,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, or a markdown file cannot be read.
+    /// - [`IndexError::Io`] if a directory cannot be read, a file's metadata
+    ///   cannot be inspected, or a markdown file cannot be read.
     #[inline]
-    pub fn build(&self) -> Result<FileIndex, FileIndexError> {
+    pub fn build(&self) -> Result<FileIndex, IndexError> {
         Ok(builder::IndexBuilder::from_scan(&self.root)?.build(&self.root)?)
     }
 
@@ -72,12 +72,12 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, or a markdown file cannot be read.
-    /// - [`FileIndexError::Store`] or [`FileIndexError::Deserialize`] if the
-    ///   previous index cannot be loaded.
+    /// - [`IndexError::Io`] if a directory cannot be read, a file's metadata
+    ///   cannot be inspected, or a markdown file cannot be read.
+    /// - [`IndexError::Store`] or [`IndexError::Deserialize`] if the previous
+    ///   index cannot be loaded.
     #[inline]
-    pub fn refresh(&self) -> Result<FileIndex, FileIndexError> {
+    pub fn refresh(&self) -> Result<FileIndex, IndexError> {
         let previous = self.load()?;
         Ok(builder::IndexBuilder::from_scan(&self.root)?
             .reuse_unchanged(previous)
@@ -92,12 +92,12 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Io`] if the database's parent directory cannot be
+    /// - [`IndexError::Io`] if the database's parent directory cannot be
     ///   created.
-    /// - [`FileIndexError::Store`] if the database transaction fails.
-    /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
+    /// - [`IndexError::Store`] if the database transaction fails.
+    /// - [`IndexError::Serialize`] if a record cannot be encoded.
     #[inline]
-    pub fn persist(&self, index: &FileIndex) -> Result<(), FileIndexError> {
+    pub fn persist(&self, index: &FileIndex) -> Result<(), IndexError> {
         IndexStore::open(&self.root)?.replace_all(
             index.records(),
             index.notes(),
@@ -111,11 +111,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the database cannot be read.
-    /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
-    ///   record.
+    /// - [`IndexError::Store`] if the database cannot be read.
+    /// - [`IndexError::Deserialize`] if stored bytes are not a valid record.
     #[inline]
-    pub fn load(&self) -> Result<FileIndex, FileIndexError> {
+    pub fn load(&self) -> Result<FileIndex, IndexError> {
         let (records, notes, inlinks) =
             IndexStore::open(&self.root)?.load_all()?;
         Ok(FileIndex::new(records, notes, inlinks))
@@ -226,7 +225,7 @@ mod tests {
 
             let result = IndexerService::new(temp.path()).build();
 
-            assert!(matches!(result, Err(FileIndexError::Io { .. })));
+            assert!(matches!(result, Err(IndexError::Io { .. })));
         }
 
         #[test]

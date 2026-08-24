@@ -75,7 +75,7 @@ use minijinja::{
 };
 
 use crate::{
-    index::{FileIndex, FileIndexError, IndexerService},
+    index::{FileIndex, IndexError, IndexerService},
     note::NoteFieldValue,
     query::{
         ClassExpansionMode, FieldPath, FileField, QueryError, QueryRecord,
@@ -235,19 +235,19 @@ impl Object for QueryOps {
 pub(super) fn cached_refresh(
     state: &State,
     root: &Path,
-) -> Result<Arc<FileIndex>, FileIndexError> {
+) -> Result<Arc<FileIndex>, IndexError> {
     super::cache::cached(state, INDEX_CACHE_KEY, || {
         IndexerService::new(root).refresh().map(Arc::new)
     })
 }
 
-/// Maps a [`FileIndexError`] into a [`minijinja::Error`].
+/// Maps a [`IndexError`] into a [`minijinja::Error`].
 ///
 /// Keeps the original error as [`source`], matching [`super::ui`]'s
 /// `dialog_error`.
 ///
 /// [`source`]: std::error::Error::source
-pub(super) fn index_error(source: FileIndexError) -> Error {
+pub(super) fn index_error(source: IndexError) -> Error {
     super::error::invalid_operation("failed to refresh the file index", source)
 }
 

@@ -64,7 +64,6 @@ mod note;
 mod path;
 mod query;
 mod schema;
-mod store;
 mod template;
 
 pub mod cli;
@@ -87,7 +86,7 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
-pub use index::{FileIndex, FileIndexError, IndexerService};
+pub use index::{FileIndex, IndexError, IndexerService};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,

@@ -46,11 +46,9 @@ impl IndexBuilder {
     ///
     /// # Errors
     ///
-    /// - [`super::FileIndexError::Io`] if a directory cannot be read or a
-    ///   file's metadata cannot be inspected.
-    pub(super) fn from_scan(
-        root: &Path,
-    ) -> Result<Self, super::FileIndexError> {
+    /// - [`super::IndexError::Io`] if a directory cannot be read or a file's
+    ///   metadata cannot be inspected.
+    pub(super) fn from_scan(root: &Path) -> Result<Self, super::IndexError> {
         let records = scan::scan_root(root)?;
         Ok(Self {
             records,

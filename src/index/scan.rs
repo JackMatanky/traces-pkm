@@ -14,7 +14,7 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use super::{INDEX_FILE, error::FileIndexError};
+use super::{INDEX_FILE, error::IndexError};
 use crate::file::FileRecord;
 
 /// Recursively scans `root` for regular files and returns sorted records.
@@ -23,11 +23,9 @@ use crate::file::FileRecord;
 ///
 /// # Errors
 ///
-/// - [`FileIndexError::Io`] if a directory cannot be read or a file's metadata
+/// - [`IndexError::Io`] if a directory cannot be read or a file's metadata
 ///   cannot be inspected.
-pub(super) fn scan_root(
-    root: &Path,
-) -> Result<Vec<FileRecord>, FileIndexError> {
+pub(super) fn scan_root(root: &Path) -> Result<Vec<FileRecord>, IndexError> {
     let index_db = root.join(INDEX_FILE);
     let mut records = Vec::new();
 
@@ -44,7 +42,7 @@ pub(super) fn scan_root(
             entry.metadata().map_err(|source| io_error(root, source))?;
         records.push(
             FileRecord::from_metadata(path, root, &metadata).map_err(
-                |source| FileIndexError::Io {
+                |source| IndexError::Io {
                     path: path.to_path_buf(),
                     source,
                 },
@@ -56,13 +54,13 @@ pub(super) fn scan_root(
     Ok(records)
 }
 
-/// Wraps a [`walkdir::Error`] with path context as a [`FileIndexError::Io`].
+/// Wraps a [`walkdir::Error`] with path context as a [`IndexError::Io`].
 ///
 /// Falls back to `root` if the underlying error provides no path (such as rare
 /// symlink loop errors).
-fn io_error(root: &Path, source: walkdir::Error) -> FileIndexError {
+fn io_error(root: &Path, source: walkdir::Error) -> IndexError {
     let path = source.path().unwrap_or(root).to_path_buf();
-    FileIndexError::Io {
+    IndexError::Io {
         path,
         source: source.into(),
     }
@@ -176,7 +174,7 @@ mod tests {
 
             let error = scan_root(root).expect_err("unreadable dir fails");
 
-            assert!(matches!(error, FileIndexError::Io { .. }));
+            assert!(matches!(error, IndexError::Io { .. }));
         }
     }
 }

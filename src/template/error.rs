@@ -17,7 +17,7 @@ use std::{error::Error as StdError, io, path::PathBuf};
 use thiserror::Error;
 
 use super::path::TemplatePathError;
-use crate::{DialogError, index::FileIndexError, query::QueryError};
+use crate::{DialogError, index::IndexError, query::QueryError};
 
 /// Reports the failed stage of a template operation.
 ///
@@ -196,7 +196,7 @@ pub fn classify_render_error(error: &minijinja::Error) -> RenderFailureKind {
         if err.downcast_ref::<QueryError>().is_some() {
             return RenderFailureKind::Query;
         }
-        if err.downcast_ref::<FileIndexError>().is_some() {
+        if err.downcast_ref::<IndexError>().is_some() {
             return RenderFailureKind::Index;
         }
         if err.downcast_ref::<io::Error>().is_some() {

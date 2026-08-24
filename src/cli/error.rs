@@ -21,7 +21,7 @@ use crate::{
         ConfigBuilderError, ConfigLoadError, ConfigScaffoldError,
         ConfigStateError, DiscoveryError,
     },
-    index::FileIndexError,
+    index::IndexError,
     query::{QueryDialect, QueryError, QueryRequestError},
     schema::SchemaError,
     template::{
@@ -42,7 +42,7 @@ use crate::{
               QueryError stay pub(crate); construction and matching happen \
               inside crate::cli, callers use CliError's Display/Diagnostic \
               surface, never these types directly. TemplateError and \
-              FileIndexError are pub only under cfg(any(test, feature = \
+              IndexError are pub only under cfg(any(test, feature = \
               \"test-utils\")), where FileIndex::build/refresh and \
               TemplateService::render_to_file are themselves pub for external \
               benchmark/test use"
@@ -173,7 +173,7 @@ pub enum CliError {
         root: PathBuf,
         /// Source `FileIndex` error.
         #[source]
-        source: FileIndexError,
+        source: IndexError,
     },
     /// Loading Schemas needed to resolve a File Class query failed.
     #[error("failed to load Schemas for query in {root}")]
@@ -987,7 +987,7 @@ mod tests {
             let root = PathBuf::from("/some/project");
             let error = CliError::Index {
                 root: root.clone(),
-                source: FileIndexError::Io {
+                source: IndexError::Io {
                     path: root.join("notes"),
                     source: io::Error::other("boom"),
                 },
@@ -1717,7 +1717,7 @@ mod tests {
                         minijinja::ErrorKind::InvalidOperation,
                         "failed to refresh the file index",
                     )
-                    .with_source(FileIndexError::Io {
+                    .with_source(IndexError::Io {
                         path: PathBuf::from("/project"),
                         source: io::Error::other("boom"),
                     }),
