@@ -1,0 +1,134 @@
+# 16 — Correlate LINKS Byte Keys Against Loaded Notes Instead of Reconstructing Independently
+
+**What to build:** `IndexStore::load_links` (and its callers
+`load_all`/`load_bases_and_links`) stop reconstructing `PathBuf` values
+independently from stored `LINKS` bytes, and instead correlate each
+stored edge against the already-loaded `bases`/`notes` list, using the
+authoritative `Path` reference from that list rather than a value
+rebuilt purely from redb bytes.
+
+**Related to:** the `src/index/store.rs` redb-adapter deepening (ticket
+14). Not blocked by it — the correlation problem exists today with
+`&str` keys too — but the byte-key work is what surfaced it, and lands
+the `str::from_utf8` + lossy-fallback stopgap this ticket supersedes.
+Deliberately numbered and ordered last of the three tickets from this
+architecture review — lowest priority, do after ticket 14 and ticket 15.
+
+**Category:** enhancement
+
+**Status:** ready-for-agent
+
+- [ ] `load_links`/`load_all`/`load_bases_and_links` resolve each stored
+      `LINKS` edge's target/source against the freshly-loaded
+      `bases`/`notes` list (matched by path bytes) instead of building a
+      `PathBuf` purely from stored bytes.
+- [ ] A stored edge whose target or source no longer matches any
+      currently-loaded Note (stale/orphaned — e.g. the note was deleted
+      since the edge was persisted) has defined, tested behavior instead
+      of silently producing a `PathBuf` that can never equal a real
+      `FileIndexEntry`'s path.
+- [ ] A note with a non-Unicode filename that both links to and is
+      linked from another note survives a `persist` → `load` round trip
+      with byte-exact inlink paths (no `str::from_utf8`/lossy-fallback
+      approximation).
+- [ ] `IndexerService::load()` (currently test/library-only — not on the
+      production CLI/template `refresh()` path) returns correct
+      `entries().inlinks()` for such a note; add the missing coverage
+      rather than relying on `refresh()`'s fresh `derive_inlinks`
+      masking the gap.
+
+## Comments
+
+> *Filed during an architecture-review grilling session on `src/index/`,
+> not standard AI triage.*
+
+### Triage Notes
+
+Surfaced while grilling the "deepen `IndexStore`'s redb adapter"
+candidate: fixing `LINKS`' key collision risk via `&[u8]` keys still
+leaves `load_links` reconstructing `PathBuf` values from raw stored
+bytes with no companion struct to fall back on (unlike `FILES`/`NOTES`,
+whose `path` field lives inside the postcard-encoded `FileBase`/`Note`
+value and never needs reconstruction from the key). The user preferred
+not to introduce `unsafe` for that reconstruction; ticket 14 lands a
+safe `str::from_utf8` + `String::from_utf8_lossy` fallback that narrows
+the blast radius (from "any path can collide" to "only a non-Unicode
+path can mis-reconstruct on load") without eliminating it.
+
+Traced the actual current impact: production callers (`cli`
+list/table/task, the minijinja `query`/`tasks` namespace) only ever call
+`refresh()`, whose final in-memory `FileIndex` always derives inlinks
+fresh from `derive_inlinks(&notes)` — real `Path` refs, no
+reconstruction. The loaded/reconstructed `LINKS` data only feeds
+`diff_inlinks`'s "previous" side (deciding what to write in the
+incremental delta), so today's worst case for a non-Unicode-named note
+is a wastefully-rewritten link edge on every refresh, not a wrong query
+result. The path where a stale reconstruction could actually surface in
+query output — `IndexerService::load()` — isn't called by any production
+code path today.
+
+Deferred rather than folded into ticket 14 because it's a second,
+narrower interface change (`load_links` needs `notes` loaded and passed
+in before it runs, today it's independent) with a second edge case to
+define (stale/orphaned edge with no match in current `notes`) — scope
+growth on a ticket that already covers a value codec, byte keys, a
+migration path, and durability tuning. Numbered and sequenced last of
+the three architecture-review tickets for the same reason: lowest
+priority, safe to defer indefinitely without blocking ticket 14 or
+ticket 15.
+
+## Agent Brief
+
+**Category:** enhancement
+
+**Summary:** Make `LINKS` round-trip through persistence with
+byte-exact fidelity for every indexed Note's path, including
+non-Unicode filenames, by correlating stored edges against
+already-loaded Notes instead of reconstructing `PathBuf` values
+independently.
+
+**Current behavior (after ticket 14 lands):** `FILES`/`NOTES` tables
+key on `&[u8]` derived from `path.as_os_str().as_encoded_bytes()`, with
+the authoritative `PathBuf` always sourced from the postcard-decoded
+`FileBase`/`Note` value — never reconstructed from the key. `LINKS` has
+no such companion value: both its key (target path) and value (source
+path) are bare path bytes, so `load_links` must build a `PathBuf`
+purely from stored bytes. The safe path (`str::from_utf8` succeeding)
+is exact; the fallback (`String::from_utf8_lossy`) is not, for the rare
+non-Unicode-filename case.
+
+**Desired behavior:** `load_links` (or whichever call site assembles
+the final `InlinkMap` after loading) resolves each stored edge's raw
+bytes against the freshly-loaded `bases`/`notes` list — e.g. a
+`HashMap<&[u8], &Path>` built once from `notes` (LINKS edges are always
+between indexed Notes, never other File Records) — and uses the
+matched, authoritative `Path` rather than any independent
+reconstruction. Falls back to a defined behavior (drop the edge, most
+likely — a link to a Note no longer in the index shouldn't be shown)
+when no match exists, rather than producing an orphaned `PathBuf`.
+
+**Key interfaces:**
+
+- `IndexStore::load_links` — today `pub(super) fn load_links(&self,
+  read_txn: &ReadTransaction, table: MultimapTableDefinition<...>) ->
+  Result<InlinkMap, DbError>`, independent of `notes`. Needs either a
+  `notes: &[Note]` parameter or to move to a call site that already has
+  both loaded.
+- `IndexStore::load_all`/`load_bases_and_links` — the two callers; both
+  already load `bases`/`notes` in the same call, so threading `notes`
+  through to a link-correlation step is a call-order change, not a new
+  data dependency.
+- `InlinkMap` (`HashMap<PathBuf, Vec<PathBuf>>`, `src/index/inlinks.rs`)
+  — return shape is unchanged; only how its entries are constructed on
+  load changes.
+
+**Out of scope:**
+
+- Any change to `derive_inlinks`'s in-memory computation
+  (`src/index/inlinks.rs`) — it already builds edges from real `&Path`
+  refs with no reconstruction step; this ticket only touches the
+  load-from-disk path.
+- Ticket 14's `Postcard<T>` codec, byte-key migration, and
+  `Durability` split — assumed already landed.
+- Any change to `FILES`/`NOTES` reconstruction — already correct (path
+  lives in the decoded value, not the key).
