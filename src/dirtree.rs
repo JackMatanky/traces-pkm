@@ -260,7 +260,8 @@ impl Descendants {
     /// `predicate` runs on directories only; returning `true` removes that
     /// directory *and* everything beneath it from the walk. Non-matching
     /// entries — including files whose name satisfies the predicate — are
-    /// yielded unchanged.
+    /// yielded unchanged. A predicate matching the walk root itself empties
+    /// the whole walk.
     pub(crate) fn skipping<F>(self, predicate: F) -> PrunedDescendants
     where
         F: FnMut(&DirNode) -> bool + 'static,
@@ -453,6 +454,26 @@ mod tests {
             assert_eq!(names.len(), 2);
             assert!(names.contains(&"note.md".to_owned()));
             assert!(!names.contains(&"HEAD".to_owned()));
+        }
+
+        #[test]
+        fn skipping_keeps_files_whose_name_matches_the_predicate() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, ".git");
+
+            // Act
+            let mut names: Vec<String> = descendants(root)
+                .skipping(|node| node.file_name() == ".git")
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| node.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+
+            // Assert — the predicate only prunes directories; a file named
+            // `.git` passes through untouched.
+            assert_eq!(names, vec!["", ".git"]);
         }
     }
 }
