@@ -153,7 +153,9 @@ impl TemplateLoader {
             subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
         let key = path.file_stem().unwrap_or(path.as_os_str());
         let mut hits = Vec::new();
-        for entry in DirChildren::new(&search_dir) {
+        let entries = DirChildren::new(&search_dir)
+            .sorted_by(|a, b| a.file_name().cmp(b.file_name()));
+        for entry in entries {
             let node = match entry {
                 Ok(node) => node,
                 Err(DirTreeError::MissingRoot {
@@ -177,7 +179,6 @@ impl TemplateLoader {
                 ));
             }
         }
-        hits.sort_unstable();
         match hits.as_slice() {
             [] => Ok(None),
             [hit] => Ok(Some(TemplatePath::verified(

@@ -4,7 +4,7 @@
 //! every regular file as a [`FileBase`], and returns them sorted by
 //! project-relative path. Skipped:
 //!
-//! - `.git` directories and their descendants (via `skipping`)
+//! - `.git` directories and their descendants (via `filter`)
 //! - The index database file (`.traces/index.redb`)
 //! - Symbolic links
 //!
@@ -43,7 +43,7 @@ pub(super) fn scan_root(
     let index_db = root.join(INDEX_FILE);
     let mut bases = Vec::new();
     let nodes =
-        DirDescendants::new(root).skipping(|node| node.file_name() == ".git");
+        DirDescendants::new(root).filter(|node| node.file_name() == ".git");
     for node in nodes {
         let node = node.map_err(scan_error)?;
         let path = node.path();

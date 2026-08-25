@@ -16,7 +16,8 @@ The human operating the CLI tool. In MCP mode, the AI agent acts on the user's b
 The shared traversal vocabulary behind the FileIndex scan, Schema registry load,
 config subtree discovery, and Template Directory listing:
 `DirChildren::new(dir)` reads a directory's immediate entries;
-`DirDescendants::new(root)` walks a whole tree (`skipping` prunes subtrees).
+`DirDescendants::new(root)` walks a whole tree (`filter` removes matching subtrees,
+`sorted_by` orders entries within each directory).
 Both yield **DirNodes** and classified **Dir Tree Errors** — `MissingRoot`,
 `RootInaccessible`, `NodeInaccessible` — whose degrade-or-fail policy each
 caller states explicitly in its match arms. *Avoid*: walker, walk adapter,

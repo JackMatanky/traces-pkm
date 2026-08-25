@@ -3,7 +3,8 @@
 //!
 //! [`DirChildren::new`] lists a directory's immediate entries;
 //! [`DirDescendants::new`] walks a whole tree, with
-//! [`DirDescendants::skipping`] pruning subtrees. Both yield
+//! [`DirDescendants::filter`] pruning subtrees and
+//! [`DirChildren::sorted_by`] imposing per-directory order. Both yield
 //! [`DirNode`] values and report failures as [`DirTreeError`], classified at
 //! the point where walkdir's depth information is still known:
 //!
@@ -189,9 +190,12 @@ impl DirNode {
 /// Iterator over a directory's immediate entries.
 ///
 /// Created by [`DirChildren::new`]; yields [`Result<DirNode, DirTreeError>`].
+/// Impose deterministic order with [`DirChildren::sorted_by`] before
+/// iterating.
 pub(crate) struct DirChildren {
-    inner: walkdir::IntoIter,
+    builder: Option<WalkDir>,
     root: PathBuf,
+    inner: Option<walkdir::IntoIter>,
 }
 
 impl DirChildren {
@@ -207,15 +211,56 @@ impl DirChildren {
     /// `max_depth` cuts the stack. Recursive walks surface such failures as
     /// [`DirTreeError::NodeInaccessible`].
     ///
-    /// Entry order follows the OS directory read and is unspecified — sort if
-    /// order matters.
+    /// Entry order follows the OS directory read and is unspecified — pass
+    /// [`Self::sorted_by`] to impose deterministic order.
     #[must_use]
     pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
         Self {
-            inner: WalkDir::new(dir).min_depth(1).max_depth(1).into_iter(),
+            builder: Some(WalkDir::new(dir).min_depth(1).max_depth(1)),
             root: dir.to_path_buf(),
+            inner: None,
         }
+    }
+
+    /// Orders the entries of every listed directory with `compare`.
+    ///
+    /// walkdir merges each directory separately, so ordering is
+    /// per-directory; there is no global ordering across hierarchy levels.
+    /// Comparators run on cloned node views, costing one allocation per
+    /// comparison, and must be [`Send`] + [`Sync`] (walkdir's requirement).
+    /// Has no effect once iteration has begun.
+    #[must_use]
+    pub(crate) fn sorted_by<F>(mut self, mut compare: F) -> Self
+    where
+        F: FnMut(&DirNode, &DirNode) -> std::cmp::Ordering
+            + Send
+            + Sync
+            + 'static,
+    {
+        if let Some(builder) = self.builder.take() {
+            self.builder = Some(builder.sort_by(move |a, b| {
+                compare(&DirNode(a.clone()), &DirNode(b.clone()))
+            }));
+        }
+        self
+    }
+
+    fn start(&mut self) -> &mut walkdir::IntoIter {
+        let Self {
+            builder,
+            inner,
+            ..
+        } = self;
+        inner.get_or_insert_with(|| {
+            // ponytail: `builder` is always present here — it starts set and
+            // only this closure takes it. The empty-walk fallback is
+            // unreachable; swap for an enum state if that ever changes.
+            builder.take().map_or_else(
+                || WalkDir::new("").min_depth(1).max_depth(1).into_iter(),
+                WalkDir::into_iter,
+            )
+        })
     }
 }
 
@@ -223,18 +268,25 @@ impl Iterator for DirChildren {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| DirNode::try_new(&self.root, result))
+        self.start().next().map(|result| DirNode::try_new(&self.root, result))
     }
 }
 
 /// Iterator over a directory tree and its descendants.
 ///
-/// Created by [`DirDescendants::new`]; yields [`Result<DirNode,
-/// DirTreeError>`].
+/// Created by [`DirDescendants::new`] and configured with
+/// [`DirDescendants::filter`] and [`DirDescendants::sorted_by`] before
+/// iterating; yields [`Result<DirNode, DirTreeError>`].
 pub(crate) struct DirDescendants {
-    inner: walkdir::IntoIter,
+    builder: Option<WalkDir>,
+    prune: Option<PrunePredicate>,
     root: PathBuf,
+    inner: Option<Box<dyn Iterator<Item = walkdir::Result<DirEntry>>>>,
 }
+
+/// Type-erased pruner: the caller's node predicate wrapped so
+/// [`walkdir::FilterEntry`] can apply it to raw entries.
+type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
 
 impl DirDescendants {
     /// Walks a directory tree recursively, starting at the root itself.
@@ -244,42 +296,86 @@ impl DirDescendants {
     /// Symlinks are never followed. A missing root yields exactly one
     /// [`DirTreeError::MissingRoot`] and then stops.
     ///
-    /// Pass [`DirDescendants::skipping`] to prune whole subtrees.
-    ///
-    /// Entry order follows the OS directory read and is unspecified — sort if
-    /// order matters.
+    /// Entry order follows the OS directory read and is unspecified — pass
+    /// [`Self::sorted_by`] to impose deterministic order.
     #[must_use]
     pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
         Self {
-            inner: WalkDir::new(dir).into_iter(),
+            builder: Some(WalkDir::new(dir)),
+            prune: None,
             root: dir.to_path_buf(),
+            inner: None,
         }
     }
 
-    /// Prunes every subtree whose directory satisfies `predicate`.
+    /// Removes every subtree whose directory satisfies `predicate`.
     ///
     /// `predicate` runs on directories only; returning `true` removes that
     /// directory *and* everything beneath it from the walk. Non-matching
     /// entries — including files whose name satisfies the predicate — are
     /// yielded unchanged. A predicate matching the walk root itself empties
-    /// the whole walk.
+    /// the whole walk. Has no effect once iteration has begun.
     #[must_use]
-    pub(crate) fn skipping<F>(self, predicate: F) -> PrunedDescendants
+    pub(crate) fn filter<F>(mut self, mut predicate: F) -> Self
     where
         F: FnMut(&DirNode) -> bool + 'static,
     {
-        let root = self.root;
-        let mut predicate = predicate;
-        PrunedDescendants {
-            inner: self.inner.filter_entry(Box::new(
-                move |entry: &walkdir::DirEntry| {
-                    !(entry.file_type().is_dir()
-                        && predicate(&DirNode(entry.clone())))
-                },
-            )),
-            root,
+        self.prune = Some(Box::new(move |entry: &DirEntry| {
+            !(entry.file_type().is_dir() && predicate(&DirNode(entry.clone())))
+        }));
+        self
+    }
+
+    /// Orders the entries of every walked directory with `compare`.
+    ///
+    /// walkdir merges each directory separately, so ordering is
+    /// per-directory; there is no global ordering across hierarchy levels.
+    /// Comparators run on cloned node views, costing one allocation per
+    /// comparison, and must be [`Send`] + [`Sync`] (walkdir's requirement).
+    /// Has no effect once iteration has begun.
+    #[must_use]
+    #[expect(
+        dead_code,
+        reason = "no recursive consumer needs walk-order yet; flat listing \
+                  already uses its sibling"
+    )]
+    pub(crate) fn sorted_by<F>(mut self, mut compare: F) -> Self
+    where
+        F: FnMut(&DirNode, &DirNode) -> std::cmp::Ordering
+            + Send
+            + Sync
+            + 'static,
+    {
+        if let Some(builder) = self.builder.take() {
+            self.builder = Some(builder.sort_by(move |a, b| {
+                compare(&DirNode(a.clone()), &DirNode(b.clone()))
+            }));
         }
+        self
+    }
+
+    fn start(&mut self) -> &mut dyn Iterator<Item = walkdir::Result<DirEntry>> {
+        let Self {
+            builder,
+            prune,
+            inner,
+            ..
+        } = self;
+        inner
+            .get_or_insert_with(|| {
+                // ponytail: same unreachable-fallback contract as
+                // `DirChildren::start`.
+                let iter = builder.take().map_or_else(
+                    || WalkDir::new("").into_iter(),
+                    WalkDir::into_iter,
+                );
+                match prune.take() {
+                    Some(predicate) => Box::new(iter.filter_entry(predicate)),
+                    None => Box::new(iter),
+                }
+            })
+            .as_mut()
     }
 }
 
@@ -287,26 +383,7 @@ impl Iterator for DirDescendants {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| DirNode::try_new(&self.root, result))
-    }
-}
-
-/// Type-erased pruner: the caller's node predicate wrapped so
-/// [`walkdir::FilterEntry`] can apply it to raw entries.
-type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
-
-/// Iterator over a directory tree with subtrees pruned by
-/// [`Descendants::skipping`].
-pub(crate) struct PrunedDescendants {
-    inner: walkdir::FilterEntry<walkdir::IntoIter, PrunePredicate>,
-    root: PathBuf,
-}
-
-impl Iterator for PrunedDescendants {
-    type Item = Result<DirNode, DirTreeError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| DirNode::try_new(&self.root, result))
+        self.start().next().map(|result| DirNode::try_new(&self.root, result))
     }
 }
 
@@ -378,6 +455,25 @@ mod tests {
         }
 
         #[test]
+        fn sorted_by_orders_immediate_entries() {
+            // Arrange — created deliberately out of lexicographic order.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, "z.md");
+            write(root, "a.md");
+
+            // Act
+            let names: Vec<String> = DirChildren::new(root)
+                .sorted_by(|a, b| a.file_name().cmp(b.file_name()))
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| node.file_name().to_string_lossy().into_owned())
+                .collect();
+
+            // Assert — yielded already ordered; nothing sorted after the walk.
+            assert_eq!(names, vec!["a.md", "z.md"]);
+        }
+
+        #[test]
         fn a_file_root_yields_no_entries_and_no_errors() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -440,7 +536,7 @@ mod tests {
         }
 
         #[test]
-        fn skipping_prunes_matching_subtrees_but_keeps_other_entries() {
+        fn filter_prunes_matching_subtrees_but_keeps_other_entries() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
@@ -449,7 +545,7 @@ mod tests {
 
             // Act
             let mut names: Vec<String> = DirDescendants::new(root)
-                .skipping(|node| node.file_name() == ".git")
+                .filter(|node| node.file_name() == ".git")
                 .map(|entry| entry.expect("entry is ok"))
                 .map(|node| node.file_name().to_string_lossy().into_owned())
                 .collect();
@@ -462,7 +558,7 @@ mod tests {
         }
 
         #[test]
-        fn skipping_keeps_files_whose_name_matches_the_predicate() {
+        fn filter_keeps_files_whose_name_matches_the_predicate() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
@@ -470,7 +566,7 @@ mod tests {
 
             // Act
             let mut names: Vec<String> = DirDescendants::new(root)
-                .skipping(|node| node.file_name() == ".git")
+                .filter(|node| node.file_name() == ".git")
                 .map(|entry| entry.expect("entry is ok"))
                 .map(|node| node.file_name().to_string_lossy().into_owned())
                 .collect();
@@ -481,9 +577,65 @@ mod tests {
             assert_eq!(names.len(), 2);
             assert!(names.contains(&".git".to_owned()));
         }
-    }
+        #[test]
+        fn sorted_by_orders_entries_within_each_directory() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, "b/zero.md");
+            write(root, "a.md");
+            write(root, "b/one.md");
 
-    /// Restores a locked directory's permissions on drop, even if the test
+            // Act
+            let relatives: Vec<String> = DirDescendants::new(root)
+                .sorted_by(|a, b| a.file_name().cmp(b.file_name()))
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| {
+                    node.path()
+                        .strip_prefix(root)
+                        .expect("under root")
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+
+            // Assert — depth-first with siblings name-ordered per directory;
+            // the root itself still comes first.
+            assert_eq!(relatives, vec![
+                "",
+                "a.md",
+                "b",
+                "b/one.md",
+                "b/zero.md"
+            ]);
+        }
+
+        #[test]
+        fn filter_composes_with_sorted_by() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, ".git/HEAD");
+            write(root, "b/note.md");
+
+            // Act
+            let relatives: Vec<String> = DirDescendants::new(root)
+                .filter(|node| node.file_name() == ".git")
+                .sorted_by(|a, b| a.file_name().cmp(b.file_name()))
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| {
+                    node.path()
+                        .strip_prefix(root)
+                        .expect("under root")
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+
+            // Assert — pruned subtree absent AND surviving siblings ordered.
+            assert_eq!(relatives, vec!["", "b", "b/note.md"]);
+        }
+    }
     /// panics. Otherwise, a `0o000` directory blocks the tempdir's cleanup.
     #[cfg(unix)]
     struct RestorePermissions<'a>(&'a Path);
