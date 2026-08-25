@@ -96,7 +96,7 @@ pub enum IndexBuilderError {
     ///
     /// Indicates a logic bug in the reconciliation pipeline: the record's
     /// metadata said "unchanged", so the builder tried to reuse its note via
-    /// [`super::store::IndexStore::load_note`], but no note was persisted at
+    /// [`super::store::IndexStore::read_note`], but no note was persisted at
     /// that path.
     #[error("note missing for record at {path}")]
     MissingNote {
@@ -109,7 +109,7 @@ pub enum IndexBuilderError {
     /// `source` is boxed: it breaks the size cycle this variant otherwise
     /// creates ([`IndexError::Builder`] holds a plain, unboxed
     /// `IndexBuilderError`), and it matches
-    /// [`super::store::IndexStore::load_note`]'s own return type, so callers
+    /// [`super::store::IndexStore::read_note`]'s own return type, so callers
     /// forward its error unchanged instead of re-wrapping it.
     #[error("failed to read persisted note for {path}")]
     NoteLookup {

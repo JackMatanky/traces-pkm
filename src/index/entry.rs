@@ -17,7 +17,7 @@ pub struct FileIndex {
     pub(super) bases: Vec<FileBase>,
     pub(super) notes: Vec<Note>,
     pub(super) inlinks: InlinkMap,
-    pub(super) delta: super::builder::IndexDelta,
+    pub(super) delta: super::delta::IndexDelta,
 }
 
 impl FileIndex {
@@ -26,7 +26,7 @@ impl FileIndex {
         bases: Vec<FileBase>,
         notes: Vec<Note>,
         inlinks: InlinkMap,
-        delta: super::builder::IndexDelta,
+        delta: super::delta::IndexDelta,
     ) -> Self {
         Self {
             bases,
@@ -76,7 +76,7 @@ impl FileIndex {
 
     /// Returns the persistence plan `IndexStore::persist_index` uses to choose
     /// a full rewrite vs. a row-level incremental write.
-    pub(super) fn delta(&self) -> &super::builder::IndexDelta {
+    pub(super) fn delta(&self) -> &super::delta::IndexDelta {
         &self.delta
     }
 }

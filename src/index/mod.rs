@@ -39,10 +39,11 @@
 //! [`builder::IndexBuilder`]: mod@builder
 
 mod builder;
+mod cache;
+mod delta;
 mod entry;
 mod error;
 mod inlinks;
-mod scan;
 mod service;
 mod store;
 
@@ -60,8 +61,8 @@ const INDEX_FILE: &str = ".traces/index.redb";
 
 #[cfg(test)]
 mod tests {
-    /// Shared test fixtures live here so `scan.rs` and `store.rs` tests can
-    /// import them without duplicating the definitions.
+    /// Shared test fixtures live here so `service.rs` and `store.rs` tests
+    /// can import them without duplicating the definitions.
     pub(crate) mod fixtures {
         use std::{fs, path::Path};
 
