@@ -1,9 +1,9 @@
 # 16 — Correlate LINKS Byte Keys Against Loaded Notes Instead of Reconstructing Independently
 
 **What to build:** `IndexStore::load_links` (and its callers
-`load_all`/`load_bases_and_links`) stop reconstructing `PathBuf` values
-independently from stored `LINKS` bytes, and instead correlate each
-stored edge against the already-loaded `bases`/`notes` list, using the
+`load_all`/`load_bases_and_links_via`) stop reconstructing `PathBuf`
+values independently from stored `LINKS` bytes, and instead correlate
+each stored edge against an already-loaded `notes` list, using the
 authoritative `Path` reference from that list rather than a value
 rebuilt purely from redb bytes.
 
@@ -18,9 +18,9 @@ architecture review — lowest priority, do after ticket 14 and ticket 15.
 
 **Status:** ready-for-agent
 
-- [ ] `load_links`/`load_all`/`load_bases_and_links` resolve each stored
-      `LINKS` edge's target/source against the freshly-loaded
-      `bases`/`notes` list (matched by path bytes) instead of building a
+- [ ] `load_links`/`load_all`/`load_bases_and_links_via` resolve each
+      stored `LINKS` edge's target/source against an already-loaded
+      `notes` list (matched by path bytes) instead of building a
       `PathBuf` purely from stored bytes.
 - [ ] A stored edge whose target or source no longer matches any
       currently-loaded Note (stale/orphaned — e.g. the note was deleted
@@ -77,6 +77,19 @@ the three architecture-review tickets for the same reason: lowest
 priority, safe to defer indefinitely without blocking ticket 14 or
 ticket 15.
 
+**Update, after tickets 14/15 were rewritten in the same architecture-review
+session:** ticket 14 renames the self-opening `load_bases_and_links` to
+`load_bases_and_links_via` (taking an external read transaction — see its
+Design Decision 14) and ticket 15 gives `RefreshCache::load` sole
+ownership of calling it. References here are updated to the new name.
+While fixing the reference, corrected a pre-existing inaccuracy in this
+ticket's own "Key interfaces" section: it claimed `load_all` and
+`load_bases_and_links` "both already load `bases`/`notes` in the same
+call" — false even before the rename, since `load_bases_and_links`
+(like its `_via` successor) only ever loaded `bases`+`links`, never
+`notes`. See the corrected "Key interfaces" bullet for what this means
+for this ticket's actual correlation design.
+
 ## Agent Brief
 
 **Category:** enhancement
@@ -114,10 +127,21 @@ when no match exists, rather than producing an orphaned `PathBuf`.
   Result<InlinkMap, DbError>`, independent of `notes`. Needs either a
   `notes: &[Note]` parameter or to move to a call site that already has
   both loaded.
-- `IndexStore::load_all`/`load_bases_and_links` — the two callers; both
-  already load `bases`/`notes` in the same call, so threading `notes`
-  through to a link-correlation step is a call-order change, not a new
-  data dependency.
+- `IndexStore::load_all` already loads `bases`/`notes`/`links` together
+  — threading `notes` into a link-correlation step there is a call-order
+  change, not a new data dependency. `IndexStore::load_bases_and_links_via`
+  (introduced by ticket 14, replacing the old self-opening
+  `load_bases_and_links`) is different: it deliberately loads `bases` and
+  `links` only, *not* `notes` — that's the whole point of its existence
+  (`RefreshCache::load`, ticket 14/15, avoids touching the comparatively
+  heavy `NOTES` table when reconciliation only needs unchanged Notes via
+  point lookup). Correlating its `LINKS` load against `notes` would mean
+  either loading `notes` there too (defeating that avoidance) or
+  accepting that `load_bases_and_links_via`'s `LINKS` data stays
+  reconstruction-based while `load_all`'s becomes correlation-based —
+  decide which explicitly rather than assuming both callers converge for
+  free, which the ticket's first draft incorrectly assumed of the
+  original (also notes-free) `load_bases_and_links`.
 - `InlinkMap` (`HashMap<PathBuf, Vec<PathBuf>>`, `src/index/inlinks.rs`)
   — return shape is unchanged; only how its entries are constructed on
   load changes.

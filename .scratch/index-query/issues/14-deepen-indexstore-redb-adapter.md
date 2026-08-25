@@ -1,4 +1,4 @@
-# 14 — Deepen IndexStore's Redb Adapter and Persist on Refresh
+# 14 — Deepen IndexStore's Redb Adapter, Reshape RefreshCache's Storage Access, and Persist on Refresh
 
 **What to build:** Collapse `src/index/store.rs`'s six near-identical postcard
 encode/decode methods (`store_table`, `load_table`, `store_links`,
@@ -7,24 +7,38 @@ type implementing `redb::Value`; retype `FILES`/`NOTES`/`LINKS` to `&[u8]`
 keys (and, for `LINKS`, `&[u8]` values) instead of `path.to_string_lossy()`;
 transparently rebuild `.traces/index.redb` on a detected schema mismatch
 or structural corruption; split `Durability` between the frequent
-incremental write path and the explicit full-rebuild path. Additionally,
-make `IndexerService::refresh()` persist its own result internally
-(best-effort, never failing the caller's `refresh()` on a persist error)
-instead of requiring a separate `persist()` call every caller today
-forgets to make. Also resolves, mitigates, or explicitly and reasonedly
-accepts every `clippy::large_stack_frames` warning `src/index/store.rs`
-and `src/index/service.rs` currently raise (six of the module's seven
-total).
+incremental write path and the explicit full-rebuild path. Make
+`IndexerService::refresh()` persist its own result internally (best-effort,
+never failing the caller's `refresh()` on a persist error) instead of
+requiring a separate `persist()` call every caller today forgets to make —
+and do so through exactly **one** `IndexStore::open()` and **one** read
+transaction per `refresh()` call, not the two-and-two a naive
+implementation would reach for. Also resolves, mitigates, or explicitly
+and reasonedly accepts every `clippy::large_stack_frames` warning
+`src/index/store.rs` and `src/index/service.rs` raise, re-verified against
+the code shape this ticket actually produces (see Design Decision 12 —
+the specific byte counts below are stale the moment this ticket's other
+changes land, and must be re-measured, not assumed).
 
 **Related to:** architecture review of `src/index/` (this repo's own
-codebase-design skill run). Fully grilled — every open branch below was
-walked and settled interactively across two candidates, merged into one
-ticket since they touch the same write path and one motivated the other
-(the `Durability::None`/`Immediate` split only matters once
-`persist_incremental` gets frequent, which the refresh-persists change
-causes). Ticket 16 is the deliberately-deferred follow-up (`LINKS`
-reconstruction fidelity for non-Unicode filenames) — do not fold it into
-this ticket, see its own scope notes for why.
+codebase-design skill run), across two grilling passes. The first pass
+settled the redb-adapter/persist-on-refresh work below (Design Decisions
+1–12). A second, later pass — grilling `service.rs`/`builder.rs`/`scan.rs`
+together, informed by research against `salsa`, `tantivy`, git's index,
+and Obsidian/Logseq's link-graph designs — found that the first pass's
+"make `refresh()` persist internally" plan, implemented as originally
+written, would have silently reintroduced a measured ~20% latency
+regression (a second, redundant `IndexStore::open()`) and a second,
+redundant read transaction. Design Decisions 13–17 below are that second
+pass's findings, folded into this ticket rather than filed separately,
+because they change the exact shape of `RefreshCache` and `refresh()`
+this ticket already owns. Ticket 15 is the deliberately-deferred,
+separately-scoped follow-up that reshapes `IndexBuilder` itself and gives
+`RefreshCache` its own methods — land this ticket first; ticket 15 builds
+directly on the `RefreshCache` shape (borrowed fields, boxed, built via
+`RefreshCache::load`) this ticket introduces. Ticket 16 (`LINKS`
+reconstruction fidelity for non-Unicode filenames) is unaffected in
+scope but needs one reference updated — see its own file.
 
 **Category:** enhancement
 
@@ -52,8 +66,8 @@ this ticket, see its own scope notes for why.
       compiling and running the comparison) — an ordinary file next to a
       same-stemmed sibling directory, not a contrived input. Every
       downstream binary search, merge-join, and `debug_assert!` in
-      `builder.rs`/`entry.rs` depends on `Path::cmp` order specifically;
-      deleting the sort would silently break them.
+      `builder.rs`/`entry.rs`/`delta.rs` (ticket 15) depends on `Path::cmp`
+      order specifically; deleting the sort would silently break them.
 - [ ] `IndexStore::open` eagerly probes all three tables via a read-only
       transaction immediately after opening the database; on
       `TableError::TableTypeMismatch`/`TypeDefinitionChanged` **or
@@ -67,7 +81,10 @@ this ticket, see its own scope notes for why.
       best-effort persist-after-refresh case below.
 - [ ] A test confirms the first `refresh()` after either a schema-mismatch
       or corruption recovery behaves like a full build (an empty
-      `reuse.previous` naturally makes every current file "upserted").
+      `RefreshCache.previous` naturally makes every current file
+      "upserted", and — because the tables genuinely are empty after a
+      wipe, not merely assumed empty — `deleted` is correctly `[]` too;
+      see Design Decision 17 for why that distinction matters).
 - [ ] `persist_incremental`'s write transactions use
       `Durability::None`; `replace_all` (only reachable from the explicit
       `traces index` command) keeps the default `Durability::Immediate`.
@@ -84,10 +101,16 @@ this ticket, see its own scope notes for why.
       `Result` — the caller still gets its fresh, correct in-memory
       `FileIndex`.
 - [ ] `persist()`/`persist_incremental` skip opening a write transaction
-      entirely when the computed `IncrementalDelta` is empty (`upserted`,
-      `deleted`, and `links_deleted` all empty, `links_upserted` `None`
-      or empty) — the common case once `refresh()` persists on every
-      call.
+      entirely when the computed `IncrementalDelta` is empty. This check
+      is `IncrementalDelta::is_empty(&self) -> bool` — a method on the
+      type itself (`self.upserted.is_empty() && self.deleted.is_empty()
+      && self.links_deleted.is_empty() &&
+      self.links_upserted.as_ref().is_none_or(Vec::is_empty)`), not
+      inline boolean logic in `store.rs` reaching into four fields it
+      doesn't own. `IncrementalDelta` lives in ticket 15's new `delta.rs`
+      by the time this lands there — if ticket 15 hasn't landed yet,
+      define `is_empty` on it in `builder.rs` where it currently lives
+      and let ticket 15 move it, not re-derive it.
 - [ ] `benches/template_render.rs`'s `prepared_root()` builds and
       persists the index in its untimed setup step, matching the
       benchmark's own doc comment ("against a pre-built, pre-persisted
@@ -100,6 +123,84 @@ this ticket, see its own scope notes for why.
       now persists internally; verify with a test that a `traces
       list`/`table`/`task` run advances `.traces/index.redb` without an
       explicit `traces index`.
+- [ ] `IndexStore` gains `load_bases_and_links_via(&self, read_txn:
+      &ReadTransaction) -> Result<(Vec<FileBase>, InlinkMap), IndexError>`
+      — identical body to today's `load_bases_and_links`, except it takes
+      the transaction instead of opening one via `self.begin_read()`. The
+      old self-opening `load_bases_and_links()` is **removed**, not kept
+      alongside it — confirmed via `references` search that its only
+      callers (`IndexerService::refresh` and a `reuse_state` test helper
+      in `builder.rs` mirroring production usage) both immediately called
+      `store.begin_read()` again right after, so nothing depends on the
+      self-opening version's existing behavior.
+- [ ] `RefreshCache` (`src/index/builder.rs`) gains a lifetime parameter
+      and borrows instead of owns: `store: &'a IndexStore`, `read_txn:
+      &'a ReadTransaction` replace the previously-owned `IndexStore`/
+      `ReadTransaction` fields. `RefreshCache::load(store: &'a IndexStore,
+      read_txn: &'a ReadTransaction) -> Result<Self, IndexError>` becomes
+      its only constructor (all fields stay private) — it calls
+      `store.load_bases_and_links_via(read_txn)` to populate `previous`/
+      `inlinks`, then stores the two borrows alongside them. `IndexBuilder`
+      threads the same `'a` through (`IndexBuilder<'a>`); its `cache`
+      field becomes `Option<Box<RefreshCache<'a>>>` — boxed for the same
+      reason `IndexDelta` already boxes its `Incremental` payload (see
+      Design Decision 13), just applied to a now-borrowed-and-much-smaller
+      struct instead of the previously-owned one. Renaming
+      `reuse_unchanged` to `with_cache` and giving `RefreshCache` its own
+      methods (`diff_bases`, `reconcile_note`, `diff_links`,
+      `into_inlinks`) instead of `build_with_reuse` reaching into its raw
+      fields is ticket 15's job, landing on top of this — this ticket only
+      needs `RefreshCache`'s fields borrowed, boxed, and constructed via
+      `load()`; leave `reuse_unchanged`'s name and `build_with_reuse`'s
+      body (reaching into `cache.previous`/`&cache.store`/`&cache.read_txn`
+      directly, as today) otherwise alone. `reuse_unchanged`'s own
+      parameter (currently four loose parameters, becoming one
+      `RefreshCache` per this ticket) is also renamed from `reuse` to
+      `cache` for the same reason: it's the same value the field stores,
+      and having the field called `cache` while every local reference to
+      its unwrapped value stayed called `reuse` would be confusing, not
+      preserved-for-a-reason.
+- [ ] `IndexerService::refresh()` is rewritten to open the store once,
+      scope the read transaction to a block that ends before persisting:
+      ```rust
+      pub fn refresh(&self) -> Result<FileIndex, IndexError> {
+          let store = IndexStore::open(&self.root)?;
+          let index = {
+              let read_txn = store.begin_read()?;
+              let cache = builder::RefreshCache::load(&store, &read_txn)?;
+              builder::IndexBuilder::from_scan(&self.root)?
+                  .reuse_unchanged(cache)
+                  .build(&self.root)?
+          }; // read_txn (and cache, which borrows it) drop here
+          if let Err(source) = store.persist_index(&index) {
+              tracing::warn!(%source, "failed to persist refreshed index");
+          }
+          Ok(index)
+      }
+      ```
+      (`reuse_unchanged` here takes the whole `RefreshCache` as one
+      argument, not four loose parameters — a narrower, incidental
+      signature change riding along with the borrowing change; ticket 15
+      renames the method itself to `with_cache`.) The read transaction
+      opened for reconciliation never overlaps the write transaction
+      `persist_index` opens — confirmed by construction, not by
+      inspection, since `read_txn`'s block-scope drop is a hard Rust
+      guarantee, not a convention to remember.
+- [ ] `IndexDelta` (`src/index/builder.rs`, moving to `delta.rs` under
+      ticket 15) gains a doc comment recording why `Full` and
+      `Incremental` are not interchangeable, even when an `Incremental`
+      diff would come out empty — see Design Decision 17 for the exact
+      wording and the hazard it documents.
+- [ ] A new test: persist an index, delete a note, call `refresh()`
+      (which now persists internally per this ticket), then `load()`
+      fresh and assert the deleted note's `FileBase`/`Note`/inlink rows
+      are actually gone from disk — not merely absent from `refresh()`'s
+      in-memory return value. `persists_rebuilds_rather_than_appends`
+      already proves this for the `Full`/`replace_all` path
+      (`build()`+`persist()`); nothing currently proves it for the
+      `Incremental`/`persist_incremental` path, which becomes the common
+      case the instant `refresh()` persists on every call. See Design
+      Decision 17.
 - [ ] `clippy::large_stack_frames` on `load_note` (currently 4212 bytes)
       is resolved once its raw `postcard::from_bytes` call and
       `DbError::Deserialize{path, source}` construction move behind
@@ -136,14 +237,14 @@ this ticket, see its own scope notes for why.
       full compliance (still ~309 bytes over the 4096 threshold). Do
       **not** chase further micro-extraction purely to cross the
       threshold number; if 4405-ish bytes remains after this ticket's
-      other changes (byte keys, `Postcard<T>`) are also applied, accept
-      the residual with a documented, narrowly-scoped
-      `#[expect(clippy::large_stack_frames, reason = "...")]` on
-      `load_links` itself, rather than fragmenting the function further
-      for its own sake. This decomposition is also the natural seam
-      ticket 16's later correlation-against-loaded-notes rewrite can
-      build on, rather than restructuring an even-more-tangled starting
-      point.
+      other changes (byte keys, `Postcard<T>`, `load_bases_and_links_via`)
+      are also applied, accept the residual with a documented,
+      narrowly-scoped `#[expect(clippy::large_stack_frames, reason =
+      "...")]` on `load_links` itself, rather than fragmenting the
+      function further for its own sake. This decomposition is also the
+      natural seam ticket 16's later correlation-against-loaded-notes
+      rewrite can build on, rather than restructuring an even-more-tangled
+      starting point.
 - [ ] `replace_all` and `persist_incremental` each get a documented,
       narrowly-scoped
       `#[expect(clippy::large_stack_frames, reason = "...")]` directly
@@ -152,55 +253,39 @@ this ticket, see its own scope notes for why.
       dominated by `redb::WriteTransaction` itself (624 bytes, confirmed
       via `size_of`), an external RAII type that must stay alive for the
       whole "open transaction, write N tables, commit" sequence by
-      construction. Unlike `IndexBuilder`'s `RefreshCache` (below),
-      boxing does **not** help here — tested directly:
+      construction. Boxing does **not** help here — tested directly:
       `Box::new(self.begin_write()?)` made `replace_all` *worse* (4983
       → 5137 bytes), because `WriteTransaction` is constructed once and
       used within this one function, never moved through multiple
-      owning calls the way `RefreshCache` is — boxing it only adds a
-      heap allocation on top of the same initial stack materialization,
-      with no repeated-copy cost to eliminate in exchange. Each
-      individual table write already delegates to a small named helper
-      (`store_table`, `store_links`) taking `&WriteTransaction` by
-      reference, not by value — there is no further meaningful
-      decomposition available without either not holding the
-      transaction for its required duration (incorrect) or fragmenting
-      the commit sequence for no reason. At ~5KB against a 1-8MB thread
-      stack, this carries no real overflow risk; the `reason` string
-      should say exactly this, and that boxing was tried and measured
-      worse, so a future reader doesn't re-litigate either.
-- [ ] `IndexBuilder`'s `reuse: Option<RefreshCache>` field
-      (`src/index/builder.rs`) becomes `reuse: Option<Box<RefreshCache>>`
-      — the one narrow exception to this ticket otherwise not touching
-      `IndexBuilder` (see amended scope note below).
-      `reuse_unchanged`/`build_with_reuse` adjust to box/receive
-      `RefreshCache` accordingly; every existing `reuse.previous`/
-      `&reuse.store`/`&reuse.read_txn` field access keeps working
-      unchanged through `Box`'s `Deref`. This is not a lint workaround —
-      it's the same pattern this exact file already uses for
-      `IndexDelta` (boxed for the identical reason, per its own doc
-      comment: "Boxing shrinks IndexDelta from 96 bytes to 8"), applied
-      consistently to `RefreshCache`, which was missed. Resolves
-      `IndexerService::refresh`'s `clippy::large_stack_frames` warning
-      entirely (confirmed empirically, not assumed — see Design
-      Decision 13) as a byproduct of a real fix, not a target in
-      itself: `RefreshCache` embeds a live `redb::ReadTransaction`
-      (160B) and `IndexStore` (40B) that today get physically copied
-      through `IndexBuilder`'s self-consuming builder chain
-      (`from_scan()?.reuse_unchanged(...).build()?`, three hops) every
-      single `refresh()` call — the exact call every `traces
-      list`/`table`/`task`/template render now makes, per this ticket's
-      own persist-on-refresh change. Boxing collapses `IndexBuilder`
-      from 304 bytes to 32 (measured via `size_of`, confirmed) and
-      turns three ~270-byte struct copies into one heap allocation up
-      front — a real reduction on what's now the module's hottest path,
-      not just a smaller number reported by a linter.
+      owning calls the way the old, owned `RefreshCache` was — boxing it
+      only adds a heap allocation on top of the same initial stack
+      materialization, with no repeated-copy cost to eliminate in
+      exchange. At ~5KB against a 1–8MB thread stack, this carries no
+      real overflow risk; the `reason` string should say exactly this,
+      and that boxing was tried and measured worse, so a future reader
+      doesn't re-litigate either.
+- [ ] `IndexerService::refresh`'s own `clippy::large_stack_frames`
+      warning (previously resolved by boxing the *owned* `RefreshCache`,
+      collapsing `IndexBuilder` from 304 to 32 bytes) is **re-measured
+      after this ticket's borrowing change**, not assumed still fixed by
+      the same reasoning. The borrowed `RefreshCache` is already much
+      smaller before boxing (roughly 88 bytes: a 24-byte `Vec<FileBase>`,
+      a 48-byte `InlinkMap`, and two 8-byte references, versus the
+      previous ~200+ owned bytes) — boxing it is still free margin worth
+      keeping, but confirm with `cargo clippy` against the actual
+      implemented code that `refresh()`'s frame stays under threshold
+      once both the borrowing change and the phase-split block-scoping
+      above are in place, rather than carrying forward a byte count
+      measured against a materially different struct shape.
 
 ## Comments
 
 > *Filed after a full grilling session on this architecture-review
 > candidate — decisions below are the user's confirmed answers, not
-> proposals awaiting review.*
+> proposals awaiting review. Decisions 1–12 are from the first grilling
+> pass (redb adapter, persist-on-refresh); 13–17 are from a second pass
+> that reconsidered `RefreshCache`'s ownership and construction before
+> this ticket's plan was implemented.*
 
 ### Design Decisions (settled)
 
@@ -226,8 +311,8 @@ this ticket, see its own scope notes for why.
    whatever types are requested, so delete-and-recreate is a
    redb-idiomatic recovery. Reactive per-call-site handling was rejected
    as re-scattering the exact boilerplate this ticket removes. Broadened
-   during audit (Design Decision 11 below) to also catch structural
-   corruption, not just schema mismatch.
+   during audit (Design Decision 11) to also catch structural corruption,
+   not just schema mismatch.
 6. **No `unsafe`** — `FILES`/`NOTES` never need bytes→`Path`
    reconstruction at all (the authoritative `path` lives inside the
    postcard-decoded `FileBase`/`Note` value, not the key). `LINKS`
@@ -289,208 +374,166 @@ this ticket, see its own scope notes for why.
     schema mismatch.
 12. **`clippy::large_stack_frames` triaged per-function, not
     blanket-suppressed, and not stopped at the first plausible-looking
-    fix** — ran clippy with the lint enabled (already `warn` in this
+    fix, and re-verified after every subsequent design change in this
+    ticket** — ran clippy with the lint enabled (already `warn` in this
     project's `Cargo.toml`) across `src/index/`, found seven warnings
     across three files, and empirically tested every candidate fix
     rather than reasoning from first impressions: implemented each
     refactor in isolation, measured with `cargo clippy`, then reverted.
-    First pass wrongly concluded `refresh`/`replace_all`/
-    `persist_incremental` were all equally "inherent, decomposition
-    doesn't help" after one failed decomposition experiment on
-    `refresh` — that conclusion was too hasty and got corrected (Design
-    Decision 13) once pushed to ask *why* the data was shaped that way,
-    not just *whether* moving it around helped. Final results split
-    four ways: `load_note` is a confirmed, clean fix (extracting the
-    postcard-decode step out of the function); `load_table` is the
-    *opposite* result under the same-looking fix (got worse, because it
-    deserializes inside a loop, not at a point lookup — the naive
-    extraction added overhead instead of removing it); `load_links` is
-    a real-but-partial win (44% reduction, threshold not fully
-    crossed); `refresh` is a confirmed, clean fix once the *actual*
-    root cause was found (Design Decision 13, not the first thing
-    tried); `replace_all`/`persist_incremental` are genuinely not
-    fixable by decomposition or boxing, confirmed by testing both.
-    Treating every warning as "must decompose" would have made
-    `load_table` and `replace_all` worse; treating every warning as
-    "just suppress" would have missed two genuine fixes and one real
-    44% reduction; stopping after the first failed experiment on
-    `refresh` would have missed its actual fix entirely.
-13. **`refresh`'s real fix was an architecture correction, not a
-    decomposition — found by asking why the data was shaped that way,
-    not just moving it around** — the first attempt (extracting
-    `refresh`'s three "gather previous state" calls into one
-    `IndexStore` method) failed because the same data still had to be
-    alive somewhere; that result was reported as "not fixable by
-    decomposition," full stop, which undersold the actual question:
-    *why* is a live `redb::ReadTransaction` and `IndexStore` physically
-    embedded inside `IndexBuilder`, copied through three self-consuming
-    builder-chain calls (`from_scan()?.reuse_unchanged(...).build()?`)
-    on every `refresh()` — the exact call this ticket makes the
-    module's hottest path? `builder.rs`'s own doc comment on
-    `RefreshCache` already flags a second symptom of the same root
-    cause (holding the transaction open "pins the transaction's MVCC
-    snapshot for the duration, deferring reclamation of pages"), and
-    this exact file already boxes a comparably-shaped payload
-    (`IndexDelta`) for the identical reason, documented in its own doc
-    comment. Boxing `RefreshCache` the same way collapses `IndexBuilder`
-    from 304 bytes to 32 (confirmed via `size_of`), resolves
-    `refresh`'s `large_stack_frames` warning entirely (confirmed via
-    clippy), and turns three ~270-byte struct copies per `refresh()`
-    call into one heap allocation — a real reduction on the module's
-    hottest path, not a number satisfied for its own sake. Full 106-test
-    `index::` suite passes unchanged.
-14. **Boxing helps or hurts depending on one testable property: does the
-    value move through multiple owning function calls, or is it
-    constructed and consumed once?** — derived from the direct contrast
-    between Decision 13 (`RefreshCache`: constructed once, then copied
-    through three chained calls — boxing removes two of those three
-    copies for one allocation, a clear win) and the negative,
-    equally-tested result on `WriteTransaction` in `replace_all`
-    (constructed once, used within that same one function, never
-    re-copied — boxing only adds an allocation with nothing to offset
-    it, measured worse). The same reasoning explains why `load_table`'s
-    naive per-row extraction hurt (a fresh per-iteration call boundary,
-    analogous to a fresh per-iteration allocation, added on top of a
-    loop instead of removing a one-time cost) while `load_note`'s
-    identical-looking extraction helped (a true one-time cost moved out
-    of a non-looping function). Recorded as a general rule for any
-    future `large_stack_frames` triage in this codebase, not just this
-    ticket's functions.
-
-### Confirmed via `rust-docs-mcp` against redb 4.1 source (not guessed)
-
-- `redb::Value`: custom types need `type SelfType<'a>`, `type AsBytes<'a>`,
-  `fixed_width() -> Option<usize>`, `from_bytes`, `as_bytes`, `type_name()`.
-- `redb::Key: Value` needs one method, `compare(&[u8], &[u8]) -> Ordering`;
-  `&[u8]` implements it natively via byte-lexicographic order.
-- `Durability::{None, Immediate}`, set via
-  `WriteTransaction::set_durability`. `None`: "will not be persisted to
-  disk unless followed by a commit with `Durability::Immediate`."
-- `MultimapTable::remove_all` + loop-`insert` is already the idiomatic
-  replace-one-key pattern; no bulk replace exists, not worth adding.
-- `Database::compact()` requires exclusive `&mut Database` (blocks all
-  readers) and redb's own source comments describe it as too slow to
-  matter for this workload — not worth adopting.
-- `ReadableTable::iter` docs: "Values are in ascending order" — this
-  describes redb's own **key** order (byte-lexicographic), not
-  `Path::cmp`'s component-wise order; the two diverge (see Design
-  Decision 10). Originally, and wrongly, read as confirming
-  `load_table`'s sort was dead code.
-- redb is copy-on-write; a crash after a `Durability::None` commit but
-  before a subsequent `Durability::Immediate` commit reverts cleanly to
-  the last durable state — no torn-write risk.
-- `DatabaseError::Storage(StorageError::Corrupted)` ("The Database is
-  corrupted") is a distinct error variant from
-  `TableError::TableTypeMismatch`/`TypeDefinitionChanged` — structural
-  corruption is handled at the storage layer, schema mismatch at the
-  table layer.
-- `TableError::TableTypeMismatch`/`TypeDefinitionChanged` are ordinary
-  `Result` variants; `open_table` creates a missing table under whatever
-  types are requested.
-
-### `clippy::large_stack_frames` — measured, not estimated
-
-`cargo clippy --lib --all-features` against unmodified `src/index/`,
-7 warnings across 3 files (`stack-size-threshold = 4096` per
-`clippy.toml`):
-
-| Function | File | Bytes | Largest named part | Resolution |
-|---|---|---|---|---|
-| `load_links` | store.rs | 7957 | `(AccessGuard<'_, &str>, MultimapValue<'_, &str>)`, 392B | decomposed to 4405 (44%), `#[expect]` for the residual |
-| `replace_all` | store.rs | 4983 | `write_txn: WriteTransaction`, 624B | `#[expect]` — boxing tested, made it worse (5137B) |
-| `load_table<T>` | store.rs | 4495 | none named (diffuse) | `Postcard<T>` per checklist; naive extraction tested, made it worse (4575B), verify after real implementation |
-| `persist_incremental` | store.rs | 4321 | `write_txn: WriteTransaction`, 624B | `#[expect]`, same reasoning as `replace_all` |
-| `load_note` | store.rs | 4212 | `note: Note`, 240B | fixed — confirmed gone after extracting the decode step |
-| `refresh` | service.rs | 4135 | `IndexBuilder`, 304B | fixed — confirmed gone after boxing `IndexBuilder`'s `RefreshCache` field |
-| `reconcile_note` | builder.rs | 4615 | `(Note, bool)`, 248B | fixed — confirmed gone via ticket 15's already-planned refactor |
-
-`size_of::<T>()` measured directly via a temporary in-crate test (added,
-run, removed — nothing landed):
-`redb::WriteTransaction` 624B, `redb::ReadTransaction` 160B,
-`redb::Database` 16B, `IndexBuilder` 304B (**32B once `RefreshCache` is
-boxed**, confirmed), `IndexStore` 40B, `Note` 240B, `FileBase` 112B,
-`FileIndex` 104B, `IndexError` 48B, `DbError` 40B, `IndexBuilderError`
-40B, `InlinkMap` 48B, `PathBuf` 24B, `postcard::Error` 1B.
-
-No single type in `refresh`'s or `replace_all`'s chain is individually
-large in isolation — the totals come from several moderate-sized owned
-values, and the two functions differ in a way that matters: `refresh`'s
-values get physically copied through `IndexBuilder`'s three-hop
-self-consuming builder chain (fixable by boxing, confirmed), while
-`replace_all`'s `WriteTransaction` is constructed once and used within
-one function (not fixable by boxing, confirmed — see Design Decisions
-13-14 for the full reasoning and the general principle).
+    The byte counts recorded in this ticket's checklist were measured
+    against the code shape *before* the `RefreshCache`
+    borrowing/boxing/phase-split changes (Decisions 13–15) existed —
+    they are a methodology and a set of already-tested individual
+    fixes, not a promise that the final numbers match once every change
+    in this ticket is applied together. Re-run `cargo clippy` against
+    the actual implemented code as the last step before closing this
+    ticket, not as an assumption baked into the checklist.
+13. **`RefreshCache` borrows `&IndexStore`/`&ReadTransaction` instead of
+    owning them — a second grilling pass, after this ticket's plan
+    (Decisions 1–12) was written but before it was implemented.**
+    Measured directly (temporary in-process timing tests, reverted, not
+    landed): `IndexStore::open()` costs ~3ms per call; the naive
+    implementation of "refresh persists internally" — two independent
+    `IndexStore::open()` calls, one for reconciliation, one for
+    persisting — costs ~31–40ms for a 200-note steady-state refresh,
+    over double a clean single-open ~14–17ms cost. `RefreshCache` owning
+    the store/transaction by value is *why*: it gets moved into
+    `IndexBuilder`'s self-consuming chain and is gone by the time
+    `refresh()` would go on to persist, forcing a second `open()`.
+    Borrowing keeps `refresh()`'s own `store` binding alive for the
+    whole call, reused for both reconciliation and the final persist —
+    eliminating the second `open()` entirely, not just making it cheaper.
+14. **`load_bases_and_links` becomes `load_bases_and_links_via`, taking
+    an external read transaction** — surfaced while designing
+    `RefreshCache::load` as a constructor: today's `refresh()` opens
+    *two* separate read transactions (one internal to the old
+    `load_bases_and_links`, a second explicit one for point lookups
+    during reconciliation), confirmed via `references` search to be true
+    of every actual caller, not just a hypothetical. One shared
+    transaction, held for the whole reconciliation phase, is strictly
+    safer under redb's MVCC (both loads now observe the exact same
+    snapshot) as well as cheaper.
+15. **The read transaction's lifetime is explicitly scoped to end before
+    `persist_index` opens a write transaction** — `RefreshCache`'s own
+    prior doc comment already named the underlying concern (the
+    transaction "pins the transaction's MVCC snapshot for the duration,
+    deferring reclamation of pages superseded by writes made *during*
+    this refresh," dismissed as "immaterial for this crate's single-shot
+    CLI usage"). That dismissal was reasonable when refresh and persist
+    were two separate, uncoordinated calls; it stops being reasonable
+    the moment this ticket makes them happen inside one function.
+    Cross-checked against `salsa`'s own architecture (rust-analyzer's
+    incremental engine): salsa forcibly cancels and drops every
+    outstanding read snapshot before allowing a mutation, treating
+    read/write overlap against the same store as a structural hazard,
+    not a per-callsite judgment call. traces-pkm doesn't have salsa's
+    concurrent-reader problem (single-threaded CLI), but the block-scope
+    fix costs nothing and removes the hedge from `RefreshCache`'s own
+    doc comment instead of continuing to defer it.
+16. **`IndexStore` is *not* embedded as a field of `IndexerService`** —
+    considered directly: it would be the deepest possible fix to
+    "how many times does this process open the database," since a
+    long-lived `IndexerService` could open the store exactly once for
+    its entire lifetime rather than once per `refresh()` call. Checked
+    against actual usage before deciding, not assumed: `references`
+    search across all 90 `IndexerService::new` call sites in `src/`,
+    `benches/`, and `tests/` found zero cases where one `IndexerService`
+    instance is reused across more than one store-touching method call
+    — every caller constructs, calls one method, and drops. The cost is
+    real and immediate: `redb::Database` does not implement `Clone`
+    (confirmed against its generated docs), so embedding would force
+    `IndexerService::new` to become fallible (`Result<Self, IndexError>`)
+    — a mechanical but 90-call-site ripple — and would require either
+    dropping `IndexerService`'s currently-`#[derive(Clone)]` (unused —
+    zero actual `.clone()` call sites found) or wrapping `IndexStore` in
+    `Arc` to keep it. The one scenario where embedding would pay off is
+    a long-lived process reusing one `IndexerService` across many
+    refreshes — which ADR-0005 explicitly names as deferred future work
+    (`traces watch`, via the `notify` crate), not something this
+    codebase does today. Deferred as YAGNI against a documented-but-
+    unbuilt future, not implemented speculatively; revisit if/when
+    `traces watch` is actually built.
+17. **`IndexDelta::Full`/`Incremental` are documented as non-interchangeable,
+    and a persisted-deletion round-trip test is added for the
+    `Incremental` path specifically** — surfaced while confirming that
+    `build_fresh` (which never touches `IndexStore` at all) can't safely
+    be re-expressed as "incremental reconciliation against an empty
+    `RefreshCache`," even though the two produce an identical in-memory
+    `FileIndex` for that case. The persistence side does not: `Full`
+    (`replace_all`) unconditionally wipes all three tables before
+    rewriting, so it never needs to know what was deleted; `Incremental`
+    (`persist_incremental`) only deletes paths its diff explicitly names,
+    which is only correct because that diff is always computed against a
+    `RefreshCache` loaded from the real, currently-persisted store (via
+    `RefreshCache::load`, the only constructor — private fields make this
+    a type-level guarantee, not just a convention) — never a synthetic or
+    assumed-empty one. A `build_fresh` result tagged `Incremental` against
+    a fabricated empty previous state would silently orphan any row for a
+    file deleted since the last persist, because an empty diff can never
+    produce a deletion. Concretely reachable today if this distinction
+    were ever blurred: delete a note, re-run `traces index` — `build()`
+    never opens the store, so it has no way to know that note's row
+    exists. `persists_rebuilds_rather_than_appends` already proves this
+    is safe for the `Full` path today; nothing currently proves the
+    equivalent for `Incremental` once it becomes the common case (every
+    `refresh()` call, per this ticket) — hence the new test above.
 
 ## Agent Brief
 
 **Category:** enhancement
-**Summary:** Retype `IndexStore`'s three redb tables onto a single
-`Postcard<T>` value codec and byte-exact path keys, add transparent
-schema-mismatch and corruption recovery, tune write durability for a
-workload that's a disposable, rebuildable cache rather than a source of
-truth, make `IndexerService::refresh()` persist its own result so the
-on-disk cache actually stays warm across CLI and template queries
-instead of only advancing on an explicit `traces index`, and resolve or
-deliberately accept every `clippy::large_stack_frames` warning this
-module raises.
 
-**Current behavior:** `src/index/store.rs`'s `FILES`/`NOTES` tables are
-`TableDefinition<&str, &[u8]>`; `LINKS` is
-`MultimapTableDefinition<&str, &str>`. Every value is manually
-postcard-encoded/decoded across six near-identical methods. Every key is
-`path.to_string_lossy()` — lossy for non-UTF-8 paths, a latent collision
-risk (two different non-UTF-8 paths can map to the same lossy string and
-overwrite each other's row). `load_table` deserializes every row and
-re-sorts it by `Path::cmp` order — necessary, not redundant, since
-redb's own key order is byte-lexicographic on the encoded path bytes and
-provably diverges from `Path::cmp`'s component-wise order (see Design
-Decision 10).
-`IndexStore::open` uses the default `Durability::Immediate` for
-every write, including the frequent small writes `persist_incremental`
-makes, even though `.traces/index.redb` is fully regenerable by
-rescanning the project's markdown files.
+**Summary:** Deepen `IndexStore`'s redb adapter (value codec, byte-exact
+path keys, transparent schema-mismatch/corruption recovery, tuned write
+durability), make `IndexerService::refresh()` persist its own result
+through exactly one store connection and one read transaction, and
+resolve `src/index/`'s `clippy::large_stack_frames` warnings — measured,
+not assumed, at every step, including after this ticket's own
+`RefreshCache` reshaping.
 
-Separately, `IndexerService::refresh()` computes a fresh `FileIndex` but
-documents that it does *not* persist — callers must call `persist()`
-themselves. No production caller does: `src/cli/mod.rs`'s
-`refresh_page_query`/`refresh_task_query` (backing `traces
-list`/`table`/`task`) and `src/template/engine/query.rs`'s
-`cached_refresh` (backing the `query`/`tasks` template namespace) all
-call bare `refresh()` and discard the result without persisting. Only the
-explicit `traces index` command (`build()`+`persist()`) advances the
-on-disk cache, so every query against an edited vault re-parses the same
-changed notes on every invocation until the user manually reindexes.
+**Current behavior:** `IndexStore` hand-writes postcard encode/decode at
+six call sites keyed by `path.to_string_lossy()` (a lossy, collision-prone
+`&str`). Schema drift or corruption in `.traces/index.redb` propagates as
+a hard error with no recovery. `persist_incremental` and `replace_all`
+share `Durability::Immediate`. Callers must remember to call `persist()`
+after `refresh()` — most don't, so the on-disk cache only advances via
+explicit `traces index` runs. `RefreshCache` owns an `IndexStore` and a
+`redb::ReadTransaction` by value, moved through `IndexBuilder`'s
+self-consuming chain; if `refresh()` were naively changed to persist
+internally on top of today's shape, it would reopen the database a
+second time and hold two separate read transactions, reproducing exactly
+the ~20% latency regression this ticket's design avoids by construction.
 
 **Desired behavior:** see the checklist above — this section intentionally
 doesn't repeat it.
 
 **Key interfaces:**
 
-- `IndexStore` (`src/index/store.rs`) — all six table-mechanics methods,
-  `open`, `replace_all`, `persist_incremental` and its write-transaction
-  construction.
-- `FILES`/`NOTES`/`LINKS` table `const`s — type signatures change; every
-  call site that opens them follows.
-- `IndexStore::load_note`/`load_table` (`src/index/store.rs`) — decode
-  logic moves behind `Postcard<T>`'s `redb::Value` impl; `load_links`
-  gains two extracted helpers (per-entry and per-target-sources).
-- `IndexerService::refresh()` (`src/index/service.rs`) — gains an
-  internal persist step and a doc-comment rewrite. `IndexerService::
-  persist()`/`build()` are unchanged.
-- `benches/template_render.rs` — `prepared_root()` gains a build+persist
-  step in its untimed setup.
-- `IndexBuilder`'s `reuse` field (`src/index/builder.rs`) — boxed; no
-  other change to `IndexBuilder`, `diff_bases`, `reconcile_note`, or
-  the reconciliation logic ticket 15 owns. Land this ticket before
-  ticket 15 (already the intended order): ticket 15's `build_with_reuse`
-  rewrite reads `reuse.previous`/`&reuse.store`/`&reuse.read_txn`
-  exactly as today through `Box`'s `Deref`, no adaptation needed either
-  way, but implementing them in the stated priority order avoids any
-  merge back-and-forth.
+- `IndexStore` (`src/index/store.rs`) — `Postcard<T>: redb::Value`, byte
+  keys, `open`'s eager mismatch/corruption probe, `Durability` split,
+  new `load_bases_and_links_via(&self, read_txn: &ReadTransaction)`,
+  removed `load_bases_and_links(&self)`.
+- `RefreshCache` (`src/index/builder.rs`) — gains a lifetime parameter,
+  borrows `&'a IndexStore`/`&'a ReadTransaction`, constructed only via
+  `RefreshCache::load`. Its other methods (`diff_bases`, `reconcile_note`,
+  `diff_links`, `into_inlinks`) and its move into a method-owning shape
+  are ticket 15's scope, landing after this ticket.
+- `IndexBuilder` (`src/index/builder.rs`) — `cache: Option<Box<RefreshCache<'a>>>`
+  (was `Option<RefreshCache>`, owned, unboxed).
+- `IndexerService::refresh`/`persist` (`src/index/service.rs`) — `refresh`
+  persists internally, best-effort; `persist` unchanged.
+- `IndexDelta` (`src/index/builder.rs`, moves to `delta.rs` under ticket
+  15) — gains the non-interchangeability doc comment.
 
 **Out of scope:**
 
-- Ticket 16 (`LINKS` reconstruction fidelity via correlation against
-  loaded `notes`, closing the `str::from_utf8` fallback's residual gap).
-- Any change to what gets stored (`FileBase`, `Note`, `InlinkMap` shapes)
-  — only how it's encoded and keyed changes.
+- Renaming `reuse_unchanged` to `with_cache`, giving `RefreshCache` its
+  own `diff_bases`/`reconcile_note`/`diff_links`/`into_inlinks` methods,
+  the `IndexBuilder::new`/`with_cache`/`build` builder shape, backdated
+  staleness (comparing outlink targets, not full note equality), moving
+  `scan_root` into `IndexerService::scan`, and extracting `delta.rs` —
+  all ticket 15, which lands on top of this ticket's `RefreshCache`
+  shape.
+- Embedding `IndexStore` in `IndexerService` — considered and rejected,
+  see Design Decision 16.
+- Ticket 16's `LINKS` byte-exact reconstruction — assumed to land after
+  this ticket, per its own file.
