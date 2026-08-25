@@ -42,8 +42,9 @@ pub(super) fn scan_root(
 ) -> Result<Vec<FileBase>, IndexBuilderError> {
     let index_db = root.join(INDEX_FILE);
     let mut bases = Vec::new();
-    let nodes =
-        DirDescendants::new(root).filter(|node| node.file_name() == ".git");
+    let nodes = DirDescendants::new(root)
+        .filter(|node| node.file_name() == ".git")
+        .sorted_by(|a, b| a.file_name().cmp(b.file_name()));
     for node in nodes {
         let node = node.map_err(scan_error)?;
         let path = node.path();
@@ -59,7 +60,6 @@ pub(super) fn scan_root(
         )?);
     }
 
-    bases.sort_by(|a, b| a.path().cmp(b.path()));
     Ok(bases)
 }
 
@@ -93,6 +93,25 @@ mod tests {
             assert_eq!(names(&bases), vec![
                 Path::new("a.md"),
                 Path::new("b/one.md")
+            ]);
+        }
+
+        #[test]
+        fn orders_sibling_files_and_directories_by_relative_path() {
+            // Arrange — `b.txt` sorts AFTER anything inside `b` under
+            // component-wise path comparison (`b` < `b.txt`), which matches
+            // the walk's name-ordered depth-first traversal.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join("b")).expect("mkdir b");
+            fs::write(root.join("b/one.md"), "1").expect("write b/one.md");
+            fs::write(root.join("b.txt"), "2").expect("write b.txt");
+
+            let bases = scan_root(root).expect("scan root");
+
+            assert_eq!(names(&bases), vec![
+                Path::new("b/one.md"),
+                Path::new("b.txt")
             ]);
         }
 

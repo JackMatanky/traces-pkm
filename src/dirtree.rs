@@ -31,6 +31,16 @@ use std::{
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
+/// Applies `configure` to a pending builder, leaving an started walk alone.
+fn configure(
+    builder: &mut Option<WalkDir>,
+    f: impl FnOnce(WalkDir) -> WalkDir,
+) {
+    if let Some(pending) = builder.take() {
+        *builder = Some(f(pending));
+    }
+}
+
 /// A failure raised while traversing a directory tree.
 ///
 /// Variants are classified inside this module where walkdir's depth information
@@ -238,11 +248,11 @@ impl DirChildren {
             + Sync
             + 'static,
     {
-        if let Some(builder) = self.builder.take() {
-            self.builder = Some(builder.sort_by(move |a, b| {
+        configure(&mut self.builder, |builder| {
+            builder.sort_by(move |a, b| {
                 compare(&DirNode(a.clone()), &DirNode(b.clone()))
-            }));
-        }
+            })
+        });
         self
     }
 
@@ -335,11 +345,6 @@ impl DirDescendants {
     /// comparison, and must be [`Send`] + [`Sync`] (walkdir's requirement).
     /// Has no effect once iteration has begun.
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "no recursive consumer needs walk-order yet; flat listing \
-                  already uses its sibling"
-    )]
     pub(crate) fn sorted_by<F>(mut self, mut compare: F) -> Self
     where
         F: FnMut(&DirNode, &DirNode) -> std::cmp::Ordering
@@ -347,11 +352,11 @@ impl DirDescendants {
             + Sync
             + 'static,
     {
-        if let Some(builder) = self.builder.take() {
-            self.builder = Some(builder.sort_by(move |a, b| {
+        configure(&mut self.builder, |builder| {
+            builder.sort_by(move |a, b| {
                 compare(&DirNode(a.clone()), &DirNode(b.clone()))
-            }));
-        }
+            })
+        });
         self
     }
 
