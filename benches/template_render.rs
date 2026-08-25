@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use traces_pkm::{
-    Config, PresetDialogProvider, TemplatePathInput, TemplateService,
-    WriteMode, create_trusted_project, fixture_service, write_note,
-    write_template,
+    Config, IndexerService, PresetDialogProvider, TemplatePathInput,
+    TemplateService, WriteMode, create_trusted_project, fixture_service,
+    write_note, write_template,
 };
 
 fn prepared_root() -> std::path::PathBuf {
@@ -38,6 +38,10 @@ fn prepared_root() -> std::path::PathBuf {
         "report.md",
         "{{ query.from() | list(\"file.path\") }}",
     );
+    let indexer = IndexerService::new(&root);
+    indexer
+        .persist(&indexer.build().expect("build index"))
+        .expect("persist index");
     // `keep()` intentionally leaks the directory: the setup closure's directory
     // must outlive the measured `render_to_file` call below, so an ordinary
     // `TempDir` drop inside `routine` would count toward the *measured* time

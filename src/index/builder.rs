@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     FileFormat,
-    error::IndexBuilderError,
+    error::{IndexBuilderError, IndexError},
     inlinks::{InlinkMap, derive_inlinks},
     scan,
 };
@@ -30,6 +30,19 @@ use crate::{file::FileBase, note::parse_markdown};
 ///
 /// [`Incremental`]: IndexDelta::Incremental
 /// [`Full`]: IndexDelta::Full
+///
+/// `Full` and `Incremental` are not interchangeable, even when an
+/// `Incremental` diff would come out empty: `Full` (`replace_all`)
+/// unconditionally wipes all three tables before rewriting, so it never
+/// needs to know what was deleted. `Incremental` (`persist_incremental`)
+/// only deletes paths its diff explicitly names, which is only correct
+/// because that diff is always computed against a `RefreshCache` loaded
+/// from the real, currently-persisted store (via `RefreshCache::load`,
+/// the only constructor — private fields make this a type-level
+/// guarantee). A `Full`-built `FileIndex` retagged `Incremental` against
+/// a fabricated empty previous state would silently orphan any row for a
+/// file deleted since the last persist, because an empty diff can never
+/// produce a deletion.
 #[derive(Clone, Debug)]
 pub(crate) enum IndexDelta {
     /// Produced by a fresh build: no previous state exists to diff against.
@@ -58,6 +71,17 @@ pub(crate) struct IncrementalDelta {
     pub(crate) links_deleted: Vec<PathBuf>,
 }
 
+impl IncrementalDelta {
+    /// True if this delta names no changes at all — persisting it would
+    /// open a write transaction only to commit nothing.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.upserted.is_empty()
+            && self.deleted.is_empty()
+            && self.links_deleted.is_empty()
+            && self.links_upserted.as_ref().is_none_or(Vec::is_empty)
+    }
+}
+
 /// Build plan for a [`super::FileIndex`].
 ///
 /// Stores the fresh scan result and (optionally) moved notes from a previous
@@ -73,15 +97,15 @@ pub(crate) struct IncrementalDelta {
 /// - [`Self::build`] produces a [`super::FileIndex`] with sorted records and
 ///   notes, and correctly derived inlinks (reused when nothing changed,
 ///   recomputed otherwise).
-pub(crate) struct IndexBuilder {
+pub(crate) struct IndexBuilder<'a> {
     bases: Vec<FileBase>,
-    /// `None` = fresh build (parse all notes at build time). `Some(records,
-    /// notes, inlinks)` = refresh (reuse moved notes for unchanged records,
-    /// parse only changed ones at build time).
-    reuse: Option<RefreshCache>,
+    /// `None` = fresh build (parse all notes at build time). `Some(cache)`
+    /// = refresh (reuse `cache`'s previously-persisted state for
+    /// unchanged records, parse only changed ones at build time).
+    cache: Option<Box<RefreshCache<'a>>>,
 }
 
-impl IndexBuilder {
+impl<'a> IndexBuilder<'a> {
     /// Scans `root` for regular files. Parsing is deferred to [`Self::build`].
     ///
     /// # Errors
@@ -92,40 +116,28 @@ impl IndexBuilder {
         let bases = scan::scan_root(root)?;
         Ok(Self {
             bases,
-            reuse: None,
+            cache: None,
         })
     }
 
-    /// Consumes `previous`/`inlinks` (already loaded via
-    /// [`super::store::IndexStore::load_bases_and_links`]) and `store`/
-    /// `read_txn` (kept open for point lookups) to plan reuse of unchanged
-    /// Notes without loading every persisted Note upfront.
+    /// Consumes `cache` (already loaded via
+    /// [`RefreshCache::load`]) to plan reuse of unchanged Notes without
+    /// loading every persisted Note upfront.
     ///
     /// Parsing of changed or newly added notes, and recalling unchanged notes
     /// via point lookup, are both deferred to [`Self::build`].
-    pub(super) fn reuse_unchanged(
-        self,
-        previous: Vec<FileBase>,
-        inlinks: InlinkMap,
-        store: super::store::IndexStore,
-        read_txn: redb::ReadTransaction,
-    ) -> Self {
+    pub(super) fn reuse_unchanged(self, cache: RefreshCache<'a>) -> Self {
         Self {
             bases: self.bases,
-            reuse: Some(RefreshCache {
-                previous,
-                inlinks,
-                store,
-                read_txn,
-            }),
+            cache: Some(Box::new(cache)),
         }
     }
 
     /// Consumes the plan and produces a [`super::FileIndex`].
     ///
-    /// - **Fresh build** (`reuse: None`): parses every markdown record from
+    /// - **Fresh build** (`cache: None`): parses every markdown record from
     ///   disk, sorts notes, derives inlinks.
-    /// - **Refresh** (`reuse: Some`): for each markdown record, reuses the
+    /// - **Refresh** (`cache: Some`): for each markdown record, reuses the
     ///   moved note if the file metadata is unchanged, otherwise parses from
     ///   disk. Sorts notes, then derives inlinks only if any note was reparsed
     ///   or the record set changed.
@@ -141,11 +153,11 @@ impl IndexBuilder {
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let Self {
             bases,
-            reuse,
+            cache,
         } = self;
-        match reuse {
+        match cache {
             None => Self::build_fresh(bases, root),
-            Some(reuse) => Self::build_with_reuse(bases, root, reuse),
+            Some(cache) => Self::build_with_reuse(bases, root, *cache),
         }
     }
 
@@ -254,7 +266,7 @@ impl IndexBuilder {
     fn build_with_reuse(
         bases: Vec<FileBase>,
         root: &Path,
-        reuse: RefreshCache,
+        reuse: RefreshCache<'a>,
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let (upserted, deleted) = Self::diff_bases(&bases, &reuse.previous);
         let mut notes = Vec::with_capacity(bases.len());
@@ -273,8 +285,8 @@ impl IndexBuilder {
             let (note, reparsed) = Self::reconcile_note(
                 base,
                 &mut prev_iter,
-                &reuse.store,
-                &reuse.read_txn,
+                reuse.store,
+                reuse.read_txn,
                 root,
             )?;
             dirty |= reparsed;
@@ -389,23 +401,47 @@ impl IndexBuilder {
     }
 }
 
-/// Reuse state carried across [`IndexBuilder::build_with_reuse`].
+/// State carried across [`IndexBuilder::build_with_reuse`], borrowed
+/// from the caller's own [`super::store::IndexStore`]/`ReadTransaction`
+/// rather than owned — owning them here would force
+/// [`super::IndexerService::refresh`] to reopen the store a second time
+/// to persist afterward.
 ///
 /// `read_txn` stays open for the entire call — every `parse_note` disk read
 /// and the full merge-join, not just the
 /// [`super::store::IndexStore::load_note`] point lookups it backs. Per redb's
 /// own docs, "read-only transactions may exist concurrently with writes", so
 /// this never blocks a concurrent writer; it does pin the transaction's MVCC
-/// snapshot for the duration, deferring reclamation of pages superseded by
-/// writes made *during* this refresh until `read_txn` drops at the end of
-/// `build`. Immaterial for this crate's single-shot CLI usage; worth revisiting
-/// if `IndexBuilder` is ever driven from a long-lived process with concurrent
-/// writers.
-struct RefreshCache {
+/// snapshot for the duration. [`super::IndexerService::refresh`] scopes this
+/// transaction's lifetime to end before it opens its own write transaction
+/// to persist, so the two never overlap.
+pub(super) struct RefreshCache<'a> {
     previous: Vec<FileBase>,
     inlinks: InlinkMap,
-    store: super::store::IndexStore,
-    read_txn: redb::ReadTransaction,
+    store: &'a super::store::IndexStore,
+    read_txn: &'a redb::ReadTransaction,
+}
+
+impl<'a> RefreshCache<'a> {
+    /// Loads `previous`/`inlinks` via `store` through `read_txn` — the
+    /// only way to construct a `RefreshCache`; fields stay private.
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexError::Store`] if the previously persisted `FILES`/`LINKS`
+    ///   tables cannot be read.
+    pub(super) fn load(
+        store: &'a super::store::IndexStore,
+        read_txn: &'a redb::ReadTransaction,
+    ) -> Result<Self, IndexError> {
+        let (previous, inlinks) = store.load_bases_and_links_via(read_txn)?;
+        Ok(Self {
+            previous,
+            inlinks,
+            store,
+            read_txn,
+        })
+    }
 }
 
 /// Reads and parses the markdown file for `record`.
@@ -434,21 +470,70 @@ mod tests {
         note::Note,
     };
 
-    /// Persists `previous` to `root` and reopens it as the four pieces
-    /// [`IndexBuilder::reuse_unchanged`] needs, mirroring what
-    /// `IndexerService::refresh` does in production.
-    fn reuse_state(
-        previous: &FileIndex,
-        root: &Path,
-    ) -> (Vec<FileBase>, InlinkMap, IndexStore, redb::ReadTransaction) {
+    /// Persists `previous` to `root` and reopens the store, mirroring what
+    /// `IndexerService::refresh` does in production before reconciliation.
+    fn persist_previous(previous: &FileIndex, root: &Path) -> IndexStore {
         let store = IndexStore::open(root).expect("open store");
         store
             .replace_all(previous.bases(), previous.notes(), previous.inlinks())
             .expect("persist previous index");
-        let (bases, inlinks) =
-            store.load_bases_and_links().expect("load bases and links");
-        let read_txn = store.begin_read().expect("begin read");
-        (bases, inlinks, store, read_txn)
+        store
+    }
+
+    mod is_empty {
+        use rstest::rstest;
+
+        use super::*;
+
+        /// Builds an [`IncrementalDelta`] with all-empty fields except the
+        /// one under test, so each case isolates exactly one field's
+        /// contribution to [`IncrementalDelta::is_empty`].
+        fn delta(
+            upserted: Vec<PathBuf>,
+            deleted: Vec<PathBuf>,
+            links_upserted: Option<Vec<PathBuf>>,
+            links_deleted: Vec<PathBuf>,
+        ) -> IncrementalDelta {
+            IncrementalDelta {
+                upserted,
+                deleted,
+                links_upserted,
+                links_deleted,
+            }
+        }
+
+        #[test]
+        fn is_true_when_every_field_is_empty_or_none() {
+            let delta = delta(vec![], vec![], None, vec![]);
+
+            assert!(delta.is_empty());
+        }
+
+        #[test]
+        fn is_true_when_links_upserted_is_an_empty_vec_not_none() {
+            // `Some(vec![])` ("recomputed, nothing changed") must count as
+            // empty alongside `None` ("never recomputed") — the two are
+            // different reasons for the same "nothing to write" outcome.
+            let delta = delta(vec![], vec![], Some(vec![]), vec![]);
+
+            assert!(delta.is_empty());
+        }
+
+        #[rstest]
+        #[case::upserted(delta(vec![PathBuf::from("a.md")], vec![], None, vec![]))]
+        #[case::deleted(delta(vec![], vec![PathBuf::from("a.md")], None, vec![]))]
+        #[case::links_deleted(delta(vec![], vec![], None, vec![PathBuf::from("a.md")]))]
+        #[case::links_upserted_nonempty(delta(
+            vec![],
+            vec![],
+            Some(vec![PathBuf::from("a.md")]),
+            vec![]
+        ))]
+        fn is_false_when_any_field_names_a_change(
+            #[case] delta: IncrementalDelta,
+        ) {
+            assert!(!delta.is_empty());
+        }
     }
 
     mod constructor {
@@ -517,16 +602,13 @@ mod tests {
                 .expect("build");
             let first_inlinks = first.inlinks().len();
 
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&first, temp.path());
+            let store = persist_previous(&first, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -557,16 +639,13 @@ mod tests {
             fs::remove_file(temp.path().join("image.png"))
                 .expect("delete image");
 
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&first, temp.path());
+            let store = persist_previous(&first, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -600,16 +679,13 @@ mod tests {
             let first_len = first.notes().len();
 
             // Act
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&first, temp.path());
+            let store = persist_previous(&first, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -639,16 +715,13 @@ mod tests {
             .expect("rewrite note");
 
             // Act
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&first, temp.path());
+            let store = persist_previous(&first, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -684,16 +757,13 @@ mod tests {
             fs::remove_file(temp.path().join("note.md")).expect("delete note");
 
             // Act
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&first, temp.path());
+            let store = persist_previous(&first, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -716,16 +786,13 @@ mod tests {
             fs::write(temp.path().join("b.md"), "---\ntitle: B\n---\nBody.")
                 .expect("write b");
 
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&first, temp.path());
+            let store = persist_previous(&first, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -740,16 +807,13 @@ mod tests {
             let built =
                 IndexerService::new(temp.path()).build().expect("build index");
 
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&built, temp.path());
+            let store = persist_previous(&built, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let index = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
@@ -773,16 +837,13 @@ mod tests {
             fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
                 .expect("rewrite note");
 
-            let (previous_bases, previous_inlinks, store, read_txn) =
-                reuse_state(&built, temp.path());
+            let store = persist_previous(&built, temp.path());
+            let read_txn = store.begin_read().expect("begin read");
+            let cache =
+                RefreshCache::load(&store, &read_txn).expect("load cache");
             let index = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
-                .reuse_unchanged(
-                    previous_bases,
-                    previous_inlinks,
-                    store,
-                    read_txn,
-                )
+                .reuse_unchanged(cache)
                 .build(temp.path())
                 .expect("build");
 
