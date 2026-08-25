@@ -50,8 +50,13 @@ impl IndexerService {
         Ok(builder::IndexBuilder::from_scan(&self.root)?.build(&self.root)?)
     }
 
-    /// Refreshes the persisted index for this service's root against current
-    /// filesystem state.
+    /// Refreshes the persisted index for this service's root against
+    /// current filesystem state, persisting the fresh result before
+    /// returning (best-effort: a persist failure is logged via
+    /// `tracing::warn!` and does not fail this call). Callers do not need
+    /// to call [`Self::persist`] separately after `refresh`; it remains
+    /// available for persisting a [`FileIndex`] built via [`Self::build`]
+    /// instead.
     ///
     /// Re-scans the root and compares each current file's `(created_at,
     /// modified_at, size)` tuple against the previously persisted
@@ -60,9 +65,6 @@ impl IndexerService {
     /// - Unchanged markdown Notes reuse their parsed [`crate::note::Note`].
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
-    ///
-    /// Returns the fresh [`FileIndex`] without persisting. Call
-    /// [`Self::persist`] to write the result to disk.
     ///
     /// Derived inlinks are recomputed in full whenever a Note's content or
     /// metadata changed since the last persist. A full recompute (not a
@@ -82,11 +84,18 @@ impl IndexerService {
     #[inline]
     pub fn refresh(&self) -> Result<FileIndex, IndexError> {
         let store = IndexStore::open(&self.root)?;
-        let (previous, inlinks) = store.load_bases_and_links()?;
-        let read_txn = store.begin_read()?;
-        Ok(builder::IndexBuilder::from_scan(&self.root)?
-            .reuse_unchanged(previous, inlinks, store, read_txn)
-            .build(&self.root)?)
+        let index = {
+            let read_txn = store.begin_read()?;
+            let cache = builder::RefreshCache::load(&store, &read_txn)?;
+            builder::IndexBuilder::from_scan(&self.root)?
+                .reuse_unchanged(cache)
+                .build(&self.root)?
+        }; // read_txn (and cache, which borrows it) drop here, before
+        // persist_index opens a write transaction
+        if let Err(source) = store.persist_index(&index) {
+            tracing::warn!(%source, "failed to persist refreshed index");
+        }
+        Ok(index)
     }
 
     /// Persists `index` to this service's root, replacing any existing index
@@ -512,6 +521,32 @@ mod tests {
         }
 
         #[test]
+        fn incremental_refresh_persist_actually_removes_a_deleted_notes_row_from_disk()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("keep.md"), "# Keep")
+                .expect("write keep");
+            fs::write(temp.path().join("gone.md"), "# Gone")
+                .expect("write gone");
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            fs::remove_file(temp.path().join("gone.md")).expect("delete gone");
+            indexer.refresh().expect("refresh persists internally");
+
+            let loaded = indexer.load().expect("load index");
+            assert_eq!(loaded.bases().len(), 1);
+            assert_eq!(loaded.notes().len(), 1);
+            assert!(loaded.note(Path::new("gone.md")).is_none());
+            assert_eq!(
+                loaded.bases().first().map(FileBase::path),
+                Some(Path::new("keep.md"))
+            );
+        }
+
+        #[test]
         fn refresh_delta_names_only_the_changed_path() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -586,6 +621,42 @@ mod tests {
             let delta = incremental_paths(noop_refresh.delta())
                 .expect("refresh after a persisted build must be incremental");
             assert!(delta.upserted.is_empty());
+            assert!(delta.deleted.is_empty());
+        }
+
+        #[test]
+        fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_deleted()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            let db_path = temp.path().join(".traces/index.redb");
+            // Preserve redb's 9-byte magic number (`page_store::header::
+            // MAGICNUMBER`) so opening reaches checksum verification and
+            // reports `StorageError::Corrupted`, not the earlier
+            // magic-number mismatch path (`StorageError::Io`) a
+            // completely-foreign byte sequence would hit instead.
+            let mut corrupted = fs::read(&db_path).expect("read valid db");
+            corrupted[9..].fill(0xFF);
+            fs::write(&db_path, &corrupted).expect("corrupt the database file");
+
+            let refreshed =
+                indexer.refresh().expect("refresh recovers from corruption");
+
+            let delta = incremental_paths(refreshed.delta()).expect(
+                "post-recovery refresh must still report an incremental delta",
+            );
+            let mut upserted = delta.upserted.to_vec();
+            upserted.sort();
+            assert_eq!(upserted, [
+                PathBuf::from("a.md"),
+                PathBuf::from("b.md")
+            ]);
             assert!(delta.deleted.is_empty());
         }
     }
@@ -798,7 +869,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_unpersisted_index_from_refresh() {
+        fn refresh_persists_so_a_fresh_load_reflects_the_change() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "---\ntitle: Draft\n---")
                 .expect("write note");
@@ -821,8 +892,9 @@ mod tests {
                     .and_then(|v| v.as_str()),
                 None // "# Revised" has no frontmatter
             );
-            // ...but a fresh load from disk still shows the OLD content,
-            // because refresh did not persist.
+            // ...and refresh() persists internally, so a fresh load from
+            // disk reflects the same revised content without a separate
+            // `persist()` call.
             let loaded = indexer.load().expect("load index");
             assert_eq!(
                 loaded
@@ -830,7 +902,7 @@ mod tests {
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),
-                Some("Draft") // OLD frontmatter, not the revised content
+                None // "# Revised" content, persisted by refresh() itself
             );
         }
 
