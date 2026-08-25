@@ -31,6 +31,7 @@
 //!   field definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
+//! - `dirtree` - Directory-tree traversal with classified walk errors
 //! - `walk` - Shared directory-walk error context for `walkdir` consumers
 //!   across config, index, schema, and template.
 //!
@@ -56,6 +57,7 @@
 mod config;
 mod dialog;
 mod dirs;
+mod dirtree;
 mod field;
 mod file;
 mod file_class_expander;
