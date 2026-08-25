@@ -80,8 +80,11 @@ ticket 15.
 **Update, after tickets 14/15 were rewritten in the same architecture-review
 session:** ticket 14 renames the self-opening `load_bases_and_links` to
 `load_bases_and_links_via` (taking an external read transaction — see its
-Design Decision 14) and ticket 15 gives `RefreshCache::load` sole
-ownership of calling it. References here are updated to the new name.
+Design Decision 14) and gives `RefreshCache::load` sole ownership of
+calling it (ticket 14's checklist, not ticket 15's — ticket 15 only adds
+`RefreshCache`'s own `diff_bases`/`reconcile_note`/`diff_links`/
+`into_inlinks` methods on top of the already-landed `load` constructor).
+References here are updated to the new name.
 While fixing the reference, corrected a pre-existing inaccuracy in this
 ticket's own "Key interfaces" section: it claimed `load_all` and
 `load_bases_and_links` "both already load `bases`/`notes` in the same
