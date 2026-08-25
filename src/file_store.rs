@@ -16,7 +16,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{Blake3PathHash, dirs::StateDirRoot};
+use crate::{Blake3PathHash, DirTree, DirTreeError, dirs::StateDirRoot};
 
 /// Reports a [`FileStateStore`] operation failure.
 #[derive(Debug, Error)]
@@ -182,9 +182,10 @@ impl FileStateStore {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
-        let entries = read_dir_entries(&self.root)?;
-        let mut targets = Vec::with_capacity(entries.len());
-        for entry in entries {
+        let mut targets = Vec::new();
+        for node in DirTree::children(&self.root) {
+            let node = node.map_err(store_error)?;
+            let entry = node.path().to_path_buf();
             if let Some(target) = recorded_target(&entry)
                 && target.exists()
             {
@@ -356,9 +357,10 @@ impl FileStateStore {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
-        let entries = read_dir_entries(&self.root)?;
-        let mut removed = Vec::with_capacity(entries.len());
-        for entry in entries {
+        let mut removed = Vec::new();
+        for node in DirTree::children(&self.root) {
+            let node = node.map_err(store_error)?;
+            let entry = node.path().to_path_buf();
             let Some(target) = recorded_target(&entry) else {
                 continue;
             };
@@ -453,27 +455,13 @@ fn recorded_target(entry: &Path) -> Option<PathBuf> {
     target.ok()
 }
 
-/// Reads the entry paths directly under `root`.
-///
-/// # Errors
-///
-/// - [`FileStateStoreError`] if `root` cannot be read or any child entry cannot
-///   be inspected.
-fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, FileStateStoreError> {
-    fs::read_dir(root)
-        .map_err(|source| FileStateStoreError::StoreIo {
-            path: root.to_path_buf(),
-            source,
-        })?
-        .map(|entry| {
-            entry.map(|entry| entry.path()).map_err(|source| {
-                FileStateStoreError::StoreIo {
-                    path: root.to_path_buf(),
-                    source,
-                }
-            })
-        })
-        .collect()
+/// Converts a [`DirTreeError`] into a [`FileStateStoreError::StoreIo`].
+fn store_error(error: DirTreeError) -> FileStateStoreError {
+    let (path, source) = error.into_parts();
+    FileStateStoreError::StoreIo {
+        path,
+        source,
+    }
 }
 
 #[cfg(test)]
