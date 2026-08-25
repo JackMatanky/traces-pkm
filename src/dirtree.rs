@@ -196,10 +196,15 @@ impl DirNode {
 
 /// Lists a directory's immediate entries (non-recursive).
 ///
-/// Yields every direct child of `directory` — files, directories, and symlinks
-/// alike; filtering stays with the caller. A missing directory yields exactly
-/// one [`DirTreeError::MissingRoot`] and then stops; a *file* root yields
-/// nothing at all.
+/// Yields every direct child of `directory` — files, directories, and
+/// symlinks alike; filtering stays with the caller. A missing directory
+/// yields exactly one [`DirTreeError::MissingRoot`] and then stops; a
+/// *file* root yields nothing at all.
+///
+/// An unreadable *subdirectory* is still yielded as a plain entry without
+/// an error: walkdir records the failed open but discards it when
+/// `max_depth` cuts the stack. Recursive walks surface such failures as
+/// [`DirTreeError::NodeInaccessible`].
 ///
 /// Entry order follows the OS directory read and is unspecified — sort if
 /// order matters.
@@ -327,6 +332,8 @@ mod tests {
     }
 
     mod children {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -389,6 +396,8 @@ mod tests {
     }
 
     mod descendants {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -475,6 +484,187 @@ mod tests {
             // `.git` passes through untouched (alongside the walk root).
             assert_eq!(names.len(), 2);
             assert!(names.contains(&".git".to_owned()));
+        }
+    }
+
+    /// Restores a locked directory's permissions on drop, even if the test
+    /// panics. Otherwise, a `0o000` directory blocks the tempdir's cleanup.
+    #[cfg(unix)]
+    struct RestorePermissions<'a>(&'a Path);
+
+    #[cfg(unix)]
+    impl Drop for RestorePermissions<'_> {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                fs::set_permissions(self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    mod classification {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[cfg(unix)]
+        #[test]
+        fn unreadable_root_reports_root_inaccessible_never_missing_root() {
+            use std::os::unix::fs::PermissionsExt;
+
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, "inside.md");
+            fs::set_permissions(root, fs::Permissions::from_mode(0o000))
+                .expect("revoke root permissions");
+            let _restore = RestorePermissions(root);
+
+            // Act
+            let collected: Vec<_> = children(root).collect();
+
+            // Assert — stat on the root still succeeds (parent grants it),
+            // so this is an access failure, not absence.
+            assert_eq!(collected.len(), 1);
+            let error = collected
+                .into_iter()
+                .next()
+                .expect("one item")
+                .expect_err("is an error");
+            assert!(
+                matches!(error, DirTreeError::RootInaccessible { .. }),
+                "expected RootInaccessible, got {error:?}"
+            );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn children_yields_an_unreadable_subdirectory_without_error() {
+            use std::os::unix::fs::PermissionsExt;
+
+            // Arrange — walkdir opens child directories eagerly even under
+            // max_depth(1), but a failed open is stored in the child's dir
+            // list and popped before it can be polled, so flat listings
+            // yield the locked directory as a plain entry with no error.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let kid = root.join("locked-kid");
+            fs::create_dir(&kid).expect("create locked dir");
+            fs::set_permissions(&kid, fs::Permissions::from_mode(0o000))
+                .expect("revoke permissions");
+            let _restore = RestorePermissions(&kid);
+
+            // Act
+            let collected: Vec<_> = children(root).collect();
+
+            // Assert
+            assert_eq!(collected.len(), 1);
+            assert!(
+                !collected.iter().any(Result::is_err),
+                "flat listing surfaces no error: {collected:?}"
+            );
+            let node = collected
+                .into_iter()
+                .next()
+                .expect("one item")
+                .expect("entry is ok");
+            assert_eq!(node.file_name(), std::ffi::OsStr::new("locked-kid"));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn descendants_reports_an_unreadable_subdirectory_naming_it() {
+            use std::os::unix::fs::PermissionsExt;
+
+            // Arrange — unlike `children`, an unlimited-depth walk polls the
+            // stored open-failure and surfaces it.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let kid = root.join("locked-kid");
+            fs::create_dir(&kid).expect("create locked dir");
+            fs::set_permissions(&kid, fs::Permissions::from_mode(0o000))
+                .expect("revoke permissions");
+            let _restore = RestorePermissions(&kid);
+
+            // Act
+            let mut errors = descendants(root).filter_map(Result::err);
+
+            // Assert
+            let error = errors.next();
+            assert!(
+                matches!(&error, Some(DirTreeError::NodeInaccessible { .. })),
+                "expected NodeInaccessible, got {error:?}"
+            );
+            let (path, _) = error.expect("present").into_parts();
+            assert_eq!(path, kid);
+            assert!(errors.next().is_none(), "exactly one error");
+        }
+    }
+
+    mod dirnode {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn exposes_path_file_name_and_file_type() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let file = write(root, "daily.md");
+
+            // Act
+            let node =
+                children(root).next().expect("one entry").expect("entry is ok");
+
+            // Assert
+            assert_eq!(node.path(), file);
+            assert_eq!(node.file_name(), std::ffi::OsStr::new("daily.md"));
+            assert!(node.file_type().is_file());
+        }
+
+        #[test]
+        fn metadata_reads_size_and_mtime() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, "daily.md");
+
+            // Act
+            let node =
+                children(root).next().expect("one entry").expect("entry is ok");
+            let metadata = node.metadata().expect("metadata reads");
+
+            let expected_len =
+                u64::try_from("content".len()).expect("len fits u64");
+
+            // Assert
+            assert_eq!(metadata.len(), expected_len);
+            assert!(metadata.modified().is_ok());
+        }
+    }
+
+    mod display {
+        use super::*;
+
+        #[test]
+        fn messages_are_lowercase_without_trailing_punctuation() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let missing = temp.path().join("gone");
+            let error = children(&missing)
+                .next()
+                .expect("one item")
+                .expect_err("missing root");
+
+            // Act
+            let message = error.to_string();
+
+            // Assert
+            assert!(
+                message.starts_with(char::is_lowercase),
+                "message starts lowercase: {message}"
+            );
+            assert!(!message.ends_with('.') && !message.ends_with('!'));
         }
     }
 }
