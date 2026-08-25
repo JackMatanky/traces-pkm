@@ -32,12 +32,11 @@ use std::{
 };
 
 use minijinja::{Error, ErrorKind};
-use walkdir::WalkDir;
 
 use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
 use crate::{
     config::Config,
-    walk::{DirWalk, is_missing_root},
+    dirtree::{DirTreeError, children},
 };
 
 /// A template search path: at most one local directory and at most one global
@@ -137,15 +136,13 @@ impl TemplateLoader {
     /// Searches `dir` itself, or `dir`'s subdirectory named by `path`'s parent
     /// component, for files sharing `path`'s file stem: `None` for no matches,
     /// the sole match for exactly one. Like [`Self::find_path_in`], a symlink
-    /// never counts as a match because [`DirEntry::file_type`] reports the
+    /// never counts as a match because [`DirNode::file_type`] reports the
     /// link's own type, not its target's.
     ///
     /// # Errors
     ///
     /// - [`TemplatePathError::AmbiguousTemplate`] if more than one file in the
     ///   search directory shares the stem.
-    ///
-    /// [`DirEntry::file_type`]: walkdir::DirEntry::file_type
     fn find_name_in(
         dir: &Path,
         name: &TemplatePathInput,
@@ -159,25 +156,22 @@ impl TemplateLoader {
             subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
         let key = path.file_stem().unwrap_or(path.as_os_str());
         let mut hits = Vec::new();
-        let entries = DirWalk::new(
-            &search_dir,
-            WalkDir::new(&search_dir).min_depth(1).max_depth(1).into_iter(),
-        );
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(walk_error) if is_missing_root(&walk_error.source) => {
-                    return Ok(None);
-                }
-                Err(walk_error) => {
+        for entry in children(&search_dir) {
+            let node = match entry {
+                Ok(node) => node,
+                Err(DirTreeError::MissingRoot {
+                    ..
+                }) => return Ok(None),
+                Err(error) => {
+                    let (directory, source) = error.into_parts();
                     return Err(TemplatePathError::DirectoryRead {
-                        directory: walk_error.path,
-                        source: walk_error.source.into(),
+                        directory,
+                        source,
                     });
                 }
             };
-            let file_name = entry.file_name();
-            if entry.file_type().is_file()
+            let file_name = node.file_name();
+            if node.file_type().is_file()
                 && Path::new(file_name).file_stem() == Some(key)
             {
                 hits.push(subdir.map_or_else(
@@ -266,26 +260,25 @@ impl TemplateLoader {
     /// Collects the file stems of every top-level `.md` file directly inside
     /// `dir`.
     ///
-    /// A symlink entry does not count, matching the [`DirEntry::file_type`]
+    /// A symlink entry does not count, matching the [`DirNode::file_type`]
     /// check in [`Self::find_name_in`]. Returns empty when `dir` is `None`,
-    /// does not exist, or cannot be read. An unreadable entry inside an
-    /// otherwise-valid `dir` is skipped, not fatal. This never recurses into
-    /// subdirectories.
-    ///
-    /// [`DirEntry::file_type`]: walkdir::DirEntry::file_type
+    /// does not exist, or cannot be read: listing failures shrink the
+    /// candidate list, deliberately — there is no `Result` here to report
+    /// one in, so the discard is stated explicitly rather than hidden in a
+    /// `filter_map(Result::ok)`. This never recurses into subdirectories.
     fn stems_in(dir: Option<&Path>) -> Vec<String> {
         let Some(dir) = dir else {
             return Vec::new();
         };
-        WalkDir::new(dir)
-            .min_depth(1)
-            .max_depth(1)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_file())
+        children(dir)
             .filter_map(|entry| {
-                let name = entry.file_name();
-                let path = Path::new(name);
+                let Ok(node) = entry else {
+                    return None;
+                };
+                if !node.file_type().is_file() {
+                    return None;
+                }
+                let path = Path::new(node.file_name());
                 let is_markdown =
                     path.extension().is_some_and(|ext| ext == "md");
                 is_markdown
