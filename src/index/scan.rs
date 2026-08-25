@@ -1,9 +1,10 @@
 //! Recursive filesystem scan for a project root.
 //!
-//! [`scan_root`] walks the directory tree, collects every regular file as a
-//! [`FileBase`], and returns them sorted by project-relative path. Skipped:
+//! [`scan_root`] walks the directory tree via [`crate::dirtree`], collects
+//! every regular file as a [`FileBase`], and returns them sorted by
+//! project-relative path. Skipped:
 //!
-//! - `.git` directories and their descendants
+//! - `.git` directories and their descendants (via `skipping`)
 //! - The index database file (`.traces/index.redb`)
 //! - Symbolic links
 //!
@@ -12,14 +13,28 @@
 
 use std::path::Path;
 
-use walkdir::WalkDir;
-
 use super::{INDEX_FILE, error::IndexBuilderError};
-use crate::{file::FileBase, walk::DirWalk};
+use crate::{
+    dirtree::{DirTreeError, descendants},
+    file::FileBase,
+};
+
+/// Converts any classified walk failure into the builder's scan error.
+///
+/// Replaces the deleted `io_error` helper: path context and I/O conversion
+/// now happen inside `dirtree`, so this is a straight rewrap.
+fn scan_error(error: DirTreeError) -> IndexBuilderError {
+    let (path, source) = error.into_parts();
+    IndexBuilderError::Scan {
+        path,
+        source,
+    }
+}
 
 /// Recursively scans `root` for regular files and returns sorted records.
 ///
-/// Skips `.git` directories, the index database itself, and symlinks.
+/// Skips `.git` directories (and their descendants), the index database
+/// itself, and symlinks.
 ///
 /// # Errors
 ///
@@ -30,24 +45,14 @@ pub(super) fn scan_root(
 ) -> Result<Vec<FileBase>, IndexBuilderError> {
     let index_db = root.join(INDEX_FILE);
     let mut bases = Vec::new();
-
-    let entries = DirWalk::new(
-        root,
-        WalkDir::new(root).into_iter().filter_entry(|entry| {
-            !(entry.file_type().is_dir() && is_git_dir(entry.path()))
-        }),
-    );
-    for entry in entries {
-        let entry = entry.map_err(|walk_error| IndexBuilderError::Scan {
-            path: walk_error.path,
-            source: walk_error.source.into(),
-        })?;
-        let path = entry.path();
-        if !entry.file_type().is_file() || path == index_db {
+    let nodes = descendants(root).skipping(|node| node.file_name() == ".git");
+    for node in nodes {
+        let node = node.map_err(scan_error)?;
+        let path = node.path();
+        if !node.file_type().is_file() || path == index_db {
             continue;
         }
-        let metadata =
-            entry.metadata().map_err(|source| io_error(root, source))?;
+        let metadata = node.metadata().map_err(scan_error)?;
         bases.push(FileBase::from_metadata(path, root, &metadata).map_err(
             |source| IndexBuilderError::Scan {
                 path: path.to_path_buf(),
@@ -58,26 +63,6 @@ pub(super) fn scan_root(
 
     bases.sort_by(|a, b| a.path().cmp(b.path()));
     Ok(bases)
-}
-
-/// Wraps a [`walkdir::Error`] with path context as a
-/// [`IndexBuilderError::Scan`]. Used for [`walkdir::DirEntry::metadata`]
-/// errors, which return a bare `walkdir::Error` outside [`DirWalk`]'s
-/// iteration path.
-///
-/// Falls back to `root` if the underlying error provides no path (such as rare
-/// symlink loop errors).
-fn io_error(root: &Path, source: walkdir::Error) -> IndexBuilderError {
-    let path = source.path().unwrap_or(root).to_path_buf();
-    IndexBuilderError::Scan {
-        path,
-        source: source.into(),
-    }
-}
-
-/// Returns `true` if `path` names a `.git` directory.
-fn is_git_dir(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == ".git")
 }
 
 #[cfg(test)]
