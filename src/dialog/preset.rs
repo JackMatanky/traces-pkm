@@ -350,6 +350,17 @@ mod tests {
         }
 
         #[test]
+        fn returns_error_when_queued_index_is_out_of_bounds() {
+            let items = vec!["a".to_owned(), "b".to_owned()];
+            let p = PresetDialogProvider::new().with_select(2);
+
+            assert!(matches!(
+                p.select("pick", &items),
+                Err(DialogError::InvalidConfiguration(_))
+            ));
+        }
+
+        #[test]
         fn returns_error_when_items_are_empty_and_preserves_queue() {
             let p = PresetDialogProvider::new().with_select(0);
 
