@@ -290,16 +290,16 @@ impl Iterator for Descendants {
     }
 }
 
+/// Type-erased pruner: the caller's node predicate wrapped so
+/// [`walkdir::FilterEntry`] can apply it to raw entries.
+type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
+
 /// Iterator over a directory tree with subtrees pruned by
 /// [`Descendants::skipping`].
 pub(crate) struct PrunedDescendants {
     inner: walkdir::FilterEntry<walkdir::IntoIter, PrunePredicate>,
     root: PathBuf,
 }
-
-/// Type-erased pruner: the caller's node predicate wrapped so
-/// [`walkdir::FilterEntry`] can apply it to raw entries.
-type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
 
 impl Iterator for PrunedDescendants {
     type Item = Result<DirNode, DirTreeError>;

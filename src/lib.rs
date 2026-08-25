@@ -10,6 +10,7 @@
 //! - `dialog` - Object-safe dialog prompts for interactive and preset input.
 //! - `dirs` - XDG and platform-specific directory resolution for configuration
 //!   and persistent state.
+//! - `dirtree` - Directory-tree traversal with classified walk errors.
 //! - `field` - Validated field-name and field-key primitives shared across note
 //!   metadata and schemas.
 //! - `file` - File metadata and file-name newtypes shared by the index,
@@ -31,7 +32,6 @@
 //!   field definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
-//! - `dirtree` - Directory-tree traversal with classified walk errors.
 //!
 //! # Key Types
 //!
@@ -78,6 +78,7 @@ pub use config::{
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
+pub(crate) use dirtree::{DirNode, DirTreeError, children, descendants};
 pub use file::FileBase;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{

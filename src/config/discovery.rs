@@ -21,7 +21,7 @@ use super::{
     file::{Discovered, GlobalConfigFile, LocalConfigFile},
     trust::{TrustRequest, TrustRequests},
 };
-use crate::{dirs, dirtree::descendants};
+use crate::{descendants, dirs};
 
 /// Relative path to the local project config directory.
 ///

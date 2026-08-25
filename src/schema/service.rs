@@ -14,10 +14,7 @@ use super::{
     error::{SchemaError, SchemaWarning},
     model::Schema,
 };
-use crate::{
-    BaseNameRef,
-    dirtree::{DirTreeError, children},
-};
+use crate::{BaseNameRef, DirTreeError, children};
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///

@@ -34,10 +34,7 @@ use std::{
 use minijinja::{Error, ErrorKind};
 
 use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
-use crate::{
-    config::Config,
-    dirtree::{DirTreeError, children},
-};
+use crate::{DirTreeError, children, config::Config};
 
 /// A template search path: at most one local directory and at most one global
 /// directory, searched local-first.

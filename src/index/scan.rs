@@ -14,10 +14,7 @@
 use std::path::Path;
 
 use super::{INDEX_FILE, error::IndexBuilderError};
-use crate::{
-    dirtree::{DirTreeError, descendants},
-    file::FileBase,
-};
+use crate::{DirTreeError, descendants, file::FileBase};
 
 /// Converts any classified walk failure into the builder's scan error.
 ///
