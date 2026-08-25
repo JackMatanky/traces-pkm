@@ -1,8 +1,8 @@
-//! Directory-tree traversal: flat listings and recursive walks with
-//! classified, path-contextualized errors.
+//! Directory-tree traversal: flat listings and recursive walks with classified,
+//! path-contextualized errors.
 //!
-//! [`children`] lists a directory's immediate entries; [`descendants`] walks
-//! a whole tree, with [`Descendants::skipping`] pruning subtrees. Both yield
+//! [`children`] lists a directory's immediate entries; [`descendants`] walks a
+//! whole tree, with [`Descendants::skipping`] pruning subtrees. Both yield
 //! [`DirNode`] values and report failures as [`DirTreeError`], classified at
 //! the point where walkdir's depth information is still known:
 //!
@@ -13,8 +13,8 @@
 //! - [`DirTreeError::NodeInaccessible`] — something beneath the root failed.
 //!
 //! Traversal construction lives here; entry filtering (extensions, stems,
-//! hidden files) stays with callers, who see every [`DirNode`] and decide
-//! what matches.
+//! hidden files) stays with callers, who see every [`DirNode`] and decide what
+//! matches.
 //!
 //! Verified against walkdir 2.5.0: loop detection cannot fire while
 //! `follow_links` remains unset (the only configuration these constructors
@@ -36,9 +36,9 @@ use walkdir::{DirEntry, WalkDir};
 
 /// A failure raised while traversing a directory tree.
 ///
-/// Variants are classified inside this module where walkdir's depth
-/// information is still known; callers match to state their missing-root
-/// policy and convert everything else via [`into_parts`](Self::into_parts).
+/// Variants are classified inside this module where walkdir's depth information
+/// is still known; callers match to state their missing-root policy and convert
+/// everything else via [`into_parts`](Self::into_parts).
 #[derive(Debug, Error)]
 pub(crate) enum DirTreeError {
     /// The walk root does not exist (depth-0 `NotFound`).
@@ -59,12 +59,12 @@ pub(crate) enum DirTreeError {
         #[source]
         source: io::Error,
     },
-    /// Something beneath the root failed: a directory could not be listed,
-    /// a mid-stream read glitched, or one node's metadata could not be read.
+    /// Something beneath the root failed: a directory could not be listed, a
+    /// mid-stream read glitched, or one node's metadata could not be read.
     #[error("failed to access node {path}")]
     NodeInaccessible {
-        /// The failing node's path, falling back to the walk root when
-        /// walkdir supplies none (mid-readdir stream errors carry no path).
+        /// The failing node's path, falling back to the walk root when walkdir
+        /// supplies none (mid-readdir stream errors carry no path).
         path: PathBuf,
         /// Source I/O error.
         #[source]
@@ -99,8 +99,8 @@ impl DirTreeError {
 /// Depth 0 + `NotFound` is [`DirTreeError::MissingRoot`]; other depth-0
 /// failures are [`DirTreeError::RootInaccessible`]; anything deeper is
 /// [`DirTreeError::NodeInaccessible`]. When walkdir carries no path
-/// (mid-readdir stream errors), `fallback` (the walk root) is used so the
-/// path is never lost.
+/// (mid-readdir stream errors), `fallback` (the walk root) is used so the path
+/// is never lost.
 fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
     let depth = source.depth();
     let path = source.path().unwrap_or(fallback).to_path_buf();
@@ -167,8 +167,8 @@ impl DirNode {
     }
 
     /// Returns the node's type without following symlinks: a symlinked file
-    /// reports [`FileType::is_symlink`](std::fs::FileType::is_symlink),
-    /// never its target's type.
+    /// reports [`FileType::is_symlink`](std::fs::FileType::is_symlink), never
+    /// its target's type.
     #[must_use]
     pub(crate) fn file_type(&self) -> fs::FileType {
         self.inner.file_type()
@@ -194,10 +194,10 @@ impl DirNode {
 
 /// Lists a directory's immediate entries (non-recursive).
 ///
-/// Yields every direct child of `directory` — files, directories, and
-/// symlinks alike; filtering stays with the caller. A missing directory
-/// yields exactly one [`DirTreeError::MissingRoot`] and then stops; a
-/// *file* root yields nothing at all.
+/// Yields every direct child of `directory` — files, directories, and symlinks
+/// alike; filtering stays with the caller. A missing directory yields exactly
+/// one [`DirTreeError::MissingRoot`] and then stops; a *file* root yields
+/// nothing at all.
 ///
 /// Entry order follows the OS directory read and is unspecified — sort if
 /// order matters.
@@ -218,6 +218,85 @@ pub(crate) struct Children {
 }
 
 impl Iterator for Children {
+    type Item = Result<DirNode, DirTreeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|result| adapt(&self.root, result))
+    }
+}
+
+/// Walks a directory tree recursively, starting at the root itself.
+///
+/// Yields the root node first, then every descendant — files, directories, and
+/// symlinks alike; filtering stays with the caller. Symlinks are never
+/// followed. A missing root yields exactly one [`DirTreeError::MissingRoot`]
+/// and then stops.
+///
+/// Pass [`Descendants::skipping`] to prune whole subtrees.
+///
+/// Entry order follows the OS directory read and is unspecified — sort if
+/// order matters.
+pub(crate) fn descendants(root: impl AsRef<Path>) -> Descendants {
+    let root = root.as_ref();
+    Descendants {
+        inner: WalkDir::new(root).into_iter(),
+        root: root.to_path_buf(),
+    }
+}
+
+/// Iterator over a directory tree and its descendants.
+///
+/// Created by [`descendants`]; yields [`Result<DirNode, DirTreeError>`].
+pub(crate) struct Descendants {
+    inner: walkdir::IntoIter,
+    root: PathBuf,
+}
+
+impl Descendants {
+    /// Prunes every subtree whose directory satisfies `predicate`.
+    ///
+    /// `predicate` runs on directories only; returning `true` removes that
+    /// directory *and* everything beneath it from the walk. Non-matching
+    /// entries — including files whose name satisfies the predicate — are
+    /// yielded unchanged.
+    pub(crate) fn skipping<F>(self, predicate: F) -> PrunedDescendants
+    where
+        F: FnMut(&DirNode) -> bool + 'static,
+    {
+        let root = self.root;
+        let mut predicate = predicate;
+        PrunedDescendants {
+            inner: self.inner.filter_entry(Box::new(
+                move |entry: &walkdir::DirEntry| {
+                    !(entry.file_type().is_dir()
+                        && predicate(&DirNode::new(entry.clone())))
+                },
+            )),
+            root,
+        }
+    }
+}
+
+impl Iterator for Descendants {
+    type Item = Result<DirNode, DirTreeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|result| adapt(&self.root, result))
+    }
+}
+
+/// Iterator over a directory tree with subtrees pruned by
+/// [`Descendants::skipping`].
+pub(crate) struct PrunedDescendants {
+    inner: walkdir::FilterEntry<walkdir::IntoIter, PrunePredicate>,
+    root: PathBuf,
+}
+
+/// Type-erased pruner: the caller's node predicate wrapped so
+/// [`walkdir::FilterEntry`] can apply it to raw entries.
+type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
+
+impl Iterator for PrunedDescendants {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -301,6 +380,75 @@ mod tests {
 
             // Assert
             assert!(collected.is_empty(), "a file root lists nothing");
+        }
+    }
+
+    mod descendants {
+        use super::*;
+
+        #[test]
+        fn walks_the_whole_tree_including_the_root_node() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, "a.md");
+            write(root, "b/one.md");
+
+            // Act
+            let mut relatives: Vec<String> = descendants(root)
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| {
+                    node.path()
+                        .strip_prefix(root)
+                        .expect("under root")
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            relatives.sort();
+
+            // Assert — the root itself is yielded (empty relative path),
+            // matching what index scanning and subtree discovery rely on.
+            assert_eq!(relatives, vec!["", "a.md", "b", "b/one.md"]);
+        }
+
+        #[test]
+        fn missing_root_yields_a_missing_root_error() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let missing = temp.path().join("gone");
+
+            // Act
+            let collected: Vec<_> = descendants(&missing).collect();
+
+            // Assert
+            assert_eq!(collected.len(), 1);
+            assert!(matches!(
+                collected.into_iter().next().expect("one item"),
+                Err(DirTreeError::MissingRoot { .. })
+            ));
+        }
+
+        #[test]
+        fn skipping_prunes_matching_subtrees_but_keeps_other_entries() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, ".git/HEAD");
+            write(root, "note.md");
+
+            // Act
+            let mut names: Vec<String> = descendants(root)
+                .skipping(|node| node.file_name() == ".git")
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| node.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+
+            // Assert — pruned subtree absent entirely, surviving entry kept.
+            assert_eq!(names.len(), 2);
+            assert!(names.contains(&"note.md".to_owned()));
+            assert!(!names.contains(&"HEAD".to_owned()));
         }
     }
 }
