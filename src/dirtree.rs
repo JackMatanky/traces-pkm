@@ -123,17 +123,6 @@ fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
     }
 }
 
-/// Adapts one raw walkdir item into this module's interface.
-fn adapt(
-    root: &Path,
-    result: walkdir::Result<DirEntry>,
-) -> Result<DirNode, DirTreeError> {
-    match result {
-        Ok(entry) => Ok(DirNode::new(entry)),
-        Err(source) => Err(classify(root, source)),
-    }
-}
-
 /// One node of a directory tree: a file, directory, or symlink yielded by
 /// [`children`] or [`descendants`].
 ///
@@ -147,10 +136,23 @@ pub(crate) struct DirNode {
 }
 
 impl DirNode {
-    /// Wraps a raw walkdir entry.
-    fn new(inner: DirEntry) -> Self {
-        Self {
-            inner,
+    /// Adapts one raw walkdir item into this module's interface: entries
+    /// become nodes, failures are classified against the walk's root.
+    ///
+    /// # Errors
+    ///
+    /// - [`DirTreeError::MissingRoot`] for a depth-0 `NotFound`
+    /// - [`DirTreeError::RootInaccessible`] for any other depth-0 failure
+    /// - [`DirTreeError::NodeInaccessible`] for anything deeper
+    fn try_new(
+        root: &Path,
+        result: walkdir::Result<DirEntry>,
+    ) -> Result<Self, DirTreeError> {
+        match result {
+            Ok(entry) => Ok(Self {
+                inner: entry,
+            }),
+            Err(source) => Err(classify(root, source)),
         }
     }
 
@@ -221,7 +223,7 @@ impl Iterator for Children {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| adapt(&self.root, result))
+        self.inner.next().map(|result| DirNode::try_new(&self.root, result))
     }
 }
 
@@ -269,7 +271,9 @@ impl Descendants {
             inner: self.inner.filter_entry(Box::new(
                 move |entry: &walkdir::DirEntry| {
                     !(entry.file_type().is_dir()
-                        && predicate(&DirNode::new(entry.clone())))
+                        && predicate(&DirNode {
+                            inner: entry.clone(),
+                        }))
                 },
             )),
             root,
@@ -281,7 +285,7 @@ impl Iterator for Descendants {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| adapt(&self.root, result))
+        self.inner.next().map(|result| DirNode::try_new(&self.root, result))
     }
 }
 
@@ -300,7 +304,7 @@ impl Iterator for PrunedDescendants {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| adapt(&self.root, result))
+        self.inner.next().map(|result| DirNode::try_new(&self.root, result))
     }
 }
 
