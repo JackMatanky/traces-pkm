@@ -16,13 +16,13 @@
 //! Template exposure, `file` field filtering, and class queries consume
 //! [`SchemaService`] and [`Schema`] from outside this module.
 
+mod builder;
 mod error;
 mod fields;
 mod graph;
 mod model;
 mod name;
 mod raw;
-mod resolver;
 mod service;
 
 pub(crate) use error::SchemaError;

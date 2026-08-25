@@ -11,9 +11,9 @@ use walkdir::WalkDir;
 
 use super::{
     RawSchema, SchemaName,
+    builder::{SchemaBuilder, SchemaFailure},
     error::{SchemaError, SchemaWarning},
     model::Schema,
-    resolver::{SchemaBuilder, SchemaFailure},
 };
 use crate::{
     BaseNameRef,
