@@ -113,7 +113,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            index::IndexError,
+            index::{IndexBuilderError, IndexError},
             query::{QueryError, QueryRequestError},
         };
 
@@ -379,7 +379,7 @@ mod tests {
                 .expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {
-                source: IndexError::Io { .. },
+                source: IndexError::Builder(IndexBuilderError::Scan { .. }),
                 ..
             }));
         }

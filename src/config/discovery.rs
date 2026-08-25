@@ -23,7 +23,7 @@ use super::{
     file::{Discovered, GlobalConfigFile, LocalConfigFile},
     trust::{TrustRequest, TrustRequests},
 };
-use crate::dirs;
+use crate::{dirs, walk::DirWalk};
 
 /// Relative path to the local project config directory.
 ///
@@ -419,8 +419,13 @@ impl DiscoveryEngine {
         dir: &Path,
     ) -> Result<Vec<LocalConfigFile<Discovered>>, DiscoveryError> {
         let mut configs = Vec::new();
-        for entry in WalkDir::new(dir) {
-            let entry = entry.map_err(|source| walk_error(dir, source))?;
+        for entry in DirWalk::new(dir, WalkDir::new(dir).into_iter()) {
+            let entry = entry.map_err(|walk_error| {
+                DiscoveryError::PathInaccessible {
+                    path: walk_error.path,
+                    source: walk_error.source.into(),
+                }
+            })?;
             if !entry.file_type().is_dir() {
                 continue;
             }
@@ -444,16 +449,6 @@ impl DiscoveryEngine {
                 source,
             }),
         }
-    }
-}
-
-/// Wraps a [`walkdir::Error`] with path context as a
-/// [`DiscoveryError::PathInaccessible`].
-fn walk_error(dir: &Path, source: walkdir::Error) -> DiscoveryError {
-    let path = source.path().unwrap_or(dir).to_path_buf();
-    DiscoveryError::PathInaccessible {
-        path,
-        source: source.into(),
     }
 }
 

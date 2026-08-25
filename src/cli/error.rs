@@ -786,7 +786,7 @@ mod tests {
         use serde::ser::Error as SerdeError;
 
         use super::*;
-        use crate::query::QuerySyntaxError;
+        use crate::{index::IndexBuilderError, query::QuerySyntaxError};
 
         #[test]
         fn current_directory() {
@@ -987,10 +987,10 @@ mod tests {
             let root = PathBuf::from("/some/project");
             let error = CliError::Index {
                 root: root.clone(),
-                source: IndexError::Io {
+                source: IndexError::Builder(IndexBuilderError::Scan {
                     path: root.join("notes"),
                     source: io::Error::other("boom"),
-                },
+                }),
             };
 
             assert_eq!(error.to_string(), "failed to index /some/project");
@@ -1617,6 +1617,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
+        use crate::index::IndexBuilderError;
 
         #[test]
         fn syntax_failure() {
@@ -1717,10 +1718,12 @@ mod tests {
                         minijinja::ErrorKind::InvalidOperation,
                         "failed to refresh the file index",
                     )
-                    .with_source(IndexError::Io {
-                        path: PathBuf::from("/project"),
-                        source: io::Error::other("boom"),
-                    }),
+                    .with_source(IndexError::Builder(
+                        IndexBuilderError::Scan {
+                            path: PathBuf::from("/project"),
+                            source: io::Error::other("boom"),
+                        },
+                    )),
                 },
             };
 

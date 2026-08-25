@@ -17,6 +17,7 @@ pub struct FileIndex {
     pub(super) bases: Vec<FileBase>,
     pub(super) notes: Vec<Note>,
     pub(super) inlinks: InlinkMap,
+    pub(super) delta: super::builder::IndexDelta,
 }
 
 impl FileIndex {
@@ -25,11 +26,13 @@ impl FileIndex {
         bases: Vec<FileBase>,
         notes: Vec<Note>,
         inlinks: InlinkMap,
+        delta: super::builder::IndexDelta,
     ) -> Self {
         Self {
             bases,
             notes,
             inlinks,
+            delta,
         }
     }
 
@@ -70,12 +73,18 @@ impl FileIndex {
     ) -> impl Iterator<Item = FileIndexEntry<'_>> + '_ {
         FileIndexEntryIter::new(self)
     }
+
+    /// Returns the persistence plan `IndexStore::persist_index` uses to choose
+    /// a full rewrite vs. a row-level incremental write.
+    pub(super) fn delta(&self) -> &super::builder::IndexDelta {
+        &self.delta
+    }
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.
 ///
-/// Shared by the [`super::inlinks`] submodule, which needs the same search
-/// over a bare `&[Note]` slice while resolving link targets during
+/// Shared by the [`super::inlinks`] submodule, which needs the same search over
+/// a bare `&[Note]` slice while resolving link targets during
 /// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
 pub(super) fn find_by_path<'a>(
     notes: &'a [Note],

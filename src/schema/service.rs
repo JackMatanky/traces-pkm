@@ -4,7 +4,7 @@
 //! `extends` DAG, and resolves it once at construction, exposing read-side
 //! queries over the resolved Schemas for its whole lifetime.
 
-use std::{ffi::OsStr, fs, io, path::Path, sync::Arc};
+use std::{ffi::OsStr, fs, path::Path, sync::Arc};
 
 use indexmap::{IndexMap, IndexSet};
 use walkdir::WalkDir;
@@ -15,7 +15,10 @@ use super::{
     model::Schema,
     resolver::{SchemaBuilder, SchemaFailure},
 };
-use crate::BaseNameRef;
+use crate::{
+    BaseNameRef,
+    walk::{DirWalk, is_missing_root},
+};
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///
@@ -197,15 +200,23 @@ impl SchemaService {
 fn read_raw_schemas(
     dir: &Path,
 ) -> Result<IndexMap<SchemaName, RawSchema>, SchemaError> {
-    let entries = WalkDir::new(dir).min_depth(1).max_depth(1);
+    let entries = DirWalk::new(
+        dir,
+        WalkDir::new(dir).min_depth(1).max_depth(1).into_iter(),
+    );
     let mut schemas = IndexMap::new();
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(source) if is_missing_root(&source) => {
+            Err(walk_error) if is_missing_root(&walk_error.source) => {
                 return Ok(IndexMap::new());
             }
-            Err(source) => return Err(walk_error(dir, source)),
+            Err(walk_error) => {
+                return Err(SchemaError::ReadDirectory {
+                    directory: walk_error.path,
+                    source: walk_error.source.into(),
+                });
+            }
         };
         let path = entry.path();
         if path.extension().and_then(OsStr::to_str) != Some("toml") {
@@ -229,28 +240,6 @@ fn read_raw_schemas(
         schemas.insert(stem, raw);
     }
     Ok(schemas)
-}
-
-/// Return `true` if `error` reports that the walk's root itself does not exist,
-/// so [`read_raw_schemas`] can degrade to an empty registry.
-fn is_missing_root(error: &walkdir::Error) -> bool {
-    error.depth() == 0
-        && error
-            .io_error()
-            .is_some_and(|source| source.kind() == io::ErrorKind::NotFound)
-}
-
-/// Wrap a [`walkdir::Error`] with path context as a
-/// [`SchemaError::ReadDirectory`].
-///
-/// Falls back to `root` when the error carries no path of its own (some I/O
-/// errors surface without [`DirEntry`] context).
-fn walk_error(root: &Path, source: walkdir::Error) -> SchemaError {
-    let path = source.path().unwrap_or(root).to_path_buf();
-    SchemaError::ReadDirectory {
-        directory: path,
-        source: source.into(),
-    }
 }
 
 #[cfg(test)]

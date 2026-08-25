@@ -35,7 +35,10 @@ use minijinja::{Error, ErrorKind};
 use walkdir::WalkDir;
 
 use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
-use crate::config::Config;
+use crate::{
+    config::Config,
+    walk::{DirWalk, is_missing_root},
+};
 
 /// A template search path: at most one local directory and at most one global
 /// directory, searched local-first.
@@ -156,11 +159,22 @@ impl TemplateLoader {
             subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
         let key = path.file_stem().unwrap_or(path.as_os_str());
         let mut hits = Vec::new();
-        for entry in WalkDir::new(&search_dir).min_depth(1).max_depth(1) {
+        let entries = DirWalk::new(
+            &search_dir,
+            WalkDir::new(&search_dir).min_depth(1).max_depth(1).into_iter(),
+        );
+        for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(source) if is_missing_dir(&source) => return Ok(None),
-                Err(source) => return Err(walk_error(&search_dir, source)),
+                Err(walk_error) if is_missing_root(&walk_error.source) => {
+                    return Ok(None);
+                }
+                Err(walk_error) => {
+                    return Err(TemplatePathError::DirectoryRead {
+                        directory: walk_error.path,
+                        source: walk_error.source.into(),
+                    });
+                }
             };
             let file_name = entry.file_name();
             if entry.file_type().is_file()
@@ -282,28 +296,6 @@ impl TemplateLoader {
                     .flatten()
             })
             .collect()
-    }
-}
-
-/// Returns `true` if `error` reports that the searched directory itself does
-/// not exist, so [`TemplateLoader::find_name_in`] can degrade to "no match"
-/// instead of failing.
-fn is_missing_dir(error: &walkdir::Error) -> bool {
-    error.depth() == 0
-        && error
-            .io_error()
-            .is_some_and(|source| source.kind() == io::ErrorKind::NotFound)
-}
-
-/// Wraps a [`walkdir::Error`] with path context as a
-/// [`TemplatePathError::DirectoryRead`].
-///
-/// Falls back to `dir` if the underlying error carries no path of its own.
-fn walk_error(dir: &Path, source: walkdir::Error) -> TemplatePathError {
-    let directory = source.path().unwrap_or(dir).to_path_buf();
-    TemplatePathError::DirectoryRead {
-        directory,
-        source: source.into(),
     }
 }
 

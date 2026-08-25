@@ -14,8 +14,8 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use super::{INDEX_FILE, error::IndexError};
-use crate::file::FileBase;
+use super::{INDEX_FILE, error::IndexBuilderError};
+use crate::{file::FileBase, walk::DirWalk};
 
 /// Recursively scans `root` for regular files and returns sorted records.
 ///
@@ -23,17 +23,25 @@ use crate::file::FileBase;
 ///
 /// # Errors
 ///
-/// - [`IndexError::Io`] if a directory cannot be read or a file's metadata
-///   cannot be inspected.
-pub(super) fn scan_root(root: &Path) -> Result<Vec<FileBase>, IndexError> {
+/// - [`IndexBuilderError::Scan`] if a directory cannot be read or a file's
+///   metadata cannot be inspected.
+pub(super) fn scan_root(
+    root: &Path,
+) -> Result<Vec<FileBase>, IndexBuilderError> {
     let index_db = root.join(INDEX_FILE);
     let mut bases = Vec::new();
 
-    let entries = WalkDir::new(root).into_iter().filter_entry(|entry| {
-        !(entry.file_type().is_dir() && is_git_dir(entry.path()))
-    });
+    let entries = DirWalk::new(
+        root,
+        WalkDir::new(root).into_iter().filter_entry(|entry| {
+            !(entry.file_type().is_dir() && is_git_dir(entry.path()))
+        }),
+    );
     for entry in entries {
-        let entry = entry.map_err(|source| io_error(root, source))?;
+        let entry = entry.map_err(|walk_error| IndexBuilderError::Scan {
+            path: walk_error.path,
+            source: walk_error.source.into(),
+        })?;
         let path = entry.path();
         if !entry.file_type().is_file() || path == index_db {
             continue;
@@ -41,7 +49,7 @@ pub(super) fn scan_root(root: &Path) -> Result<Vec<FileBase>, IndexError> {
         let metadata =
             entry.metadata().map_err(|source| io_error(root, source))?;
         bases.push(FileBase::from_metadata(path, root, &metadata).map_err(
-            |source| IndexError::Io {
+            |source| IndexBuilderError::Scan {
                 path: path.to_path_buf(),
                 source,
             },
@@ -52,13 +60,16 @@ pub(super) fn scan_root(root: &Path) -> Result<Vec<FileBase>, IndexError> {
     Ok(bases)
 }
 
-/// Wraps a [`walkdir::Error`] with path context as a [`IndexError::Io`].
+/// Wraps a [`walkdir::Error`] with path context as a
+/// [`IndexBuilderError::Scan`]. Used for [`walkdir::DirEntry::metadata`]
+/// errors, which return a bare `walkdir::Error` outside [`DirWalk`]'s
+/// iteration path.
 ///
 /// Falls back to `root` if the underlying error provides no path (such as rare
 /// symlink loop errors).
-fn io_error(root: &Path, source: walkdir::Error) -> IndexError {
+fn io_error(root: &Path, source: walkdir::Error) -> IndexBuilderError {
     let path = source.path().unwrap_or(root).to_path_buf();
-    IndexError::Io {
+    IndexBuilderError::Scan {
         path,
         source: source.into(),
     }
@@ -172,7 +183,7 @@ mod tests {
 
             let error = scan_root(root).expect_err("unreadable dir fails");
 
-            assert!(matches!(error, IndexError::Io { .. }));
+            assert!(matches!(error, IndexBuilderError::Scan { .. }));
         }
     }
 }

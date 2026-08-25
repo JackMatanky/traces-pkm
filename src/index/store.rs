@@ -1,8 +1,9 @@
 //! Redb persistence for [`FileBase`], [`Note`], and derived inlink records.
 //!
-//! [`IndexStore`] adapts [`DbStore`] for the file-index schema
-//! (`FILES`, `NOTES`, `LINKS` tables). Callers use [`super::IndexerService`]
-//! methods instead of interacting with redb tables directly.
+//! [`IndexStore`] owns one redb connection under a project root and adapts it
+//! to the file-index schema (`FILES`, `NOTES`, `LINKS` tables). Callers use
+//! [`super::IndexerService`] methods instead of interacting with redb tables
+//! directly.
 
 use std::{
     collections::HashMap,
@@ -20,33 +21,53 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::{INDEX_FILE, error::DbError, inlinks::InlinkMap};
 use crate::{file::FileBase, index::error::IndexError, note::Note};
 
-/// Redb database handle for a project root.
+/// Postcard-encoded [`FileBase`] bytes keyed by project-relative path.
+const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
+
+/// Postcard-encoded [`Note`] bytes keyed by project-relative path.
+const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
+
+/// Derived inbound-link edges: target path to every linking source path. See
+/// [`super::inlinks`]. Written via [`IndexStore::replace_all`] (full rewrite)
+/// or [`IndexStore::persist_index`]'s incremental path, which patches only
+/// [`super::builder::IndexDelta::Incremental`]'s changed targets instead of
+/// rewriting the whole table.
+const LINKS: MultimapTableDefinition<&str, &str> =
+    MultimapTableDefinition::new("links");
+
+/// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
+/// (sorted by path) plus derived inlink edges (target-keyed, unordered).
+type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
+
+/// Redb-backed handle to one project root's index database.
 ///
 /// Owns one redb connection under a project root and the generic table
 /// store/load mechanics every domain module builds its own table-specific
-/// persistence on top of. Table definitions and their read/write semantics
-/// stay with the domain that owns them (this module owns File/Note/Inlink
-/// tables); this struct owns only "open the file, run a transaction,
+/// persistence on top of. Table definitions and their read/write semantics stay
+/// with the domain that owns them (this module owns File/Note/Inlink tables);
+/// this struct owns only "open the file, run a transaction,
 /// serialize/deserialize a value or multimap table" — mechanics with no domain
 /// knowledge.
+///
+/// Created by [`Self::open`]. Callers interact through
+/// [`super::IndexerService`] methods, not directly.
 #[derive(Debug)]
-pub(super) struct DbStore {
+pub(super) struct IndexStore {
     db: redb::Database,
     path: PathBuf,
 }
 
-impl DbStore {
-    /// Opens or creates a redb database at `root.join(relative_path)`.
+impl IndexStore {
+    /// Opens the index database under `root`, creating it if absent.
     ///
     /// # Errors
     ///
-    /// - [`DbError::Io`] if the database's parent directory cannot be created.
-    /// - [`DbError::Redb`] if the database file cannot be opened or created.
-    pub(super) fn open(
-        root: &Path,
-        relative_path: &str,
-    ) -> Result<Self, DbError> {
-        let path = root.join(relative_path);
+    /// - [`IndexError::Store`] ([`DbError::Io`]) if the database's parent
+    ///   directory cannot be created.
+    /// - [`IndexError::Store`] ([`DbError::Redb`]) if the database file cannot
+    ///   be opened.
+    pub(super) fn open(root: &Path) -> Result<Self, IndexError> {
+        let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| DbError::Io {
                 path: parent.to_path_buf(),
@@ -62,17 +83,6 @@ impl DbStore {
             db,
             path,
         })
-    }
-
-    /// Returns a reference to the database path.
-    #[inline]
-    #[expect(
-        dead_code,
-        reason = "documented API for future domain table stores (e.g. \
-                  task-system LISTS table)"
-    )]
-    pub(super) fn path(&self) -> &Path {
-        &self.path
     }
 
     /// Begins a read transaction.
@@ -227,48 +237,6 @@ impl DbStore {
             source: Box::new(source.into()),
         }
     }
-}
-
-/// Postcard-encoded [`FileBase`] bytes keyed by project-relative path.
-const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
-
-/// Postcard-encoded [`Note`] bytes keyed by project-relative path.
-const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
-
-/// Derived inbound-link edges: target path to every linking source path.
-/// See [`super::inlinks`]; rewritten in full whenever [`super::FileIndex`]
-/// content changes, never patched.
-const LINKS: MultimapTableDefinition<&str, &str> =
-    MultimapTableDefinition::new("links");
-
-/// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
-/// (sorted by path) plus derived inlink edges (target-keyed, unordered).
-type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
-
-/// Redb-backed handle to one project root's index database.
-///
-/// Wraps [`DbStore`] with the `FILES`/`NOTES`/`LINKS` table definitions.
-/// Created by [`Self::open`]. Callers interact through
-/// [`super::IndexerService`] methods, not directly.
-#[derive(Debug)]
-pub(super) struct IndexStore {
-    db: DbStore,
-}
-
-impl IndexStore {
-    /// Opens the index database under `root`, creating it if absent.
-    ///
-    /// # Errors
-    ///
-    /// - [`IndexError::Io`] if the database's parent directory cannot be
-    ///   created.
-    /// - [`IndexError::Store`] if the database file cannot be opened.
-    pub(super) fn open(root: &Path) -> Result<Self, IndexError> {
-        let db = DbStore::open(root, INDEX_FILE)?;
-        Ok(Self {
-            db,
-        })
-    }
 
     /// Atomically replaces every stored [`FileBase`], [`Note`], and derived
     /// inlink edge.
@@ -279,44 +247,275 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the transaction fails.
-    /// - [`IndexError::Serialize`] if a record cannot be encoded.
+    /// - [`IndexError::Store`] ([`DbError::Redb`]) if the transaction fails.
+    /// - [`IndexError::Store`] ([`DbError::Serialize`]) if a record cannot be
+    ///   encoded.
     pub(super) fn replace_all(
         &self,
         bases: &[FileBase],
         notes: &[Note],
         links: &InlinkMap,
     ) -> Result<(), IndexError> {
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.begin_write()?;
         write_txn
             .delete_table(FILES)
-            .map_err(|source| self.db.store_error(source))?;
+            .map_err(|source| self.store_error(source))?;
         write_txn
             .delete_table(NOTES)
-            .map_err(|source| self.db.store_error(source))?;
+            .map_err(|source| self.store_error(source))?;
         write_txn
             .delete_multimap_table(LINKS)
-            .map_err(|source| self.db.store_error(source))?;
-        self.db.store_table(&write_txn, FILES, bases, FileBase::path)?;
-        self.db.store_table(&write_txn, NOTES, notes, Note::path)?;
-        self.db.store_links(&write_txn, LINKS, links)?;
-        write_txn.commit().map_err(|source| self.db.store_error(source))?;
+            .map_err(|source| self.store_error(source))?;
+        self.store_table(&write_txn, FILES, bases, FileBase::path)?;
+        self.store_table(&write_txn, NOTES, notes, Note::path)?;
+        self.store_links(&write_txn, LINKS, links)?;
+        write_txn.commit().map_err(|source| self.store_error(source))?;
         Ok(())
     }
 
-    /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and
-    /// every derived inlink edge (target-keyed, unordered).
+    /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
+    /// derived inlink edge (target-keyed, unordered).
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if a table cannot be read.
-    /// - [`IndexError::Deserialize`] if stored bytes are not a valid record.
+    /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
+    /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
+    ///   not a valid record.
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, IndexError> {
-        let read_txn = self.db.begin_read()?;
-        let bases = self.db.load_table(&read_txn, FILES, FileBase::path)?;
-        let notes = self.db.load_table(&read_txn, NOTES, Note::path)?;
-        let links = self.db.load_links(&read_txn, LINKS)?;
+        let read_txn = self.begin_read()?;
+        let bases = self.load_table(&read_txn, FILES, FileBase::path)?;
+        let notes = self.load_table(&read_txn, NOTES, Note::path)?;
+        let links = self.load_links(&read_txn, LINKS)?;
         Ok((bases, notes, links))
+    }
+
+    /// Reads and deserializes exactly one [`Note`] from the `NOTES` table by
+    /// path, without loading any other row — the point-lookup redb's zero-copy
+    /// `AccessGuard` is designed for, used by
+    /// [`super::builder::IndexBuilder::build_with_reuse`] to recall an
+    /// unchanged Note's previous value without deserializing every persisted
+    /// Note upfront.
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexError::Store`] ([`DbError::Redb`]) if the table cannot be read.
+    /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if the stored bytes
+    ///   are corrupt.
+    pub(super) fn load_note(
+        &self,
+        read_txn: &ReadTransaction,
+        path: &Path,
+    ) -> Result<Option<Note>, IndexError> {
+        let table = match read_txn.open_table(NOTES) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(source) => return Err(self.store_error(source).into()),
+        };
+        let key = path.to_string_lossy();
+        match table.get(&*key).map_err(|source| self.store_error(source))? {
+            None => Ok(None),
+            Some(guard) => {
+                let note =
+                    postcard::from_bytes(guard.value()).map_err(|source| {
+                        DbError::Deserialize {
+                            path: path.to_path_buf(),
+                            source,
+                        }
+                    })?;
+                Ok(Some(note))
+            }
+        }
+    }
+
+    /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge,
+    /// without touching `NOTES` — the comparatively heavy per-note table.
+    /// [`super::IndexerService::refresh`] uses this instead of
+    /// [`Self::load_all`] so unchanged Notes are recalled lazily via
+    /// [`Self::load_note`] instead of every persisted Note being deserialized
+    /// upfront regardless of whether it changed.
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
+    /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
+    ///   not a valid record.
+    pub(super) fn load_bases_and_links(
+        &self,
+    ) -> Result<(Vec<FileBase>, InlinkMap), IndexError> {
+        let read_txn = self.begin_read()?;
+        let bases = self.load_table(&read_txn, FILES, FileBase::path)?;
+        let links = self.load_links(&read_txn, LINKS)?;
+        Ok((bases, links))
+    }
+
+    /// Persists `index`, choosing a full [`Self::replace_all`] rewrite when its
+    /// delta is [`super::builder::IndexDelta::Full`] (no previous state to diff
+    /// against), or a row-level incremental write for
+    /// [`super::builder::IndexDelta::Incremental`]'s changed paths only.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::replace_all`]/the incremental write path: transaction
+    /// failure or serialization failure.
+    pub(super) fn persist_index(
+        &self,
+        index: &super::FileIndex,
+    ) -> Result<(), IndexError> {
+        match index.delta() {
+            super::builder::IndexDelta::Full => {
+                self.replace_all(index.bases(), index.notes(), index.inlinks())
+            }
+            super::builder::IndexDelta::Incremental(_) => {
+                self.persist_incremental(index)
+            }
+        }
+    }
+
+    /// Row-level incremental write for
+    /// [`super::builder::IndexDelta::Incremental`].
+    ///
+    /// Falls back to [`Self::replace_all`] if `index`'s delta turns out to be
+    /// [`super::builder::IndexDelta::Full`] — defensive only; every caller
+    /// routes through [`Self::persist_index`], which never reaches this
+    /// branch for a full delta.
+    fn persist_incremental(
+        &self,
+        index: &super::FileIndex,
+    ) -> Result<(), IndexError> {
+        let super::builder::IndexDelta::Incremental(delta) = index.delta()
+        else {
+            return self.replace_all(
+                index.bases(),
+                index.notes(),
+                index.inlinks(),
+            );
+        };
+        let super::builder::IncrementalDelta {
+            upserted,
+            deleted,
+            links_upserted,
+            links_deleted,
+        } = delta.as_ref();
+        let write_txn = self.begin_write()?;
+        self.upsert_files_and_notes(&write_txn, index, upserted, deleted)?;
+        if let Some(links_upserted) = links_upserted {
+            self.upsert_links(
+                &write_txn,
+                index,
+                links_upserted,
+                links_deleted,
+            )?;
+        }
+        write_txn.commit().map_err(|source| self.store_error(source))?;
+        Ok(())
+    }
+
+    /// Deletes `deleted` paths from `FILES`/`NOTES`, then upserts each
+    /// `upserted` path's current [`FileBase`] (and [`Note`], if present) by
+    /// binary-searching `index`'s path-sorted slices.
+    fn upsert_files_and_notes(
+        &self,
+        write_txn: &WriteTransaction,
+        index: &super::FileIndex,
+        upserted: &[PathBuf],
+        deleted: &[PathBuf],
+    ) -> Result<(), IndexError> {
+        let mut files = write_txn
+            .open_table(FILES)
+            .map_err(|source| self.store_error(source))?;
+        let mut notes_table = write_txn
+            .open_table(NOTES)
+            .map_err(|source| self.store_error(source))?;
+        for path in deleted {
+            let key = path.to_string_lossy();
+            files.remove(&*key).map_err(|source| self.store_error(source))?;
+            notes_table
+                .remove(&*key)
+                .map_err(|source| self.store_error(source))?;
+        }
+        for path in upserted {
+            if let Ok(idx) =
+                index.bases().binary_search_by(|b| b.path().cmp(path))
+                && let Some(base) = index.bases().get(idx)
+            {
+                self.upsert_row(&mut files, path, base)?;
+            }
+            if let Ok(idx) =
+                index.notes().binary_search_by(|n| n.path().cmp(path))
+                && let Some(note) = index.notes().get(idx)
+            {
+                self.upsert_row(&mut notes_table, path, note)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Serializes `value` with postcard and upserts it into `table` at
+    /// `path`. Shared by [`Self::upsert_files_and_notes`] for both the
+    /// `FILES` and `NOTES` tables, which share the same key/value shape.
+    fn upsert_row<T: Serialize>(
+        &self,
+        table: &mut redb::Table<'_, &str, &[u8]>,
+        path: &Path,
+        value: &T,
+    ) -> Result<(), IndexError> {
+        let key = path.to_string_lossy();
+        let bytes = postcard::to_allocvec(value).map_err(|source| {
+            DbError::Serialize {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+        table
+            .insert(&*key, bytes.as_slice())
+            .map_err(|source| self.store_error(source))?;
+        Ok(())
+    }
+
+    /// Removes `links_deleted` targets from `LINKS`, then rewrites each
+    /// `links_upserted` target's full source set from `index`'s inlink map.
+    fn upsert_links(
+        &self,
+        write_txn: &WriteTransaction,
+        index: &super::FileIndex,
+        links_upserted: &[PathBuf],
+        links_deleted: &[PathBuf],
+    ) -> Result<(), IndexError> {
+        let mut links = write_txn
+            .open_multimap_table(LINKS)
+            .map_err(|source| self.store_error(source))?;
+        for target in links_deleted {
+            links
+                .remove_all(&*target.to_string_lossy())
+                .map_err(|source| self.store_error(source))?;
+        }
+        for target in links_upserted {
+            self.upsert_link_target(&mut links, index, target)?;
+        }
+        Ok(())
+    }
+
+    /// Rewrites one target's full source set in `links` from `index`'s
+    /// inlink map, replacing whatever was previously stored for it.
+    fn upsert_link_target(
+        &self,
+        links: &mut redb::MultimapTable<'_, &str, &str>,
+        index: &super::FileIndex,
+        target: &Path,
+    ) -> Result<(), IndexError> {
+        let target_key = target.to_string_lossy();
+        links
+            .remove_all(&*target_key)
+            .map_err(|source| self.store_error(source))?;
+        let Some(sources) = index.inlinks().get(target) else {
+            return Ok(());
+        };
+        for source in sources {
+            links
+                .insert(&*target_key, &*source.to_string_lossy())
+                .map_err(|source| self.store_error(source))?;
+        }
+        Ok(())
     }
 }
 
@@ -339,7 +538,7 @@ mod tests {
     #[test]
     fn persists_records_as_postcard_bytes_not_toml_text() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let db = DbStore::open(temp.path(), "test.redb").expect("open db");
+        let db = IndexStore::open(temp.path()).expect("open db");
         let write_txn = db.begin_write().expect("begin write");
         db.store_table(&write_txn, TEST_TABLE, &["hello".to_owned()], |s| {
             Path::new(s.as_str())
@@ -359,7 +558,7 @@ mod tests {
     #[test]
     fn returns_deserialize_error_when_stored_bytes_are_invalid() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let db = DbStore::open(temp.path(), "test.redb").expect("open db");
+        let db = IndexStore::open(temp.path()).expect("open db");
         let write_txn = db.begin_write().expect("begin write");
         {
             let mut table =
@@ -549,7 +748,7 @@ mod tests {
             let error = IndexStore::open(root)
                 .expect_err("directory at db path fails to open");
 
-            assert!(matches!(error, IndexError::Store { .. }));
+            assert!(matches!(error, IndexError::Store(DbError::Redb { .. })));
         }
 
         #[cfg(unix)]
@@ -566,7 +765,7 @@ mod tests {
             let error = IndexStore::open(root)
                 .expect_err("unwritable root fails to open store");
 
-            assert!(matches!(error, IndexError::Io { .. }));
+            assert!(matches!(error, IndexError::Store(DbError::Io { .. })));
         }
     }
 
@@ -605,7 +804,8 @@ mod tests {
 
             assert!(matches!(
                 &error,
-                IndexError::Deserialize { path, .. } if path == Path::new("bad.md")
+                IndexError::Store(DbError::Deserialize { path, .. })
+                    if path == Path::new("bad.md")
             ));
         }
 

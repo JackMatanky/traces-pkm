@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use super::{FileIndex, IndexError, builder, store::IndexStore};
+use super::{
+    FileIndex, IndexError, builder, builder::IndexDelta, store::IndexStore,
+};
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
@@ -41,8 +43,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Io`] if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, or a markdown file cannot be read.
+    /// - [`IndexError::Builder`] if a directory cannot be read, a file's
+    ///   metadata cannot be inspected, or a markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> Result<FileIndex, IndexError> {
         Ok(builder::IndexBuilder::from_scan(&self.root)?.build(&self.root)?)
@@ -72,15 +74,18 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Io`] if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, or a markdown file cannot be read.
-    /// - [`IndexError::Store`] or [`IndexError::Deserialize`] if the previous
-    ///   index cannot be loaded.
+    /// - [`IndexError::Builder`] if a directory cannot be read, a file's
+    ///   metadata cannot be inspected, a markdown file cannot be parsed, or an
+    ///   unchanged Note's previous value cannot be recalled.
+    /// - [`IndexError::Store`] if the previously persisted index cannot be
+    ///   loaded.
     #[inline]
     pub fn refresh(&self) -> Result<FileIndex, IndexError> {
-        let previous = self.load()?;
+        let store = IndexStore::open(&self.root)?;
+        let (previous, inlinks) = store.load_bases_and_links()?;
+        let read_txn = store.begin_read()?;
         Ok(builder::IndexBuilder::from_scan(&self.root)?
-            .reuse_unchanged(previous)
+            .reuse_unchanged(previous, inlinks, store, read_txn)
             .build(&self.root)?)
     }
 
@@ -92,17 +97,11 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Io`] if the database's parent directory cannot be
-    ///   created.
-    /// - [`IndexError::Store`] if the database transaction fails.
-    /// - [`IndexError::Serialize`] if a record cannot be encoded.
+    /// - [`IndexError::Store`] if the database's parent directory cannot be
+    ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> Result<(), IndexError> {
-        IndexStore::open(&self.root)?.replace_all(
-            index.bases(),
-            index.notes(),
-            index.inlinks(),
-        )
+        IndexStore::open(&self.root)?.persist_index(index)
     }
 
     /// Loads the index previously persisted for this service's root.
@@ -111,19 +110,22 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the database cannot be read.
-    /// - [`IndexError::Deserialize`] if stored bytes are not a valid record.
+    /// - [`IndexError::Store`] if the database cannot be read or stored bytes
+    ///   are not a valid record.
     #[inline]
     pub fn load(&self) -> Result<FileIndex, IndexError> {
         let (records, notes, inlinks) =
             IndexStore::open(&self.root)?.load_all()?;
-        Ok(FileIndex::new(records, notes, inlinks))
+        Ok(FileIndex::new(records, notes, inlinks, IndexDelta::Full))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::*;
     use crate::{
@@ -145,6 +147,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::index::error::IndexBuilderError;
 
         #[test]
         fn extracts_note_metadata_only_for_markdown_files() {
@@ -225,7 +228,10 @@ mod tests {
 
             let result = IndexerService::new(temp.path()).build();
 
-            assert!(matches!(result, Err(IndexError::Io { .. })));
+            assert!(matches!(
+                result,
+                Err(IndexError::Builder(IndexBuilderError::NoteParse { .. }))
+            ));
         }
 
         #[test]
@@ -248,6 +254,49 @@ mod tests {
 
         use super::*;
         use crate::note::{Frontmatter, Link, LinkType, NoteFieldValue, Tag};
+
+        /// The `upserted`/`deleted` path lists extracted from an
+        /// [`IndexDelta::Incremental`]. Distinct from production's
+        /// [`builder::IncrementalDelta`]: this borrows only the two fields
+        /// these tests assert on.
+        struct IncrementalPaths<'a> {
+            upserted: &'a [PathBuf],
+            deleted: &'a [PathBuf],
+        }
+
+        /// Extracts [`IncrementalPaths`] from an [`IndexDelta::Incremental`],
+        /// or `None` for [`IndexDelta::Full`].
+        fn incremental_paths(
+            delta: &IndexDelta,
+        ) -> Option<IncrementalPaths<'_>> {
+            match delta {
+                IndexDelta::Incremental(delta) => Some(IncrementalPaths {
+                    upserted: &delta.upserted,
+                    deleted: &delta.deleted,
+                }),
+                IndexDelta::Full => None,
+            }
+        }
+
+        /// Writes three notes (`a.md`/`b.md`/`c.md`) under `root`, builds
+        /// and persists the index, and returns the scoped service plus the
+        /// initial build's `a`/`c` notes — used to assert they persist
+        /// byte-identical after an incremental refresh that only changes
+        /// `b.md`.
+        fn seed_three_notes(root: &Path) -> (IndexerService, Note, Note) {
+            fs::write(root.join("a.md"), "---\ntitle: A\n---\nBody A.")
+                .expect("write a");
+            fs::write(root.join("b.md"), "---\ntitle: B\n---\nBody B.")
+                .expect("write b");
+            fs::write(root.join("c.md"), "---\ntitle: C\n---\nBody C.")
+                .expect("write c");
+            let indexer = IndexerService::new(root);
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let a = built.note(Path::new("a.md")).expect("note a").clone();
+            let c = built.note(Path::new("c.md")).expect("note c").clone();
+            (indexer, a, c)
+        }
 
         #[test]
         fn round_trips_records() {
@@ -460,6 +509,84 @@ mod tests {
                 loaded.notes().first().map(Note::path),
                 Some(Path::new("second.md"))
             );
+        }
+
+        #[test]
+        fn refresh_delta_names_only_the_changed_path() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (indexer, ..) = seed_three_notes(temp.path());
+            fs::write(
+                temp.path().join("b.md"),
+                "---\ntitle: B\n---\nBody B changed.",
+            )
+            .expect("rewrite b");
+
+            // Act
+            let refreshed = indexer.refresh().expect("refresh index");
+
+            // Assert: the delta names only the changed path — proves the
+            // refresh plans a row-level write, not a full rewrite.
+            let delta = incremental_paths(refreshed.delta())
+                .expect("refresh after a persisted build must be incremental");
+            assert_eq!(delta.upserted, &[PathBuf::from("b.md")]);
+            assert!(delta.deleted.is_empty());
+        }
+
+        #[test]
+        fn persist_incremental_preserves_unchanged_notes_and_updates_changed_note()
+         {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (indexer, original_a, original_c) =
+                seed_three_notes(temp.path());
+            fs::write(
+                temp.path().join("b.md"),
+                "---\ntitle: B\n---\nBody B changed.",
+            )
+            .expect("rewrite b");
+            let refreshed = indexer.refresh().expect("refresh index");
+
+            // Act
+            indexer.persist(&refreshed).expect("persist refreshed index");
+            let loaded = indexer.load().expect("load index");
+
+            // Assert: the two untouched notes persisted byte-identical to
+            // their original write — the incremental write path never
+            // touched their rows.
+            assert_eq!(loaded.note(Path::new("a.md")), Some(&original_a));
+            assert_eq!(loaded.note(Path::new("c.md")), Some(&original_c));
+
+            // The changed note reflects the rewrite.
+            let loaded_b = loaded.note(Path::new("b.md")).expect("note b");
+            assert_eq!(
+                loaded_b.frontmatter().and_then(|fm| fm.get("title").cloned()),
+                Some(crate::note::NoteFieldValue::String("B".to_owned()))
+            );
+        }
+
+        #[test]
+        fn noop_refresh_after_incremental_persist_reports_empty_delta() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (indexer, ..) = seed_three_notes(temp.path());
+            fs::write(
+                temp.path().join("b.md"),
+                "---\ntitle: B\n---\nBody B changed.",
+            )
+            .expect("rewrite b");
+            let refreshed = indexer.refresh().expect("refresh index");
+            indexer.persist(&refreshed).expect("persist refreshed index");
+
+            // Act
+            let noop_refresh = indexer.refresh().expect("noop refresh");
+
+            // Assert: a refresh against the now-persisted, unchanged
+            // filesystem state reports no further changes.
+            let delta = incremental_paths(noop_refresh.delta())
+                .expect("refresh after a persisted build must be incremental");
+            assert!(delta.upserted.is_empty());
+            assert!(delta.deleted.is_empty());
         }
     }
 

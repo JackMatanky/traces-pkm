@@ -31,6 +31,8 @@
 //!   field definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
+//! - `walk` - Shared directory-walk error context for `walkdir` consumers
+//!   across config, index, schema, and template.
 //!
 //! # Key Types
 //!
@@ -65,6 +67,7 @@ mod path;
 mod query;
 mod schema;
 mod template;
+mod walk;
 
 pub mod cli;
 

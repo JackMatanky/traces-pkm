@@ -1,17 +1,34 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`IndexError`] covers persistence failures (database, serialization).
-//! [`IndexBuilderError`] covers build-pipeline failures (scan, parse).
-//! The [`From`] impl converts builder errors into index errors for
-//! callers that use the unified [`super::FileIndex`] API.
+//! [`IndexError`] is the unified index-error type every fallible `index`
+//! operation converts into via `?`: a thin `#[error(transparent)]` wrapper
+//! distinguishing persistence failures ([`DbError`], database access and
+//! serialization) from build-pipeline failures ([`IndexBuilderError`], scan,
+//! parse, and refresh reconciliation). Neither `Display` nor `source()` adds
+//! anything at this level — both fully delegate to whichever inner error
+//! actually occurred, matching this codebase's established convention for
+//! error-enum composition (see e.g. `ConfigLoadError`, `QueryError`,
+//! `TemplateError`).
 
 use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
+/// Error type for [`super::FileIndex`] operations: build, persist, load, and
+/// refresh.
+#[derive(Debug, Error)]
+pub enum IndexError {
+    /// Database access or record (de)serialization failed.
+    #[error(transparent)]
+    Store(#[from] DbError),
+    /// Scanning, parsing, or reconciling the build pipeline failed.
+    #[error(transparent)]
+    Builder(#[from] IndexBuilderError),
+}
+
 /// Generic error type for low-level redb persistence operations.
 #[derive(Debug, Error)]
-pub(crate) enum DbError {
+pub enum DbError {
     /// A filesystem operation failed during directory creation or file setup.
     #[error("failed to access {path}")]
     Io {
@@ -19,9 +36,11 @@ pub(crate) enum DbError {
         path: PathBuf,
         /// Source I/O error.
         #[source]
-        source: std::io::Error,
+        source: io::Error,
     },
     /// Opening, reading, or writing the redb-backed database failed.
+    ///
+    /// `redb::Error` is boxed to keep this enum small.
     #[error("failed to access the database at {path}")]
     Redb {
         /// The database file path.
@@ -50,102 +69,8 @@ pub(crate) enum DbError {
     },
 }
 
-/// Error type for [`super::FileIndex`] persistence operations.
-///
-/// Variants distinguish database access, and postcard encoding failures.
-/// Build-time failures are covered by [`IndexBuilderError`].
-#[derive(Debug, Error)]
-pub enum IndexError {
-    /// A filesystem operation failed during a scan or directory setup.
-    ///
-    /// Occurs while scanning a project root or preparing the index database's
-    /// parent directory.
-    #[error("failed to access {path}")]
-    Io {
-        /// The path that could not be accessed.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Opening, reading, or writing the redb-backed index database failed.
-    ///
-    /// `redb::Error` is boxed to keep this enum small; `Store` is by far the
-    /// rarest variant.
-    #[error("failed to access the index database at {path}")]
-    Store {
-        /// The index database file.
-        path: PathBuf,
-        /// Source redb error.
-        #[source]
-        source: Box<redb::Error>,
-    },
-    /// A [`super::FileBase`] or [`super::Note`] could not be serialized.
-    #[error("failed to serialize the record for {path}")]
-    Serialize {
-        /// The record's project-relative path.
-        path: PathBuf,
-        /// Source postcard serialization error.
-        #[source]
-        source: postcard::Error,
-    },
-    /// A stored record could not be deserialized.
-    ///
-    /// Occurs when stored bytes are corrupt or were written by an incompatible
-    /// encoding.
-    #[error("failed to deserialize the record for {path}")]
-    Deserialize {
-        /// The record's project-relative path (its key in the index database).
-        path: PathBuf,
-        /// Source postcard deserialization error. Not boxed: `postcard::Error`
-        /// is a small, fieldless, non-exhaustive enum with no parse-diagnostic
-        /// payload.
-        #[source]
-        source: postcard::Error,
-    },
-}
-
-impl From<DbError> for IndexError {
-    #[inline]
-    fn from(err: DbError) -> Self {
-        match err {
-            DbError::Io {
-                path,
-                source,
-            } => Self::Io {
-                path,
-                source,
-            },
-            DbError::Redb {
-                path,
-                source,
-            } => Self::Store {
-                path,
-                source,
-            },
-            DbError::Serialize {
-                path,
-                source,
-            } => Self::Serialize {
-                path,
-                source,
-            },
-            DbError::Deserialize {
-                path,
-                source,
-            } => Self::Deserialize {
-                path,
-                source,
-            },
-        }
-    }
-}
-
-/// Error type for the [`super::builder::IndexBuilder`] build pipeline.
-///
-/// Distinct from [`IndexError`] to separate build-time failures
-/// (filesystem scan, markdown parse) from persistence failures (database,
-/// serialization).
+/// Error type for the [`super::builder::IndexBuilder`] build pipeline:
+/// filesystem scan, markdown parse, and refresh reconciliation.
 #[derive(Debug, Error)]
 pub enum IndexBuilderError {
     /// Filesystem error during directory scan or file metadata read.
@@ -167,49 +92,87 @@ pub enum IndexBuilderError {
         source: io::Error,
     },
     /// Record metadata matched the previous index, but the corresponding note
-    /// was not found in the moved notes map.
+    /// was absent from the persisted index during point-lookup recall.
     ///
     /// Indicates a logic bug in the reconciliation pipeline: the record's
-    /// metadata said "unchanged", so the builder tried to reuse its note, but
-    /// the note was never moved into the reuse map.
+    /// metadata said "unchanged", so the builder tried to reuse its note via
+    /// [`super::store::IndexStore::load_note`], but no note was persisted at
+    /// that path.
     #[error("note missing for record at {path}")]
     MissingNote {
         /// The record path whose expected note was absent.
         path: PathBuf,
     },
-}
-
-impl From<IndexBuilderError> for IndexError {
-    #[inline]
-    fn from(err: IndexBuilderError) -> Self {
-        match err {
-            IndexBuilderError::Scan {
-                path,
-                source,
-            }
-            | IndexBuilderError::NoteParse {
-                path,
-                source,
-            } => Self::Io {
-                path,
-                source,
-            },
-            IndexBuilderError::MissingNote {
-                path,
-            } => Self::Io {
-                path,
-                source: io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "note missing for matched record",
-                ),
-            },
-        }
-    }
+    /// A previously-persisted [`crate::note::Note`] could not be read via a
+    /// point lookup during refresh reconciliation.
+    ///
+    /// `source` is boxed: it breaks the size cycle this variant otherwise
+    /// creates ([`IndexError::Builder`] holds a plain, unboxed
+    /// `IndexBuilderError`), and it matches
+    /// [`super::store::IndexStore::load_note`]'s own return type, so callers
+    /// forward its error unchanged instead of re-wrapping it.
+    #[error("failed to read persisted note for {path}")]
+    NoteLookup {
+        /// The path whose previous Note lookup failed.
+        path: PathBuf,
+        /// Source index-store error.
+        #[source]
+        source: Box<IndexError>,
+    },
 }
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as StdError;
+
     use super::*;
+
+    mod db_error_display {
+        use super::*;
+
+        #[test]
+        fn io_includes_path_in_message() {
+            let err = DbError::Io {
+                path: PathBuf::from("data.csv"),
+                source: io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "denied",
+                ),
+            };
+
+            assert!(err.to_string().contains("data.csv"));
+        }
+
+        #[test]
+        fn redb_includes_path_in_message() {
+            let err = DbError::Redb {
+                path: PathBuf::from(".traces/index.redb"),
+                source: Box::new(redb::Error::DatabaseAlreadyOpen),
+            };
+
+            assert!(err.to_string().contains(".traces/index.redb"));
+        }
+
+        #[test]
+        fn serialize_includes_path_in_message() {
+            let err = DbError::Serialize {
+                path: PathBuf::from("note.md"),
+                source: postcard::Error::DeserializeUnexpectedEnd,
+            };
+
+            assert!(err.to_string().contains("note.md"));
+        }
+
+        #[test]
+        fn deserialize_includes_path_in_message() {
+            let err = DbError::Deserialize {
+                path: PathBuf::from("note.md"),
+                source: postcard::Error::DeserializeUnexpectedEnd,
+            };
+
+            assert!(err.to_string().contains("note.md"));
+        }
+    }
 
     mod index_builder_error_display {
         use super::*;
@@ -242,157 +205,139 @@ mod tests {
 
             assert!(err.to_string().contains("orphan.md"));
         }
+
+        #[test]
+        fn note_lookup_includes_path_in_message() {
+            let err = IndexBuilderError::NoteLookup {
+                path: PathBuf::from("recall.md"),
+                source: Box::new(IndexError::Store(DbError::Redb {
+                    path: PathBuf::from(".traces/index.redb"),
+                    source: Box::new(redb::Error::DatabaseAlreadyOpen),
+                })),
+            };
+
+            assert!(err.to_string().contains("recall.md"));
+        }
     }
 
-    mod index_error_display {
+    mod transparent_forwarding {
         use super::*;
 
         #[test]
-        fn io_includes_path_in_message() {
-            let err = IndexError::Io {
-                path: PathBuf::from("data.csv"),
-                source: io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "denied",
-                ),
-            };
-
-            assert!(err.to_string().contains("data.csv"));
-        }
-
-        #[test]
-        fn store_includes_path_in_message() {
-            let err = IndexError::Store {
+        fn store_display_matches_the_wrapped_db_error_with_no_added_text() {
+            let db_error = DbError::Redb {
                 path: PathBuf::from(".traces/index.redb"),
                 source: Box::new(redb::Error::DatabaseAlreadyOpen),
             };
+            let db_message = db_error.to_string();
 
-            assert!(err.to_string().contains(".traces/index.redb"));
+            let wrapped = IndexError::Store(db_error);
+
+            assert_eq!(wrapped.to_string(), db_message);
         }
 
         #[test]
-        fn serialize_includes_path_in_message() {
-            let err = IndexError::Serialize {
-                path: PathBuf::from("note.md"),
-                source: postcard::Error::DeserializeUnexpectedEnd,
+        fn builder_display_matches_the_wrapped_builder_error_with_no_added_text()
+         {
+            let builder_error = IndexBuilderError::MissingNote {
+                path: PathBuf::from("orphan.md"),
             };
+            let builder_message = builder_error.to_string();
 
-            assert!(err.to_string().contains("note.md"));
+            let wrapped = IndexError::Builder(builder_error);
+
+            assert_eq!(wrapped.to_string(), builder_message);
         }
 
         #[test]
-        fn deserialize_includes_path_in_message() {
-            let err = IndexError::Deserialize {
-                path: PathBuf::from("note.md"),
-                source: postcard::Error::DeserializeUnexpectedEnd,
-            };
+        fn store_source_skips_straight_to_the_db_errors_own_source() {
+            // `#[error(transparent)]` hides the wrapping variant from the
+            // source chain entirely: `.source()` returns what `DbError`'s
+            // own `.source()` returns (the io::Error), not the `DbError`
+            // itself.
+            let err = IndexError::Store(DbError::Io {
+                path: PathBuf::from("x"),
+                source: io::Error::new(io::ErrorKind::BrokenPipe, "pipe"),
+            });
 
-            assert!(err.to_string().contains("note.md"));
-        }
-    }
-
-    mod from_index_builder_error {
-        use std::path::Path;
-
-        use super::*;
-
-        #[test]
-        fn scan_converts_to_io() {
-            let source =
-                io::Error::new(io::ErrorKind::NotFound, "no such file");
-            let err = IndexBuilderError::Scan {
-                path: PathBuf::from("missing.rs"),
-                source,
-            };
-
-            let converted: IndexError = err.into();
-
-            assert!(
-                matches!(converted, IndexError::Io { path, .. } if path == Path::new("missing.rs"))
+            let source = err.source().expect("source present");
+            assert!(source.downcast_ref::<DbError>().is_none());
+            assert_eq!(
+                source.downcast_ref::<io::Error>().map(io::Error::kind),
+                Some(io::ErrorKind::BrokenPipe)
             );
         }
 
         #[test]
-        fn note_parse_converts_to_io() {
-            let source = io::Error::new(io::ErrorKind::InvalidData, "bad utf8");
-            let err = IndexBuilderError::NoteParse {
-                path: PathBuf::from("notes").join("bad.md"),
-                source,
-            };
+        fn builder_source_skips_straight_to_the_builder_errors_own_source() {
+            let err = IndexError::Builder(IndexBuilderError::NoteParse {
+                path: PathBuf::from("x"),
+                source: io::Error::new(io::ErrorKind::InvalidData, "bad"),
+            });
 
-            let converted: IndexError = err.into();
-
-            assert!(
-                matches!(converted, IndexError::Io { path, .. } if path == Path::new("notes/bad.md"))
+            let source = err.source().expect("source present");
+            assert!(source.downcast_ref::<IndexBuilderError>().is_none());
+            assert_eq!(
+                source.downcast_ref::<io::Error>().map(io::Error::kind),
+                Some(io::ErrorKind::InvalidData)
             );
         }
 
         #[test]
-        fn missing_note_converts_to_io_with_not_found() {
-            let err = IndexBuilderError::MissingNote {
+        fn db_error_converts_to_the_store_variant() {
+            let db_error = DbError::Io {
+                path: PathBuf::from("x"),
+                source: io::Error::other("boom"),
+            };
+
+            let converted: IndexError = db_error.into();
+
+            assert!(matches!(converted, IndexError::Store(DbError::Io { .. })));
+        }
+
+        #[test]
+        fn index_builder_error_converts_to_the_builder_variant() {
+            let builder_error = IndexBuilderError::MissingNote {
                 path: PathBuf::from("orphan.md"),
             };
 
-            let converted: IndexError = err.into();
+            let converted: IndexError = builder_error.into();
 
-            assert!(matches!(converted, IndexError::Io { path, source }
-                if path == Path::new("orphan.md")
-                    && source.kind() == io::ErrorKind::NotFound));
-        }
-    }
-
-    mod error_source_chains {
-        use std::error::Error as StdError;
-
-        use super::*;
-
-        #[test]
-        fn io_preserves_source() {
-            let source = io::Error::new(io::ErrorKind::BrokenPipe, "pipe");
-            let err = IndexError::Io {
-                path: PathBuf::from("x"),
-                source,
-            };
-
-            assert!(err.source().is_some());
-            assert_eq!(
-                err.source()
-                    .unwrap()
-                    .downcast_ref::<io::Error>()
-                    .unwrap()
-                    .kind(),
-                io::ErrorKind::BrokenPipe,
-            );
+            assert!(matches!(
+                converted,
+                IndexError::Builder(IndexBuilderError::MissingNote { .. })
+            ));
         }
 
         #[test]
-        fn store_preserves_source() {
-            let err = IndexError::Store {
-                path: PathBuf::from("db"),
-                source: Box::new(redb::Error::DatabaseAlreadyOpen),
+        fn note_lookup_keeps_its_own_path_distinct_from_the_wrapped_errors_path()
+         {
+            // `NoteLookup`'s own `path` (the record being recalled) must stay
+            // reachable even though its `source` is a full `IndexError` that
+            // may carry an unrelated path of its own (e.g. the database
+            // file, for a `Store`-caused failure).
+            let err = IndexBuilderError::NoteLookup {
+                path: PathBuf::from("recall.md"),
+                source: Box::new(IndexError::Store(DbError::Redb {
+                    path: PathBuf::from(".traces/index.redb"),
+                    source: Box::new(redb::Error::DatabaseAlreadyOpen),
+                })),
             };
 
-            assert!(err.source().is_some());
-        }
-
-        #[test]
-        fn serialize_preserves_source() {
-            let err = IndexError::Serialize {
-                path: PathBuf::from("x"),
-                source: postcard::Error::DeserializeUnexpectedEnd,
-            };
-
-            assert!(err.source().is_some());
-        }
-
-        #[test]
-        fn deserialize_preserves_source() {
-            let err = IndexError::Deserialize {
-                path: PathBuf::from("x"),
-                source: postcard::Error::DeserializeUnexpectedEnd,
-            };
-
-            assert!(err.source().is_some());
+            assert!(matches!(
+                &err,
+                IndexBuilderError::NoteLookup { path, .. }
+                    if path == std::path::Path::new("recall.md")
+            ));
+            assert!(matches!(
+                &err,
+                IndexBuilderError::NoteLookup { source, .. }
+                    if matches!(
+                        &**source,
+                        IndexError::Store(DbError::Redb { path, .. })
+                            if path == std::path::Path::new(".traces/index.redb")
+                    )
+            ));
         }
     }
 }
