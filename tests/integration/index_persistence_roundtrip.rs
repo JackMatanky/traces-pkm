@@ -15,7 +15,7 @@ use traces_pkm::IndexerService;
 /// unit test. This is the only test proving `build`/`persist`/`load` still
 /// work when called only through their `pub` signatures.
 #[test]
-fn persist_then_load_recovers_the_same_record_count_and_paths() {
+fn persist_then_load_recovers_the_same_file_count_and_paths() {
     let temp = tempfile::tempdir().expect("create temp dir");
     fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
     fs::write(temp.path().join("b.md"), "# B\n").expect("write b.md");
@@ -25,9 +25,9 @@ fn persist_then_load_recovers_the_same_record_count_and_paths() {
 
     let loaded = indexer.load().expect("load persisted index");
 
-    assert_eq!(loaded.records().len(), built.records().len());
+    assert_eq!(loaded.bases().len(), built.bases().len());
     let mut loaded_paths: Vec<_> =
-        loaded.records().iter().map(|r| r.path().to_path_buf()).collect();
+        loaded.bases().iter().map(|r| r.path().to_path_buf()).collect();
     loaded_paths.sort();
     assert_eq!(loaded_paths, vec![
         std::path::PathBuf::from("a.md"),
