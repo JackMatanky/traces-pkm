@@ -35,12 +35,19 @@ the full `previous` is real but modest at typical vault sizes).
       reparse-vs-reuse decision is driven by checking `base.path()`
       against a peekable pointer over `diff_bases`'s `upserted` (walked
       alongside `bases` in `build_with_reuse`'s existing loop), never
-      consulting `reuse.previous` again. `reconcile_note` stays a named
-      private helper (not inlined) — matches this file's convention of
-      small, named, doc-commented private helpers (`parse_note`,
-      `folder_distance`, `io_error`), and it's still two distinct
-      fallible operations (point-lookup-with-two-error-paths vs.
-      reparse) worth a name and independent testability.
+      consulting `reuse.previous` again. **The upserted-membership check
+      — and consuming a match — runs unconditionally for every `base`,
+      Note or not, before the format-gated `continue`**, exactly
+      mirroring how the old `has_deleted_note` ran unconditionally.
+      Skipping the check for non-Note bases would stall the peekable
+      pointer, misaligning it for later Note-format bases and silently
+      reintroducing the exact double-counting bug class this ticket
+      exists to eliminate. `reconcile_note` stays a named private helper
+      (not inlined) — matches this file's convention of small, named,
+      doc-commented private helpers (`parse_note`, `folder_distance`,
+      `io_error`), and it's still two distinct fallible operations
+      (point-lookup-with-two-error-paths vs. reparse) worth a name and
+      independent testability.
 - [ ] `build_with_reuse` no longer assembles `dirty`/`stale` piecemeal
       across three sites (per-base `has_deleted_note`, per-note
       `reparsed`, a trailing `prev_iter.any(...)` check) — it's a single
@@ -63,6 +70,12 @@ the full `previous` is real but modest at typical vault sizes).
       unit tests today) gain direct coverage for the new `stale` output:
       a deleted Note sets `stale`; a deleted non-Note file does not; an
       upserted Note sets `stale`; an upserted non-Note file does not.
+- [ ] A regression test covers an upserted **non-Note** file sitting
+      between two Note-format bases in path order — proves the
+      upserted-pointer consumption is unconditional (checked for every
+      base) rather than only for Note-format ones, exactly the shape of
+      bug the old `prev_iter`-consumption tests (now deleted) used to
+      guard against under the previous design.
 
 ## Comments
 
@@ -103,6 +116,19 @@ the full `previous` is real but modest at typical vault sizes).
    whole ticket — deleting the mechanism that made those tests necessary
    is exactly what "the complexity was accidental, not earned" looks
    like in practice.
+6. **Upserted-pointer consumption must be unconditional — audit
+   correction** — re-derivation during a second grilling pass confirmed
+   `diff_bases`'s `upserted` and the old `reconcile_note`'s
+   reparse-vs-reuse partition are provably the same set (both keyed on
+   full `FileBase` (in)equality), so the refactor is sound in principle
+   — but only if the peekable pointer over `upserted` is advanced past
+   every matching path, Note or not, not just Note-format ones. The
+   original checklist wording didn't say this explicitly. Skipping
+   non-Note bases would stall the pointer and misalign it for later
+   Note-format bases, silently reintroducing the exact bug class
+   (un-consumed matched entries causing later false positives)
+   `builder.rs`'s own doc comments already record having been bitten by
+   once before.
 
 ## Agent Brief
 
