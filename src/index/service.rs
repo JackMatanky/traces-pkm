@@ -642,7 +642,10 @@ mod tests {
             // magic-number mismatch path (`StorageError::Io`) a
             // completely-foreign byte sequence would hit instead.
             let mut corrupted = fs::read(&db_path).expect("read valid db");
-            corrupted[9..].fill(0xFF);
+            corrupted
+                .get_mut(9..)
+                .expect("db file longer than the 9-byte magic number")
+                .fill(0xFF);
             fs::write(&db_path, &corrupted).expect("corrupt the database file");
 
             let refreshed =

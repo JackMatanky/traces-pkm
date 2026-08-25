@@ -129,9 +129,10 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`IndexError::Store`] ([`DbError::Io`]) if the database's parent
-    ///   directory cannot be created.
+    ///   directory cannot be created, or if a corrupted or schema-mismatched
+    ///   file cannot be deleted during recovery.
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if the database file cannot
-    ///   be opened.
+    ///   be opened, or a post-recovery re-create fails.
     pub(super) fn open(root: &Path) -> Result<Self, IndexError> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
@@ -276,18 +277,6 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the table cannot be read.
     /// - [`DbError::Deserialize`] if stored bytes are corrupt or incompatible.
-    #[expect(
-        clippy::large_stack_frames,
-        reason = "measured at 4591 bytes, over the 4096 threshold; tried the \
-                  same decode_row-extraction shape that fixed load_note \
-                  (which cut a single point-lookup's frame entirely) but \
-                  load_table deserializes inside a loop, so the same \
-                  extraction adds a per-iteration PathBuf plus a call \
-                  boundary instead of removing overhead — matches this \
-                  ticket's own prior finding that this pattern makes \
-                  load_table's frame worse, not better, and further \
-                  fragmenting the loop body would repeat that mistake"
-    )]
     pub(super) fn load_table<T: DeserializeOwned>(
         &self,
         read_txn: &ReadTransaction,
@@ -346,15 +335,6 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the table cannot be read.
-    #[expect(
-        clippy::large_stack_frames,
-        reason = "measured at 4405 bytes after decomposing into \
-                  process_link_entry/collect_sources (down from 7957 before \
-                  decomposition, a real 44% reduction); the residual ~300 \
-                  bytes is the iterator Result tuple itself, and further \
-                  micro-extraction was tried and found to fragment the loop \
-                  without removing any actual duplicated stack materialization"
-    )]
     pub(super) fn load_links(
         &self,
         read_txn: &ReadTransaction,
@@ -422,17 +402,6 @@ impl IndexStore {
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if the transaction fails.
     /// - [`IndexError::Store`] ([`DbError::Serialize`]) if a record cannot be
     ///   encoded.
-    #[expect(
-        clippy::large_stack_frames,
-        reason = "measured at 4983 bytes, dominated by redb::WriteTransaction \
-                  (624 bytes), an external RAII type that must stay alive for \
-                  the whole open-transaction/write-tables/commit sequence by \
-                  construction; boxing it was tried directly and measured \
-                  worse (4983 -> 5137 bytes) since it is constructed and used \
-                  within this one function, never moved through multiple \
-                  owning calls, so boxing only adds a heap allocation on top \
-                  of the same stack materialization"
-    )]
     pub(super) fn replace_all(
         &self,
         bases: &[FileBase],
@@ -555,15 +524,6 @@ impl IndexStore {
     /// [`super::builder::IndexDelta::Full`] — defensive only; every caller
     /// routes through [`Self::persist_index`], which never reaches this
     /// branch for a full delta.
-    #[expect(
-        clippy::large_stack_frames,
-        reason = "measured at 4540 bytes, dominated by redb::WriteTransaction \
-                  (624 bytes) for the same reason as replace_all: an external \
-                  RAII type that must stay alive for the whole \
-                  write-then-commit sequence by construction; boxing it was \
-                  already measured worse for replace_all's identical shape, \
-                  so not re-tried here"
-    )]
     fn persist_incremental(
         &self,
         index: &super::FileIndex,
@@ -990,6 +950,68 @@ mod tests {
             assert!(bases.is_empty());
             assert!(notes.is_empty());
             assert!(links.is_empty());
+        }
+    }
+
+    mod is_rebuild_trigger {
+        use super::*;
+
+        #[test]
+        fn accepts_table_type_mismatch_as_a_trigger() {
+            let error = redb::TableError::TableTypeMismatch {
+                table: "files".to_owned(),
+                key: redb::TypeName::new("&str"),
+                value: redb::TypeName::new("&[u8]"),
+            };
+
+            assert!(IndexStore::is_rebuild_trigger(&error));
+        }
+
+        #[test]
+        fn accepts_type_definition_changed_as_a_trigger() {
+            let error = redb::TableError::TypeDefinitionChanged {
+                name: redb::TypeName::new("&[u8]"),
+                alignment: 1,
+                width: None,
+            };
+
+            assert!(IndexStore::is_rebuild_trigger(&error));
+        }
+
+        #[test]
+        fn accepts_storage_corrupted_as_a_trigger() {
+            // The one arm added beyond the ticket's literal
+            // `TableTypeMismatch`/`TypeDefinitionChanged` pair: per-table
+            // structural corruption surfaced by `open_table`/
+            // `open_multimap_table` itself, distinct from the
+            // container-level `DatabaseError::Storage(StorageError::
+            // Corrupted)` `create_db` already catches. Exercising this
+            // through a real `IndexStore::open` call would require
+            // hand-crafting a redb file corrupted at exactly one table's
+            // B-tree while leaving the container header/checksums valid —
+            // infeasible to construct reliably without redb's own
+            // on-disk-format internals, so the predicate is proven
+            // directly here instead.
+            let error = redb::TableError::Storage(
+                redb::StorageError::Corrupted("simulated".to_owned()),
+            );
+
+            assert!(IndexStore::is_rebuild_trigger(&error));
+        }
+
+        #[test]
+        fn rejects_table_does_not_exist() {
+            let error = redb::TableError::TableDoesNotExist("files".to_owned());
+
+            assert!(!IndexStore::is_rebuild_trigger(&error));
+        }
+
+        #[test]
+        fn rejects_a_non_corrupted_storage_error() {
+            let error =
+                redb::TableError::Storage(redb::StorageError::DatabaseClosed);
+
+            assert!(!IndexStore::is_rebuild_trigger(&error));
         }
     }
 

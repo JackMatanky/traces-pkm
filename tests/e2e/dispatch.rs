@@ -24,6 +24,27 @@ mod trust_and_diagnostics {
         assert!(sandbox.root().join(".traces/index.redb").is_file());
     }
 
+    /// Trusts a project, writes a note, and runs `list` with **no** prior
+    /// `index` call — then checks `.traces/index.redb` gets persisted
+    /// anyway.
+    ///
+    /// `IndexerService::refresh` persisting internally is unit-tested
+    /// against the service directly; only a spawned process proves the
+    /// `list`/`table`/`task` dispatch path (`refresh_page_query`/
+    /// `refresh_task_query` in `src/cli/mod.rs`) actually reaches that
+    /// `refresh()` call and the write survives process exit, rather than
+    /// e.g. a future refactor swapping it for `build()`.
+    #[test]
+    fn list_persists_the_file_index_without_an_explicit_index_command() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("a.md", "# A\n");
+
+        let list = sandbox.run(&["list"]);
+
+        assert!(list.is_success(), "stderr: {}", list.stderr);
+        assert!(sandbox.root().join(".traces/index.redb").is_file());
+    }
+
     /// Checks an untrusted config makes `list` fail with the untrusted
     /// diagnostic, non-zero exit, and empty stdout.
     ///

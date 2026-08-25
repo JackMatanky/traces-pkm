@@ -480,6 +480,62 @@ mod tests {
         store
     }
 
+    mod is_empty {
+        use rstest::rstest;
+
+        use super::*;
+
+        /// Builds an [`IncrementalDelta`] with all-empty fields except the
+        /// one under test, so each case isolates exactly one field's
+        /// contribution to [`IncrementalDelta::is_empty`].
+        fn delta(
+            upserted: Vec<PathBuf>,
+            deleted: Vec<PathBuf>,
+            links_upserted: Option<Vec<PathBuf>>,
+            links_deleted: Vec<PathBuf>,
+        ) -> IncrementalDelta {
+            IncrementalDelta {
+                upserted,
+                deleted,
+                links_upserted,
+                links_deleted,
+            }
+        }
+
+        #[test]
+        fn is_true_when_every_field_is_empty_or_none() {
+            let delta = delta(vec![], vec![], None, vec![]);
+
+            assert!(delta.is_empty());
+        }
+
+        #[test]
+        fn is_true_when_links_upserted_is_an_empty_vec_not_none() {
+            // `Some(vec![])` ("recomputed, nothing changed") must count as
+            // empty alongside `None` ("never recomputed") — the two are
+            // different reasons for the same "nothing to write" outcome.
+            let delta = delta(vec![], vec![], Some(vec![]), vec![]);
+
+            assert!(delta.is_empty());
+        }
+
+        #[rstest]
+        #[case::upserted(delta(vec![PathBuf::from("a.md")], vec![], None, vec![]))]
+        #[case::deleted(delta(vec![], vec![PathBuf::from("a.md")], None, vec![]))]
+        #[case::links_deleted(delta(vec![], vec![], None, vec![PathBuf::from("a.md")]))]
+        #[case::links_upserted_nonempty(delta(
+            vec![],
+            vec![],
+            Some(vec![PathBuf::from("a.md")]),
+            vec![]
+        ))]
+        fn is_false_when_any_field_names_a_change(
+            #[case] delta: IncrementalDelta,
+        ) {
+            assert!(!delta.is_empty());
+        }
+    }
+
     mod constructor {
         use pretty_assertions::assert_eq;
 
