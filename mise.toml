@@ -333,7 +333,7 @@ description = "Run parallel mutation testing with cargo-mutants"
 usage = '''
 flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
 flag "-f --file <file>" help="Run mutants in a specific file only"
-flag "--iterate" help="Skip mutants that were caught in previous runs"
+flag "--iterate" negate="--no-iterate" default=#true help="Skip mutants that were caught in previous runs"
 flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
@@ -354,7 +354,7 @@ if [[ "${usage_iterate:-false}" == "true" ]]; then
   args+=(--iterate)
 fi
 if [[ -n "${usage_mod:-}" ]]; then
-  args+=(--file "src/${usage_mod}/")
+  args+=(--file "src/${usage_mod}/**/*.rs")
 fi
 
 cargo mutants "${args[@]}"
