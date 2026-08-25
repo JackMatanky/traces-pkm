@@ -31,7 +31,7 @@
 //!   field definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
-//! - `dirtree` - Directory-tree traversal with classified walk errors
+//! - `dirtree` - Directory-tree traversal with classified walk errors.
 //! - `walk` - Shared directory-walk error context for `walkdir` consumers
 //!   across config, index, schema, and template.
 //!

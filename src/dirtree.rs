@@ -42,7 +42,7 @@ use walkdir::{DirEntry, WalkDir};
 #[derive(Debug, Error)]
 pub(crate) enum DirTreeError {
     /// The walk root does not exist (depth-0 `NotFound`).
-    #[error("walk root {} does not exist", path.display())]
+    #[error("walk root {path} does not exist")]
     MissingRoot {
         /// The root path passed to the constructor.
         path: PathBuf,
