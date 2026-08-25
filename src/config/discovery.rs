@@ -21,7 +21,7 @@ use super::{
     file::{Discovered, GlobalConfigFile, LocalConfigFile},
     trust::{TrustRequest, TrustRequests},
 };
-use crate::{DirDescendants, dirs};
+use crate::{DirTree, dirs};
 
 /// Relative path to the local project config directory.
 ///
@@ -424,7 +424,7 @@ impl DiscoveryEngine {
         dir: &Path,
     ) -> Result<Vec<LocalConfigFile<Discovered>>, DiscoveryError> {
         let mut configs = Vec::new();
-        for node in DirDescendants::new(dir) {
+        for node in DirTree::descendants(dir) {
             let node = node.map_err(|error| {
                 let (path, source) = error.into_parts();
                 DiscoveryError::PathInaccessible {

@@ -14,7 +14,7 @@
 use std::path::Path;
 
 use super::{INDEX_FILE, error::IndexBuilderError};
-use crate::{DirDescendants, DirTreeError, file::FileBase};
+use crate::{DirTree, DirTreeError, file::FileBase};
 
 /// Converts any classified walk failure into the builder's scan error.
 ///
@@ -42,7 +42,7 @@ pub(super) fn scan_root(
 ) -> Result<Vec<FileBase>, IndexBuilderError> {
     let index_db = root.join(INDEX_FILE);
     let mut bases = Vec::new();
-    let nodes = DirDescendants::new(root)
+    let nodes = DirTree::descendants(root)
         .filter(|node| node.file_name() == ".git")
         .sorted_by(|a, b| a.file_name().cmp(b.file_name()));
     for node in nodes {
