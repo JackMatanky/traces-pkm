@@ -127,13 +127,11 @@ fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
 /// iteration stream; here it flows through the same [`DirTreeError`] as
 /// every other failure.
 #[derive(Clone, Debug)]
-pub(crate) struct DirNode {
-    inner: DirEntry,
-}
+pub(crate) struct DirNode(DirEntry);
 
 impl DirNode {
-    /// Adapts one raw walkdir item into this module's interface: entries
-    /// become nodes, failures are classified against the walk's root.
+    /// Adapts one raw walkdir item into this module's interface: entries become
+    /// nodes, failures are classified against the walk's root.
     ///
     /// # Errors
     ///
@@ -145,9 +143,7 @@ impl DirNode {
         result: walkdir::Result<DirEntry>,
     ) -> Result<Self, DirTreeError> {
         match result {
-            Ok(entry) => Ok(Self {
-                inner: entry,
-            }),
+            Ok(entry) => Ok(Self(entry)),
             Err(source) => Err(classify(root, source)),
         }
     }
@@ -155,13 +151,13 @@ impl DirNode {
     /// Returns the node's full path, including the walk root prefix.
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
-        self.inner.path()
+        self.0.path()
     }
 
     /// Returns the node's final path component.
     #[must_use]
     pub(crate) fn file_name(&self) -> &OsStr {
-        self.inner.file_name()
+        self.0.file_name()
     }
 
     /// Returns the node's type without following symlinks: a symlinked file
@@ -169,7 +165,7 @@ impl DirNode {
     /// its target's type.
     #[must_use]
     pub(crate) fn file_type(&self) -> fs::FileType {
-        self.inner.file_type()
+        self.0.file_type()
     }
 
     /// Reads the node's filesystem metadata.
@@ -179,8 +175,8 @@ impl DirNode {
     /// - [`DirTreeError::NodeInaccessible`] if the node's metadata cannot be
     ///   read (for example, the entry vanished between listing and this call).
     pub(crate) fn metadata(&self) -> Result<fs::Metadata, DirTreeError> {
-        self.inner.metadata().map_err(|source| {
-            let path = self.inner.path().to_path_buf();
+        self.0.metadata().map_err(|source| {
+            let path = self.0.path().to_path_buf();
             let source = io::Error::from(source);
             DirTreeError::NodeInaccessible {
                 path,
@@ -201,10 +197,10 @@ pub(crate) struct DirChildren {
 impl DirChildren {
     /// Lists a directory's immediate entries (non-recursive).
     ///
-    /// Yields every direct child of `dir` — files, directories, and
-    /// symlinks alike; filtering stays with the caller. A missing directory
-    /// yields exactly one [`DirTreeError::MissingRoot`] and then stops; a
-    /// *file* root yields nothing at all.
+    /// Yields every direct child of `dir` — files, directories, and symlinks
+    /// alike; filtering stays with the caller. A missing directory yields
+    /// exactly one [`DirTreeError::MissingRoot`] and then stops; a *file* root
+    /// yields nothing at all.
     ///
     /// An unreadable *subdirectory* is still yielded as a plain entry without
     /// an error: walkdir records the failed open but discards it when
@@ -233,8 +229,8 @@ impl Iterator for DirChildren {
 
 /// Iterator over a directory tree and its descendants.
 ///
-/// Created by [`DirDescendants::new`]; yields
-/// [`Result<DirNode, DirTreeError>`].
+/// Created by [`DirDescendants::new`]; yields [`Result<DirNode,
+/// DirTreeError>`].
 pub(crate) struct DirDescendants {
     inner: walkdir::IntoIter,
     root: PathBuf,
@@ -279,9 +275,7 @@ impl DirDescendants {
             inner: self.inner.filter_entry(Box::new(
                 move |entry: &walkdir::DirEntry| {
                     !(entry.file_type().is_dir()
-                        && predicate(&DirNode {
-                            inner: entry.clone(),
-                        }))
+                        && predicate(&DirNode(entry.clone())))
                 },
             )),
             root,
