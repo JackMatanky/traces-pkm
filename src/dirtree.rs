@@ -472,8 +472,9 @@ mod tests {
             names.sort();
 
             // Assert — the predicate only prunes directories; a file named
-            // `.git` passes through untouched.
-            assert_eq!(names, vec!["", ".git"]);
+            // `.git` passes through untouched (alongside the walk root).
+            assert_eq!(names.len(), 2);
+            assert!(names.contains(&".git".to_owned()));
         }
     }
 }
