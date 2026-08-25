@@ -19,11 +19,6 @@
 //! Verified against walkdir 2.5.0: loop detection cannot fire while
 //! `follow_links` remains unset (the only configuration these constructors
 //! use), so loop errors never reach [`DirTreeError`].
-#![expect(
-    dead_code,
-    reason = "internal API; walk.rs consumers migrate onto dirtree in later \
-              tasks"
-)]
 
 use std::{
     ffi::OsStr,

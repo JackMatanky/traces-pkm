@@ -32,8 +32,6 @@
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
 //! - `dirtree` - Directory-tree traversal with classified walk errors.
-//! - `walk` - Shared directory-walk error context for `walkdir` consumers
-//!   across config, index, schema, and template.
 //!
 //! # Key Types
 //!
@@ -69,7 +67,6 @@ mod path;
 mod query;
 mod schema;
 mod template;
-mod walk;
 
 pub mod cli;
 

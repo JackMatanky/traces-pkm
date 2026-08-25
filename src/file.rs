@@ -70,6 +70,11 @@ impl FileBase {
         root: &Path,
         metadata: &fs::Metadata,
     ) -> Result<Self, std::io::Error> {
+        // TODO: `unwrap_or` silently stores absolute paths for any input
+        // outside `root`. Replace with a strict lexical confinement check
+        // (see `SafeRelativePath`); deferred from the dirtree deepening
+        // because per-file `RootConfinedPath` canonicalization would add
+        // filesystem syscalls to every index build.
         let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         let modified_at = metadata.modified().map(Timestamp::from)?;
         let created_at = metadata.created().map(Timestamp::from).ok();
