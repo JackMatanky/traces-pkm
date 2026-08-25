@@ -13,13 +13,19 @@ small peekable pointer over `Vec<PathBuf>`) instead of re-walking the full
 `reuse.previous` a second time.
 
 **Related to:** architecture review of `src/index/` (this repo's own
-codebase-design skill run). Independent of tickets 14 and 16 — different
-file (`src/index/builder.rs`, not `store.rs`/`service.rs`), different
-motivation (locality/duplication, not persistence correctness or the
-redb adapter), rated `Worth exploring` rather than `Strong` in the
-originating report (mostly a maintainability win — `FileBase` equality is
-cheap, so the perf gain from walking a smaller `upserted` set instead of
-the full `previous` is real but modest at typical vault sizes).
+codebase-design skill run). Independent of ticket 16 — different file,
+different motivation. Ticket 14 now also touches `builder.rs` — it boxes
+`IndexBuilder`'s `reuse` field (a `large_stack_frames` fix, unrelated to
+this ticket's `diff_bases`/`reconcile_note` rewrite) and should land
+first, per its own stated priority. No adaptation needed here either
+way: `reuse.previous`/`&reuse.store`/`&reuse.read_txn` read identically
+through `Box`'s `Deref`. Otherwise independent — different motivation
+(locality/duplication, not persistence correctness or the redb
+adapter), rated `Worth exploring` rather than `Strong` in the
+originating report (mostly a maintainability win — `FileBase` equality
+is cheap, so the perf gain from walking a smaller `upserted` set
+instead of the full `previous` is real but modest at typical vault
+sizes).
 
 **Category:** enhancement
 
@@ -76,6 +82,16 @@ the full `previous` is real but modest at typical vault sizes).
       base) rather than only for Note-format ones, exactly the shape of
       bug the old `prev_iter`-consumption tests (now deleted) used to
       guard against under the previous design.
+- [ ] `clippy::large_stack_frames` on `reconcile_note` (currently flagged
+      at 4615 bytes, over the project's 4096-byte
+      `stack-size-threshold`) is resolved — confirmed empirically by
+      implementing this ticket's refactor in isolation and re-running
+      clippy: the warning disappears entirely once `reconcile_note`
+      drops the `(Note, bool)` tuple return (down to a bare `Note`) and
+      the `prev_iter`/`previous_matches_path`/`unchanged` dual-check
+      logic collapses to a single `if is_upserted` branch. Not a
+      coincidence — re-run clippy after implementing to confirm it still
+      holds against the real (not experimental) code.
 
 ## Comments
 
@@ -129,6 +145,16 @@ the full `previous` is real but modest at typical vault sizes).
    (un-consumed matched entries causing later false positives)
    `builder.rs`'s own doc comments already record having been bitten by
    once before.
+7. **`large_stack_frames` on `reconcile_note` is a genuine byproduct of
+   this design fix, verified empirically** — implemented the planned
+   refactor in an isolated experiment (then reverted) and measured with
+   `cargo clippy`: the function's reported stack frame was 4615 bytes
+   before, absent from clippy's output entirely after. This wasn't
+   assumed; a sibling investigation into the same lint elsewhere in
+   `src/index/` found the *opposite* result for a structurally different
+   function (`IndexStore::load_table`, where the same kind of extraction
+   made the warning worse), so the fix here is reported as confirmed,
+   not inferred from a general pattern.
 
 ## Agent Brief
 
@@ -171,8 +197,9 @@ doesn't repeat it.
 
 **Out of scope:**
 
-- Tickets 14 and 16 (different file, different motivation — see "Related
-  to" above).
+- Tickets 14 and 16 (different motivation — see "Related to" above; the
+  narrow `builder.rs` overlap with ticket 14 is a non-conflicting field
+  change, not shared scope).
 - Any change to `IndexDelta`/`IncrementalDelta`'s shape — `upserted`/
   `deleted`/`links_upserted`/`links_deleted` are unaffected; only how
   `upserted`/`deleted`/staleness get computed changes.
