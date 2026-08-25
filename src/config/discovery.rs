@@ -16,14 +16,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use walkdir::WalkDir;
-
 use super::{
     error::DiscoveryError,
     file::{Discovered, GlobalConfigFile, LocalConfigFile},
     trust::{TrustRequest, TrustRequests},
 };
-use crate::{dirs, walk::DirWalk};
+use crate::{dirs, dirtree::descendants};
 
 /// Relative path to the local project config directory.
 ///
@@ -415,21 +413,29 @@ impl DiscoveryEngine {
         }
     }
 
+    /// Collects every local config directly rooted at a directory beneath
+    /// `dir`, including `dir` itself.
+    ///
+    /// Walks the whole tree unpruned: a config may sit anywhere, so every
+    /// directory is probed. Errors — including a vanished root — propagate
+    /// as [`DiscoveryError::PathInaccessible`]; unlike the Schema registry
+    /// and Template loaders there is no degrade-to-empty policy here.
     fn collect_descendant_configs(
         dir: &Path,
     ) -> Result<Vec<LocalConfigFile<Discovered>>, DiscoveryError> {
         let mut configs = Vec::new();
-        for entry in DirWalk::new(dir, WalkDir::new(dir).into_iter()) {
-            let entry = entry.map_err(|walk_error| {
+        for node in descendants(dir) {
+            let node = node.map_err(|error| {
+                let (path, source) = error.into_parts();
                 DiscoveryError::PathInaccessible {
-                    path: walk_error.path,
-                    source: walk_error.source.into(),
+                    path,
+                    source,
                 }
             })?;
-            if !entry.file_type().is_dir() {
+            if !node.file_type().is_dir() {
                 continue;
             }
-            let config_file = entry.path().join(LOCAL_CONFIG_FILE);
+            let config_file = node.path().join(LOCAL_CONFIG_FILE);
             if Self::is_config_file(&config_file)? {
                 configs
                     .push(LocalConfigFile::<Discovered>::try_new(config_file)?);
