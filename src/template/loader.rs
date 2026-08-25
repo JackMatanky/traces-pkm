@@ -34,7 +34,7 @@ use std::{
 use minijinja::{Error, ErrorKind};
 
 use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
-use crate::{DirTreeError, children, config::Config};
+use crate::{DirChildren, DirTreeError, config::Config};
 
 /// A template search path: at most one local directory and at most one global
 /// directory, searched local-first.
@@ -153,7 +153,7 @@ impl TemplateLoader {
             subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
         let key = path.file_stem().unwrap_or(path.as_os_str());
         let mut hits = Vec::new();
-        for entry in children(&search_dir) {
+        for entry in DirChildren::new(&search_dir) {
             let node = match entry {
                 Ok(node) => node,
                 Err(DirTreeError::MissingRoot {
@@ -267,7 +267,7 @@ impl TemplateLoader {
         let Some(dir) = dir else {
             return Vec::new();
         };
-        children(dir)
+        DirChildren::new(dir)
             .filter_map(|entry| {
                 let Ok(node) = entry else {
                     return None;

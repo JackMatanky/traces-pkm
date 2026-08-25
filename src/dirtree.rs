@@ -1,8 +1,9 @@
 //! Directory-tree traversal: flat listings and recursive walks with classified,
 //! path-contextualized errors.
 //!
-//! [`children`] lists a directory's immediate entries; [`descendants`] walks a
-//! whole tree, with [`Descendants::skipping`] pruning subtrees. Both yield
+//! [`DirChildren::new`] lists a directory's immediate entries;
+//! [`DirDescendants::new`] walks a whole tree, with
+//! [`DirDescendants::skipping`] pruning subtrees. Both yield
 //! [`DirNode`] values and report failures as [`DirTreeError`], classified at
 //! the point where walkdir's depth information is still known:
 //!
@@ -189,37 +190,40 @@ impl DirNode {
     }
 }
 
-/// Lists a directory's immediate entries (non-recursive).
-///
-/// Yields every direct child of `directory` — files, directories, and
-/// symlinks alike; filtering stays with the caller. A missing directory
-/// yields exactly one [`DirTreeError::MissingRoot`] and then stops; a
-/// *file* root yields nothing at all.
-///
-/// An unreadable *subdirectory* is still yielded as a plain entry without
-/// an error: walkdir records the failed open but discards it when
-/// `max_depth` cuts the stack. Recursive walks surface such failures as
-/// [`DirTreeError::NodeInaccessible`].
-///
-/// Entry order follows the OS directory read and is unspecified — sort if
-/// order matters.
-pub(crate) fn children(directory: impl AsRef<Path>) -> Children {
-    let directory = directory.as_ref();
-    Children {
-        inner: WalkDir::new(directory).min_depth(1).max_depth(1).into_iter(),
-        root: directory.to_path_buf(),
-    }
-}
-
 /// Iterator over a directory's immediate entries.
 ///
-/// Created by [`children`]; yields [`Result<DirNode, DirTreeError>`].
-pub(crate) struct Children {
+/// Created by [`DirChildren::new`]; yields [`Result<DirNode, DirTreeError>`].
+pub(crate) struct DirChildren {
     inner: walkdir::IntoIter,
     root: PathBuf,
 }
 
-impl Iterator for Children {
+impl DirChildren {
+    /// Lists a directory's immediate entries (non-recursive).
+    ///
+    /// Yields every direct child of `dir` — files, directories, and
+    /// symlinks alike; filtering stays with the caller. A missing directory
+    /// yields exactly one [`DirTreeError::MissingRoot`] and then stops; a
+    /// *file* root yields nothing at all.
+    ///
+    /// An unreadable *subdirectory* is still yielded as a plain entry without
+    /// an error: walkdir records the failed open but discards it when
+    /// `max_depth` cuts the stack. Recursive walks surface such failures as
+    /// [`DirTreeError::NodeInaccessible`].
+    ///
+    /// Entry order follows the OS directory read and is unspecified — sort if
+    /// order matters.
+    #[must_use]
+    pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref();
+        Self {
+            inner: WalkDir::new(dir).min_depth(1).max_depth(1).into_iter(),
+            root: dir.to_path_buf(),
+        }
+    }
+}
+
+impl Iterator for DirChildren {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -227,34 +231,36 @@ impl Iterator for Children {
     }
 }
 
-/// Walks a directory tree recursively, starting at the root itself.
-///
-/// Yields the root node first, then every descendant — files, directories, and
-/// symlinks alike; filtering stays with the caller. Symlinks are never
-/// followed. A missing root yields exactly one [`DirTreeError::MissingRoot`]
-/// and then stops.
-///
-/// Pass [`Descendants::skipping`] to prune whole subtrees.
-///
-/// Entry order follows the OS directory read and is unspecified — sort if
-/// order matters.
-pub(crate) fn descendants(root: impl AsRef<Path>) -> Descendants {
-    let root = root.as_ref();
-    Descendants {
-        inner: WalkDir::new(root).into_iter(),
-        root: root.to_path_buf(),
-    }
-}
-
 /// Iterator over a directory tree and its descendants.
 ///
-/// Created by [`descendants`]; yields [`Result<DirNode, DirTreeError>`].
-pub(crate) struct Descendants {
+/// Created by [`DirDescendants::new`]; yields
+/// [`Result<DirNode, DirTreeError>`].
+pub(crate) struct DirDescendants {
     inner: walkdir::IntoIter,
     root: PathBuf,
 }
 
-impl Descendants {
+impl DirDescendants {
+    /// Walks a directory tree recursively, starting at the root itself.
+    ///
+    /// Yields the root node first, then every descendant — files,
+    /// directories, and symlinks alike; filtering stays with the caller.
+    /// Symlinks are never followed. A missing root yields exactly one
+    /// [`DirTreeError::MissingRoot`] and then stops.
+    ///
+    /// Pass [`DirDescendants::skipping`] to prune whole subtrees.
+    ///
+    /// Entry order follows the OS directory read and is unspecified — sort if
+    /// order matters.
+    #[must_use]
+    pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref();
+        Self {
+            inner: WalkDir::new(dir).into_iter(),
+            root: dir.to_path_buf(),
+        }
+    }
+
     /// Prunes every subtree whose directory satisfies `predicate`.
     ///
     /// `predicate` runs on directories only; returning `true` removes that
@@ -262,6 +268,7 @@ impl Descendants {
     /// entries — including files whose name satisfies the predicate — are
     /// yielded unchanged. A predicate matching the walk root itself empties
     /// the whole walk.
+    #[must_use]
     pub(crate) fn skipping<F>(self, predicate: F) -> PrunedDescendants
     where
         F: FnMut(&DirNode) -> bool + 'static,
@@ -282,7 +289,7 @@ impl Descendants {
     }
 }
 
-impl Iterator for Descendants {
+impl Iterator for DirDescendants {
     type Item = Result<DirNode, DirTreeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -340,7 +347,7 @@ mod tests {
             write(root, "sub/nested.md");
 
             // Act
-            let mut names: Vec<String> = children(root)
+            let mut names: Vec<String> = DirChildren::new(root)
                 .map(|entry| entry.expect("entry is ok"))
                 .map(|node| node.file_name().to_string_lossy().into_owned())
                 .collect();
@@ -357,7 +364,7 @@ mod tests {
             let missing = temp.path().join("does-not-exist");
 
             // Act
-            let collected: Vec<_> = children(&missing).collect();
+            let collected: Vec<_> = DirChildren::new(&missing).collect();
 
             // Assert
             assert_eq!(
@@ -383,7 +390,7 @@ mod tests {
             let file = write(temp.path(), "plain.md");
 
             // Act
-            let collected: Vec<_> = children(&file).collect();
+            let collected: Vec<_> = DirChildren::new(&file).collect();
 
             // Assert
             assert!(collected.is_empty(), "a file root lists nothing");
@@ -404,7 +411,7 @@ mod tests {
             write(root, "b/one.md");
 
             // Act
-            let mut relatives: Vec<String> = descendants(root)
+            let mut relatives: Vec<String> = DirDescendants::new(root)
                 .map(|entry| entry.expect("entry is ok"))
                 .map(|node| {
                     node.path()
@@ -428,7 +435,7 @@ mod tests {
             let missing = temp.path().join("gone");
 
             // Act
-            let collected: Vec<_> = descendants(&missing).collect();
+            let collected: Vec<_> = DirDescendants::new(&missing).collect();
 
             // Assert
             assert_eq!(collected.len(), 1);
@@ -447,7 +454,7 @@ mod tests {
             write(root, "note.md");
 
             // Act
-            let mut names: Vec<String> = descendants(root)
+            let mut names: Vec<String> = DirDescendants::new(root)
                 .skipping(|node| node.file_name() == ".git")
                 .map(|entry| entry.expect("entry is ok"))
                 .map(|node| node.file_name().to_string_lossy().into_owned())
@@ -468,7 +475,7 @@ mod tests {
             write(root, ".git");
 
             // Act
-            let mut names: Vec<String> = descendants(root)
+            let mut names: Vec<String> = DirDescendants::new(root)
                 .skipping(|node| node.file_name() == ".git")
                 .map(|entry| entry.expect("entry is ok"))
                 .map(|node| node.file_name().to_string_lossy().into_owned())
@@ -515,7 +522,7 @@ mod tests {
             let _restore = RestorePermissions(root);
 
             // Act
-            let collected: Vec<_> = children(root).collect();
+            let collected: Vec<_> = DirChildren::new(root).collect();
 
             // Assert — stat on the root still succeeds (parent grants it),
             // so this is an access failure, not absence.
@@ -549,7 +556,7 @@ mod tests {
             let _restore = RestorePermissions(&kid);
 
             // Act
-            let collected: Vec<_> = children(root).collect();
+            let collected: Vec<_> = DirChildren::new(root).collect();
 
             // Assert
             assert_eq!(collected.len(), 1);
@@ -581,7 +588,7 @@ mod tests {
             let _restore = RestorePermissions(&kid);
 
             // Act
-            let mut errors = descendants(root).filter_map(Result::err);
+            let mut errors = DirDescendants::new(root).filter_map(Result::err);
 
             // Assert
             let error = errors.next();
@@ -608,8 +615,10 @@ mod tests {
             let file = write(root, "daily.md");
 
             // Act
-            let node =
-                children(root).next().expect("one entry").expect("entry is ok");
+            let node = DirChildren::new(root)
+                .next()
+                .expect("one entry")
+                .expect("entry is ok");
 
             // Assert
             assert_eq!(node.path(), file);
@@ -625,8 +634,10 @@ mod tests {
             write(root, "daily.md");
 
             // Act
-            let node =
-                children(root).next().expect("one entry").expect("entry is ok");
+            let node = DirChildren::new(root)
+                .next()
+                .expect("one entry")
+                .expect("entry is ok");
             let metadata = node.metadata().expect("metadata reads");
 
             let expected_len =
@@ -646,7 +657,7 @@ mod tests {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let missing = temp.path().join("gone");
-            let error = children(&missing)
+            let error = DirChildren::new(&missing)
                 .next()
                 .expect("one item")
                 .expect_err("missing root");

@@ -78,7 +78,7 @@ pub use config::{
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
-pub(crate) use dirtree::{DirNode, DirTreeError, children, descendants};
+pub(crate) use dirtree::{DirChildren, DirDescendants, DirNode, DirTreeError};
 pub use file::FileBase;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{

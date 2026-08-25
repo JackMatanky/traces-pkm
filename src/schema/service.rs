@@ -14,7 +14,7 @@ use super::{
     error::{SchemaError, SchemaWarning},
     model::Schema,
 };
-use crate::{BaseNameRef, DirTreeError, children};
+use crate::{BaseNameRef, DirChildren, DirTreeError};
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///
@@ -197,7 +197,7 @@ fn read_raw_schemas(
     dir: &Path,
 ) -> Result<IndexMap<SchemaName, RawSchema>, SchemaError> {
     let mut schemas = IndexMap::new();
-    for node in children(dir) {
+    for node in DirChildren::new(dir) {
         let node = match node {
             Ok(node) => node,
             Err(DirTreeError::MissingRoot {
