@@ -7,7 +7,6 @@
 use std::{ffi::OsStr, fs, path::Path, sync::Arc};
 
 use indexmap::{IndexMap, IndexSet};
-use walkdir::WalkDir;
 
 use super::{
     RawSchema, SchemaName,
@@ -17,7 +16,7 @@ use super::{
 };
 use crate::{
     BaseNameRef,
-    walk::{DirWalk, is_missing_root},
+    dirtree::{DirTreeError, children},
 };
 
 /// Schema loading, resolution, and hierarchy/class query facade.
@@ -200,25 +199,22 @@ impl SchemaService {
 fn read_raw_schemas(
     dir: &Path,
 ) -> Result<IndexMap<SchemaName, RawSchema>, SchemaError> {
-    let entries = DirWalk::new(
-        dir,
-        WalkDir::new(dir).min_depth(1).max_depth(1).into_iter(),
-    );
     let mut schemas = IndexMap::new();
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(walk_error) if is_missing_root(&walk_error.source) => {
-                return Ok(IndexMap::new());
-            }
-            Err(walk_error) => {
+    for node in children(dir) {
+        let node = match node {
+            Ok(node) => node,
+            Err(DirTreeError::MissingRoot {
+                ..
+            }) => return Ok(IndexMap::new()),
+            Err(error) => {
+                let (directory, source) = error.into_parts();
                 return Err(SchemaError::ReadDirectory {
-                    directory: walk_error.path,
-                    source: walk_error.source.into(),
+                    directory,
+                    source,
                 });
             }
         };
-        let path = entry.path();
+        let path = node.path();
         if path.extension().and_then(OsStr::to_str) != Some("toml") {
             continue;
         }
