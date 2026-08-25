@@ -23,6 +23,10 @@ pub(crate) struct WalkError {
 
 /// Returns `true` if `error` reports that the walk's root itself does not
 /// exist, so a caller can degrade to "no entries" instead of a hard error.
+#[expect(
+    dead_code,
+    reason = "last consumer migrated to dirtree; module deleted in Task 8"
+)]
 pub(crate) fn is_missing_root(error: &walkdir::Error) -> bool {
     error.depth() == 0
         && error
