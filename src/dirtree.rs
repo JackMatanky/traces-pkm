@@ -1,26 +1,29 @@
 //! Directory-tree traversal: flat listings and recursive walks with classified,
 //! path-contextualized errors.
 //!
-//! [`DirTree::children`] lists a directory's immediate entries;
-//! [`DirTree::descendants`] walks a whole tree, with
-//! [`DirTree::filter`] pruning subtrees and
-//! [`DirTree::sorted_by`] imposing per-directory order. Both yield
-//! [`DirNode`] values and report failures as [`DirTreeError`], classified at
-//! the point where walkdir's depth information is still known:
+//! The core entry points are [`DirTree::children`] (flat, one level) and
+//! [`DirTree::descendants`] (recursive, whole tree). Both yield [`DirNode`]
+//! values and report failures as [`DirTreeError`]. Configure iteration with
+//! [`DirTree::filter`] (prune subtrees) and [`DirTree::sorted_by`]
+//! (deterministic per-directory order).
 //!
-//! - [`DirTreeError::MissingRoot`] — the walk root does not exist. Callers pick
-//!   their own policy: degrade to empty or fail.
-//! - [`DirTreeError::RootInaccessible`] — the root exists but could not be
-//!   inspected or opened.
-//! - [`DirTreeError::NodeInaccessible`] — something beneath the root failed.
+//! # Error classification
 //!
-//! Traversal construction lives here; entry filtering (extensions, stems,
-//! hidden files) stays with callers, who see every [`DirNode`] and decide what
-//! matches.
+//! Errors are classified into three variants based on where they occur:
 //!
-//! Verified against walkdir 2.5.0: loop detection cannot fire while
-//! `follow_links` remains unset (the only configuration these constructors
-//! use), so loop errors never reach [`DirTreeError`].
+//! - [`DirTreeError::MissingRoot`] - the walk root does not exist. Callers
+//!   decide their policy: degrade to empty or propagate.
+//! - [`DirTreeError::RootInaccessible`] - the root exists but could not be
+//!   opened.
+//! - [`DirTreeError::NodeInaccessible`] - a node beneath the root failed
+//!   (unreadable directory, metadata failure, mid-readdir glitch).
+//!
+//! Only [`DirTreeError::MissingRoot`] and [`DirTreeError::RootInaccessible`]
+//! can appear from [`DirTree::children`]; [`DirTreeError::NodeInaccessible`]
+//! only surfaces in recursive walks.
+//!
+//! Entry filtering (extensions, stems, hidden files) stays with callers, who
+//! see every [`DirNode`] and decide what matches.
 
 use std::{
     ffi::OsStr,
@@ -31,24 +34,13 @@ use std::{
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
-/// Applies `configure` to a pending builder, leaving a started walk alone.
-fn configure(
-    builder: &mut Option<WalkDir>,
-    f: impl FnOnce(WalkDir) -> WalkDir,
-) {
-    if let Some(pending) = builder.take() {
-        *builder = Some(f(pending));
-    }
-}
-
 /// A failure raised while traversing a directory tree.
 ///
-/// Variants are classified inside this module where walkdir's depth information
-/// is still known; callers match to state their missing-root policy and convert
-/// everything else via [`into_parts`](Self::into_parts).
+/// Callers match to state their missing-root policy and convert remaining
+/// errors via [`into_parts`](Self::into_parts).
 #[derive(Debug, Error)]
 pub(crate) enum DirTreeError {
-    /// The walk root does not exist (depth-0 `NotFound`).
+    /// The walk root does not exist.
     #[error("walk root {path} does not exist")]
     MissingRoot {
         /// The root path passed to the constructor.
@@ -57,7 +49,7 @@ pub(crate) enum DirTreeError {
         #[source]
         source: io::Error,
     },
-    /// The root exists but could not be inspected or opened.
+    /// The root exists but could not be opened.
     #[error("failed to access walk root {path}")]
     RootInaccessible {
         /// The root path passed to the constructor.
@@ -66,12 +58,12 @@ pub(crate) enum DirTreeError {
         #[source]
         source: io::Error,
     },
-    /// Something beneath the root failed: a directory could not be listed, a
-    /// mid-stream read glitched, or one node's metadata could not be read.
+    /// A node beneath the root failed (unreadable directory, metadata failure,
+    /// mid-readdir glitch).
     #[error("failed to access node {path}")]
     NodeInaccessible {
-        /// The failing node's path, falling back to the walk root when walkdir
-        /// supplies none (mid-readdir stream errors carry no path).
+        /// The failing node's path, falling back to the walk root when the
+        /// path is unavailable (mid-readdir stream errors).
         path: PathBuf,
         /// Source I/O error.
         #[source]
@@ -82,7 +74,13 @@ pub(crate) enum DirTreeError {
 impl DirTreeError {
     /// Splits the error into its resolved path and I/O source.
     ///
-    /// Domain errors shaped `{path, io::Error}` convert in one line.
+    /// Every variant carries the same `{path, source}` shape, so callers can
+    /// convert any error into their own domain type in one line:
+    ///
+    /// ```ignore
+    /// let (path, source) = error.into_parts();
+    /// MyError::Io { path, source }
+    /// ```
     pub(crate) fn into_parts(self) -> (PathBuf, io::Error) {
         match self {
             Self::MissingRoot {
@@ -102,12 +100,6 @@ impl DirTreeError {
 }
 
 /// Classifies one raw walkdir failure against the walk's root.
-///
-/// Depth 0 + `NotFound` is [`DirTreeError::MissingRoot`]; other depth-0
-/// failures are [`DirTreeError::RootInaccessible`]; anything deeper is
-/// [`DirTreeError::NodeInaccessible`]. When walkdir carries no path
-/// (mid-readdir stream errors), `fallback` (the walk root) is used so the path
-/// is never lost.
 fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
     let depth = source.depth();
     let path = source.path().unwrap_or(fallback).to_path_buf();
@@ -133,22 +125,16 @@ fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
 /// One node of a directory tree: a file, directory, or symlink yielded by
 /// [`DirTree::children`] or [`DirTree::descendants`].
 ///
-/// Wraps walkdir's entry so callers never touch walkdir types — including
-/// [`DirNode::metadata`]'s failure mode, which walkdir reports outside the
-/// iteration stream; here it flows through the same [`DirTreeError`] as
-/// every other failure.
+/// Wraps walkdir's entry so callers never touch walkdir types. Accessors
+/// delegate to the underlying [`walkdir::DirEntry`] and report failures through
+/// the same [`DirTreeError`] as iteration.
 #[derive(Clone, Debug)]
 pub(crate) struct DirNode(DirEntry);
 
 impl DirNode {
-    /// Adapts one raw walkdir item into this module's interface: entries become
-    /// nodes, failures are classified against the walk's root.
+    /// Adapts one raw walkdir item into this module's interface.
     ///
-    /// # Errors
-    ///
-    /// - [`DirTreeError::MissingRoot`] for a depth-0 `NotFound`
-    /// - [`DirTreeError::RootInaccessible`] for any other depth-0 failure
-    /// - [`DirTreeError::NodeInaccessible`] for anything deeper
+    /// Entries become nodes; failures are classified against the walk's root.
     fn try_new(
         root: &Path,
         result: walkdir::Result<DirEntry>,
@@ -171,9 +157,12 @@ impl DirNode {
         self.0.file_name()
     }
 
-    /// Returns the node's type without following symlinks: a symlinked file
-    /// reports [`FileType::is_symlink`](std::fs::FileType::is_symlink), never
-    /// its target's type.
+    /// Returns the node's type without following symlinks.
+    ///
+    /// A symlinked file reports [`FileType::is_symlink`], never its target's
+    /// type.
+    ///
+    /// [`FileType::is_symlink`]: std::fs::FileType::is_symlink
     #[must_use]
     pub(crate) fn file_type(&self) -> fs::FileType {
         self.0.file_type()
@@ -183,8 +172,8 @@ impl DirNode {
     ///
     /// # Errors
     ///
-    /// - [`DirTreeError::NodeInaccessible`] if the node's metadata cannot be
-    ///   read (for example, the entry vanished between listing and this call).
+    /// Returns [`DirTreeError::NodeInaccessible`] if the node's metadata cannot
+    /// be read (for example, the entry vanished between listing and this call).
     pub(crate) fn metadata(&self) -> Result<fs::Metadata, DirTreeError> {
         self.0.metadata().map_err(|source| {
             let path = self.0.path().to_path_buf();
@@ -201,12 +190,16 @@ impl DirNode {
 /// [`walkdir::FilterEntry`] can apply it to raw entries.
 type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
 
-/// Iterator over a directory tree — flat or recursive — with classified,
-/// path-contextualized errors.
+/// Iterator over a directory tree with classified, path-contextualized errors.
 ///
-/// Created by [`DirTree::children`] (flat) or [`DirTree::descendants`]
-/// (recursive); configured with [`DirTree::filter`] and [`DirTree::sorted_by`]
-/// before iterating; yields [`Result<DirNode, DirTreeError>`].
+/// Created by [`DirTree::children`] (flat, one level) or
+/// [`DirTree::descendants`] (recursive, whole tree). Configure with
+/// [`DirTree::filter`] and [`DirTree::sorted_by`] before iterating. Yields
+/// [`Result<DirNode, DirTreeError>`].
+///
+/// Builder-time configuration must be called before the first
+/// [`Iterator::next`] call. Once iteration begins, further configuration is
+/// silently ignored.
 pub(crate) struct DirTree {
     builder: Option<WalkDir>,
     root: PathBuf,
@@ -217,17 +210,16 @@ pub(crate) struct DirTree {
 impl DirTree {
     /// Lists a directory's immediate entries (non-recursive).
     ///
-    /// Yields every direct child of `dir` — files, directories, and symlinks
-    /// alike; filtering stays with the caller. A missing directory yields
-    /// exactly one [`DirTreeError::MissingRoot`] and then stops; a *file* root
-    /// yields nothing at all.
+    /// Yields every direct child of `dir` (files, directories, symlinks); entry
+    /// filtering stays with the caller.
     ///
-    /// An unreadable *subdirectory* is still yielded as a plain entry without
-    /// an error: walkdir records the failed open but discards it when
-    /// `max_depth` cuts the stack. Recursive walks surface such failures as
+    /// A missing directory yields exactly one [`DirTreeError::MissingRoot`] and
+    /// stops; a file root yields nothing at all. An unreadable subdirectory is
+    /// still yielded as a plain entry without an error. Use
+    /// [`DirTree::descendants`] to surface such failures as
     /// [`DirTreeError::NodeInaccessible`].
     ///
-    /// Entry order follows the OS directory read and is unspecified — pass
+    /// Entry order follows the OS directory read and is unspecified. Pass
     /// [`Self::sorted_by`] to impose deterministic order.
     #[must_use]
     pub(crate) fn children(dir: impl AsRef<Path>) -> Self {
@@ -242,13 +234,14 @@ impl DirTree {
 
     /// Walks a directory tree recursively, starting at the root itself.
     ///
-    /// Yields the root node first, then every descendant — files,
-    /// directories, and symlinks alike; filtering stays with the caller.
-    /// Symlinks are never followed. A missing root yields exactly one
-    /// [`DirTreeError::MissingRoot`] and then stops.
+    /// Yields the root node first, then every descendant (files, directories,
+    /// symlinks); entry filtering stays with the caller. Symlinks are never
+    /// followed. A missing root yields exactly one
+    /// [`DirTreeError::MissingRoot`] and stops. An unreadable subdirectory
+    /// surfaces [`DirTreeError::NodeInaccessible`] with the failing path.
     ///
-    /// Entry order follows the OS directory read and is unspecified — pass
-    /// [`Self::sorted_by`] to impose deterministic order.
+    /// Entry order follows the OS directory read and is unspecified. Pass
+    /// [`Self::sorted_by`] to impose deterministic per-directory order.
     #[must_use]
     pub(crate) fn descendants(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
@@ -262,14 +255,16 @@ impl DirTree {
 
     /// Removes every subtree whose directory satisfies `predicate`.
     ///
-    /// `predicate` runs on directories only; returning `true` removes that
-    /// directory *and* everything beneath it from the walk. Non-matching
-    /// entries — including files whose name satisfies the predicate — are
-    /// yielded unchanged. A predicate matching the walk root itself empties
-    /// the whole walk. Has no effect once iteration has begun.
+    /// `predicate` receives a [`DirNode`] for each directory. Returning `true`
+    /// removes that directory *and* everything beneath it from the walk.
+    /// Non-matching entries (including files whose name satisfies the
+    /// predicate) are yielded unchanged. A predicate matching the walk root
+    /// itself empties the whole walk.
     ///
-    /// Works on both flat and recursive walks: for [`Self::children`],
-    /// filtered directories are simply omitted from the listing.
+    /// Works on both [`Self::children`] and [`Self::descendants`]: for flat
+    /// walks, filtered directories are simply omitted from the listing.
+    ///
+    /// Has no effect once iteration has begun.
     #[must_use]
     pub(crate) fn filter<F>(mut self, mut predicate: F) -> Self
     where
@@ -283,10 +278,10 @@ impl DirTree {
 
     /// Orders the entries of every listed directory with `compare`.
     ///
-    /// walkdir merges each directory separately, so ordering is
-    /// per-directory; there is no global ordering across hierarchy levels.
-    /// Comparators run on cloned node views, costing one allocation per
-    /// comparison, and must be [`Send`] + [`Sync`] (walkdir's requirement).
+    /// Ordering is per-directory; there is no global ordering across hierarchy
+    /// levels. Comparators run on cloned node views (one allocation per
+    /// comparison) and must be [`Send`] + [`Sync`].
+    ///
     /// Has no effect once iteration has begun.
     #[must_use]
     pub(crate) fn sorted_by<F>(mut self, mut compare: F) -> Self
@@ -296,14 +291,19 @@ impl DirTree {
             + Sync
             + 'static,
     {
-        configure(&mut self.builder, |builder| {
-            builder.sort_by(move |a, b| {
+        if let Some(pending) = self.builder.take() {
+            self.builder = Some(pending.sort_by(move |a, b| {
                 compare(&DirNode(a.clone()), &DirNode(b.clone()))
-            })
-        });
+            }));
+        }
         self
     }
 
+    /// Lazily starts the walk and returns a reference to the inner iterator.
+    ///
+    /// The builder is consumed on the first call; subsequent calls return the
+    /// same boxed iterator. If a [`filter`](Self::filter) predicate was
+    /// configured, it is applied here.
     fn start(&mut self) -> &mut dyn Iterator<Item = walkdir::Result<DirEntry>> {
         let Self {
             builder,
@@ -313,9 +313,6 @@ impl DirTree {
         } = self;
         inner
             .get_or_insert_with(|| {
-                // ponytail: `builder` is always present here — it starts set
-                // and only this closure takes it. The empty-walk fallback is
-                // unreachable; swap for an enum state if that ever changes.
                 let iter = builder.take().map_or_else(
                     || WalkDir::new("").into_iter(),
                     WalkDir::into_iter,
