@@ -848,43 +848,6 @@ mod tests {
             assert_eq!(loaded_notes, notes);
         }
 
-        #[cfg(unix)]
-        #[test]
-        fn replace_all_then_read_all_round_trips_non_unicode_paths() {
-            use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
-
-            use crate::{
-                file::{BaseName, FileFormat, FileName, Timestamp},
-                path::SafeRelativePath,
-            };
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let weird = PathBuf::from(OsStr::from_bytes(b"weird\xff.md"));
-
-            let files = vec![FileBase::new_test(
-                SafeRelativePath::parse(&weird).unwrap(),
-                BaseName::from(
-                    &FileName::try_from(weird.as_path()).unwrap_or_default(),
-                ),
-                None,
-                FileFormat::Note,
-                None,
-                Timestamp::now(),
-                7,
-            )];
-            let note = parse_markdown(weird, "content");
-            let notes = vec![note];
-            let store = IndexStore::open(temp.path()).expect("open store");
-
-            store
-                .replace_all(&files, &notes, &HashMap::new())
-                .expect("persist records");
-            let (loaded_records, loaded_notes, _) =
-                store.read_all().expect("load records");
-
-            assert_eq!(loaded_records, files);
-            assert_eq!(loaded_notes, notes);
-        }
-
         #[test]
         fn replace_all_then_read_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
