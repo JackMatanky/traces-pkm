@@ -1169,6 +1169,41 @@ mod tests {
 
             assert!(children.is_empty());
         }
+
+        #[test]
+        fn sorts_children_by_topological_rank_not_insertion_order() {
+            // To exercise the sort, raw CSR order must differ from
+            // topological order.  sci_fi extends parent (declared before
+            // book), so raw CSR for parent's children is [sci_fi, book].
+            // Topological order is [parent, book, sci_fi] (book first
+            // because sci_fi depends on it).  After sort by rank the
+            // children become [book, sci_fi].
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("parent"), schema(&[]));
+            raw.insert(SchemaName::from("sci_fi"), schema(&["parent", "book"]));
+            raw.insert(SchemaName::from("book"), schema(&["parent"]));
+            let graph = SchemaGraphBuilder::new(
+                &raw,
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+            )
+            .0
+            .build()
+            .unwrap();
+            let children = graph.children_by_name();
+
+            let parent_children: Vec<&str> = children
+                .get("parent")
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str())
+                .collect();
+            assert_eq!(
+                parent_children,
+                vec!["book", "sci_fi"],
+                "children must be in topological order (book before sci_fi), \
+                 not raw CSR insertion order"
+            );
+        }
     }
 
     mod descendants {

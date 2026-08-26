@@ -725,5 +725,83 @@ mod tests {
             service
                 .warn_unknown_classes(&["book".to_owned(), "ghost".to_owned()]);
         }
+
+        #[test]
+        fn emits_a_warning_for_each_unknown_class() {
+            use std::sync::{Arc, Mutex};
+
+            use tracing::{Event, Level, Metadata, Subscriber};
+            use tracing_subscriber::{Layer, layer::Context, prelude::*};
+
+            struct EventCapture {
+                events: Arc<Mutex<Vec<String>>>,
+            }
+
+            impl<S: Subscriber> Layer<S> for EventCapture {
+                fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+                    let metadata: &Metadata<'_> = event.metadata();
+                    if *metadata.level() == Level::WARN {
+                        let mut visitor = EventVisitor(String::new());
+                        event.record(&mut visitor);
+                        self.events.lock().unwrap().push(visitor.0);
+                    }
+                }
+            }
+
+            struct EventVisitor(String);
+
+            impl tracing::field::Visit for EventVisitor {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    use std::fmt::Write;
+                    let _ = write!(self.0, "{}={:?} ", field.name(), value);
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                "#,
+            );
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let capture = EventCapture {
+                events: events.clone(),
+            };
+            let subscriber = tracing_subscriber::registry().with(capture);
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            service.warn_unknown_classes(&[
+                "book".to_owned(),
+                "ghost".to_owned(),
+                "phantom".to_owned(),
+            ]);
+
+            drop(_guard);
+            let events = events.lock().unwrap();
+            assert!(
+                events.iter().any(|e| e.contains("ghost")),
+                "expected warning for unknown class 'ghost', got: {events:?}"
+            );
+            assert!(
+                events.iter().any(|e| e.contains("phantom")),
+                "expected warning for unknown class 'phantom', got: {events:?}"
+            );
+            assert!(
+                !events.iter().any(|e| e.contains("book")),
+                "must not warn for known class 'book', got: {events:?}"
+            );
+        }
     }
 }
