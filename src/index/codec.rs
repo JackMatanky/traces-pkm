@@ -132,146 +132,171 @@ pub(crate) mod path {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use serde::{Deserialize, Serialize, Serializer};
-
     use super::*;
 
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Dummy {
-        value: String,
-    }
+    mod test_encode_row {
+        use pretty_assertions::assert_eq;
+        use serde::{Deserialize, Serialize};
 
-    #[test]
-    fn encode_row_serializes_successfully() {
-        let path = Path::new("test.md");
-        let item = Dummy {
-            value: "hello".to_owned(),
-        };
+        use super::encode_row;
+        use crate::index::error::DbError;
 
-        let bytes = encode_row(path, &item).expect("encode succeeds");
-        let decoded: Dummy = postcard::from_bytes(&bytes).expect("decode raw");
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct Dummy {
+            value: String,
+        }
 
-        assert_eq!(decoded, item);
-    }
+        #[test]
+        fn serializes_successfully() {
+            let path = std::path::Path::new("test.md");
+            let item = Dummy {
+                value: "hello".to_owned(),
+            };
 
-    #[test]
-    fn encode_row_fails_on_serialization_error() {
-        struct Failing;
-        impl Serialize for Failing {
-            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                Err(serde::ser::Error::custom("forced error"))
+            let bytes = encode_row(path, &item).expect("encode succeeds");
+            let decoded: Dummy =
+                postcard::from_bytes(&bytes).expect("decode succeeds");
+            assert_eq!(decoded, item);
+        }
+
+        #[test]
+        fn fails_on_serialization_error() {
+            struct Failing;
+            impl Serialize for Failing {
+                fn serialize<S>(
+                    &self,
+                    _serializer: S,
+                ) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    Err(serde::ser::Error::custom("forced error"))
+                }
             }
+            let path = std::path::Path::new("test.md");
+
+            let result = encode_row(path, &Failing);
+
+            assert!(matches!(result, Err(DbError::Serialize { .. })));
         }
-        let path = Path::new("test.md");
-
-        let result = encode_row(path, &Failing);
-
-        assert!(matches!(result, Err(DbError::Serialize { .. })));
     }
 
-    #[test]
-    fn decode_row_deserializes_successfully() {
-        let path = Path::new("test.md");
-        let item = Dummy {
-            value: "hello".to_owned(),
-        };
-        let bytes = postcard::to_allocvec(&item).unwrap();
+    mod test_decode_row {
+        use pretty_assertions::assert_eq;
+        use serde::{Deserialize, Serialize};
 
-        let decoded: Dummy = decode_row(path, &bytes).expect("decode succeeds");
+        use super::decode_row;
+        use crate::index::error::DbError;
 
-        assert_eq!(decoded, item);
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct Dummy {
+            value: String,
+        }
+
+        #[test]
+        fn deserializes_successfully() {
+            let path = std::path::Path::new("test.md");
+            let item = Dummy {
+                value: "hello".to_owned(),
+            };
+            let bytes = postcard::to_allocvec(&item).unwrap();
+
+            let decoded: Dummy =
+                decode_row(path, &bytes).expect("decode succeeds");
+
+            assert_eq!(decoded, item);
+        }
+
+        #[test]
+        fn fails_on_corrupt_bytes() {
+            let path = std::path::Path::new("test.md");
+            let result: Result<Dummy, _> = decode_row(path, &[0xFF, 0x00]);
+            assert!(matches!(result, Err(DbError::Deserialize { .. })));
+        }
     }
 
-    #[test]
-    fn decode_row_fails_on_corrupt_bytes() {
-        let path = Path::new("test.md");
-        let result: Result<Dummy, _> = decode_row(path, &[0xFF, 0x00]);
-        assert!(matches!(result, Err(DbError::Deserialize { .. })));
+    mod test_path_from_bytes {
+        use std::path::PathBuf;
+
+        use pretty_assertions::assert_eq;
+
+        use super::path_from_bytes;
+
+        #[test]
+        fn decodes_valid_utf8() {
+            let bytes = b"hello.md";
+            let path = path_from_bytes(bytes);
+            assert_eq!(path, PathBuf::from("hello.md"));
+        }
+
+        #[test]
+        fn falls_back_to_lossy_on_invalid_utf8() {
+            let bytes = b"hello\xFF.md";
+            let path = path_from_bytes(bytes);
+            assert_eq!(path, PathBuf::from("hello\u{FFFD}.md"));
+        }
     }
 
-    #[test]
-    fn path_from_bytes_decodes_valid_utf8() {
-        let bytes = b"hello.md";
-        let path = path_from_bytes(bytes);
-        assert_eq!(path, PathBuf::from("hello.md"));
-    }
+    mod test_path_codec {
+        use std::path::PathBuf;
 
-    #[test]
-    fn path_from_bytes_falls_back_to_lossy_on_invalid_utf8() {
-        let bytes = b"hello\xFF.md";
-        let path = path_from_bytes(bytes);
-        assert_eq!(path, PathBuf::from("hello\u{FFFD}.md"));
-    }
+        use pretty_assertions::assert_eq;
+        use serde::{Deserialize, Serialize};
 
-    #[test]
-    fn path_codec_round_trips_valid_utf8() {
-        let path = PathBuf::from("hello.md");
+        use super::path;
 
         #[derive(Serialize, Deserialize, Debug, PartialEq)]
         struct PathWrapper {
-            #[serde(with = "super::path")]
+            #[serde(with = "path")]
             path: PathBuf,
         }
 
-        let item = PathWrapper {
-            path: path.clone(),
-        };
-        let bytes = postcard::to_allocvec(&item).expect("serialize path");
-        let decoded: PathWrapper =
-            postcard::from_bytes(&bytes).expect("deserialize path");
+        #[test]
+        fn round_trips_valid_utf8() {
+            let path = PathBuf::from("hello.md");
+            let item = PathWrapper {
+                path: path.clone(),
+            };
+            let bytes = postcard::to_allocvec(&item).expect("serialize path");
+            let decoded: PathWrapper =
+                postcard::from_bytes(&bytes).expect("deserialize path");
 
-        assert_eq!(decoded, item);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn path_codec_round_trips_non_unicode_on_unix() {
-        use std::os::unix::ffi::OsStringExt as _;
-        let weird_os = std::ffi::OsString::from_vec(b"weird\xFF.md".to_vec());
-        let path = PathBuf::from(weird_os);
-
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
-        struct PathWrapper {
-            #[serde(with = "super::path")]
-            path: PathBuf,
+            assert_eq!(decoded, item);
         }
 
-        let item = PathWrapper {
-            path: path.clone(),
-        };
-        let bytes = postcard::to_allocvec(&item).expect("serialize path");
-        let decoded: PathWrapper =
-            postcard::from_bytes(&bytes).expect("deserialize path");
+        #[cfg(unix)]
+        #[test]
+        fn round_trips_non_unicode_on_unix() {
+            use std::os::unix::ffi::OsStringExt as _;
+            let weird_os =
+                std::ffi::OsString::from_vec(b"weird\xFF.md".to_vec());
+            let path = PathBuf::from(weird_os);
+            let item = PathWrapper {
+                path: path.clone(),
+            };
+            let bytes = postcard::to_allocvec(&item).expect("serialize path");
+            let decoded: PathWrapper =
+                postcard::from_bytes(&bytes).expect("deserialize path");
 
-        assert_eq!(decoded, item);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn path_codec_round_trips_non_unicode_on_windows() {
-        use std::os::windows::ffi::OsStringExt as _;
-        let weird_os = std::ffi::OsString::from_wide(&[
-            119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
-        ]);
-        let path = PathBuf::from(weird_os);
-
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
-        struct PathWrapper {
-            #[serde(with = "super::path")]
-            path: PathBuf,
+            assert_eq!(decoded, item);
         }
 
-        let item = PathWrapper {
-            path: path.clone(),
-        };
-        let bytes = postcard::to_allocvec(&item).expect("serialize path");
-        let decoded: PathWrapper =
-            postcard::from_bytes(&bytes).expect("deserialize path");
+        #[cfg(windows)]
+        #[test]
+        fn round_trips_non_unicode_on_windows() {
+            use std::os::windows::ffi::OsStringExt as _;
+            let weird_os = std::ffi::OsString::from_wide(&[
+                119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
+            ]);
+            let path = PathBuf::from(weird_os);
+            let item = PathWrapper {
+                path: path.clone(),
+            };
+            let bytes = postcard::to_allocvec(&item).expect("serialize path");
+            let decoded: PathWrapper =
+                postcard::from_bytes(&bytes).expect("deserialize path");
 
-        assert_eq!(decoded, item);
+            assert_eq!(decoded, item);
+        }
     }
 }
