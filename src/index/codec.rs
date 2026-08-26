@@ -70,3 +70,62 @@ pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
         PathBuf::from,
     )
 }
+
+/// Custom serde serialization module for `std::path::Path` and
+/// `std::path::PathBuf`. Serializes paths as target-specific raw byte slices
+/// (on Unix) or wide character arrays (on Windows) to allow exact non-Unicode
+/// path round-trips.
+pub(crate) mod path {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::*;
+
+    #[cfg(unix)]
+    pub(crate) fn serialize<S>(
+        path: &Path,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        serializer.serialize_bytes(path.as_os_str().as_bytes())
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use std::os::unix::ffi::OsStringExt as _;
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn serialize<S>(
+        path: &Path,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        wide.serialize(serializer)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use std::os::windows::ffi::OsStringExt as _;
+        let wide = <Vec<u16>>::deserialize(deserializer)?;
+        Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+    }
+}

@@ -48,6 +48,7 @@ mod inlinks;
 mod service;
 mod store;
 
+pub(crate) use codec::path;
 pub use entry::FileIndex;
 pub(crate) use entry::FileIndexEntry;
 #[allow(unused_imports, reason = "re-exported for downstream callers")]

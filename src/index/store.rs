@@ -978,6 +978,108 @@ mod tests {
         }
 
         #[test]
+        fn round_trips_a_record_with_a_non_unicode_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            #[cfg(unix)]
+            let weird_path = {
+                use std::os::unix::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_vec(
+                    b"weird\xFF.md".to_vec(),
+                ))
+            };
+            #[cfg(windows)]
+            let weird_path = {
+                use std::os::windows::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_wide(&[
+                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
+                ]))
+            };
+
+            let file = FileBase::new_test(
+                weird_path.clone(),
+                PathBuf::new(),
+                crate::file::FileFormat::Note,
+            );
+
+            let note = parse_markdown(&weird_path, "content");
+            let files = vec![file];
+            let notes = vec![note];
+
+            store
+                .replace_all(&files, &notes, &HashMap::new())
+                .expect("persist records");
+            let (loaded_records, loaded_notes, _) =
+                store.read_all().expect("load records");
+
+            assert_eq!(loaded_records, files);
+            assert_eq!(loaded_notes, notes);
+        }
+
+        #[test]
+        fn load_returns_byte_exact_inlinks_for_a_non_unicode_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            #[cfg(unix)]
+            let weird = {
+                use std::os::unix::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_vec(
+                    b"weird\xFF.md".to_vec(),
+                ))
+            };
+            #[cfg(windows)]
+            let weird = {
+                use std::os::windows::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_wide(&[
+                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
+                ]))
+            };
+
+            let normal = PathBuf::from("normal.md");
+
+            let files = vec![
+                FileBase::new_test(
+                    weird.clone(),
+                    PathBuf::new(),
+                    crate::file::FileFormat::Note,
+                ),
+                FileBase::new_test(
+                    normal.clone(),
+                    PathBuf::new(),
+                    crate::file::FileFormat::Note,
+                ),
+            ];
+
+            let notes = vec![
+                parse_markdown(&weird, "link to [[normal]]"),
+                parse_markdown(&normal, "link to [[weird]]"),
+            ];
+
+            let links = HashMap::from([
+                (weird.clone(), vec![normal.clone()]),
+                (normal.clone(), vec![weird.clone()]),
+            ]);
+
+            store.replace_all(&files, &notes, &links).expect("persist");
+            drop(store);
+
+            let indexer = IndexerService::new(temp.path());
+            let loaded = indexer.load().expect("load index");
+            let inlinks_of = |target: &Path| {
+                loaded
+                    .entries()
+                    .find(|e| e.base().path() == target)
+                    .expect("entry present")
+                    .inlinks()
+                    .to_vec()
+            };
+            assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);
+            assert_eq!(inlinks_of(normal.as_path()), vec![weird.clone()]);
+        }
+
+        #[test]
         fn returns_records_in_path_sort_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("a-b")).expect("mkdir a-b");
