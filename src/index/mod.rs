@@ -40,6 +40,7 @@
 
 mod builder;
 mod cache;
+mod codec;
 mod delta;
 mod entry;
 mod error;

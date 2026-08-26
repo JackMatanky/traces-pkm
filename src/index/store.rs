@@ -30,6 +30,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
     FileIndex, INDEX_FILE,
+    codec::{decode_row, encode_row, path_from_bytes},
     delta::{IncrementalDelta, IndexDelta},
     error::{DbError, IndexError},
     inlinks::InlinkMap,
@@ -49,57 +50,6 @@ const NOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("notes");
 /// rewriting the whole table.
 const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("links");
-
-/// Postcard-encodes `value` for a row keyed by `path`, wrapping a failure as
-/// [`DbError::Serialize`]. Shared by [`IndexStore::write_table`]'s loop and
-/// [`IndexStore::upsert_row`], previously duplicated inline.
-fn encode_row<T: Serialize>(
-    path: &Path,
-    value: &T,
-) -> Result<Vec<u8>, DbError> {
-    postcard::to_allocvec(value).map_err(|source| DbError::Serialize {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-/// Postcard-decodes `bytes` for a row keyed by `path`, wrapping a failure as
-/// [`DbError::Deserialize`]. Shared by [`IndexStore::read_table`]'s loop and
-/// [`IndexStore::read_note`], previously duplicated inline. Not a `redb::Value`
-/// impl: see this file's module-level correction note.
-fn decode_row<T: DeserializeOwned>(
-    path: &Path,
-    bytes: &[u8],
-) -> Result<T, DbError> {
-    postcard::from_bytes(bytes).map_err(|source| DbError::Deserialize {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-/// Recovers a `PathBuf` from raw key/value bytes: an exact UTF-8 decode,
-/// falling back to a lossy decode only for non-Unicode paths. No `unsafe`:
-/// `OsStr::from_encoded_bytes_unchecked` would be exact for every input but
-/// requires an `unsafe` block this crate avoids; the lossy fallback degrades
-/// only non-Unicode filenames, matching this crate's pre-migration
-/// `Path::to_string_lossy` behavior for the same edge case. In practice the
-/// lossy branch is unreachable for stored records: [`FileBase`]/[`Note`]
-/// serialize their paths through serde, which rejects non-Unicode paths at
-/// write time, so no non-Unicode path ever reaches a stored key or edge. Used
-/// by [`read_table`]'s per-row deserialize-error path and by
-/// [`read_files_and_links_via`]'s link reconstruction (the refresh side, whose
-/// links only feed `diff_inlinks`); [`read_all`] instead resolves stored link
-/// bytes against the loaded notes, dropping orphaned edges.
-///
-/// [`read_table`]: IndexStore::read_table
-/// [`read_all`]: IndexStore::read_all
-/// [`read_files_and_links_via`]: IndexStore::read_files_and_links_via
-fn path_from_bytes(bytes: &[u8]) -> PathBuf {
-    str::from_utf8(bytes).map_or_else(
-        |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),
-        PathBuf::from,
-    )
-}
 
 /// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
 /// (sorted by path) plus derived inlink edges (target-keyed, unordered).
