@@ -127,6 +127,28 @@ pub(crate) mod path {
         let wide = <Vec<u16>>::deserialize(deserializer)?;
         Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
     }
+
+    #[cfg(not(any(unix, windows)))]
+    pub(crate) fn serialize<S>(
+        path: &Path,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&path.to_string_lossy())
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub(crate) fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <String>::deserialize(deserializer)?;
+        Ok(PathBuf::from(s))
+    }
 }
 
 #[cfg(test)]

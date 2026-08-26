@@ -726,41 +726,43 @@ mod tests {
                 .warn_unknown_classes(&["book".to_owned(), "ghost".to_owned()]);
         }
 
+        struct EventCapture {
+            events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for EventCapture {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _ctx: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                if *event.metadata().level() != tracing::Level::WARN {
+                    return;
+                }
+                let mut visitor = EventVisitor(String::new());
+                event.record(&mut visitor);
+                self.events.lock().unwrap().push(visitor.0);
+            }
+        }
+
+        struct EventVisitor(String);
+
+        impl tracing::field::Visit for EventVisitor {
+            fn record_debug(
+                &mut self,
+                field: &tracing::field::Field,
+                value: &dyn std::fmt::Debug,
+            ) {
+                use std::fmt::Write;
+                let _ = write!(self.0, "{}={:?} ", field.name(), value);
+            }
+        }
+
         #[test]
         fn emits_a_warning_for_each_unknown_class() {
             use std::sync::{Arc, Mutex};
 
-            use tracing::{Event, Level, Metadata, Subscriber};
-            use tracing_subscriber::{Layer, layer::Context, prelude::*};
-
-            struct EventCapture {
-                events: Arc<Mutex<Vec<String>>>,
-            }
-
-            impl<S: Subscriber> Layer<S> for EventCapture {
-                fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-                    let metadata: &Metadata<'_> = event.metadata();
-                    if *metadata.level() == Level::WARN {
-                        let mut visitor = EventVisitor(String::new());
-                        event.record(&mut visitor);
-                        self.events.lock().unwrap().push(visitor.0);
-                    }
-                }
-            }
-
-            struct EventVisitor(String);
-
-            impl tracing::field::Visit for EventVisitor {
-                fn record_debug(
-                    &mut self,
-                    field: &tracing::field::Field,
-                    value: &dyn std::fmt::Debug,
-                ) {
-                    use std::fmt::Write;
-                    let _ = write!(self.0, "{}={:?} ", field.name(), value);
-                }
-            }
-
+            use tracing_subscriber::prelude::*;
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),
@@ -780,7 +782,7 @@ mod tests {
                 events: events.clone(),
             };
             let subscriber = tracing_subscriber::registry().with(capture);
-            let _guard = tracing::subscriber::set_default(subscriber);
+            let guard = tracing::subscriber::set_default(subscriber);
 
             service.warn_unknown_classes(&[
                 "book".to_owned(),
@@ -788,7 +790,7 @@ mod tests {
                 "phantom".to_owned(),
             ]);
 
-            drop(_guard);
+            drop(guard);
             let events = events.lock().unwrap();
             assert!(
                 events.iter().any(|e| e.contains("ghost")),
