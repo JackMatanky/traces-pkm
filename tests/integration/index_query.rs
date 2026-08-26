@@ -1,6 +1,6 @@
-//! Proves `FileIndex::build` → `QueryRequest` execution works across real
-//! files through the test-utils surface alone. Unit coverage inside
-//! `src/query/` exercises crate-internal transforms.
+//! Proves `FileIndex::build` → `QueryRequest` execution works across real files
+//! through the test-utils surface alone. Unit coverage inside `src/query/`
+//! exercises crate-internal transforms.
 
 use std::{fs, path::Path};
 

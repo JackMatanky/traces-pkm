@@ -22,16 +22,18 @@ pub struct Schema {
 impl Schema {
     /// Build a resolved Schema from its merged fields and ancestors.
     ///
-    /// Hierarchy links ([`children`](Self::children),
-    /// [`descendants`](Self::descendants)) are empty until
-    /// [`set_hierarchy`](Self::set_hierarchy) is called after full DAG
-    /// resolution.
+    /// Hierarchy links ([`children`], [`descendants`]) are empty until
+    /// [`set_hierarchy`] is called after full DAG resolution.
     ///
     /// # Arguments
     ///
     /// * `name` - Schema name derived from the source file stem.
     /// * `fields` - Effective Field Definitions after merge and excludes.
     /// * `ancestors` - Transitive `extends` targets that resolved.
+    ///
+    /// [`children`]: Self::children
+    /// [`descendants`]: Self::descendants
+    /// [`set_hierarchy`]: Self::set_hierarchy
     pub(super) fn new(
         name: SchemaName,
         fields: IndexMap<FieldName, SchemaFieldDef>,
@@ -97,6 +99,25 @@ impl Schema {
     #[must_use]
     pub(super) const fn descendants(&self) -> &IndexSet<SchemaName> {
         &self.descendants
+    }
+
+    // ------------- `test-utils` Public Surface ------------- //
+
+    /// Return the Schema name. Integration-test entry point.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn schema_name(&self) -> &str {
+        self.name()
+    }
+
+    /// Return whether the named Field Definition exists. Integration-test
+    /// entry point.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn schema_field(&self, name: &str) -> bool {
+        self.field(name).is_some()
     }
 
     /// Test whether this Schema is a `class` name.

@@ -174,6 +174,65 @@ impl SchemaService {
             }
         }
     }
+
+    // ------------- `test-utils` Public Surface ------------- //
+
+    // Integration tests (`tests/integration/`) and benchmarks (`benches/`) can
+    // only call `pub` methods. These thin wrappers expose the `pub(crate)`
+    // internals under the same feature gate that re-exports `SchemaService`
+    // from `lib.rs`.
+
+    /// Load and resolve every Schema under `directory`.
+    ///
+    /// Integration-test and bench entry point; production code should use
+    /// [`SchemaService::new`] directly. Warnings and per-Schema build failures
+    /// are discarded — tests that need them should use [`SchemaService::new`]
+    /// from within the crate.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if the schema directory cannot be read, a schema
+    /// file cannot be parsed, or the `extends` DAG contains a cycle.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    pub fn resolve(directory: &Path) -> Result<Self, String> {
+        let (service, _warnings, _failures) =
+            Self::new(directory).map_err(|e| e.to_string())?;
+        Ok(service)
+    }
+
+    /// Look up a Schema by name.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn schema_get(&self, name: &str) -> Option<&Arc<Schema>> {
+        self.get(name)
+    }
+
+    /// Every Schema that directly extends `name`.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn schema_children_of(&self, name: &str) -> Vec<Arc<Schema>> {
+        self.children_of(name)
+    }
+
+    /// Every Schema that transitively extends `name`.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn schema_descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
+        self.descendants_of(name)
+    }
+
+    /// Set of Schema names matching `classes`, including transitive
+    /// descendants.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn schema_matches(&self, classes: &[String]) -> IndexSet<String> {
+        self.matches(classes)
+    }
 }
 
 /// Read and parse every `*.toml` file directly under `dir` into a [`RawSchema`]
@@ -245,8 +304,7 @@ mod tests {
 
     /// Resolves every Schema TOML file directly under `dir`, mirroring the
     /// pre-refactor `SchemaRegistry::load(dir)` call shape: `dir` is used
-    /// directly as the Schema directory, `root` is unused by resolution
-    /// itself.
+    /// directly as the Schema directory, `root` is unused by resolution itself.
     fn resolve_dir(dir: &Path) -> ResolveResult {
         SchemaService::new(dir)
     }
@@ -404,9 +462,9 @@ mod tests {
          {
             use std::os::unix::fs::PermissionsExt as _;
 
-            /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise, a `0o000` directory blocks the
-            /// tempdir's own cleanup.
+            /// Restores a locked directory's permissions on drop, even if the
+            /// test panics. Otherwise, a `0o000` directory blocks the tempdir's
+            /// own cleanup.
             struct RestorePermissions<'a>(&'a Path);
 
             impl Drop for RestorePermissions<'_> {

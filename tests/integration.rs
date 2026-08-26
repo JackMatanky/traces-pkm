@@ -9,5 +9,7 @@ mod config_lifecycle;
 mod index_persistence_roundtrip;
 #[path = "integration/index_query.rs"]
 mod index_query;
+#[path = "integration/schema_field_resolution.rs"]
+mod schema_field_resolution;
 #[path = "integration/template_render.rs"]
 mod template_render;
