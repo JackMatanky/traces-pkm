@@ -553,16 +553,15 @@ mod tests {
 
             let rank = adj.compute_topo_rank(&topo_order);
 
-            assert_eq!(
-                rank[adj.index_of(SchemaNameRef::from("author")).unwrap().0
-                    as usize],
-                0
-            );
-            assert_eq!(
-                rank[adj.index_of(SchemaNameRef::from("book")).unwrap().0
-                    as usize],
-                1
-            );
+            let author_rank = adj
+                .index_of(SchemaNameRef::from("author"))
+                .and_then(|index| rank.get(index.index()));
+            let book_rank = adj
+                .index_of(SchemaNameRef::from("book"))
+                .and_then(|index| rank.get(index.index()));
+
+            assert_eq!(author_rank, Some(&0));
+            assert_eq!(book_rank, Some(&1));
         }
 
         #[test]
@@ -578,8 +577,7 @@ mod tests {
 
             let rank = adj.compute_topo_rank(&topo_order);
 
-            assert_eq!(rank[0], 0);
-            assert_eq!(rank[1], u32::MAX);
+            assert_eq!(rank.as_slice(), [0, u32::MAX]);
         }
     }
 

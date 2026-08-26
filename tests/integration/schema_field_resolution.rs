@@ -5,17 +5,20 @@
 //! test proving that field inheritance works when called only through
 //! `SchemaService::resolve` + `schema_get` + `schema_field`.
 
-use pretty_assertions::assert_eq;
 use traces_pkm::SchemaService;
 
-fn write_schema(dir: &std::path::Path, name: &str, toml: &str) {
+fn write_schema(
+    dir: &std::path::Path,
+    name: &str,
+    toml: &str,
+) -> std::io::Result<()> {
     std::fs::write(dir.join(format!("{name}.toml")), toml)
-        .expect("write schema fixture");
 }
 
 #[test]
-fn child_schema_inherits_parent_fields() {
-    let temp = tempfile::tempdir().expect("create temp dir");
+fn child_schema_inherits_parent_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
     write_schema(
         temp.path(),
         "book",
@@ -24,21 +27,26 @@ fn child_schema_inherits_parent_fields() {
         type = "select"
         values = ["draft", "done"]
         "#,
-    );
-    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+    )?;
+    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path()).expect("registry loads");
-
-    let sci_fi = service.schema_get("sci_fi").expect("sci_fi resolved");
-    assert!(
-        sci_fi.schema_field("status"),
-        "sci_fi must inherit status from book"
-    );
+    let service = SchemaService::resolve(temp.path())?;
+    let sci_fi = service
+        .schema_get("sci_fi")
+        .ok_or_else(|| std::io::Error::other("sci_fi resolved"))?;
+    if !sci_fi.schema_field("status") {
+        return Err(std::io::Error::other(
+            "sci_fi must inherit status from book",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 #[test]
-fn parent_fields_override_is_not_lost_when_child_adds_own_fields() {
-    let temp = tempfile::tempdir().expect("create temp dir");
+fn parent_fields_override_is_not_lost_when_child_adds_own_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
     write_schema(
         temp.path(),
         "book",
@@ -47,7 +55,7 @@ fn parent_fields_override_is_not_lost_when_child_adds_own_fields() {
         type = "select"
         values = ["draft", "done"]
         "#,
-    );
+    )?;
     write_schema(
         temp.path(),
         "sci_fi",
@@ -57,59 +65,85 @@ fn parent_fields_override_is_not_lost_when_child_adds_own_fields() {
         [fields.setting]
         type = "input"
         "#,
-    );
+    )?;
 
-    let service = SchemaService::resolve(temp.path()).expect("registry loads");
-
-    let sci_fi = service.schema_get("sci_fi").expect("sci_fi resolved");
-    assert!(
-        sci_fi.schema_field("status"),
-        "sci_fi must still inherit status after adding own field"
-    );
-    assert!(
-        sci_fi.schema_field("setting"),
-        "sci_fi must have its own setting field"
-    );
+    let service = SchemaService::resolve(temp.path())?;
+    let sci_fi = service
+        .schema_get("sci_fi")
+        .ok_or_else(|| std::io::Error::other("sci_fi resolved"))?;
+    if !sci_fi.schema_field("status") {
+        return Err(std::io::Error::other(
+            "sci_fi must still inherit status after adding own field",
+        )
+        .into());
+    }
+    if !sci_fi.schema_field("setting") {
+        return Err(std::io::Error::other(
+            "sci_fi must have its own setting field",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 #[test]
-fn children_of_returns_direct_extenders() {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    write_schema(temp.path(), "book", "");
-    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
-    write_schema(temp.path(), "memoir", r#"extends = ["book"]"#);
+fn children_of_returns_direct_extenders()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    write_schema(temp.path(), "book", "")?;
+    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
+    write_schema(temp.path(), "memoir", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path()).expect("registry loads");
+    let service = SchemaService::resolve(temp.path())?;
 
     let children = service.schema_children_of("book");
     let names: Vec<&str> = children.iter().map(|s| s.schema_name()).collect();
-    assert_eq!(names, vec!["sci_fi", "memoir"]);
+    if names != ["sci_fi", "memoir"] {
+        return Err(std::io::Error::other(format!(
+            "direct children mismatch: {names:?}"
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 #[test]
-fn descendants_of_returns_transitive_extenders() {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    write_schema(temp.path(), "thing", "");
-    write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
-    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+fn descendants_of_returns_transitive_extenders()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    write_schema(temp.path(), "thing", "")?;
+    write_schema(temp.path(), "book", r#"extends = ["thing"]"#)?;
+    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path()).expect("registry loads");
+    let service = SchemaService::resolve(temp.path())?;
 
     let descendants = service.schema_descendants_of("thing");
     let names: Vec<&str> =
         descendants.iter().map(|s| s.schema_name()).collect();
-    assert_eq!(names, vec!["book", "sci_fi"]);
+    if names != ["book", "sci_fi"] {
+        return Err(std::io::Error::other(format!(
+            "descendants mismatch: {names:?}"
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 #[test]
-fn matches_includes_transitive_subclasses() {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    write_schema(temp.path(), "book", "");
-    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+fn matches_includes_transitive_subclasses()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    write_schema(temp.path(), "book", "")?;
+    write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path()).expect("registry loads");
+    let service = SchemaService::resolve(temp.path())?;
 
     let matches = service.schema_matches(&["book".to_owned()]);
-    assert!(matches.contains("book"));
-    assert!(matches.contains("sci_fi"));
+    if !matches.contains("book") || !matches.contains("sci_fi") {
+        return Err(std::io::Error::other(format!(
+            "transitive matches missing: {matches:?}"
+        ))
+        .into());
+    }
+    Ok(())
 }
