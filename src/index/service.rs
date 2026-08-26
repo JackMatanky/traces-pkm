@@ -99,12 +99,14 @@ impl IndexerService {
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Derived inlinks are recomputed in full whenever a Note's content or
-    /// metadata changed since the last persist. A full recompute (not a
-    /// per-note patch) is required because link target resolution considers
-    /// every indexed Note: an unedited Note's *resolved* target can change
-    /// when an unrelated Note is added or removed. For example, a wikilink
-    /// that was ambiguous becomes resolvable once one of the ambiguous
+    /// Derived inlinks are recomputed in full when a Note is added or removed,
+    /// or when a changed Note's outlink targets actually differ from its
+    /// previously-persisted value (backdating skips the recompute otherwise;
+    /// see [`super::cache::RefreshCache::reconcile_note`]). A full recompute
+    /// (not a per-note patch) is required because link target resolution
+    /// considers every indexed Note: an unedited Note's *resolved* target can
+    /// change when an unrelated Note is added or removed. For example, a
+    /// wikilink that was ambiguous becomes resolvable once one of the ambiguous
     /// candidates is deleted.
     ///
     /// # Errors
@@ -1232,8 +1234,9 @@ mod tests {
             // deleted. `refresh`'s per-file staleness check would mark
             // `a.md` "unchanged, reused" and skip re-parsing it — proving
             // inlinks must come from a full recompute over every indexed
-            // Note (gated on whether *anything* changed), not a patch
-            // limited to the notes `refresh` actually re-parsed.
+            // Note (deleting a Note always forces one, per
+            // `RefreshCache::diff_files`), not a patch limited to the
+            // notes `refresh` actually re-parsed.
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
             fs::create_dir_all(temp.path().join("archive"))

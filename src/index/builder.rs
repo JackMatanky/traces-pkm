@@ -18,11 +18,11 @@ use crate::{file::FileBase, note::parse_markdown};
 
 /// Build plan for a [`super::FileIndex`].
 ///
-/// Stores an already-scanned set of records and (optionally) a
-/// [`RefreshCache`] to reuse. All heavy work (note parsing, sorting, inlink
-/// derivation) happens once in [`Self::build`], not across intermediate
-/// steps. Scanning itself lives in [`super::IndexerService::scan`], not
-/// here: `IndexBuilder` is pure data assembly, no I/O.
+/// Stores an already-scanned set of records and (optionally) a [`RefreshCache`]
+/// to reuse. All heavy work (note parsing, sorting, inlink derivation) happens
+/// once in [`Self::build`], not across intermediate steps. Scanning itself
+/// lives in [`super::IndexerService::scan`], not here: `IndexBuilder` is pure
+/// data assembly, no I/O.
 ///
 /// # Invariants
 ///
@@ -60,8 +60,7 @@ impl<'a> IndexBuilder<'a> {
     }
 
     /// Attaches `cache` (already loaded via [`RefreshCache::load`]) to plan
-    /// reuse of unchanged Notes without loading every persisted Note
-    /// upfront.
+    /// reuse of unchanged Notes without loading every persisted Note upfront.
     ///
     /// [`RefreshCache::load`]: super::cache::RefreshCache::load
     pub(super) fn with_cache(mut self, cache: RefreshCache<'a>) -> Self {
@@ -234,7 +233,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn from_scan_produces_sorted_records() {
+        fn new_produces_sorted_records() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
@@ -252,7 +251,7 @@ mod tests {
         }
 
         #[test]
-        fn from_scan_parses_markdown_notes() {
+        fn new_parses_markdown_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
