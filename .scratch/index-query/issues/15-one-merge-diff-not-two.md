@@ -39,24 +39,24 @@ not reconciliation-algorithm shape).
 
 **Category:** enhancement
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## `delta.rs` extraction
 
-- [ ] New file `src/index/delta.rs`. `IndexDelta`, `IncrementalDelta`,
+- [x] New file `src/index/delta.rs`. `IndexDelta`, `IncrementalDelta`,
       `diff_bases`, `diff_inlinks` move here from `builder.rs` verbatim,
       except where the checklist below changes them. `mod.rs` gains
       `mod delta;`.
-- [ ] `IndexDelta`'s doc comment carries forward unchanged from ticket
+- [x] `IndexDelta`'s doc comment carries forward unchanged from ticket
       14's Design Decision 17 (the `Full`/`Incremental`
       non-interchangeability explanation) — do not lose it in the move.
-- [ ] `IncrementalDelta::is_empty(&self) -> bool` — `self.upserted.is_empty()
+- [x] `IncrementalDelta::is_empty(&self) -> bool` — `self.upserted.is_empty()
       && self.deleted.is_empty() && self.links_deleted.is_empty() &&
       self.links_upserted.as_ref().is_none_or(Vec::is_empty)`. Used by
       ticket 14's "skip the write transaction when the delta is empty"
       checklist item; define it here if ticket 14 hasn't landed yet
       rather than duplicating the logic in `store.rs`.
-- [ ] `diff_bases` signature changes to
+- [x] `diff_bases` signature changes to
       `pub(super) fn diff_bases(current: &[FileBase], previous: &[FileBase])
       -> (Vec<PathBuf>, Vec<PathBuf>, bool)` — `upserted`, `deleted`, and a
       third value named `has_deleted_note` (**not** a general "is anything
@@ -69,11 +69,11 @@ not reconciliation-algorithm shape).
       separately — a deleted Note always forces an inlink recompute, and
       this is knowable from `FileBase` metadata alone, no Note content
       needed.
-- [ ] The old free-standing `has_deleted_note` function is deleted — its
+- [x] The old free-standing `has_deleted_note` function is deleted — its
       job is fully absorbed into `diff_bases`.
-- [ ] `diff_inlinks` is unchanged (still diffs two `InlinkMap`s by
+- [x] `diff_inlinks` is unchanged (still diffs two `InlinkMap`s by
       source-set membership) — only its file location moves.
-- [ ] `diff_bases` and `diff_inlinks` gain direct unit tests in
+- [x] `diff_bases` and `diff_inlinks` gain direct unit tests in
       `delta.rs` (currently `diff_bases` is only exercised indirectly via
       `build_with_reuse`/`refresh()` integration tests): a deleted Note
       sets `has_deleted_note`; a deleted non-Note file does not; an
@@ -82,7 +82,7 @@ not reconciliation-algorithm shape).
 
 ## `RefreshCache` gains methods (`IndexBuilder` stops reaching into its fields)
 
-- [ ] `RefreshCache` (fields, the `cache` field name on `IndexBuilder`,
+- [x] `RefreshCache` (fields, the `cache` field name on `IndexBuilder`,
       and `load` constructor already land via ticket 14) gains:
       ```rust
       impl<'a> RefreshCache<'a> {
@@ -120,12 +120,12 @@ not reconciliation-algorithm shape).
       Two real shapes for the same logic (direct unit tests in `delta.rs`,
       integration coverage through the full reconciliation flow), not one
       dressed up as a method for its own sake.
-- [ ] `IndexBuilder`'s own `reconcile_note` associated function is
+- [x] `IndexBuilder`'s own `reconcile_note` associated function is
       **deleted entirely** — it moves into `RefreshCache` as above, not
       duplicated. `IndexBuilder`'s impl block shrinks correspondingly;
       confirm no leftover unused-import or dead-code warnings after
       removal.
-- [ ] `parse_note` stays a free function in `builder.rs`, **not** a
+- [x] `parse_note` stays a free function in `builder.rs`, **not** a
       `RefreshCache` method — it's called by both `build_fresh` (no
       `RefreshCache` involved at all) and `RefreshCache::reconcile_note`.
       This is the one case where a genuine second caller justifies a
@@ -133,7 +133,7 @@ not reconciliation-algorithm shape).
 
 ## Backdating (the actual staleness fix)
 
-- [ ] `RefreshCache::reconcile_note`'s reparse branch (`is_upserted ==
+- [x] `RefreshCache::reconcile_note`'s reparse branch (`is_upserted ==
       true`) additionally point-looks-up the *previous* Note at
       `base.path()` via `self.store.load_note(self.read_txn, base.path())`
       — the same mechanism the unchanged branch already uses — and
@@ -148,7 +148,7 @@ not reconciliation-algorithm shape).
       ... collapse to a single edge" — two notes with the same target set
       in different textual order, or with an incidental duplicate, must
       compare equal).
-- [ ] Three outcomes for the reparse branch, each returning `(Note, bool)`
+- [x] Three outcomes for the reparse branch, each returning `(Note, bool)`
       where `bool` is "outlinks changed":
       - Previous Note exists at this path, target sets match →
         `(new_note, false)` — backdated; the Note's row is still
@@ -157,7 +157,7 @@ not reconciliation-algorithm shape).
       - Previous Note exists, target sets differ → `(new_note, true)`.
       - No previous Note at this path (a genuinely new file) →
         `(new_note, true)` — nothing to backdate against, always counts.
-- [ ] **Backdating's point lookup fails open, never hard-errors the
+- [x] **Backdating's point lookup fails open, never hard-errors the
       refresh.** If loading the previous Note for comparison errors for
       any reason other than "not found" (e.g. a corrupted or
       undeserializable stored row), treat it identically to "outlinks
@@ -169,7 +169,7 @@ not reconciliation-algorithm shape).
       `parse_note` regardless of whether this comparison succeeds — only
       the "can we skip the inlink recompute" decision is at stake, never
       correctness of the returned `FileIndex`.
-- [ ] `IndexBuilder::build_with_cache` (renamed from `build_with_reuse`)
+- [x] `IndexBuilder::build_with_cache` (renamed from `build_with_reuse`)
       assembles `stale` starting from `diff_bases`'s `has_deleted_note`,
       then `|=`s in each reconciled Note's `outlinks_changed`:
       ```rust
@@ -217,7 +217,7 @@ not reconciliation-algorithm shape).
       Note-format bases and reintroducing the exact double-counting bug
       class `builder.rs`'s own doc comments record having been bitten by
       once already.
-- [ ] Tests, each isolating one signal:
+- [x] Tests, each isolating one signal:
       - A Note's frontmatter/body/tasks change but its outlinks stay
         identical (same target set) → `refresh()`'s delta has
         `links_upserted: None` (inlinks reused, not recomputed) — proves
@@ -239,7 +239,7 @@ not reconciliation-algorithm shape).
 
 ## `IndexBuilder` becomes a proper builder; scanning moves out
 
-- [ ] `IndexBuilder` gains a lifetime parameter threading `RefreshCache`'s:
+- [x] `IndexBuilder` gains a lifetime parameter threading `RefreshCache`'s:
       ```rust
       pub(super) struct IndexBuilder<'a> {
           bases: Vec<FileBase>,
@@ -269,7 +269,7 @@ not reconciliation-algorithm shape).
       builder itself), and `with_cache` takes an already-constructed
       `RefreshCache` (built via `RefreshCache::load`, from ticket 14) as
       one argument, not four loose parameters.
-- [ ] `build_fresh`'s doc comment gets one line added: why it can't be
+- [x] `build_fresh`'s doc comment gets one line added: why it can't be
       re-expressed as `build_with_cache` against a synthetic empty cache
       — cross-reference `IndexDelta`'s doc comment (ticket 14, Design
       Decision 17) rather than re-explaining it inline. `build_fresh`
@@ -278,14 +278,14 @@ not reconciliation-algorithm shape).
       first-time build and — the actual hazard — risk conflating "no
       previous state to check" with "verified nothing was deleted,"
       which only `RefreshCache::load`'s real query can honestly claim.
-- [ ] `scan_root` (`src/index/scan.rs`) moves into `service.rs` as a
+- [x] `scan_root` (`src/index/scan.rs`) moves into `service.rs` as a
       private method: `IndexerService::scan(&self) -> Result<Vec<FileBase>,
       IndexBuilderError>`, reading `self.root` instead of taking a `root:
       &Path` parameter. `scan.rs` is deleted; its doc comment (sort
       invariant, `.git`/symlink/index-db skip rules) and its test module
       move into `service.rs`'s existing `#[cfg(test)] mod tests`. `mod.rs`
       drops `mod scan;`.
-- [ ] `IndexerService::build`/`refresh` are rewritten to the final shape:
+- [x] `IndexerService::build`/`refresh` are rewritten to the final shape:
       ```rust
       pub fn build(&self) -> Result<FileIndex, IndexError> {
           let bases = self.scan()?;
@@ -311,7 +311,7 @@ not reconciliation-algorithm shape).
       interim shape first for its own borrowing/phase-split/persist-on-
       refresh changes; this ticket updates the method names and moves
       scanning out, on top of it, not instead of it.
-- [ ] The two now-obsolete `reconcile_note` unit tests
+- [x] The two now-obsolete `reconcile_note` unit tests
       (`consumes_the_matched_previous_entry_so_it_is_not_double_counted`,
       `consumes_the_matched_previous_entry_even_when_the_record_changed`)
       are deleted — they assert an invariant ("the matched previous entry
@@ -322,11 +322,11 @@ not reconciliation-algorithm shape).
       directly: an unchanged Note (`is_upserted: false`) reuses via point
       lookup, not reparse; a changed-or-new Note (`is_upserted: true`)
       reparses, not reuse.
-- [ ] A regression test covers an upserted **non-Note** file sitting
+- [x] A regression test covers an upserted **non-Note** file sitting
       between two Note-format bases in path order — proves the
       upserted-pointer consumption is unconditional (checked for every
       base) rather than only for Note-format ones.
-- [ ] `clippy::large_stack_frames` — re-run `cargo clippy` against the
+- [x] `clippy::large_stack_frames` — re-run `cargo clippy` against the
       fully implemented result of both tickets (not this ticket in
       isolation) and treat every reported frame as new information. The
       original single-file investigation (ticket 14, Design Decision 12)
@@ -476,3 +476,107 @@ doesn't repeat it.
   field-and-constructor work — assumed already landed.
 - Ticket 16's `LINKS` reconstruction fidelity.
 - Embedding `IndexStore` in `IndexerService` — see Design Decision 10.
+
+## Implementation details
+
+Implemented on branch `one-merge-diff-not-two` (branched from
+`d4d64f7`, ticket 14's integration commit) in three commits:
+
+- `2891575` — `feat(index): rebuild builder as cache-driven, backdate staleness`
+- `5699c3b` — `docs(index): comprehensive doc revision for crates.io publication`
+- `37cf3b9` — `fix(index): restore diff_files/diff_inlinks as pure functions in delta.rs`
+
+### Delivered shape
+
+- `src/index/delta.rs` — `IndexDelta`, `IncrementalDelta` (+`is_empty`),
+  and the two-pointer merge functions, unit-tested against plain
+  `(current, previous)` values with no `IndexStore`/`ReadTransaction`
+  fixture.
+- **Deviation from the checklist's literal naming:** the merge-join
+  function is `diff_files`, not `diff_bases` as written throughout this
+  ticket's checklist — renamed at the user's explicit direction during
+  review, after the initial implementation shipped it as `diff_bases`.
+  `diff_inlinks` keeps its checklist name (no rename requested there).
+  Its return shape matches the checklist exactly: `(Vec<PathBuf>,
+  Vec<PathBuf>, bool)`, third value `has_deleted_note`.
+- `src/index/cache.rs` (new file, not `builder.rs` as the checklist's
+  code samples show) — `RefreshCache` and its methods
+  (`diff_files`/`reconcile_note`/`diff_links`/`into_inlinks`) moved
+  here as a deliberate deepening beyond the approved plan: it had grown
+  to 5 methods + 2 helpers, and `builder.rs` was accumulating structs
+  it doesn't own. `diff_files`/`diff_links` are one-line delegations to
+  `delta.rs`'s free functions (fixed post-review; the initial pass had
+  duplicated the merge logic inline in `cache.rs` instead of
+  delegating, diverging from Design Decision 4). The `is_upserted: bool`
+  decision that `reconcile_note` and `diff_files` communicate is a
+  `NoteCacheState` enum (`Stale`/`Fresh`), not a bare `bool` — named
+  through an interactive naming pass during review (rejected
+  `FileStatus`/`ReconcileStrategy` as less specific).
+- `src/index/builder.rs` — `IndexBuilder<'a>` is the checklist's
+  `new`/`with_cache`/`build` builder; `build_with_reuse` renamed
+  `build_with_cache`; own `reconcile_note` deleted; `from_scan`/
+  `reuse_unchanged` deleted. Stale `from_scan_*` test names renamed to
+  `new_*` (fixed post-review — leftover names referencing a deleted
+  API).
+- `src/index/service.rs` — `scan_root` moved in as private
+  `IndexerService::scan`, `scan.rs` deleted, `mod.rs` drops `mod scan;`
+  and gains `mod delta;`/`mod cache;`. `refresh()`'s doc comment fixed
+  post-review: it claimed inlinks recompute "whenever a Note's content
+  or metadata changed," which backdating makes false — corrected to
+  "whenever a Note is added/removed, or a changed Note's outlink
+  targets actually differ from its previously-persisted value."
+- Backdating: `reconcile_note`'s reparse branch point-looks-up the
+  previous Note, compares deduplicated sorted outlink-target sets (not
+  full `Link`/`Note` equality), fails open (logs via
+  `tracing::debug!`, treats as "changed") on any lookup error other
+  than not-found.
+- Every test the checklist named is present: `diff_files`/`diff_inlinks`
+  unit tests in `delta.rs`; the two simplified `reconcile_note` tests
+  (unchanged reuses via point lookup, changed-or-new reparses)
+  replacing the two now-impossible double-counting tests; the
+  upserted-non-Note-between-two-Notes regression test in `builder.rs`;
+  and all five backdating signal tests in `service.rs`
+  (`refresh_persists_so_a_fresh_load_reflects_the_change`,
+  outlinks-changed, outlinks-reordered-still-backdates,
+  brand-new-note-never-backdated, corrupted-previous-row-fails-open).
+
+### Verification
+
+- `cargo fmt --check`: clean.
+- `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings`: fails with the same 11 pre-existing errors as `main`
+  before this ticket (none in `src/index/`), confirmed identical by
+  diffing the error set against the pre-existing baseline.
+- `cargo test --lib index::`: 132 passed, 0 failed.
+- `cargo doc --no-deps --lib`: zero warnings.
+- `cargo test --doc`: 13 passed.
+
+### Corrections (discovered during review, applied before merge)
+
+A dedicated `rust-code-review` pass against the approved plan and this
+ticket's checklist found six issues in the initial implementation
+(`2891575`), fixed in `37cf3b9`:
+
+1. `delta.rs`'s `diff_files`/`diff_inlinks` were missing entirely —
+   `RefreshCache::diff_files`/`diff_links` had the two-pointer merge
+   inlined directly instead of delegating, contradicting Design
+   Decision 4. Restored as pure, fixture-free functions with their own
+   tests moved from `cache.rs`.
+2. `RefreshCache::diff_files`/`diff_links` rewritten as one-line
+   delegations once (1) landed.
+3. `service.rs`'s `refresh()` doc comment overclaimed inlink recompute
+   conditions (see Delivered shape above).
+4. A stale test comment in `resolves_stale_ambiguous_wikilink_after_unrelated_deletion`
+   still described the pre-backdating "gated on whether anything
+   changed" behavior.
+5. `builder.rs`'s `from_scan_produces_sorted_records`/
+   `from_scan_parses_markdown_notes` test names referenced the deleted
+   `from_scan` API; renamed to `new_produces_sorted_records`/
+   `new_parses_markdown_notes`.
+6. `NoteCacheState` derived unused `PartialEq`/`Eq`; trimmed to
+   `Clone`, `Copy`, `Debug`.
+
+`RefreshCache`'s file relocation to `cache.rs` (a net improvement, not
+finding 1's original review scope) and the `diff_bases`→`diff_files`
+rename were both separate, explicit user calls made during the same
+review session — not silent scope drift.
