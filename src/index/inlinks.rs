@@ -25,7 +25,7 @@ use crate::{
 /// Target-keyed inbound link edges: maps every Note path to the paths of every
 /// Note whose outlinks resolve to it. Returned by [`derive_inlinks`]; persisted
 /// and reloaded by [`super::store`].
-pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
+pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
@@ -51,7 +51,8 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// - The wikilink-by-name fallback tier looks its stem up in the index in O(1)
 ///   average time, then scans only that stem's candidates (not all of `notes`)
 ///   to break ties by proximity.
-pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
+#[must_use]
+pub fn derive_inlinks(notes: &[Note]) -> InlinkMap {
     let resolver = LinkResolver::new(notes);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {

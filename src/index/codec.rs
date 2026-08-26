@@ -75,15 +75,12 @@ pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 /// `std::path::PathBuf`. Serializes paths as target-specific raw byte slices
 /// (on Unix) or wide character arrays (on Windows) to allow exact non-Unicode
 /// path round-trips.
-pub(crate) mod path {
+pub mod path {
     use std::path::{Path, PathBuf};
 
     use serde::{Deserialize, Deserializer, Serializer};
     #[cfg(unix)]
-    pub(crate) fn serialize<S>(
-        path: &Path,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -92,9 +89,7 @@ pub(crate) mod path {
     }
 
     #[cfg(unix)]
-    pub(crate) fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<PathBuf, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -104,10 +99,7 @@ pub(crate) mod path {
     }
 
     #[cfg(windows)]
-    pub(crate) fn serialize<S>(
-        path: &Path,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -117,9 +109,7 @@ pub(crate) mod path {
     }
 
     #[cfg(windows)]
-    pub(crate) fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<PathBuf, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -129,10 +119,7 @@ pub(crate) mod path {
     }
 
     #[cfg(not(any(unix, windows)))]
-    pub(crate) fn serialize<S>(
-        path: &Path,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -140,9 +127,7 @@ pub(crate) mod path {
     }
 
     #[cfg(not(any(unix, windows)))]
-    pub(crate) fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<PathBuf, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
     where
         D: Deserializer<'de>,
     {
