@@ -14,6 +14,7 @@
 //! test-utils`.
 #![expect(
     clippy::expect_used,
+    clippy::arithmetic_side_effects,
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]

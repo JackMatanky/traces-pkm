@@ -52,6 +52,7 @@ pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 ///   average time, then scans only that stem's candidates (not all of `notes`)
 ///   to break ties by proximity.
 #[must_use]
+#[inline]
 pub fn derive_inlinks(notes: &[Note]) -> InlinkMap {
     let resolver = LinkResolver::new(notes);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
