@@ -49,15 +49,10 @@ pub(super) fn decode_row<T: DeserializeOwned>(
 /// falling back to a lossy decode only for non-Unicode paths. No `unsafe`:
 /// `OsStr::from_encoded_bytes_unchecked` would be exact for every input but
 /// requires an `unsafe` block this crate avoids; the lossy fallback degrades
-/// only non-Unicode filenames, matching this crate's pre-migration
-/// `Path::to_string_lossy` behavior for the same edge case. In practice the
-/// lossy branch is unreachable for stored records: [`FileBase`]/[`Note`]
-/// serialize their paths through serde, which rejects non-Unicode paths at
-/// write time, so no non-Unicode path ever reaches a stored key or edge. Used
-/// by [`read_table`]'s per-row deserialize-error path and by
-/// [`read_files_and_links_via`]'s link reconstruction (the refresh side, whose
-/// links only feed `diff_inlinks`); [`read_all`] instead resolves stored link
-/// bytes against the loaded notes, dropping orphaned edges.
+/// only reconstructed refresh-diff links. [`read_all`] instead resolves stored
+/// link bytes against loaded notes for byte-exact query output. Used by
+/// [`read_table`]'s per-row deserialize-error path and by
+/// [`read_files_and_links_via`]'s link reconstruction.
 ///
 /// [`read_table`]: super::store::IndexStore::read_table
 /// [`read_all`]: super::store::IndexStore::read_all

@@ -758,6 +758,27 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        fn non_unicode_path() -> PathBuf {
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_vec(
+                    b"weird\xFF.md".to_vec(),
+                ))
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_wide(&[
+                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
+                ]))
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                PathBuf::from("weird.md")
+            }
+        }
+
         #[test]
         fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -982,20 +1003,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            #[cfg(unix)]
-            let weird_path = {
-                use std::os::unix::ffi::OsStringExt as _;
-                PathBuf::from(std::ffi::OsString::from_vec(
-                    b"weird\xFF.md".to_vec(),
-                ))
-            };
-            #[cfg(windows)]
-            let weird_path = {
-                use std::os::windows::ffi::OsStringExt as _;
-                PathBuf::from(std::ffi::OsString::from_wide(&[
-                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
-                ]))
-            };
+            let weird_path = non_unicode_path();
 
             let file = FileBase::new_test(
                 weird_path.clone(),
@@ -1021,24 +1029,8 @@ mod tests {
         fn load_returns_byte_exact_inlinks_for_a_non_unicode_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-
-            #[cfg(unix)]
-            let weird = {
-                use std::os::unix::ffi::OsStringExt as _;
-                PathBuf::from(std::ffi::OsString::from_vec(
-                    b"weird\xFF.md".to_vec(),
-                ))
-            };
-            #[cfg(windows)]
-            let weird = {
-                use std::os::windows::ffi::OsStringExt as _;
-                PathBuf::from(std::ffi::OsString::from_wide(&[
-                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
-                ]))
-            };
-
+            let weird = non_unicode_path();
             let normal = PathBuf::from("normal.md");
-
             let files = vec![
                 FileBase::new_test(
                     weird.clone(),
@@ -1051,22 +1043,19 @@ mod tests {
                     crate::file::FileFormat::Note,
                 ),
             ];
-
             let notes = vec![
                 parse_markdown(&weird, "link to [[normal]]"),
                 parse_markdown(&normal, "link to [[weird]]"),
             ];
-
             let links = HashMap::from([
                 (weird.clone(), vec![normal.clone()]),
                 (normal.clone(), vec![weird.clone()]),
             ]);
-
             store.replace_all(&files, &notes, &links).expect("persist");
             drop(store);
 
-            let indexer = IndexerService::new(temp.path());
-            let loaded = indexer.load().expect("load index");
+            let loaded =
+                IndexerService::new(temp.path()).load().expect("load index");
             let inlinks_of = |target: &Path| {
                 loaded
                     .entries()
@@ -1077,6 +1066,20 @@ mod tests {
             };
             assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);
             assert_eq!(inlinks_of(normal.as_path()), vec![weird]);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn scan_preserves_a_non_unicode_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let weird = non_unicode_path();
+            fs::write(temp.path().join(&weird), "# weird")
+                .expect("write weird note");
+
+            let files =
+                IndexerService::new(temp.path()).scan().expect("scan root");
+
+            assert!(files.iter().any(|file| file.path() == weird));
         }
 
         #[test]

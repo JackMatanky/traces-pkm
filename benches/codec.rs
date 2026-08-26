@@ -1,8 +1,8 @@
 //! Performance benchmark suite for the path serialization codec.
 //!
-//! Exposes and monitors the execution cost (CPU latency and allocations) of
-//! path serialization and deserialization. The path codec is invoked for every
-//! single record read from or written to the `FILES`, `NOTES`, and `LINKS`
+//! Exposes and monitors the CPU latency of path serialization and
+//! deserialization. The path codec is invoked for every single record read from
+//! or written to the `FILES`, `NOTES`, and `LINKS`
 //! database tables.
 //!
 //! Because database transactions are highly dependent on serialization
@@ -13,10 +13,6 @@
 //! ```text
 //! [PathBuf] ──(Serialize)──► [postcard target bytes (Raw/Wide)] ──(Deserialize)──► [PathBuf]
 //! ```
-//!
-//! ### Expected Baselines
-//! - **Serialization**: < 100 ns per path.
-//! - **Deserialization**: < 120 ns per path.
 //!
 //! ### Profiling Integration
 //! To profile serialization/deserialization CPU bottlenecks:
@@ -32,16 +28,9 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use std::{alloc::System, hint::black_box, path::PathBuf};
+use std::{hint::black_box, path::PathBuf};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-
-// `StatsAlloc` implements `GlobalAlloc` internally (the crate's own audited
-// code owns the only `unsafe impl`); this benchmark never writes `unsafe`
-// itself while still measuring per-call allocation counts and byte totals.
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PathWrapper {
@@ -78,10 +67,8 @@ fn non_unicode_path() -> PathBuf {
 /// arrays into raw serialized bytes.
 ///
 /// Expected outcomes:
-/// - Fast, allocation-light serialization (sub-microsecond) scaling linearly
-///   with path length.
-/// - Windows wide characters are slightly more expensive than Unix bytes due to
-///   UTF-16 conversion.
+/// - Serialization scales with path length without unexpected allocation churn.
+/// - Target-specific path conversion remains correct for non-Unicode paths.
 ///
 /// Unexpected outcomes:
 /// - Excessive memory allocations or high latency, indicating performance
@@ -98,18 +85,6 @@ fn bench_codec_serialize(c: &mut Criterion) {
     let non_uni = PathWrapper {
         path: non_unicode_path(),
     };
-
-    // Report allocation stats (count + bytes across alloc/dealloc/realloc)
-    // once before timing, via `stats_alloc::Region`'s before/after snapshot.
-    eprintln!("\n[Path Codec Serialization Stats]");
-    for (label, wrapper) in
-        [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
-    {
-        let region = Region::new(GLOBAL);
-        let bytes = postcard::to_allocvec(wrapper).expect("serialize path");
-        eprintln!("  - serialize ({label}): {:?}", region.change());
-        black_box(bytes);
-    }
 
     for (label, wrapper) in
         [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
@@ -136,10 +111,8 @@ fn bench_codec_serialize(c: &mut Criterion) {
 /// into standard Rust `PathBuf` structures.
 ///
 /// Expected outcomes:
-/// - Quick parsing times, matching or slightly exceeding serialization
-///   performance due to validation checks.
-/// - Lossy fallback paths are only executed when deserializing corrupt or
-///   non-Unicode entries.
+/// - Non-Unicode paths deserialize byte-exactly through the target-specific
+///   codec.
 ///
 /// Unexpected outcomes:
 /// - Parsing latency spikes, indicating inefficient memory allocation or
@@ -156,19 +129,6 @@ fn bench_codec_deserialize(c: &mut Criterion) {
     let non_uni = PathWrapper {
         path: non_unicode_path(),
     };
-
-    // Report allocation stats once before timing.
-    eprintln!("\n[Path Codec Deserialization Stats]");
-    for (label, wrapper) in
-        [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
-    {
-        let bytes = postcard::to_allocvec(wrapper).expect("serialize path");
-        let region = Region::new(GLOBAL);
-        let decoded: PathWrapper =
-            postcard::from_bytes(&bytes).expect("deserialize path");
-        eprintln!("  - deserialize ({label}): {:?}", region.change());
-        black_box(decoded);
-    }
 
     for (label, wrapper) in
         [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
