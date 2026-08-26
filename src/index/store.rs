@@ -5,8 +5,8 @@
 //! [`super::IndexerService`] methods instead of interacting with redb tables
 //! directly.
 //!
-//! `FILES`/`NOTES` values stay plain `&[u8]` in their `TableDefinition`s
-//! rather than a `Postcard<T>` wrapper implementing `redb::Value`:
+//! `FILES`/`NOTES` values stay plain `&[u8]` in their `TableDefinition`s rather
+//! than a `Postcard<T>` wrapper implementing `redb::Value`:
 //! `redb::Value::from_bytes` is infallible (cannot return a `Result`), so a
 //! corrupted row's postcard-decode failure could only surface as a panic,
 //! incompatible with this crate's `Cargo.toml` denying
@@ -50,9 +50,9 @@ const NOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("notes");
 const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("links");
 
-/// Postcard-encodes `value` for a row keyed by `path`, wrapping a failure
-/// as [`DbError::Serialize`]. Shared by [`IndexStore::write_table`]'s loop
-/// and [`IndexStore::upsert_row`], previously duplicated inline.
+/// Postcard-encodes `value` for a row keyed by `path`, wrapping a failure as
+/// [`DbError::Serialize`]. Shared by [`IndexStore::write_table`]'s loop and
+/// [`IndexStore::upsert_row`], previously duplicated inline.
 fn encode_row<T: Serialize>(
     path: &Path,
     value: &T,
@@ -63,10 +63,10 @@ fn encode_row<T: Serialize>(
     })
 }
 
-/// Postcard-decodes `bytes` for a row keyed by `path`, wrapping a failure
-/// as [`DbError::Deserialize`]. Shared by [`IndexStore::read_table`]'s loop
-/// and [`IndexStore::read_note`], previously duplicated inline. Not a
-/// `redb::Value` impl: see this file's module-level correction note.
+/// Postcard-decodes `bytes` for a row keyed by `path`, wrapping a failure as
+/// [`DbError::Deserialize`]. Shared by [`IndexStore::read_table`]'s loop and
+/// [`IndexStore::read_note`], previously duplicated inline. Not a `redb::Value`
+/// impl: see this file's module-level correction note.
 fn decode_row<T: DeserializeOwned>(
     path: &Path,
     bytes: &[u8],
@@ -82,13 +82,18 @@ fn decode_row<T: DeserializeOwned>(
 /// `OsStr::from_encoded_bytes_unchecked` would be exact for every input but
 /// requires an `unsafe` block this crate avoids; the lossy fallback degrades
 /// only non-Unicode filenames, matching this crate's pre-migration
-/// `Path::to_string_lossy` behavior for the same edge case (full byte-exact
-/// fidelity is ticket 16, deliberately deferred). Used by [`read_table`]'s
-/// per-row deserialize-error path and [`read_links`]'s target/source
-/// reconstruction.
+/// `Path::to_string_lossy` behavior for the same edge case. In practice the
+/// lossy branch is unreachable for stored records: [`FileBase`]/[`Note`]
+/// serialize their paths through serde, which rejects non-Unicode paths at
+/// write time, so no non-Unicode path ever reaches a stored key or edge. Used
+/// by [`read_table`]'s per-row deserialize-error path and by
+/// [`read_files_and_links_via`]'s link reconstruction (the refresh side, whose
+/// links only feed `diff_inlinks`); [`read_all`] instead resolves stored link
+/// bytes against the loaded notes, dropping orphaned edges.
 ///
 /// [`read_table`]: IndexStore::read_table
-/// [`read_links`]: IndexStore::read_links
+/// [`read_all`]: IndexStore::read_all
+/// [`read_files_and_links_via`]: IndexStore::read_files_and_links_via
 fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
         |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),
@@ -100,11 +105,10 @@ fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 /// (sorted by path) plus derived inlink edges (target-keyed, unordered).
 type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
 
-/// One raw `LINKS` multimap-table iterator entry: a target key's
-/// `AccessGuard` paired with its source-set `MultimapValue`, or the
-/// `redb::StorageError` reading it failed with. Named to satisfy
-/// `clippy::type_complexity`; used only by
-/// [`IndexStore::process_link_entry`].
+/// One raw `LINKS` multimap-table iterator entry: a target key's `AccessGuard`
+/// paired with its source-set `MultimapValue`, or the `redb::StorageError`
+/// reading it failed with. Named to satisfy `clippy::type_complexity`; used
+/// only by [`IndexStore::process_link_entry`].
 type LinkEntry<'a> = Result<
     (
         redb::AccessGuard<'a, &'static [u8]>,
@@ -113,20 +117,26 @@ type LinkEntry<'a> = Result<
     redb::StorageError,
 >;
 
+/// One resolved `LINKS` row: a target path and its surviving source paths, or
+/// `None` when the target resolved to no loaded note or all its sources
+/// dropped. Named to satisfy `clippy::type_complexity`; the return of
+/// [`IndexStore::process_link_entry`].
+type ResolvedLink = Option<(PathBuf, Vec<PathBuf>)>;
+
 /// Redb-backed handle to one project root's index database.
 ///
 /// Owns one redb connection under a project root and the generic table
 /// store/load mechanics every domain module builds its own table-specific
-/// persistence on top of. Table definitions and their read/write semantics
-/// stay with the domain that owns them (this module owns File/Note/Inlink
-/// tables); this struct owns only "open the file, run a transaction,
-/// serialize/deserialize a value or multimap table", mechanics with no
-/// domain knowledge.
+/// persistence on top of. Table definitions and their read/write semantics stay
+/// with the domain that owns them (this module owns File/Note/Inlink tables);
+/// this struct owns only "open the file, run a transaction,
+/// serialize/deserialize a value or multimap table", mechanics with no domain
+/// knowledge.
 ///
-/// Created by [`Self::open`]. Callers interact through
-/// [`super::IndexerService`] methods, not directly.
+/// Created by [`Self::open`]. Callers interact through [`IndexerService`]
+/// methods, not directly.
 ///
-/// [`super::IndexerService`]: super::IndexerService
+/// [`IndexerService`]: super::IndexerService
 #[derive(Debug)]
 pub(super) struct IndexStore {
     db: redb::Database,
@@ -230,10 +240,10 @@ impl IndexStore {
         Ok(false)
     }
 
-    /// Schema drift or structural corruption this store recovers from by
-    /// wiping and rebuilding, deliberately narrower than "any unexpected
-    /// `TableError`": an unrelated I/O failure should propagate, not
-    /// trigger a destructive wipe that won't fix it.
+    /// Schema drift or structural corruption this store recovers from by wiping
+    /// and rebuilding, deliberately narrower than "any unexpected
+    /// `TableError`": an unrelated I/O failure should propagate, not trigger a
+    /// destructive wipe that won't fix it.
     fn is_rebuild_trigger(error: &redb::TableError) -> bool {
         matches!(
             error,
@@ -346,7 +356,13 @@ impl IndexStore {
     }
 
     /// Deserializes every `target -> sources` edge from the `links` multimap
-    /// table.
+    /// table, resolving each stored path's raw bytes through `resolve`.
+    ///
+    /// `resolve` maps a stored key/value's raw bytes to the authoritative path
+    /// to use, or `None` to drop it. A target that resolves to `None` drops its
+    /// whole edge set; a source that resolves to `None` is skipped; an entry
+    /// left with no surviving sources is omitted entirely ([`super::inlinks`]
+    /// never emits an empty source set, so one must not round-trip either).
     ///
     /// # Errors
     ///
@@ -355,6 +371,7 @@ impl IndexStore {
         &self,
         txn: &ReadTransaction,
         table: MultimapTableDefinition<&[u8], &[u8]>,
+        resolve: impl Fn(&[u8]) -> Option<PathBuf>,
     ) -> Result<HashMap<PathBuf, Vec<PathBuf>>, DbError> {
         let table = match txn.open_multimap_table(table) {
             Ok(table) => table,
@@ -365,35 +382,50 @@ impl IndexStore {
         };
         let mut links = HashMap::new();
         for entry in table.iter().map_err(|source| self.store_error(source))? {
-            let (target, sources) = self.process_link_entry(entry)?;
-            links.insert(target, sources);
+            if let Some((target, sources)) =
+                self.process_link_entry(entry, &resolve)?
+            {
+                links.insert(target, sources);
+            }
         }
         Ok(links)
     }
 
-    /// Extracts one `target -> sources` row from a `LINKS` multimap
-    /// iterator entry. Split from [`Self::read_links`]'s loop body to
-    /// reduce that function's stack frame
+    /// Extracts one `target -> sources` row from a `LINKS` multimap iterator
+    /// entry, resolving raw bytes through `resolve`. Returns `None` when the
+    /// target resolves to no path or when every source dropped. Split from
+    /// [`Self::read_links`]'s loop body to reduce that function's stack frame
     /// (`clippy::large_stack_frames`).
     fn process_link_entry(
         &self,
         entry: LinkEntry<'_>,
-    ) -> Result<(PathBuf, Vec<PathBuf>), DbError> {
+        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
+    ) -> Result<ResolvedLink, DbError> {
         let (target, sources) =
             entry.map_err(|source| self.store_error(source))?;
-        let sources = self.collect_sources(sources)?;
-        Ok((path_from_bytes(target.value()), sources))
+        let Some(target) = resolve(target.value()) else {
+            return Ok(None);
+        };
+        let sources = self.collect_sources(sources, resolve)?;
+        if sources.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((target, sources)))
     }
 
-    /// Drains one target's `MultimapValue` iterator of source paths.
+    /// Drains one target's `MultimapValue` iterator of source paths, skipping
+    /// any whose bytes `resolve` maps to `None`.
     fn collect_sources(
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
+        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
     ) -> Result<Vec<PathBuf>, DbError> {
         let mut values = Vec::new();
         for source in sources {
             let source = source.map_err(|source| self.store_error(source))?;
-            values.push(path_from_bytes(source.value()));
+            if let Some(path) = resolve(source.value()) {
+                values.push(path);
+            }
         }
         Ok(values)
     }
@@ -442,7 +474,11 @@ impl IndexStore {
     }
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
-    /// derived inlink edge (target-keyed, unordered).
+    /// derived inlink edge (target-keyed, unordered). LINKS are correlated
+    /// against the loaded notes — each stored edge's raw target/source bytes
+    /// are matched to the loaded [`Note::path`] with the same bytes and
+    /// cloned from it, never rebuilt from the stored bytes; edges whose
+    /// endpoints are not among the loaded notes (stale/orphaned) are dropped.
     ///
     /// # Errors
     ///
@@ -453,7 +489,17 @@ impl IndexStore {
         let txn = self.begin_read()?;
         let files = self.read_table(&txn, FILES, FileBase::path)?;
         let notes = self.read_table(&txn, NOTES, Note::path)?;
-        let links = self.read_links(&txn, LINKS)?;
+        let links = {
+            let by_bytes: HashMap<&[u8], &Path> = notes
+                .iter()
+                .map(|note| {
+                    (note.path().as_os_str().as_encoded_bytes(), note.path())
+                })
+                .collect();
+            self.read_links(&txn, LINKS, |bytes| {
+                by_bytes.get(bytes).map(|path| path.to_path_buf())
+            })?
+        };
         Ok((files, notes, links))
     }
 
@@ -494,7 +540,11 @@ impl IndexStore {
     /// upfront regardless of whether it changed. Takes the caller's own
     /// read transaction rather than opening one via [`Self::begin_read`] so
     /// [`super::cache::RefreshCache::load`] can share one transaction
-    /// with the point lookups it backs.
+    /// with the point lookups it backs. Keeps byte-reconstruction of link
+    /// paths deliberately: correlating against loaded notes (as
+    /// [`Self::read_all`] does) would require loading the `NOTES` table this
+    /// exists to avoid, and its links only feed the refresh diff, never
+    /// query output.
     ///
     /// # Errors
     ///
@@ -506,7 +556,8 @@ impl IndexStore {
         txn: &ReadTransaction,
     ) -> Result<(Vec<FileBase>, InlinkMap), IndexError> {
         let files = self.read_table(txn, FILES, FileBase::path)?;
-        let links = self.read_links(txn, LINKS)?;
+        let links =
+            self.read_links(txn, LINKS, |bytes| Some(path_from_bytes(bytes)))?;
         Ok((files, links))
     }
 
@@ -797,6 +848,43 @@ mod tests {
             assert_eq!(loaded_notes, notes);
         }
 
+        #[cfg(unix)]
+        #[test]
+        fn replace_all_then_read_all_round_trips_non_unicode_paths() {
+            use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+
+            use crate::{
+                file::{BaseName, FileFormat, FileName, Timestamp},
+                path::SafeRelativePath,
+            };
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let weird = PathBuf::from(OsStr::from_bytes(b"weird\xff.md"));
+
+            let files = vec![FileBase::new_test(
+                SafeRelativePath::parse(&weird).unwrap(),
+                BaseName::from(
+                    &FileName::try_from(weird.as_path()).unwrap_or_default(),
+                ),
+                None,
+                FileFormat::Note,
+                None,
+                Timestamp::now(),
+                7,
+            )];
+            let note = parse_markdown(weird, "content");
+            let notes = vec![note];
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            store
+                .replace_all(&files, &notes, &HashMap::new())
+                .expect("persist records");
+            let (loaded_records, loaded_notes, _) =
+                store.read_all().expect("load records");
+
+            assert_eq!(loaded_records, files);
+            assert_eq!(loaded_notes, notes);
+        }
+
         #[test]
         fn replace_all_then_read_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -809,10 +897,92 @@ mod tests {
                 (PathBuf::from("other.md"), vec![PathBuf::from("a.md")]),
             ]);
 
-            store.replace_all(&[], &[], &links).expect("persist links");
+            let notes: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
+                .iter()
+                .map(|p| parse_markdown(*p, ""))
+                .collect();
+            store.replace_all(&[], &notes, &links).expect("persist links");
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
             assert_eq!(loaded_links, links);
+        }
+
+        #[test]
+        fn read_all_drops_link_edges_with_no_matching_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let notes: Vec<_> = ["a.md", "target.md"]
+                .iter()
+                .map(|p| parse_markdown(*p, ""))
+                .collect();
+            let links = HashMap::from([
+                (PathBuf::from("target.md"), vec![
+                    PathBuf::from("a.md"),
+                    PathBuf::from("ghost.md"),
+                ]),
+                (PathBuf::from("ghost-target.md"), vec![PathBuf::from("a.md")]),
+            ]);
+
+            store.replace_all(&[], &notes, &links).expect("persist links");
+            let (_, _, loaded_links) = store.read_all().expect("load links");
+
+            assert_eq!(
+                loaded_links,
+                HashMap::from([(PathBuf::from("target.md"), vec![
+                    PathBuf::from("a.md"),
+                ])])
+            );
+        }
+
+        #[test]
+        fn read_all_drops_a_target_whose_sources_are_all_orphaned() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let notes: Vec<_> = ["a.md", "b.md"]
+                .iter()
+                .map(|p| parse_markdown(*p, ""))
+                .collect();
+            let links = HashMap::from([
+                (PathBuf::from("a.md"), vec![PathBuf::from("ghost.md")]),
+                (PathBuf::from("b.md"), vec![PathBuf::from("a.md")]),
+            ]);
+
+            store.replace_all(&[], &notes, &links).expect("persist links");
+            let (_, _, loaded_links) = store.read_all().expect("load links");
+
+            assert_eq!(
+                loaded_links,
+                HashMap::from([(PathBuf::from("b.md"), vec![PathBuf::from(
+                    "a.md"
+                ),])])
+            );
+        }
+
+        #[test]
+        fn read_files_and_links_via_keeps_orphaned_edges_that_read_all_drops() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let notes: Vec<_> = ["a.md", "target.md"]
+                .iter()
+                .map(|p| parse_markdown(*p, ""))
+                .collect();
+            let links = HashMap::from([
+                (PathBuf::from("target.md"), vec![
+                    PathBuf::from("a.md"),
+                    PathBuf::from("ghost.md"),
+                ]),
+                (PathBuf::from("ghost-target.md"), vec![PathBuf::from("a.md")]),
+            ]);
+            store.replace_all(&[], &notes, &links).expect("persist links");
+
+            // The refresh path reconstructs without correlating, so every
+            // persisted edge survives — proving the orphans are on disk and
+            // that only read_all's correlation drops them.
+            let txn = store.begin_read().expect("read txn");
+            let (_, reconstructed) =
+                store.read_files_and_links_via(&txn).expect("reconstruct load");
+
+            assert_eq!(reconstructed, links);
         }
 
         #[test]

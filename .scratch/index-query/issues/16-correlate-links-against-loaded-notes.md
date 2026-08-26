@@ -16,26 +16,38 @@ architecture review — lowest priority, do after ticket 14 and ticket 15.
 
 **Category:** enhancement
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `load_links`/`load_all`/`load_bases_and_links_via` resolve each
-      stored `LINKS` edge's target/source against an already-loaded
-      `notes` list (matched by path bytes) instead of building a
-      `PathBuf` purely from stored bytes.
-- [ ] A stored edge whose target or source no longer matches any
-      currently-loaded Note (stale/orphaned — e.g. the note was deleted
-      since the edge was persisted) has defined, tested behavior instead
-      of silently producing a `PathBuf` that can never equal a real
-      `FileIndexEntry`'s path.
-- [ ] A note with a non-Unicode filename that both links to and is
-      linked from another note survives a `persist` → `load` round trip
-      with byte-exact inlink paths (no `str::from_utf8`/lossy-fallback
-      approximation).
-- [ ] `IndexerService::load()` (currently test/library-only — not on the
-      production CLI/template `refresh()` path) returns correct
-      `entries().inlinks()` for such a note; add the missing coverage
-      rather than relying on `refresh()`'s fresh `derive_inlinks`
-      masking the gap.
+- [x] `read_links`/`read_all`/`read_files_and_links_via` resolve each
+      stored `LINKS` edge's target/source through a `resolve` closure.
+      `read_all` correlates against the already-loaded `notes` list
+      (matched by `path.as_os_str().as_encoded_bytes()`), reusing the
+      authoritative `Note::path`; `read_files_and_links_via` keeps
+      byte-reconstruction deliberately (correlating would force loading
+      the `NOTES` table it exists to avoid, and its links only feed the
+      refresh diff, never query output).
+- [x] A stored edge whose target or source matches no currently-loaded
+      Note (stale/orphaned) is dropped: an unresolved target drops its
+      whole edge set, an unresolved source is skipped, and an entry left
+      with no surviving sources is omitted. Covered by
+      `read_all_drops_link_edges_with_no_matching_note`.
+- [~] **Descoped (deferred, not yet ticketed).** A note with a
+      non-Unicode filename round-tripping `persist` → `load` with
+      byte-exact inlink paths is **not achievable at this layer**:
+      `FileBase`/`Note` derive `Serialize` with plain `PathBuf` fields,
+      and serde encodes `PathBuf` as a UTF-8 `str`, so persisting a
+      non-Unicode-named record fails with `SerdeSerCustom` in the
+      `NOTES`/`FILES` *value* before any `LINKS` reconstruction is
+      reached. The lossy `path_from_bytes` branch this ticket targeted is
+      therefore unreachable for stored data. Byte-exact non-Unicode
+      support would require changing the record path codec (custom serde
+      over `OsStr::as_encoded_bytes`, needing `unsafe`/a bytes newtype and
+      an index migration) — a separate effort, not tracked here.
+- [~] **Descoped (deferred, not yet ticketed).** `IndexerService::load()`
+      returning byte-exact `entries().inlinks()` for a non-Unicode note
+      depends on the same record-codec change; unachievable here for the
+      reason above. (`load()`'s correlation path itself is exercised by
+      the landed drop-behavior and round-trip tests.)
 
 ## Comments
 
@@ -159,3 +171,35 @@ when no match exists, rather than producing an orphaned `PathBuf`.
   `Durability` split — assumed already landed.
 - Any change to `FILES`/`NOTES` reconstruction — already correct (path
   lives in the decoded value, not the key).
+
+### Resolution
+
+Landed on branch `correlate-links-loaded-notes`. `read_links` gained a
+`resolve: impl Fn(&[u8]) -> Option<PathBuf>` closure so the
+correlation-vs-reconstruction choice lives in its two callers:
+`read_all` builds a `HashMap<&[u8], &Path>` from the loaded `notes` and
+resolves through it (dropping orphaned edges); `read_files_and_links_via`
+passes `|bytes| Some(path_from_bytes(bytes))` to keep reconstruction and
+avoid loading `NOTES`.
+
+**Byte-exact non-Unicode round-trip (criteria 3/4) proved unachievable
+at this layer and was descoped (deferred, not yet ticketed).** Verified
+empirically: a `#[cfg(unix)]` test persisting a `b"weird\xFF.md"` note
+fails at `replace_all` with `Store(Serialize { path: "weird\xFF.md",
+source: SerdeSerCustom })` — serde encodes `FileBase`/`Note`'s `PathBuf`
+fields as UTF-8 `str`, rejecting non-Unicode paths when writing the
+`NOTES`/`FILES` *value*, long before any `LINKS` reconstruction runs. So
+the lossy `path_from_bytes` branch this ticket targeted is unreachable
+for stored data; the fix's real, reachable value is orphaned-edge
+dropping plus cloning each edge path from the authoritative `Note::path`
+rather than rebuilding it from stored bytes.
+
+Tests (all in `store::tests::persistence`): updated
+`replace_all_then_read_all_round_trips_links` (now persists notes so
+correlated edges survive); `read_all_drops_link_edges_with_no_matching_note`
+(orphan source skipped, orphan target dropped);
+`read_all_drops_a_target_whose_sources_are_all_orphaned` (target with
+only orphan sources omitted); and
+`read_files_and_links_via_keeps_orphaned_edges_that_read_all_drops`
+(proves the refresh path retains what `read_all` drops). Full `index::`
+suite green.
