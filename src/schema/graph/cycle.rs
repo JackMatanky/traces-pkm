@@ -364,7 +364,7 @@ mod tests {
         );
 
         let graph = builder.build().expect("acyclic graph resolves");
-        assert!(!graph.topological_order().next().is_none());
+        assert!(graph.topological_order().next().is_some());
     }
 
     #[test]
