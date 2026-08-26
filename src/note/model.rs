@@ -20,6 +20,7 @@ use crate::field::FieldKey;
 /// instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {
+    #[serde(with = "crate::index::path")]
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,

@@ -40,6 +40,7 @@
 
 mod builder;
 mod cache;
+mod codec;
 mod delta;
 mod entry;
 mod error;
@@ -47,11 +48,18 @@ mod inlinks;
 mod service;
 mod store;
 
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use codec::path;
+#[cfg(any(test, feature = "test-utils"))]
+pub use codec::path;
 pub use entry::FileIndex;
 pub(crate) use entry::FileIndexEntry;
 #[allow(unused_imports, reason = "re-exported for downstream callers")]
 pub use error::{IndexBuilderError, IndexError};
+#[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use inlinks::InlinkMap;
+#[cfg(any(test, feature = "test-utils"))]
+pub use inlinks::{InlinkMap, derive_inlinks};
 pub use service::IndexerService;
 
 pub(crate) use crate::file::FileFormat;

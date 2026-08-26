@@ -89,7 +89,10 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
-pub use index::{FileIndex, IndexError, IndexerService};
+pub use index::{
+    FileIndex, IndexError, IndexerService, InlinkMap, derive_inlinks,
+    path as path_codec,
+};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,

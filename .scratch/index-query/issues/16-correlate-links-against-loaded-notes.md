@@ -16,26 +16,26 @@ architecture review — lowest priority, do after ticket 14 and ticket 15.
 
 **Category:** enhancement
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `load_links`/`load_all`/`load_bases_and_links_via` resolve each
-      stored `LINKS` edge's target/source against an already-loaded
-      `notes` list (matched by path bytes) instead of building a
-      `PathBuf` purely from stored bytes.
-- [ ] A stored edge whose target or source no longer matches any
-      currently-loaded Note (stale/orphaned — e.g. the note was deleted
-      since the edge was persisted) has defined, tested behavior instead
-      of silently producing a `PathBuf` that can never equal a real
-      `FileIndexEntry`'s path.
-- [ ] A note with a non-Unicode filename that both links to and is
-      linked from another note survives a `persist` → `load` round trip
-      with byte-exact inlink paths (no `str::from_utf8`/lossy-fallback
-      approximation).
-- [ ] `IndexerService::load()` (currently test/library-only — not on the
-      production CLI/template `refresh()` path) returns correct
-      `entries().inlinks()` for such a note; add the missing coverage
-      rather than relying on `refresh()`'s fresh `derive_inlinks`
-      masking the gap.
+- [x] `read_links`/`read_all`/`read_files_and_links_via` resolve each
+      stored `LINKS` edge's target/source through a `resolve` closure.
+      `read_all` correlates against the already-loaded `notes` list
+      (matched by `path.as_os_str().as_encoded_bytes()`), reusing the
+      authoritative `Note::path`; `read_files_and_links_via` keeps
+      byte-reconstruction deliberately (correlating would force loading
+      the `NOTES` table it exists to avoid, and its links only feed the
+      refresh diff, never query output).
+- [x] A stored edge whose target or source matches no currently-loaded
+      Note (stale/orphaned) is dropped: an unresolved target drops its
+      whole edge set, an unresolved source is skipped, and an entry left
+      with no surviving sources is omitted. Covered by
+      `read_all_drops_link_edges_with_no_matching_note`.
+- [x] `FileBase` and `Note` persist paths through a target-specific serde
+      codec: Unix raw bytes and Windows wide-character arrays. Non-Unicode
+      paths round-trip byte-exactly through `persist` → `load`, including
+      `IndexerService::load()` inlinks. No data migration was required because
+      this project has not shipped a release.
 
 ## Comments
 
@@ -159,3 +159,20 @@ when no match exists, rather than producing an orphaned `PathBuf`.
   `Durability` split — assumed already landed.
 - Any change to `FILES`/`NOTES` reconstruction — already correct (path
   lives in the decoded value, not the key).
+
+### Resolution
+
+Landed on branch `correlate-links-loaded-notes`. `read_links` gained a
+`resolve: impl Fn(&[u8]) -> Option<PathBuf>` closure so the
+correlation-vs-reconstruction choice lives in its two callers:
+`read_all` builds a `HashMap<&[u8], &Path>` from the loaded `notes` and
+resolves through it (dropping orphaned edges); `read_files_and_links_via`
+passes `|bytes| Some(path_from_bytes(bytes))` to keep reconstruction and
+avoid loading `NOTES`.
+
+**Byte-exact non-Unicode round-trip (criteria 3/4) landed with a custom
+record-path serde codec.** The codec serializes Unix `OsStr` bytes or Windows
+wide characters without `unsafe`, so `FileBase`/`Note` values can persist the
+same non-Unicode paths that LINKS stores as raw bytes. Tests cover record and
+full `IndexerService::load()` inlink round trips, orphaned-edge dropping, and
+the intentional refresh-path reconstruction divergence.

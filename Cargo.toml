@@ -22,7 +22,7 @@ name = "note_parsing"
 
 [[bench]]
 harness = false
-name = "index_build"
+name = "index_lifecycle"
 
 [[bench]]
 harness = false
@@ -35,6 +35,10 @@ name = "hash"
 [[bench]]
 harness = false
 name = "template_render"
+
+[[bench]]
+harness = false
+name = "codec"
 
 [dependencies]
 bit-vec = "0.10"

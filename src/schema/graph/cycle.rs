@@ -17,7 +17,8 @@ use super::{
 /// over the unvisited subgraph.
 pub(super) struct CycleDetector<'a, 'b> {
     adjacency: &'b SchemaAdjacency<'a>,
-    /// Schemas Kahn's sort already resolved; only unvisited nodes are explored.
+    /// Schemas Kahn's sort already resolved; only unvisited nodes are
+    /// explored.
     visited: &'b IndexSet<SchemaNameRef<'a>>,
     search: CycleSearchState,
     cyclic: Vec<SchemaName>,

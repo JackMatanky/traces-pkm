@@ -45,8 +45,10 @@ use thiserror::Error;
 /// project directory.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct FileBase {
+    #[serde(with = "crate::index::path")]
     path: PathBuf,
     name: BaseName,
+    #[serde(with = "crate::index::path")]
     folder: PathBuf,
     format: FileFormat,
     created_at: Option<Timestamp>,
@@ -94,6 +96,27 @@ impl FileBase {
             modified_at,
             size: metadata.len(),
         })
+    }
+
+    /// Builds a [`FileBase`] with custom fields for test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code, reason = "fixture helper used by tests outside file.rs")]
+    pub(crate) fn new_test(
+        path: PathBuf,
+        folder: PathBuf,
+        format: FileFormat,
+    ) -> Self {
+        let file_name = FileName::try_from(path.as_path()).unwrap_or_default();
+        let name = BaseName::from(&file_name);
+        Self {
+            path,
+            name,
+            folder,
+            format,
+            created_at: None,
+            modified_at: Timestamp::now(),
+            size: 10,
+        }
     }
 
     /// Returns the file's path, relative to the project root.

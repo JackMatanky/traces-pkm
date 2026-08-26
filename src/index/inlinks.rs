@@ -22,18 +22,18 @@ use crate::{
     note::{LinkTarget, Note},
 };
 
-/// Target-keyed inbound link edges: maps every Note path to the paths of every
-/// Note whose outlinks resolve to it. Returned by [`derive_inlinks`]; persisted
-/// and reloaded by [`super::store`].
-pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
+/// Target-keyed inbound link edges: maps every [`Note`] path to the paths of
+/// every [`Note`] whose outlinks resolve to it. Returned by [`derive_inlinks`];
+/// persisted and reloaded by [`super::store`].
+pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
-/// Derives inbound links for every indexed Note from its peers' outlinks.
+/// Derives inbound links for every indexed [`Note`] from its peers' outlinks.
 ///
-/// For each outlink in each Note, resolves the link target against `notes`
+/// For each outlink in each [`Note`], resolves the link target against `notes`
 /// (see [`LinkResolver::resolve`]) and records an inbound edge from the
-/// linking Note to the resolved target Note. Unresolvable targets (external
-/// URLs, links to non-Notes, or links with no matching Note) contribute no
-/// edge.
+/// linking [`Note`] to the resolved target [`Note`]. Unresolvable targets
+/// (external URLs, links to non-Notes, or links with no matching [`Note`])
+/// contribute no edge.
 ///
 /// Duplicate outlinks to the same target within one Note, and self-links,
 /// collapse to a single edge rather than duplicating or otherwise corrupting
@@ -51,7 +51,9 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// - The wikilink-by-name fallback tier looks its stem up in the index in O(1)
 ///   average time, then scans only that stem's candidates (not all of `notes`)
 ///   to break ties by proximity.
-pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
+#[must_use]
+#[inline]
+pub fn derive_inlinks(notes: &[Note]) -> InlinkMap {
     let resolver = LinkResolver::new(notes);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {
