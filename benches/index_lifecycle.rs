@@ -1,13 +1,32 @@
 //! Performance benchmark suite for the index lifecycle pipeline.
 //!
-//! Exposes and monitors the execution cost of indexing operations driven by
-//! `IndexerService` (build, refresh, and persist) and the underlying link graph
-//! compiler (`derive_inlinks`).
+//! Exposes and monitors the execution cost (CPU latency and allocations) of
+//! indexing operations driven by `IndexerService` (build, refresh, and persist)
+//! and the underlying link graph compiler (`derive_inlinks`).
 //!
 //! This suite serves as a key guardian against performance regressions in the
 //! write path of the personal knowledge base index. Because PKM queries must
 //! refresh transparently on command execution, any overhead in these lifecycle
 //! functions directly limits the responsiveness of the CLI.
+//!
+//! ### Data Flow Diagram
+//! ```text
+//! [Files on Disk] ──(Scan)──► [FileBase / Notes] ──(derive_inlinks)──► [InlinkMap]
+//!                                                                          │
+//! [redb database] ◄──(Persist)─────────────────────────────────────────────┘
+//! ```
+//!
+//! ### Expected Baselines
+//! - **Build**: ~40ms for 1000 notes.
+//! - **Refresh (No-op)**: ~1ms.
+//! - **Refresh (Upsert/Delete)**: ~5ms.
+//! - **Inlink Graph**: ~5ms for 1000 notes.
+//!
+//! ### Profiling Integration
+//! To profile index lifecycle CPU bottlenecks:
+//! ```bash
+//! cargo flamegraph --bench index_lifecycle -- --bench "FileIndex::refresh/no-op/1000"
+//! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface is only reachable with `--features
@@ -18,14 +37,21 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use std::{fmt::Write as _, hint::black_box, path::PathBuf};
+use std::{alloc::System, fmt::Write as _, hint::black_box, path::PathBuf};
 
 use criterion::{
     BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main,
 };
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use traces_pkm::{
     FileIndex, IndexerService, Note, derive_inlinks, parse_markdown,
 };
+
+// `StatsAlloc` implements `GlobalAlloc` internally (the crate's own audited
+// code owns the only `unsafe impl`); this benchmark never writes `unsafe`
+// itself while still measuring per-call allocation counts and byte totals.
+#[global_allocator]
+static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 /// Creates a temporary directory populated with `n` synthetic notes, returning
 /// the project path.
@@ -49,7 +75,7 @@ fn populate(n: usize) -> PathBuf {
 }
 
 /// Prepares a project directory with a populated and persisted index of `n`
-/// notes, returning the root path and the `IndexerService` instance.
+/// notes, and returns the root [`PathBuf`] and the [`IndexerService`] instance.
 fn setup_refresh(n: usize) -> (PathBuf, IndexerService) {
     let root = populate(n);
     let indexer = IndexerService::new(&root);
@@ -59,7 +85,8 @@ fn setup_refresh(n: usize) -> (PathBuf, IndexerService) {
 }
 
 /// Prepares a project directory with a populated but unpersisted index of `n`
-/// notes, returning the `IndexerService` instance and the built `FileIndex`.
+/// notes, and returns the [`IndexerService`] instance and the built
+/// [`FileIndex`].
 fn setup_persist_full(n: usize) -> (IndexerService, FileIndex) {
     let root = populate(n);
     let indexer = IndexerService::new(&root);
@@ -67,7 +94,7 @@ fn setup_persist_full(n: usize) -> (IndexerService, FileIndex) {
     (indexer, index)
 }
 
-/// Generates a vector of `n` notes in-memory where each note links to the next
+/// Generates a [`Vec`] of `n` notes in-memory where each note links to the next
 /// note, creating a sparse link graph.
 fn generate_notes_sparse(n: usize) -> Vec<Note> {
     let mut notes = Vec::with_capacity(n);
@@ -81,7 +108,7 @@ fn generate_notes_sparse(n: usize) -> Vec<Note> {
     notes
 }
 
-/// Generates a vector of `n` notes in-memory where each note links to 20 other
+/// Generates a [`Vec`] of `n` notes in-memory where each note links to 20 other
 /// notes, creating a highly dense link graph.
 fn generate_notes_dense(n: usize) -> Vec<Note> {
     let mut notes = Vec::with_capacity(n);
@@ -98,10 +125,9 @@ fn generate_notes_dense(n: usize) -> Vec<Note> {
     notes
 }
 
-/// Generates a vector of `n` notes in-memory containing same-stem collisions
-/// across multiple directories (e.g., `folder_x/target.md`), where every other
-/// note links to the ambiguous stem `[[target]]` to trigger the proximity
-/// tie-breaker.
+/// Generates a [`Vec`] of `n` notes in-memory containing same-stem collisions
+/// across multiple directories, where every other note links to the ambiguous
+/// stem.
 fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
     let mut notes = Vec::with_capacity(n);
     for i in 0..n {
@@ -121,11 +147,9 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
     notes
 }
 
-/// Measures full index compilation over scaling note counts.
+/// Measures compile time for building the index.
 ///
-/// This benchmark isolates the overhead of performing a full scan and parsing
-/// all notes from scratch, setting a performance baseline for initial
-/// repository onboarding.
+/// Runs the raw build operation on a temporary directory.
 ///
 /// Expected outcomes:
 /// - Linear O(n) scaling where doubling the note count roughly doubles
@@ -136,6 +160,16 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
 ///   iterations, or poor algorithms in link graph construction or file path
 ///   sorting.
 fn bench_file_index_build(c: &mut Criterion) {
+    // Report allocation stats once before timing.
+    eprintln!("\n[FileIndex::build Allocation Stats]");
+    {
+        let root = populate(1000);
+        let region = Region::new(GLOBAL);
+        let index = IndexerService::new(&root).build().expect("build index");
+        eprintln!("  - build (1000 notes): {:?}", region.change());
+        black_box(index);
+    }
+
     let mut group = c.benchmark_group("FileIndex::build");
     for n in [10_usize, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
@@ -167,6 +201,29 @@ fn bench_file_index_build(c: &mut Criterion) {
 /// - High execution times in the "no-op" scenario, indicating cache
 ///   invalidation leaks or broken comparison logic.
 fn bench_file_index_refresh(c: &mut Criterion) {
+    // Report allocation stats once before timing.
+    eprintln!("\n[FileIndex::refresh Allocation Stats]");
+    {
+        let (_root, indexer) = setup_refresh(1000);
+        let region = Region::new(GLOBAL);
+        let index = indexer.refresh().expect("refresh index");
+        eprintln!("  - refresh no-op (1000 notes): {:?}", region.change());
+        black_box(index);
+    }
+    {
+        let (root, indexer) = setup_refresh(1000);
+        let note_path = root.join("note-0.md");
+        std::fs::write(&note_path, "---\nrating: 99\n---\n\nBody change.\n")
+            .expect("write update");
+        let region = Region::new(GLOBAL);
+        let index = indexer.refresh().expect("refresh index");
+        eprintln!(
+            "  - refresh single-upsert (1000 notes): {:?}",
+            region.change()
+        );
+        black_box(index);
+    }
+
     let mut group = c.benchmark_group("FileIndex::refresh");
     for n in [100_usize, 1000] {
         // No-op refresh
@@ -238,6 +295,15 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 /// - Write times that grow exponentially or present high variance, indicating
 ///   transaction lock contention or redb table allocation bottlenecks.
 fn bench_index_persist(c: &mut Criterion) {
+    // Report allocation stats once before timing.
+    eprintln!("\n[FileIndex::persist Allocation Stats]");
+    {
+        let (indexer, index) = setup_persist_full(1000);
+        let region = Region::new(GLOBAL);
+        indexer.persist(&index).expect("persist index");
+        eprintln!("  - persist full (1000 notes): {:?}", region.change());
+    }
+
     let mut group = c.benchmark_group("FileIndex::persist");
     for n in [10_usize, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
@@ -268,6 +334,39 @@ fn bench_index_persist(c: &mut Criterion) {
 /// - O(n^2) scaling under tie-breaking search, indicating folder distance
 ///   calculation is too hot or allocating redundant paths.
 fn bench_derive_inlinks(c: &mut Criterion) {
+    // Report allocation stats once before timing.
+    eprintln!("\n[derive_inlinks Allocation Stats]");
+    {
+        let notes = generate_notes_sparse(1000);
+        let region = Region::new(GLOBAL);
+        let res = derive_inlinks(&notes);
+        eprintln!(
+            "  - derive_inlinks sparse (1000 notes): {:?}",
+            region.change()
+        );
+        black_box(res);
+    }
+    {
+        let notes = generate_notes_dense(1000);
+        let region = Region::new(GLOBAL);
+        let res = derive_inlinks(&notes);
+        eprintln!(
+            "  - derive_inlinks dense (1000 notes): {:?}",
+            region.change()
+        );
+        black_box(res);
+    }
+    {
+        let notes = generate_notes_ambiguous(1000);
+        let region = Region::new(GLOBAL);
+        let res = derive_inlinks(&notes);
+        eprintln!(
+            "  - derive_inlinks ambiguous (1000 notes): {:?}",
+            region.change()
+        );
+        black_box(res);
+    }
+
     let mut group = c.benchmark_group("derive_inlinks");
     for n in [100_usize, 1000] {
         // Sparse in-memory link graph
@@ -305,11 +404,65 @@ fn bench_derive_inlinks(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures concurrent reading performance across multiple independently
+/// indexed projects.
+///
+/// Multi-vault tooling (batch importers, multi-project LSP workspaces) loads
+/// several project indexes concurrently. This benchmark spawns one thread per
+/// project rather than sharing one project across threads: redb enforces at
+/// most one open [`redb::Database`] handle per file *per process*, so two
+/// [`IndexerService::load`] calls against the *same* database file from
+/// concurrent threads panic with `DatabaseAlreadyOpen` (discovered while
+/// writing this benchmark) rather than contending on a read lock. Genuine
+/// same-file concurrent reads require sharing one `Database` handle across
+/// threads, which `IndexerService`'s per-call `open`/`close` design does not
+/// expose.
+///
+/// Expected outcomes:
+/// - Smooth scaling under parallel loads, dominated by thread-spawn and
+///   per-project I/O cost rather than lock contention (each project has its own
+///   database file).
+///
+/// Unexpected outcomes:
+/// - Scaling bottlenecks, indicating shared OS-level resource contention (disk
+///   I/O, page cache) rather than an application-level lock.
+fn bench_concurrent_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("FileIndex::concurrent");
+    let n = 250_usize;
+
+    group.bench_function("concurrent-load-4-independent-projects", |b| {
+        b.iter_batched(
+            || {
+                let mut projects = Vec::new();
+                for _ in 0..4 {
+                    projects.push(setup_refresh(n));
+                }
+                projects
+            },
+            |projects| {
+                let mut handles = Vec::new();
+                for (_root, indexer) in projects {
+                    handles.push(std::thread::spawn(move || {
+                        let index = indexer.load().expect("load index");
+                        black_box(index);
+                    }));
+                }
+                for handle in handles {
+                    handle.join().expect("thread joined");
+                }
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_file_index_build,
     bench_file_index_refresh,
     bench_index_persist,
-    bench_derive_inlinks
+    bench_derive_inlinks,
+    bench_concurrent_operations
 );
 criterion_main!(benches);
