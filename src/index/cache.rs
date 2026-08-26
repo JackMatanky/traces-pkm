@@ -17,27 +17,30 @@ use super::{
 use crate::file::FileBase;
 
 /// Whether a record's previously-persisted Note is still valid, decided by
-/// [`RefreshCache::diff_files`]'s merge-join — replaces a bare
+/// [`RefreshCache::diff_files`]'s merge-join. Replaces a bare
 /// `is_upserted: bool` so [`RefreshCache::reconcile_note`] reads as a
 /// decision, not a flag.
+///
+/// [`RefreshCache::diff_files`]: RefreshCache::diff_files
+/// [`RefreshCache::reconcile_note`]: RefreshCache::reconcile_note
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NoteCacheState {
-    /// New or metadata-changed since the last persist — the cached Note (if
+    /// New or metadata-changed since the last persist; the cached Note (if
     /// any) is outdated; reparse from disk and backdate against its
     /// outlinks.
     Upserted,
-    /// Unchanged since the last persist — the cached Note can be reused via
+    /// Unchanged since the last persist; the cached Note can be reused via
     /// point lookup.
     Fresh,
 }
 
 /// State carried across [`super::builder::IndexBuilder::build_with_cache`],
-/// borrowed from the caller's own [`super::store::IndexStore`]/
-/// `ReadTransaction` rather than owned — owning them here would force
-/// [`super::IndexerService::refresh`] to reopen the store a second time to
-/// persist afterward.
+/// borrowed from the caller's own
+/// [`super::store::IndexStore`]/`ReadTransaction` rather than owned. Owning
+/// them here would force [`super::IndexerService::refresh`] to reopen the store
+/// a second time to persist afterward.
 ///
-/// `txn` stays open for the entire call — every `parse_note` disk read and
+/// `txn` stays open for the entire call, every `parse_note` disk read and
 /// the full merge-join, not just the [`super::store::IndexStore::read_note`]
 /// point lookups it backs. Per redb's own docs, "read-only transactions may
 /// exist concurrently with writes", so this never blocks a concurrent
@@ -53,7 +56,7 @@ pub(super) struct RefreshCache<'a> {
 }
 
 impl<'a> RefreshCache<'a> {
-    /// Loads `files`/`inlinks` via `store` through `txn` — the only way to
+    /// Loads `files`/`inlinks` via `store` through `txn`, the only way to
     /// construct a `RefreshCache`; fields stay private.
     ///
     /// # Errors
@@ -76,11 +79,13 @@ impl<'a> RefreshCache<'a> {
     /// Diffs two path-sorted `FileBase` slices via a two-pointer merge,
     /// returning current-side paths that are new or changed (`upserted`),
     /// previous-side paths absent from `current` (`deleted`), and whether
-    /// any deleted entry was a Note (the trailing `bool`) — a deleted Note
+    /// any deleted entry was a Note (the trailing `bool`). A deleted Note
     /// always forces an inlink recompute; an upserted Note's contribution to
     /// staleness depends on its outlinks, which needs Note content this
     /// function structurally doesn't have, so it is deliberately not folded
     /// in here (see [`Self::reconcile_note`]'s backdating).
+    ///
+    /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
     pub(super) fn diff_files(
         &self,
         current: &[FileBase],
@@ -130,21 +135,24 @@ impl<'a> RefreshCache<'a> {
     }
 
     /// Reuses `file`'s Note via point lookup when
-    /// [`NoteCacheState::Fresh`];
-    /// otherwise reparses from disk and backdates by comparing the reparsed
-    /// Note's outlink targets against the previously persisted Note's (if
-    /// any) — see the module-level backdating note on
-    /// [`super::builder::IndexBuilder::build_with_cache`]. Returns the
-    /// resolved Note and whether its outlinks actually changed (forcing an
-    /// inlink recompute).
+    /// [`NoteCacheState::Fresh`]; otherwise reparses from disk and backdates
+    /// by comparing the reparsed Note's outlink targets against the
+    /// previously persisted Note's (if any), see the module-level backdating
+    /// note on [`super::builder::IndexBuilder::build_with_cache`]. Returns
+    /// the resolved Note and whether its outlinks actually changed (forcing
+    /// an inlink recompute).
     ///
     /// Backdating's point lookup fails open: if it errors for any reason
     /// other than "no previous Note at this path" (a corrupted or
     /// undeserializable stored row), it is logged via `tracing::debug!` and
-    /// treated as "outlinks changed" — never propagated as a hard error.
+    /// treated as "outlinks changed", never propagated as a hard error.
     /// Backdating is a pure optimization layered on top of the reparsed
     /// Note's own already-successful parse; its failure must never fail
     /// `refresh()`.
+    ///
+    /// [`NoteCacheState::Fresh`]: NoteCacheState::Fresh
+    /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
+    /// [`super::builder::IndexBuilder::build_with_cache`]: super::builder::IndexBuilder::build_with_cache
     ///
     /// # Errors
     ///
@@ -171,8 +179,10 @@ impl<'a> RefreshCache<'a> {
     }
 
     /// Recalls an unchanged record's previously-persisted Note via point
-    /// lookup — the [`NoteCacheState::Fresh`] branch of
+    /// lookup, the [`NoteCacheState::Fresh`] branch of
     /// [`Self::reconcile_note`].
+    ///
+    /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
     ///
     /// # Errors
     ///
@@ -196,8 +206,10 @@ impl<'a> RefreshCache<'a> {
     }
 
     /// Reparses an upserted record from disk and backdates it against its
-    /// previously-persisted Note — the [`NoteCacheState::Upserted`] branch of
+    /// previously-persisted Note, the [`NoteCacheState::Upserted`] branch of
     /// [`Self::reconcile_note`].
+    ///
+    /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
     ///
     /// # Errors
     ///
@@ -224,7 +236,7 @@ impl<'a> RefreshCache<'a> {
     }
 
     /// Diffs two target-keyed inlink maps by source-set membership (order
-    /// independent — [`derive_inlinks`](super::inlinks::derive_inlinks)'s
+    /// independent; [`derive_inlinks`](super::inlinks::derive_inlinks)'s
     /// output and a redb-loaded map are not guaranteed to list one target's
     /// sources in the same order even when the set is identical). Returns
     /// target paths whose source set is new or changed (`upserted`) and
@@ -268,7 +280,7 @@ impl<'a> RefreshCache<'a> {
 /// Logs a backdating point-lookup failure at debug level. Extracted (and
 /// marked cold/never-inline) so [`RefreshCache::reconcile_note`]'s hot path
 /// doesn't pay for `tracing`'s format-argument machinery in its own stack
-/// frame — this error path is rare (a corrupted or undeserializable stored
+/// frame; this error path is rare (a corrupted or undeserializable stored
 /// row) and never propagated as a hard error.
 #[cold]
 #[inline(never)]
@@ -280,7 +292,7 @@ fn log_backdating_lookup_failure(path: &Path, source: &IndexError) {
     );
 }
 
-/// Deduplicated, sorted outlink targets for backdating comparison — order-
+/// Deduplicated, sorted outlink targets for backdating comparison. Order-
 /// and duplicate-insensitive, matching `derive_inlinks`'s own "duplicate
 /// outlinks to the same target within one Note ... collapse to a single
 /// edge" behavior. `Link::text` (display text) is deliberately excluded:
@@ -301,8 +313,8 @@ mod tests {
     use super::*;
     use crate::index::{IndexerService, store::IndexStore};
 
-    /// Persists `files`/`inlinks` and loads a [`RefreshCache`] against them
-    /// — the only way to construct one outside
+    /// Persists `files`/`inlinks` and loads a [`RefreshCache`] against them,
+    /// the only way to construct one outside
     /// [`super::super::builder::IndexBuilder::build_with_cache`].
     fn load_cache<'a>(
         store: &'a IndexStore,

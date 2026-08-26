@@ -8,7 +8,7 @@
 //! `FILES`/`NOTES` values stay plain `&[u8]` in their `TableDefinition`s
 //! rather than a `Postcard<T>` wrapper implementing `redb::Value`:
 //! `redb::Value::from_bytes` is infallible (cannot return a `Result`), so a
-//! corrupted row's postcard-decode failure could only surface as a panic —
+//! corrupted row's postcard-decode failure could only surface as a panic,
 //! incompatible with this crate's `Cargo.toml` denying
 //! `clippy::panic`/`unwrap_used`/`expect_used` and with
 //! [`DbError::Deserialize`]'s existing per-row `Result` error path.
@@ -52,7 +52,7 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 
 /// Postcard-encodes `value` for a row keyed by `path`, wrapping a failure
 /// as [`DbError::Serialize`]. Shared by [`IndexStore::write_table`]'s loop
-/// and [`IndexStore::upsert_row`] — previously duplicated inline.
+/// and [`IndexStore::upsert_row`], previously duplicated inline.
 fn encode_row<T: Serialize>(
     path: &Path,
     value: &T,
@@ -65,7 +65,7 @@ fn encode_row<T: Serialize>(
 
 /// Postcard-decodes `bytes` for a row keyed by `path`, wrapping a failure
 /// as [`DbError::Deserialize`]. Shared by [`IndexStore::read_table`]'s loop
-/// and [`IndexStore::read_note`] — previously duplicated inline. Not a
+/// and [`IndexStore::read_note`], previously duplicated inline. Not a
 /// `redb::Value` impl: see this file's module-level correction note.
 fn decode_row<T: DeserializeOwned>(
     path: &Path,
@@ -78,14 +78,17 @@ fn decode_row<T: DeserializeOwned>(
 }
 
 /// Recovers a `PathBuf` from raw key/value bytes: an exact UTF-8 decode,
-/// falling back to a lossy decode only for non-Unicode paths. No
-/// `unsafe`: `OsStr::from_encoded_bytes_unchecked` would be exact for
-/// every input but requires an `unsafe` block this crate avoids; the
-/// lossy fallback degrades only non-Unicode filenames, matching this
-/// crate's pre-migration `Path::to_string_lossy` behavior for the same
-/// edge case (full byte-exact fidelity is ticket 16, deliberately
-/// deferred). Used by `read_table`'s per-row deserialize-error path and
-/// `read_links`'s target/source reconstruction.
+/// falling back to a lossy decode only for non-Unicode paths. No `unsafe`:
+/// `OsStr::from_encoded_bytes_unchecked` would be exact for every input but
+/// requires an `unsafe` block this crate avoids; the lossy fallback degrades
+/// only non-Unicode filenames, matching this crate's pre-migration
+/// `Path::to_string_lossy` behavior for the same edge case (full byte-exact
+/// fidelity is ticket 16, deliberately deferred). Used by [`read_table`]'s
+/// per-row deserialize-error path and [`read_links`]'s target/source
+/// reconstruction.
+///
+/// [`read_table`]: IndexStore::read_table
+/// [`read_links`]: IndexStore::read_links
 fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
         |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),
@@ -114,14 +117,16 @@ type LinkEntry<'a> = Result<
 ///
 /// Owns one redb connection under a project root and the generic table
 /// store/load mechanics every domain module builds its own table-specific
-/// persistence on top of. Table definitions and their read/write semantics stay
-/// with the domain that owns them (this module owns File/Note/Inlink tables);
-/// this struct owns only "open the file, run a transaction,
-/// serialize/deserialize a value or multimap table" — mechanics with no domain
-/// knowledge.
+/// persistence on top of. Table definitions and their read/write semantics
+/// stay with the domain that owns them (this module owns File/Note/Inlink
+/// tables); this struct owns only "open the file, run a transaction,
+/// serialize/deserialize a value or multimap table", mechanics with no
+/// domain knowledge.
 ///
 /// Created by [`Self::open`]. Callers interact through
 /// [`super::IndexerService`] methods, not directly.
+///
+/// [`super::IndexerService`]: super::IndexerService
 #[derive(Debug)]
 pub(super) struct IndexStore {
     db: redb::Database,
@@ -130,6 +135,9 @@ pub(super) struct IndexStore {
 
 impl IndexStore {
     /// Opens the index database under `root`, creating it if absent.
+    ///
+    /// Recovers by wipe-and-recreate if the existing file is corrupted or
+    /// schema-mismatched.
     ///
     /// # Errors
     ///
@@ -163,8 +171,10 @@ impl IndexStore {
         })
     }
 
-    /// Opens (or creates) the database file. Recovers by wipe-and-recreate if
-    /// `Database::create` itself reports container-level corruption.
+    /// Opens (or creates) the database file.
+    ///
+    /// Recovers by wipe-and-recreate if `Database::create` itself reports
+    /// container-level corruption.
     fn create_db(path: &Path) -> Result<redb::Database, DbError> {
         let wrap = |source: redb::DatabaseError| DbError::Redb {
             path: path.to_path_buf(),
@@ -187,8 +197,10 @@ impl IndexStore {
 
     /// True if `FILES`/`NOTES`/`LINKS` show schema drift or per-table
     /// structural corruption against this process's compiled-in table
-    /// definitions. A fresh, still-tableless database (first-ever open)
-    /// reports `TableDoesNotExist` for all three — not a rebuild trigger.
+    /// definitions.
+    ///
+    /// A fresh, still-tableless database (first-ever open) reports
+    /// `TableDoesNotExist` for all three, which is not a rebuild trigger.
     fn should_rebuild(
         db: &redb::Database,
         path: &Path,
@@ -219,7 +231,7 @@ impl IndexStore {
     }
 
     /// Schema drift or structural corruption this store recovers from by
-    /// wiping and rebuilding — deliberately narrower than "any unexpected
+    /// wiping and rebuilding, deliberately narrower than "any unexpected
     /// `TableError`": an unrelated I/O failure should propagate, not
     /// trigger a destructive wipe that won't fix it.
     fn is_rebuild_trigger(error: &redb::TableError) -> bool {
@@ -446,7 +458,7 @@ impl IndexStore {
     }
 
     /// Reads and deserializes exactly one [`Note`] from the `NOTES` table by
-    /// path, without loading any other row — the point-lookup redb's zero-copy
+    /// path, without loading any other row; the point-lookup redb's zero-copy
     /// `AccessGuard` is designed for, used by
     /// [`super::cache::RefreshCache::reconcile_note`] to recall an
     /// unchanged Note's previous value without deserializing every persisted
@@ -475,7 +487,7 @@ impl IndexStore {
     }
 
     /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge,
-    /// without touching `NOTES` — the comparatively heavy per-note table.
+    /// without touching `NOTES`, the comparatively heavy per-note table.
     /// [`super::IndexerService::refresh`] uses this instead of
     /// [`Self::read_all`] so unchanged Notes are recalled lazily via
     /// [`Self::read_note`] instead of every persisted Note being deserialized
@@ -523,7 +535,7 @@ impl IndexStore {
     /// [`super::delta::IndexDelta::Incremental`].
     ///
     /// Falls back to [`Self::replace_all`] if `index`'s delta turns out to be
-    /// [`super::delta::IndexDelta::Full`] — defensive only; every caller
+    /// [`super::delta::IndexDelta::Full`], defensive only; every caller
     /// routes through [`Self::persist_index`], which never reaches this
     /// branch for a full delta.
     fn persist_incremental(&self, index: &FileIndex) -> Result<(), IndexError> {
@@ -681,7 +693,7 @@ mod tests {
         TableDefinition::new("test_table");
 
     /// Writes raw, possibly-invalid bytes directly into `table_def` at
-    /// `key`, bypassing postcard encoding — used to simulate corrupted
+    /// `key`, bypassing postcard encoding, used to simulate corrupted
     /// stored rows.
     fn write_raw_value(
         store: &IndexStore,

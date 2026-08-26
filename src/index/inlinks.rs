@@ -29,14 +29,17 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
-/// For each outlink in each Note, resolves the link target against `notes` (see
-/// [`LinkResolver::resolve`]) and records an inbound edge from the linking Note
-/// to the resolved target Note. Unresolvable targets (external URLs, links to
-/// non-Notes, or links with no matching Note) contribute no edge.
+/// For each outlink in each Note, resolves the link target against `notes`
+/// (see [`LinkResolver::resolve`]) and records an inbound edge from the
+/// linking Note to the resolved target Note. Unresolvable targets (external
+/// URLs, links to non-Notes, or links with no matching Note) contribute no
+/// edge.
 ///
 /// Duplicate outlinks to the same target within one Note, and self-links,
 /// collapse to a single edge rather than duplicating or otherwise corrupting
 /// the result: edges are deduplicated `(target, source)` pairs.
+///
+/// [`LinkResolver::resolve`]: LinkResolver::resolve
 ///
 /// # Performance
 ///
@@ -98,7 +101,7 @@ impl<'a> LinkResolver<'a> {
 
     /// Resolves an already-split [`LinkTarget`] to an indexed Note's path.
     ///
-    /// Tries, in order:
+    /// Resolution tries three tiers in order:
     ///
     /// 1. An exact project-relative path match (Markdown-style links).
     /// 2. The same path with a `.md` extension appended, when `target` has no
@@ -179,8 +182,10 @@ impl<'a> LinkResolver<'a> {
 ///
 /// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
 /// accidentally record an edge in the wrong direction: both wrap the same
-/// `&Path` representation, so nothing but the type system would catch a swapped
-/// `edges.entry(source).or_default().insert(target)`.
+/// `&Path` representation, so nothing but the type system would catch a
+/// swapped `edges.entry(source).or_default().insert(target)`.
+///
+/// [`derive_inlinks`]: fn@derive_inlinks
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 struct Target<'a>(&'a Path);
 
@@ -193,6 +198,8 @@ impl Target<'_> {
 /// A Note that links *to* a [`Target`]: the path recorded as an inbound edge.
 ///
 /// See [`Target`] for why this is a separate type.
+///
+/// [`Target`]: struct@Target
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Source<'a>(&'a Path);
 
@@ -211,10 +218,12 @@ impl Source<'_> {
 /// tie-break for ambiguous wikilink stem matches.
 ///
 /// Reads folder placement from each Note's own `path()` rather than
-/// [`super::FileBase`]'s precomputed `folder`/`name` fields, because
+/// [`crate::file::FileBase`]'s precomputed `folder`/`name` fields, because
 /// this resolution pass only needs `&[Note]` and pulling in a second
 /// sorted collection for folder data that `Note::path()` already provides
 /// would be redundant.
+///
+/// [`LinkResolver::nearest_by_stem`]: LinkResolver::nearest_by_stem
 fn folder_distance(a: &Path, b: &Path) -> usize {
     let a_folder = a.parent().unwrap_or_else(|| Path::new(""));
     let b_folder = b.parent().unwrap_or_else(|| Path::new(""));

@@ -5,7 +5,7 @@
 //! distinguishing persistence failures ([`DbError`], database access and
 //! serialization) from build-pipeline failures ([`IndexBuilderError`], scan,
 //! parse, and refresh reconciliation). Neither `Display` nor `source()` adds
-//! anything at this level — both fully delegate to whichever inner error
+//! anything at this level; both fully delegate to whichever inner error
 //! actually occurred, matching this codebase's established convention for
 //! error-enum composition (see e.g. `ConfigLoadError`, `QueryError`,
 //! `TemplateError`).
@@ -16,6 +16,10 @@ use thiserror::Error;
 
 /// Error type for [`super::FileIndex`] operations: build, persist, load, and
 /// refresh.
+///
+/// Every fallible `index` operation converts into this type via `?`. A thin
+/// `#[error(transparent)]` wrapper that delegates `Display` and `source()`
+/// entirely to whichever inner error actually occurred.
 #[derive(Debug, Error)]
 pub enum IndexError {
     /// Database access or record (de)serialization failed.
@@ -27,9 +31,14 @@ pub enum IndexError {
 }
 
 /// Generic error type for low-level redb persistence operations.
+///
+/// Wraps filesystem I/O, redb database access, and postcard
+/// (de)serialization failures. [`super::IndexerService`] never exposes
+/// these directly; callers see [`IndexError`], which delegates to
+/// [`DbError`] or [`IndexBuilderError`].
 #[derive(Debug, Error)]
 pub enum DbError {
-    /// A filesystem operation failed during directory creation or file setup.
+    /// A filesystem operation failed.
     #[error("failed to access {path}")]
     Io {
         /// The path that could not be accessed.
@@ -71,6 +80,10 @@ pub enum DbError {
 
 /// Error type for the [`super::builder::IndexBuilder`] build pipeline:
 /// filesystem scan, markdown parse, and refresh reconciliation.
+///
+/// [`super::IndexerService::refresh`] converts these into [`IndexError`]
+/// via `?`; callers see [`IndexError::Builder`], not the raw
+/// `IndexBuilderError`.
 #[derive(Debug, Error)]
 pub enum IndexBuilderError {
     /// Filesystem error during directory scan or file metadata read.

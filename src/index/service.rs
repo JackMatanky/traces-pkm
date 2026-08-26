@@ -1,4 +1,20 @@
 //! Index lifecycle service.
+//!
+//! [`IndexerService`] owns a project root and drives the [`super::FileIndex`]
+//! lifecycle through four operations:
+//!
+//! - [`build`](IndexerService::build) scans and parses all files into a fresh
+//!   in-memory index.
+//! - [`persist`](IndexerService::persist) writes the index to a redb database
+//!   at `.traces/index.redb`.
+//! - [`load`](IndexerService::load) reads a previously-persisted index from
+//!   disk.
+//! - [`refresh`](IndexerService::refresh) re-scans the root, diffs against the
+//!   persisted state, and atomically writes only changed rows.
+//!
+//! All disk interaction flows through [`super::store::IndexStore`]; this module
+//! owns the service-level orchestration (scan, diff, persist, load) but not the
+//! table-level read/write mechanics.
 
 use std::path::PathBuf;
 
@@ -15,6 +31,19 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 /// (here, the project root) with methods that read or write against it, rather
 /// than a bare `root: &Path` parameter repeated at every call site.
 ///
+/// # Lifecycle
+///
+/// 1. Build a fresh in-memory index: [`Self::build`]
+/// 2. Persist to disk: [`Self::persist`]
+/// 3. On subsequent runs, load from disk: [`Self::load`]
+/// 4. Keep the index current: [`Self::refresh`] (re-scans and persists
+///    atomically, best-effort on persist failure)
+///
+/// # Errors
+///
+/// All methods return [`IndexError`]. [`Self::refresh`] also logs a
+/// `tracing::warn!` on persist failure without propagating it.
+///
 /// # Examples
 ///
 /// ```ignore
@@ -23,6 +52,8 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 /// let index = indexer.build().expect("build index");
 /// indexer.persist(&index).expect("persist index");
 /// ```
+///
+/// [`IndexError`]: super::IndexError
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -71,10 +102,10 @@ impl IndexerService {
     /// Derived inlinks are recomputed in full whenever a Note's content or
     /// metadata changed since the last persist. A full recompute (not a
     /// per-note patch) is required because link target resolution considers
-    /// every indexed Note: an unedited Note's *resolved* target can change when
-    /// an unrelated Note is added or removed. For example, a wikilink that was
-    /// ambiguous becomes resolvable once one of the ambiguous candidates is
-    /// deleted.
+    /// every indexed Note: an unedited Note's *resolved* target can change
+    /// when an unrelated Note is added or removed. For example, a wikilink
+    /// that was ambiguous becomes resolvable once one of the ambiguous
+    /// candidates is deleted.
     ///
     /// # Errors
     ///
@@ -172,7 +203,7 @@ impl IndexerService {
     }
 }
 
-/// Converts any classified walk failure into the builder's scan error.
+/// Converts a [`DirTreeError`] into the builder's scan error variant.
 fn scan_error(error: DirTreeError) -> IndexBuilderError {
     let (path, source) = error.into_parts();
     IndexBuilderError::Scan {
@@ -469,7 +500,7 @@ mod tests {
 
         /// Writes three notes (`a.md`/`b.md`/`c.md`) under `root`, builds
         /// and persists the index, and returns the scoped service plus the
-        /// initial build's `a`/`c` notes — used to assert they persist
+        /// initial build's `a`/`c` notes, used to assert they persist
         /// byte-identical after an incremental refresh that only changes
         /// `b.md`.
         fn seed_three_notes(root: &Path) -> (IndexerService, Note, Note) {

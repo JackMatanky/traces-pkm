@@ -2,10 +2,10 @@
 //!
 //! [`IndexerService`] owns a project root and drives the index lifecycle:
 //! build, persist, load, and refresh. [`FileIndex`] is the value it
-//! produces — a snapshot of every indexed [`FileBase`] (from
-//! [`crate::file`]), each Markdown file's parsed [`Note`], and derived
-//! inbound links. `FileIndex` carries no `&Path` of its own; construction and
-//! persistence flow entirely through [`IndexerService`].
+//! produces, a snapshot of every indexed [`crate::file::FileBase`] (from
+//! [`crate::file`]), each Markdown file's parsed [`crate::note::Note`], and
+//! derived inbound links. `FileIndex` carries no `&Path` of its own;
+//! construction and persistence flow entirely through [`IndexerService`].
 //!
 //! Query execution lives in [`crate::query`]: `QueryService` borrows a
 //! [`FileIndex`] through its entry view, keeping `index` focused on indexed
@@ -29,7 +29,7 @@
 //! - Load from disk: [`IndexerService::load`]
 //! - Refresh against the filesystem: [`IndexerService::refresh`]
 //!
-//! - [`FileIndex::records`] and [`FileIndex::notes`] expose sorted indexed data
+//! - [`FileIndex::bases`] and [`FileIndex::notes`] expose sorted indexed data
 //!   for direct inspection.
 //! - [`FileIndex::entries`] exposes a borrowed, allocation-free view pairing
 //!   records with optional Notes and inbound links for query execution.
@@ -56,7 +56,8 @@ pub use service::IndexerService;
 
 pub(crate) use crate::file::FileFormat;
 
-/// Project-relative path of the persisted [`FileIndex`] database.
+/// Project-relative path of the persisted [`FileIndex`] database,
+/// `.traces/index.redb`, relative to the project root.
 const INDEX_FILE: &str = ".traces/index.redb";
 
 #[cfg(test)]

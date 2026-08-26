@@ -22,17 +22,25 @@ use crate::{file::FileBase, note::parse_markdown};
 /// [`RefreshCache`] to reuse. All heavy work (note parsing, sorting, inlink
 /// derivation) happens once in [`Self::build`], not across intermediate
 /// steps. Scanning itself lives in [`super::IndexerService::scan`], not
-/// here — `IndexBuilder` is pure data assembly, no I/O.
+/// here: `IndexBuilder` is pure data assembly, no I/O.
 ///
 /// # Invariants
 ///
-/// - `files` must already be sorted by path — guaranteed by
+/// - `files` must already be sorted by path, guaranteed by
 ///   [`super::IndexerService::scan`], the only production caller.
 /// - [`Self::with_cache`] consumes the previous index's cache, reusing its
 ///   notes and inlinks where unchanged.
 /// - [`Self::build`] produces a [`super::FileIndex`] with sorted records and
 ///   notes, and correctly derived inlinks (reused when nothing changed,
 ///   recomputed otherwise).
+/// - The delta on the returned [`super::FileIndex`] is
+///   [`super::delta::IndexDelta::Full`] for a fresh build and
+///   [`super::delta::IndexDelta::Incremental`] for a refresh, enabling
+///   [`super::store::IndexStore::persist_index`] to choose the appropriate
+///   write strategy.
+///
+/// [`RefreshCache`]: super::cache::RefreshCache
+/// [`RefreshCache::load`]: super::cache::RefreshCache::load
 pub(crate) struct IndexBuilder<'a> {
     files: Vec<FileBase>,
     /// `None` = fresh build (parse all notes at build time). `Some(cache)`
@@ -54,6 +62,8 @@ impl<'a> IndexBuilder<'a> {
     /// Attaches `cache` (already loaded via [`RefreshCache::load`]) to plan
     /// reuse of unchanged Notes without loading every persisted Note
     /// upfront.
+    ///
+    /// [`RefreshCache::load`]: super::cache::RefreshCache::load
     pub(super) fn with_cache(mut self, cache: RefreshCache<'a>) -> Self {
         self.cache = Some(Box::new(cache));
         self
@@ -62,7 +72,7 @@ impl<'a> IndexBuilder<'a> {
     /// Consumes the plan and produces a [`super::FileIndex`].
     ///
     /// - **Fresh build** (`cache: None`): parses every markdown record from
-    ///   disk, sorts notes, derives inlinks. Never opens `IndexStore` — forcing
+    ///   disk, sorts notes, derives inlinks. Never opens `IndexStore`; forcing
     ///   this through `RefreshCache` would both cost a needless store-open on
     ///   every first-time build and, more importantly, risk conflating "no
     ///   previous state to check" with "verified nothing was deleted," which
@@ -178,6 +188,11 @@ impl<'a> IndexBuilder<'a> {
 }
 
 /// Reads and parses the markdown file for `file`.
+///
+/// # Errors
+///
+/// - [`IndexBuilderError::NoteParse`] if the file cannot be read or is not
+///   valid UTF-8.
 pub(super) fn parse_note(
     root: &Path,
     file: &FileBase,

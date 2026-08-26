@@ -1,40 +1,41 @@
 //! [`IndexDelta`]/[`IncrementalDelta`]: the persistence plan produced by
 //! [`super::builder::IndexBuilder::build`], describing what changed since
 //! the last persist. The diffing that produces an [`IncrementalDelta`]
-//! lives in [`super::cache::RefreshCache`], not here — this module holds
+//! lives in [`super::cache::RefreshCache`], not here; this module holds
 //! only the resulting data shape.
+//!
+//! [`IncrementalDelta`]: struct@IncrementalDelta
 
 use std::path::PathBuf;
 
-/// Per-path persistence plan produced by [`IndexBuilder::build`].
+/// Per-path persistence plan produced by
+/// [`super::builder::IndexBuilder::build`].
 ///
-/// [`IndexStore::persist_index`] reads this to choose between a full
-/// [`IndexStore::replace_all`] rewrite (fresh build — no previous persisted
-/// state to diff against) and a row-level incremental write (refresh — only
-/// paths that actually changed since the last persist).
+/// [`super::store::IndexStore::persist_index`] reads this to choose between
+/// a full [`super::store::IndexStore::replace_all`] rewrite (fresh build,
+/// no previous persisted state to diff against) and a row-level incremental
+/// write (refresh, only paths that actually changed since the last persist).
 ///
-/// [`Incremental`]'s payload is boxed: `IndexDelta` is a field of
+/// `Incremental`'s payload is boxed: `IndexDelta` is a field of
 /// [`super::FileIndex`], and every [`Full`] build (the common case for a
-/// first-time index) would otherwise pay for the largest variant's four inline
-/// `Vec`s regardless of which variant is active. Boxing shrinks `IndexDelta`
-/// from 96 bytes to 8.
+/// first-time index) would otherwise pay for the largest variant's four
+/// inline `Vec`s regardless of which variant is active. Boxing shrinks
+/// `IndexDelta` from 96 bytes to 8.
 ///
-/// `Full` and `Incremental` are not interchangeable, even when an `Incremental`
-/// diff would come out empty: `Full` (`replace_all`) unconditionally wipes all
-/// three tables before rewriting, so it never needs to know what was deleted.
-/// `Incremental` (`persist_incremental`) only deletes paths its diff explicitly
-/// names, which is only correct because that diff is always computed against a
+/// `Full` and `Incremental` are not interchangeable, even when an
+/// `Incremental` diff would come out empty: `Full`
+/// (`replace_all`) unconditionally wipes all three tables before
+/// rewriting, so it never needs to know what was deleted. `Incremental`
+/// (`persist_incremental`) only deletes paths its diff explicitly names,
+/// which is only correct because that diff is always computed against a
 /// `RefreshCache` loaded from the real, currently-persisted store (via
-/// `RefreshCache::load`, the only constructor — private fields make this a
+/// `RefreshCache::load`, the only constructor, private fields make this a
 /// type-level guarantee). A `Full`-built `FileIndex` retagged `Incremental`
-/// against a fabricated empty previous state would silently orphan any row for
-/// a file deleted since the last persist.
+/// against a fabricated empty previous state would silently orphan any row
+/// for a file deleted since the last persist.
 ///
-/// [`IndexStore::persist_index`]: `super::store::IndexStore::persist_index`
-/// [`IndexStore::replace_all`]: `super::store::IndexStore::replace_all`
-/// [`IndexBuilder::build`]: `super::builder::IndexBuilder::build`
-/// [`Incremental`]: IndexDelta::Incremental
 /// [`Full`]: IndexDelta::Full
+/// [`Incremental`]: IndexDelta::Incremental
 #[derive(Clone, Debug)]
 pub(crate) enum IndexDelta {
     /// Produced by a fresh build: no previous state exists to diff against.
@@ -44,19 +45,33 @@ pub(crate) enum IndexDelta {
 }
 
 /// The changed-path plan behind [`IndexDelta::Incremental`].
+///
+/// Produced by [`super::cache::RefreshCache`]'s diffing pass. Each field
+/// names the paths that changed since the last persist:
+///
+/// - `upserted` and `deleted` cover [`crate::file::FileBase`] and
+///   [`crate::note::Note`] rows.
+/// - `links_upserted` and `links_deleted` cover the
+///   [`super::inlinks::InlinkMap`] multimap table.
+///
+/// [`super::store::IndexStore::persist_incremental`] reads these fields to
+/// patch only the changed rows instead of rewriting the entire database.
+///
+/// [`super::cache::RefreshCache`]: super::cache::RefreshCache
+/// [`super::store::IndexStore::persist_incremental`]: super::store::IndexStore::persist_incremental
 #[derive(Clone, Debug)]
 pub(crate) struct IncrementalDelta {
     /// Paths whose `FileBase` (and `Note`, if applicable) must be upserted
-    /// into `FILES`/`NOTES` — added or metadata-changed since the last
+    /// into `FILES`/`NOTES`, added or metadata-changed since the last
     /// persist.
     pub(crate) upserted: Vec<PathBuf>,
-    /// Paths removed since the last persist — must be deleted from
+    /// Paths removed since the last persist, must be deleted from
     /// `FILES`/`NOTES`.
     pub(crate) deleted: Vec<PathBuf>,
-    /// Target paths in `LINKS` whose source set is new or changed — `None`
+    /// Target paths in `LINKS` whose source set is new or changed; `None`
     /// when inlinks were reused unchanged (nothing to write).
     pub(crate) links_upserted: Option<Vec<PathBuf>>,
-    /// Target paths removed from `LINKS` — always present alongside
+    /// Target paths removed from `LINKS`, always present alongside
     /// `links_upserted` (both `None`/both populated; empty `Vec` is a valid
     /// "no removals" case, distinct from `None`'s "inlinks unchanged,
     /// nothing computed").
@@ -64,8 +79,10 @@ pub(crate) struct IncrementalDelta {
 }
 
 impl IncrementalDelta {
-    /// True if this delta names no changes at all — persisting it would
-    /// open a write transaction only to commit nothing.
+    /// True if this delta names no changes at all.
+    ///
+    /// Persisting an empty delta would open a write transaction only to
+    /// commit nothing, so callers short-circuit.
     pub(crate) fn is_empty(&self) -> bool {
         self.upserted.is_empty()
             && self.deleted.is_empty()
