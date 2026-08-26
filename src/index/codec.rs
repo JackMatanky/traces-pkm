@@ -79,11 +79,11 @@ pub mod path {
     use std::path::{Path, PathBuf};
 
     use serde::{Deserialize, Deserializer, Serializer};
-    /// Serializes a path using target-specific raw byte slices on Unix.
+    /// Serializes a [`Path`] using target-specific raw byte slices on Unix.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying serializer fails to encode the path
+    /// Returns `Err` if the underlying [`Serializer`] fails to encode the path
     /// bytes.
     #[cfg(unix)]
     #[inline]
@@ -95,11 +95,12 @@ pub mod path {
         serializer.serialize_bytes(path.as_os_str().as_bytes())
     }
 
-    /// Deserializes a path from target-specific raw byte slices on Unix.
+    /// Deserializes a [`PathBuf`] from target-specific raw byte slices on Unix.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying deserializer fails to decode raw bytes.
+    /// Returns `Err` if the underlying [`Deserializer`] fails to decode raw
+    /// bytes.
     #[cfg(unix)]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
@@ -111,11 +112,11 @@ pub mod path {
         Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
     }
 
-    /// Serializes a path using wide character arrays on Windows.
+    /// Serializes a [`Path`] using wide character arrays on Windows.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying serializer fails to encode the wide
+    /// Returns `Err` if the underlying [`Serializer`] fails to encode the wide
     /// characters.
     #[cfg(windows)]
     #[inline]
@@ -128,11 +129,11 @@ pub mod path {
         wide.serialize(serializer)
     }
 
-    /// Deserializes a path from wide character arrays on Windows.
+    /// Deserializes a [`PathBuf`] from wide character arrays on Windows.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying deserializer fails to decode wide
+    /// Returns `Err` if the underlying [`Deserializer`] fails to decode wide
     /// characters.
     #[cfg(windows)]
     #[inline]
@@ -145,12 +146,12 @@ pub mod path {
         Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
     }
 
-    /// Serializes a path using standard lossless string representation on
+    /// Serializes a [`Path`] using standard lossless string representation on
     /// non-Unix, non-Windows platforms.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying serializer fails to encode the path
+    /// Returns `Err` if the underlying [`Serializer`] fails to encode the path
     /// string.
     #[cfg(not(any(unix, windows)))]
     #[inline]
@@ -161,13 +162,13 @@ pub mod path {
         serializer.serialize_str(&path.to_string_lossy())
     }
 
-    /// Deserializes a path from standard string representation on non-Unix,
-    /// non-Windows platforms.
+    /// Deserializes a [`PathBuf`] from standard string representation on
+    /// non-Unix, non-Windows platforms.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying deserializer fails to decode the path
-    /// string.
+    /// Returns `Err` if the underlying [`Deserializer`] fails to decode the
+    /// path string.
     #[cfg(not(any(unix, windows)))]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
