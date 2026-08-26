@@ -132,13 +132,11 @@ pub(crate) mod path {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    mod test_encode_row {
+    mod encode {
         use pretty_assertions::assert_eq;
         use serde::{Deserialize, Serialize};
 
-        use super::encode_row;
+        use super::super::encode_row;
         use crate::index::error::DbError;
 
         #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -181,11 +179,11 @@ mod tests {
         }
     }
 
-    mod test_decode_row {
+    mod decode {
         use pretty_assertions::assert_eq;
         use serde::{Deserialize, Serialize};
 
-        use super::decode_row;
+        use super::super::decode_row;
         use crate::index::error::DbError;
 
         #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -215,12 +213,12 @@ mod tests {
         }
     }
 
-    mod test_path_from_bytes {
+    mod path_from_bytes {
         use std::path::PathBuf;
 
         use pretty_assertions::assert_eq;
 
-        use super::path_from_bytes;
+        use super::super::path_from_bytes;
 
         #[test]
         fn decodes_valid_utf8() {
@@ -237,13 +235,13 @@ mod tests {
         }
     }
 
-    mod test_path_codec {
+    mod path_codec {
         use std::path::PathBuf;
 
         use pretty_assertions::assert_eq;
         use serde::{Deserialize, Serialize};
 
-        use super::path;
+        use super::super::path;
 
         #[derive(Serialize, Deserialize, Debug, PartialEq)]
         struct PathWrapper {
