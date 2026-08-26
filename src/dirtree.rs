@@ -426,11 +426,11 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let file = write(temp.path(), "plain.md");
 
-            // Act
-            let collected: Vec<_> = DirTree::children(&file).collect();
-
-            // Assert
-            assert!(collected.is_empty(), "a file root lists nothing");
+            // Act / Assert
+            assert!(
+                DirTree::children(&file).next().is_none(),
+                "a file root lists nothing"
+            );
         }
 
         #[test]
