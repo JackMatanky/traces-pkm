@@ -1076,7 +1076,7 @@ mod tests {
                     .to_vec()
             };
             assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);
-            assert_eq!(inlinks_of(normal.as_path()), vec![weird.clone()]);
+            assert_eq!(inlinks_of(normal.as_path()), vec![weird]);
         }
 
         #[test]

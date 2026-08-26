@@ -76,10 +76,9 @@ pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 /// (on Unix) or wide character arrays (on Windows) to allow exact non-Unicode
 /// path round-trips.
 pub(crate) mod path {
+    use std::path::{Path, PathBuf};
+
     use serde::{Deserialize, Deserializer, Serializer};
-
-    use super::*;
-
     #[cfg(unix)]
     pub(crate) fn serialize<S>(
         path: &Path,
@@ -253,7 +252,7 @@ mod tests {
         fn round_trips_valid_utf8() {
             let path = PathBuf::from("hello.md");
             let item = PathWrapper {
-                path: path.clone(),
+                path,
             };
             let bytes = postcard::to_allocvec(&item).expect("serialize path");
             let decoded: PathWrapper =
@@ -270,7 +269,7 @@ mod tests {
                 std::ffi::OsString::from_vec(b"weird\xFF.md".to_vec());
             let path = PathBuf::from(weird_os);
             let item = PathWrapper {
-                path: path.clone(),
+                path,
             };
             let bytes = postcard::to_allocvec(&item).expect("serialize path");
             let decoded: PathWrapper =
@@ -288,7 +287,7 @@ mod tests {
             ]);
             let path = PathBuf::from(weird_os);
             let item = PathWrapper {
-                path: path.clone(),
+                path,
             };
             let bytes = postcard::to_allocvec(&item).expect("serialize path");
             let decoded: PathWrapper =
