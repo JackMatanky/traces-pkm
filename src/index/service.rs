@@ -1,17 +1,48 @@
 //! Index lifecycle service.
+//!
+//! [`IndexerService`] owns a project root and drives the [`super::FileIndex`]
+//! lifecycle through four operations:
+//!
+//! - [`build`](IndexerService::build) scans and parses all files into a fresh
+//!   in-memory index.
+//! - [`persist`](IndexerService::persist) writes the index to a redb database
+//!   at `.traces/index.redb`.
+//! - [`load`](IndexerService::load) reads a previously-persisted index from
+//!   disk.
+//! - [`refresh`](IndexerService::refresh) re-scans the root, diffs against the
+//!   persisted state, and atomically writes only changed rows.
+//!
+//! All disk interaction flows through [`super::store::IndexStore`]; this module
+//! owns the service-level orchestration (scan, diff, persist, load) but not the
+//! table-level read/write mechanics.
 
 use std::path::PathBuf;
 
 use super::{
-    FileIndex, IndexError, builder, builder::IndexDelta, store::IndexStore,
+    FileIndex, INDEX_FILE, IndexError, builder, cache, delta::IndexDelta,
+    error::IndexBuilderError, store::IndexStore,
 };
+use crate::{DirTree, DirTreeError, file::FileBase};
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
 ///
 /// Mirrors `ConfigService`/`SchemaService`: a fixed-configuration service
-/// (here, the project root) with methods that read or write against it,
-/// rather than a bare `root: &Path` parameter repeated at every call site.
+/// (here, the project root) with methods that read or write against it, rather
+/// than a bare `root: &Path` parameter repeated at every call site.
+///
+/// # Lifecycle
+///
+/// 1. Build a fresh in-memory index: [`Self::build`]
+/// 2. Persist to disk: [`Self::persist`]
+/// 3. On subsequent runs, load from disk: [`Self::load`]
+/// 4. Keep the index current: [`Self::refresh`] (re-scans and persists
+///    atomically, best-effort on persist failure)
+///
+/// # Errors
+///
+/// All methods return [`IndexError`]. [`Self::refresh`] also logs a
+/// `tracing::warn!` on persist failure without propagating it.
 ///
 /// # Examples
 ///
@@ -21,6 +52,8 @@ use super::{
 /// let index = indexer.build().expect("build index");
 /// indexer.persist(&index).expect("persist index");
 /// ```
+///
+/// [`IndexError`]: super::IndexError
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -47,16 +80,16 @@ impl IndexerService {
     ///   metadata cannot be inspected, or a markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> Result<FileIndex, IndexError> {
-        Ok(builder::IndexBuilder::from_scan(&self.root)?.build(&self.root)?)
+        let files = self.scan()?;
+        Ok(builder::IndexBuilder::new(files).build(&self.root)?)
     }
 
-    /// Refreshes the persisted index for this service's root against
-    /// current filesystem state, persisting the fresh result before
-    /// returning (best-effort: a persist failure is logged via
-    /// `tracing::warn!` and does not fail this call). Callers do not need
-    /// to call [`Self::persist`] separately after `refresh`; it remains
-    /// available for persisting a [`FileIndex`] built via [`Self::build`]
-    /// instead.
+    /// Refreshes the persisted index for this service's root against current
+    /// filesystem state, persisting the fresh result before returning
+    /// (best-effort: a persist failure is logged via `tracing::warn!` and does
+    /// not fail this call). Callers do not need to call [`Self::persist`]
+    /// separately after `refresh`; it remains available for persisting a
+    /// [`FileIndex`] built via [`Self::build`] instead.
     ///
     /// Re-scans the root and compares each current file's `(created_at,
     /// modified_at, size)` tuple against the previously persisted
@@ -66,12 +99,14 @@ impl IndexerService {
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Derived inlinks are recomputed in full whenever a Note's content or
-    /// metadata changed since the last persist. A full recompute (not a
-    /// per-note patch) is required because link target resolution considers
-    /// every indexed Note: an unedited Note's *resolved* target can change
-    /// when an unrelated Note is added or removed. For example, a wikilink
-    /// that was ambiguous becomes resolvable once one of the ambiguous
+    /// Derived inlinks are recomputed in full when a Note is added or removed,
+    /// or when a changed Note's outlink targets actually differ from its
+    /// previously-persisted value (backdating skips the recompute otherwise;
+    /// see [`super::cache::RefreshCache::reconcile_note`]). A full recompute
+    /// (not a per-note patch) is required because link target resolution
+    /// considers every indexed Note: an unedited Note's *resolved* target can
+    /// change when an unrelated Note is added or removed. For example, a
+    /// wikilink that was ambiguous becomes resolvable once one of the ambiguous
     /// candidates is deleted.
     ///
     /// # Errors
@@ -86,11 +121,13 @@ impl IndexerService {
         let store = IndexStore::open(&self.root)?;
         let index = {
             let read_txn = store.begin_read()?;
-            let cache = builder::RefreshCache::load(&store, &read_txn)?;
-            builder::IndexBuilder::from_scan(&self.root)?
-                .reuse_unchanged(cache)
+            let cache = cache::RefreshCache::load(&store, &read_txn)?;
+            let files = self.scan()?;
+            builder::IndexBuilder::new(files)
+                .with_cache(cache)
                 .build(&self.root)?
-        }; // read_txn (and cache, which borrows it) drop here, before
+        };
+        // read_txn (and cache, which borrows it) drop here, before
         // persist_index opens a write transaction
         if let Err(source) = store.persist_index(&index) {
             tracing::warn!(%source, "failed to persist refreshed index");
@@ -124,8 +161,56 @@ impl IndexerService {
     #[inline]
     pub fn load(&self) -> Result<FileIndex, IndexError> {
         let (records, notes, inlinks) =
-            IndexStore::open(&self.root)?.load_all()?;
+            IndexStore::open(&self.root)?.read_all()?;
         Ok(FileIndex::new(records, notes, inlinks, IndexDelta::Full))
+    }
+
+    /// Recursively scans this service's root for regular files and returns
+    /// records sorted by project-relative path.
+    ///
+    /// Skips `.git` directories (and their descendants), the index database
+    /// itself, and symlinks.
+    ///
+    /// The sorted output is a precondition for the merge-join reconciliation
+    /// in [`builder::IndexBuilder`].
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexBuilderError::Scan`] if a directory cannot be read or a file's
+    ///   metadata cannot be inspected.
+    #[inline]
+    pub(super) fn scan(&self) -> Result<Vec<FileBase>, IndexBuilderError> {
+        let index_db = self.root.join(INDEX_FILE);
+        let mut files = Vec::new();
+        let nodes = DirTree::descendants(&self.root)
+            .filter(|node| node.file_name() == ".git")
+            .sorted_by(|a, b| a.file_name().cmp(b.file_name()));
+        for node in nodes {
+            let node = node.map_err(scan_error)?;
+            let path = node.path();
+            if !node.file_type().is_file() || path == index_db {
+                continue;
+            }
+            let metadata = node.metadata().map_err(scan_error)?;
+            files.push(
+                FileBase::from_metadata(path, &self.root, &metadata).map_err(
+                    |source| IndexBuilderError::Scan {
+                        path: path.to_path_buf(),
+                        source,
+                    },
+                )?,
+            );
+        }
+        Ok(files)
+    }
+}
+
+/// Converts a [`DirTreeError`] into the builder's scan error variant.
+fn scan_error(error: DirTreeError) -> IndexBuilderError {
+    let (path, source) = error.into_parts();
+    IndexBuilderError::Scan {
+        path,
+        source,
     }
 }
 
@@ -257,6 +342,130 @@ mod tests {
         }
     }
 
+    mod scan {
+        use std::fs;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        #[cfg(unix)]
+        use crate::index::tests::fixtures::RestorePermissions;
+
+        fn names(files: &[FileBase]) -> Vec<&Path> {
+            files.iter().map(FileBase::path).collect()
+        }
+
+        #[test]
+        fn scans_nested_files_in_sorted_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join("b")).expect("mkdir b");
+            fs::write(root.join("b/one.md"), "1").expect("write b/one.md");
+            fs::write(root.join("a.md"), "2").expect("write a.md");
+
+            let files = IndexerService::new(root).scan().expect("scan");
+
+            assert_eq!(names(&files), vec![
+                Path::new("a.md"),
+                Path::new("b/one.md")
+            ]);
+        }
+
+        #[test]
+        fn orders_sibling_files_and_directories_by_relative_path() {
+            // Arrange — `b.txt` sorts AFTER anything inside `b` under
+            // component-wise path comparison (`b` < `b.txt`), which matches
+            // the walk's name-ordered depth-first traversal.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join("b")).expect("mkdir b");
+            fs::write(root.join("b/one.md"), "1").expect("write b/one.md");
+            fs::write(root.join("b.txt"), "2").expect("write b.txt");
+
+            let files = IndexerService::new(root).scan().expect("scan");
+
+            assert_eq!(names(&files), vec![
+                Path::new("b/one.md"),
+                Path::new("b.txt")
+            ]);
+        }
+
+        #[test]
+        fn skips_git_directories() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join(".git")).expect("mkdir .git");
+            fs::write(root.join(".git/HEAD"), "ref: refs/heads/main")
+                .expect("write .git/HEAD");
+            fs::write(root.join("note.md"), "content").expect("write note.md");
+
+            let files = IndexerService::new(root).scan().expect("scan");
+
+            assert_eq!(names(&files), vec![Path::new("note.md")]);
+        }
+
+        #[test]
+        fn skips_its_own_index_database_file() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join(".traces")).expect("mkdir .traces");
+            fs::write(root.join(INDEX_FILE), b"redb-bytes")
+                .expect("write index db");
+            fs::write(root.join("note.md"), "content").expect("write note.md");
+
+            let files = IndexerService::new(root).scan().expect("scan");
+
+            assert_eq!(names(&files), vec![Path::new("note.md")]);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn skips_symlinks_entirely() {
+            use std::os::unix::fs::symlink;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outside = tempfile::tempdir().expect("create outside dir");
+            let root = temp.path();
+            let target = outside.path().join("outside.md");
+            fs::write(&target, "content").expect("write link target");
+            symlink(&target, root.join("link.md")).expect("create symlink");
+            fs::write(root.join("note.md"), "content").expect("write note.md");
+
+            let files = IndexerService::new(root).scan().expect("scan");
+
+            assert_eq!(names(&files), vec![Path::new("note.md")]);
+        }
+
+        #[test]
+        fn empty_root_yields_no_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+
+            let files = IndexerService::new(temp.path()).scan().expect("scan");
+
+            assert_eq!(files.len(), 0);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_an_io_error_when_a_directory_is_unreadable() {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let locked = root.join("locked");
+            fs::create_dir(&locked).expect("create locked dir");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let _restore = RestorePermissions(&locked);
+
+            let error = IndexerService::new(root)
+                .scan()
+                .expect_err("unreadable dir fails");
+
+            assert!(matches!(error, IndexBuilderError::Scan { .. }));
+        }
+    }
+
     mod persistence {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -264,13 +473,15 @@ mod tests {
         use super::*;
         use crate::note::{Frontmatter, Link, LinkType, NoteFieldValue, Tag};
 
-        /// The `upserted`/`deleted` path lists extracted from an
+        /// The `upserted`/`deleted`/link path lists extracted from an
         /// [`IndexDelta::Incremental`]. Distinct from production's
-        /// [`builder::IncrementalDelta`]: this borrows only the two fields
-        /// these tests assert on.
+        /// [`delta::IncrementalDelta`]: this borrows the same fields these
+        /// tests assert on.
         struct IncrementalPaths<'a> {
             upserted: &'a [PathBuf],
             deleted: &'a [PathBuf],
+            links_upserted: Option<&'a [PathBuf]>,
+            links_deleted: &'a [PathBuf],
         }
 
         /// Extracts [`IncrementalPaths`] from an [`IndexDelta::Incremental`],
@@ -282,6 +493,8 @@ mod tests {
                 IndexDelta::Incremental(delta) => Some(IncrementalPaths {
                     upserted: &delta.upserted,
                     deleted: &delta.deleted,
+                    links_upserted: delta.links_upserted.as_deref(),
+                    links_deleted: &delta.links_deleted,
                 }),
                 IndexDelta::Full => None,
             }
@@ -289,7 +502,7 @@ mod tests {
 
         /// Writes three notes (`a.md`/`b.md`/`c.md`) under `root`, builds
         /// and persists the index, and returns the scoped service plus the
-        /// initial build's `a`/`c` notes — used to assert they persist
+        /// initial build's `a`/`c` notes, used to assert they persist
         /// byte-identical after an incremental refresh that only changes
         /// `b.md`.
         fn seed_three_notes(root: &Path) -> (IndexerService, Note, Note) {
@@ -662,6 +875,110 @@ mod tests {
             ]);
             assert!(delta.deleted.is_empty());
         }
+
+        #[test]
+        fn content_change_without_outlink_change_backdates_and_skips_inlink_recompute()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]\n- [ ] task")
+                .expect("write linker");
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            fs::write(temp.path().join("linker.md"), "[[target]]\n- [x] task")
+                .expect("rewrite linker: task checked, same outlink");
+
+            let refreshed = indexer.refresh().expect("refresh index");
+
+            let delta = incremental_paths(refreshed.delta())
+                .expect("refresh after a persisted build must be incremental");
+            assert_eq!(delta.upserted, &[PathBuf::from("linker.md")]);
+            assert!(
+                delta.links_upserted.is_none(),
+                "backdating must skip the inlink recompute when outlinks are \
+                 unchanged"
+            );
+        }
+
+        #[test]
+        fn outlink_change_is_not_backdated_and_recomputes_inlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("old-target.md"), "# Old")
+                .expect("write old target");
+            fs::write(temp.path().join("new-target.md"), "# New")
+                .expect("write new target");
+            fs::write(temp.path().join("linker.md"), "[[old-target]]")
+                .expect("write linker");
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            fs::write(temp.path().join("linker.md"), "[[new-target]]")
+                .expect("retarget linker");
+
+            let refreshed = indexer.refresh().expect("refresh index");
+            let delta = incremental_paths(refreshed.delta())
+                .expect("refresh after a persisted build must be incremental");
+            let links_upserted = delta
+                .links_upserted
+                .expect("outlink change must recompute inlinks");
+            assert!(links_upserted.contains(&PathBuf::from("new-target.md")));
+            assert!(
+                delta.links_deleted.contains(&PathBuf::from("old-target.md"))
+            );
+        }
+
+        #[test]
+        fn reordered_or_relabeled_outlinks_with_same_targets_still_backdates() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("linker.md"), "[[a]]\n[[b]]")
+                .expect("write linker");
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            fs::write(temp.path().join("linker.md"), "[[b|Bee]]\n[[a]]")
+                .expect("reorder links and relabel display text, same targets");
+
+            let refreshed = indexer.refresh().expect("refresh index");
+            let delta = incremental_paths(refreshed.delta())
+                .expect("refresh after a persisted build must be incremental");
+            assert!(
+                delta.links_upserted.is_none(),
+                "same target set in different order/display text must still \
+                 backdate"
+            );
+        }
+
+        #[test]
+        fn brand_new_note_always_contributes_to_staleness() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            fs::write(temp.path().join("b.md"), "# B, no links")
+                .expect("write new note");
+
+            let refreshed = indexer.refresh().expect("refresh index");
+            let delta = incremental_paths(refreshed.delta())
+                .expect("refresh after a persisted build must be incremental");
+            assert!(
+                delta.links_upserted.is_some(),
+                "a brand-new note has nothing to backdate against and must \
+                 force a recompute"
+            );
+        }
     }
 
     mod refresh {
@@ -917,8 +1234,9 @@ mod tests {
             // deleted. `refresh`'s per-file staleness check would mark
             // `a.md` "unchanged, reused" and skip re-parsing it — proving
             // inlinks must come from a full recompute over every indexed
-            // Note (gated on whether *anything* changed), not a patch
-            // limited to the notes `refresh` actually re-parsed.
+            // Note (deleting a Note always forces one, per
+            // `RefreshCache::diff_files`), not a patch limited to the
+            // notes `refresh` actually re-parsed.
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
             fs::create_dir_all(temp.path().join("archive"))

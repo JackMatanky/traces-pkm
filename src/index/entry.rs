@@ -12,21 +12,29 @@ use crate::{file::FileBase, note::Note};
 /// Markdown files also contribute a [`Note`], accessible through
 /// [`Self::notes`]. A pure value type: [`super::IndexerService`] produces,
 /// persists, and loads it; `FileIndex` itself carries no `&Path`.
+///
+/// Construction always flows through [`super::IndexerService`]'s
+/// [`build`](super::IndexerService::build),
+/// [`load`](super::IndexerService::load), or
+/// [`refresh`](super::IndexerService::refresh) methods, never directly.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
     pub(super) bases: Vec<FileBase>,
     pub(super) notes: Vec<Note>,
     pub(super) inlinks: InlinkMap,
-    pub(super) delta: super::builder::IndexDelta,
+    pub(super) delta: super::delta::IndexDelta,
 }
 
 impl FileIndex {
     /// Creates an index from its constituent parts.
+    ///
+    /// Used exclusively by [`super::builder::IndexBuilder`] after scanning,
+    /// parsing, and inlink derivation are complete.
     pub(crate) fn new(
         bases: Vec<FileBase>,
         notes: Vec<Note>,
         inlinks: InlinkMap,
-        delta: super::builder::IndexDelta,
+        delta: super::delta::IndexDelta,
     ) -> Self {
         Self {
             bases,
@@ -50,7 +58,7 @@ impl FileIndex {
         &self.notes
     }
 
-    /// Returns the inbound link map.
+    /// Returns the inbound link map keyed by target [`Note`] path.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &InlinkMap {
@@ -65,8 +73,8 @@ impl FileIndex {
         find_by_path(&self.notes, path)
     }
 
-    /// Returns borrowed entries pairing each file record with its Note and
-    /// inbound links.
+    /// Returns borrowed entries pairing each [`FileBase`] with its optional
+    /// [`Note`] and inbound links.
     #[inline]
     pub(crate) fn entries(
         &self,
@@ -74,9 +82,9 @@ impl FileIndex {
         FileIndexEntryIter::new(self)
     }
 
-    /// Returns the persistence plan `IndexStore::persist_index` uses to choose
-    /// a full rewrite vs. a row-level incremental write.
-    pub(super) fn delta(&self) -> &super::builder::IndexDelta {
+    /// Returns the persistence plan [`super::store::IndexStore::persist_index`]
+    /// uses to choose a full rewrite vs. a row-level incremental write.
+    pub(super) fn delta(&self) -> &super::delta::IndexDelta {
         &self.delta
     }
 }
@@ -103,7 +111,7 @@ pub(crate) struct FileIndexEntry<'a> {
 }
 
 impl<'a> FileIndexEntry<'a> {
-    /// Returns the indexed file record.
+    /// Returns the [`FileBase`] for this entry's file.
     #[inline]
     pub(crate) const fn base(&self) -> &'a FileBase {
         self.base
@@ -122,7 +130,8 @@ impl<'a> FileIndexEntry<'a> {
     }
 }
 
-/// Iterator over [`FileIndexEntry`] values.
+/// Iterator that pairs each [`FileBase`] with its optional [`Note`] and
+/// inlinks via a merge-join over path-sorted slices.
 struct FileIndexEntryIter<'a> {
     bases: std::slice::Iter<'a, FileBase>,
     notes: std::iter::Peekable<std::slice::Iter<'a, Note>>,
