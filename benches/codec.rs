@@ -2,8 +2,7 @@
 //!
 //! Exposes and monitors the CPU latency of path serialization and
 //! deserialization. The path codec is invoked for every single record read from
-//! or written to the `FILES`, `NOTES`, and `LINKS`
-//! database tables.
+//! or written to the `FILES`, `NOTES`, and `LINKS` database tables.
 //!
 //! Because database transactions are highly dependent on serialization
 //! efficiency, regressions in this codec directly degrade the performance of
