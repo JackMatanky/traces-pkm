@@ -52,6 +52,10 @@ use traces_pkm::{Blake3FileHash, Blake3PathHash};
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
+        #[allow(
+            clippy::as_conversions,
+            reason = "usize→u64 is a lossless widening cast"
+        )]
         group.throughput(Throughput::Bytes(size as u64));
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("content");

@@ -75,6 +75,10 @@ fn bench_parse_markdown(c: &mut Criterion) {
     for (label, source) in
         [("small", SMALL.to_owned()), ("medium", medium()), ("large", large())]
     {
+        #[allow(
+            clippy::as_conversions,
+            reason = "usize→u64 is a lossless widening cast"
+        )]
         group.throughput(Throughput::Bytes(source.len() as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
