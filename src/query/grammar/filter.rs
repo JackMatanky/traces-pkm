@@ -8,13 +8,14 @@ use super::{
     },
 };
 use crate::{
-    lexer::{self, Spanned, TokenStream},
+    LexTokenStream, LexedToken,
     note::NoteFieldValue,
     query::{
         QueryError, QueryRecord,
         error::{QueryDialect, QuerySyntaxError},
         value::QueryFieldValueRef,
     },
+    tokenize, unescape_backslash,
 };
 
 /// A parsed filter expression AST.
@@ -142,7 +143,7 @@ impl FilterExpr {
     pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
         parse_boolean_expr(
             input,
-            TokenStream::new(tokenize_filter_expr(input)?),
+            LexTokenStream::new(tokenize_filter_expr(input)?),
             FilterGrammar,
         )
         .map(Self)
@@ -242,7 +243,7 @@ impl FilterFunction {
 impl FilterGrammar {
     fn parse_literal_arg(
         input: &str,
-        tokens: &mut TokenStream<Spanned<FilterToken>>,
+        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
     ) -> Result<NoteFieldValue, QueryError> {
         let spanned = tokens
             .expect_map(input, "a literal value", |token| {
@@ -260,7 +261,7 @@ impl FilterGrammar {
 
     fn parse_function_call(
         input: &str,
-        tokens: &mut TokenStream<Spanned<FilterToken>>,
+        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         name: &str,
     ) -> Result<FilterFunction, QueryError> {
         tokens
@@ -313,7 +314,7 @@ impl FilterGrammar {
 
     fn parse_comparison(
         input: &str,
-        tokens: &mut TokenStream<Spanned<FilterToken>>,
+        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         field_ident: &str,
     ) -> Result<ComparisonExpr, QueryError> {
         let op_spanned = tokens
@@ -355,7 +356,7 @@ impl AtomParser for FilterGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut TokenStream<Spanned<Self::Token>>,
+        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
     ) -> Result<Self::Atom, QueryError> {
         let spanned_ident = tokens
             .expect_map(input, "a filter term", |token| {
@@ -391,8 +392,8 @@ impl AtomParser for FilterGrammar {
 /// Tokenizes `input`, preserving each token's original byte span.
 fn tokenize_filter_expr(
     input: &str,
-) -> Result<Vec<Spanned<FilterToken>>, QueryError> {
-    let tokens = lexer::tokenize::<FilterToken>(input).map_err(|e| {
+) -> Result<Vec<LexedToken<FilterToken>>, QueryError> {
+    let tokens = tokenize::<FilterToken>(input).map_err(|e| {
         QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
     })?;
     tokens
@@ -401,7 +402,7 @@ fn tokenize_filter_expr(
             let span = spanned.span();
             match spanned.into_value() {
                 FilterToken::Ident(word) => match word.parse::<f64>() {
-                    Ok(number) if number.is_finite() => Ok(Spanned::new(
+                    Ok(number) if number.is_finite() => Ok(LexedToken::new(
                         FilterToken::Literal(NoteFieldValue::Number(number)),
                         span,
                     )),
@@ -412,9 +413,11 @@ fn tokenize_filter_expr(
                         "a finite numeric literal",
                     )
                     .into()),
-                    Err(_) => Ok(Spanned::new(FilterToken::Ident(word), span)),
+                    Err(_) => {
+                        Ok(LexedToken::new(FilterToken::Ident(word), span))
+                    }
                 },
-                other => Ok(Spanned::new(other, span)),
+                other => Ok(LexedToken::new(other, span)),
             }
         })
         .collect()
@@ -432,7 +435,7 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
         .unwrap_or_default();
-    NoteFieldValue::String(crate::lexer::unescape_backslash(inner))
+    NoteFieldValue::String(unescape_backslash(inner))
 }
 
 #[cfg(test)]
@@ -525,13 +528,10 @@ mod tests {
                 "expected syntax error"
             );
             if let Err(QueryError::Syntax(error)) = result {
-                assert_eq!(
-                    error.lex_error,
-                    crate::lexer::LexError::UnexpectedEof {
-                        span: SourceSpan::from((offset, length)),
-                        expected: "a finite numeric literal",
-                    }
-                );
+                assert_eq!(*error.lex_error, crate::LexError::UnexpectedEof {
+                    span: SourceSpan::from((offset, length)),
+                    expected: "a finite numeric literal",
+                });
                 assert_eq!(error.span, SourceSpan::from((offset, length)));
             }
         }

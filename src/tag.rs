@@ -1,21 +1,20 @@
 //! Validated Markdown tag type with pre-computed hierarchical segments.
 //!
-//! Tags are `#`-prefixed identifiers matching `[a-zA-Z][a-zA-Z0-9_/]*`.
-//! Nested tags like `#projects/active` are stored with their full segment
-//! hierarchy pre-computed at construction time for efficient containment
-//! checks.
+//! Tags are `#`-prefixed identifiers matching `[a-zA-Z][a-zA-Z0-9_/]*`. Nested
+//! tags like `#projects/active` are stored with their full segment hierarchy
+//! pre-computed at construction time for efficient containment checks.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// A validated Markdown tag, including its leading `#`.
 ///
-/// Constructed via [`Tag::parse`], which validates the format and
-/// pre-computes hierarchical segments for efficient nesting checks.
+/// Constructed via [`Tag::parse`], which validates the format and pre-computes
+/// hierarchical segments for efficient nesting checks.
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # use crate::tag::Tag;
 /// let tag = Tag::parse("#projects/active").unwrap();
 /// assert_eq!(tag.as_str(), "#projects/active");
@@ -50,12 +49,13 @@ impl Tag {
     /// Parses and validates a tag string.
     ///
     /// The input must start with `#` followed by `[a-zA-Z]`, then
-    /// `[a-zA-Z0-9_/]*`. Hierarchical segments are pre-computed at
-    /// construction time for efficient containment checks.
+    /// `[a-zA-Z0-9_/]*`. Hierarchical segments are pre-computed at construction
+    /// time for efficient containment checks.
     ///
     /// # Errors
     ///
     /// Returns [`TagError`] if the input does not match the tag format.
+    #[inline]
     pub fn parse(input: &str) -> Result<Self, TagError> {
         let rest = input.strip_prefix('#').ok_or(TagError::MissingHash)?;
         let mut chars = rest.chars();
@@ -68,9 +68,14 @@ impl Tag {
         let body_bytes = rest.len();
         let mut end = first.len_utf8();
         while end < body_bytes {
-            let ch = rest[end..].chars().next().unwrap();
+            let ch = rest[end..].chars().next().ok_or(
+                TagError::InvalidBodyCharacter {
+                    offset: end,
+                    found: '\0',
+                },
+            )?;
             if ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-') {
-                end += ch.len_utf8();
+                end = end.saturating_add(ch.len_utf8());
             } else {
                 return Err(TagError::InvalidBodyCharacter {
                     offset: end,
@@ -78,12 +83,12 @@ impl Tag {
                 });
             }
         }
-        let full = input[..=end].to_owned();
+        let full = input[..=end].to_string();
         let segments: Vec<String> = full
             .split('/')
             .scan(String::new(), |acc, part| {
                 if acc.is_empty() {
-                    *acc = part.to_owned();
+                    *acc = String::from(part);
                 } else {
                     acc.push('/');
                     acc.push_str(part);

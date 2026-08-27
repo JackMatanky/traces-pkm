@@ -95,6 +95,9 @@ pub use index::{
     FileIndex, IndexError, IndexerService, InlinkMap, derive_inlinks,
     path as path_codec,
 };
+pub(crate) use lexer::{
+    LexError, LexTokenStream, LexedToken, tokenize, unescape_backslash,
+};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,

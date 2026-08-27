@@ -96,7 +96,7 @@ pub struct QuerySyntaxError {
     pub(crate) span: SourceSpan,
     /// The underlying lexer error carrying diagnostic context.
     #[source]
-    pub(crate) lex_error: crate::lexer::LexError,
+    pub(crate) lex_error: Box<crate::LexError>,
 }
 
 impl QuerySyntaxError {
@@ -111,29 +111,29 @@ impl QuerySyntaxError {
             dialect,
             input: input.to_owned(),
             span,
-            lex_error: crate::lexer::LexError::UnexpectedEof {
+            lex_error: Box::new(crate::LexError::UnexpectedEof {
                 span,
                 expected,
-            },
+            }),
         }
     }
 
-    /// Wraps a [`crate::lexer::LexError`] into a syntax diagnostic.
+    /// Wraps a [`crate::LexError`] into a syntax diagnostic.
     pub(crate) fn from_lex(
         dialect: QueryDialect,
         input: &str,
-        lex_error: crate::lexer::LexError,
+        lex_error: crate::LexError,
     ) -> Self {
         let span = match &lex_error {
-            crate::lexer::LexError::UnexpectedToken {
+            crate::LexError::UnexpectedToken {
                 span,
                 ..
             }
-            | crate::lexer::LexError::UnexpectedEof {
+            | crate::LexError::UnexpectedEof {
                 span,
                 ..
             }
-            | crate::lexer::LexError::InvalidCharacter {
+            | crate::LexError::InvalidCharacter {
                 span,
                 ..
             } => *span,
@@ -142,7 +142,7 @@ impl QuerySyntaxError {
             dialect,
             input: input.to_owned(),
             span,
-            lex_error,
+            lex_error: Box::new(lex_error),
         }
     }
 }
@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(error.dialect, QueryDialect::Filter);
         assert_eq!(error.input, "rating >");
         assert_eq!(error.span, SourceSpan::from((7, 0)));
-        assert_eq!(error.lex_error, crate::lexer::LexError::UnexpectedEof {
+        assert_eq!(*error.lex_error, crate::LexError::UnexpectedEof {
             span: SourceSpan::from((7, 0)),
             expected: "a literal value",
         });

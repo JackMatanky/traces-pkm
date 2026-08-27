@@ -1,7 +1,7 @@
 use miette::SourceSpan;
 
 use crate::{
-    lexer::{Spanned, TokenStream},
+    LexTokenStream, LexedToken,
     query::{QueryError, error::QuerySyntaxError},
 };
 
@@ -84,7 +84,7 @@ pub(super) trait AtomParser {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut TokenStream<Spanned<Self::Token>>,
+        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
     ) -> Result<Self::Atom, QueryError>;
 
     /// Builds a span-aware syntax diagnostic for this domain.
@@ -98,7 +98,7 @@ pub(super) trait AtomParser {
 
 struct BooleanExprParser<'input, G: AtomParser> {
     input: &'input str,
-    tokens: TokenStream<Spanned<G::Token>>,
+    tokens: LexTokenStream<LexedToken<G::Token>>,
     grammar: G,
 }
 
@@ -163,7 +163,7 @@ impl<A> BooleanExpr<A> {
 impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn parse(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
         let expression = self.parse_or()?;
-        let unexpected = self.tokens.peek().map(|token| token.span());
+        let unexpected = self.tokens.peek().map(LexedToken::span);
         if let Some(span) = unexpected {
             return Err(self
                 .syntax_error(
@@ -251,7 +251,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn next_span(&mut self) -> SourceSpan {
         self.tokens.peek().map_or_else(
             || SourceSpan::from((self.input.len(), 0)),
-            |token| token.span(),
+            LexedToken::span,
         )
     }
 
@@ -277,7 +277,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
 /// [`AtomParser`] rejects a token.
 pub(super) fn parse_boolean_expr<G>(
     input: &str,
-    tokens: TokenStream<Spanned<G::Token>>,
+    tokens: LexTokenStream<LexedToken<G::Token>>,
     grammar: G,
 ) -> Result<BooleanExpr<G::Atom>, QueryError>
 where
@@ -319,21 +319,18 @@ mod tests {
         fn parse_atom(
             &self,
             input: &str,
-            tokens: &mut TokenStream<Spanned<Self::Token>>,
+            tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
         ) -> Result<Self::Atom, QueryError> {
             match tokens.next() {
-                Some(spanned)
-                    if matches!(spanned.value(), TestToken::Atom(_)) =>
-                {
-                    let atom = match spanned.into_value() {
-                        TestToken::Atom(a) => a,
-                        _ => unreachable!(),
-                    };
-                    Ok(atom)
+                Some(spanned) => {
+                    let span = spanned.span();
+                    match spanned.into_value() {
+                        TestToken::Atom(atom) => Ok(atom),
+                        TestToken::Control(_) => Err(self
+                            .syntax_error(input, span, "an atom")
+                            .into()),
+                    }
                 }
-                Some(token) => Err(self
-                    .syntax_error(input, token.span(), "an atom")
-                    .into()),
                 None => Err(self
                     .syntax_error(
                         input,
@@ -354,8 +351,8 @@ mod tests {
         }
     }
 
-    fn token(value: TestToken, offset: usize) -> Spanned<TestToken> {
-        Spanned::new(value, SourceSpan::from((offset, 1)))
+    fn token(value: TestToken, offset: usize) -> LexedToken<TestToken> {
+        LexedToken::new(value, SourceSpan::from((offset, 1)))
     }
 
     mod parse {
@@ -372,7 +369,7 @@ mod tests {
 
             let parsed = parse_boolean_expr(
                 "a or b and not not c and d",
-                TokenStream::new(vec![
+                LexTokenStream::new(vec![
                     token(Atom("a"), 0),
                     token(Control(Operator(Or)), 2),
                     token(Atom("b"), 5),
@@ -410,7 +407,7 @@ mod tests {
             assert_eq!(
                 parse_boolean_expr(
                     "(a or b) and c",
-                    TokenStream::new(vec![
+                    LexTokenStream::new(vec![
                         token(Control(LeftParen), 0),
                         token(Atom("a"), 1),
                         token(Control(Operator(Or)), 3),
@@ -449,12 +446,12 @@ mod tests {
             token(TestToken::Atom("b"), 2),
         ])]
         fn rejects_incomplete_or_adjacent_tokens(
-            #[case] tokens: Vec<Spanned<TestToken>>,
+            #[case] tokens: Vec<LexedToken<TestToken>>,
         ) {
             assert!(
                 parse_boolean_expr(
                     "fixture",
-                    TokenStream::new(tokens),
+                    LexTokenStream::new(tokens),
                     TestGrammar
                 )
                 .is_err()

@@ -1051,7 +1051,7 @@ mod tests {
             let tags = extract_tags(input);
 
             let expected: Vec<Tag> =
-                expected.iter().map(|tag| Tag::parse(*tag).unwrap()).collect();
+                expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
             assert_eq!(tags, expected);
         }
     }

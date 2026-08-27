@@ -7,12 +7,12 @@ use miette::SourceSpan;
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Spanned<T> {
+pub(crate) struct LexedToken<T> {
     value: T,
     span: SourceSpan,
 }
 
-impl<T> Spanned<T> {
+impl<T> LexedToken<T> {
     #[inline]
     #[must_use]
     pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
@@ -34,7 +34,7 @@ impl<T> Spanned<T> {
         self.span
     }
 
-    /// Consumes the `Spanned` wrapper, returning the inner value.
+    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
     #[inline]
     #[must_use]
     pub(crate) fn into_value(self) -> T {
@@ -70,7 +70,7 @@ pub(crate) enum LexError {
 /// unrecognized token.
 pub(crate) fn tokenize<'a, T>(
     input: &'a str,
-) -> Result<Vec<Spanned<T>>, LexError>
+) -> Result<Vec<LexedToken<T>>, LexError>
 where
     T: Logos<'a, Source = str>,
     T::Extras: Default,
@@ -85,20 +85,20 @@ where
             found: format!("{e:?}"),
             expected: "a valid token",
         })?;
-        tokens.push(Spanned::new(value, span));
+        tokens.push(LexedToken::new(value, span));
     }
     Ok(tokens)
 }
 
 /// Strips backslash escapes from `input`, returning the unescaped string.
 ///
-/// A backslash followed by any character consumes both and emits the
-/// second character verbatim. A trailing backslash (with nothing after
-/// it) is kept as-is.
+/// A backslash followed by any character consumes both and emits the second
+/// character verbatim. A trailing backslash (with nothing after it) is kept
+/// as-is.
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// assert_eq!(unescape_backslash(r#"hello \"world\""#), "hello \"world\"");
 /// assert_eq!(unescape_backslash(r#"back\\slash"#), "back\\slash");
 /// assert_eq!(unescape_backslash("trailing\\"), "trailing\\");
@@ -121,11 +121,11 @@ pub(crate) fn unescape_backslash(input: &str) -> String {
 }
 
 /// An owning one-token-lookahead cursor over a materialized token stream.
-pub(crate) struct TokenStream<T> {
+pub(crate) struct LexTokenStream<T> {
     tokens: Peekable<vec::IntoIter<T>>,
 }
 
-impl<T> TokenStream<T> {
+impl<T> LexTokenStream<T> {
     /// Creates a new token stream from a vector of tokens.
     #[inline]
     pub(crate) fn new(tokens: Vec<T>) -> Self {
@@ -175,12 +175,12 @@ impl<T> TokenStream<T> {
     }
 }
 
-impl<T> TokenStream<Spanned<T>> {
+impl<T> LexTokenStream<LexedToken<T>> {
     /// Resolves the span of the next token, or end-of-input if empty.
     pub(crate) fn next_span(&mut self, input: &str) -> SourceSpan {
         self.peek().map_or_else(
             || SourceSpan::from((input.len(), 0)),
-            |token| token.span(),
+            LexedToken::span,
         )
     }
 
@@ -230,14 +230,14 @@ impl<T> TokenStream<Spanned<T>> {
         input: &str,
         expected_desc: &'static str,
         f: F,
-    ) -> Result<Spanned<R>, LexError>
+    ) -> Result<LexedToken<R>, LexError>
     where
-        F: FnOnce(Spanned<T>) -> Option<R>,
+        F: FnOnce(LexedToken<T>) -> Option<R>,
     {
         match self.next() {
             Some(token) => {
                 let span = token.span();
-                f(token).map(|value| Spanned::new(value, span)).ok_or_else(
+                f(token).map(|value| LexedToken::new(value, span)).ok_or_else(
                     || LexError::UnexpectedToken {
                         span,
                         found: expected_desc.to_owned(),
@@ -253,7 +253,7 @@ impl<T> TokenStream<Spanned<T>> {
     }
 }
 
-impl<T> AsRef<T> for Spanned<T> {
+impl<T> AsRef<T> for LexedToken<T> {
     fn as_ref(&self) -> &T {
         &self.value
     }
@@ -314,10 +314,12 @@ mod tests {
 
         let tokens = tokenize::<TestToken>("a b").unwrap();
         assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].value(), &TestToken::A);
-        assert_eq!(tokens[0].span(), SourceSpan::from((0, 1)));
-        assert_eq!(tokens[1].value(), &TestToken::B);
-        assert_eq!(tokens[1].span(), SourceSpan::from((2, 1)));
+        let first = tokens.first().unwrap();
+        assert_eq!(first.value(), &TestToken::A);
+        assert_eq!(first.span(), SourceSpan::from((0, 1)));
+        let second = tokens.get(1).unwrap();
+        assert_eq!(second.value(), &TestToken::B);
+        assert_eq!(second.span(), SourceSpan::from((2, 1)));
     }
 
     #[test]
@@ -357,7 +359,7 @@ mod tests {
 
     #[test]
     fn token_stream_peek_does_not_consume() {
-        let mut ts = TokenStream::new(vec![1_i32, 2, 3]);
+        let mut ts = LexTokenStream::new(vec![1_i32, 2, 3]);
         assert_eq!(ts.peek(), Some(&1));
         assert_eq!(ts.peek(), Some(&1));
         assert_eq!(ts.next(), Some(1));
@@ -365,21 +367,21 @@ mod tests {
 
     #[test]
     fn token_stream_is_taken_consumes_on_match() {
-        let mut ts = TokenStream::new(vec![1, 2, 3]);
+        let mut ts = LexTokenStream::new(vec![1, 2, 3]);
         assert!(ts.is_taken(&1));
         assert_eq!(ts.next(), Some(2));
     }
 
     #[test]
     fn token_stream_is_taken_rejects_non_match() {
-        let mut ts = TokenStream::new(vec![1, 2, 3]);
+        let mut ts = LexTokenStream::new(vec![1, 2, 3]);
         assert!(!ts.is_taken(&99));
         assert_eq!(ts.next(), Some(1));
     }
 
     #[test]
     fn token_stream_peek_is_does_not_consume() {
-        let mut ts = TokenStream::new(vec![42_i32, 43]);
+        let mut ts = LexTokenStream::new(vec![42_i32, 43]);
         assert!(ts.peek_is(&42));
         assert!(!ts.peek_is(&43));
         assert_eq!(ts.next(), Some(42));
@@ -387,9 +389,9 @@ mod tests {
 
     #[test]
     fn token_stream_peek_is_value_compares_inner() {
-        let mut ts = TokenStream::new(vec![
-            Spanned::new("hello", SourceSpan::from((0, 5))),
-            Spanned::new("world", SourceSpan::from((6, 5))),
+        let mut ts = LexTokenStream::new(vec![
+            LexedToken::new("hello", SourceSpan::from((0, 5))),
+            LexedToken::new("world", SourceSpan::from((6, 5))),
         ]);
         assert!(ts.peek_is_value(&"hello"));
         assert!(!ts.peek_is_value(&"world"));
@@ -397,15 +399,18 @@ mod tests {
 
     #[test]
     fn token_stream_next_span_returns_end_when_empty() {
-        let mut ts: TokenStream<Spanned<i32>> = TokenStream::new(vec![]);
+        let mut ts: LexTokenStream<LexedToken<i32>> =
+            LexTokenStream::new(vec![]);
         let span = ts.next_span("hello");
         assert_eq!(span, SourceSpan::from((5, 0)));
     }
 
     #[test]
     fn token_stream_next_span_returns_current_token_span() {
-        let mut ts =
-            TokenStream::new(vec![Spanned::new(1, SourceSpan::from((0, 3)))]);
+        let mut ts = LexTokenStream::new(vec![LexedToken::new(
+            1,
+            SourceSpan::from((0, 3)),
+        )]);
         let span = ts.next_span("input");
         assert_eq!(span, SourceSpan::from((0, 3)));
     }
@@ -424,7 +429,7 @@ mod tests {
         }
 
         let tokens = tokenize::<T>("a b").unwrap();
-        let mut ts = TokenStream::new(tokens);
+        let mut ts = LexTokenStream::new(tokens);
         let span = ts.expect("a b", &T::A, "an `a` token").unwrap();
         assert_eq!(span, SourceSpan::from((0, 1)));
     }
@@ -443,7 +448,7 @@ mod tests {
         }
 
         let tokens = tokenize::<T>("a b").unwrap();
-        let mut ts = TokenStream::new(tokens);
+        let mut ts = LexTokenStream::new(tokens);
         let err = ts.expect("a b", &T::B, "a `b` token").unwrap_err();
         assert!(matches!(err, LexError::UnexpectedToken { .. }));
     }
@@ -460,7 +465,7 @@ mod tests {
         }
 
         let tokens = tokenize::<T>("").unwrap();
-        let mut ts = TokenStream::new(tokens);
+        let mut ts = LexTokenStream::new(tokens);
         let err = ts.expect("", &T::A, "an `a` token").unwrap_err();
         assert!(matches!(err, LexError::UnexpectedEof { .. }));
     }

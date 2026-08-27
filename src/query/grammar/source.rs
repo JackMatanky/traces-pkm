@@ -8,13 +8,14 @@ use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
+    LexTokenStream, LexedToken,
     file::FileBase,
-    lexer::{self, Spanned, TokenStream},
     note::{Note, NoteFieldValue},
     query::{
         QueryError,
         error::{QueryDialect, QuerySyntaxError},
     },
+    tokenize as lex_tokens, unescape_backslash,
 };
 
 /// Top-level source selector: every Note or a parsed expression.
@@ -270,7 +271,7 @@ impl SourceExpr {
     pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
         parse_boolean_expr(
             input,
-            TokenStream::new(tokenize(input)?),
+            LexTokenStream::new(tokenize(input)?),
             SourceGrammar,
         )
         .map(Self)
@@ -464,7 +465,7 @@ impl SourceGrammar {
     /// given, or both an argument and a method modifier are present.
     fn parse_class_function(
         input: &str,
-        tokens: &mut TokenStream<Spanned<SourceToken>>,
+        tokens: &mut LexTokenStream<LexedToken<SourceToken>>,
         class_span: SourceSpan,
     ) -> Result<SourceAtom, QueryError> {
         let lex =
@@ -584,7 +585,7 @@ impl AtomParser for SourceGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut TokenStream<Spanned<Self::Token>>,
+        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
     ) -> Result<Self::Atom, QueryError> {
         let next_span = tokens.next_span(input);
         match tokens.next() {
@@ -665,11 +666,11 @@ where
 fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
     let raw = lexer.slice();
     let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    crate::lexer::unescape_backslash(inner)
+    unescape_backslash(inner)
 }
 
-fn tokenize(input: &str) -> Result<Vec<Spanned<SourceToken>>, QueryError> {
-    lexer::tokenize::<SourceToken>(input).map_err(|e| -> QueryError {
+fn tokenize(input: &str) -> Result<Vec<LexedToken<SourceToken>>, QueryError> {
+    lex_tokens::<SourceToken>(input).map_err(|e| -> QueryError {
         QuerySyntaxError::from_lex(QueryDialect::Source, input, e).into()
     })
 }
