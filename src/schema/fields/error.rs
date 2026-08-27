@@ -303,8 +303,10 @@ mod tests {
 
             assert!(matches!(
                 warning,
-                SchemaWarning::SelectValuesOverrideDegraded { ref error, .. }
-                    if error.contains("selector \"label\"")
+                SchemaWarning::SelectValuesOverrideDegraded {
+                    error: ref message,
+                    ..
+                } if message.contains("selector \"label\"")
             ));
         }
     }
