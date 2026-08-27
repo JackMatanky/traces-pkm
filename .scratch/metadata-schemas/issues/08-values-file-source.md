@@ -34,10 +34,16 @@ option by the raw layer (`RawFieldDefToml.values: Option<FieldValue>`,
 
 **Blocked by:** none outstanding — 02 — Schema Registry and Field Resolution
 (implemented); 03 — Schema minijinja Namespace (implemented); 07 — Schema Domain
-Refactor (implemented, `4801e90` on `main`) already landed the exact seam this
-ticket extends: `SchemaSelectFieldEntry { value, label, extra }`,
-`select_entry_value`'s bare-vs-structured rendering, and the eager
-`SchemaService::new` load pass where values files will be read.
+Refactor (implemented, `4801e90` on `main`) landed half the seam this ticket
+extends: `SchemaSelectFieldEntry { value, label, extra }` and
+`select_entry_value`'s bare-vs-structured rendering. It did **not** land a path
+from `SchemaService::new`'s `directory: &Path` down to
+`SchemaSelectField::parse` — verified by tracing the call chain
+(`SchemaBuilder::new`, `SchemaMerger::merge`, `SchemaFieldBuilder::new`,
+`parse_options` all take no directory today) — so a file subtable's `path`
+had no way to resolve until this ticket's own Design section closes that gap
+directly (see "Values-file loading" below). No separate blocking ticket
+needed: the fix is scoped entirely to this ticket's own implementation.
 
 **Status:** ready-for-agent
 
@@ -190,8 +196,8 @@ values = ["to_do", "in_progress", "done"]   # plain literal form, unchanged
 
 [fields.month_name]
 type = "select"
-values = [
-  { value = "january", label = "January", abbreviation = "Jan" },   # extra key, retained and returned
+  # extra key, retained and returned
+  { value = "january", label = "January", abbreviation = "Jan" },
   { value = "february", label = "February" },
   # …
   { value = "december", label = "December" },
@@ -236,7 +242,7 @@ match options.get("values") {
     Some(FieldValue::Object(sub)) => {
         // require String `path`; optional String `value`/`label`/`order`;
         // unknown subtable key -> parser error (manual deny)
-        load_values_file(schema_directory.join(path), selectors)?
+        cache.load(path)?   // SelectValuesFileCache — confines, reads, caches
     }
     _ => /* TypeMismatch, as today */,
 }
@@ -287,12 +293,80 @@ default — keeps declaration/array order, unchanged from today.
 `path` resolves against the **Schema directory**, not the project root:
 `SchemaService::new` receives only the schemas directory, dir-relative paths
 keep a Schema's values files moving with it, and root-relative paths would
-thread a second path parameter through every constructor for no capability gain.
-Paths are confined to the directory (canonicalized, no `..` escape). Confirmed
-safe against `read_raw_schemas` (`src/schema/service.rs:196`): it iterates
+require passing the project root to every constructor for no capability gain.
+Paths are confined to the directory via the crate's existing
+`crate::path::RootConfinedPath::parse` (`src/path.rs`) — the same primitive
+`template/writer.rs`'s `-o`/`file.write_to()` and `template/engine/file.rs`'s
+`file.include()` already use for confining a runtime-declared relative path to
+a root: lexical rejection of absolute paths and `..` components
+(`SafeRelativePath::parse`), then filesystem-level rejection of a symlink
+escape. No new confinement logic to write or test. Confirmed safe against
+`read_raw_schemas` (`src/schema/service.rs:196`): it iterates
 `DirTree::children(dir)` — immediate entries only — and skips every non-`.toml`
 path, so a `values/` subdirectory, in any format, is never misread as a
 Schema/File Class.
+
+### Values-file loading
+
+Reading and caching values files is a self-contained module,
+`SelectValuesFileCache` (`src/schema/fields/select.rs`, or a sibling submodule
+if it grows), with exactly two entry points:
+
+- `SelectValuesFileCache::new(schema_directory: &Path) -> Self`
+- `SelectValuesFileCache::load(&self, relative_path: &str) ->
+  Result<Arc<Vec<FieldValue>>, SelectValuesFileError>` — confines and
+  canonicalizes `relative_path` via `RootConfinedPath::parse`, picks the
+  parser by extension, reads and deserializes into the root `entries` shape
+  once per distinct resolved path, and memoizes internally (interior-mutable
+  cache keyed by the confined path) so two fields — in the same or different
+  Schemas — pointing at the identical `path` share one read and one parse
+  within a single `SchemaService::new` call. Returns a cheap `Arc` clone on a
+  cache hit rather than re-cloning potentially hundreds of entries per
+  referencing field. Mirrors Metadata Menu's own `ValuesListNotePath` design
+  (`fieldIndex.valuesListNotePathValues: Map<string, string[]>`, populated
+  once, shared by every field referencing the same note path) — proven prior
+  art, not a new pattern invented for this ticket.
+
+No port or adapter: the filesystem dependency is local-substitutable (this
+codebase's existing `schema/service.rs` tests already write real fixtures into
+a tempdir via `write_schema`; there is no FS-abstraction trait anywhere in
+`src/schema/`, and no second real consumer — CLI dry-run and the MCP surface
+both read the same local filesystem). A trait here would be a single-adapter
+seam, the exact case the "one adapter means a hypothetical seam" rule rejects.
+
+`SelectValuesFileCache` is constructed once in `SchemaService::new`
+(`src/schema/service.rs:57`), immediately after `read_raw_schemas` — the only
+other place `directory` is used — and threaded as one new
+`&SelectValuesFileCache` parameter through the existing resolution chain,
+exactly mirroring how `ancestors`/`resolved` already flow into
+`SchemaFieldBuilder`, not smuggled onto `RawSchema` and not bolted on as an
+optional builder setter that would let a caller silently skip it:
+
+- `SchemaBuilder::new` (`src/schema/builder.rs:71`)
+- `SchemaMerger::merge` / `resolve_own_fields` (`builder.rs:299`, `builder.rs:370`)
+- `SchemaFieldBuilder::new` (`src/schema/fields/builder.rs:48`)
+- `SchemaFieldBuilder::parse_options` (`fields/builder.rs:188`)
+- `select::SchemaSelectField::parse` (`fields/select.rs:43`)
+
+A load failure never propagates as a hard `SchemaError` from the cache itself
+— `.load()` returns `Result` to its caller, which converts an `Err` into the
+existing `SchemaFieldParserError`/`degrade_on_error` channel exactly as
+`UnknownKey`/`TypeMismatch` already do today, preserving the per-Schema
+`SchemaFailure` tier (see Error model below).
+
+`SchemaFieldParser` (`src/schema/fields/parser.rs`) currently exposes three
+typed extractors — `string`, `string_list`, `f64` — each of which claims its
+key and hard-fails on the wrong shape. None fits `values`: its shape must be
+inspected before deciding how to interpret it. `select::parse` needs one new
+`pub(super)` extractor that claims a key and returns its raw `FieldValue`
+without validating shape (letting the caller discriminate the three `values`
+shapes itself), plus a way to push a `select`-constructed
+`SchemaFieldParserError` — either a `pub(super) fn push(&mut self, error:
+SchemaFieldParserError)` or `pub(super)` accessors for the parser's private
+`address`/`kind` fields so `select.rs` can build its own error variants the
+same way `parser.rs`'s own private `type_mismatch` helper does today. This is
+a small, real addition to `SchemaFieldParser`'s surface the original draft did
+not name.
 
 ### Error model
 
@@ -576,6 +650,31 @@ Corrections and additions:
    explicitly — add a brief note in the Error model section.
 
 Status confirmed `ready-for-agent`.
+**Update (codebase-design deepening — values-file loading seam):** *This was
+generated by AI during triage.* The directory-threading gap flagged above
+turned out real: traced the full call chain (`SchemaBuilder::new`,
+`SchemaMerger::merge`, `SchemaFieldBuilder::new`, `parse_options`) and none of
+it carries `directory` past `read_raw_schemas` today, so a file subtable's
+`path` had nowhere to resolve. Ran a Design-It-Twice pass (four independent
+proposals — minimal-interface, max-flexibility, common-caller-first,
+ports-and-adapters) plus a review against Metadata Menu's own
+`ValuesListNotePath` prior art (`fieldIndex.valuesListNotePathValues:
+Map<string, string[]>` — read once, cached per-path, shared across every
+referencing field) and this codebase's existing
+`crate::path::RootConfinedPath::parse` confinement primitive (already used by
+`template/writer.rs`/`template/engine/file.rs`, previously uncited by this
+ticket). All four proposals independently rejected a filesystem port/adapter
+(local-substitutable dependency, single real adapter, matches
+`schema/service.rs`'s existing tempdir test convention). Landed on
+`SelectValuesFileCache` — two entry points (`new`/`load`), threaded as one
+parameter through the same six functions `ancestors`/`resolved` already flow
+through, self-memoizing so two fields sharing a `path` share one read. Also
+surfaced a previously-unnamed requirement: `SchemaFieldParser`'s three
+existing typed extractors (`string`/`string_list`/`f64`) all hard-fail on the
+wrong shape, none fit `values`'s three-way discrimination — `select::parse`
+needs a new raw/untyped extractor plus a way to push its own error variants.
+Design and Key Interfaces sections updated accordingly. Status confirmed
+`ready-for-agent`.
 
 ## Agent Brief
 
@@ -636,15 +735,37 @@ and no display-order concept beyond array position.
 
 **Key interfaces:**
 
+- `SelectValuesFileCache` (new, `src/schema/fields/select.rs`): two entry
+  points — `new(schema_directory: &Path)` and `load(&self, relative_path:
+  &str) -> Result<Arc<Vec<FieldValue>>, SelectValuesFileError>`. Confines via
+  the crate's existing `crate::path::RootConfinedPath::parse`, dispatches by
+  extension, reads/parses once per distinct path, memoizes internally. No
+  port/adapter — local-substitutable filesystem dependency, single real
+  adapter, matches `schema/service.rs`'s existing tempdir test convention.
+  Constructed once in `SchemaService::new` and threaded as one new
+  `&SelectValuesFileCache` parameter through `SchemaBuilder::new`,
+  `SchemaMerger::merge`/`resolve_own_fields`, `SchemaFieldBuilder::new`,
+  `SchemaFieldBuilder::parse_options`, and `select::SchemaSelectField::parse`
+  — six signatures, one parameter each, mirroring how `ancestors`/`resolved`
+  already thread through `SchemaFieldBuilder`.
+- `SchemaFieldParser` (`src/schema/fields/parser.rs`) gains one new
+  `pub(super)` raw extractor (claims `values` without validating its shape,
+  returning the raw `FieldValue` for `select::parse` to discriminate) and
+  either a `push(&mut self, error: SchemaFieldParserError)` method or
+  `pub(super)` accessors for its private `address`/`kind` fields, so
+  `select.rs` can construct its own new error variants the way `parser.rs`'s
+  own private `type_mismatch` helper does today. None of its three existing
+  typed extractors (`string`/`string_list`/`f64`) fit `values`'s three-shape
+  discrimination.
 - `SchemaSelectField::parse` (`src/schema/fields/select.rs`): shape
-  discrimination + structured-entry construction + values-file loading hook. The
-  only production-code entry point this ticket materially extends.
+  discrimination + structured-entry construction + `SelectValuesFileCache`
+  lookup for the file-subtable shape.
 - One new `SchemaSelectFieldEntry` constructor accepting arbitrary
   `value`/`label` `FieldValue`s plus an `extra` map (existing `literal` is
   string-only; `with_label` is test-only).
-- `struct Entries { entries: Vec<FieldValue> }` behind a small loader that
-  dispatches on extension; called during field building so errors ride the
-  existing parser-error channel.
+- `SelectValuesFileError` (new) plus a private `struct Entries { entries:
+  Vec<FieldValue> }` deserialization target behind `SelectValuesFileCache`'s
+  loader, dispatching on extension.
 - New `SchemaFieldParserError` variants: `BadValueFileExtension`,
   `ValueFileLoad`, `ValueFileMissingEntries`, `SelectorOnBareEntries`,
   `SelectorMissingKey`, `ValueNotString`, `OrderNotNumber`. The first three
