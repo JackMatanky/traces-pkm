@@ -32,7 +32,7 @@ mod parser;
 mod select;
 
 pub(crate) use address::{FieldAddress, FieldAddressRef};
-pub(crate) use builder::SchemaFieldBuilder;
+pub(crate) use builder::{SchemaFieldBuildContext, SchemaFieldBuilder};
 pub(crate) use date::SchemaDateField;
 pub(crate) use error::SchemaFieldBuilderError;
 // Needed by schema::error's tests (which can't reach the private
@@ -41,9 +41,7 @@ pub(crate) use error::SchemaFieldBuilderError;
 pub(crate) use error::SchemaFieldParserError;
 pub(crate) use file::{SchemaFileField, SchemaFileFieldRef};
 pub(crate) use number::SchemaNumberField;
-pub(crate) use select::{
-    SchemaSelectField, SchemaSelectFieldEntry, SelectValuesFileCache,
-};
+pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
 
 /// A resolved field definition after inheritance and `$ref` application.
 ///

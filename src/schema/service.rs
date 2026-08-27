@@ -12,7 +12,7 @@ use super::{
     RawSchema, SchemaName,
     builder::{SchemaBuilder, SchemaFailure},
     error::{SchemaError, SchemaWarning},
-    fields::SelectValuesFileCache,
+    fields::SchemaFieldBuildContext,
     model::Schema,
 };
 use crate::{BaseNameRef, DirTree, DirTreeError};
@@ -59,8 +59,8 @@ impl SchemaService {
         directory: &Path,
     ) -> Result<SchemaConstruction, SchemaError> {
         let raw = read_raw_schemas(directory)?;
-        let values_cache = SelectValuesFileCache::new(directory);
-        let resolved = SchemaBuilder::new(&raw, &values_cache).build()?;
+        let field_context = SchemaFieldBuildContext::new(directory);
+        let resolved = SchemaBuilder::new(&raw, &field_context).build()?;
         let schemas = resolved
             .schemas
             .into_iter()

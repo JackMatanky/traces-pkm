@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use super::{
     SchemaFieldTypeTag,
     address::{FieldAddress, FieldAddressRef},
-    error::SchemaFieldParserError,
+    error::{SchemaFieldParserError, SelectValuesError},
 };
 use crate::field::FieldValue;
 
@@ -62,24 +62,45 @@ impl<'a> SchemaFieldParser<'a> {
         options.get(key)
     }
 
-    /// Returns the address as an owned [`FieldAddress`].
-    pub(super) fn address_owned(&self) -> FieldAddress {
-        FieldAddress::from(self.address)
-    }
-
-    /// Returns the expected field type tag.
-    pub(super) const fn kind(&self) -> SchemaFieldTypeTag {
-        self.kind
-    }
-
-    /// Returns the number of errors recorded by this parser.
-    pub(super) fn error_count(&self) -> usize {
+    /// Marks the current parser error count for later fallback decisions.
+    pub(super) fn mark_errors(&self) -> usize {
         self.errors.len()
     }
 
-    /// Pushes any [`SchemaFieldParserError`] onto the parser.
-    pub(super) fn push_error(&mut self, error: SchemaFieldParserError) {
+    /// Returns whether new errors were recorded after `mark`.
+    pub(super) fn has_errors_since(&self, mark: usize) -> bool {
+        self.errors.len() > mark
+    }
+
+    /// Pushes a typed mismatch error for `key`.
+    pub(super) fn push_type_mismatch<T: std::fmt::Debug + ?Sized>(
+        &mut self,
+        key: &str,
+        value: &T,
+        expected: &'static str,
+    ) {
+        let error = self.type_mismatch(key, value, expected);
         self.errors.push(error);
+    }
+
+    /// Pushes an unknown option-key error for `key`.
+    pub(super) fn push_unknown_key(&mut self, key: &str) {
+        self.errors.push(SchemaFieldParserError::UnknownKey {
+            address: FieldAddress::from(self.address),
+            kind: self.kind,
+            key: key.to_owned(),
+        });
+    }
+
+    /// Pushes a `select`/`multi` values-specific parser error.
+    pub(super) fn push_select_values_error(
+        &mut self,
+        source: SelectValuesError,
+    ) {
+        self.errors.push(SchemaFieldParserError::SelectValues {
+            address: FieldAddress::from(self.address),
+            source,
+        });
     }
 
     /// Extracts a string value associated with a specified key.
@@ -246,10 +267,10 @@ impl<'a> SchemaFieldParser<'a> {
     /// * `key` - the attribute key whose value was unexpected.
     /// * `value` - the actual value encountered.
     /// * `expected` - a human-readable description of the expected shape.
-    fn type_mismatch(
+    fn type_mismatch<T: std::fmt::Debug + ?Sized>(
         &self,
         key: &str,
-        value: &FieldValue,
+        value: &T,
         expected: &'static str,
     ) -> SchemaFieldParserError {
         SchemaFieldParserError::TypeMismatch {
