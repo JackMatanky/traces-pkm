@@ -634,7 +634,6 @@ fn parse_file_subtable(
 #[cfg(test)]
 mod tests {
     use indexmap::IndexMap;
-    use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::schema::fields::{
@@ -650,546 +649,610 @@ mod tests {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
-    #[test]
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn collects_declared_values_as_literal_entries() {
-        let opts = options(&[(
-            "values",
-            FieldValue::List(vec![
-                FieldValue::String("draft".to_owned()),
-                FieldValue::String("done".to_owned()),
-            ]),
-        )]);
+    mod literal_lists {
+        use pretty_assertions::assert_eq;
 
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let field_type =
-            SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
+        use super::*;
 
-        assert!(errors.is_empty());
-        match &field_type {
-            SchemaFieldType::Select(def) => {
-                assert_eq!(def.values().len(), 2);
-                assert_eq!(
-                    def.values().first().expect("expected entry").value(),
-                    &FieldValue::String("draft".to_owned())
-                );
-                assert_eq!(
-                    def.values().first().expect("expected entry").label(),
-                    &FieldValue::String("draft".to_owned())
-                );
-                assert!(
-                    def.values()
-                        .first()
-                        .expect("expected entry")
-                        .extra()
-                        .is_empty()
-                );
-            }
-            other => panic!("expected Select, got {other:?}"),
+        #[test]
+        fn parses_flat_string_list_into_literal_entries() {
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![
+                    FieldValue::String("draft".to_owned()),
+                    FieldValue::String("done".to_owned()),
+                ]),
+            )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let field_type =
+                SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert!(errors.is_empty());
+            let SchemaFieldType::Select(def) = field_type else {
+                unreachable!("expected select field type");
+            };
+            assert_eq!(def.values().len(), 2);
+            assert_eq!(
+                def.values()[0].value(),
+                &FieldValue::String("draft".to_owned())
+            );
+            assert_eq!(
+                def.values()[0].label(),
+                &FieldValue::String("draft".to_owned())
+            );
+            assert!(def.values()[0].extra().is_empty());
+        }
+
+        #[test]
+        fn defaults_to_empty_list_when_values_omitted() {
+            let opts = options(&[]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let field_type =
+                SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert!(errors.is_empty());
+            assert_eq!(
+                field_type,
+                SchemaFieldType::Select(Arc::new(SchemaSelectField::default()))
+            );
+        }
+
+        #[test]
+        fn rejects_non_list_or_non_object_value_types() {
+            let opts =
+                options(&[("values", FieldValue::String("draft".to_owned()))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::TypeMismatch { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_lists_containing_non_strings() {
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![FieldValue::Int(1), FieldValue::Int(2)]),
+            )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::TypeMismatch { .. }
+            ));
         }
     }
 
-    #[test]
-    fn defaults_to_empty_values_when_options_omit_them() {
-        let opts = options(&[]);
+    mod inline_value_objects {
+        use pretty_assertions::assert_eq;
 
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let field_type =
-            SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
+        use super::*;
 
-        assert!(errors.is_empty());
-        assert_eq!(
-            field_type,
-            SchemaFieldType::Select(Arc::new(SchemaSelectField::default()))
-        );
-    }
+        #[test]
+        fn parses_object_list_and_sorts_by_order() {
+            let mut obj1 = IndexMap::new();
+            obj1.insert(
+                "value".to_owned(),
+                FieldValue::String("ca".to_owned()),
+            );
+            obj1.insert(
+                "label".to_owned(),
+                FieldValue::String("Canada".to_owned()),
+            );
+            obj1.insert("order".to_owned(), FieldValue::Float(2.0));
+            obj1.insert(
+                "currency".to_owned(),
+                FieldValue::String("CAD".to_owned()),
+            );
 
-    #[test]
-    fn rejects_non_list_values_as_type_mismatch() {
-        let opts =
-            options(&[("values", FieldValue::String("draft".to_owned()))]);
+            let mut obj2 = IndexMap::new();
+            obj2.insert(
+                "value".to_owned(),
+                FieldValue::String("us".to_owned()),
+            );
+            obj2.insert(
+                "label".to_owned(),
+                FieldValue::String("United States".to_owned()),
+            );
+            obj2.insert("order".to_owned(), FieldValue::Float(1.0));
+            obj2.insert(
+                "currency".to_owned(),
+                FieldValue::String("USD".to_owned()),
+            );
 
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors.first().expect("expected error"),
-            SchemaFieldParserError::TypeMismatch { .. }
-        ));
-    }
-
-    #[test]
-    fn falls_back_to_bases_values_when_options_omit_them() {
-        let base =
-            SchemaSelectField::for_test(vec![SchemaSelectFieldEntry::literal(
-                "old".to_owned(),
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![
+                    FieldValue::Object(obj1),
+                    FieldValue::Object(obj2),
+                ]),
             )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
 
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let field_type = SchemaSelectField::parse(
-            &cache,
-            &mut parser,
-            &IndexMap::new(),
-            Some(&base),
-        );
-        let errors = parser.finish(&IndexMap::new());
+            let field_type =
+                SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
-        assert!(errors.is_empty());
-        assert_eq!(field_type, SchemaFieldType::Select(Arc::new(base)));
+            assert!(errors.is_empty());
+            let SchemaFieldType::Select(def) = field_type else {
+                unreachable!("expected select field");
+            };
+
+            let values = def.values();
+            assert_eq!(values.len(), 2);
+            assert_eq!(values[0].value(), &FieldValue::String("us".to_owned()));
+            assert_eq!(
+                values[0].label(),
+                &FieldValue::String("United States".to_owned())
+            );
+            assert_eq!(
+                values[0].extra().get("currency"),
+                Some(&FieldValue::String("USD".to_owned()))
+            );
+            assert_eq!(
+                values[0].extra().get("order"),
+                Some(&FieldValue::Float(1.0))
+            );
+
+            assert_eq!(values[1].value(), &FieldValue::String("ca".to_owned()));
+            assert_eq!(
+                values[1].label(),
+                &FieldValue::String("Canada".to_owned())
+            );
+            assert_eq!(
+                values[1].extra().get("currency"),
+                Some(&FieldValue::String("CAD".to_owned()))
+            );
+            assert_eq!(
+                values[1].extra().get("order"),
+                Some(&FieldValue::Float(2.0))
+            );
+        }
+
+        #[test]
+        fn rejects_lists_with_inconsistent_keys() {
+            let mut obj1 = IndexMap::new();
+            obj1.insert(
+                "value".to_owned(),
+                FieldValue::String("ca".to_owned()),
+            );
+            obj1.insert(
+                "label".to_owned(),
+                FieldValue::String("Canada".to_owned()),
+            );
+
+            let mut obj2 = IndexMap::new();
+            obj2.insert(
+                "value".to_owned(),
+                FieldValue::String("us".to_owned()),
+            );
+
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![
+                    FieldValue::Object(obj1),
+                    FieldValue::Object(obj2),
+                ]),
+            )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                &errors[0],
+                SchemaFieldParserError::SelectorMissingKey { selector, key, .. }
+                    if *selector == "label" && key == "label"
+            ));
+        }
+
+        #[test]
+        fn rejects_fields_with_invalid_types() {
+            let mut obj = IndexMap::new();
+            obj.insert("value".to_owned(), FieldValue::Int(123));
+            obj.insert(
+                "order".to_owned(),
+                FieldValue::String("first".to_owned()),
+            );
+
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![FieldValue::Object(obj)]),
+            )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 2);
+            assert!(matches!(
+                &errors[0],
+                SchemaFieldParserError::TypeMismatch { key, expected, .. }
+                    if key == "value" && *expected == "a string"
+            ));
+            assert!(matches!(
+                &errors[1],
+                SchemaFieldParserError::TypeMismatch { key, expected, .. }
+                    if key == "order" && *expected == "a number"
+            ));
+        }
     }
 
-    #[test]
-    fn returns_type_mismatch_when_values_contains_non_strings() {
-        let opts = options(&[(
-            "values",
-            FieldValue::List(vec![FieldValue::Int(1), FieldValue::Int(2)]),
-        )]);
-
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors.first().expect("expected error"),
-            SchemaFieldParserError::TypeMismatch { .. }
-        ));
-    }
-
-    #[test]
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn parses_inline_value_objects_and_sorts_by_order() {
+    mod file_sources {
         use pretty_assertions::assert_eq;
 
-        let mut obj1 = IndexMap::new();
-        obj1.insert("value".to_owned(), FieldValue::String("ca".to_owned()));
-        obj1.insert(
-            "label".to_owned(),
-            FieldValue::String("Canada".to_owned()),
-        );
-        obj1.insert("order".to_owned(), FieldValue::Float(2.0));
-        obj1.insert(
-            "currency".to_owned(),
-            FieldValue::String("CAD".to_owned()),
-        );
+        use super::*;
 
-        let mut obj2 = IndexMap::new();
-        obj2.insert("value".to_owned(), FieldValue::String("us".to_owned()));
-        obj2.insert(
-            "label".to_owned(),
-            FieldValue::String("United States".to_owned()),
-        );
-        obj2.insert("order".to_owned(), FieldValue::Float(1.0));
-        obj2.insert(
-            "currency".to_owned(),
-            FieldValue::String("USD".to_owned()),
-        );
+        #[test]
+        fn parses_valid_toml_and_json_files() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let values_dir = temp.path().join("values");
+            std::fs::create_dir_all(&values_dir).expect("create_dir");
 
-        let opts = options(&[(
-            "values",
-            FieldValue::List(vec![
-                FieldValue::Object(obj1),
-                FieldValue::Object(obj2),
-            ]),
-        )]);
+            let toml_path = values_dir.join("countries.toml");
+            std::fs::write(
+                &toml_path,
+                "[[entries]]\nslug = \"us\"\nname = \"United States\"\nrank = \
+                 1\n\n[[entries]]\nslug = \"ca\"\nname = \"Canada\"\nrank = \
+                 2\n",
+            )
+            .expect("write toml");
 
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let field_type =
-            SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert!(errors.is_empty());
-        let SchemaFieldType::Select(def) = field_type else {
-            panic!("expected select field");
-        };
-
-        let values = def.values();
-        assert_eq!(values.len(), 2);
-        assert_eq!(values[0].value(), &FieldValue::String("us".to_owned()));
-        assert_eq!(
-            values[0].label(),
-            &FieldValue::String("United States".to_owned())
-        );
-        assert_eq!(
-            values[0].extra().get("currency"),
-            Some(&FieldValue::String("USD".to_owned()))
-        );
-        assert_eq!(
-            values[0].extra().get("order"),
-            Some(&FieldValue::Float(1.0))
-        );
-
-        assert_eq!(values[1].value(), &FieldValue::String("ca".to_owned()));
-        assert_eq!(values[1].label(), &FieldValue::String("Canada".to_owned()));
-        assert_eq!(
-            values[1].extra().get("currency"),
-            Some(&FieldValue::String("CAD".to_owned()))
-        );
-        assert_eq!(
-            values[1].extra().get("order"),
-            Some(&FieldValue::Float(2.0))
-        );
-    }
-
-    #[test]
-    fn rejects_inline_value_objects_missing_selector_key() {
-        use pretty_assertions::assert_eq;
-
-        let mut obj1 = IndexMap::new();
-        obj1.insert("value".to_owned(), FieldValue::String("ca".to_owned()));
-        obj1.insert(
-            "label".to_owned(),
-            FieldValue::String("Canada".to_owned()),
-        );
-
-        let mut obj2 = IndexMap::new();
-        obj2.insert("value".to_owned(), FieldValue::String("us".to_owned()));
-
-        let opts = options(&[(
-            "values",
-            FieldValue::List(vec![
-                FieldValue::Object(obj1),
-                FieldValue::Object(obj2),
-            ]),
-        )]);
-
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            &errors[0],
-            SchemaFieldParserError::SelectorMissingKey { selector, key, .. }
-                if *selector == "label" && key == "label"
-        ));
-    }
-
-    #[test]
-    fn rejects_inline_value_objects_invalid_types() {
-        use pretty_assertions::assert_eq;
-
-        let mut obj = IndexMap::new();
-        obj.insert("value".to_owned(), FieldValue::Int(123));
-        obj.insert("order".to_owned(), FieldValue::String("first".to_owned()));
-
-        let opts = options(&[(
-            "values",
-            FieldValue::List(vec![FieldValue::Object(obj)]),
-        )]);
-
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let cache = SelectValuesFileCache::for_test();
-        let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 2);
-        assert!(
-            matches!(&errors[0], SchemaFieldParserError::TypeMismatch { key, expected, .. } if key == "value" && *expected == "a string")
-        );
-        assert!(
-            matches!(&errors[1], SchemaFieldParserError::TypeMismatch { key, expected, .. } if key == "order" && *expected == "a number")
-        );
-    }
-
-    #[test]
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn parses_file_subtable_toml_and_json() {
-        use pretty_assertions::assert_eq;
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let values_dir = temp.path().join("values");
-        std::fs::create_dir_all(&values_dir).expect("create_dir");
-
-        let toml_path = values_dir.join("countries.toml");
-        std::fs::write(
-            &toml_path,
-            "[[entries]]\nslug = \"us\"\nname = \"United States\"\nrank = \
-             1\n\n[[entries]]\nslug = \"ca\"\nname = \"Canada\"\nrank = 2\n",
-        )
-        .expect("write toml");
-
-        let json_path = values_dir.join("states.json");
-        std::fs::write(
-            &json_path,
-            "{\n  \"entries\": [\n    \"California\",\n    \"New York\"\n  \
-             ]\n}",
-        )
-        .expect("write json");
-
-        let cache = SelectValuesFileCache::new(temp.path());
-
-        let mut subtable_toml = IndexMap::new();
-        subtable_toml.insert(
-            "path".to_owned(),
-            FieldValue::String("values/countries.toml".to_owned()),
-        );
-        subtable_toml
-            .insert("value".to_owned(), FieldValue::String("slug".to_owned()));
-        subtable_toml
-            .insert("label".to_owned(), FieldValue::String("name".to_owned()));
-        subtable_toml
-            .insert("order".to_owned(), FieldValue::String("rank".to_owned()));
-
-        let opts_toml =
-            options(&[("values", FieldValue::Object(subtable_toml))]);
-        let addr = address();
-        let mut parser_toml =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let field_type_toml = SchemaSelectField::parse(
-            &cache,
-            &mut parser_toml,
-            &opts_toml,
-            None,
-        );
-        let errors_toml = parser_toml.finish(&opts_toml);
-        assert!(errors_toml.is_empty());
-
-        let SchemaFieldType::Select(def_toml) = field_type_toml else {
-            panic!("expected select");
-        };
-        assert_eq!(def_toml.values().len(), 2);
-        assert_eq!(
-            def_toml.values()[0].value(),
-            &FieldValue::String("us".to_owned())
-        );
-        assert_eq!(
-            def_toml.values()[0].label(),
-            &FieldValue::String("United States".to_owned())
-        );
-
-        let mut subtable_json = IndexMap::new();
-        subtable_json.insert(
-            "path".to_owned(),
-            FieldValue::String("values/states.json".to_owned()),
-        );
-        let opts_json =
-            options(&[("values", FieldValue::Object(subtable_json))]);
-        let mut parser_json =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let field_type_json = SchemaSelectField::parse(
-            &cache,
-            &mut parser_json,
-            &opts_json,
-            None,
-        );
-        let errors_json = parser_json.finish(&opts_json);
-        assert!(errors_json.is_empty());
-
-        let SchemaFieldType::Select(def_json) = field_type_json else {
-            panic!("expected select");
-        };
-        assert_eq!(def_json.values().len(), 2);
-        assert_eq!(
-            def_json.values()[0].value(),
-            &FieldValue::String("California".to_owned())
-        );
-    }
-
-    #[test]
-    fn rejects_file_subtable_bare_strings_with_selectors() {
-        use pretty_assertions::assert_eq;
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let json_path = temp.path().join("items.json");
-        std::fs::write(&json_path, "{\"entries\": [\"a\", \"b\"]}")
+            let json_path = values_dir.join("states.json");
+            std::fs::write(
+                &json_path,
+                "{\n  \"entries\": [\n    \"California\",\n    \"New York\"\n  \
+                 ]\n}",
+            )
             .expect("write json");
 
-        let cache = SelectValuesFileCache::new(temp.path());
+            let cache = SelectValuesFileCache::new(temp.path());
 
-        let mut subtable = IndexMap::new();
-        subtable.insert(
-            "path".to_owned(),
-            FieldValue::String("items.json".to_owned()),
-        );
-        subtable
-            .insert("label".to_owned(), FieldValue::String("name".to_owned()));
+            let mut subtable_toml = IndexMap::new();
+            subtable_toml.insert(
+                "path".to_owned(),
+                FieldValue::String("values/countries.toml".to_owned()),
+            );
+            subtable_toml.insert(
+                "value".to_owned(),
+                FieldValue::String("slug".to_owned()),
+            );
+            subtable_toml.insert(
+                "label".to_owned(),
+                FieldValue::String("name".to_owned()),
+            );
+            subtable_toml.insert(
+                "order".to_owned(),
+                FieldValue::String("rank".to_owned()),
+            );
 
-        let opts = options(&[("values", FieldValue::Object(subtable))]);
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
+            let opts_toml =
+                options(&[("values", FieldValue::Object(subtable_toml))]);
+            let addr = address();
+            let mut parser_toml = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let field_type_toml = SchemaSelectField::parse(
+                &cache,
+                &mut parser_toml,
+                &opts_toml,
+                None,
+            );
+            let errors_toml = parser_toml.finish(&opts_toml);
+            assert!(errors_toml.is_empty());
 
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            &errors[0],
-            SchemaFieldParserError::SelectorOnBareEntries { selector, .. } if *selector == "label"
-        ));
-    }
+            let SchemaFieldType::Select(def_toml) = field_type_toml else {
+                unreachable!("expected select");
+            };
+            assert_eq!(def_toml.values().len(), 2);
+            assert_eq!(
+                def_toml.values()[0].value(),
+                &FieldValue::String("us".to_owned())
+            );
+            assert_eq!(
+                def_toml.values()[0].label(),
+                &FieldValue::String("United States".to_owned())
+            );
 
-    #[test]
-    fn rejects_file_subtable_bad_extension_and_missing_entries() {
-        use pretty_assertions::assert_eq;
+            let mut subtable_json = IndexMap::new();
+            subtable_json.insert(
+                "path".to_owned(),
+                FieldValue::String("values/states.json".to_owned()),
+            );
+            let opts_json =
+                options(&[("values", FieldValue::Object(subtable_json))]);
+            let mut parser_json = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let field_type_json = SchemaSelectField::parse(
+                &cache,
+                &mut parser_json,
+                &opts_json,
+                None,
+            );
+            let errors_json = parser_json.finish(&opts_json);
+            assert!(errors_json.is_empty());
 
-        let temp = tempfile::tempdir().expect("tempdir");
+            let SchemaFieldType::Select(def_json) = field_type_json else {
+                unreachable!("expected select");
+            };
+            assert_eq!(def_json.values().len(), 2);
+            assert_eq!(
+                def_json.values()[0].value(),
+                &FieldValue::String("California".to_owned())
+            );
+        }
 
-        let txt_path = temp.path().join("items.txt");
-        std::fs::write(&txt_path, "hello").expect("write txt");
-
-        let bad_json = temp.path().join("no_entries.json");
-        std::fs::write(&bad_json, "{}").expect("write json");
-
-        let cache = SelectValuesFileCache::new(temp.path());
-
-        let mut subtable_txt = IndexMap::new();
-        subtable_txt.insert(
-            "path".to_owned(),
-            FieldValue::String("items.txt".to_owned()),
-        );
-        let opts_txt = options(&[("values", FieldValue::Object(subtable_txt))]);
-        let addr = address();
-        let mut parser_txt =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let _ =
-            SchemaSelectField::parse(&cache, &mut parser_txt, &opts_txt, None);
-        let errors_txt = parser_txt.finish(&opts_txt);
-        assert_eq!(errors_txt.len(), 1);
-        assert!(matches!(
-            &errors_txt[0],
-            SchemaFieldParserError::BadValueFileExtension { .. }
-        ));
-
-        let mut subtable_missing = IndexMap::new();
-        subtable_missing.insert(
-            "path".to_owned(),
-            FieldValue::String("no_entries.json".to_owned()),
-        );
-        let opts_missing =
-            options(&[("values", FieldValue::Object(subtable_missing))]);
-        let mut parser_missing =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let _ = SchemaSelectField::parse(
-            &cache,
-            &mut parser_missing,
-            &opts_missing,
-            None,
-        );
-        let errors_missing = parser_missing.finish(&opts_missing);
-        assert_eq!(errors_missing.len(), 1);
-        assert!(matches!(
-            &errors_missing[0],
-            SchemaFieldParserError::ValueFileMissingEntries { .. }
-        ));
-    }
-
-    #[test]
-    fn rejects_file_subtable_root_unknown_fields() {
-        use pretty_assertions::assert_eq;
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let json_path = temp.path().join("extra.json");
-        std::fs::write(&json_path, "{\"entries\": [], \"typo\": 123}")
-            .expect("write json");
-
-        let cache = SelectValuesFileCache::new(temp.path());
-
-        let mut subtable = IndexMap::new();
-        subtable.insert(
-            "path".to_owned(),
-            FieldValue::String("extra.json".to_owned()),
-        );
-        let opts = options(&[("values", FieldValue::Object(subtable))]);
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            &errors[0],
-            SchemaFieldParserError::ValueFileLoad { .. }
-        ));
-    }
-
-    #[test]
-    fn cache_memoizes_loaded_files() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let json_path = temp.path().join("items.json");
-        std::fs::write(&json_path, "{\"entries\": [\"a\", \"b\"]}")
-            .expect("write json");
-
-        let cache = SelectValuesFileCache::new(temp.path());
-        let res1 = cache.load("items.json").expect("loads first time");
-        let res2 = cache.load("items.json").expect("loads second time");
-
-        assert!(Arc::ptr_eq(&res1, &res2));
-    }
-
-    #[test]
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn parses_json_null_in_extra_map() {
-        use pretty_assertions::assert_eq;
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let json_path = temp.path().join("items.json");
-        std::fs::write(
-            &json_path,
-            r#"{
+        #[test]
+        fn parses_json_null_as_null_field_value() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json_path = temp.path().join("items.json");
+            std::fs::write(
+                &json_path,
+                r#"{
   "entries": [
     { "slug": "a", "title": "Item A", "deprecated": null }
   ]
 }"#,
-        )
-        .expect("write json");
+            )
+            .expect("write json");
 
-        let cache = SelectValuesFileCache::new(temp.path());
+            let cache = SelectValuesFileCache::new(temp.path());
 
-        let mut subtable = IndexMap::new();
-        subtable.insert(
-            "path".to_owned(),
-            FieldValue::String("items.json".to_owned()),
-        );
-        subtable
-            .insert("value".to_owned(), FieldValue::String("slug".to_owned()));
-        subtable
-            .insert("label".to_owned(), FieldValue::String("title".to_owned()));
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("items.json".to_owned()),
+            );
+            subtable.insert(
+                "value".to_owned(),
+                FieldValue::String("slug".to_owned()),
+            );
+            subtable.insert(
+                "label".to_owned(),
+                FieldValue::String("title".to_owned()),
+            );
 
-        let opts = options(&[("values", FieldValue::Object(subtable))]);
-        let addr = address();
-        let mut parser =
-            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
-        let field_type =
-            SchemaSelectField::parse(&cache, &mut parser, &opts, None);
-        let errors = parser.finish(&opts);
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let field_type =
+                SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
-        assert!(errors.is_empty());
-        let SchemaFieldType::Select(def) = field_type else {
-            panic!("expected select");
-        };
+            assert!(errors.is_empty());
+            let SchemaFieldType::Select(def) = field_type else {
+                unreachable!("expected select");
+            };
+            assert_eq!(
+                def.values()[0].extra().get("deprecated"),
+                Some(&FieldValue::Null)
+            );
+        }
 
-        assert_eq!(
-            def.values()[0].extra().get("deprecated"),
-            Some(&FieldValue::Null)
-        );
+        #[test]
+        fn rejects_file_selectors_on_bare_strings() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json_path = temp.path().join("items.json");
+            std::fs::write(&json_path, "{\"entries\": [\"a\", \"b\"]}")
+                .expect("write json");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("items.json".to_owned()),
+            );
+            subtable.insert(
+                "label".to_owned(),
+                FieldValue::String("name".to_owned()),
+            );
+
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                &errors[0],
+                SchemaFieldParserError::SelectorOnBareEntries { selector, .. } if *selector == "label"
+            ));
+        }
+
+        #[test]
+        fn rejects_unsupported_file_extensions() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let txt_path = temp.path().join("items.txt");
+            std::fs::write(&txt_path, "hello").expect("write txt");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("items.txt".to_owned()),
+            );
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                &errors[0],
+                SchemaFieldParserError::BadValueFileExtension { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_files_missing_entries_key() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let bad_json = temp.path().join("no_entries.json");
+            std::fs::write(&bad_json, "{}").expect("write json");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("no_entries.json".to_owned()),
+            );
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                &errors[0],
+                SchemaFieldParserError::ValueFileMissingEntries { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_subtables_with_unknown_keys() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json_path = temp.path().join("extra.json");
+            std::fs::write(&json_path, "{\"entries\": [], \"typo\": 123}")
+                .expect("write json");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("extra.json".to_owned()),
+            );
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                &errors[0],
+                SchemaFieldParserError::ValueFileLoad { .. }
+            ));
+        }
+    }
+
+    mod cache {
+        use super::*;
+
+        #[test]
+        fn memoizes_loaded_files() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json_path = temp.path().join("items.json");
+            std::fs::write(&json_path, "{\"entries\": [\"a\", \"b\"]}")
+                .expect("write json");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+            let res1 = cache.load("items.json").expect("loads first time");
+            let res2 = cache.load("items.json").expect("loads second time");
+
+            assert!(Arc::ptr_eq(&res1, &res2));
+        }
+    }
+
+    mod inheritance {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn falls_back_to_base_values_on_omission() {
+            let base = SchemaSelectField::for_test(vec![
+                SchemaSelectFieldEntry::literal("old".to_owned()),
+            ]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let field_type = SchemaSelectField::parse(
+                &cache,
+                &mut parser,
+                &IndexMap::new(),
+                Some(&base),
+            );
+            let errors = parser.finish(&IndexMap::new());
+
+            assert!(errors.is_empty());
+            assert_eq!(field_type, SchemaFieldType::Select(Arc::new(base)));
+        }
     }
 }
