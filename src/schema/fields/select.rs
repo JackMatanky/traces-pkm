@@ -649,6 +649,15 @@ mod tests {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
+    fn select_field(
+        field_type: &SchemaFieldType,
+    ) -> Option<&SchemaSelectField> {
+        match field_type {
+            SchemaFieldType::Select(def) => Some(def.as_ref()),
+            _ => None,
+        }
+    }
+
     mod literal_lists {
         use pretty_assertions::assert_eq;
 
@@ -675,19 +684,13 @@ mod tests {
             let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
-            let SchemaFieldType::Select(def) = field_type else {
-                unreachable!("expected select field type");
-            };
+            let def =
+                select_field(&field_type).expect("expected select field type");
+            let first = def.values().first().expect("first entry");
             assert_eq!(def.values().len(), 2);
-            assert_eq!(
-                def.values()[0].value(),
-                &FieldValue::String("draft".to_owned())
-            );
-            assert_eq!(
-                def.values()[0].label(),
-                &FieldValue::String("draft".to_owned())
-            );
-            assert!(def.values()[0].extra().is_empty());
+            assert_eq!(first.value(), &FieldValue::String("draft".to_owned()));
+            assert_eq!(first.label(), &FieldValue::String("draft".to_owned()));
+            assert!(first.extra().is_empty());
         }
 
         #[test]
@@ -812,37 +815,38 @@ mod tests {
             let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
-            let SchemaFieldType::Select(def) = field_type else {
-                unreachable!("expected select field");
-            };
 
+            let def = select_field(&field_type).expect("expected select field");
             let values = def.values();
+            let first = values.first().expect("first entry");
+            let second = values.get(1).expect("second entry");
+
             assert_eq!(values.len(), 2);
-            assert_eq!(values[0].value(), &FieldValue::String("us".to_owned()));
+            assert_eq!(first.value(), &FieldValue::String("us".to_owned()));
             assert_eq!(
-                values[0].label(),
+                first.label(),
                 &FieldValue::String("United States".to_owned())
             );
             assert_eq!(
-                values[0].extra().get("currency"),
+                first.extra().get("currency"),
                 Some(&FieldValue::String("USD".to_owned()))
             );
             assert_eq!(
-                values[0].extra().get("order"),
+                first.extra().get("order"),
                 Some(&FieldValue::Float(1.0))
             );
 
-            assert_eq!(values[1].value(), &FieldValue::String("ca".to_owned()));
+            assert_eq!(second.value(), &FieldValue::String("ca".to_owned()));
             assert_eq!(
-                values[1].label(),
+                second.label(),
                 &FieldValue::String("Canada".to_owned())
             );
             assert_eq!(
-                values[1].extra().get("currency"),
+                second.extra().get("currency"),
                 Some(&FieldValue::String("CAD".to_owned()))
             );
             assert_eq!(
-                values[1].extra().get("order"),
+                second.extra().get("order"),
                 Some(&FieldValue::Float(2.0))
             );
         }
@@ -882,9 +886,9 @@ mod tests {
             let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
             let errors = parser.finish(&opts);
 
-            assert_eq!(errors.len(), 1);
+            let error = errors.first().expect("expected error");
             assert!(matches!(
-                &errors[0],
+                error,
                 SchemaFieldParserError::SelectorMissingKey { selector, key, .. }
                     if *selector == "label" && key == "label"
             ));
@@ -914,13 +918,15 @@ mod tests {
             let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 2);
+            let value_error = errors.first().expect("value error");
+            let order_error = errors.get(1).expect("order error");
             assert!(matches!(
-                &errors[0],
+                value_error,
                 SchemaFieldParserError::TypeMismatch { key, expected, .. }
                     if key == "value" && *expected == "a string"
             ));
             assert!(matches!(
-                &errors[1],
+                order_error,
                 SchemaFieldParserError::TypeMismatch { key, expected, .. }
                     if key == "order" && *expected == "a number"
             ));
@@ -991,16 +997,17 @@ mod tests {
             let errors_toml = parser_toml.finish(&opts_toml);
             assert!(errors_toml.is_empty());
 
-            let SchemaFieldType::Select(def_toml) = field_type_toml else {
-                unreachable!("expected select");
-            };
+            let def_toml =
+                select_field(&field_type_toml).expect("expected select");
+            let first_toml =
+                def_toml.values().first().expect("first TOML entry");
             assert_eq!(def_toml.values().len(), 2);
             assert_eq!(
-                def_toml.values()[0].value(),
+                first_toml.value(),
                 &FieldValue::String("us".to_owned())
             );
             assert_eq!(
-                def_toml.values()[0].label(),
+                first_toml.label(),
                 &FieldValue::String("United States".to_owned())
             );
 
@@ -1024,12 +1031,13 @@ mod tests {
             let errors_json = parser_json.finish(&opts_json);
             assert!(errors_json.is_empty());
 
-            let SchemaFieldType::Select(def_json) = field_type_json else {
-                unreachable!("expected select");
-            };
+            let def_json =
+                select_field(&field_type_json).expect("expected select");
+            let first_json =
+                def_json.values().first().expect("first JSON entry");
             assert_eq!(def_json.values().len(), 2);
             assert_eq!(
-                def_json.values()[0].value(),
+                first_json.value(),
                 &FieldValue::String("California".to_owned())
             );
         }
@@ -1075,11 +1083,11 @@ mod tests {
             let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
-            let SchemaFieldType::Select(def) = field_type else {
-                unreachable!("expected select");
-            };
+
+            let def = select_field(&field_type).expect("expected select");
+            let first = def.values().first().expect("first entry");
             assert_eq!(
-                def.values()[0].extra().get("deprecated"),
+                first.extra().get("deprecated"),
                 Some(&FieldValue::Null)
             );
         }
@@ -1112,9 +1120,9 @@ mod tests {
             let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
             let errors = parser.finish(&opts);
 
-            assert_eq!(errors.len(), 1);
+            let error = errors.first().expect("expected error");
             assert!(matches!(
-                &errors[0],
+                error,
                 SchemaFieldParserError::SelectorOnBareEntries { selector, .. } if *selector == "label"
             ));
         }
@@ -1141,9 +1149,9 @@ mod tests {
             let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
             let errors = parser.finish(&opts);
 
-            assert_eq!(errors.len(), 1);
+            let error = errors.first().expect("expected error");
             assert!(matches!(
-                &errors[0],
+                error,
                 SchemaFieldParserError::BadValueFileExtension { .. }
             ));
         }
@@ -1170,9 +1178,9 @@ mod tests {
             let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
             let errors = parser.finish(&opts);
 
-            assert_eq!(errors.len(), 1);
+            let error = errors.first().expect("expected error");
             assert!(matches!(
-                &errors[0],
+                error,
                 SchemaFieldParserError::ValueFileMissingEntries { .. }
             ));
         }
@@ -1200,9 +1208,9 @@ mod tests {
             let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
             let errors = parser.finish(&opts);
 
-            assert_eq!(errors.len(), 1);
+            let error = errors.first().expect("expected error");
             assert!(matches!(
-                &errors[0],
+                error,
                 SchemaFieldParserError::ValueFileLoad { .. }
             ));
         }
