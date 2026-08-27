@@ -25,10 +25,10 @@ use pulldown_cmark::{
 };
 
 use super::{
-    Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter, Tag,
+    Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter,
     TaskStatus, lexer,
 };
-use crate::field::FieldKey;
+use crate::{field::FieldKey, tag::Tag};
 
 /// Parses Markdown source into a [`Note`].
 ///
@@ -1093,7 +1093,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::Tag;
+        use crate::tag::Tag;
 
         #[rstest]
         #[case::body("Author:: Jane Doe", "author", "Jane Doe")]
@@ -1328,7 +1328,7 @@ mod tests {
         fn extracts_a_tag_from_body_text() {
             let note = parse_markdown("note.md", "Filed under #book today.");
 
-            assert_eq!(note.tags(), [Tag::new("#book")]);
+            assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[test]
@@ -1341,7 +1341,7 @@ mod tests {
                 .and_then(|list| list.items().first())
                 .expect("item present");
             assert_eq!(item.text(), "Reading #book now");
-            assert_eq!(note.tags(), [Tag::new("#book")]);
+            assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[rstest]
@@ -1397,7 +1397,10 @@ mod tests {
             let note =
                 parse_markdown("note.md", "- Parent #alpha\n  - Child #beta\n");
 
-            assert_eq!(note.tags(), [Tag::new("#alpha"), Tag::new("#beta")]);
+            assert_eq!(note.tags(), [
+                Tag::parse("#alpha").unwrap(),
+                Tag::parse("#beta").unwrap()
+            ]);
         }
 
         #[rstest]
@@ -1446,7 +1449,7 @@ mod tests {
                 Some("Draft #urgent")
             );
 
-            assert_eq!(note.tags(), [Tag::new("#urgent")]);
+            assert_eq!(note.tags(), [Tag::parse("#urgent").unwrap()]);
         }
 
         #[test]
@@ -1495,7 +1498,7 @@ mod tests {
         fn extracts_a_tag_from_heading_text() {
             let note = parse_markdown("note.md", "# Chapter #book\n\nBody.");
 
-            assert_eq!(note.tags(), [Tag::new("#book")]);
+            assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[test]

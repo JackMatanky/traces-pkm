@@ -17,7 +17,11 @@
 use std::{cmp::Ordering, fmt::Write as _, path::PathBuf};
 
 use super::sort::compare_field_values;
-use crate::note::{Link, NoteFieldValue, Tag, is_nested_under};
+use crate::{
+    is_nested_under,
+    note::{Link, NoteFieldValue},
+    tag::Tag,
+};
 
 /// Borrowed field value resolved from a [`super::QueryRecord`].
 pub(super) enum QueryFieldValueRef<'a> {

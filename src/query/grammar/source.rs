@@ -224,7 +224,7 @@ impl SourceAtom {
     ) -> bool {
         match self {
             Self::Tag(tag) => note.is_some_and(|note| {
-                note.tags().iter().any(|value| value.is_nested_under(tag))
+                note.tags().iter().any(|value| value.is_contained_in(tag))
             }),
             Self::Path(pattern) => pattern.is_match(base.path()),
             Self::Class {

@@ -67,6 +67,7 @@ mod note;
 mod path;
 mod query;
 mod schema;
+mod tag;
 mod template;
 
 pub mod cli;
@@ -97,7 +98,7 @@ pub use index::{
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,
-    NoteFieldValue, RawFrontmatter, Tag, TaskStatus, parse_markdown,
+    NoteFieldValue, RawFrontmatter, TaskStatus, parse_markdown,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
@@ -105,6 +106,9 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaService};
+pub(crate) use tag::is_nested_under;
+#[cfg(any(test, feature = "test-utils"))]
+pub use tag::{Tag, TagError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,
