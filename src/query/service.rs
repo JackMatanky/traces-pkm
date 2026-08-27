@@ -163,7 +163,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::note::Tag;
+        use crate::tag::Tag;
 
         fn note_paths(outcome: &QueryRecordSet) -> Vec<&Path> {
             outcome
@@ -379,7 +379,7 @@ mod tests {
                 .note()
                 .expect("note");
 
-            assert_eq!(note.tags(), [Tag::new("#book")]);
+            assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[test]

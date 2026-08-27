@@ -9,9 +9,8 @@ use super::{
     links::Link,
     lists::{List, ListItem},
     metadata::{Frontmatter, NoteFieldValue},
-    tag::Tag,
 };
-use crate::field::FieldKey;
+use crate::{field::FieldKey, tag::Tag};
 
 /// A parsed Markdown note.
 ///
@@ -289,9 +288,9 @@ mod tests {
         #[test]
         fn with_tags_attaches_the_given_tags() {
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
-                .with_tags(vec![Tag::new("#book")]);
+                .with_tags(vec![Tag::parse("#book").unwrap()]);
 
-            assert_eq!(note.tags(), [Tag::new("#book")]);
+            assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
     }
 

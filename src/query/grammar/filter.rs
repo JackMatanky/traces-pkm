@@ -6,9 +6,9 @@ use super::{
     expr::{
         AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
     },
-    lex::{Spanned, TokenStream},
 };
 use crate::{
+    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
     note::NoteFieldValue,
     query::{
         QueryError, QueryRecord,
@@ -24,6 +24,52 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FilterExpr(BooleanExpr<FilterAtom>);
 
+impl FilterExpr {
+    /// Parses a filter expression string into a logical expression tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
+        let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
+            input,
+            |token| {
+                let span = token.span();
+                match token.into_value() {
+                    FilterToken::Ident(word) => match word.parse::<f64>() {
+                        Ok(number) if number.is_finite() => {
+                            Ok(LexedToken::new(
+                                FilterToken::Literal(NoteFieldValue::Number(
+                                    number,
+                                )),
+                                span,
+                            ))
+                        }
+                        Ok(_) => Err(LexError::UnexpectedToken {
+                            span,
+                            found: "NaN or infinity".to_owned(),
+                            expected: "a finite numeric literal",
+                        }),
+                        Err(_) => {
+                            Ok(LexedToken::new(FilterToken::Ident(word), span))
+                        }
+                    },
+                    other => Ok(LexedToken::new(other, span)),
+                }
+            },
+        )
+        .map_err(|e| {
+            QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+        })?;
+        parse_boolean_expr(input, tokens, FilterGrammar).map(Self)
+    }
+
+    /// Whether `record` satisfies this expression.
+    pub(crate) fn is_matching(&self, record: &QueryRecord) -> bool {
+        self.0.is_satisfied_by(|atom| atom.is_matching(record))
+    }
+}
+
 /// Atomic predicate in a filter expression.
 ///
 /// Either a field-to-literal comparison or a recognized function call
@@ -36,6 +82,58 @@ pub(crate) enum FilterAtom {
     Function(FilterFunction),
 }
 
+impl FilterAtom {
+    fn is_matching(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Comparison(comparison) => comparison.is_matching(record),
+            Self::Function(function) => function.is_matching(record),
+        }
+    }
+}
+
+/// A recognized filter function call.
+///
+/// Adding a function requires adding a variant here, a name check in
+/// [`Self::build`], and matching logic in [`Self::is_matching`].
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FilterFunction {
+    /// `contains(field, target)`.
+    ///
+    /// - Lists match by exact value or tag prefix, such as `#book` matching
+    ///   `#book/fiction`.
+    /// - Other field kinds fall back to substring containment.
+    Contains {
+        field: FieldPath,
+        target: NoteFieldValue,
+    },
+}
+
+impl FilterFunction {
+    fn build(
+        name: &str,
+        field: FieldPath,
+        target: NoteFieldValue,
+    ) -> Option<Self> {
+        if name.eq_ignore_ascii_case("contains") {
+            Some(Self::Contains {
+                field,
+                target,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn is_matching(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Contains {
+                field,
+                target,
+            } => record.resolve_ref(field).is_containing(target),
+        }
+    }
+}
+
 /// A parsed `<field> <op> <value>` comparison node in a filter expression.
 ///
 /// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
@@ -45,6 +143,26 @@ pub(crate) struct ComparisonExpr {
     field: FieldPath,
     op: CompareOp,
     value: NoteFieldValue,
+}
+
+impl ComparisonExpr {
+    pub(super) const fn new(
+        field: FieldPath,
+        op: CompareOp,
+        value: NoteFieldValue,
+    ) -> Self {
+        Self {
+            field,
+            op,
+            value,
+        }
+    }
+
+    /// Returns whether the given index record satisfies this comparison
+    /// expression.
+    pub(super) fn is_matching(&self, record: &QueryRecord) -> bool {
+        self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
+    }
 }
 
 /// A comparison operator parsed from a filter expression.
@@ -66,6 +184,36 @@ pub(super) enum CompareOp {
     Ge,
 }
 
+impl CompareOp {
+    /// Returns whether a field value satisfies this operator against a literal.
+    pub(super) fn is_satisfied_by(
+        self,
+        field: &QueryFieldValueRef<'_>,
+        literal: &NoteFieldValue,
+    ) -> bool {
+        match self {
+            Self::Eq => field.is_equal_to_literal(literal),
+            Self::Ne => !field.is_equal_to_literal(literal),
+            Self::Lt => {
+                field.compare_to_literal(literal)
+                    == Some(std::cmp::Ordering::Less)
+            }
+            Self::Gt => {
+                field.compare_to_literal(literal)
+                    == Some(std::cmp::Ordering::Greater)
+            }
+            Self::Le => matches!(
+                field.compare_to_literal(literal),
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ),
+            Self::Ge => matches!(
+                field.compare_to_literal(literal),
+                Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+            ),
+        }
+    }
+}
+
 impl TryFrom<&str> for CompareOp {
     type Error = ();
 
@@ -83,21 +231,155 @@ impl TryFrom<&str> for CompareOp {
     }
 }
 
-/// A recognized filter function call.
-///
-/// Adding a function requires adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::is_matching`].
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FilterFunction {
-    /// `contains(field, target)`.
-    ///
-    /// - Lists match by exact value or tag prefix, such as `#book` matching
-    ///   `#book/fiction`.
-    /// - Other field kinds fall back to substring containment.
-    Contains {
-        field: FieldPath,
-        target: NoteFieldValue,
-    },
+struct FilterGrammar;
+
+impl FilterGrammar {
+    fn parse_literal_arg(
+        input: &str,
+        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
+    ) -> Result<NoteFieldValue, QueryError> {
+        let spanned = tokens
+            .expect_map(input, "a literal value", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Literal(value) => Some(value),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+        Ok(spanned.into_value())
+    }
+
+    fn parse_function_call(
+        input: &str,
+        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
+        name: &str,
+    ) -> Result<FilterFunction, QueryError> {
+        tokens
+            .expect(input, &FilterToken::LParen, "`(` after a function name")
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+
+        let field_ident = tokens
+            .expect_map(input, "a field path", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Ident(ident) => Some(ident),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+        let field = FieldPath::parse(field_ident.value())?;
+
+        tokens
+            .expect(input, &FilterToken::Comma, "`,` after the field path")
+            .map_err(|e| {
+            QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+        })?;
+
+        let target = Self::parse_literal_arg(input, tokens)?;
+
+        tokens
+            .expect(
+                input,
+                &FilterToken::RParen,
+                "`)` after the function arguments",
+            )
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+
+        FilterFunction::build(name, field, target).ok_or_else(|| {
+            QuerySyntaxError::new(
+                QueryDialect::Filter,
+                input,
+                SourceSpan::from((0, name.len())),
+                "`contains`",
+            )
+            .into()
+        })
+    }
+
+    fn parse_comparison(
+        input: &str,
+        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
+        field_ident: &str,
+    ) -> Result<ComparisonExpr, QueryError> {
+        let op_spanned = tokens
+            .expect_map(input, "a comparison operator", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Op(op) => Some(op),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+        let field = FieldPath::parse(field_ident)?;
+        let value = Self::parse_literal_arg(input, tokens)?;
+        Ok(ComparisonExpr::new(field, *op_spanned.value(), value))
+    }
+}
+
+impl AtomParser for FilterGrammar {
+    type Atom = FilterAtom;
+    type Token = FilterToken;
+
+    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
+        match token {
+            FilterToken::Logical(operator) => {
+                Some(LogicalControl::Operator(*operator))
+            }
+            FilterToken::Not => Some(LogicalControl::Not),
+            FilterToken::LParen => Some(LogicalControl::LeftParen),
+            FilterToken::RParen => Some(LogicalControl::RightParen),
+            FilterToken::Comma
+            | FilterToken::Op(_)
+            | FilterToken::Literal(_)
+            | FilterToken::Ident(_) => None,
+        }
+    }
+
+    fn parse_atom(
+        &self,
+        input: &str,
+        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
+    ) -> Result<Self::Atom, QueryError> {
+        let spanned_ident = tokens
+            .expect_map(input, "a filter term", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Ident(name) => Some(name),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+
+        if tokens.peek_is_value(&FilterToken::LParen) {
+            Self::parse_function_call(input, tokens, spanned_ident.value())
+                .map(FilterAtom::Function)
+        } else {
+            Self::parse_comparison(input, tokens, spanned_ident.value())
+                .map(FilterAtom::Comparison)
+        }
+    }
+
+    fn syntax_error(
+        &self,
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
+    ) -> QuerySyntaxError {
+        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
+    }
 }
 
 /// Lexical tokens parsed from a filter expression.
@@ -131,291 +413,6 @@ enum FilterToken {
     Ident(String),
 }
 
-struct FilterGrammar;
-
-impl FilterExpr {
-    /// Parses a filter expression string into a logical expression tree.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
-        parse_boolean_expr(
-            input,
-            TokenStream::new(tokenize_filter_expr(input)?),
-            FilterGrammar,
-        )
-        .map(Self)
-    }
-
-    /// Whether `record` satisfies this expression.
-    pub(crate) fn is_matching(&self, record: &QueryRecord) -> bool {
-        self.0.is_satisfied_by(|atom| atom.is_matching(record))
-    }
-}
-
-impl FilterAtom {
-    fn is_matching(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Comparison(comparison) => comparison.is_matching(record),
-            Self::Function(function) => function.is_matching(record),
-        }
-    }
-}
-
-impl ComparisonExpr {
-    pub(super) const fn new(
-        field: FieldPath,
-        op: CompareOp,
-        value: NoteFieldValue,
-    ) -> Self {
-        Self {
-            field,
-            op,
-            value,
-        }
-    }
-
-    /// Returns whether the given index record satisfies this comparison
-    /// expression.
-    pub(super) fn is_matching(&self, record: &QueryRecord) -> bool {
-        self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
-    }
-}
-
-impl CompareOp {
-    /// Returns whether a field value satisfies this operator against a literal.
-    pub(super) fn is_satisfied_by(
-        self,
-        field: &QueryFieldValueRef<'_>,
-        literal: &NoteFieldValue,
-    ) -> bool {
-        match self {
-            Self::Eq => field.is_equal_to_literal(literal),
-            Self::Ne => !field.is_equal_to_literal(literal),
-            Self::Lt => {
-                field.compare_to_literal(literal)
-                    == Some(std::cmp::Ordering::Less)
-            }
-            Self::Gt => {
-                field.compare_to_literal(literal)
-                    == Some(std::cmp::Ordering::Greater)
-            }
-            Self::Le => matches!(
-                field.compare_to_literal(literal),
-                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-            ),
-            Self::Ge => matches!(
-                field.compare_to_literal(literal),
-                Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
-            ),
-        }
-    }
-}
-
-impl FilterFunction {
-    fn build(
-        name: &str,
-        field: FieldPath,
-        target: NoteFieldValue,
-    ) -> Option<Self> {
-        if name.eq_ignore_ascii_case("contains") {
-            Some(Self::Contains {
-                field,
-                target,
-            })
-        } else {
-            None
-        }
-    }
-
-    fn is_matching(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Contains {
-                field,
-                target,
-            } => record.resolve_ref(field).is_containing(target),
-        }
-    }
-}
-
-impl FilterGrammar {
-    fn parse_literal_arg(
-        input: &str,
-        tokens: &mut TokenStream<Spanned<FilterToken>>,
-    ) -> Result<NoteFieldValue, QueryError> {
-        tokens
-            .expect_map(
-                input,
-                "a literal value",
-                QueryDialect::Filter,
-                |token| match token {
-                    FilterToken::Literal(value) => Some(value),
-                    _ => None,
-                },
-            )
-            .map(|spanned| spanned.value)
-    }
-
-    fn parse_function_call(
-        input: &str,
-        tokens: &mut TokenStream<Spanned<FilterToken>>,
-        name: &str,
-    ) -> Result<FilterFunction, QueryError> {
-        tokens.expect(
-            input,
-            &FilterToken::LParen,
-            "`(` after a function name",
-            QueryDialect::Filter,
-        )?;
-
-        let field_ident = tokens.expect_map(
-            input,
-            "a field path",
-            QueryDialect::Filter,
-            |token| match token {
-                FilterToken::Ident(ident) => Some(ident),
-                _ => None,
-            },
-        )?;
-        let field = FieldPath::parse(&field_ident.value)?;
-
-        tokens.expect(
-            input,
-            &FilterToken::Comma,
-            "`,` after the field path",
-            QueryDialect::Filter,
-        )?;
-
-        let target = Self::parse_literal_arg(input, tokens)?;
-
-        tokens.expect(
-            input,
-            &FilterToken::RParen,
-            "`)` after the function arguments",
-            QueryDialect::Filter,
-        )?;
-
-        FilterFunction::build(name, field, target).ok_or_else(|| {
-            syntax_error(input, SourceSpan::from((0, name.len())), "`contains`")
-        })
-    }
-
-    fn parse_comparison(
-        input: &str,
-        tokens: &mut TokenStream<Spanned<FilterToken>>,
-        field_ident: &str,
-    ) -> Result<ComparisonExpr, QueryError> {
-        let op_spanned = tokens.expect_map(
-            input,
-            "a comparison operator",
-            QueryDialect::Filter,
-            |token| match token {
-                FilterToken::Op(op) => Some(op),
-                _ => None,
-            },
-        )?;
-        let field = FieldPath::parse(field_ident)?;
-        let value = Self::parse_literal_arg(input, tokens)?;
-        Ok(ComparisonExpr::new(field, op_spanned.value, value))
-    }
-}
-
-impl AtomParser for FilterGrammar {
-    type Atom = FilterAtom;
-    type Token = FilterToken;
-
-    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
-        match token {
-            FilterToken::Logical(operator) => {
-                Some(LogicalControl::Operator(*operator))
-            }
-            FilterToken::Not => Some(LogicalControl::Not),
-            FilterToken::LParen => Some(LogicalControl::LeftParen),
-            FilterToken::RParen => Some(LogicalControl::RightParen),
-            FilterToken::Comma
-            | FilterToken::Op(_)
-            | FilterToken::Literal(_)
-            | FilterToken::Ident(_) => None,
-        }
-    }
-
-    fn parse_atom(
-        &self,
-        input: &str,
-        tokens: &mut TokenStream<Spanned<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError> {
-        let spanned_ident = tokens.expect_map(
-            input,
-            "a filter term",
-            QueryDialect::Filter,
-            |token| match token {
-                FilterToken::Ident(name) => Some(name),
-                _ => None,
-            },
-        )?;
-
-        if tokens.peek().is_some_and(|token| token.value == FilterToken::LParen)
-        {
-            Self::parse_function_call(input, tokens, &spanned_ident.value)
-                .map(FilterAtom::Function)
-        } else {
-            Self::parse_comparison(input, tokens, &spanned_ident.value)
-                .map(FilterAtom::Comparison)
-        }
-    }
-
-    fn syntax_error(
-        &self,
-        input: &str,
-        span: SourceSpan,
-        expected: &'static str,
-    ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
-    }
-}
-
-fn syntax_error(
-    input: &str,
-    span: SourceSpan,
-    expected: &'static str,
-) -> QueryError {
-    QuerySyntaxError::new(QueryDialect::Filter, input, span, expected).into()
-}
-
-/// Tokenizes `input`, preserving each token's original byte span.
-fn tokenize_filter_expr(
-    input: &str,
-) -> Result<Vec<Spanned<FilterToken>>, QueryError> {
-    let mut lexer = FilterToken::lexer(input);
-    let mut tokens = Vec::new();
-    while let Some(result) = lexer.next() {
-        let range = lexer.span();
-        let span = SourceSpan::from((range.start, range.len()));
-        let value =
-            result.map_err(|()| syntax_error(input, span, "a filter term"))?;
-        let token = match value {
-            FilterToken::Ident(word) => match word.parse::<f64>() {
-                Ok(number) if number.is_finite() => Spanned::new(
-                    FilterToken::Literal(NoteFieldValue::Number(number)),
-                    span,
-                ),
-                Ok(_) => {
-                    return Err(syntax_error(
-                        input,
-                        span,
-                        "a finite numeric literal",
-                    ));
-                }
-                Err(_) => Spanned::new(FilterToken::Ident(word), span),
-            },
-            other => Spanned::new(other, span),
-        };
-        tokens.push(token);
-    }
-    Ok(tokens)
-}
-
 /// Unescapes a lexed double-quoted string literal into a
 /// [`NoteFieldValue::String`].
 #[expect(
@@ -428,18 +425,7 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
         .unwrap_or_default();
-    let mut value = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(escaped) = chars.next() {
-                value.push(escaped);
-            }
-        } else {
-            value.push(ch);
-        }
-    }
-    NoteFieldValue::String(value)
+    NoteFieldValue::String(lexical_backslash_unescape(inner))
 }
 
 #[cfg(test)]
@@ -486,6 +472,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::LexError;
 
         #[rstest]
         #[case::no_operator("rating")]
@@ -532,7 +519,11 @@ mod tests {
                 "expected syntax error"
             );
             if let Err(QueryError::Syntax(error)) = result {
-                assert_eq!(error.expected, "a finite numeric literal");
+                assert_eq!(*error.lex_error, LexError::UnexpectedToken {
+                    span: SourceSpan::from((offset, length)),
+                    found: "NaN or infinity".to_owned(),
+                    expected: "a finite numeric literal",
+                });
                 assert_eq!(error.span, SourceSpan::from((offset, length)));
             }
         }

@@ -35,12 +35,9 @@ mod lists;
 mod metadata;
 mod model;
 mod parser;
-mod tag;
 
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{List, ListItem, TaskStatus};
 pub use metadata::{Frontmatter, NoteFieldValue, RawFrontmatter};
 pub use model::Note;
 pub use parser::parse_markdown;
-pub use tag::Tag;
-pub(crate) use tag::is_nested_under;

@@ -62,10 +62,12 @@ mod file_class_expander;
 mod file_store;
 mod hash;
 mod index;
+mod lexer;
 mod note;
 mod path;
 mod query;
 mod schema;
+mod tag;
 mod template;
 
 pub mod cli;
@@ -93,10 +95,13 @@ pub use index::{
     FileIndex, IndexError, IndexerService, InlinkMap, derive_inlinks,
     path as path_codec,
 };
+pub(crate) use lexer::{
+    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
+};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,
-    NoteFieldValue, RawFrontmatter, Tag, TaskStatus, parse_markdown,
+    NoteFieldValue, RawFrontmatter, TaskStatus, parse_markdown,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
@@ -104,6 +109,8 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaService};
+#[cfg(any(test, feature = "test-utils"))]
+pub use tag::{Tag, TagError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,

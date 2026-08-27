@@ -17,7 +17,10 @@
 use std::{cmp::Ordering, fmt::Write as _, path::PathBuf};
 
 use super::sort::compare_field_values;
-use crate::note::{Link, NoteFieldValue, Tag, is_nested_under};
+use crate::{
+    note::{Link, NoteFieldValue},
+    tag::Tag,
+};
 
 /// Borrowed field value resolved from a [`super::QueryRecord`].
 pub(super) enum QueryFieldValueRef<'a> {
@@ -268,9 +271,8 @@ fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
 
 fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
     item == target_str
-        || item.starts_with('#')
-            && target_str.starts_with('#')
-            && is_nested_under(item, target_str)
+        || (item.starts_with('#') && target_str.starts_with('#'))
+            && Tag::parse(item).is_ok_and(|tag| tag.is_contained_in(target_str))
 }
 
 fn is_tag_or_value_matching(
@@ -286,7 +288,7 @@ fn is_tag_or_value_matching(
     };
     item_str.starts_with('#')
         && target_str.starts_with('#')
-        && is_nested_under(item_str, target_str)
+        && Tag::parse(item_str).is_ok_and(|tag| tag.is_contained_in(target_str))
 }
 
 pub(super) fn is_list_containing(

@@ -15,10 +15,8 @@
 
 use logos::{Filter, Lexer, Logos};
 
-use super::{
-    Link, NoteFieldValue, Tag, cursor::SourceText, metadata::is_iso_date,
-};
-use crate::field::FieldKey;
+use super::{Link, NoteFieldValue, cursor::SourceText, metadata::is_iso_date};
+use crate::{field::FieldKey, tag::Tag};
 
 /// Extracts inline fields from `text` in encounter order.
 ///
@@ -659,7 +657,10 @@ fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
         })
         .map_or(remainder.len(), |(offset, _)| offset);
     lex.bump(body_end);
-    Filter::Emit(Tag::new(lex.slice()))
+    match Tag::parse(lex.slice()) {
+        Ok(tag) => Filter::Emit(tag),
+        Err(_) => Filter::Skip,
+    }
 }
 
 #[cfg(test)]
@@ -1020,7 +1021,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::Tag;
+        use crate::tag::Tag;
 
         #[rstest]
         #[case::standalone(
@@ -1050,7 +1051,7 @@ mod tests {
             let tags = extract_tags(input);
 
             let expected: Vec<Tag> =
-                expected.iter().map(|tag| Tag::new(*tag)).collect();
+                expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
             assert_eq!(tags, expected);
         }
     }

@@ -471,7 +471,10 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{Frontmatter, Link, LinkType, NoteFieldValue, Tag};
+        use crate::{
+            note::{Frontmatter, Link, LinkType, NoteFieldValue},
+            tag::Tag,
+        };
 
         /// The `upserted`/`deleted`/link path lists extracted from an
         /// [`IndexDelta::Incremental`]. Distinct from production's
@@ -688,7 +691,7 @@ mod tests {
             let built_note =
                 built.note(Path::new("note.md")).expect("built note");
             assert_eq!(loaded_note.tags(), built_note.tags());
-            assert_eq!(loaded_note.tags(), [Tag::new("#book")]);
+            assert_eq!(loaded_note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[test]
