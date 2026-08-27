@@ -109,7 +109,6 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaService};
-pub(crate) use tag::is_nested_under;
 #[cfg(any(test, feature = "test-utils"))]
 pub use tag::{Tag, TagError};
 #[cfg(any(test, feature = "test-utils"))]

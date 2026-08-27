@@ -472,6 +472,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::LexError;
 
         #[rstest]
         #[case::no_operator("rating")]
@@ -518,14 +519,11 @@ mod tests {
                 "expected syntax error"
             );
             if let Err(QueryError::Syntax(error)) = result {
-                assert_eq!(
-                    *error.lex_error,
-                    crate::LexError::UnexpectedToken {
-                        span: SourceSpan::from((offset, length)),
-                        found: "NaN or infinity".to_owned(),
-                        expected: "a finite numeric literal",
-                    }
-                );
+                assert_eq!(*error.lex_error, LexError::UnexpectedToken {
+                    span: SourceSpan::from((offset, length)),
+                    found: "NaN or infinity".to_owned(),
+                    expected: "a finite numeric literal",
+                });
                 assert_eq!(error.span, SourceSpan::from((offset, length)));
             }
         }

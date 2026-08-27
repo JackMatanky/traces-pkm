@@ -123,18 +123,6 @@ impl Tag {
     }
 }
 
-/// Returns `true` if `text` equals `prefix` or is nested below it at a `/`
-/// boundary.
-///
-/// Shared by [`Tag::is_contained_in`] and [`crate::query::value`]'s tag
-/// containment check so the nesting rule has one implementation.
-#[inline]
-#[must_use]
-pub(crate) fn is_nested_under(text: &str, prefix: &str) -> bool {
-    text == prefix
-        || text.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('/'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,12 +230,6 @@ mod tests {
             let tag = Tag::parse("#projects").unwrap();
             assert!(!tag.is_contained_in("#projects/active"));
         }
-
-        #[test]
-        fn tag_rejects_similar_name_without_slash_boundary() {
-            let tag = Tag::parse("#projects").unwrap();
-            assert!(!tag.is_contained_in("#project"));
-        }
     }
 
     mod segments {
@@ -263,35 +245,6 @@ mod tests {
         fn nested_tag_has_two_segments() {
             let tag = Tag::parse("#a/b").unwrap();
             assert_eq!(tag.segments().len(), 2);
-        }
-    }
-
-    mod is_nested_under_tests {
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::identical_tag("#projects/active", "#projects/active")]
-        #[case::direct_parent("#projects/active", "#projects")]
-        #[case::grandparent("#projects/active/urgent", "#projects")]
-        #[case::nested_query_target("#projects/active/sub", "#projects/active")]
-        fn returns_true_when_tag_matches_or_is_nested(
-            #[case] tag: &str,
-            #[case] query: &str,
-        ) {
-            assert!(is_nested_under(tag, query));
-        }
-
-        #[rstest]
-        #[case::unrelated_tag("#book", "#movie")]
-        #[case::more_specific_than_the_tag("#projects", "#projects/active")]
-        #[case::prefix_word_without_a_slash_boundary("#projects", "#project")]
-        fn returns_false_when_unrelated_or_more_specific(
-            #[case] tag: &str,
-            #[case] query: &str,
-        ) {
-            assert!(!is_nested_under(tag, query));
         }
     }
 }

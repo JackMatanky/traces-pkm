@@ -32,6 +32,8 @@ use std::fmt;
 use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 
+use crate::LexError;
+
 /// Identifies the query language that rejected an expression.
 ///
 /// Used by [`QuerySyntaxError`] to produce a human-readable message that names
@@ -96,7 +98,7 @@ pub struct QuerySyntaxError {
     pub(crate) span: SourceSpan,
     /// The underlying lexer error carrying diagnostic context.
     #[source]
-    pub(crate) lex_error: Box<crate::LexError>,
+    pub(crate) lex_error: Box<LexError>,
 }
 
 impl QuerySyntaxError {
@@ -111,18 +113,18 @@ impl QuerySyntaxError {
             dialect,
             input: input.to_owned(),
             span,
-            lex_error: Box::new(crate::LexError::UnexpectedEof {
+            lex_error: Box::new(LexError::UnexpectedEndOfInput {
                 span,
                 expected,
             }),
         }
     }
 
-    /// Wraps a [`crate::LexError`] into a syntax diagnostic.
+    /// Wraps a [`LexError`] into a syntax diagnostic.
     pub(crate) fn from_lex(
         dialect: QueryDialect,
         input: &str,
-        lex_error: crate::LexError,
+        lex_error: LexError,
     ) -> Self {
         let span = lex_error.span();
         Self {
@@ -318,7 +320,7 @@ mod tests {
         assert_eq!(error.dialect, QueryDialect::Filter);
         assert_eq!(error.input, "rating >");
         assert_eq!(error.span, SourceSpan::from((7, 0)));
-        assert_eq!(*error.lex_error, crate::LexError::UnexpectedEof {
+        assert_eq!(*error.lex_error, LexError::UnexpectedEndOfInput {
             span: SourceSpan::from((7, 0)),
             expected: "a literal value",
         });
