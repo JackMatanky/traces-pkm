@@ -931,6 +931,64 @@ mod tests {
                     if key == "order" && *expected == "a number"
             ));
         }
+
+        #[test]
+        fn sorts_order_with_total_float_ordering() {
+            let mut nan = IndexMap::new();
+            nan.insert(
+                "value".to_owned(),
+                FieldValue::String("nan".to_owned()),
+            );
+            nan.insert("order".to_owned(), FieldValue::Float(f64::NAN));
+
+            let mut zero = IndexMap::new();
+            zero.insert(
+                "value".to_owned(),
+                FieldValue::String("zero".to_owned()),
+            );
+            zero.insert("order".to_owned(), FieldValue::Float(0.0));
+
+            let mut negative_zero = IndexMap::new();
+            negative_zero.insert(
+                "value".to_owned(),
+                FieldValue::String("negative_zero".to_owned()),
+            );
+            negative_zero.insert("order".to_owned(), FieldValue::Float(-0.0));
+
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![
+                    FieldValue::Object(nan),
+                    FieldValue::Object(zero),
+                    FieldValue::Object(negative_zero),
+                ]),
+            )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let field_type =
+                SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert!(errors.is_empty());
+            let def = select_field(&field_type).expect("expected select field");
+            let values = def.values();
+            let first = values.first().expect("first entry");
+            let second = values.get(1).expect("second entry");
+            let third = values.get(2).expect("third entry");
+
+            assert_eq!(values.len(), 3);
+            assert_eq!(
+                first.value(),
+                &FieldValue::String("negative_zero".to_owned())
+            );
+            assert_eq!(second.value(), &FieldValue::String("zero".to_owned()));
+            assert_eq!(third.value(), &FieldValue::String("nan".to_owned()));
+        }
     }
 
     mod file_sources {
@@ -1186,7 +1244,7 @@ mod tests {
         }
 
         #[test]
-        fn rejects_subtables_with_unknown_keys() {
+        fn rejects_values_files_with_unknown_top_level_keys() {
             let temp = tempfile::tempdir().expect("tempdir");
             let json_path = temp.path().join("extra.json");
             std::fs::write(&json_path, "{\"entries\": [], \"typo\": 123}")
@@ -1212,6 +1270,65 @@ mod tests {
             assert!(matches!(
                 error,
                 SchemaFieldParserError::ValueFileLoad { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_file_subtables_with_unknown_keys() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json_path = temp.path().join("items.json");
+            std::fs::write(&json_path, "{\"entries\": []}")
+                .expect("write json");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("items.json".to_owned()),
+            );
+            subtable.insert("typo".to_owned(), FieldValue::Bool(true));
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            let error = errors.first().expect("expected error");
+            assert!(matches!(
+                error,
+                SchemaFieldParserError::UnknownKey { key, .. } if key == "typo"
+            ));
+        }
+
+        #[test]
+        fn rejects_file_paths_that_escape_schema_directory() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("../outside.json".to_owned()),
+            );
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+
+            let _ = SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            let error = errors.first().expect("expected error");
+            assert!(matches!(
+                error,
+                SchemaFieldParserError::ValueFileLoad { path, .. } if path == "../outside.json"
             ));
         }
     }

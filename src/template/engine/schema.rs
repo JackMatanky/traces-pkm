@@ -241,9 +241,8 @@ fn bind_related(
 
 /// Converts a resolved `select`-field entry into the minijinja `Value` shape
 /// `.field()` returns: a plain string when `label == value` and `extra` is
-/// empty (always true under this ticket; see
-/// [`SchemaSelectFieldEntry`](crate::schema::SchemaSelectFieldEntry)'s docs),
-/// else a `{value, label, ...extra}` object for a future structured source.
+/// empty, otherwise a `{value, label, ...extra}` object for structured inline
+/// value objects or external values-file entries.
 fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
     if entry.label() == entry.value() && entry.extra().is_empty() {
         return Value::from_serialize(entry.value());
