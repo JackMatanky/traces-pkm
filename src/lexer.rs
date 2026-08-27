@@ -6,42 +6,6 @@ use logos::Logos;
 use miette::SourceSpan;
 use thiserror::Error;
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LexedToken<T> {
-    value: T,
-    span: SourceSpan,
-}
-
-impl<T> LexedToken<T> {
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
-        Self {
-            value,
-            span,
-        }
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn value(&self) -> &T {
-        &self.value
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn span(&self) -> SourceSpan {
-        self.span
-    }
-
-    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
-    #[inline]
-    #[must_use]
-    pub(crate) fn into_value(self) -> T {
-        self.value
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub(crate) enum LexError {
     #[error("found `{found}`, expected {expected}")]
@@ -55,6 +19,10 @@ pub(crate) enum LexError {
         span: SourceSpan,
         expected: &'static str,
     },
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for lexer-specific diagnostics")
+    )]
     #[error("invalid character `{char}`; {expected}")]
     InvalidCharacter {
         span: SourceSpan,
@@ -90,36 +58,6 @@ where
     Ok(tokens)
 }
 
-/// Strips backslash escapes from `input`, returning the unescaped string.
-///
-/// A backslash followed by any character consumes both and emits the second
-/// character verbatim. A trailing backslash (with nothing after it) is kept
-/// as-is.
-///
-/// # Examples
-///
-/// ```ignore
-/// assert_eq!(unescape_backslash(r#"hello \"world\""#), "hello \"world\"");
-/// assert_eq!(unescape_backslash(r#"back\\slash"#), "back\\slash");
-/// assert_eq!(unescape_backslash("trailing\\"), "trailing\\");
-/// ```
-pub(crate) fn unescape_backslash(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(escaped) = chars.next() {
-                output.push(escaped);
-            } else {
-                output.push('\\');
-            }
-        } else {
-            output.push(ch);
-        }
-    }
-    output
-}
-
 /// An owning one-token-lookahead cursor over a materialized token stream.
 pub(crate) struct LexTokenStream<T> {
     tokens: Peekable<vec::IntoIter<T>>,
@@ -145,37 +83,23 @@ impl<T> LexTokenStream<T> {
     pub(crate) fn next(&mut self) -> Option<T> {
         self.tokens.next()
     }
-
-    /// Returns `true` if the stream is exhausted.
-    #[inline]
-    pub(crate) fn is_empty(&mut self) -> bool {
-        self.tokens.peek().is_none()
-    }
-
-    /// Consumes `expected` only when it is the next token value.
-    pub(crate) fn is_taken<U>(&mut self, expected: &U) -> bool
-    where
-        T: PartialEq<U>,
-        U: ?Sized,
-    {
-        if self.peek().is_some_and(|token| *token == *expected) {
-            self.next();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns `true` if the next token equals `expected` without consuming it.
-    pub(crate) fn peek_is(&mut self, expected: &T) -> bool
-    where
-        T: PartialEq,
-    {
-        self.peek().is_some_and(|token| token == expected)
-    }
 }
 
 impl<T> LexTokenStream<LexedToken<T>> {
+    /// Tokenizes `input` into a spanned token stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LexError`] when the logos lexer encounters an unrecognized
+    /// token.
+    pub(crate) fn tokenize<'a>(input: &'a str) -> Result<Self, LexError>
+    where
+        T: Logos<'a, Source = str>,
+        T::Extras: Default,
+    {
+        tokenize::<T>(input).map(Self::new)
+    }
+
     /// Resolves the span of the next token, or end-of-input if empty.
     pub(crate) fn next_span(&mut self, input: &str) -> SourceSpan {
         self.peek().map_or_else(
@@ -259,6 +183,72 @@ impl<T> AsRef<T> for LexedToken<T> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LexedToken<T> {
+    value: T,
+    span: SourceSpan,
+}
+
+impl<T> LexedToken<T> {
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
+        Self {
+            value,
+            span,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &T {
+        &self.value
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn span(&self) -> SourceSpan {
+        self.span
+    }
+
+    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn into_value(self) -> T {
+        self.value
+    }
+}
+
+/// Strips backslash escapes from `input`, returning the unescaped string.
+///
+/// A backslash followed by any character consumes both and emits the second
+/// character verbatim. A trailing backslash (with nothing after it) is kept
+/// as-is.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(lexical_backslash_unescape(r#"hello \"world\""#), "hello \"world\"");
+/// assert_eq!(lexical_backslash_unescape(r#"back\\slash"#), "back\\slash");
+/// assert_eq!(lexical_backslash_unescape("trailing\\"), "trailing\\");
+/// ```
+pub(crate) fn lexical_backslash_unescape(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(escaped) = chars.next() {
+                output.push(escaped);
+            } else {
+                output.push('\\');
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,23 +328,29 @@ mod tests {
     }
 
     #[test]
-    fn unescape_backslash_removes_escape_before_quote() {
-        assert_eq!(unescape_backslash(r#"say \"hello\""#), "say \"hello\"");
+    fn lexical_backslash_unescape_removes_escape_before_quote() {
+        assert_eq!(
+            lexical_backslash_unescape(r#"say \"hello\""#),
+            "say \"hello\""
+        );
     }
 
     #[test]
-    fn unescape_backslash_keeps_trailing_backslash() {
-        assert_eq!(unescape_backslash("abc\\"), "abc\\");
+    fn lexical_backslash_unescape_keeps_trailing_backslash() {
+        assert_eq!(lexical_backslash_unescape("abc\\"), "abc\\");
     }
 
     #[test]
-    fn unescape_backslash_passes_through_no_escapes() {
-        assert_eq!(unescape_backslash("no escapes here"), "no escapes here");
+    fn lexical_backslash_unescape_passes_through_no_escapes() {
+        assert_eq!(
+            lexical_backslash_unescape("no escapes here"),
+            "no escapes here"
+        );
     }
 
     #[test]
-    fn unescape_backslash_handles_empty_string() {
-        assert_eq!(unescape_backslash(""), "");
+    fn lexical_backslash_unescape_handles_empty_string() {
+        assert_eq!(lexical_backslash_unescape(""), "");
     }
 
     #[test]
@@ -366,28 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn token_stream_is_taken_consumes_on_match() {
-        let mut ts = LexTokenStream::new(vec![1, 2, 3]);
-        assert!(ts.is_taken(&1));
-        assert_eq!(ts.next(), Some(2));
-    }
-
-    #[test]
-    fn token_stream_is_taken_rejects_non_match() {
-        let mut ts = LexTokenStream::new(vec![1, 2, 3]);
-        assert!(!ts.is_taken(&99));
-        assert_eq!(ts.next(), Some(1));
-    }
-
-    #[test]
-    fn token_stream_peek_is_does_not_consume() {
-        let mut ts = LexTokenStream::new(vec![42_i32, 43]);
-        assert!(ts.peek_is(&42));
-        assert!(!ts.peek_is(&43));
-        assert_eq!(ts.next(), Some(42));
-    }
-
-    #[test]
     fn token_stream_peek_is_value_compares_inner() {
         let mut ts = LexTokenStream::new(vec![
             LexedToken::new("hello", SourceSpan::from((0, 5))),
@@ -395,6 +369,32 @@ mod tests {
         ]);
         assert!(ts.peek_is_value(&"hello"));
         assert!(!ts.peek_is_value(&"world"));
+    }
+
+    #[test]
+    fn token_stream_tokenize_builds_spanned_stream() {
+        use logos::Logos;
+
+        #[derive(Logos, Debug, Clone, PartialEq)]
+        #[logos(skip r"[ \t\n]+")]
+        enum T {
+            #[token("a")]
+            A,
+            #[token("b")]
+            B,
+        }
+
+        let mut ts = LexTokenStream::<LexedToken<T>>::tokenize("a b").unwrap();
+        assert!(ts.peek_is_value(&T::A));
+        assert_eq!(
+            ts.expect("a b", &T::A, "an `a` token").unwrap(),
+            SourceSpan::from((0, 1))
+        );
+        assert_eq!(
+            ts.expect("a b", &T::B, "a `b` token").unwrap(),
+            SourceSpan::from((2, 1))
+        );
+        assert_eq!(ts.next(), None);
     }
 
     #[test]

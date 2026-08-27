@@ -10,12 +10,12 @@ use super::expr::{
 use crate::{
     LexTokenStream, LexedToken,
     file::FileBase,
+    lexical_backslash_unescape,
     note::{Note, NoteFieldValue},
     query::{
         QueryError,
         error::{QueryDialect, QuerySyntaxError},
     },
-    tokenize as lex_tokens, unescape_backslash,
 };
 
 /// Top-level source selector: every Note or a parsed expression.
@@ -30,6 +30,69 @@ pub enum SourceSelector {
     All,
     /// Only Notes matching this expression satisfy this source.
     Expr(SourceExpr),
+}
+
+impl SourceSelector {
+    /// Parses `input` as a source expression.
+    ///
+    /// Empty or whitespace-only input yields [`Self::All`]; any nonempty input
+    /// is parsed into a [`SourceExpr`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Syntax`] when a nonempty `input` is invalid.
+    #[inline]
+    pub fn parse(input: &str) -> Result<Self, QueryError> {
+        if input.trim().is_empty() {
+            Ok(Self::All)
+        } else {
+            SourceExpr::parse(input).map(Self::Expr)
+        }
+    }
+
+    /// Returns whether `file` and `note` satisfy this source.
+    #[must_use]
+    pub(crate) fn is_match(
+        &self,
+        base: &FileBase,
+        note: Option<&Note>,
+        canonical_class_field: &str,
+    ) -> bool {
+        match self {
+            Self::All => true,
+            Self::Expr(expr) => {
+                expr.is_match(base, note, canonical_class_field)
+            }
+        }
+    }
+
+    /// Returns whether this source contains File Class atoms requiring
+    /// Schema-level class expansion.
+    #[must_use]
+    pub(crate) fn has_classes(&self) -> bool {
+        match self {
+            Self::All => false,
+            Self::Expr(expression) => expression.has_classes(),
+        }
+    }
+
+    /// Resolve every File Class leaf in `self` against `expander`.
+    pub(crate) fn resolve_classes(
+        &mut self,
+        expander: &(impl FileClassExpander + ?Sized),
+    ) {
+        if let Self::Expr(expression) = self {
+            expression.visit_atoms_mut(&mut |atom| {
+                if let SourceAtom::Class {
+                    names,
+                    mode,
+                } = atom
+                {
+                    expander.expand(names, mode);
+                }
+            });
+        }
+    }
 }
 
 /// Parsed source expression wrapping a boolean tree of [`SourceAtom`] leaves.
@@ -47,221 +110,6 @@ pub enum SourceSelector {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceExpr(BooleanExpr<SourceAtom>);
 
-/// Atomic match predicate in a source expression.
-///
-/// Combined into expression trees by boolean operators (`and`, `or`, `not`).
-///
-/// # Matching rules
-///
-/// - **[`SourceAtom::Tag`]**: matches if the Note carries the named tag or any
-///   nested sub-tag (`#book` matches `#book/fiction`)
-/// - **[`SourceAtom::Path`]**: matches if the file path matches the compiled
-///   glob (`books/` compiles to `books/**`, matching every file under it)
-/// - **[`SourceAtom::Class`]**: matches if any of the Note's class field values
-///   appears in the resolved [`ClassExpansionMode`] set
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum SourceAtom {
-    /// Matches an exact tag or any nested sub-tag.
-    Tag(String),
-    /// Matches a path against a compiled glob pattern.
-    Path(GlobPattern),
-    /// Matches any named File Class under the requested expansion mode.
-    Class {
-        /// Raw class names requested by the user.
-        names: Vec<String>,
-        /// Expansion depth and the precomputed class match set.
-        mode: ClassExpansionMode,
-    },
-}
-
-/// Compiled glob pattern backing [`SourceAtom::Path`].
-///
-/// Dialect: `*` matches any run of characters except `/`; `**` matches any run
-/// of characters including `/`; every other character matches literally. The
-/// compiled regex is anchored to match the whole path and is built once at
-/// construction, not per-match.
-#[derive(Clone)]
-pub(crate) struct GlobPattern {
-    regex: Regex,
-    pattern: String,
-}
-
-impl std::fmt::Debug for GlobPattern {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("GlobPattern").field(&self.pattern).finish()
-    }
-}
-
-impl PartialEq for GlobPattern {
-    fn eq(&self, other: &Self) -> bool {
-        self.pattern == other.pattern
-    }
-}
-
-impl Eq for GlobPattern {}
-
-/// Expansion depth for a File Class match.
-///
-/// | Mode          | Matches                                    | Sigil | Function                |
-/// | ------------- | ------------------------------------------ | ----- | ----------------------- |
-/// | `Exact`       | Only the named class                       | `@C`  | `class(C)`              |
-/// | `Children`    | Named class and its direct sub-classes     | `@C+` | `class(C, children)`    |
-/// | `Descendants` | Named class and all transitive sub-classes | `@C*` | `class(C, descendants)` |
-///
-/// The inner [`BTreeSet`] holds precomputed class names. Populate via
-/// [`set_classes`](Self::set_classes) before matching; the set is empty after
-/// parsing and resolved at query execution time.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ClassExpansionMode {
-    /// Match only the named class.
-    Exact(BTreeSet<String>),
-    /// Match the named class and its direct children.
-    Children(BTreeSet<String>),
-    /// Match the named class and every transitive descendant.
-    Descendants(BTreeSet<String>),
-}
-
-/// Lexical tokens for the page source expression language.
-#[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(skip r"[ \t\n\r\f]+")]
-enum SourceToken {
-    #[token("(")]
-    LParen,
-    #[token(")")]
-    RParen,
-    #[token(",")]
-    Comma,
-    #[regex(
-        "&&|and|\\|\\||or",
-        |lex| LogicalOp::try_from(lex.slice()),
-        ignore(case)
-    )]
-    Logical(LogicalOp),
-    #[token("!", priority = 3)]
-    #[token("not", priority = 3, ignore(case))]
-    Not,
-    #[token("class", priority = 3, ignore(case))]
-    Class,
-    #[token(".with_children()", priority = 4)]
-    WithChildren,
-    #[token(".with_descendants()", priority = 4)]
-    WithDescendants,
-    #[regex(r"#[a-zA-Z][a-zA-Z0-9_\-/]+", |lex| lex.slice().to_owned())]
-    Tag(String),
-    #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
-    ClassSigil(String),
-    #[regex(r#"\"([^\"\\]|\\.)*\""#, quoted_callback)]
-    #[regex(r#"'([^'\\]|\\.)*'"#, quoted_callback)]
-    Quoted(String),
-    #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
-    Bare(String),
-}
-
-/// Resolves File Class names against the Schema domain.
-///
-/// Implemented by `schema::SchemaService` in a dedicated composition module
-/// (`crate::file_class_expander`) so neither `query` nor `schema` depends on
-/// the other's types.
-pub(crate) trait FileClassExpander {
-    /// Populates `mode`'s match set from `classes` at its requested depth.
-    fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
-}
-
-impl GlobPattern {
-    /// Compiles `pattern` (glob syntax: `*`, `**`, literal characters) into an
-    /// anchored path matcher.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`regex::Error`] if the translated pattern fails to compile as
-    /// a regex (not expected for this fixed `*`/`**`-only translation, but the
-    /// compile step is fallible in principle).
-    fn compile(pattern: &str) -> Result<Self, regex::Error> {
-        let mut regex_source = String::from("^");
-        let mut rest = pattern;
-        while let Some(index) = rest.find('*') {
-            regex_source.push_str(&regex::escape(&rest[..index]));
-            rest = &rest[index.saturating_add(1)..];
-            if let Some(stripped) = rest.strip_prefix('*') {
-                regex_source.push_str(".*");
-                rest = stripped;
-            } else {
-                regex_source.push_str("[^/]*");
-            }
-        }
-        regex_source.push_str(&regex::escape(rest));
-        regex_source.push('$');
-        Regex::new(&regex_source).map(|regex| Self {
-            regex,
-            pattern: pattern.to_owned(),
-        })
-    }
-
-    /// Returns whether `path` matches this glob.
-    #[must_use]
-    fn is_match(&self, path: &Path) -> bool {
-        self.regex.is_match(&path.to_string_lossy())
-    }
-}
-
-impl SourceAtom {
-    /// Constructs a path atom from a compiled glob `pattern`.
-    pub(crate) fn path(pattern: &str) -> Result<Self, regex::Error> {
-        GlobPattern::compile(pattern).map(Self::Path)
-    }
-
-    /// Returns whether `file` and `note` match this atom.
-    ///
-    /// `note` is `None` for files with no parsed [`Note`] (non-Markdown files);
-    /// [`Self::Tag`] and [`Self::Class`] never match a note-less file, while
-    /// [`Self::Path`] never reads `note`.
-    fn is_match(
-        &self,
-        base: &FileBase,
-        note: Option<&Note>,
-        canonical_class_field: &str,
-    ) -> bool {
-        match self {
-            Self::Tag(tag) => note.is_some_and(|note| {
-                note.tags().iter().any(|value| value.is_contained_in(tag))
-            }),
-            Self::Path(pattern) => pattern.is_match(base.path()),
-            Self::Class {
-                mode,
-                ..
-            } => note.is_some_and(|note| {
-                class_values(note, canonical_class_field)
-                    .any(|value| mode.classes().contains(value))
-            }),
-        }
-    }
-}
-
-impl ClassExpansionMode {
-    /// Returns the resolved class names.
-    ///
-    /// Empty until populated by [`set_classes`](Self::set_classes).
-    #[must_use]
-    pub(crate) const fn classes(&self) -> &BTreeSet<String> {
-        match self {
-            Self::Exact(classes)
-            | Self::Children(classes)
-            | Self::Descendants(classes) => classes,
-        }
-    }
-
-    /// Populates the resolved class names.
-    ///
-    /// Replaces any existing set; does not alter the expansion depth.
-    pub(crate) fn set_classes(&mut self, resolved: BTreeSet<String>) {
-        match self {
-            Self::Exact(classes)
-            | Self::Children(classes)
-            | Self::Descendants(classes) => *classes = resolved,
-        }
-    }
-}
-
 impl SourceExpr {
     /// Parses `input` as a source expression.
     ///
@@ -269,12 +117,11 @@ impl SourceExpr {
     ///
     /// Returns [`QueryError::Syntax`] on any tokenization or parse failure.
     pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
-        parse_boolean_expr(
-            input,
-            LexTokenStream::new(tokenize(input)?),
-            SourceGrammar,
-        )
-        .map(Self)
+        let tokens = LexTokenStream::<LexedToken<SourceToken>>::tokenize(input)
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Source, input, e)
+            })?;
+        parse_boolean_expr(input, tokens, SourceGrammar).map(Self)
     }
 
     /// Returns whether `file` and `note` satisfy this expression.
@@ -345,68 +192,199 @@ impl SourceExpr {
     }
 }
 
-impl SourceSelector {
-    /// Parses `input` as a source expression.
-    ///
-    /// Empty or whitespace-only input yields [`Self::All`]; any nonempty input
-    /// is parsed into a [`SourceExpr`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::Syntax`] when a nonempty `input` is invalid.
-    #[inline]
-    pub fn parse(input: &str) -> Result<Self, QueryError> {
-        if input.trim().is_empty() {
-            Ok(Self::All)
-        } else {
-            SourceExpr::parse(input).map(Self::Expr)
-        }
+/// Atomic match predicate in a source expression.
+///
+/// Combined into expression trees by boolean operators (`and`, `or`, `not`).
+///
+/// # Matching rules
+///
+/// - **[`SourceAtom::Tag`]**: matches if the Note carries the named tag or any
+///   nested sub-tag (`#book` matches `#book/fiction`)
+/// - **[`SourceAtom::Path`]**: matches if the file path matches the compiled
+///   glob (`books/` compiles to `books/**`, matching every file under it)
+/// - **[`SourceAtom::Class`]**: matches if any of the Note's class field values
+///   appears in the resolved [`ClassExpansionMode`] set
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SourceAtom {
+    /// Matches an exact tag or any nested sub-tag.
+    Tag(String),
+    /// Matches a path against a compiled glob pattern.
+    Path(GlobPattern),
+    /// Matches any named File Class under the requested expansion mode.
+    Class {
+        /// Raw class names requested by the user.
+        names: Vec<String>,
+        /// Expansion depth and the precomputed class match set.
+        mode: ClassExpansionMode,
+    },
+}
+
+impl SourceAtom {
+    /// Constructs a path atom from a compiled glob `pattern`.
+    pub(crate) fn path(pattern: &str) -> Result<Self, regex::Error> {
+        GlobPattern::compile(pattern).map(Self::Path)
     }
 
-    /// Returns whether `file` and `note` satisfy this source.
-    #[must_use]
-    pub(crate) fn is_match(
+    /// Returns whether `file` and `note` match this atom.
+    ///
+    /// `note` is `None` for files with no parsed [`Note`] (non-Markdown files);
+    /// [`Self::Tag`] and [`Self::Class`] never match a note-less file, while
+    /// [`Self::Path`] never reads `note`.
+    fn is_match(
         &self,
         base: &FileBase,
         note: Option<&Note>,
         canonical_class_field: &str,
     ) -> bool {
         match self {
-            Self::All => true,
-            Self::Expr(expr) => {
-                expr.is_match(base, note, canonical_class_field)
-            }
-        }
-    }
-
-    /// Returns whether this source contains File Class atoms requiring
-    /// Schema-level class expansion.
-    #[must_use]
-    pub(crate) fn has_classes(&self) -> bool {
-        match self {
-            Self::All => false,
-            Self::Expr(expression) => expression.has_classes(),
-        }
-    }
-
-    /// Resolve every File Class leaf in `self` against `expander`.
-    pub(crate) fn resolve_classes(
-        &mut self,
-        expander: &(impl FileClassExpander + ?Sized),
-    ) {
-        if let Self::Expr(expression) = self {
-            expression.visit_atoms_mut(&mut |atom| {
-                if let SourceAtom::Class {
-                    names,
-                    mode,
-                } = atom
-                {
-                    expander.expand(names, mode);
-                }
-            });
+            Self::Tag(tag) => note.is_some_and(|note| {
+                note.tags().iter().any(|value| value.is_contained_in(tag))
+            }),
+            Self::Path(pattern) => pattern.is_match(base.path()),
+            Self::Class {
+                mode,
+                ..
+            } => note.is_some_and(|note| {
+                class_values(note, canonical_class_field)
+                    .any(|value| mode.classes().contains(value))
+            }),
         }
     }
 }
+
+/// Extracts string File Class values from the frontmatter of a note.
+pub(crate) fn class_values<'a, 'b>(
+    note: &'a Note,
+    canonical_class_field: &'b str,
+) -> impl Iterator<Item = &'a str> + 'b
+where
+    'a: 'b,
+{
+    let values =
+        note.frontmatter().map(|fm| fm.get_values(canonical_class_field));
+    values.into_iter().flatten().filter_map(NoteFieldValue::as_str)
+}
+
+/// Compiled glob pattern backing [`SourceAtom::Path`].
+///
+/// Dialect: `*` matches any run of characters except `/`; `**` matches any run
+/// of characters including `/`; every other character matches literally. The
+/// compiled regex is anchored to match the whole path and is built once at
+/// construction, not per-match.
+#[derive(Clone)]
+pub(crate) struct GlobPattern {
+    regex: Regex,
+    pattern: String,
+}
+
+impl GlobPattern {
+    /// Compiles `pattern` (glob syntax: `*`, `**`, literal characters) into an
+    /// anchored path matcher.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`regex::Error`] if the translated pattern fails to compile as
+    /// a regex (not expected for this fixed `*`/`**`-only translation, but the
+    /// compile step is fallible in principle).
+    fn compile(pattern: &str) -> Result<Self, regex::Error> {
+        let mut regex_source = String::from("^");
+        let mut rest = pattern;
+        while let Some(index) = rest.find('*') {
+            regex_source.push_str(&regex::escape(&rest[..index]));
+            rest = &rest[index.saturating_add(1)..];
+            if let Some(stripped) = rest.strip_prefix('*') {
+                regex_source.push_str(".*");
+                rest = stripped;
+            } else {
+                regex_source.push_str("[^/]*");
+            }
+        }
+        regex_source.push_str(&regex::escape(rest));
+        regex_source.push('$');
+        Regex::new(&regex_source).map(|regex| Self {
+            regex,
+            pattern: pattern.to_owned(),
+        })
+    }
+
+    /// Returns whether `path` matches this glob.
+    #[must_use]
+    fn is_match(&self, path: &Path) -> bool {
+        self.regex.is_match(&path.to_string_lossy())
+    }
+}
+
+impl std::fmt::Debug for GlobPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("GlobPattern").field(&self.pattern).finish()
+    }
+}
+
+impl Eq for GlobPattern {}
+
+impl PartialEq for GlobPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+    }
+}
+
+/// Expansion depth for a File Class match.
+///
+/// | Mode          | Matches                                    | Sigil | Function                |
+/// | ------------- | ------------------------------------------ | ----- | ----------------------- |
+/// | `Exact`       | Only the named class                       | `@C`  | `class(C)`              |
+/// | `Children`    | Named class and its direct sub-classes     | `@C+` | `class(C, children)`    |
+/// | `Descendants` | Named class and all transitive sub-classes | `@C*` | `class(C, descendants)` |
+///
+/// The inner [`BTreeSet`] holds precomputed class names. Populate via
+/// [`set_classes`](Self::set_classes) before matching; the set is empty after
+/// parsing and resolved at query execution time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClassExpansionMode {
+    /// Match only the named class.
+    Exact(BTreeSet<String>),
+    /// Match the named class and its direct children.
+    Children(BTreeSet<String>),
+    /// Match the named class and every transitive descendant.
+    Descendants(BTreeSet<String>),
+}
+
+impl ClassExpansionMode {
+    /// Returns the resolved class names.
+    ///
+    /// Empty until populated by [`set_classes`](Self::set_classes).
+    #[must_use]
+    pub(crate) const fn classes(&self) -> &BTreeSet<String> {
+        match self {
+            Self::Exact(classes)
+            | Self::Children(classes)
+            | Self::Descendants(classes) => classes,
+        }
+    }
+
+    /// Populates the resolved class names.
+    ///
+    /// Replaces any existing set; does not alter the expansion depth.
+    pub(crate) fn set_classes(&mut self, resolved: BTreeSet<String>) {
+        match self {
+            Self::Exact(classes)
+            | Self::Children(classes)
+            | Self::Descendants(classes) => *classes = resolved,
+        }
+    }
+}
+
+/// Resolves File Class names against the Schema domain.
+///
+/// Implemented by `schema::SchemaService` in a dedicated composition module
+/// (`crate::file_class_expander`) so neither `query` nor `schema` depends on
+/// the other's types.
+pub(crate) trait FileClassExpander {
+    /// Populates `mode`'s match set from `classes` at its requested depth.
+    fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
+}
+
+struct SourceGrammar;
 
 impl SourceGrammar {
     /// Parses a sigil-form File Class term (e.g., `@Class`, `@Class+`,
@@ -557,8 +535,6 @@ impl SourceGrammar {
     }
 }
 
-struct SourceGrammar;
-
 impl AtomParser for SourceGrammar {
     type Atom = SourceAtom;
     type Token = SourceToken;
@@ -646,17 +622,40 @@ impl AtomParser for SourceGrammar {
     }
 }
 
-/// Extracts string File Class values from the frontmatter of a note.
-pub(crate) fn class_values<'a, 'b>(
-    note: &'a Note,
-    canonical_class_field: &'b str,
-) -> impl Iterator<Item = &'a str> + 'b
-where
-    'a: 'b,
-{
-    let values =
-        note.frontmatter().map(|fm| fm.get_values(canonical_class_field));
-    values.into_iter().flatten().filter_map(NoteFieldValue::as_str)
+/// Lexical tokens for the page source expression language.
+#[derive(Logos, Clone, Debug, PartialEq)]
+#[logos(skip r"[ \t\n\r\f]+")]
+enum SourceToken {
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token(",")]
+    Comma,
+    #[regex(
+        "&&|and|\\|\\||or",
+        |lex| LogicalOp::try_from(lex.slice()),
+        ignore(case)
+    )]
+    Logical(LogicalOp),
+    #[token("!", priority = 3)]
+    #[token("not", priority = 3, ignore(case))]
+    Not,
+    #[token("class", priority = 3, ignore(case))]
+    Class,
+    #[token(".with_children()", priority = 4)]
+    WithChildren,
+    #[token(".with_descendants()", priority = 4)]
+    WithDescendants,
+    #[regex(r"#[a-zA-Z][a-zA-Z0-9_\-/]+", |lex| lex.slice().to_owned())]
+    Tag(String),
+    #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
+    ClassSigil(String),
+    #[regex(r#"\"([^\"\\]|\\.)*\""#, quoted_callback)]
+    #[regex(r#"'([^'\\]|\\.)*'"#, quoted_callback)]
+    Quoted(String),
+    #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
+    Bare(String),
 }
 
 #[expect(
@@ -666,13 +665,7 @@ where
 fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
     let raw = lexer.slice();
     let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    unescape_backslash(inner)
-}
-
-fn tokenize(input: &str) -> Result<Vec<LexedToken<SourceToken>>, QueryError> {
-    lex_tokens::<SourceToken>(input).map_err(|e| -> QueryError {
-        QuerySyntaxError::from_lex(QueryDialect::Source, input, e).into()
-    })
+    lexical_backslash_unescape(inner)
 }
 
 #[cfg(test)]

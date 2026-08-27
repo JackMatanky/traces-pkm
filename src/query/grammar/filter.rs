@@ -8,14 +8,14 @@ use super::{
     },
 };
 use crate::{
-    LexTokenStream, LexedToken,
+    LexTokenStream, LexedToken, lexical_backslash_unescape,
     note::NoteFieldValue,
     query::{
         QueryError, QueryRecord,
         error::{QueryDialect, QuerySyntaxError},
         value::QueryFieldValueRef,
     },
-    tokenize, unescape_backslash,
+    tokenize,
 };
 
 /// A parsed filter expression AST.
@@ -24,115 +24,6 @@ use crate::{
 /// type used by [`crate::query::QueryRecordSet::filter`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FilterExpr(BooleanExpr<FilterAtom>);
-
-/// Atomic predicate in a filter expression.
-///
-/// Either a field-to-literal comparison or a recognized function call
-/// (such as `contains(tags, "#book")`).
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FilterAtom {
-    /// `<field> <op> <value>` comparison.
-    Comparison(ComparisonExpr),
-    /// Recognized function call, such as `contains(tags, "#book")`.
-    Function(FilterFunction),
-}
-
-/// A parsed `<field> <op> <value>` comparison node in a filter expression.
-///
-/// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
-/// [`NoteFieldValue`] to evaluate against the resolved field of each record.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ComparisonExpr {
-    field: FieldPath,
-    op: CompareOp,
-    value: NoteFieldValue,
-}
-
-/// A comparison operator parsed from a filter expression.
-///
-/// Each variant maps to a syntactic operator in the filter language.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum CompareOp {
-    /// `==`
-    Eq,
-    /// `!=`
-    Ne,
-    /// `<`
-    Lt,
-    /// `<=`
-    Le,
-    /// `>`
-    Gt,
-    /// `>=`
-    Ge,
-}
-
-impl TryFrom<&str> for CompareOp {
-    type Error = ();
-
-    /// Attempts to parse a comparison operator from its string representation.
-    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
-        match spelling {
-            "==" => Ok(Self::Eq),
-            "!=" => Ok(Self::Ne),
-            ">=" => Ok(Self::Ge),
-            "<=" => Ok(Self::Le),
-            ">" => Ok(Self::Gt),
-            "<" => Ok(Self::Lt),
-            _ => Err(()),
-        }
-    }
-}
-
-/// A recognized filter function call.
-///
-/// Adding a function requires adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::is_matching`].
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FilterFunction {
-    /// `contains(field, target)`.
-    ///
-    /// - Lists match by exact value or tag prefix, such as `#book` matching
-    ///   `#book/fiction`.
-    /// - Other field kinds fall back to substring containment.
-    Contains {
-        field: FieldPath,
-        target: NoteFieldValue,
-    },
-}
-
-/// Lexical tokens parsed from a filter expression.
-#[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(skip r"[ \t\n\r\f]+")]
-enum FilterToken {
-    #[token("(")]
-    LParen,
-    #[token(")")]
-    RParen,
-    #[token(",")]
-    Comma,
-    #[regex(
-        "&&|and|\\|\\||or",
-        |lex| LogicalOp::try_from(lex.slice()),
-        ignore(case)
-    )]
-    Logical(LogicalOp),
-    #[token("!")]
-    #[token("not", ignore(case))]
-    Not,
-    #[regex("==|!=|>=|<=|>|<", |lex| CompareOp::try_from(lex.slice()))]
-    Op(CompareOp),
-    #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
-    #[token("true", |_| NoteFieldValue::Bool(true), priority = 3)]
-    #[token("false", |_| NoteFieldValue::Bool(false), priority = 3)]
-    #[token("null", |_| NoteFieldValue::Null, priority = 3)]
-    #[token("Null", |_| NoteFieldValue::Null, priority = 3)]
-    Literal(NoteFieldValue),
-    #[regex(r#"[^\s()",=!<>&|]+"#, |lex| lex.slice().to_owned())]
-    Ident(String),
-}
-
-struct FilterGrammar;
 
 impl FilterExpr {
     /// Parses a filter expression string into a logical expression tree.
@@ -155,6 +46,18 @@ impl FilterExpr {
     }
 }
 
+/// Atomic predicate in a filter expression.
+///
+/// Either a field-to-literal comparison or a recognized function call
+/// (such as `contains(tags, "#book")`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FilterAtom {
+    /// `<field> <op> <value>` comparison.
+    Comparison(ComparisonExpr),
+    /// Recognized function call, such as `contains(tags, "#book")`.
+    Function(FilterFunction),
+}
+
 impl FilterAtom {
     fn is_matching(&self, record: &QueryRecord) -> bool {
         match self {
@@ -162,6 +65,60 @@ impl FilterAtom {
             Self::Function(function) => function.is_matching(record),
         }
     }
+}
+
+/// A recognized filter function call.
+///
+/// Adding a function requires adding a variant here, a name check in
+/// [`Self::build`], and matching logic in [`Self::is_matching`].
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FilterFunction {
+    /// `contains(field, target)`.
+    ///
+    /// - Lists match by exact value or tag prefix, such as `#book` matching
+    ///   `#book/fiction`.
+    /// - Other field kinds fall back to substring containment.
+    Contains {
+        field: FieldPath,
+        target: NoteFieldValue,
+    },
+}
+
+impl FilterFunction {
+    fn build(
+        name: &str,
+        field: FieldPath,
+        target: NoteFieldValue,
+    ) -> Option<Self> {
+        if name.eq_ignore_ascii_case("contains") {
+            Some(Self::Contains {
+                field,
+                target,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn is_matching(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Contains {
+                field,
+                target,
+            } => record.resolve_ref(field).is_containing(target),
+        }
+    }
+}
+
+/// A parsed `<field> <op> <value>` comparison node in a filter expression.
+///
+/// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
+/// [`NoteFieldValue`] to evaluate against the resolved field of each record.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ComparisonExpr {
+    field: FieldPath,
+    op: CompareOp,
+    value: NoteFieldValue,
 }
 
 impl ComparisonExpr {
@@ -182,6 +139,25 @@ impl ComparisonExpr {
     pub(super) fn is_matching(&self, record: &QueryRecord) -> bool {
         self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
     }
+}
+
+/// A comparison operator parsed from a filter expression.
+///
+/// Each variant maps to a syntactic operator in the filter language.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum CompareOp {
+    /// `==`
+    Eq,
+    /// `!=`
+    Ne,
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `>`
+    Gt,
+    /// `>=`
+    Ge,
 }
 
 impl CompareOp {
@@ -214,31 +190,24 @@ impl CompareOp {
     }
 }
 
-impl FilterFunction {
-    fn build(
-        name: &str,
-        field: FieldPath,
-        target: NoteFieldValue,
-    ) -> Option<Self> {
-        if name.eq_ignore_ascii_case("contains") {
-            Some(Self::Contains {
-                field,
-                target,
-            })
-        } else {
-            None
-        }
-    }
+impl TryFrom<&str> for CompareOp {
+    type Error = ();
 
-    fn is_matching(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Contains {
-                field,
-                target,
-            } => record.resolve_ref(field).is_containing(target),
+    /// Attempts to parse a comparison operator from its string representation.
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        match spelling {
+            "==" => Ok(Self::Eq),
+            "!=" => Ok(Self::Ne),
+            ">=" => Ok(Self::Ge),
+            "<=" => Ok(Self::Le),
+            ">" => Ok(Self::Gt),
+            "<" => Ok(Self::Lt),
+            _ => Err(()),
         }
     }
 }
+
+struct FilterGrammar;
 
 impl FilterGrammar {
     fn parse_literal_arg(
@@ -389,6 +358,37 @@ impl AtomParser for FilterGrammar {
     }
 }
 
+/// Lexical tokens parsed from a filter expression.
+#[derive(Logos, Clone, Debug, PartialEq)]
+#[logos(skip r"[ \t\n\r\f]+")]
+enum FilterToken {
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token(",")]
+    Comma,
+    #[regex(
+        "&&|and|\\|\\||or",
+        |lex| LogicalOp::try_from(lex.slice()),
+        ignore(case)
+    )]
+    Logical(LogicalOp),
+    #[token("!")]
+    #[token("not", ignore(case))]
+    Not,
+    #[regex("==|!=|>=|<=|>|<", |lex| CompareOp::try_from(lex.slice()))]
+    Op(CompareOp),
+    #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
+    #[token("true", |_| NoteFieldValue::Bool(true), priority = 3)]
+    #[token("false", |_| NoteFieldValue::Bool(false), priority = 3)]
+    #[token("null", |_| NoteFieldValue::Null, priority = 3)]
+    #[token("Null", |_| NoteFieldValue::Null, priority = 3)]
+    Literal(NoteFieldValue),
+    #[regex(r#"[^\s()",=!<>&|]+"#, |lex| lex.slice().to_owned())]
+    Ident(String),
+}
+
 /// Tokenizes `input`, preserving each token's original byte span.
 fn tokenize_filter_expr(
     input: &str,
@@ -435,7 +435,7 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
         .unwrap_or_default();
-    NoteFieldValue::String(unescape_backslash(inner))
+    NoteFieldValue::String(lexical_backslash_unescape(inner))
 }
 
 #[cfg(test)]
