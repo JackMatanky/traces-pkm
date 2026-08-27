@@ -190,7 +190,7 @@ impl From<SchemaFieldParserError> for SchemaWarning {
                 value,
                 expected,
             },
-            err => Self::ValueFileOverrideDegraded {
+            err => Self::SelectValuesOverrideDegraded {
                 address: err.address().clone(),
                 error: err.to_string(),
             },
@@ -287,6 +287,24 @@ mod tests {
                     expected,
                     ..
                 } if key == "min" && expected == "a number"
+            ));
+        }
+
+        #[test]
+        fn select_values_error_converts_to_select_values_override_warning() {
+            let error = SchemaFieldParserError::SelectorMissingKey {
+                address: FieldAddress::try_from("#sci_fi/status")
+                    .expect("valid ref"),
+                selector: "label",
+                key: "label".to_owned(),
+            };
+
+            let warning = SchemaWarning::from(error);
+
+            assert!(matches!(
+                warning,
+                SchemaWarning::SelectValuesOverrideDegraded { ref error, .. }
+                    if error.contains("selector \"label\"")
             ));
         }
     }

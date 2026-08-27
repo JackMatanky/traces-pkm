@@ -133,11 +133,12 @@ pub(crate) enum SchemaWarning {
         value: String,
         expected: &'static str,
     },
-    /// A bare `$ref` override declares an invalid values file source or entry
+    /// A bare `$ref` override declares invalid `select`/`multi` values
     /// configuration.
     ///
-    /// The override is dropped and the base field's attribute is used as-is.
-    ValueFileOverrideDegraded {
+    /// The `values` override is dropped and the base field's values are used
+    /// as-is.
+    SelectValuesOverrideDegraded {
         address: FieldAddress,
         error: String,
     },
@@ -199,13 +200,13 @@ impl fmt::Display for SchemaWarning {
                 "$ref override {address}'s {key:?} attribute on its resolved \
                  type {kind} must be {expected}, got {value}; ignoring the key"
             ),
-            Self::ValueFileOverrideDegraded {
+            Self::SelectValuesOverrideDegraded {
                 address,
                 error,
             } => write!(
                 f,
-                "$ref override {address} values file error: {error}; ignoring \
-                 the key"
+                "$ref override {address}'s values override is invalid: \
+                 {error}; using base values"
             ),
         }
     }
@@ -477,6 +478,25 @@ mod tests {
                 "$ref override #sci_fi/rating's \"min\" attribute on its \
                  resolved type number must be a number, got \"abc\"; ignoring \
                  the key"
+            );
+        }
+
+        #[test]
+        fn select_values_override_degraded_names_whole_values_override() {
+            let warning = SchemaWarning::SelectValuesOverrideDegraded {
+                address: FieldAddress::try_from("#sci_fi/status")
+                    .expect("valid ref"),
+                error: "field #sci_fi/status configures selector \"label\" = \
+                        \"label\", but an entry is missing this key"
+                    .to_owned(),
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "$ref override #sci_fi/status's values override is invalid: \
+                 field #sci_fi/status configures selector \"label\" = \
+                 \"label\", but an entry is missing this key; using base \
+                 values"
             );
         }
     }

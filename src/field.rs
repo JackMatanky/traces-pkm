@@ -507,9 +507,9 @@ impl FieldValue {
     /// [`FieldValue::Int`], converting an integer to `f64`, or `None` for any
     /// other kind.
     ///
-    /// Mirrors [`FieldValueRef::as_f64`]: schema field-attribute validation
-    /// (`schema::fields`) accepts a TOML integer or float interchangeably for
-    /// a `number`-type field's `min`/`max`/`step`.
+    /// Schema field-attribute validation (`schema::fields`) accepts a TOML
+    /// integer or float interchangeably for a `number`-type field's
+    /// `min`/`max`/`step` and select-entry `order`.
     #[inline]
     #[must_use]
     pub(crate) const fn as_f64(&self) -> Option<f64> {
@@ -613,27 +613,6 @@ pub(crate) enum FieldValueRef<'a> {
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
     Object(IndexMap<Cow<'a, str>, Self>),
-}
-
-impl FieldValueRef<'_> {
-    /// Returns the inner value for [`FieldValueRef::Float`] or
-    /// [`FieldValueRef::Int`], converting an integer to `f64`, or `None` for
-    /// any other kind.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "ref values-source"))]
-    pub(crate) const fn as_f64(&self) -> Option<f64> {
-        match *self {
-            Self::Float(f) => Some(f),
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                reason = "integer field value converted to f64"
-            )]
-            Self::Int(i) => Some(i as f64),
-            _ => None,
-        }
-    }
 }
 
 impl Serialize for FieldValueRef<'_> {
@@ -1287,8 +1266,8 @@ mod tests {
         use super::super::*;
 
         /// Test-only map lookup: production code either destructures a known
-        /// variant directly or, for `order`, uses [`FieldValueRef::as_f64`].
-        /// No other accessor earns its keep outside this test module.
+        /// variant directly or uses the owned [`FieldValue`] accessors.
+        /// No accessor earns its keep outside this test module.
         fn get<'v, 'a>(
             value: &'v FieldValueRef<'a>,
             key: &str,
@@ -1314,24 +1293,6 @@ mod tests {
             match value {
                 FieldValueRef::String(s) => Some(s.as_ref()),
                 _ => None,
-            }
-        }
-
-        mod accessors {
-            use pretty_assertions::assert_eq;
-            use rstest::rstest;
-
-            use super::super::super::*;
-
-            #[rstest]
-            #[case::int(FieldValueRef::Int(-3), Some(-3.0))]
-            #[case::float(FieldValueRef::Float(1.5), Some(1.5))]
-            #[case::non_numeric_variant(FieldValueRef::Bool(true), None)]
-            fn as_f64_converts_numbers_and_rejects_other_variants(
-                #[case] value: FieldValueRef<'static>,
-                #[case] expected: Option<f64>,
-            ) {
-                assert_eq!(value.as_f64(), expected);
             }
         }
 
