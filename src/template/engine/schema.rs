@@ -13,10 +13,11 @@
 //!
 //! - `.name`: the Schema's own name (its source file's stem).
 //! - `.field(name)`: the named field's selectable values. For a `select` field,
-//!   plain strings. For a `file` field, a Query Source filter, declarative data
-//!   built without executing any query itself, composable with
-//!   `query.from(...)` and `| with_children`/`| with_descendants`. `none` for
-//!   every other type.
+//!   plain strings (for simple string lists) or resolved `{value, label,
+//!   ...extra}` objects (for structured inline objects and file sources). For a
+//!   `file` field, a Query Source filter, declarative data built without
+//!   executing any query itself, composable with `query.from(...)` and `|
+//!   with_children`/`| with_descendants`. `none` for every other type.
 //! - `.children()`: every Schema that directly `extends` this one, each itself
 //!   a bound `Schema`. Empty, not an error, when nothing directly extends this
 //!   Schema.
@@ -1167,7 +1168,40 @@ mod tests {
 
             assert_eq!(rendered, "reading");
         }
+        #[test]
+        fn renders_structured_file_sourced_select_field_as_objects() {
+            use pretty_assertions::assert_eq;
 
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas_dir = temp.path().join(".traces/schemas");
+            std::fs::create_dir_all(schemas_dir.join("values"))
+                .expect("values dir");
+
+            std::fs::write(
+                schemas_dir.join("values/countries.toml"),
+                "[[entries]]\nslug = \"us\"\nname = \"United States\"\n",
+            )
+            .expect("write values file");
+
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.country]
+                type = "select"
+                values = { path = "values/countries.toml", value = "slug", label = "name" }
+                "#,
+            );
+
+            let rendered = render(
+                &schemas_dir,
+                "{{ schema.get('book').field('country')[0].label }} ({{ \
+                 schema.get('book').field('country')[0].value }})",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "United States (us)");
+        }
         #[test]
         fn a_broken_schema_now_breaks_construction_even_when_the_template_never_touches_schema()
          {

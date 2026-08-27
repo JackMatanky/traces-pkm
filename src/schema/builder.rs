@@ -23,7 +23,7 @@ use indexmap::{IndexMap, IndexSet};
 use super::{
     GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
-    fields::{FieldAddressRef, SchemaFieldBuilder},
+    fields::{FieldAddressRef, SchemaFieldBuilder, SelectValuesFileCache},
     graph::{SchemaGraph, SchemaGraphBuilder},
     model::Schema,
 };
@@ -58,6 +58,8 @@ pub(super) struct ResolvedSchemas {
 pub(super) struct SchemaBuilder<'a> {
     /// Raw schemas to resolve, keyed by name.
     raw: &'a IndexMap<SchemaName, RawSchema>,
+    /// Confined values file cache for `select`/`multi` fields.
+    values_cache: &'a SelectValuesFileCache,
     /// Schemas resolved so far.
     resolved: IndexMap<SchemaName, Schema>,
     /// Recoverable defects accumulated across the whole set.
@@ -67,10 +69,14 @@ pub(super) struct SchemaBuilder<'a> {
 }
 
 impl<'a> SchemaBuilder<'a> {
-    /// Create a builder from a borrowed raw-schema map.
-    pub(super) fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
+    /// Create a builder from a borrowed raw-schema map and values file cache.
+    pub(super) fn new(
+        raw: &'a IndexMap<SchemaName, RawSchema>,
+        values_cache: &'a SelectValuesFileCache,
+    ) -> Self {
         Self {
             raw,
+            values_cache,
             resolved: IndexMap::new(),
             warnings: Vec::new(),
             failures: Vec::new(),
@@ -137,6 +143,7 @@ impl<'a> SchemaBuilder<'a> {
             global_raw,
             &[],
             &self.resolved,
+            self.values_cache,
         )?;
         self.warnings.extend(warnings);
         self.resolved.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema);
@@ -172,6 +179,7 @@ impl<'a> SchemaBuilder<'a> {
                 raw_schema,
                 graph.parents_of(name),
                 &self.resolved,
+                self.values_cache,
             ) {
                 Ok((schema, schema_warnings)) => {
                     self.warnings.extend(schema_warnings);
@@ -301,11 +309,12 @@ impl<'a> SchemaMerger<'a> {
         raw: &RawSchema,
         parents: &[SchemaName],
         resolved: &IndexMap<SchemaName, Schema>,
+        values_cache: &'a SelectValuesFileCache,
     ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
         let mut merger = Self::new(name);
         merger.inherit_from(parents, resolved);
         merger.exclude(&raw.excludes);
-        merger.resolve_own_fields(raw, resolved)?;
+        merger.resolve_own_fields(raw, resolved, values_cache)?;
         merger.into_schema()
     }
 
@@ -371,8 +380,10 @@ impl<'a> SchemaMerger<'a> {
         &mut self,
         raw: &RawSchema,
         resolved: &IndexMap<SchemaName, Schema>,
+        values_cache: &'a SelectValuesFileCache,
     ) -> Result<(), SchemaError> {
-        let field_builder = SchemaFieldBuilder::new(&self.ancestors, resolved);
+        let field_builder =
+            SchemaFieldBuilder::new(&self.ancestors, resolved, values_cache);
         for (field_name, raw_field) in &raw.fields {
             let address = FieldAddressRef::new(self.name, field_name.as_ref());
             let (field, warnings) = field_builder.build(address, raw_field)?;
@@ -452,7 +463,8 @@ mod tests {
     fn resolve(
         raw: &IndexMap<SchemaName, RawSchema>,
     ) -> Result<ResolvedSchemas, SchemaError> {
-        SchemaBuilder::new(raw).build()
+        let cache = SelectValuesFileCache::for_test();
+        SchemaBuilder::new(raw, &cache).build()
     }
 
     fn field_name(name: &str) -> FieldName {

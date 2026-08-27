@@ -83,6 +83,86 @@ pub(crate) enum SchemaFieldParserError {
         value: String,
         expected: &'static str,
     },
+    /// A values file path has an unsupported file extension.
+    #[error(
+        "field {address} values file {path:?} has unsupported extension (must \
+         be .toml or .json)"
+    )]
+    BadValueFileExtension {
+        address: FieldAddress,
+        path: String,
+    },
+    /// A values file failed to load or parse.
+    #[error("field {address} failed to load values file {path:?}: {error}")]
+    ValueFileLoad {
+        address: FieldAddress,
+        path: String,
+        error: String,
+    },
+    /// A values file was missing the required top-level `entries` list.
+    #[error(
+        "field {address} values file {path:?} missing top-level 'entries' list"
+    )]
+    ValueFileMissingEntries {
+        address: FieldAddress,
+        path: String,
+    },
+    /// A selector key was specified on bare string entries.
+    #[error(
+        "field {address} configures selector {selector:?} but values file \
+         contains bare string entries"
+    )]
+    SelectorOnBareEntries {
+        address: FieldAddress,
+        selector: &'static str,
+    },
+    /// An entry object was missing a key named by a selector.
+    #[error(
+        "field {address} configures selector {selector:?} = {key:?}, but an \
+         entry is missing this key"
+    )]
+    SelectorMissingKey {
+        address: FieldAddress,
+        selector: &'static str,
+        key: String,
+    },
+}
+
+impl SchemaFieldParserError {
+    /// Address of the field that produced this error.
+    #[must_use]
+    pub(crate) fn address(&self) -> &FieldAddress {
+        match self {
+            Self::UnknownKey {
+                address,
+                ..
+            }
+            | Self::TypeMismatch {
+                address,
+                ..
+            }
+            | Self::BadValueFileExtension {
+                address,
+                ..
+            }
+            | Self::ValueFileLoad {
+                address,
+                ..
+            }
+            | Self::ValueFileMissingEntries {
+                address,
+                ..
+            }
+            | Self::SelectorOnBareEntries {
+                address,
+                ..
+            }
+            | Self::SelectorMissingKey {
+                address,
+                ..
+            } => address,
+        }
+    }
 }
 
 impl From<SchemaFieldParserError> for SchemaWarning {
@@ -109,6 +189,10 @@ impl From<SchemaFieldParserError> for SchemaWarning {
                 key,
                 value,
                 expected,
+            },
+            err => Self::ValueFileOverrideDegraded {
+                address: err.address().clone(),
+                error: err.to_string(),
             },
         }
     }

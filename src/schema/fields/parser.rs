@@ -52,6 +52,36 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
+    /// Claims `key` and returns the unparsed [`FieldValue`], if present.
+    pub(super) fn raw_value<'m>(
+        &mut self,
+        options: &'m IndexMap<String, FieldValue>,
+        key: &'static str,
+    ) -> Option<&'m FieldValue> {
+        self.claimed.insert(key);
+        options.get(key)
+    }
+
+    /// Returns the address as an owned [`FieldAddress`].
+    pub(super) fn address_owned(&self) -> FieldAddress {
+        FieldAddress::from(self.address)
+    }
+
+    /// Returns the expected field type tag.
+    pub(super) const fn kind(&self) -> SchemaFieldTypeTag {
+        self.kind
+    }
+
+    /// Returns the number of errors recorded by this parser.
+    pub(super) fn error_count(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// Pushes any [`SchemaFieldParserError`] onto the parser.
+    pub(super) fn push_error(&mut self, error: SchemaFieldParserError) {
+        self.errors.push(error);
+    }
+
     /// Extracts a string value associated with a specified key.
     ///
     /// Marks `key` as claimed. Returns `fallback` if `key` is not present in

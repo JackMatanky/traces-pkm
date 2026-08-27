@@ -16,7 +16,7 @@ The reserved schema `global.toml` — a File Class no note may hold — providin
 
 ### Field Definition
 
-A named entry in a Schema describing one field: a `type` (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options, plus optional `required` and `multi` flags. For `file` fields the options are an AND-composed filter over the FileIndex (`folders`, `ext`, `class`).
+A named entry in a Schema describing one field: a `type` (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options, plus optional `required` and `multi` flags. For `select`/`multi` fields, `values` is polymorphic over inline string lists, inline value objects (`{value, label, order?}`), and external file subtables (`{path = "values/countries.toml", value = "slug", label = "name", order = "rank"}`) confined to the schema directory. For `file` fields the options are an AND-composed filter over the FileIndex (`folders`, `ext`, `class`).
 *Avoid*: property, field setting, column
 
 ### Extends
@@ -41,7 +41,7 @@ A key in a Field Definition pointing at another definition used as its base: `#g
 
 ### schema namespace
 
-The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`. For `select` fields this returns plain strings; for `file` fields it returns a Query Source filter, composable with `query.from(...)` and `| with_children`/`| with_descendants`; for every other type, `None`. Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
+The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`. For `select` fields this returns plain strings or resolved `{value, label, ...extra}` objects; for `file` fields it returns a Query Source filter, composable with `query.from(...)` and `| with_children`/`| with_descendants`; for every other type, `None`. Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
 *Avoid*: schema api, metadata menu function
 
 #### children

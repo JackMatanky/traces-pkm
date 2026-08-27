@@ -15,6 +15,11 @@ use thiserror::Error;
 use super::{SchemaName, fields::FieldAddress};
 use crate::field::{FieldName, FieldValue};
 
+const ALLOWED_OPTION_KEYS: &[&str] = &[
+    "type", "$ref", "required", "multi", "values", "folders", "ext", "class",
+    "min", "max", "step", "format",
+];
+
 /// One `.traces/schemas/<name>.toml` file, parsed but not yet resolved.
 ///
 /// The filename stem (not any field on this type) is the Schema name.
@@ -105,15 +110,60 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     where
         D: Deserializer<'de>,
     {
-        let wire = RawFieldDefToml::deserialize(deserializer)?;
-        let source = match (wire.kind, wire.reference) {
-            (Some(kind), None) => RawSchemaFieldSource::Direct(kind),
-            (Some(kind), Some(address)) => RawSchemaFieldSource::Ref {
-                address,
-                override_type: Some(kind),
+        deserializer.deserialize_map(RawSchemaFieldDefVisitor)
+    }
+}
+
+struct RawSchemaFieldDefVisitor;
+
+impl<'de> serde::de::Visitor<'de> for RawSchemaFieldDefVisitor {
+    type Value = RawSchemaFieldDef;
+
+    fn expecting(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter.write_str("a field definition map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut kind = None;
+        let mut reference = None;
+        let mut required = None;
+        let mut multi = None;
+        let mut options = IndexMap::new();
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "type" => kind = Some(map.next_value()?),
+                "$ref" => reference = Some(map.next_value()?),
+                "required" => required = Some(map.next_value()?),
+                "multi" => multi = Some(map.next_value()?),
+                "values" | "folders" | "ext" | "class" | "min" | "max"
+                | "step" | "format" => {
+                    let val: FieldValue = map.next_value()?;
+                    options.insert(key, val);
+                }
+                other => {
+                    return Err(serde::de::Error::unknown_field(
+                        other,
+                        ALLOWED_OPTION_KEYS,
+                    ));
+                }
+            }
+        }
+
+        let source = match (kind, reference) {
+            (Some(k), None) => RawSchemaFieldSource::Direct(k),
+            (Some(k), Some(r)) => RawSchemaFieldSource::Ref {
+                address: r,
+                override_type: Some(k),
             },
-            (None, Some(address)) => RawSchemaFieldSource::Ref {
-                address,
+            (None, Some(r)) => RawSchemaFieldSource::Ref {
+                address: r,
                 override_type: None,
             },
             (None, None) => {
@@ -122,28 +172,28 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
                 ));
             }
         };
-        let mut options = IndexMap::new();
-        for (key, value) in [
-            ("values", wire.values),
-            ("folders", wire.folders),
-            ("ext", wire.ext),
-            ("class", wire.class),
-            ("min", wire.min),
-            ("max", wire.max),
-            ("step", wire.step),
-            ("format", wire.format),
-        ] {
-            if let Some(value) = value {
-                options.insert(key.to_owned(), value);
-            }
-        }
-        Ok(Self {
+
+        Ok(RawSchemaFieldDef {
             source,
-            required: wire.required,
-            multi: wire.multi,
+            required,
+            multi,
             options,
         })
     }
+}
+
+/// How a raw field was declared: `type` alone, or `$ref` with optional
+/// `type` override.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RawSchemaFieldSource {
+    /// Use a `type` key with no `$ref`.
+    Direct(RawSchemaFieldType),
+    /// Use a `$ref` address to a base definition, with an optional local `type`
+    /// override.
+    Ref {
+        address: FieldAddress,
+        override_type: Option<RawSchemaFieldType>,
+    },
 }
 
 /// The `type` key of a raw field definition.
@@ -177,18 +227,29 @@ impl std::fmt::Display for RawSchemaFieldType {
     }
 }
 
-/// How a raw field was declared: `type` alone, or `$ref` with optional
-/// `type` override.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum RawSchemaFieldSource {
-    /// Use a `type` key with no `$ref`.
-    Direct(RawSchemaFieldType),
-    /// Use a `$ref` address to a base definition, with an optional local `type`
-    /// override.
-    Ref {
-        address: FieldAddress,
-        override_type: Option<RawSchemaFieldType>,
-    },
+/// The raw DTO matching the root shape of a values file.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawSchemaSelectFieldValues {
+    pub(crate) entries: Option<Vec<RawSchemaSelectFieldEntry>>,
+}
+
+/// A raw entry DTO in a values file, constrained to bare strings or structured
+/// objects.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum RawSchemaSelectFieldEntry {
+    Bare(String),
+    Structured(IndexMap<String, FieldValue>),
+}
+
+impl From<RawSchemaSelectFieldEntry> for FieldValue {
+    fn from(entry: RawSchemaSelectFieldEntry) -> Self {
+        match entry {
+            RawSchemaSelectFieldEntry::Bare(s) => Self::String(s),
+            RawSchemaSelectFieldEntry::Structured(map) => Self::Object(map),
+        }
+    }
 }
 
 /// Why a [`RawSchemaFieldDef`] failed to deserialize.
@@ -197,35 +258,6 @@ pub(crate) enum RawFieldDefError {
     /// Neither `type` nor `$ref` was present.
     #[error("field definition has neither `type` nor `$ref`")]
     MissingSource,
-}
-
-/// Wire shape for one `[fields.<name>]` TOML table.
-///
-/// `type` and `$ref` are optional and separate. Every type-specific key
-/// (`values`, `folders`, `ext`, `class`, `min`, `max`, `step`, `format`)
-/// deserializes as a generic [`FieldValue`]. Converts into a validated
-/// [`RawSchemaFieldSource`] plus [`RawSchemaFieldDef::options`] during
-/// deserialization.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawFieldDefToml {
-    /// The field's `type` key. Optional when `reference` supplies it.
-    #[serde(rename = "type")]
-    kind: Option<RawSchemaFieldType>,
-    /// A parsed `$ref` address. Resolution happens in
-    /// [`super::fields::SchemaFieldBuilder`].
-    #[serde(rename = "$ref")]
-    reference: Option<FieldAddress>,
-    required: Option<bool>,
-    multi: Option<bool>,
-    values: Option<FieldValue>,
-    folders: Option<FieldValue>,
-    ext: Option<FieldValue>,
-    class: Option<FieldValue>,
-    min: Option<FieldValue>,
-    max: Option<FieldValue>,
-    step: Option<FieldValue>,
-    format: Option<FieldValue>,
 }
 
 #[cfg(test)]

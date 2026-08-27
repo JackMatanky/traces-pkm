@@ -133,6 +133,14 @@ pub(crate) enum SchemaWarning {
         value: String,
         expected: &'static str,
     },
+    /// A bare `$ref` override declares an invalid values file source or entry
+    /// configuration.
+    ///
+    /// The override is dropped and the base field's attribute is used as-is.
+    ValueFileOverrideDegraded {
+        address: FieldAddress,
+        error: String,
+    },
 }
 
 impl fmt::Display for SchemaWarning {
@@ -190,6 +198,14 @@ impl fmt::Display for SchemaWarning {
                 f,
                 "$ref override {address}'s {key:?} attribute on its resolved \
                  type {kind} must be {expected}, got {value}; ignoring the key"
+            ),
+            Self::ValueFileOverrideDegraded {
+                address,
+                error,
+            } => write!(
+                f,
+                "$ref override {address} values file error: {error}; ignoring \
+                 the key"
             ),
         }
     }

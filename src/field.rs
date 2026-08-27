@@ -621,13 +621,7 @@ impl FieldValueRef<'_> {
     /// any other kind.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "consumer lands with the values-source redesign"
-        )
-    )]
+    #[cfg_attr(not(test), expect(dead_code, reason = "ref values-source"))]
     pub(crate) const fn as_f64(&self) -> Option<f64> {
         match *self {
             Self::Float(f) => Some(f),

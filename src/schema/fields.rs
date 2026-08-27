@@ -41,7 +41,9 @@ pub(crate) use error::SchemaFieldBuilderError;
 pub(crate) use error::SchemaFieldParserError;
 pub(crate) use file::{SchemaFileField, SchemaFileFieldRef};
 pub(crate) use number::SchemaNumberField;
-pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
+pub(crate) use select::{
+    SchemaSelectField, SchemaSelectFieldEntry, SelectValuesFileCache,
+};
 
 /// A resolved field definition after inheritance and `$ref` application.
 ///

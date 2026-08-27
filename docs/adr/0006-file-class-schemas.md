@@ -56,7 +56,7 @@ Good, because:
 Bad, because:
 
 - `file` field option lists are index-derived at use-time, so they are only as fresh as the index
-- `file` being the only field type whose options resolve outside `resolve()` (in the template layer, not `crate::schema`) set an unstated precedent that went unreconciled with ADR-7's unscoped "resolution is a pure function of the schema set" — a later Value Sources ticket had no seam for load-time-external-but-static data (a values file: static like a literal array, but not in the Schema TOML) and no `.field()` return shape wider than a flat string list, forcing an abandoned first implementation attempt to bend `resolve()`'s purity via ad hoc parameter threading and invent a new crate-wide value type mid-ticket. See ticket `07-schema-service-refactor` for the architectural fix and the follow-up amendment to both ADRs once it lands.
+- Resolved by Ticket 08 (`values` file sources): static external TOML/JSON files load via a transient, confined `SelectValuesFileCache` during `SchemaService::new` construction, making `values` polymorphic across literal strings, inline value objects, and external file subtables while preserving `Schema` purity and returning structured `{value, label, ...extra}` objects via `.field()`.
 - No `enabled` toggle — users must delete the schemas directory to disable the feature
 - `required`/`multi` are declared now but inert until the deferred MCP guardrail stage; LSP and MCP stages are deferred to later phases
 

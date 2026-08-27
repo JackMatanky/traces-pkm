@@ -1,7 +1,7 @@
 ---
 number: 3
 title: Index-based selection for label-vs-value prompts
-status: proposed
+status: accepted
 date: 2026-07-08
 links:
   - target: 6
