@@ -9,11 +9,13 @@
 //! full index builds and incremental refreshes.
 //!
 //! ### Data Flow Diagram
+//!
 //! ```text
 //! [PathBuf] ──(Serialize)──► [postcard target bytes (Raw/Wide)] ──(Deserialize)──► [PathBuf]
 //! ```
 //!
 //! ### Profiling Integration
+//!
 //! To profile serialization/deserialization CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench codec -- --bench "path_codec::serialize/long"
@@ -22,6 +24,7 @@
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface is only reachable with `--features
 //! test-utils`.
+
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \

@@ -6,11 +6,13 @@
 //! under indexing throughput.
 //!
 //! ### Data Flow Diagram
+//!
 //! ```text
 //! [raw markdown bytes] ──(parse_markdown)──► [Note { frontmatter, body, tasks }]
 //! ```
 //!
 //! ### Profiling Integration
+//!
 //! To profile parsing CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench note_parsing -- --bench "parse_markdown/large"
@@ -19,7 +21,10 @@
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`parse_markdown` included) is only
 //! reachable with `--features test-utils`, which the mise task supplies.
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+
+use criterion::{
+    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 use traces_pkm::parse_markdown;
 
 const SMALL: &str = "# Title\n\nA short note with one paragraph.\n";
@@ -70,6 +75,7 @@ fn bench_parse_markdown(c: &mut Criterion) {
     for (label, source) in
         [("small", SMALL.to_owned()), ("medium", medium()), ("large", large())]
     {
+        group.throughput(Throughput::Bytes(source.len() as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &source,

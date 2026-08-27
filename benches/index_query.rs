@@ -1,11 +1,12 @@
 //! Performance benchmark suite for query execution.
 //!
 //! Exposes and monitors the CPU cost of [`QueryService::execute`] over
-//! pre-built page and task indexes. Queries are the primary user-facing
-//! latency path — every `traces query` invocation pays this cost — so
-//! regressions here directly degrade CLI responsiveness.
+//! pre-built page and task indexes. Queries are the primary user-facing latency
+//! path — every `traces query` invocation pays this cost — so regressions here
+//! directly degrade CLI responsiveness.
 //!
 //! ### Data Flow Diagram
+//!
 //! ```text
 //! [FileIndex] ──(QueryService::execute)──► [QueryResponse]
 //!                   │
@@ -14,6 +15,7 @@
 //! ```
 //!
 //! ### Profiling Integration
+//!
 //! To profile query execution CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench index_query -- --bench "QueryService::execute pages"
@@ -22,6 +24,7 @@
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface is only reachable with
 //! `--features test-utils`, which the mise task supplies.
+
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \
@@ -69,14 +72,15 @@ fn built_task_index() -> FileIndex {
 /// - Linear or worse scaling with note count, indicating unindexed scans or
 ///   redundant allocation per row.
 fn bench_execute_pages(c: &mut Criterion) {
+    let index = built_index();
     c.bench_function("QueryService::execute pages", |b| {
         b.iter_batched(
-            built_index,
+            || index.clone(),
             |index| {
                 QueryService::new("class")
                     .execute(&index, QueryRequest::pages(SourceSelector::All))
             },
-            BatchSize::LargeInput,
+            BatchSize::SmallInput,
         );
     });
 }
@@ -95,14 +99,15 @@ fn bench_execute_pages(c: &mut Criterion) {
 /// - Cost significantly exceeds page-query cost for same note count, indicating
 ///   task parsing overhead or redundant regex evaluation.
 fn bench_execute_tasks(c: &mut Criterion) {
+    let index = built_task_index();
     c.bench_function("QueryService::execute tasks", |b| {
         b.iter_batched(
-            built_task_index,
+            || index.clone(),
             |index| {
                 QueryService::new("class")
                     .execute(&index, QueryRequest::tasks(SourceSelector::All))
             },
-            BatchSize::LargeInput,
+            BatchSize::SmallInput,
         );
     });
 }

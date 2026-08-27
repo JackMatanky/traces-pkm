@@ -8,12 +8,14 @@
 //! workflows.
 //!
 //! ### Data Flow Diagram
+//!
 //! ```text
 //! [FileIndex] + [Template] + [Note] ──(TemplateService::render_to_file)──► [rendered output]
 //!                                         (DryRun — no disk write)
 //! ```
 //!
 //! ### Profiling Integration
+//!
 //! To profile template rendering CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench template_render -- --bench "TemplateService::render_to_file"
@@ -23,6 +25,7 @@
 //! `test-utils`-gated public surface (`TemplateService`, `Config`, the
 //! `test_support` fixtures) is only reachable with `--features test-utils`,
 //! which the mise task supplies.
+
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \

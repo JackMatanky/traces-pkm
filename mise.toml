@@ -293,9 +293,45 @@ fi
 alias = "t"
 
 [tasks.bench]
-raw_args = true
 description = "Run Criterion benchmarks"
-run = "cargo bench --features test-utils"
+usage = '''
+flag "-f --filter <filter>" help="Run only benchmarks matching this substring"
+flag "-b --baseline <name>" help="Save results under this baseline name for later comparison"
+flag "--baseline-compare <name>" help="Compare against a previously saved baseline"
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to cargo bench"
+  long_help """
+  Forwarded to `cargo bench`. Examples:
+
+    mise run bench -- --list                 # list available benchmarks
+    mise run bench -f codec -- --warm-up 1   # custom warm-up time
+    mise run bench -- --noplot               # skip HTML report generation
+  """
+}
+'''
+run = '''
+#!/bin/bash
+set -euo pipefail
+
+bench_args=(--features test-utils)
+
+if [[ -n "${usage_filter:-}" ]]; then
+  bench_args+=("${usage_filter}")
+fi
+
+if [[ -n "${usage_baseline:-}" ]]; then
+  bench_args+=(--save-baseline "${usage_baseline}")
+fi
+
+if [[ -n "${usage_baseline_compare:-}" ]]; then
+  bench_args+=(--baseline "${usage_baseline_compare}")
+fi
+
+eval "extra_args=(${usage_args:-})"
+bench_args+=("${extra_args[@]+"${extra_args[@]}"}")
+
+cargo bench "${bench_args[@]}"
+'''
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #

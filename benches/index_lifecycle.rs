@@ -10,20 +10,24 @@
 //! functions directly limits the responsiveness of the CLI.
 //!
 //! ### Data Flow Diagram
+//!
 //! ```text
 //! [Files on Disk] ──(Scan)──► [FileBase / Notes] ──(derive_inlinks)──► [InlinkMap]
 //!                                                                          │
 //! [redb database] ◄──(Persist)─────────────────────────────────────────────┘
 //!
 //! ### Profiling Integration
+//!
 //! To profile index lifecycle CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench index_lifecycle -- --bench
 //! "FileIndex::refresh/no-op/1000"
 //! ```
+//! 
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface is only reachable with `--features
 //! test-utils`.
+
 #![expect(
     clippy::expect_used,
     clippy::arithmetic_side_effects,
@@ -345,6 +349,10 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::concurrent");
     let n = 250_usize;
     group.throughput(Throughput::Elements(1000));
+    // Thread-spawn and per-project I/O are inherently noisy; a larger sample
+    // size and longer measurement window smooth out scheduler jitter.
+    group.sample_size(50);
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     group.bench_function("concurrent-load-4-independent-projects", |b| {
         b.iter_batched(

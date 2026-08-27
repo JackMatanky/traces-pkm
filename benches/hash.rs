@@ -8,12 +8,14 @@
 //! verification.
 //!
 //! ### Data Flow Diagram
+//!
 //! ```text
 //! [Path] ──(Blake3FileHash::try_from)──► [u128 file hash]
 //! [Path] ──(Blake3PathHash::from)───────► [u128 path hash]
 //! ```
 //!
 //! ### Profiling Integration
+//!
 //! To profile hashing CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench hash -- --bench "Blake3FileHash::try_from/1mb"
@@ -22,12 +24,15 @@
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`Blake3FileHash`, `Blake3PathHash`) is
 //! only reachable with `--features test-utils`, which the mise task supplies.
+
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{
+    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
 
 /// Measures file-content hashing cost for small (1KB) and large (1MB) files.
@@ -47,6 +52,7 @@ use traces_pkm::{Blake3FileHash, Blake3PathHash};
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
+        group.throughput(Throughput::Bytes(size as u64));
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("content");
         std::fs::write(&path, vec![0_u8; size]).expect("write fixture file");
@@ -74,8 +80,8 @@ fn bench_file_hash(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Allocation or system calls in what should be pure in-memory hashing.
 fn bench_path_hash(c: &mut Criterion) {
+    let path = std::path::Path::new("/project/.traces/config.toml");
     c.bench_function("Blake3PathHash::from", |b| {
-        let path = std::path::Path::new("/project/.traces/config.toml");
         b.iter(|| Blake3PathHash::from(path));
     });
 }
