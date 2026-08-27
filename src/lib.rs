@@ -62,6 +62,7 @@ mod file_class_expander;
 mod file_store;
 mod hash;
 mod index;
+mod lexer;
 mod note;
 mod path;
 mod query;
