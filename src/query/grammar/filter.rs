@@ -6,9 +6,9 @@ use super::{
     expr::{
         AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
     },
-    lex::{Spanned, TokenStream},
 };
 use crate::{
+    lexer::{self, Spanned, TokenStream},
     note::NoteFieldValue,
     query::{
         QueryError, QueryRecord,
@@ -244,17 +244,18 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut TokenStream<Spanned<FilterToken>>,
     ) -> Result<NoteFieldValue, QueryError> {
-        tokens
-            .expect_map(
-                input,
-                "a literal value",
-                QueryDialect::Filter,
-                |token| match token {
+        let spanned = tokens
+            .expect_map(input, "a literal value", |token| {
+                let spanned = token;
+                match spanned.into_value() {
                     FilterToken::Literal(value) => Some(value),
                     _ => None,
-                },
-            )
-            .map(|spanned| spanned.value)
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+        Ok(spanned.into_value())
     }
 
     fn parse_function_call(
@@ -262,42 +263,51 @@ impl FilterGrammar {
         tokens: &mut TokenStream<Spanned<FilterToken>>,
         name: &str,
     ) -> Result<FilterFunction, QueryError> {
-        tokens.expect(
-            input,
-            &FilterToken::LParen,
-            "`(` after a function name",
-            QueryDialect::Filter,
-        )?;
+        tokens
+            .expect(input, &FilterToken::LParen, "`(` after a function name")
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
 
-        let field_ident = tokens.expect_map(
-            input,
-            "a field path",
-            QueryDialect::Filter,
-            |token| match token {
-                FilterToken::Ident(ident) => Some(ident),
-                _ => None,
-            },
-        )?;
-        let field = FieldPath::parse(&field_ident.value)?;
+        let field_ident = tokens
+            .expect_map(input, "a field path", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Ident(ident) => Some(ident),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
+        let field = FieldPath::parse(field_ident.value())?;
 
-        tokens.expect(
-            input,
-            &FilterToken::Comma,
-            "`,` after the field path",
-            QueryDialect::Filter,
-        )?;
+        tokens
+            .expect(input, &FilterToken::Comma, "`,` after the field path")
+            .map_err(|e| {
+            QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+        })?;
 
         let target = Self::parse_literal_arg(input, tokens)?;
 
-        tokens.expect(
-            input,
-            &FilterToken::RParen,
-            "`)` after the function arguments",
-            QueryDialect::Filter,
-        )?;
+        tokens
+            .expect(
+                input,
+                &FilterToken::RParen,
+                "`)` after the function arguments",
+            )
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
 
         FilterFunction::build(name, field, target).ok_or_else(|| {
-            syntax_error(input, SourceSpan::from((0, name.len())), "`contains`")
+            QuerySyntaxError::new(
+                QueryDialect::Filter,
+                input,
+                SourceSpan::from((0, name.len())),
+                "`contains`",
+            )
+            .into()
         })
     }
 
@@ -306,18 +316,20 @@ impl FilterGrammar {
         tokens: &mut TokenStream<Spanned<FilterToken>>,
         field_ident: &str,
     ) -> Result<ComparisonExpr, QueryError> {
-        let op_spanned = tokens.expect_map(
-            input,
-            "a comparison operator",
-            QueryDialect::Filter,
-            |token| match token {
-                FilterToken::Op(op) => Some(op),
-                _ => None,
-            },
-        )?;
+        let op_spanned = tokens
+            .expect_map(input, "a comparison operator", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Op(op) => Some(op),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
         let field = FieldPath::parse(field_ident)?;
         let value = Self::parse_literal_arg(input, tokens)?;
-        Ok(ComparisonExpr::new(field, op_spanned.value, value))
+        Ok(ComparisonExpr::new(field, *op_spanned.value(), value))
     }
 }
 
@@ -345,22 +357,23 @@ impl AtomParser for FilterGrammar {
         input: &str,
         tokens: &mut TokenStream<Spanned<Self::Token>>,
     ) -> Result<Self::Atom, QueryError> {
-        let spanned_ident = tokens.expect_map(
-            input,
-            "a filter term",
-            QueryDialect::Filter,
-            |token| match token {
-                FilterToken::Ident(name) => Some(name),
-                _ => None,
-            },
-        )?;
+        let spanned_ident = tokens
+            .expect_map(input, "a filter term", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    FilterToken::Ident(name) => Some(name),
+                    _ => None,
+                }
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
 
-        if tokens.peek().is_some_and(|token| token.value == FilterToken::LParen)
-        {
-            Self::parse_function_call(input, tokens, &spanned_ident.value)
+        if tokens.peek_is_value(&FilterToken::LParen) {
+            Self::parse_function_call(input, tokens, spanned_ident.value())
                 .map(FilterAtom::Function)
         } else {
-            Self::parse_comparison(input, tokens, &spanned_ident.value)
+            Self::parse_comparison(input, tokens, spanned_ident.value())
                 .map(FilterAtom::Comparison)
         }
     }
@@ -375,45 +388,36 @@ impl AtomParser for FilterGrammar {
     }
 }
 
-fn syntax_error(
-    input: &str,
-    span: SourceSpan,
-    expected: &'static str,
-) -> QueryError {
-    QuerySyntaxError::new(QueryDialect::Filter, input, span, expected).into()
-}
-
 /// Tokenizes `input`, preserving each token's original byte span.
 fn tokenize_filter_expr(
     input: &str,
 ) -> Result<Vec<Spanned<FilterToken>>, QueryError> {
-    let mut lexer = FilterToken::lexer(input);
-    let mut tokens = Vec::new();
-    while let Some(result) = lexer.next() {
-        let range = lexer.span();
-        let span = SourceSpan::from((range.start, range.len()));
-        let value =
-            result.map_err(|()| syntax_error(input, span, "a filter term"))?;
-        let token = match value {
-            FilterToken::Ident(word) => match word.parse::<f64>() {
-                Ok(number) if number.is_finite() => Spanned::new(
-                    FilterToken::Literal(NoteFieldValue::Number(number)),
-                    span,
-                ),
-                Ok(_) => {
-                    return Err(syntax_error(
+    let tokens = lexer::tokenize::<FilterToken>(input).map_err(|e| {
+        QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+    })?;
+    tokens
+        .into_iter()
+        .map(|spanned| {
+            let span = spanned.span();
+            match spanned.into_value() {
+                FilterToken::Ident(word) => match word.parse::<f64>() {
+                    Ok(number) if number.is_finite() => Ok(Spanned::new(
+                        FilterToken::Literal(NoteFieldValue::Number(number)),
+                        span,
+                    )),
+                    Ok(_) => Err(QuerySyntaxError::new(
+                        QueryDialect::Filter,
                         input,
                         span,
                         "a finite numeric literal",
-                    ));
-                }
-                Err(_) => Spanned::new(FilterToken::Ident(word), span),
-            },
-            other => Spanned::new(other, span),
-        };
-        tokens.push(token);
-    }
-    Ok(tokens)
+                    )
+                    .into()),
+                    Err(_) => Ok(Spanned::new(FilterToken::Ident(word), span)),
+                },
+                other => Ok(Spanned::new(other, span)),
+            }
+        })
+        .collect()
 }
 
 /// Unescapes a lexed double-quoted string literal into a
@@ -428,18 +432,7 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
         .unwrap_or_default();
-    let mut value = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(escaped) = chars.next() {
-                value.push(escaped);
-            }
-        } else {
-            value.push(ch);
-        }
-    }
-    NoteFieldValue::String(value)
+    NoteFieldValue::String(crate::lexer::unescape_backslash(inner))
 }
 
 #[cfg(test)]
@@ -532,7 +525,13 @@ mod tests {
                 "expected syntax error"
             );
             if let Err(QueryError::Syntax(error)) = result {
-                assert_eq!(error.expected, "a finite numeric literal");
+                assert_eq!(
+                    error.lex_error,
+                    crate::lexer::LexError::UnexpectedEof {
+                        span: SourceSpan::from((offset, length)),
+                        expected: "a finite numeric literal",
+                    }
+                );
                 assert_eq!(error.span, SourceSpan::from((offset, length)));
             }
         }

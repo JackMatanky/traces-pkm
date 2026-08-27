@@ -4,14 +4,12 @@ use logos::{Lexer, Logos};
 use miette::SourceSpan;
 use regex::Regex;
 
-use super::{
-    expr::{
-        AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
-    },
-    lex::{Spanned, TokenStream},
+use super::expr::{
+    AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
     file::FileBase,
+    lexer::{self, Spanned, TokenStream},
     note::{Note, NoteFieldValue},
     query::{
         QueryError,
@@ -147,7 +145,7 @@ enum SourceToken {
     WithChildren,
     #[token(".with_descendants()", priority = 4)]
     WithDescendants,
-    #[regex(r"#[a-zA-Z0-9_\-./]+", |lex| lex.slice().to_owned())]
+    #[regex(r"#[a-zA-Z][a-zA-Z0-9_\-/]+", |lex| lex.slice().to_owned())]
     Tag(String),
     #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
     ClassSigil(String),
@@ -422,9 +420,14 @@ impl SourceGrammar {
         sigil: &str,
         span: SourceSpan,
     ) -> Result<SourceAtom, QueryError> {
-        let raw = sigil
-            .strip_prefix('@')
-            .ok_or_else(|| syntax_error(input, span, "a File Class name"))?;
+        let raw = sigil.strip_prefix('@').ok_or_else(|| {
+            QuerySyntaxError::new(
+                QueryDialect::Source,
+                input,
+                span,
+                "a File Class name",
+            )
+        })?;
         let (name, mode) = raw.strip_suffix('+').map_or_else(
             || {
                 raw.strip_suffix('*').map_or(
@@ -437,7 +440,13 @@ impl SourceGrammar {
             |name| (name, ClassExpansionMode::Children(BTreeSet::new())),
         );
         if name.is_empty() {
-            return Err(syntax_error(input, span, "a File Class name"));
+            return Err(QuerySyntaxError::new(
+                QueryDialect::Source,
+                input,
+                span,
+                "a File Class name",
+            )
+            .into());
         }
         Ok(SourceAtom::Class {
             names: vec![name.to_owned()],
@@ -458,37 +467,44 @@ impl SourceGrammar {
         tokens: &mut TokenStream<Spanned<SourceToken>>,
         class_span: SourceSpan,
     ) -> Result<SourceAtom, QueryError> {
-        tokens.expect(
-            input,
-            &SourceToken::LParen,
-            "`(` after `class`",
-            QueryDialect::Source,
-        )?;
+        let lex =
+            |e| QuerySyntaxError::from_lex(QueryDialect::Source, input, e);
 
-        let name_spanned = tokens.expect_map(
-            input,
-            "a File Class name",
-            QueryDialect::Source,
-            |token| match token {
-                SourceToken::Quoted(name) | SourceToken::Bare(name) => {
-                    Some(name)
+        tokens
+            .expect(input, &SourceToken::LParen, "`(` after `class`")
+            .map_err(&lex)?;
+
+        let name_spanned = tokens
+            .expect_map(input, "a File Class name", |token| {
+                let spanned = token;
+                match spanned.into_value() {
+                    SourceToken::Quoted(name) | SourceToken::Bare(name) => {
+                        Some(name)
+                    }
+                    _ => None,
                 }
-                _ => None,
-            },
-        )?;
-        if name_spanned.value.is_empty() {
-            return Err(syntax_error(input, class_span, "a File Class name"));
+            })
+            .map_err(&lex)?;
+        if name_spanned.value().is_empty() {
+            return Err(QuerySyntaxError::new(
+                QueryDialect::Source,
+                input,
+                class_span,
+                "a File Class name",
+            )
+            .into());
         }
 
         let mut mode = ClassExpansionMode::Exact(BTreeSet::new());
-        let has_mode_argument = tokens.is_taken(&SourceToken::Comma);
-        if has_mode_argument {
+        let has_mode_argument =
+            tokens.peek_is_value(&SourceToken::Comma).then(|| {
+                tokens.next();
+            });
+        if has_mode_argument.is_some() {
             mode = tokens
-                .expect_map(
-                    input,
-                    "`children` or `descendants`",
-                    QueryDialect::Source,
-                    |token| match token {
+                .expect_map(input, "`children` or `descendants`", |token| {
+                    let spanned = token;
+                    match spanned.into_value() {
                         SourceToken::Bare(value) if value == "children" => {
                             Some(ClassExpansionMode::Children(BTreeSet::new()))
                         }
@@ -498,33 +514,35 @@ impl SourceGrammar {
                             ))
                         }
                         _ => None,
-                    },
-                )?
-                .value;
+                    }
+                })
+                .map_err(&lex)?
+                .into_value();
         }
 
-        tokens.expect(
-            input,
-            &SourceToken::RParen,
-            "`)` after `class(...)`",
-            QueryDialect::Source,
-        )?;
+        tokens
+            .expect(input, &SourceToken::RParen, "`)` after `class(...)`")
+            .map_err(&lex)?;
 
-        let modifier = if tokens.is_taken(&SourceToken::WithChildren) {
+        let modifier = if tokens.peek_is_value(&SourceToken::WithChildren) {
+            tokens.next();
             Some(ClassExpansionMode::Children(BTreeSet::new()))
-        } else if tokens.is_taken(&SourceToken::WithDescendants) {
+        } else if tokens.peek_is_value(&SourceToken::WithDescendants) {
+            tokens.next();
             Some(ClassExpansionMode::Descendants(BTreeSet::new()))
         } else {
             None
         };
 
-        if has_mode_argument && modifier.is_some() {
+        if has_mode_argument.is_some() && modifier.is_some() {
             let next_span = tokens.next_span(input);
-            return Err(syntax_error(
+            return Err(QuerySyntaxError::new(
+                QueryDialect::Source,
                 input,
                 next_span,
                 "one File Class expansion mode",
-            ));
+            )
+            .into());
         }
 
         if let Some(modifier) = modifier {
@@ -532,7 +550,7 @@ impl SourceGrammar {
         }
 
         Ok(SourceAtom::Class {
-            names: vec![name_spanned.value],
+            names: vec![name_spanned.into_value()],
             mode,
         })
     }
@@ -570,35 +588,50 @@ impl AtomParser for SourceGrammar {
     ) -> Result<Self::Atom, QueryError> {
         let next_span = tokens.next_span(input);
         match tokens.next() {
-            Some(Spanned {
-                value: SourceToken::Tag(tag),
-                ..
-            }) => Ok(SourceAtom::Tag(tag)),
-            Some(Spanned {
-                value: SourceToken::ClassSigil(sigil),
-                span,
-            }) => Self::parse_sigil(input, &sigil, span),
-            Some(Spanned {
-                value: SourceToken::Quoted(path) | SourceToken::Bare(path),
-                span,
-            }) => {
-                let glob = if path.ends_with('/') {
-                    format!("{path}**")
-                } else {
-                    path
-                };
-                GlobPattern::compile(&glob)
-                    .map(SourceAtom::Path)
-                    .map_err(|_| syntax_error(input, span, "a valid path glob"))
+            Some(spanned) => {
+                let span = spanned.span();
+                match spanned.into_value() {
+                    SourceToken::Tag(tag) => Ok(SourceAtom::Tag(tag)),
+                    SourceToken::ClassSigil(sigil) => {
+                        Self::parse_sigil(input, &sigil, span)
+                    }
+                    SourceToken::Quoted(path) | SourceToken::Bare(path) => {
+                        let glob = if path.ends_with('/') {
+                            format!("{path}**")
+                        } else {
+                            path
+                        };
+                        GlobPattern::compile(&glob)
+                            .map(SourceAtom::Path)
+                            .map_err(|_| {
+                                QuerySyntaxError::new(
+                                    QueryDialect::Source,
+                                    input,
+                                    span,
+                                    "a valid path glob",
+                                )
+                                .into()
+                            })
+                    }
+                    SourceToken::Class => {
+                        Self::parse_class_function(input, tokens, span)
+                    }
+                    _ => Err(QuerySyntaxError::new(
+                        QueryDialect::Source,
+                        input,
+                        span,
+                        "a source term",
+                    )
+                    .into()),
+                }
             }
-            Some(Spanned {
-                value: SourceToken::Class,
-                span,
-            }) => Self::parse_class_function(input, tokens, span),
-            Some(token) => {
-                Err(syntax_error(input, token.span, "a source term"))
-            }
-            None => Err(syntax_error(input, next_span, "a source term")),
+            None => Err(QuerySyntaxError::new(
+                QueryDialect::Source,
+                input,
+                next_span,
+                "a source term",
+            )
+            .into()),
         }
     }
 
@@ -632,40 +665,13 @@ where
 fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
     let raw = lexer.slice();
     let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    let mut value = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(escaped) = chars.next() {
-                value.push(escaped);
-            }
-        } else {
-            value.push(ch);
-        }
-    }
-    value
+    crate::lexer::unescape_backslash(inner)
 }
 
-fn syntax_error(
-    input: &str,
-    span: SourceSpan,
-    expected: &'static str,
-) -> QueryError {
-    QuerySyntaxError::new(QueryDialect::Source, input, span, expected).into()
-}
-
-/// Tokenizes the source expression input string.
 fn tokenize(input: &str) -> Result<Vec<Spanned<SourceToken>>, QueryError> {
-    let mut lexer = SourceToken::lexer(input);
-    let mut tokens = Vec::new();
-    while let Some(result) = lexer.next() {
-        let range = lexer.span();
-        let span = SourceSpan::from((range.start, range.len()));
-        let value =
-            result.map_err(|()| syntax_error(input, span, "a source term"))?;
-        tokens.push(Spanned::new(value, span));
-    }
-    Ok(tokens)
+    lexer::tokenize::<SourceToken>(input).map_err(|e| -> QueryError {
+        QuerySyntaxError::from_lex(QueryDialect::Source, input, e).into()
+    })
 }
 
 #[cfg(test)]

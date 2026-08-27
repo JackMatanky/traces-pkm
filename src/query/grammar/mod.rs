@@ -2,7 +2,7 @@
 //! source-selection language ([`source`]) and the `--where` record-filter
 //! language ([`filter`]), sharing the generic boolean-expression parser
 //! in [`expr`]. [`field`] implements the field-path accessor grammar
-//! both DSLs build on, and [`lex`] provides the shared token stream.
+//! both DSLs build on.
 //!
 //! # Main Types
 //!
@@ -17,7 +17,6 @@
 mod expr;
 mod field;
 mod filter;
-mod lex;
 mod source;
 
 pub(crate) use field::{FieldPath, FileField, TaskField};

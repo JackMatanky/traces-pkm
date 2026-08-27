@@ -33,6 +33,13 @@ impl<T> Spanned<T> {
     pub(crate) fn span(&self) -> SourceSpan {
         self.span
     }
+
+    /// Consumes the `Spanned` wrapper, returning the inner value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn into_value(self) -> T {
+        self.value
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -146,11 +153,12 @@ impl<T> TokenStream<T> {
     }
 
     /// Consumes `expected` only when it is the next token value.
-    pub(crate) fn is_taken(&mut self, expected: &T) -> bool
+    pub(crate) fn is_taken<U>(&mut self, expected: &U) -> bool
     where
-        T: PartialEq,
+        T: PartialEq<U>,
+        U: ?Sized,
     {
-        if self.peek().is_some_and(|token| token == expected) {
+        if self.peek().is_some_and(|token| *token == *expected) {
             self.next();
             true
         } else {
@@ -200,7 +208,7 @@ impl<T> TokenStream<Spanned<T>> {
         T: PartialEq<U> + std::fmt::Debug,
     {
         match self.next() {
-            Some(token) if token.value() == expected => Ok(token.span()),
+            Some(token) if *token.value() == *expected => Ok(token.span()),
             Some(token) => Err(LexError::UnexpectedToken {
                 span: token.span(),
                 found: format!("{:?}", token.value()),

@@ -1,7 +1,9 @@
 use miette::SourceSpan;
 
-use super::lex::{Spanned, TokenStream};
-use crate::query::{QueryError, error::QuerySyntaxError};
+use crate::{
+    lexer::{Spanned, TokenStream},
+    query::{QueryError, error::QuerySyntaxError},
+};
 
 /// Binary logical operators shared by source and filter expressions.
 ///
@@ -161,7 +163,7 @@ impl<A> BooleanExpr<A> {
 impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn parse(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
         let expression = self.parse_or()?;
-        let unexpected = self.tokens.peek().map(|token| token.span);
+        let unexpected = self.tokens.peek().map(|token| token.span());
         if let Some(span) = unexpected {
             return Err(self
                 .syntax_error(
@@ -236,7 +238,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         if self
             .tokens
             .peek()
-            .and_then(|token| self.grammar.control(&token.value))
+            .and_then(|token| self.grammar.control(token.value()))
             == Some(expected)
         {
             self.tokens.next();
@@ -249,7 +251,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn next_span(&mut self) -> SourceSpan {
         self.tokens.peek().map_or_else(
             || SourceSpan::from((self.input.len(), 0)),
-            |token| token.span,
+            |token| token.span(),
         )
     }
 
@@ -320,13 +322,18 @@ mod tests {
             tokens: &mut TokenStream<Spanned<Self::Token>>,
         ) -> Result<Self::Atom, QueryError> {
             match tokens.next() {
-                Some(Spanned {
-                    value: TestToken::Atom(atom),
-                    ..
-                }) => Ok(atom),
-                Some(token) => {
-                    Err(self.syntax_error(input, token.span, "an atom").into())
+                Some(spanned)
+                    if matches!(spanned.value(), TestToken::Atom(_)) =>
+                {
+                    let atom = match spanned.into_value() {
+                        TestToken::Atom(a) => a,
+                        _ => unreachable!(),
+                    };
+                    Ok(atom)
                 }
+                Some(token) => Err(self
+                    .syntax_error(input, token.span(), "an atom")
+                    .into()),
                 None => Err(self
                     .syntax_error(
                         input,

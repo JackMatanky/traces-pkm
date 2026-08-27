@@ -92,27 +92,15 @@ pub struct QuerySyntaxError {
     #[source_code]
     pub(crate) input: String,
     /// The invalid token range, or the end of input when a token is missing.
-    #[label("{expected}")]
+    #[label("{lex_error}")]
     pub(crate) span: SourceSpan,
-    /// Concrete repair text supplied by the parser.
-    pub(crate) expected: &'static str,
+    /// The underlying lexer error carrying diagnostic context.
+    #[source]
+    pub(crate) lex_error: crate::lexer::LexError,
 }
 
 impl QuerySyntaxError {
     /// Constructs a syntax diagnostic for a single expression range.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use miette::SourceSpan;
-    /// # use traces_pkm::query::error::{QueryDialect, QuerySyntaxError};
-    /// let error = QuerySyntaxError::new(
-    ///     QueryDialect::Source,
-    ///     "input",
-    ///     SourceSpan::from((0, 5)),
-    ///     "expected atom",
-    /// );
-    /// ```
     pub(crate) fn new(
         dialect: QueryDialect,
         input: &str,
@@ -123,7 +111,38 @@ impl QuerySyntaxError {
             dialect,
             input: input.to_owned(),
             span,
-            expected,
+            lex_error: crate::lexer::LexError::UnexpectedEof {
+                span,
+                expected,
+            },
+        }
+    }
+
+    /// Wraps a [`crate::lexer::LexError`] into a syntax diagnostic.
+    pub(crate) fn from_lex(
+        dialect: QueryDialect,
+        input: &str,
+        lex_error: crate::lexer::LexError,
+    ) -> Self {
+        let span = match &lex_error {
+            crate::lexer::LexError::UnexpectedToken {
+                span,
+                ..
+            }
+            | crate::lexer::LexError::UnexpectedEof {
+                span,
+                ..
+            }
+            | crate::lexer::LexError::InvalidCharacter {
+                span,
+                ..
+            } => *span,
+        };
+        Self {
+            dialect,
+            input: input.to_owned(),
+            span,
+            lex_error,
         }
     }
 }
@@ -312,7 +331,10 @@ mod tests {
         assert_eq!(error.dialect, QueryDialect::Filter);
         assert_eq!(error.input, "rating >");
         assert_eq!(error.span, SourceSpan::from((7, 0)));
-        assert_eq!(error.expected, "a literal value");
+        assert_eq!(error.lex_error, crate::lexer::LexError::UnexpectedEof {
+            span: SourceSpan::from((7, 0)),
+            expected: "a literal value",
+        });
         assert_eq!(
             error
                 .labels()
@@ -323,7 +345,14 @@ mod tests {
                     label.label().map(str::to_owned)
                 ))
                 .collect::<Vec<_>>(),
-            vec![(7, 0, Some("a literal value".to_owned()))]
+            vec![(
+                7,
+                0,
+                Some(
+                    "unexpected end of input, expected a literal value"
+                        .to_owned()
+                )
+            )]
         );
         assert!(error.source_code().is_some());
     }
