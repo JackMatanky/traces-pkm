@@ -1,7 +1,23 @@
-//! Benches `traces_pkm`'s BLAKE3 hashing surface: `Blake3FileHash` (file
-//! content, via `TryFrom<&Path>`) and `Blake3PathHash` (path bytes, via
-//! `From<&Path>`). Every trust check and tracked-config lookup hashes a config
-//! file or canonical path through one of these.
+//! Performance benchmark suite for BLAKE3 hashing.
+//!
+//! Exposes and monitors the CPU cost of two hashing paths used throughout the
+//! crate: [`Blake3FileHash`] (file content hashing via [`TryFrom<&Path>`]) and
+//! [`Blake3PathHash`] (path-bytes hashing via [`From<&Path>`]). Every trust
+//! check and tracked-config lookup hashes a config file or canonical path
+//! through one of these, so regressions here directly degrade query-time trust
+//! verification.
+//!
+//! ### Data Flow Diagram
+//! ```text
+//! [Path] ──(Blake3FileHash::try_from)──► [u128 file hash]
+//! [Path] ──(Blake3PathHash::from)───────► [u128 path hash]
+//! ```
+//!
+//! ### Profiling Integration
+//! To profile hashing CPU bottlenecks:
+//! ```bash
+//! cargo flamegraph --bench hash -- --bench "Blake3FileHash::try_from/1mb"
+//! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`Blake3FileHash`, `Blake3PathHash`) is
@@ -14,12 +30,20 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
 
-/// Hashes a small (1KB) and a large (1MB) file via `Blake3FileHash::try_from`.
+/// Measures file-content hashing cost for small (1KB) and large (1MB) files.
 ///
 /// Every trust check and tracked-config lookup hashes a file through this path
 /// (see module docs); scaling by size catches a regression from fixed overhead
 /// to something that grows with file size, either of which a correctness test
 /// would miss.
+///
+/// Expected outcomes:
+/// - 1MB hashing is roughly proportional to 1KB (I/O dominates at large sizes).
+/// - No unexpected allocation spikes per size tier.
+///
+/// Unexpected outcomes:
+/// - 1MB hashing significantly exceeds 1000x the 1KB cost, indicating excessive
+///   per-chunk allocation or missing buffering in the hasher.
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
@@ -39,10 +63,16 @@ fn bench_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
-/// Hashes a fixed config-file path string via `Blake3PathHash::from`.
+/// Measures path-bytes hashing cost for a fixed config-file path.
 ///
 /// Same hot-path reasoning as `bench_file_hash`, for the path-hashing half
 /// every tracked-config lookup also pays.
+///
+/// Expected outcomes:
+/// - Constant-time operation independent of filesystem state.
+///
+/// Unexpected outcomes:
+/// - Allocation or system calls in what should be pure in-memory hashing.
 fn bench_path_hash(c: &mut Criterion) {
     c.bench_function("Blake3PathHash::from", |b| {
         let path = std::path::Path::new("/project/.traces/config.toml");

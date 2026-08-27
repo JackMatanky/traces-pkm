@@ -1,7 +1,23 @@
-//! Benches `traces_pkm::TemplateService::render_to_file` in `WriteMode::DryRun`
-//! (excludes disk-write cost) against a pre-built, pre-persisted 1000-note
-//! project, exercising `template` + `index` + `note` together the way every
-//! `traces template`/`traces -i` render does.
+//! Performance benchmark suite for template rendering.
+//!
+//! Exposes and monitors the CPU cost of [`TemplateService::render_to_file`] in
+//! [`WriteMode::DryRun`] (excludes disk-write cost) against a pre-built,
+//! pre-persisted 1000-note project, exercising `template` + `index` + `note`
+//! together the way every `traces template`/`traces -i` render does.
+//! Regressions here directly degrade render latency for template-driven
+//! workflows.
+//!
+//! ### Data Flow Diagram
+//! ```text
+//! [FileIndex] + [Template] + [Note] ──(TemplateService::render_to_file)──► [rendered output]
+//!                                         (DryRun — no disk write)
+//! ```
+//!
+//! ### Profiling Integration
+//! To profile template rendering CPU bottlenecks:
+//! ```bash
+//! cargo flamegraph --bench template_render -- --bench "TemplateService::render_to_file"
+//! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`TemplateService`, `Config`, the
@@ -50,12 +66,20 @@ fn prepared_root() -> std::path::PathBuf {
     root
 }
 
-/// Renders a template listing every path over a pre-built 1000-note project, in
+/// Measures template rendering cost over a pre-built 1000-note project, in
 /// `WriteMode::DryRun`.
 ///
 /// The render path every `traces template`/`-i` invocation pays (see module
 /// docs); `DryRun` isolates render cost from disk-write cost so a regression
 /// here is unambiguous rather than muddied by I/O variance.
+///
+/// Expected outcomes:
+/// - Render time is dominated by index query + template expansion, not fixture
+///   setup or cleanup.
+///
+/// Unexpected outcomes:
+/// - Render cost scales super-linearly with note count, indicating unbounded
+///   template expansion or redundant index scans per row.
 fn bench_render(c: &mut Criterion) {
     c.bench_function("TemplateService::render_to_file", |b| {
         b.iter_batched(

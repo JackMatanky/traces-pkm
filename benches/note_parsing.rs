@@ -1,6 +1,20 @@
-//! Benches `traces_pkm::parse_markdown`, the crate's markdown/frontmatter/task
-//! lexer. Every indexed base passes through this on `FileIndex::build` and
-//! `FileIndex::refresh`, so its cost sets a floor under indexing throughput.
+//! Performance benchmark suite for markdown/frontmatter parsing.
+//!
+//! Exposes and monitors the CPU cost of [`parse_markdown`], the crate's
+//! markdown/frontmatter/task lexer. Every indexed note passes through this on
+//! [`FileIndex::build`] and [`FileIndex::refresh`], so its cost sets a floor
+//! under indexing throughput.
+//!
+//! ### Data Flow Diagram
+//! ```text
+//! [raw markdown bytes] ──(parse_markdown)──► [Note { frontmatter, body, tasks }]
+//! ```
+//!
+//! ### Profiling Integration
+//! To profile parsing CPU bottlenecks:
+//! ```bash
+//! cargo flamegraph --bench note_parsing -- --bench "parse_markdown/large"
+//! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`parse_markdown` included) is only
@@ -39,9 +53,18 @@ fn large() -> String {
 
 /// Parses small, medium, and large synthetic notes through `parse_markdown`.
 ///
-/// Every indexed base passes through this lexer (see module docs); scaling by
+/// Every indexed note passes through this lexer (see module docs); scaling by
 /// field/task density, not just byte count, catches a cost regression that a
 /// correctness test — which only checks the parsed result — would miss.
+///
+/// Expected outcomes:
+/// - Scaling is dominated by frontmatter field count and task count, not raw
+///   byte length.
+/// - Small notes remain sub-microsecond (trivial frontmatter, one paragraph).
+///
+/// Unexpected outcomes:
+/// - Large-note parsing cost exceeds 10x medium-note cost, indicating quadratic
+///   field scanning or unbounded allocation per task line.
 fn bench_parse_markdown(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown");
     for (label, source) in
