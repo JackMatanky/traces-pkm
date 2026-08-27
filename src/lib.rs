@@ -96,7 +96,7 @@ pub use index::{
     path as path_codec,
 };
 pub(crate) use lexer::{
-    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape, tokenize,
+    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{

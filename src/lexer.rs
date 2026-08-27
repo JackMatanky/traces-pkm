@@ -19,43 +19,22 @@ pub(crate) enum LexError {
         span: SourceSpan,
         expected: &'static str,
     },
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for lexer-specific diagnostics")
-    )]
-    #[error("invalid character `{char}`; {expected}")]
-    InvalidCharacter {
-        span: SourceSpan,
-        char: char,
-        expected: &'static str,
-    },
 }
 
-/// Tokenizes `input` using a logos lexer, returning spanned tokens.
-///
-/// Each token is paired with its byte span for error diagnostics.
-/// Returns `Err(LexError)` when the logos lexer encounters an
-/// unrecognized token.
-pub(crate) fn tokenize<'a, T>(
-    input: &'a str,
-) -> Result<Vec<LexedToken<T>>, LexError>
-where
-    T: Logos<'a, Source = str>,
-    T::Extras: Default,
-{
-    let mut lexer = T::lexer(input);
-    let mut tokens = Vec::new();
-    while let Some(result) = lexer.next() {
-        let range = lexer.span();
-        let span = SourceSpan::from((range.start, range.len()));
-        let value = result.map_err(|e| LexError::UnexpectedToken {
-            span,
-            found: format!("{e:?}"),
-            expected: "a valid token",
-        })?;
-        tokens.push(LexedToken::new(value, span));
+impl LexError {
+    /// Returns the byte span of this error.
+    pub(crate) fn span(&self) -> SourceSpan {
+        match self {
+            Self::UnexpectedToken {
+                span,
+                ..
+            }
+            | Self::UnexpectedEof {
+                span,
+                ..
+            } => *span,
+        }
     }
-    Ok(tokens)
 }
 
 /// An owning one-token-lookahead cursor over a materialized token stream.
@@ -86,6 +65,36 @@ impl<T> LexTokenStream<T> {
 }
 
 impl<T> LexTokenStream<LexedToken<T>> {
+    /// Tokenizes `input`, applying `post` to each token before adding it
+    /// to the stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LexError`] when the logos lexer encounters an unrecognized
+    /// token or when `post` returns an error.
+    pub(crate) fn tokenize_with<'a>(
+        input: &'a str,
+        mut post: impl FnMut(LexedToken<T>) -> Result<LexedToken<T>, LexError>,
+    ) -> Result<Self, LexError>
+    where
+        T: Logos<'a, Source = str>,
+        T::Extras: Default,
+    {
+        let mut lexer = T::lexer(input);
+        let mut tokens = Vec::new();
+        while let Some(result) = lexer.next() {
+            let range = lexer.span();
+            let span = SourceSpan::from((range.start, range.len()));
+            let value = result.map_err(|e| LexError::UnexpectedToken {
+                span,
+                found: format!("{e:?}"),
+                expected: "a valid token",
+            })?;
+            tokens.push(post(LexedToken::new(value, span))?);
+        }
+        Ok(Self::new(tokens))
+    }
+
     /// Tokenizes `input` into a spanned token stream.
     ///
     /// # Errors
@@ -97,7 +106,7 @@ impl<T> LexTokenStream<LexedToken<T>> {
         T: Logos<'a, Source = str>,
         T::Extras: Default,
     {
-        tokenize::<T>(input).map(Self::new)
+        Self::tokenize_with(input, Ok)
     }
 
     /// Resolves the span of the next token, or end-of-input if empty.
@@ -156,15 +165,17 @@ impl<T> LexTokenStream<LexedToken<T>> {
         f: F,
     ) -> Result<LexedToken<R>, LexError>
     where
+        T: std::fmt::Debug,
         F: FnOnce(LexedToken<T>) -> Option<R>,
     {
         match self.next() {
             Some(token) => {
                 let span = token.span();
+                let found = format!("{:?}", token.value());
                 f(token).map(|value| LexedToken::new(value, span)).ok_or_else(
                     || LexError::UnexpectedToken {
                         span,
-                        found: expected_desc.to_owned(),
+                        found,
                         expected: expected_desc,
                     },
                 )
@@ -276,17 +287,19 @@ mod tests {
     }
 
     #[test]
-    fn invalid_character_message_includes_char_and_expected() {
-        let error = LexError::InvalidCharacter {
-            span: SourceSpan::from((2, 1)),
-            char: '@',
-            expected: "a letter, digit, underscore, slash, or hyphen",
+    fn lex_error_span_returns_underlying_span() {
+        let token = LexError::UnexpectedToken {
+            span: SourceSpan::from((3, 2)),
+            found: "foo".to_owned(),
+            expected: "bar",
         };
-        assert_eq!(
-            error.to_string(),
-            "invalid character `@`; a letter, digit, underscore, slash, or \
-             hyphen"
-        );
+        assert_eq!(token.span(), SourceSpan::from((3, 2)));
+
+        let eof = LexError::UnexpectedEof {
+            span: SourceSpan::from((10, 0)),
+            expected: "baz",
+        };
+        assert_eq!(eof.span(), SourceSpan::from((10, 0)));
     }
 
     #[test]
@@ -302,14 +315,18 @@ mod tests {
             B,
         }
 
-        let tokens = tokenize::<TestToken>("a b").unwrap();
-        assert_eq!(tokens.len(), 2);
-        let first = tokens.first().unwrap();
-        assert_eq!(first.value(), &TestToken::A);
-        assert_eq!(first.span(), SourceSpan::from((0, 1)));
-        let second = tokens.get(1).unwrap();
-        assert_eq!(second.value(), &TestToken::B);
-        assert_eq!(second.span(), SourceSpan::from((2, 1)));
+        let mut ts =
+            LexTokenStream::<LexedToken<TestToken>>::tokenize("a b").unwrap();
+        assert!(ts.peek_is_value(&TestToken::A));
+        assert_eq!(
+            ts.expect("a b", &TestToken::A, "an `a` token").unwrap(),
+            SourceSpan::from((0, 1))
+        );
+        assert_eq!(
+            ts.expect("a b", &TestToken::B, "a `b` token").unwrap(),
+            SourceSpan::from((2, 1))
+        );
+        assert_eq!(ts.next(), None);
     }
 
     #[test]
@@ -323,7 +340,7 @@ mod tests {
             A,
         }
 
-        let result = tokenize::<TestToken>("a x");
+        let result = LexTokenStream::<LexedToken<TestToken>>::tokenize("a x");
         assert!(result.is_err());
     }
 
@@ -428,8 +445,7 @@ mod tests {
             B,
         }
 
-        let tokens = tokenize::<T>("a b").unwrap();
-        let mut ts = LexTokenStream::new(tokens);
+        let mut ts = LexTokenStream::<LexedToken<T>>::tokenize("a b").unwrap();
         let span = ts.expect("a b", &T::A, "an `a` token").unwrap();
         assert_eq!(span, SourceSpan::from((0, 1)));
     }
@@ -447,8 +463,7 @@ mod tests {
             B,
         }
 
-        let tokens = tokenize::<T>("a b").unwrap();
-        let mut ts = LexTokenStream::new(tokens);
+        let mut ts = LexTokenStream::<LexedToken<T>>::tokenize("a b").unwrap();
         let err = ts.expect("a b", &T::B, "a `b` token").unwrap_err();
         assert!(matches!(err, LexError::UnexpectedToken { .. }));
     }
@@ -464,9 +479,65 @@ mod tests {
             A,
         }
 
-        let tokens = tokenize::<T>("").unwrap();
-        let mut ts = LexTokenStream::new(tokens);
+        let mut ts = LexTokenStream::<LexedToken<T>>::tokenize("").unwrap();
         let err = ts.expect("", &T::A, "an `a` token").unwrap_err();
         assert!(matches!(err, LexError::UnexpectedEof { .. }));
+    }
+
+    #[test]
+    fn tokenize_with_applies_post_processing() {
+        use logos::Logos;
+
+        #[derive(Logos, Debug, Clone, PartialEq)]
+        #[logos(skip r"[ \t\n]+")]
+        enum T {
+            #[token("a")]
+            A,
+            #[regex("[0-9]+", |lex| lex.slice().parse::<i32>().ok())]
+            Num(i32),
+        }
+
+        let mut ts =
+            LexTokenStream::<LexedToken<T>>::tokenize_with("a 42", |token| {
+                let span = token.span();
+                match token.into_value() {
+                    T::Num(n) if n > 100 => Err(LexError::UnexpectedToken {
+                        span,
+                        found: format!("{n}"),
+                        expected: "a number <= 100",
+                    }),
+                    other => Ok(LexedToken::new(other, span)),
+                }
+            })
+            .unwrap();
+        assert!(ts.peek_is_value(&T::A));
+        ts.next();
+        assert!(ts.peek_is_value(&T::Num(42)));
+    }
+
+    #[test]
+    fn tokenize_with_propagates_post_processing_errors() {
+        use logos::Logos;
+
+        #[derive(Logos, Debug, Clone, PartialEq)]
+        #[logos(skip r"[ \t\n]+")]
+        enum T {
+            #[regex("[0-9]+", |lex| lex.slice().parse::<i32>().ok())]
+            Num(i32),
+        }
+
+        let result =
+            LexTokenStream::<LexedToken<T>>::tokenize_with("200", |token| {
+                let span = token.span();
+                match token.into_value() {
+                    T::Num(n) if n > 100 => Err(LexError::UnexpectedToken {
+                        span,
+                        found: format!("{n}"),
+                        expected: "a number <= 100",
+                    }),
+                    other => Ok(LexedToken::new(other, span)),
+                }
+            });
+        assert!(result.is_err());
     }
 }

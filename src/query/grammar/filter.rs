@@ -8,14 +8,13 @@ use super::{
     },
 };
 use crate::{
-    LexTokenStream, LexedToken, lexical_backslash_unescape,
+    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
     note::NoteFieldValue,
     query::{
         QueryError, QueryRecord,
         error::{QueryDialect, QuerySyntaxError},
         value::QueryFieldValueRef,
     },
-    tokenize,
 };
 
 /// A parsed filter expression AST.
@@ -32,12 +31,37 @@ impl FilterExpr {
     ///
     /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
     pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
-        parse_boolean_expr(
+        let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
             input,
-            LexTokenStream::new(tokenize_filter_expr(input)?),
-            FilterGrammar,
+            |token| {
+                let span = token.span();
+                match token.into_value() {
+                    FilterToken::Ident(word) => match word.parse::<f64>() {
+                        Ok(number) if number.is_finite() => {
+                            Ok(LexedToken::new(
+                                FilterToken::Literal(NoteFieldValue::Number(
+                                    number,
+                                )),
+                                span,
+                            ))
+                        }
+                        Ok(_) => Err(LexError::UnexpectedToken {
+                            span,
+                            found: "NaN or infinity".to_owned(),
+                            expected: "a finite numeric literal",
+                        }),
+                        Err(_) => {
+                            Ok(LexedToken::new(FilterToken::Ident(word), span))
+                        }
+                    },
+                    other => Ok(LexedToken::new(other, span)),
+                }
+            },
         )
-        .map(Self)
+        .map_err(|e| {
+            QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+        })?;
+        parse_boolean_expr(input, tokens, FilterGrammar).map(Self)
     }
 
     /// Whether `record` satisfies this expression.
@@ -389,40 +413,6 @@ enum FilterToken {
     Ident(String),
 }
 
-/// Tokenizes `input`, preserving each token's original byte span.
-fn tokenize_filter_expr(
-    input: &str,
-) -> Result<Vec<LexedToken<FilterToken>>, QueryError> {
-    let tokens = tokenize::<FilterToken>(input).map_err(|e| {
-        QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
-    })?;
-    tokens
-        .into_iter()
-        .map(|spanned| {
-            let span = spanned.span();
-            match spanned.into_value() {
-                FilterToken::Ident(word) => match word.parse::<f64>() {
-                    Ok(number) if number.is_finite() => Ok(LexedToken::new(
-                        FilterToken::Literal(NoteFieldValue::Number(number)),
-                        span,
-                    )),
-                    Ok(_) => Err(QuerySyntaxError::new(
-                        QueryDialect::Filter,
-                        input,
-                        span,
-                        "a finite numeric literal",
-                    )
-                    .into()),
-                    Err(_) => {
-                        Ok(LexedToken::new(FilterToken::Ident(word), span))
-                    }
-                },
-                other => Ok(LexedToken::new(other, span)),
-            }
-        })
-        .collect()
-}
-
 /// Unescapes a lexed double-quoted string literal into a
 /// [`NoteFieldValue::String`].
 #[expect(
@@ -528,10 +518,14 @@ mod tests {
                 "expected syntax error"
             );
             if let Err(QueryError::Syntax(error)) = result {
-                assert_eq!(*error.lex_error, crate::LexError::UnexpectedEof {
-                    span: SourceSpan::from((offset, length)),
-                    expected: "a finite numeric literal",
-                });
+                assert_eq!(
+                    *error.lex_error,
+                    crate::LexError::UnexpectedToken {
+                        span: SourceSpan::from((offset, length)),
+                        found: "NaN or infinity".to_owned(),
+                        expected: "a finite numeric literal",
+                    }
+                );
                 assert_eq!(error.span, SourceSpan::from((offset, length)));
             }
         }

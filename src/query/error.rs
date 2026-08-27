@@ -124,20 +124,7 @@ impl QuerySyntaxError {
         input: &str,
         lex_error: crate::LexError,
     ) -> Self {
-        let span = match &lex_error {
-            crate::LexError::UnexpectedToken {
-                span,
-                ..
-            }
-            | crate::LexError::UnexpectedEof {
-                span,
-                ..
-            }
-            | crate::LexError::InvalidCharacter {
-                span,
-                ..
-            } => *span,
-        };
+        let span = lex_error.span();
         Self {
             dialect,
             input: input.to_owned(),
