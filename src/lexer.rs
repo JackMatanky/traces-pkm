@@ -4,20 +4,15 @@ use std::{iter::Peekable, vec};
 
 use logos::Logos;
 use miette::SourceSpan;
+use thiserror::Error;
 
-/// A token paired with its original byte span in the source text.
-///
-/// Used throughout the parser to produce span-aware error diagnostics.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Spanned<T> {
-    /// The parsed token value.
-    pub(crate) value: T,
-    /// Its byte range in the source text.
-    pub(crate) span: SourceSpan,
+    value: T,
+    span: SourceSpan,
 }
 
 impl<T> Spanned<T> {
-    /// Pairs a token with its original source span.
     #[inline]
     #[must_use]
     pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
@@ -26,67 +21,40 @@ impl<T> Spanned<T> {
             span,
         }
     }
-}
 
-/// A lexer error with enough context for both developer traces and
-/// user-facing diagnostics.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum LexError {
-    /// Found `found` where `expected` was expected.
-    UnexpectedToken {
-        /// Byte span of the unexpected token.
-        span: SourceSpan,
-        /// What was actually found.
-        found: String,
-        /// What was expected.
-        expected: &'static str,
-    },
-    /// Input ended while expecting more tokens.
-    UnexpectedEof {
-        /// Span pointing at end of input.
-        span: SourceSpan,
-        /// What was still expected.
-        expected: &'static str,
-    },
-    /// An invalid character was encountered.
-    InvalidCharacter {
-        /// Byte span of the invalid character.
-        span: SourceSpan,
-        /// The invalid character.
-        char: char,
-        /// Description of what characters are allowed.
-        expected: &'static str,
-    },
-}
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &T {
+        &self.value
+    }
 
-impl std::fmt::Display for LexError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnexpectedToken {
-                found,
-                expected,
-                ..
-            } => {
-                write!(f, "found `{found}`, expected {expected}")
-            }
-            Self::UnexpectedEof {
-                expected,
-                ..
-            } => {
-                write!(f, "unexpected end of input, expected {expected}")
-            }
-            Self::InvalidCharacter {
-                char,
-                expected,
-                ..
-            } => {
-                write!(f, "invalid character `{char}`; {expected}")
-            }
-        }
+    #[inline]
+    #[must_use]
+    pub(crate) fn span(&self) -> SourceSpan {
+        self.span
     }
 }
 
-impl std::error::Error for LexError {}
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub(crate) enum LexError {
+    #[error("found `{found}`, expected {expected}")]
+    UnexpectedToken {
+        span: SourceSpan,
+        found: String,
+        expected: &'static str,
+    },
+    #[error("unexpected end of input, expected {expected}")]
+    UnexpectedEof {
+        span: SourceSpan,
+        expected: &'static str,
+    },
+    #[error("invalid character `{char}`; {expected}")]
+    InvalidCharacter {
+        span: SourceSpan,
+        char: char,
+        expected: &'static str,
+    },
+}
 
 /// Tokenizes `input` using a logos lexer, returning spanned tokens.
 ///
@@ -204,7 +172,7 @@ impl<T> TokenStream<Spanned<T>> {
     pub(crate) fn next_span(&mut self, input: &str) -> SourceSpan {
         self.peek().map_or_else(
             || SourceSpan::from((input.len(), 0)),
-            |token| token.span,
+            |token| token.span(),
         )
     }
 
@@ -214,7 +182,7 @@ impl<T> TokenStream<Spanned<T>> {
         T: PartialEq<U>,
         U: ?Sized,
     {
-        self.peek().is_some_and(|spanned| spanned.value == *expected)
+        self.peek().is_some_and(|spanned| *spanned.value() == *expected)
     }
 
     /// Consumes and returns the next token if it equals `expected`.
@@ -232,10 +200,10 @@ impl<T> TokenStream<Spanned<T>> {
         T: PartialEq<U> + std::fmt::Debug,
     {
         match self.next() {
-            Some(token) if &token.value == expected => Ok(token.span),
+            Some(token) if token.value() == expected => Ok(token.span()),
             Some(token) => Err(LexError::UnexpectedToken {
-                span: token.span,
-                found: format!("{:?}", token),
+                span: token.span(),
+                found: format!("{:?}", token.value()),
                 expected: expected_desc,
             }),
             None => Err(LexError::UnexpectedEof {
@@ -260,7 +228,7 @@ impl<T> TokenStream<Spanned<T>> {
     {
         match self.next() {
             Some(token) => {
-                let span = token.span;
+                let span = token.span();
                 f(token).map(|value| Spanned::new(value, span)).ok_or_else(
                     || LexError::UnexpectedToken {
                         span,
@@ -338,10 +306,10 @@ mod tests {
 
         let tokens = tokenize::<TestToken>("a b").unwrap();
         assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].value, TestToken::A);
-        assert_eq!(tokens[0].span, SourceSpan::from((0, 1)));
-        assert_eq!(tokens[1].value, TestToken::B);
-        assert_eq!(tokens[1].span, SourceSpan::from((2, 1)));
+        assert_eq!(tokens[0].value(), &TestToken::A);
+        assert_eq!(tokens[0].span(), SourceSpan::from((0, 1)));
+        assert_eq!(tokens[1].value(), &TestToken::B);
+        assert_eq!(tokens[1].span(), SourceSpan::from((2, 1)));
     }
 
     #[test]
