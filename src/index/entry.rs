@@ -89,19 +89,6 @@ impl FileIndex {
     }
 }
 
-/// Binary-searches path-sorted `notes` for an exact path match.
-///
-/// Shared by the [`super::inlinks`] submodule, which needs the same search over
-/// a bare `&[Note]` slice while resolving link targets during
-/// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
-pub(super) fn find_by_path<'a>(
-    notes: &'a [Note],
-    path: &Path,
-) -> Option<&'a Note> {
-    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
-    notes.get(idx)
-}
-
 /// Borrowed file row paired with optional parsed Note data and inbound links.
 #[derive(Copy, Clone)]
 pub(crate) struct FileIndexEntry<'a> {
@@ -168,6 +155,19 @@ impl<'a> Iterator for FileIndexEntryIter<'a> {
             inlinks,
         })
     }
+}
+
+/// Binary-searches path-sorted `notes` for an exact path match.
+///
+/// Shared by the [`super::inlinks`] submodule, which needs the same search over
+/// a bare `&[Note]` slice while resolving link targets during
+/// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
+pub(super) fn find_by_path<'a>(
+    notes: &'a [Note],
+    path: &Path,
+) -> Option<&'a Note> {
+    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
+    notes.get(idx)
 }
 
 #[cfg(test)]

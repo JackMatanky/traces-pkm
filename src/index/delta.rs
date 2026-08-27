@@ -19,7 +19,7 @@ use crate::file::FileBase;
 /// [`super::builder::IndexBuilder::build`].
 ///
 /// [`super::store::IndexStore::persist_index`] reads this to choose between
-/// a full [`super::store::IndexStore::replace_all`] rewrite (fresh build,
+/// a full [`super::store::IndexStore::write_all`] rewrite (fresh build,
 /// no previous persisted state to diff against) and a row-level incremental
 /// write (refresh, only paths that actually changed since the last persist).
 ///
@@ -31,7 +31,7 @@ use crate::file::FileBase;
 ///
 /// `Full` and `Incremental` are not interchangeable, even when an
 /// `Incremental` diff would come out empty: `Full`
-/// (`replace_all`) unconditionally wipes all three tables before
+/// (`write_all`) unconditionally wipes all three tables before
 /// rewriting, so it never needs to know what was deleted. `Incremental`
 /// (`persist_incremental`) only deletes paths its diff explicitly names,
 /// which is only correct because that diff is always computed against a

@@ -259,7 +259,7 @@ mod tests {
             let note = crate::note::parse_markdown("a.md", "content");
             let store = IndexStore::open(temp.path()).expect("open store");
             store
-                .replace_all(&files, &[note], &InlinkMap::new())
+                .write_all(&files, &[note], &InlinkMap::new())
                 .expect("persist");
             let txn = store.begin_read().expect("begin read");
             let cache = load_cache(&store, &txn);

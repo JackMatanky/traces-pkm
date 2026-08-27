@@ -222,7 +222,7 @@ mod tests {
     fn persist_previous(previous: &FileIndex, root: &Path) -> IndexStore {
         let store = IndexStore::open(root).expect("open store");
         store
-            .replace_all(previous.bases(), previous.notes(), previous.inlinks())
+            .write_all(previous.bases(), previous.notes(), previous.inlinks())
             .expect("persist previous index");
         store
     }
