@@ -137,14 +137,14 @@ fi
 [tasks.check]
 raw_args = true
 description = "Fast compile check, then hk project checks"
-run = ["cargo check --workspace", "hk check"]
 alias = "c"
+run = ["cargo check --workspace", "hk check"]
 
 [tasks.build]
 raw_args = true
 description = "Debug build"
-run = "cargo build"
 alias = "b"
+run = "cargo build"
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
 rust_cache = true
@@ -243,6 +243,7 @@ run = "cargo deny check"
 
 [tasks.test]
 description = "Run tests with nextest (+ doc-tests by default)"
+alias = "t"
 usage = '''
 flag "--feature <feature>" help="Enable a specific feature" default="all"
 flag "--docs" negate="--no-docs" default=#true {
@@ -290,7 +291,6 @@ if [[ "${usage_docs?}" == "true" ]]; then
   cargo test "${cargo_test_args[@]}" --doc
 fi
 '''
-alias = "t"
 
 [tasks.bench]
 description = "Run Criterion benchmarks"
@@ -442,8 +442,8 @@ EOF
 [tasks.release]
 raw_args = true
 description = "Release build"
-run = "cargo build --release"
 alias = "r"
+run = "cargo build --release"
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
 rust_cache = true
@@ -451,8 +451,8 @@ rust_cache = true
 [tasks.doc]
 raw_args = true
 description = "Build documentation (warnings as errors)"
-run = "cargo doc --no-deps"
 env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc --no-deps"
 sources = ["@group:rust"]
 outputs = ["target/doc"]
 rust_cache = true
