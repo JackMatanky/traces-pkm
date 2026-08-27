@@ -172,13 +172,11 @@ impl<T> LexTokenStream<LexedToken<T>> {
             Some(token) => {
                 let span = token.span();
                 let found = format!("{:?}", token.value());
-                f(token).map(|value| LexedToken::new(value, span)).ok_or_else(
-                    || LexError::UnexpectedToken {
+                f(token).map(|value| LexedToken::new(value, span)).ok_or(LexError::UnexpectedToken {
                         span,
                         found,
                         expected: expected_desc,
-                    },
-                )
+                    })
             }
             None => Err(LexError::UnexpectedEndOfInput {
                 span: SourceSpan::from((input.len(), 0)),
