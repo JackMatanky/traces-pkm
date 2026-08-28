@@ -107,6 +107,8 @@ impl<'a> SchemaBuilder<'a> {
     ///   attribute key
     /// - [`OverrideValueTypeMismatch`] if a `$ref` override attribute has the
     ///   wrong value type
+    /// - [`SelectValuesOverrideDegraded`] if a bare `$ref` override declares
+    ///   invalid `select`/`multi` values configuration
     ///
     /// [`Cycle`]: SchemaError::Cycle
     /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
@@ -115,6 +117,7 @@ impl<'a> SchemaBuilder<'a> {
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
     /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
+    /// [`SelectValuesOverrideDegraded`]: SchemaWarning::SelectValuesOverrideDegraded
     pub(super) fn build(mut self) -> Result<ResolvedSchemas, SchemaError> {
         self.resolve_global()?;
         let (graph_builder, graph_warnings) = SchemaGraphBuilder::new(

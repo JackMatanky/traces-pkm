@@ -103,10 +103,30 @@ pub(crate) enum SelectValuesError {
         #[source]
         source: SelectValuesFileError,
     },
+    /// A file subtable omitted its required `path` attribute.
+    #[error("values file subtable is missing required attribute \"path\"")]
+    MissingPath,
+    /// A file subtable's `path` attribute was not a string.
+    #[error(
+        "values file subtable's \"path\" attribute must be a string, got \
+         {value}"
+    )]
+    PathNotString {
+        value: String,
+    },
+    /// A file subtable selector was not a string.
+    #[error(
+        "values file subtable's selector {selector:?} must be a string, got \
+         {value}"
+    )]
+    SelectorNotString {
+        selector: &'static str,
+        value: String,
+    },
     /// A selector key was specified on bare string entries.
     #[error(
-        "configures selector {selector:?} but values file contains bare \
-         string entries"
+        "configures selector {selector:?} but entries contain bare string \
+         values"
     )]
     SelectorOnBareEntries {
         selector: &'static str,
@@ -119,6 +139,25 @@ pub(crate) enum SelectValuesError {
     SelectorMissingKey {
         selector: &'static str,
         key: String,
+    },
+    /// A selected entry key was not a string.
+    #[error(
+        "configures selector {selector:?} = {key:?}, but that entry value \
+         must be a string, got {value}"
+    )]
+    SelectedValueNotString {
+        selector: &'static str,
+        key: String,
+        value: String,
+    },
+    /// A selected order key was not numeric.
+    #[error(
+        "configures selector \"order\" = {key:?}, but that entry value must \
+         be a number, got {value}"
+    )]
+    OrderNotNumber {
+        key: String,
+        value: String,
     },
     /// An entry includes a passthrough key reserved by rendered select output.
     #[error(
@@ -157,6 +196,15 @@ pub(crate) enum SelectValuesFileError {
     /// The values file is missing the top-level `entries` list.
     #[error("values file missing top-level 'entries' list")]
     MissingEntries,
+
+    /// The values file's `entries` list mixed incompatible entry shapes.
+    #[error(
+        "entries must be a list of strings or a list of value objects, got {0}"
+    )]
+    MixedEntries(String),
+
+    #[error(transparent)]
+    Entry(Box<SelectValuesError>),
 }
 
 impl From<SchemaFieldParserError> for SchemaWarning {
@@ -254,6 +302,29 @@ mod tests {
                 &error,
                 "field #book/status configures selector \"label\" = \"name\", \
                  but an entry is missing this key",
+            );
+        }
+
+        #[test]
+        fn values_file_entry_formats_display_message_with_path() {
+            let error = SchemaFieldParserError::SelectValues {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                source: SelectValuesError::ValuesFile {
+                    path: "values/statuses.json".to_owned(),
+                    source: SelectValuesFileError::Entry(Box::new(
+                        SelectValuesError::ReservedOutputKey {
+                            key: "value".to_owned(),
+                        },
+                    )),
+                },
+            };
+
+            assert_display(
+                &error,
+                "field #book/status values file \"values/statuses.json\" is \
+                 invalid: entry key \"value\" is reserved for rendered select \
+                 output; choose another source key or selector",
             );
         }
     }

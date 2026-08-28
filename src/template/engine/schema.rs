@@ -1178,7 +1178,8 @@ mod tests {
 
             std::fs::write(
                 schemas_dir.join("values/countries.toml"),
-                "[[entries]]\nslug = \"us\"\nname = \"United States\"\n",
+                "[[entries]]\nslug = \"us\"\nname = \"United \
+                 States\"\ncontinent = \"North America\"\n",
             )
             .expect("write values file");
 
@@ -1195,11 +1196,40 @@ mod tests {
             let rendered = render(
                 &schemas_dir,
                 "{{ schema.get('book').field('country')[0].label }} ({{ \
-                 schema.get('book').field('country')[0].value }})",
+                 schema.get('book').field('country')[0].value }}, {{ \
+                 schema.get('book').field('country')[0].continent }})",
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "United States (us)");
+            assert_eq!(rendered, "United States (us, North America)");
+        }
+
+        #[test]
+        fn renders_structured_inline_select_field_as_objects() {
+            use pretty_assertions::assert_eq;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas_dir = temp.path().join(".traces/schemas");
+            write_schema(
+                temp.path(),
+                "calendar",
+                r#"
+                [fields.month]
+                type = "select"
+                values = [
+                    { value = "jan", label = "January", quarter = 1 },
+                ]
+                "#,
+            );
+
+            let rendered = render(
+                &schemas_dir,
+                "{{ schema.get('calendar').field('month')[0].label }}:Q{{ \
+                 schema.get('calendar').field('month')[0].quarter }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "January:Q1");
         }
         #[test]
         fn a_broken_schema_now_breaks_construction_even_when_the_template_never_touches_schema()

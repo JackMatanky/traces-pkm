@@ -417,6 +417,35 @@ mod tests {
         }
 
         #[test]
+        fn values_file_failures_drop_declaring_schema_not_registry() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "broken",
+                r#"
+                [fields.status]
+                type = "select"
+                values = { path = "missing.json" }
+                "#,
+            );
+            write_schema(temp.path(), "child", r#"extends = ["broken"]"#);
+
+            let (service, warnings, failures) =
+                resolve_dir(temp.path()).expect("registry still loads");
+
+            assert!(service.get("broken").is_none());
+            assert!(service.get("child").is_some());
+            assert_eq!(failures.len(), 1);
+            let failure = failures.first().expect("schema failure");
+            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert!(failure.error.to_string().contains("missing.json"));
+            assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("child"),
+                parent: SchemaName::from("broken"),
+            }));
+        }
+
+        #[test]
         fn rejects_a_field_with_neither_type_nor_ref_at_parse() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
