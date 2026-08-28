@@ -13,7 +13,7 @@
 use thiserror::Error;
 
 use super::{FieldAddress, SchemaFieldTypeTag};
-use crate::schema::error::SchemaWarning;
+use crate::{path::PathError, schema::error::SchemaWarning};
 
 /// Why [`super::SchemaFieldBuilder::build`] failed.
 ///
@@ -83,6 +83,128 @@ pub(crate) enum SchemaFieldParserError {
         value: String,
         expected: &'static str,
     },
+    /// `select`/`multi` values configuration is invalid.
+    #[error("field {address} {source}")]
+    SelectValues {
+        address: FieldAddress,
+        #[source]
+        source: SelectValuesError,
+    },
+}
+
+/// A validation failure inside a `select`/`multi` values definition.
+#[derive(Debug, Error)]
+pub(crate) enum SelectValuesError {
+    /// A values file failed confinement, extension, I/O, parsing, or shape
+    /// validation.
+    #[error("values file {path:?} is invalid: {source}")]
+    ValuesFile {
+        path: String,
+        #[source]
+        source: SelectValuesFileError,
+    },
+    /// A file subtable omitted its required `path` attribute.
+    #[error("values file subtable is missing required attribute \"path\"")]
+    MissingPath,
+    /// A file subtable's `path` attribute was not a string.
+    #[error(
+        "values file subtable's \"path\" attribute must be a string, got \
+         {value}"
+    )]
+    PathNotString {
+        value: String,
+    },
+    /// A file subtable selector was not a string.
+    #[error(
+        "values file subtable's selector {selector:?} must be a string, got \
+         {value}"
+    )]
+    SelectorNotString {
+        selector: &'static str,
+        value: String,
+    },
+    /// A selector key was specified on bare string entries.
+    #[error(
+        "configures selector {selector:?} but entries contain bare string \
+         values"
+    )]
+    SelectorOnBareEntries {
+        selector: &'static str,
+    },
+    /// An entry object was missing a key named by a selector.
+    #[error(
+        "configures selector {selector:?} = {key:?}, but an entry is missing \
+         this key"
+    )]
+    SelectorMissingKey {
+        selector: &'static str,
+        key: String,
+    },
+    /// A selected entry key was not a string.
+    #[error(
+        "configures selector {selector:?} = {key:?}, but that entry value \
+         must be a string, got {value}"
+    )]
+    SelectedValueNotString {
+        selector: &'static str,
+        key: String,
+        value: String,
+    },
+    /// A selected order key was not numeric.
+    #[error(
+        "configures selector \"order\" = {key:?}, but that entry value must \
+         be a number, got {value}"
+    )]
+    OrderNotNumber {
+        key: String,
+        value: String,
+    },
+    /// An entry includes a passthrough key reserved by rendered select output.
+    #[error(
+        "entry key {key:?} is reserved for rendered select output; choose \
+         another source key or selector"
+    )]
+    ReservedOutputKey {
+        key: String,
+    },
+}
+
+/// Errors encountered while loading or parsing an external values file.
+#[derive(Debug, Error)]
+pub(crate) enum SelectValuesFileError {
+    /// The values file path escaped the schema directory or contained unsafe
+    /// components.
+    #[error(transparent)]
+    Confinement(#[from] PathError),
+
+    /// An I/O error occurred while reading the values file.
+    #[error("failed to read values file: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// A TOML values file failed to parse.
+    #[error("failed to parse TOML values file: {0}")]
+    ParseToml(#[source] Box<toml::de::Error>),
+
+    /// A JSON values file failed to parse.
+    #[error("failed to parse JSON values file: {0}")]
+    ParseJson(#[source] Box<serde_json::Error>),
+
+    /// The values file path has an unsupported extension.
+    #[error("unsupported values file extension {0:?} (must be .toml or .json)")]
+    BadExtension(String),
+
+    /// The values file is missing the top-level `entries` list.
+    #[error("values file missing top-level 'entries' list")]
+    MissingEntries,
+
+    /// The values file's `entries` list mixed incompatible entry shapes.
+    #[error(
+        "entries must be a list of strings or a list of value objects, got {0}"
+    )]
+    MixedEntries(String),
+
+    #[error(transparent)]
+    Entry(Box<SelectValuesError>),
 }
 
 impl From<SchemaFieldParserError> for SchemaWarning {
@@ -109,6 +231,13 @@ impl From<SchemaFieldParserError> for SchemaWarning {
                 key,
                 value,
                 expected,
+            },
+            SchemaFieldParserError::SelectValues {
+                address,
+                source,
+            } => Self::SelectValuesOverrideDegraded {
+                address,
+                error: source.to_string(),
             },
         }
     }
@@ -157,6 +286,47 @@ mod tests {
                  be a number, got \"abc\"",
             );
         }
+
+        #[test]
+        fn select_values_formats_display_message() {
+            let error = SchemaFieldParserError::SelectValues {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                source: SelectValuesError::SelectorMissingKey {
+                    selector: "label",
+                    key: "name".to_owned(),
+                },
+            };
+
+            assert_display(
+                &error,
+                "field #book/status configures selector \"label\" = \"name\", \
+                 but an entry is missing this key",
+            );
+        }
+
+        #[test]
+        fn values_file_entry_formats_display_message_with_path() {
+            let error = SchemaFieldParserError::SelectValues {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                source: SelectValuesError::ValuesFile {
+                    path: "values/statuses.json".to_owned(),
+                    source: SelectValuesFileError::Entry(Box::new(
+                        SelectValuesError::ReservedOutputKey {
+                            key: "value".to_owned(),
+                        },
+                    )),
+                },
+            };
+
+            assert_display(
+                &error,
+                "field #book/status values file \"values/statuses.json\" is \
+                 invalid: entry key \"value\" is reserved for rendered select \
+                 output; choose another source key or selector",
+            );
+        }
     }
 
     mod conversions {
@@ -203,6 +373,28 @@ mod tests {
                     expected,
                     ..
                 } if key == "min" && expected == "a number"
+            ));
+        }
+
+        #[test]
+        fn select_values_error_converts_to_select_values_override_warning() {
+            let error = SchemaFieldParserError::SelectValues {
+                address: FieldAddress::try_from("#sci_fi/status")
+                    .expect("valid ref"),
+                source: SelectValuesError::SelectorMissingKey {
+                    selector: "label",
+                    key: "label".to_owned(),
+                },
+            };
+
+            let warning = SchemaWarning::from(error);
+
+            assert!(matches!(
+                warning,
+                SchemaWarning::SelectValuesOverrideDegraded {
+                    error: ref message,
+                    ..
+                } if message.contains("selector \"label\"")
             ));
         }
     }

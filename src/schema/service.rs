@@ -12,6 +12,7 @@ use super::{
     RawSchema, SchemaName,
     builder::{SchemaBuilder, SchemaFailure},
     error::{SchemaError, SchemaWarning},
+    fields::SchemaFieldBuildContext,
     model::Schema,
 };
 use crate::{BaseNameRef, DirTree, DirTreeError};
@@ -58,7 +59,8 @@ impl SchemaService {
         directory: &Path,
     ) -> Result<SchemaConstruction, SchemaError> {
         let raw = read_raw_schemas(directory)?;
-        let resolved = SchemaBuilder::new(&raw).build()?;
+        let field_context = SchemaFieldBuildContext::new(directory);
+        let resolved = SchemaBuilder::new(&raw, &field_context).build()?;
         let schemas = resolved
             .schemas
             .into_iter()
@@ -412,6 +414,35 @@ mod tests {
                 resolve_dir(temp.path()).expect_err("malformed $ref rejected");
 
             assert!(matches!(err, SchemaError::Parse { .. }));
+        }
+
+        #[test]
+        fn values_file_failures_drop_declaring_schema_not_registry() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "broken",
+                r#"
+                [fields.status]
+                type = "select"
+                values = { path = "missing.json" }
+                "#,
+            );
+            write_schema(temp.path(), "child", r#"extends = ["broken"]"#);
+
+            let (service, warnings, failures) =
+                resolve_dir(temp.path()).expect("registry still loads");
+
+            assert!(service.get("broken").is_none());
+            assert!(service.get("child").is_some());
+            assert_eq!(failures.len(), 1);
+            let failure = failures.first().expect("schema failure");
+            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert!(failure.error.to_string().contains("missing.json"));
+            assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("child"),
+                parent: SchemaName::from("broken"),
+            }));
         }
 
         #[test]

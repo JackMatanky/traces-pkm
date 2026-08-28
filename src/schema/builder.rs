@@ -23,7 +23,7 @@ use indexmap::{IndexMap, IndexSet};
 use super::{
     GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
-    fields::{FieldAddressRef, SchemaFieldBuilder},
+    fields::{FieldAddressRef, SchemaFieldBuildContext, SchemaFieldBuilder},
     graph::{SchemaGraph, SchemaGraphBuilder},
     model::Schema,
 };
@@ -58,6 +58,8 @@ pub(super) struct ResolvedSchemas {
 pub(super) struct SchemaBuilder<'a> {
     /// Raw schemas to resolve, keyed by name.
     raw: &'a IndexMap<SchemaName, RawSchema>,
+    /// Construction-time dependencies for field type parsers.
+    field_context: &'a SchemaFieldBuildContext,
     /// Schemas resolved so far.
     resolved: IndexMap<SchemaName, Schema>,
     /// Recoverable defects accumulated across the whole set.
@@ -67,10 +69,14 @@ pub(super) struct SchemaBuilder<'a> {
 }
 
 impl<'a> SchemaBuilder<'a> {
-    /// Create a builder from a borrowed raw-schema map.
-    pub(super) fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
+    /// Create a builder from a borrowed raw-schema map and field-build context.
+    pub(super) fn new(
+        raw: &'a IndexMap<SchemaName, RawSchema>,
+        field_context: &'a SchemaFieldBuildContext,
+    ) -> Self {
         Self {
             raw,
+            field_context,
             resolved: IndexMap::new(),
             warnings: Vec::new(),
             failures: Vec::new(),
@@ -101,6 +107,8 @@ impl<'a> SchemaBuilder<'a> {
     ///   attribute key
     /// - [`OverrideValueTypeMismatch`] if a `$ref` override attribute has the
     ///   wrong value type
+    /// - [`SelectValuesOverrideDegraded`] if a bare `$ref` override declares
+    ///   invalid `select`/`multi` values configuration
     ///
     /// [`Cycle`]: SchemaError::Cycle
     /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
@@ -109,6 +117,7 @@ impl<'a> SchemaBuilder<'a> {
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
     /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
+    /// [`SelectValuesOverrideDegraded`]: SchemaWarning::SelectValuesOverrideDegraded
     pub(super) fn build(mut self) -> Result<ResolvedSchemas, SchemaError> {
         self.resolve_global()?;
         let (graph_builder, graph_warnings) = SchemaGraphBuilder::new(
@@ -137,6 +146,7 @@ impl<'a> SchemaBuilder<'a> {
             global_raw,
             &[],
             &self.resolved,
+            self.field_context,
         )?;
         self.warnings.extend(warnings);
         self.resolved.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema);
@@ -172,6 +182,7 @@ impl<'a> SchemaBuilder<'a> {
                 raw_schema,
                 graph.parents_of(name),
                 &self.resolved,
+                self.field_context,
             ) {
                 Ok((schema, schema_warnings)) => {
                     self.warnings.extend(schema_warnings);
@@ -301,11 +312,12 @@ impl<'a> SchemaMerger<'a> {
         raw: &RawSchema,
         parents: &[SchemaName],
         resolved: &IndexMap<SchemaName, Schema>,
+        field_context: &'a SchemaFieldBuildContext,
     ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
         let mut merger = Self::new(name);
         merger.inherit_from(parents, resolved);
         merger.exclude(&raw.excludes);
-        merger.resolve_own_fields(raw, resolved)?;
+        merger.resolve_own_fields(raw, resolved, field_context)?;
         merger.into_schema()
     }
 
@@ -371,8 +383,10 @@ impl<'a> SchemaMerger<'a> {
         &mut self,
         raw: &RawSchema,
         resolved: &IndexMap<SchemaName, Schema>,
+        field_context: &'a SchemaFieldBuildContext,
     ) -> Result<(), SchemaError> {
-        let field_builder = SchemaFieldBuilder::new(&self.ancestors, resolved);
+        let field_builder =
+            SchemaFieldBuilder::new(&self.ancestors, resolved, field_context);
         for (field_name, raw_field) in &raw.fields {
             let address = FieldAddressRef::new(self.name, field_name.as_ref());
             let (field, warnings) = field_builder.build(address, raw_field)?;
@@ -442,9 +456,10 @@ mod tests {
         schema::{
             RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
             fields::{
-                FieldAddress, SchemaDateField, SchemaFieldBuilderError,
-                SchemaFieldParserError, SchemaFieldType, SchemaFileField,
-                SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
+                FieldAddress, SchemaDateField, SchemaFieldBuildContext,
+                SchemaFieldBuilderError, SchemaFieldParserError,
+                SchemaFieldType, SchemaFileField, SchemaNumberField,
+                SchemaSelectField, SchemaSelectFieldEntry,
             },
         },
     };
@@ -452,7 +467,8 @@ mod tests {
     fn resolve(
         raw: &IndexMap<SchemaName, RawSchema>,
     ) -> Result<ResolvedSchemas, SchemaError> {
-        SchemaBuilder::new(raw).build()
+        let field_context = SchemaFieldBuildContext::for_test();
+        SchemaBuilder::new(raw, &field_context).build()
     }
 
     fn field_name(name: &str) -> FieldName {

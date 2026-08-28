@@ -45,7 +45,7 @@ had no way to resolve until this ticket's own Design section closes that gap
 directly (see "Values-file loading" below). No separate blocking ticket
 needed: the fix is scoped entirely to this ticket's own implementation.
 
-**Status:** ready-for-agent
+**Status:** implemented
 
 ## Motivation
 
@@ -398,56 +398,53 @@ even when the values file is referenced transitively.
 
 ## Acceptance Criteria
 
-- [ ] No wire-layer change: `RawFieldDefToml.values` remains
+- [x] No wire-layer change: `RawFieldDefToml.values` remains
   `Option<FieldValue>`. `SchemaSelectField::parse` discriminates three shapes —
   string list (literal, unchanged), object list (inline value objects), single
-  object (file subtable) — with new `SchemaFieldParserError` variants for the
+  object (file subtable) — with values-specific parser diagnostics for the
   structured cases; mixed-element lists and any other shape keep today's
   `TypeMismatch`; absent/empty `values` keeps inheriting the `$ref` base or
   resolving empty.
-- [ ] Inline value objects: required string `value`; optional string `label`
-  defaulting to `value`; optional integer `order`; every other key retained into
+- [x] Inline value objects: required string `value`; optional string `label`
+  defaulting to `value`; optional numeric `order`; every other key retained into
   the entry's passthrough `extra` map with types preserved — open-keyed, not
   deny-unknown-fields.
-- [ ] File subtable: required string `path` resolving against the Schema
+- [x] File subtable: required string `path` resolving against the Schema
   directory (canonicalized, confined, no `..`), plus optional string
   `value`/`label`/`order` selectors; any unknown subtable key is an error.
   `.toml` and `.json` extensions parse via their respective parsers; any other
   extension is an error naming the field and path.
-- [ ] A values file's root is a single required `entries` array; elements
+- [x] A values file's root is a single required `entries` array; elements
   deserialize into `FieldValue` — bare strings or objects of arbitrary
   user-defined keys of any TOML/JSON-representable type, including JSON `null`
-  (unreachable from TOML). Values files are not deny-unknown-fields.
-- [ ] Selector semantics: naming any of `value`/`label`/`order` against
+  (unreachable from TOML). Values files deny unknown top-level keys but entry
+  objects are open-keyed.
+- [x] Selector semantics: naming any of `value`/`label`/`order` against
   bare-string entries is an error; `value` is required whenever entries are
   tables; once any selector is configured, its key must be present on every
   entry — presence on some but not all is an error for that selector; `label`
   defaults to `value`'s content and declaration order holds only while the
   selector is entirely unset. When `order` resolves on every entry, entries sort
-  ascending, stable on ties; otherwise declaration/array order holds.
-- [ ] Values files are read once during `SchemaService::new`'s build pass. Every
-  failure mode above is a distinct, field-and-path-attributed error surfaced as
-  a per-Schema `SchemaFailure` (declaring Schema excluded, dependents resolve
-  with `ParentFailedToResolve`) — not a whole-directory construction failure.
-- [ ] `.field()` returns plain strings for bare-entry sources and full resolved
-  objects for structured sources through the existing `select_entry_value` path
-  — zero template-engine changes; a passthrough key (e.g. `abbreviation`)
-  survives to the rendered object.
-- [ ] Tests at the three seams: unit fixtures under `src/schema/fields/` (TOML +
-  JSON, all three `values` shapes, the all-or-none selector-presence rule across
-  `value`/`label`/`order`, `order` sorting, JSON-`null` passthrough, and every
-  error path including unknown subtable key, mixed list, and bad extension), the
-  `schema` namespace render seam in `src/template/engine/schema.rs` (`.field()`
-  return shape for each source, passthrough key surviving to the rendered
-  object), and one CLI dispatch/e2e case in `cli/template.rs` exercising a
-  file-sourced `select` end to end.
-- [ ] Touch up ADR-0006's Consequences: name the load-time-external-but-static
-  phase as a first-class option alongside "declared in the TOML" and
-  "index-derived at use-time", citing the real symbol
-  (`schema::fields::SchemaFieldBuilder`) — ticket 07 already added the gap
-  narrative there; this closes it by example. Separately, accept ADR-0003
-  (`proposed` since July): this ticket makes its index-selection contract
-  load-bearing for a second consumer.
+  ascending; otherwise declaration/array order holds.
+- [x] Values files are read during `SchemaService::new`'s build pass. Successful
+  loads are cached per confined path. Every failure mode above is a distinct,
+  field-and-path-attributed error surfaced as a per-Schema `SchemaFailure`
+  (declaring Schema excluded, dependents resolve with `ParentFailedToResolve`) —
+  not a whole-directory construction failure.
+- [x] `.field()` returns plain strings for bare-entry sources and full resolved
+  objects for structured sources through the existing `select_entry_value` path;
+  passthrough keys survive to the rendered object.
+- [x] Tests cover the three seams: unit fixtures under `src/schema/fields/`
+  (TOML + JSON, all three `values` shapes, selector presence across
+  `value`/`label`/`order`, `order` sorting, JSON-`null` passthrough, and error
+  paths including unknown subtable key, mixed lists, non-string selectors, and
+  bad extension), the `schema` namespace render seam in
+  `src/template/engine/schema.rs`, and integration/e2e template rendering cases
+  exercising a file-sourced `select` end to end.
+- [x] ADR/doc touch-ups: ADR-0006 names ticket 08's static external values-file
+  option, ADR-0003 is accepted, `src/schema/CONTEXT.md` documents values
+  polymorphism, and `src/template/engine/schema.rs` documents structured
+  `.field()` output.
 
 ## Out of Scope
 
@@ -463,6 +460,38 @@ even when the values file is referenced transitively.
 - Making an absent/empty `values` on a `select` a parse error — today it
   inherits the `$ref` base or resolves empty; tightening that is unrelated
   validation work.
+
+## Implementation Notes
+
+- Implemented in branch `feat/values-file-source` under
+  `.worktrees/values-file-source`.
+- Raw field definitions still carry `values` as `Option<FieldValue>`. Values
+  files deserialize through `RawSchemaSelectFieldValues` /
+  `RawSchemaSelectFieldEntry` only at the cache boundary, then convert back to
+  canonical `FieldValue`.
+- `SchemaFieldBuildContext` owns the transient `SelectValuesFileCache`; the
+  context is created in `SchemaService::new` and threaded through
+  `SchemaBuilder`, `SchemaMerger`, and `SchemaFieldBuilder`.
+- `SchemaSelectField::parse` now claims raw `values`, records values-specific
+  diagnostics through `SchemaFieldParser::push_select_values_error`, and falls
+  back to inherited base values if a bare `$ref` override degrades.
+- Diagnostics are factored as `SchemaFieldParserError::SelectValues` wrapping
+  `SelectValuesError` / `SelectValuesFileError`, instead of the draft's flat
+  parser-error variants. This keeps one parser error channel while preserving
+  distinct display messages and `SchemaWarning::SelectValuesOverrideDegraded`.
+- Successful values-file loads are memoized; failed loads retry so each
+  diagnostic keeps its original I/O/parse error source.
+- Verification completed:
+  - `cargo test --all-features`: 1918 passed, 13 ignored.
+  - `cargo fmt --check`: passed.
+  - `cargo doc --no-deps`: passed.
+  - `cargo check --workspace --all-targets --all-features`: passed.
+  - `git diff --check`: passed.
+  - GitNexus `detect_changes`: low risk, no affected processes.
+- Remaining lint gate is unrelated to this ticket:
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings` fails
+  on pre-existing `private_interfaces` in `src/note/model.rs` and
+  `large_stack_frames` in config/index/template code.
 
 ## Comments
 

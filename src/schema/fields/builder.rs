@@ -7,12 +7,15 @@
 //! The main type is [`SchemaFieldBuilder`], which builds a field definition
 //! from raw input, resolving `$ref` targets against ancestor schemas.
 
+use std::path::Path;
+
 use indexmap::{IndexMap, IndexSet};
 
 use super::{
     SchemaFieldDef, SchemaFieldType, SchemaFieldTypeTag,
     address::{FieldAddress, FieldAddressRef},
     error::{SchemaFieldBuilderError, SchemaFieldParserError},
+    select::SelectValuesFileCache,
 };
 use crate::{
     field::FieldValue,
@@ -33,6 +36,37 @@ struct ResolvedBase<'a> {
     degrade_on_error: bool,
 }
 
+/// Construction-time dependencies shared by field type parsers.
+///
+/// Keeps generic schema builders coupled to one field-build context instead of
+/// every type-specific parser dependency.
+pub(crate) struct SchemaFieldBuildContext {
+    select_values: SelectValuesFileCache,
+}
+
+impl SchemaFieldBuildContext {
+    /// Create a field-build context rooted at the schema directory.
+    #[must_use]
+    pub(crate) fn new(schema_dir: &Path) -> Self {
+        Self {
+            select_values: SelectValuesFileCache::new(schema_dir),
+        }
+    }
+
+    /// Create a test context with no filesystem root.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            select_values: SelectValuesFileCache::for_test(),
+        }
+    }
+
+    fn select_values(&self) -> &SelectValuesFileCache {
+        &self.select_values
+    }
+}
+
 /// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`
 /// targets against already-resolved Schemas.
 ///
@@ -41,6 +75,7 @@ struct ResolvedBase<'a> {
 pub(crate) struct SchemaFieldBuilder<'a> {
     ancestors: &'a IndexSet<SchemaName>,
     resolved: &'a IndexMap<SchemaName, Schema>,
+    context: &'a SchemaFieldBuildContext,
 }
 
 impl<'a> SchemaFieldBuilder<'a> {
@@ -48,10 +83,12 @@ impl<'a> SchemaFieldBuilder<'a> {
     pub(crate) const fn new(
         ancestors: &'a IndexSet<SchemaName>,
         resolved: &'a IndexMap<SchemaName, Schema>,
+        context: &'a SchemaFieldBuildContext,
     ) -> Self {
         Self {
             ancestors,
             resolved,
+            context,
         }
     }
 
@@ -98,6 +135,7 @@ impl<'a> SchemaFieldBuilder<'a> {
             tag,
             &raw.options,
             base.map(SchemaFieldDef::kind),
+            self.context,
         );
         if !errors.is_empty() {
             if degrade_on_error {
@@ -190,6 +228,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         kind: SchemaFieldTypeTag,
         options: &IndexMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
+        context: &SchemaFieldBuildContext,
     ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         use super::{date, file, number, parser::SchemaFieldParser, select};
         let mut parser = SchemaFieldParser::new(address, kind);
@@ -197,6 +236,7 @@ impl<'a> SchemaFieldBuilder<'a> {
             SchemaFieldTypeTag::Input => SchemaFieldType::Input,
             SchemaFieldTypeTag::Boolean => SchemaFieldType::Boolean,
             SchemaFieldTypeTag::Select => select::SchemaSelectField::parse(
+                context.select_values(),
                 &mut parser,
                 options,
                 base.and_then(SchemaFieldType::as_select),
@@ -373,7 +413,9 @@ mod tests {
                 fixture(&[("book", "status", SchemaFieldType::Input)], &[
                     "book",
                 ]);
-            let field_builder = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let field_builder =
+                SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("status")
@@ -393,7 +435,9 @@ mod tests {
                 &[(GLOBAL_SCHEMA_NAME, "priority", SchemaFieldType::Input)],
                 &[],
             );
-            let field_builder = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let field_builder =
+                SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("task"),
                 crate::field::FieldNameRef::try_from("priority")
@@ -411,7 +455,9 @@ mod tests {
         fn rejects_a_reference_outside_the_bound() {
             let (ancestors, resolved) =
                 fixture(&[("movie", "status", SchemaFieldType::Input)], &[]);
-            let field_builder = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let field_builder =
+                SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("book"),
                 crate::field::FieldNameRef::try_from("status")
@@ -435,7 +481,9 @@ mod tests {
                 fixture(&[("book", "status", SchemaFieldType::Input)], &[
                     "book",
                 ]);
-            let field_builder = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let field_builder =
+                SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("missing")
@@ -462,7 +510,8 @@ mod tests {
         #[test]
         fn returns_direct_field_with_no_options() {
             let (ancestors, resolved) = field_fixture(&[], &[]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("title")
@@ -487,7 +536,8 @@ mod tests {
         fn merges_bare_ref_with_base() {
             let (ancestors, resolved) =
                 field_fixture(&[("book", SchemaFieldType::Input)], &["book"]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("field")
@@ -512,7 +562,8 @@ mod tests {
         fn applies_type_override_on_ref() {
             let (ancestors, resolved) =
                 field_fixture(&[("book", SchemaFieldType::Input)], &["book"]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("field")
@@ -536,7 +587,8 @@ mod tests {
         #[test]
         fn returns_parser_error_for_direct_field_with_bad_option() {
             let (ancestors, resolved) = field_fixture(&[], &[]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("title")
@@ -567,7 +619,8 @@ mod tests {
         fn degrades_bare_ref_bad_option_to_warning() {
             let (ancestors, resolved) =
                 field_fixture(&[("book", SchemaFieldType::Input)], &["book"]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("field")
@@ -598,7 +651,8 @@ mod tests {
         fn rejects_ref_to_out_of_bounds_target() {
             let (ancestors, resolved) =
                 field_fixture(&[("movie", SchemaFieldType::Input)], &[]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("book"),
                 crate::field::FieldNameRef::try_from("status")
@@ -627,7 +681,8 @@ mod tests {
         fn rejects_ref_to_missing_field() {
             let (ancestors, resolved) =
                 field_fixture(&[("book", SchemaFieldType::Input)], &["book"]);
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("missing")
@@ -658,7 +713,8 @@ mod tests {
                 &[(GLOBAL_SCHEMA_NAME, SchemaFieldType::Input)],
                 &[],
             );
-            let b = SchemaFieldBuilder::new(&ancestors, &resolved);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
                 crate::field::FieldNameRef::try_from("title")

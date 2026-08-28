@@ -39,7 +39,14 @@ The existing glossary deliberately has a No-Declaration Template Format, so the 
 
 Introduce a Schema concept: a TOML file in `.traces/schemas/<name>.toml` defining Field Definitions that govern a File Class. A note's File Class(es) are read from the frontmatter key configured by `[schemas] class_field` (default `class`); the filename stem is the schema name and the filesystem is the registry. Schema TOML files deny unknown fields, so typos fail loudly at parse. A Field Definition has a `type` (input, select, boolean, number, date, file) with type-specific options plus optional `required` and `multi` flags; `file` fields resolve their option list from the FileIndex via an AND-composed filter of `folders` (array), `ext`, and `class` (array), with no regex.
 
-Templates consume schemas through a `schema` minijinja namespace: `schema.get("book")` binds a resolved Schema and `book.field("status")` returns the selectable values (plain strings, or label/value pairs for `file` fields where the label is the frontmatter alias or stem and the value is the path, reusing ADR-0003 index selection); non-list types return None. The schema supplies values only; the template author picks the interactive `ui.*` function.
+Templates consume schemas through a `schema` minijinja namespace:
+`schema.get("book")` binds a resolved Schema and `book.field("status")` returns
+selectable values. `select` fields return plain strings for bare values or
+`{value, label, ...extra}` objects for structured values; `file` fields return
+a Query Source filter composable with `query.from(...)`, reusing ADR-0003 index
+selection at the eventual `ui.select` call. Non-list types return None. The
+schema supplies values only; the template author picks the interactive `ui.*`
+function.
 
 Queries use `query.from_class("book")` or `from_class(["book","movie"])` (any-of), mirrored by `tasks.from_class(...)` in the tasks namespace. Config tables `[schemas]` (class_field, directory) and `[frontmatter]` (title, aliases, date_created/date_modified as {name, format} objects) complete the surface.
 
@@ -51,18 +58,30 @@ Good, because:
 
 - Templates stop duplicating value lists; one field definition is shared across templates, queries, and future LSP completions/MCP guardrails
 - The `file` field reuses ADR-0003 label/value selection and the existing interactive-function machinery, so dry-run/MCP need no new code
-- Lazy validation means a broken schema only breaks the template that touches it, and no `enabled` flag is needed
+- Field-level validation failures stay scoped to the declaring Schema and its
+  dependents; malformed Schema TOML still fails construction early because
+  Schemas resolve once at `SchemaService::new`
 
 Bad, because:
 
 - `file` field option lists are index-derived at use-time, so they are only as fresh as the index
-- `file` being the only field type whose options resolve outside `resolve()` (in the template layer, not `crate::schema`) set an unstated precedent that went unreconciled with ADR-7's unscoped "resolution is a pure function of the schema set" — a later Value Sources ticket had no seam for load-time-external-but-static data (a values file: static like a literal array, but not in the Schema TOML) and no `.field()` return shape wider than a flat string list, forcing an abandoned first implementation attempt to bend `resolve()`'s purity via ad hoc parameter threading and invent a new crate-wide value type mid-ticket. See ticket `07-schema-service-refactor` for the architectural fix and the follow-up amendment to both ADRs once it lands.
+- Resolved by Ticket 08 (`values` file sources): static external TOML/JSON files load via a transient, confined `SelectValuesFileCache` during `SchemaService::new` construction, making `values` polymorphic across literal strings, inline value objects, and external file subtables while preserving `Schema` purity and returning structured `{value, label, ...extra}` objects via `.field()`.
 - No `enabled` toggle — users must delete the schemas directory to disable the feature
 - `required`/`multi` are declared now but inert until the deferred MCP guardrail stage; LSP and MCP stages are deferred to later phases
 
 ### Confirmation
 
-Schema parsing is unit-testable with no vault: parse fixtures under `.traces/schemas/`, assert the filename stem becomes the class name and `class_field`/`directory` config round-trips. Template rendering tests assert `schema.get("book").field("status")` returns the declared values (and None for non-list types), and that `file` fields resolve label/value pairs from a fixture FileIndex. Query tests assert `from_class(["book","movie"])` matches any-of. Structural-reference errors (unknown `schema.get`, unknown `field`) are asserted to hard-error; predicate references and a broken `extends` target degrade to exact match with a warning; unknown keys in a Schema TOML are rejected at parse.
+Schema parsing is unit-testable with no vault: parse fixtures under
+`.traces/schemas/`, assert the filename stem becomes the class name and
+`class_field`/`directory` config round-trips. Template rendering tests assert
+`schema.get("book").field("status")` returns select values as plain strings or
+structured `{value, label, ...extra}` objects, returns `None` for non-list
+types, and returns file-field Query Source filters that compose with
+`query.from(...)`. Query tests assert `from_class(["book","movie"])` matches
+any-of. Structural-reference errors (unknown `schema.get`, unknown `field`) are
+asserted to hard-error; predicate references and a broken `extends` target
+degrade to exact match with a warning; unknown keys in a Schema TOML are
+rejected at parse.
 
 ## Pros and Cons of the Options
 

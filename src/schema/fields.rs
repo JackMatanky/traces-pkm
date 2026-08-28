@@ -32,7 +32,7 @@ mod parser;
 mod select;
 
 pub(crate) use address::{FieldAddress, FieldAddressRef};
-pub(crate) use builder::SchemaFieldBuilder;
+pub(crate) use builder::{SchemaFieldBuildContext, SchemaFieldBuilder};
 pub(crate) use date::SchemaDateField;
 pub(crate) use error::SchemaFieldBuilderError;
 // Needed by schema::error's tests (which can't reach the private
