@@ -366,7 +366,7 @@ mod tests {
     use minijinja::Environment;
 
     use super::*;
-    use crate::schema::SchemaError;
+    use crate::schema::{SchemaError, SchemaFileError};
 
     /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
@@ -1109,7 +1109,10 @@ mod tests {
                         "malformed Schema TOML fails construction, not a panic",
                     );
 
-            assert!(matches!(error, SchemaError::Parse { .. }));
+            assert!(matches!(error, SchemaError::File {
+                source: SchemaFileError::Parse(_),
+                ..
+            }));
         }
 
         #[test]
@@ -1137,7 +1140,10 @@ mod tests {
                         "a broken sibling Schema fails the whole registry load",
                     );
 
-            assert!(matches!(error, SchemaError::Parse { .. }));
+            assert!(matches!(error, SchemaError::File {
+                source: SchemaFileError::Parse(_),
+                ..
+            }));
         }
     }
 
@@ -1249,7 +1255,10 @@ mod tests {
                          unconditionally",
                     );
 
-            assert!(matches!(error, SchemaError::Parse { .. }));
+            assert!(matches!(error, SchemaError::File {
+                source: SchemaFileError::Parse(_),
+                ..
+            }));
         }
     }
 

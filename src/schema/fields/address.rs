@@ -56,6 +56,10 @@ impl TryFrom<&str> for FieldAddress {
     ///
     /// [`Malformed`]: FieldAddressError::Malformed
     /// [`FieldName`]: FieldAddressError::FieldName
+    #[expect(
+        clippy::expect_used,
+        reason = "schema.is_empty() checked two lines above"
+    )]
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         let malformed = || FieldAddressError::Malformed {
             reference: raw.to_owned(),
@@ -66,7 +70,8 @@ impl TryFrom<&str> for FieldAddress {
             return Err(malformed());
         }
         Ok(Self {
-            schema: SchemaName::from(schema),
+            schema: SchemaName::try_from(schema)
+                .expect("non-empty checked above"),
             field: FieldName::try_from(field)?,
         })
     }
@@ -236,5 +241,53 @@ mod tests {
 
         assert_eq!(reference.schema().as_str(), "book");
         assert_eq!(reference.field().as_str(), "status");
+    }
+
+    #[test]
+    fn try_from_string_parses_an_owned_input_the_same_as_a_borrowed_one() {
+        let address =
+            FieldAddress::try_from("#book/status".to_owned()).expect("parses");
+
+        assert_eq!(address.to_string(), "#book/status");
+    }
+
+    #[test]
+    fn from_field_address_ref_round_trips_through_try_from() {
+        let owned = FieldAddress::try_from("#book/status").expect("parses");
+        let borrowed = owned.as_ref();
+
+        let round_tripped = FieldAddress::from(borrowed);
+
+        assert_eq!(round_tripped, owned);
+    }
+
+    #[test]
+    fn from_str_parses_via_the_str_parse_method() {
+        let address: FieldAddress = "#book/status".parse().expect("parses");
+
+        assert_eq!(address.to_string(), "#book/status");
+    }
+
+    mod deserialize {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn deserializes_a_well_formed_reference_string() {
+            let address: FieldAddress =
+                serde_json::from_str("\"#book/status\"")
+                    .expect("valid reference");
+
+            assert_eq!(address.to_string(), "#book/status");
+        }
+
+        #[test]
+        fn rejects_a_malformed_reference_string() {
+            let result: Result<FieldAddress, _> =
+                serde_json::from_str("\"not-a-ref\"");
+
+            assert!(result.is_err());
+        }
     }
 }

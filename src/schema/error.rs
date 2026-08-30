@@ -7,10 +7,7 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{
-    SchemaName,
-    fields::{FieldAddress, SchemaFieldBuilderError, SchemaFieldTypeTag},
-};
+use super::{SchemaName, fields::SchemaFieldBuilderError};
 use crate::field::FieldName;
 
 /// A hard failure that stops Schema loading or resolution.
@@ -35,19 +32,12 @@ pub(crate) enum SchemaError {
         #[source]
         source: std::io::Error,
     },
-    /// A Schema TOML file could not be read.
-    #[error("failed to read Schema file {path}: {source}")]
-    ReadFile {
+    /// A Schema TOML file could not be read or parsed.
+    #[error("failed to load Schema file {path}: {source}")]
+    File {
         path: PathBuf,
         #[source]
-        source: std::io::Error,
-    },
-    /// A Schema TOML file failed to parse.
-    #[error("failed to parse Schema {schema}: {source}")]
-    Parse {
-        schema: SchemaName,
-        #[source]
-        source: Box<toml::de::Error>,
+        source: SchemaFileError,
     },
     /// The `extends` DAG contains a cycle.
     #[error("cycle detected among Schemas: {}", .schemas.join(", "))]
@@ -69,6 +59,22 @@ pub(crate) enum SchemaError {
     /// or `$ref` resolution failure.
     #[error(transparent)]
     FieldBuilder(Box<SchemaFieldBuilderError>),
+}
+
+/// Why a Schema TOML file could not be loaded, once its path is known.
+///
+/// Deliberately not shared with `select`'s file loader
+/// (`SchemaSelectFieldFileError`, in `fields::error`, a private submodule
+/// this doc comment can't link to):
+/// Schema files are always TOML, values files can be TOML or JSON, so the two
+/// don't have the same shape to share, even though both follow the same
+/// "read, then parse" pattern.
+#[derive(Debug, Error)]
+pub(crate) enum SchemaFileError {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Parse(#[from] Box<toml::de::Error>),
 }
 
 impl From<SchemaFieldBuilderError> for SchemaError {
@@ -112,52 +118,23 @@ pub(crate) enum SchemaWarning {
     StrayGlobalRequired {
         field: String,
     },
-    /// A bare `$ref` override declares an attribute key that does not belong
-    /// to the resolved base field's type.
+    /// A bare `$ref` override declared an invalid attribute (unknown key,
+    /// wrongly-shaped value, or invalid `number`/`select` configuration).
+    /// The key (or whole `values` override) is dropped and the base field's
+    /// value is used as-is.
     ///
-    /// The key is dropped and the base field's attribute is used as-is.
-    UnknownOverrideKey {
-        address: FieldAddress,
-        kind: SchemaFieldTypeTag,
-        key: String,
-    },
-    /// A bare `$ref` override declares a valid attribute key with a
-    /// wrongly-shaped value.
-    ///
-    /// The key is dropped and the base field's attribute is used as-is.
-    OverrideValueTypeMismatch {
-        address: FieldAddress,
-        kind: SchemaFieldTypeTag,
-        key: String,
-        value: String,
-        expected: &'static str,
-    },
-    /// A bare `$ref` override declares a numeric attribute value that cannot
-    /// form a valid `number` field.
-    ///
-    /// The invalid key is dropped and the base field's attribute is used as-is.
-    InvalidNumberOverride {
-        address: FieldAddress,
-        key: String,
-        value: String,
-        expected: &'static str,
-    },
-    /// A bare `$ref` override declares `min > max`.
-    ///
-    /// The invalid range is dropped and the base field's range is used as-is.
-    InvalidNumberRangeOverride {
-        address: FieldAddress,
-        min: String,
-        max: String,
-    },
-    /// A bare `$ref` override declares invalid `select`/`multi` values
-    /// configuration.
-    ///
-    /// The `values` override is dropped and the base field's values are used
-    /// as-is.
-    SelectValuesOverrideDegraded {
-        address: FieldAddress,
-        error: String,
+    /// `message` is exactly what a hard failure for this same attribute
+    /// would report — `SchemaFieldParserError`'s `Display` (a private
+    /// `fields::error` type this doc comment can't link to) — rather than a
+    /// second, hand-mirrored wording per
+    /// failure kind: five variants used to restate
+    /// `SchemaFieldParserError`'s five variants field-for-field just to
+    /// change "field ... has no attribute" into "$ref override ... has no
+    /// attribute"; the wrapped message already carries the address, kind,
+    /// and key, so this variant only adds what a degraded override actually
+    /// needs on top: that it *was* degraded.
+    DegradedOverride {
+        message: String,
     },
 }
 
@@ -197,52 +174,12 @@ impl fmt::Display for SchemaWarning {
                  required; ignoring, since Global Schema fields can never be \
                  required"
             ),
-            Self::UnknownOverrideKey {
-                address,
-                kind,
-                key,
+            Self::DegradedOverride {
+                message,
             } => write!(
                 f,
-                "$ref override {address} has no attribute {key:?} on its \
-                 resolved type {kind}; ignoring the key"
-            ),
-            Self::OverrideValueTypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            } => write!(
-                f,
-                "$ref override {address}'s {key:?} attribute on its resolved \
-                 type {kind} must be {expected}, got {value}; ignoring the key"
-            ),
-            Self::InvalidNumberOverride {
-                address,
-                key,
-                value,
-                expected,
-            } => write!(
-                f,
-                "$ref override {address}'s {key:?} attribute must be \
-                 {expected}, got {value}; using base value"
-            ),
-            Self::InvalidNumberRangeOverride {
-                address,
-                min,
-                max,
-            } => write!(
-                f,
-                "$ref override {address}'s number range is invalid: min {min} \
-                 exceeds max {max}; using base range"
-            ),
-            Self::SelectValuesOverrideDegraded {
-                address,
-                error,
-            } => write!(
-                f,
-                "$ref override {address}'s values override is invalid: \
-                 {error}; using base values"
+                "$ref override degraded: {message}; using the base value \
+                 instead"
             ),
         }
     }
@@ -256,7 +193,9 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
-        use crate::schema::fields::SchemaFieldParserError;
+        use crate::schema::fields::{
+            FieldAddress, SchemaFieldParserError, SchemaFieldTypeTag,
+        };
 
         fn assert_display(error: &SchemaError, expected: &str) {
             assert_eq!(
@@ -280,30 +219,32 @@ mod tests {
         }
 
         #[test]
-        fn read_file_formats_display_message() {
-            let error = SchemaError::ReadFile {
+        fn file_formats_display_message_for_an_io_failure() {
+            let error = SchemaError::File {
                 path: PathBuf::from("/schemas/book.toml"),
-                source: std::io::Error::other("denied"),
+                source: SchemaFileError::Io(std::io::Error::other("denied")),
             };
 
             assert_display(
                 &error,
-                "failed to read Schema file /schemas/book.toml: denied",
+                "failed to load Schema file /schemas/book.toml: denied",
             );
         }
 
         #[test]
-        fn parse_formats_display_message_wrapping_the_toml_source() {
+        fn file_formats_display_message_for_a_parse_failure() {
             let source = "not valid toml".parse::<toml::Value>().unwrap_err();
-            let error = SchemaError::Parse {
-                schema: SchemaName::from("book"),
-                source: Box::new(source),
+            let error = SchemaError::File {
+                path: PathBuf::from("/schemas/book.toml"),
+                source: SchemaFileError::Parse(Box::new(source)),
             };
 
             let message = error.to_string();
             assert!(
-                message.starts_with("failed to parse Schema book: "),
-                "expected message to open with the Schema context, got: \
+                message.starts_with(
+                    "failed to load Schema file /schemas/book.toml: "
+                ),
+                "expected message to open with the file context, got: \
                  {message:?}"
             );
         }
@@ -366,9 +307,11 @@ mod tests {
             // `String`. `AmbiguousFieldName` boxes `second` for the same
             // reason: two owned `FieldName`s alongside `schema` would tie it
             // for the largest variant. `FieldBuilder` boxes the whole wrapped
-            // `SchemaFieldBuilderError`, whose own `AttributeValueTypeMismatch`
-            // variant carries two owned `String`s and would otherwise be this
-            // enum's largest member by far. Keep every variant's payload
+            // `SchemaFieldBuilderError`: its own largest variant is
+            // `Parser(Vec<SchemaFieldParserError>)`, a fixed-size `Vec`
+            // handle regardless of what's inside it, so boxing here mainly
+            // decouples `SchemaError`'s size from that enum's future growth.
+            // Keep every variant's payload
             // small enough that `Result<_, SchemaError>` stays cheap to move
             // through the resolution call chain.
             assert!(
@@ -384,7 +327,9 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
-        use crate::schema::fields::SchemaFieldParserError;
+        use crate::schema::fields::{
+            FieldAddress, SchemaFieldParserError, SchemaFieldTypeTag,
+        };
 
         #[test]
         fn parser_wraps_multiple_errors() {
@@ -469,6 +414,34 @@ mod tests {
         }
 
         #[test]
+        fn duplicate_extends_target_message_names_schema_and_target() {
+            let warning = SchemaWarning::DuplicateExtendsTarget {
+                schema: SchemaName::from("sci_fi"),
+                target: SchemaName::from("book"),
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "Schema \"sci_fi\" declares extends target \"book\" more than \
+                 once; duplicates are ignored"
+            );
+        }
+
+        #[test]
+        fn parent_failed_to_resolve_message_names_schema_and_parent() {
+            let warning = SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("sci_fi"),
+                parent: SchemaName::from("book"),
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "Schema \"sci_fi\" extends \"book\", which failed to resolve; \
+                 its own fields still resolve, without \"book\"'s fields"
+            );
+        }
+
+        #[test]
         fn stray_global_required_message_names_the_field() {
             let warning = SchemaWarning::StrayGlobalRequired {
                 field: "priority".to_owned(),
@@ -483,56 +456,16 @@ mod tests {
         }
 
         #[test]
-        fn unknown_override_key_message_names_address_kind_and_key() {
-            let warning = SchemaWarning::UnknownOverrideKey {
-                address: FieldAddress::try_from("#sci_fi/cover")
-                    .expect("valid ref"),
-                kind: SchemaFieldTypeTag::Select,
-                key: "folders".to_owned(),
-            };
-
-            assert_eq!(
-                warning.to_string(),
-                "$ref override #sci_fi/cover has no attribute \"folders\" on \
-                 its resolved type select; ignoring the key"
-            );
-        }
-
-        #[test]
-        fn override_value_type_mismatch_message_names_every_field() {
-            let warning = SchemaWarning::OverrideValueTypeMismatch {
-                address: FieldAddress::try_from("#sci_fi/rating")
-                    .expect("valid ref"),
-                kind: SchemaFieldTypeTag::Number,
-                key: "min".to_owned(),
-                value: "\"abc\"".to_owned(),
-                expected: "a number",
-            };
-
-            assert_eq!(
-                warning.to_string(),
-                "$ref override #sci_fi/rating's \"min\" attribute on its \
-                 resolved type number must be a number, got \"abc\"; ignoring \
-                 the key"
-            );
-        }
-
-        #[test]
-        fn select_values_override_degraded_names_whole_values_override() {
-            let warning = SchemaWarning::SelectValuesOverrideDegraded {
-                address: FieldAddress::try_from("#sci_fi/status")
-                    .expect("valid ref"),
-                error: "field #sci_fi/status configures selector \"label\" = \
-                        \"label\", but an entry is missing this key"
+        fn degraded_override_message_wraps_the_hard_failure_text() {
+            let warning = SchemaWarning::DegradedOverride {
+                message: "field #sci_fi/cover has no attribute \"folders\""
                     .to_owned(),
             };
 
             assert_eq!(
                 warning.to_string(),
-                "$ref override #sci_fi/status's values override is invalid: \
-                 field #sci_fi/status configures selector \"label\" = \
-                 \"label\", but an entry is missing this key; using base \
-                 values"
+                "$ref override degraded: field #sci_fi/cover has no attribute \
+                 \"folders\"; using the base value instead"
             );
         }
     }
