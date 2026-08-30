@@ -176,44 +176,47 @@ pub enum RenderFailureKind {
     Other,
 }
 
-/// Classifies a minijinja render error.
-///
-/// Inspects [`minijinja::Error::kind`] and the source chain. It does not parse
-/// display text.
-///
-/// # Examples
-///
-/// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
-/// use minijinja::{Error, ErrorKind};
-/// use traces_pkm::{RenderFailureKind, classify_render_error};
-///
-/// let error = Error::new(ErrorKind::SyntaxError, "bad syntax");
-/// assert_eq!(classify_render_error(&error), RenderFailureKind::Syntax);
-/// # }
-/// ```
-#[inline]
-#[must_use]
-pub fn classify_render_error(error: &minijinja::Error) -> RenderFailureKind {
-    if error.kind() == minijinja::ErrorKind::SyntaxError {
-        return RenderFailureKind::Syntax;
+impl RenderFailureKind {
+    /// Classifies a minijinja render error.
+    ///
+    /// Inspects [`minijinja::Error::kind`] and the source chain. It does not
+    /// parse display text.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use minijinja::{Error, ErrorKind};
+    /// use traces_pkm::RenderFailureKind;
+    ///
+    /// let error = Error::new(ErrorKind::SyntaxError, "bad syntax");
+    /// assert_eq!(RenderFailureKind::classify(&error), RenderFailureKind::Syntax);
+    /// # }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn classify(error: &minijinja::Error) -> Self {
+        if error.kind() == minijinja::ErrorKind::SyntaxError {
+            return Self::Syntax;
+        }
+        let mut cause: Option<&(dyn StdError + 'static)> =
+            StdError::source(error);
+        while let Some(err) = cause {
+            if err.downcast_ref::<DialogError>().is_some() {
+                return Self::Prompt;
+            }
+            if err.downcast_ref::<QueryError>().is_some() {
+                return Self::Query;
+            }
+            if err.downcast_ref::<IndexError>().is_some() {
+                return Self::Index;
+            }
+            if err.downcast_ref::<io::Error>().is_some() {
+                return Self::Io;
+            }
+            cause = err.source();
+        }
+        Self::Other
     }
-    let mut cause: Option<&(dyn StdError + 'static)> = StdError::source(error);
-    while let Some(err) = cause {
-        if err.downcast_ref::<DialogError>().is_some() {
-            return RenderFailureKind::Prompt;
-        }
-        if err.downcast_ref::<QueryError>().is_some() {
-            return RenderFailureKind::Query;
-        }
-        if err.downcast_ref::<IndexError>().is_some() {
-            return RenderFailureKind::Index;
-        }
-        if err.downcast_ref::<io::Error>().is_some() {
-            return RenderFailureKind::Io;
-        }
-        cause = err.source();
-    }
-    RenderFailureKind::Other
 }

@@ -64,7 +64,7 @@ impl Blake3FileHash {
     /// Returns the BLAKE3 hex representation without heap allocation.
     #[inline]
     #[must_use]
-    pub fn to_hex(&self) -> impl AsRef<str> + Display {
+    pub fn to_hex(self) -> impl AsRef<str> + Display {
         self.0.to_hex()
     }
 }

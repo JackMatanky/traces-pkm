@@ -53,7 +53,7 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 
 /// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
 /// (sorted by path) plus derived inlink edges (target-keyed, unordered).
-type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
+pub(super) type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
 
 /// One raw `LINKS` multimap-table iterator entry: a target key's `AccessGuard`
 /// paired with its source-set `MultimapValue`, or the `redb::StorageError`

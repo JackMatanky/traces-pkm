@@ -24,10 +24,7 @@ use crate::{
     index::IndexError,
     query::{QueryDialect, QueryError, QueryRequestError},
     schema::SchemaError,
-    template::{
-        RenderFailureKind, TemplateError, TemplatePathError,
-        classify_render_error,
-    },
+    template::{RenderFailureKind, TemplateError, TemplatePathError},
 };
 
 /// Convenience alias for CLI command results.
@@ -633,7 +630,7 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
         TemplateError::Render {
             source,
             ..
-        } => match classify_render_error(source) {
+        } => match RenderFailureKind::classify(source) {
             RenderFailureKind::Syntax => {
                 "traces::cli::template::render_syntax_failed"
             }
@@ -717,7 +714,7 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
             source,
             ..
         } => {
-            let base = match classify_render_error(source) {
+            let base = match RenderFailureKind::classify(source) {
                 RenderFailureKind::Syntax => {
                     "fix the invalid minijinja syntax reported above"
                 }

@@ -118,7 +118,6 @@ pub use tag::{Tag, TagError};
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,
     TemplatePathInput, TemplateService, WriteMode, WriteOutcome,
-    classify_render_error,
 };
 
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,

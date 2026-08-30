@@ -19,7 +19,7 @@
 //! - [`TemplateError`] - User-facing error for resolve, read, render, and write
 //!   failures.
 //! - [`RenderFailureKind`] - Coarse render-error category for diagnostics.
-//! - [`classify_render_error`] - Classifies a [`TemplateError::Render`]
+//! - [`RenderFailureKind::classify`] - Classifies a [`TemplateError::Render`]
 //!   failure.
 //! - [`WriteMode`] - Choice between previewing rendered content and committing
 //!   it to disk.
@@ -46,7 +46,7 @@ mod path;
 mod service;
 mod writer;
 
-pub use error::{RenderFailureKind, TemplateError, classify_render_error};
+pub use error::{RenderFailureKind, TemplateError};
 pub use path::{TemplatePathError, TemplatePathInput};
 pub use service::TemplateService;
 #[cfg(any(test, feature = "test-utils"))]
