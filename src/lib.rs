@@ -117,8 +117,8 @@ pub use tag::{Tag, TagError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,
-    TemplatePathInput, TemplateResult, TemplateService, WriteMode,
-    WriteOutcome, classify_render_error,
+    TemplatePathInput, TemplateService, WriteMode, WriteOutcome,
+    classify_render_error,
 };
 
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,

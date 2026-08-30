@@ -46,9 +46,7 @@ mod path;
 mod service;
 mod writer;
 
-pub use error::{
-    RenderFailureKind, TemplateError, TemplateResult, classify_render_error,
-};
+pub use error::{RenderFailureKind, TemplateError, classify_render_error};
 pub use path::{TemplatePathError, TemplatePathInput};
 pub use service::TemplateService;
 #[cfg(any(test, feature = "test-utils"))]

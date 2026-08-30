@@ -19,9 +19,6 @@ use thiserror::Error;
 use super::path::TemplatePathError;
 use crate::{DialogError, index::IndexError, query::QueryError};
 
-/// Convenience alias for template operations that may fail.
-pub type TemplateResult = std::result::Result<(), TemplateError>;
-
 /// Reports the failed stage of a template operation.
 ///
 /// Variants preserve their source error when one exists. Callers can match the
