@@ -25,7 +25,13 @@ mod name;
 mod raw;
 mod service;
 
-pub(crate) use error::{SchemaError, SchemaFileError};
+pub(crate) use error::SchemaError;
+/// Test-only: production code imports `SchemaFileError` directly from
+/// `error::SchemaFileError` (see `service.rs`); this re-export exists only
+/// so `template::engine::schema`'s unit-test module can match on it
+/// without reaching into the private `error` submodule.
+#[cfg(test)]
+pub(crate) use error::SchemaFileError;
 pub(crate) use fields::{SchemaFileFieldRef, SchemaSelectFieldEntry};
 pub use model::Schema;
 pub(crate) use name::{SchemaName, SchemaNameRef};
