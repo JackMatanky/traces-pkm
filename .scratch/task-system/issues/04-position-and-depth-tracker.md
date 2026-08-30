@@ -2,17 +2,19 @@ Status: ready-for-agent
 
 # 04 — Position and depth tracker
 
-**What to build:** A byte-to-line tracker utility that precomputes line starts from source text and converts byte offsets to source line numbers. This is a pure utility with no dependency on task classification. Populate `depth`, `line`, and `parent_line` on list items during parsing using the tracker.
+**What to build:** A byte-to-line tracker utility that precomputes line starts from source text and converts byte offsets to source line numbers. Pure utility, no dependency on task classification or list item types.
 
 **Blocked by:** None — can start immediately (parallel with 01).
 
-- [ ] Byte-to-line tracker struct that precomputes line start byte offsets
-- [ ] Tracker converts byte offset to 1-indexed line number via binary search
-- [ ] Tracker is constructed once per note parse from source text
-- [ ] Parser populates `line` on each list item from its opening byte offset
-- [ ] Parser populates `depth` from list nesting level
-- [ ] Parser populates `parent_line` from the nearest ancestor list item's line
-- [ ] Top-level items have `parent_line: None`
-- [ ] Unit tests for byte-to-line conversion (single line, multi-line, empty lines)
-- [ ] Unit tests for depth and parent_line population in nested lists
-- [ ] Unit tests for top-level items having `parent_line: None`
+**Note:** This issue builds the `ByteTracker` utility only. Issue 01 owns the `ListItem` position fields (`depth`, `line`, `parent_line`) and parser integration. The parser in 01 should use this tracker for byte-to-line conversion.
+
+- [ ] `ByteTracker` struct with `line_starts: Vec<usize>` field
+- [ ] `ByteTracker::new(source: &str) -> Self` — precomputes line start byte offsets from source text
+- [ ] `ByteTracker::byte_to_line(&self, offset: usize) -> u32` — converts byte offset to 1-indexed line number via `partition_point` (binary search)
+- [ ] Handles edge cases: offset 0 → line 1, offset at line boundary → correct line, empty source → line 1
+- [ ] Unit test: single-line source, any offset returns line 1
+- [ ] Unit test: multi-line source, offsets at line starts return correct lines
+- [ ] Unit test: empty lines counted as separate lines
+- [ ] Unit test: offset at exact line boundary returns that line (not next)
+- [ ] Unit test: offset beyond source length returns last line
+- [ ] Unit test: empty source returns line 1
