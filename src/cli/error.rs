@@ -18,8 +18,8 @@ use super::UserAbort;
 use crate::{
     DialogError,
     config::{
-        ConfigBuilderError, ConfigLoadError, ConfigScaffoldError,
-        ConfigStateError, DiscoveryError,
+        ConfigBuilderError, ConfigFileError, ConfigLoadError,
+        ConfigScaffoldError, ConfigStateError, DiscoveryError,
     },
     index::IndexError,
     query::{QueryDialect, QueryError, QueryRequestError},
@@ -41,8 +41,8 @@ pub type CliResult = std::result::Result<(), CliError>;
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
-    reason = "ConfigLoadError, ConfigStateError, DiscoveryError, and \
-              QueryError stay pub(crate); construction and matching happen \
+    reason = "ConfigFileError, ConfigLoadError, ConfigStateError, \
+              DiscoveryError, and QueryError stay pub(crate); construction \
               inside crate::cli, callers use CliError's Display/Diagnostic \
               surface, never these types directly. TemplateError and \
               IndexError are pub only under cfg(any(test, feature = \
@@ -178,6 +178,16 @@ pub enum CliError {
         #[source]
         source: IndexError,
     },
+    /// Resolving the configured Schema registry directory for a File Class
+    /// query failed.
+    #[error("failed to resolve Schema registry directory for query in {root}")]
+    SchemaDirectory {
+        /// The project root the query ran against.
+        root: PathBuf,
+        /// Source config-file path validation error.
+        #[source]
+        source: ConfigFileError,
+    },
     /// Loading Schemas needed to resolve a File Class query failed.
     #[error("failed to load Schemas for query in {root}")]
     SchemaQuery {
@@ -308,6 +318,9 @@ impl Diagnostic for CliError {
             Self::Index {
                 ..
             } => "traces::cli::index::failed",
+            Self::SchemaDirectory {
+                ..
+            } => "traces::cli::query::schema_directory_failed",
             Self::SchemaQuery {
                 ..
             } => "traces::cli::query::schema_failed",
@@ -365,6 +378,13 @@ impl Diagnostic for CliError {
                 root,
                 ..
             } => Some(root_help(root, "is readable and writable")),
+            Self::SchemaDirectory {
+                root,
+                ..
+            } => Some(root_help(
+                root,
+                "has a Schema directory inside the project root",
+            )),
             Self::SchemaQuery {
                 root,
                 ..
@@ -484,15 +504,15 @@ fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
         } => Box::new(
             "run `traces trust` to trust this project root, then try again",
         ),
+        ConfigBuilderError::ConfigFile(ConfigFileError::InvalidFieldKey {
+            ..
+        }) => Box::new(
+            "check that [frontmatter] and [schemas] key names in the config \
+             file are non-empty",
+        ),
         ConfigBuilderError::ConfigFile(_) => Box::new(
             "check that the config file contains valid TOML and its structure \
              matches the expected schema",
-        ),
-        ConfigBuilderError::InvalidFieldKey {
-            ..
-        } => Box::new(
-            "check that [frontmatter] and [schemas] key names in the config \
-             file are non-empty",
         ),
     }
 }
@@ -559,12 +579,14 @@ const fn config_load_code(source: &ConfigLoadError) -> &'static str {
         ConfigLoadError::Build(ConfigBuilderError::Untrusted {
             ..
         }) => "traces::cli::config_build_untrusted",
+        ConfigLoadError::Build(ConfigBuilderError::ConfigFile(
+            ConfigFileError::InvalidFieldKey {
+                ..
+            },
+        )) => "traces::cli::config_build_invalid_field_key",
         ConfigLoadError::Build(ConfigBuilderError::ConfigFile(_)) => {
             "traces::cli::config_build_config_file_failed"
         }
-        ConfigLoadError::Build(ConfigBuilderError::InvalidFieldKey {
-            ..
-        }) => "traces::cli::config_build_invalid_field_key",
     }
 }
 
@@ -602,6 +624,9 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
         TemplateError::Write {
             ..
         } => "traces::cli::template::write_failed",
+        TemplateError::SchemaDirectory(_) => {
+            "traces::cli::template::schema_directory_failed"
+        }
         TemplateError::SchemaLoad(_) => {
             "traces::cli::template::schema_load_failed"
         }
@@ -679,6 +704,10 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
             ..
         } => Box::new(
             "check that the output path and its parent directory are writable",
+        ),
+        TemplateError::SchemaDirectory(_) => Box::new(
+            "check that the configured Schema directory resolves inside the \
+             project",
         ),
         TemplateError::SchemaLoad(_) => Box::new(
             "check that every Schema TOML file under the configured Schema \

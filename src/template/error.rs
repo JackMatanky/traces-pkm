@@ -118,6 +118,17 @@ pub enum TemplateError {
     #[error(transparent)]
     Prompt(#[from] DialogError),
 
+    /// Resolving the configured Schema registry directory failed during service
+    /// construction.
+    #[error("failed to resolve Schema registry directory from config")]
+    #[expect(
+        private_interfaces,
+        reason = "ConfigFileError is deliberately crate-internal; \
+                  TemplateError is only pub behind test-utils/test cfg, and \
+                  transparent wrapping only needs Display/Error"
+    )]
+    SchemaDirectory(#[from] crate::config::ConfigFileError),
+
     /// Loading the Schema registry failed during service construction.
     ///
     /// Reached only for registry-wide failures: the registry directory could

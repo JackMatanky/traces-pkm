@@ -112,17 +112,6 @@ pub(crate) enum ConfigBuilderError {
     /// A config file failed path validation, tracking, or parsing.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
-    /// A `[frontmatter]` or `[schemas]` config table named an invalid field
-    /// key: empty, whitespace-only, or canonicalizing to nothing.
-    #[error("invalid `{table}` config")]
-    InvalidFieldKey {
-        /// The TOML table that failed validation (`"frontmatter"` or
-        /// `"schemas"`).
-        table: &'static str,
-        /// The underlying validation failure.
-        #[source]
-        source: FieldNameError,
-    },
 }
 
 /// Errors raised while validating config paths, trust state, or TOML content.
@@ -182,6 +171,19 @@ pub(crate) enum ConfigFileError {
         #[source]
         source: FieldNameError,
     },
+}
+
+impl ConfigFileError {
+    /// Builds an invalid field-key error for a named config table.
+    pub(crate) fn invalid_field_key(
+        table: &'static str,
+        source: FieldNameError,
+    ) -> Self {
+        Self::InvalidFieldKey {
+            table,
+            source,
+        }
+    }
 }
 
 /// Errors from config tracking or trust-state operations.

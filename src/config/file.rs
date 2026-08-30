@@ -310,19 +310,7 @@ impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
     }
 }
 #[cfg(test)]
-impl LocalConfigFile<Parsed> {
-    pub(crate) fn from_content_for_test(
-        root: PathBuf,
-        path: PathBuf,
-        content: &str,
-    ) -> Result<Self, ConfigFileError> {
-        let parsed = Parsed::from_content(&path, content)?;
-        Ok(Self::new(root, path, parsed))
-    }
-}
-
-#[cfg(test)]
-impl GlobalConfigFile<Parsed> {
+impl<Source> ConfigFile<Source, Parsed> {
     pub(crate) fn from_content_for_test(
         root: PathBuf,
         path: PathBuf,

@@ -325,12 +325,20 @@ fn execute_query_request(
 
 fn load_schema_service(config: &Config) -> Result<SchemaService, CliError> {
     let root = config.root();
+    let schema_directory =
+        config.resolved_schema_directory().map_err(|source| {
+            CliError::SchemaDirectory {
+                root: root.to_path_buf(),
+                source,
+            }
+        })?;
     let construction =
-        SchemaService::load_verbose(&config.resolved_schema_directory())
-            .map_err(|error| CliError::SchemaQuery {
+        SchemaService::load_verbose(&schema_directory).map_err(|error| {
+            CliError::SchemaQuery {
                 root: root.to_path_buf(),
                 source: error,
-            })?;
+            }
+        })?;
     warn_schema_construction_diagnostics(&construction);
     Ok(construction.service)
 }

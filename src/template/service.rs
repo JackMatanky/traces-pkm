@@ -51,10 +51,12 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// [`TemplateError::SchemaLoad`] if constructing the underlying
-    /// [`TemplateEngine`] fails to load the Schema registry: the registry
-    /// directory could not be read or listed, a Schema file failed to
-    /// parse, or the `extends` DAG contains a cycle.
+    /// - [`TemplateError::SchemaDirectory`] if the configured Schema directory
+    ///   is invalid, escapes the project root, or cannot be verified.
+    /// - [`TemplateError::SchemaLoad`] if constructing the underlying
+    ///   [`TemplateEngine`] fails to load the Schema registry: the registry
+    ///   directory could not be read or listed, a Schema file failed to parse,
+    ///   or the `extends` DAG contains a cycle.
     #[inline]
     pub fn new(
         config: &'a Config,

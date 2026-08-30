@@ -154,13 +154,16 @@ impl Config {
 
     /// Returns the Schema registry directory resolved against the project
     /// root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigFileError::InvalidSubDir`] when the Schema directory
+    /// escapes the config root or cannot be verified.
     #[inline]
-    #[must_use]
-    pub(crate) fn resolved_schema_directory(&self) -> PathBuf {
-        self.schemas
-            .directory
-            .resolve_against(self.root())
-            .unwrap_or_else(|_| self.root().join(self.schemas().directory()))
+    pub(crate) fn resolved_schema_directory(
+        &self,
+    ) -> Result<PathBuf, ConfigFileError> {
+        self.schemas.directory.resolve_against(self.root())
     }
 
     /// Builds config directly for tests that do not exercise discovery.
@@ -298,19 +301,6 @@ impl Default for ConfigSubDir {
     }
 }
 
-impl AsRef<Path> for ConfigSubDir {
-    #[inline]
-    fn as_ref(&self) -> &Path {
-        self.as_path()
-    }
-}
-
-impl std::fmt::Display for ConfigSubDir {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_path().display())
-    }
-}
-
 impl TryFrom<PathBuf> for ConfigSubDir {
     type Error = PathError;
 
@@ -326,15 +316,6 @@ impl TryFrom<&str> for ConfigSubDir {
     #[inline]
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         SafeRelativePath::parse(Path::new(s)).map(Self)
-    }
-}
-
-impl TryFrom<String> for ConfigSubDir {
-    type Error = PathError;
-
-    #[inline]
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::try_from(s.as_str())
     }
 }
 
@@ -362,6 +343,15 @@ impl SchemasConfig {
     /// Defaults to `.traces/schemas/` when unconfigured.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "test-utils exposes the configured Schema directory; \
+                      production resolves through \
+                      Config::resolved_schema_directory"
+        )
+    )]
     pub fn directory(&self) -> &Path {
         self.directory.as_path()
     }
@@ -400,9 +390,8 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
         let class_field = FieldName::try_from(
             raw.class_field.unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
         )
-        .map_err(|source| ConfigFileError::InvalidFieldKey {
-            table: "schemas",
-            source,
+        .map_err(|source| {
+            ConfigFileError::invalid_field_key("schemas", source)
         })?;
 
         let directory = match raw.directory {
@@ -555,7 +544,7 @@ impl Default for FrontmatterConfig {
 }
 
 impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
-    type Error = FieldNameError;
+    type Error = ConfigFileError;
 
     /// # Errors
     ///
@@ -563,21 +552,27 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
     /// fails validation.
     #[inline]
     fn try_from(raw: RawFrontmatterConfig) -> Result<Self, Self::Error> {
+        let invalid_key =
+            |source| ConfigFileError::invalid_field_key("frontmatter", source);
         Ok(Self {
             title: FieldName::try_from(
                 raw.title.unwrap_or_else(|| DEFAULT_TITLE_FIELD.to_owned()),
-            )?,
+            )
+            .map_err(invalid_key)?,
             aliases: FieldName::try_from(
                 raw.aliases.unwrap_or_else(|| DEFAULT_ALIASES_FIELD.to_owned()),
-            )?,
+            )
+            .map_err(invalid_key)?,
             date_created: DateFieldConfig::from_raw_or_default(
                 raw.date_created,
                 DEFAULT_DATE_CREATED_FIELD,
-            )?,
+            )
+            .map_err(invalid_key)?,
             date_modified: DateFieldConfig::from_raw_or_default(
                 raw.date_modified,
                 DEFAULT_DATE_MODIFIED_FIELD,
-            )?,
+            )
+            .map_err(invalid_key)?,
         })
     }
 }
@@ -681,17 +676,42 @@ mod tests {
 
         #[test]
         fn joins_the_configured_schema_directory_onto_root() {
-            let config = Config::for_test(
-                PathBuf::from("/vault"),
-                None,
-                None,
-                PathBuf::from("/vault"),
-            );
+            let temp = tempfile::tempdir().expect("create temp directory");
+            let root = temp.path().join("vault");
+            let schemas = root.join(".traces/schemas");
+            std::fs::create_dir_all(&schemas).expect("create schema directory");
+            let config = Config::for_test(root.clone(), None, None, root);
 
             assert_eq!(
-                config.resolved_schema_directory(),
-                PathBuf::from("/vault/.traces/schemas/")
+                config
+                    .resolved_schema_directory()
+                    .expect("schema directory resolves"),
+                schemas
             );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn rejects_schema_directory_that_resolves_outside_root() {
+            let temp = tempfile::tempdir().expect("create temp directory");
+            let root = temp.path().join("root");
+            let external = temp.path().join("external");
+            std::fs::create_dir_all(&root).expect("create root directory");
+            std::fs::create_dir_all(&external)
+                .expect("create external directory");
+            std::os::unix::fs::symlink(&external, root.join(".traces"))
+                .expect("create escaping schema symlink");
+
+            let config =
+                Config::for_test(root, None, None, temp.path().join("out"));
+            let error = config
+                .resolved_schema_directory()
+                .expect_err("schema directory escapes root through symlink");
+
+            assert!(matches!(error, ConfigFileError::InvalidSubDir {
+                source: crate::path::PathError::EscapesRoot,
+                ..
+            }));
         }
     }
 

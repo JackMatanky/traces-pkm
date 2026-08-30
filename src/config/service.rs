@@ -174,12 +174,11 @@ impl ConfigService {
     /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace is
     ///   not trusted, is missing its baseline hash, or is stale.
     /// - [`ConfigBuilderError::ConfigFile`] when a selected config file fails
-    ///   path validation, tracking, trust transition, or parsing.
+    ///   path validation, tracking, trust transition, parsing, or contains a
+    ///   `[frontmatter]`/`[schemas]` key name that is empty, whitespace-only,
+    ///   or canonicalizes to nothing.
     /// - [`ConfigBuilderError::Merge`] when the merged local/global config
     ///   cannot be re-extracted for its output directory.
-    /// - [`ConfigBuilderError::InvalidFieldKey`] when a `[frontmatter]` or
-    ///   `[schemas]` key name is empty, whitespace-only, or canonicalizes to
-    ///   nothing.
     fn build(
         &self,
         discovered: DiscoveryOutcome,
@@ -1644,10 +1643,12 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::InvalidFieldKey {
-                        table: "schemas",
-                        ..
-                    })
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::InvalidFieldKey {
+                            table: "schemas",
+                            ..
+                        }
+                    ))
                 ));
             }
 
@@ -1668,10 +1669,12 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::InvalidFieldKey {
-                        table: "schemas",
-                        ..
-                    })
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::InvalidFieldKey {
+                            table: "schemas",
+                            ..
+                        }
+                    ))
                 ));
             }
         }
@@ -1930,10 +1933,12 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::InvalidFieldKey {
-                        table: "frontmatter",
-                        ..
-                    })
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::InvalidFieldKey {
+                            table: "frontmatter",
+                            ..
+                        }
+                    ))
                 ));
             }
 
@@ -2033,10 +2038,12 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::InvalidFieldKey {
-                        table: "frontmatter",
-                        ..
-                    })
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::InvalidFieldKey {
+                            table: "frontmatter",
+                            ..
+                        }
+                    ))
                 ));
             }
 
@@ -2057,10 +2064,12 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::InvalidFieldKey {
-                        table: "frontmatter",
-                        ..
-                    })
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::InvalidFieldKey {
+                            table: "frontmatter",
+                            ..
+                        }
+                    ))
                 ));
             }
         }

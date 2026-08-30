@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::{
-    error::{ConfigBuilderError, ConfigFileError},
+    error::ConfigBuilderError,
     file::{GlobalConfigFile, LocalConfigFile, Parsed},
     model::{Config, FrontmatterConfig, SchemasConfig, TemplateConfig},
     raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig},
@@ -57,15 +57,11 @@ impl ConfigBuilder {
             g.raw().templates.directory.as_ref().map(|dir| g.root().join(dir))
         });
 
-        let output_dir = local_raw
-            .templates
-            .output_dir
-            .as_ref()
-            .or_else(|| {
-                global_raw.and_then(|g| g.templates.output_dir.as_ref())
-            })
-            .cloned()
-            .unwrap_or_else(|| self.root.clone());
+        let output_dir = merge_optional(
+            local_raw.templates.output_dir.as_ref(),
+            global_raw.and_then(|g| g.templates.output_dir.as_ref()),
+        )
+        .unwrap_or_else(|| self.root.clone());
 
         let templates = TemplateConfig::new(
             local_template_dir,
@@ -75,54 +71,28 @@ impl ConfigBuilder {
 
         // 2. Merged SchemasConfig
         let raw_schemas = RawSchemasConfig {
-            class_field: local_raw
-                .schemas
-                .class_field
-                .as_deref()
-                .or_else(|| {
-                    global_raw.and_then(|g| g.schemas.class_field.as_deref())
-                })
-                .map(ToOwned::to_owned),
-            directory: local_raw
-                .schemas
-                .directory
-                .as_ref()
-                .or_else(|| {
-                    global_raw.and_then(|g| g.schemas.directory.as_ref())
-                })
-                .cloned(),
+            class_field: merge_optional(
+                local_raw.schemas.class_field.as_ref(),
+                global_raw.and_then(|g| g.schemas.class_field.as_ref()),
+            ),
+            directory: merge_optional(
+                local_raw.schemas.directory.as_ref(),
+                global_raw.and_then(|g| g.schemas.directory.as_ref()),
+            ),
         };
 
-        let schemas =
-            SchemasConfig::try_from(raw_schemas).map_err(|err| match err {
-                ConfigFileError::InvalidFieldKey {
-                    table,
-                    source,
-                } => ConfigBuilderError::InvalidFieldKey {
-                    table,
-                    source,
-                },
-                other => ConfigBuilderError::ConfigFile(other),
-            })?;
+        let schemas = SchemasConfig::try_from(raw_schemas)?;
 
         // 3. Merged FrontmatterConfig
         let raw_frontmatter = RawFrontmatterConfig {
-            title: local_raw
-                .frontmatter
-                .title
-                .as_deref()
-                .or_else(|| {
-                    global_raw.and_then(|g| g.frontmatter.title.as_deref())
-                })
-                .map(ToOwned::to_owned),
-            aliases: local_raw
-                .frontmatter
-                .aliases
-                .as_deref()
-                .or_else(|| {
-                    global_raw.and_then(|g| g.frontmatter.aliases.as_deref())
-                })
-                .map(ToOwned::to_owned),
+            title: merge_optional(
+                local_raw.frontmatter.title.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.title.as_ref()),
+            ),
+            aliases: merge_optional(
+                local_raw.frontmatter.aliases.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.aliases.as_ref()),
+            ),
             date_created: merge_date_field(
                 local_raw.frontmatter.date_created.as_ref(),
                 global_raw.and_then(|g| g.frontmatter.date_created.as_ref()),
@@ -133,14 +103,17 @@ impl ConfigBuilder {
             ),
         };
 
-        let frontmatter = FrontmatterConfig::try_from(raw_frontmatter)
-            .map_err(|source| ConfigBuilderError::InvalidFieldKey {
-                table: "frontmatter",
-                source,
-            })?;
+        let frontmatter = FrontmatterConfig::try_from(raw_frontmatter)?;
 
         Ok(Config::new(self.root, templates, schemas, frontmatter))
     }
+}
+
+fn merge_optional<T: Clone>(
+    local: Option<&T>,
+    global: Option<&T>,
+) -> Option<T> {
+    local.or(global).cloned()
 }
 
 fn merge_date_field(

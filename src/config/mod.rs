@@ -38,11 +38,9 @@ pub(crate) use builder::ConfigBuilder;
 pub(crate) use discovery::{
     DiscoveryScope, LOCAL_CONFIG_DIR, LOCAL_CONFIG_FILE,
 };
-#[cfg(test)]
-pub(crate) use error::ConfigFileError;
 pub(crate) use error::{
-    ConfigBuilderError, ConfigLoadError, ConfigScaffoldError, ConfigStateError,
-    DiscoveryError,
+    ConfigBuilderError, ConfigFileError, ConfigLoadError, ConfigScaffoldError,
+    ConfigStateError, DiscoveryError,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
