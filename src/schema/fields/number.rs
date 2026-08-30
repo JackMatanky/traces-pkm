@@ -67,8 +67,8 @@ impl SchemaNumberField {
         options: &IndexMap<String, FieldValue>,
         base: Option<&Self>,
     ) -> SchemaFieldType {
-        let (base_min, base_max, base_step) = base
-            .map_or((None, None, None), |base| (base.min, base.max, base.step));
+        let (base_min, base_max, base_step) =
+            base.map(|b| (b.min, b.max, b.step)).unwrap_or_default();
 
         let mut min = parser.f64(options, "min", base_min);
         let mut max = parser.f64(options, "max", base_max);

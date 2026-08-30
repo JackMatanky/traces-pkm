@@ -195,17 +195,15 @@ impl<'a> SchemaFieldParser<'a> {
         match options.get(key) {
             Some(value) => {
                 if let FieldValue::List(items) = value
-                    && items
+                    && let Some(strings) = items
                         .iter()
-                        .all(|item| matches!(item, FieldValue::String(_)))
-                {
-                    return items
-                        .iter()
-                        .filter_map(|item| match item {
+                        .map(|item| match item {
                             FieldValue::String(s) => Some(s.clone()),
                             _ => None,
                         })
-                        .collect();
+                        .collect::<Option<Vec<_>>>()
+                {
+                    return strings;
                 }
                 self.errors.push(self.type_mismatch(
                     key,

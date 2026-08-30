@@ -1,6 +1,6 @@
 //! `#<schema>/<field>` address parsing and representation.
 
-use std::{fmt, str::FromStr};
+use std::{borrow::Cow, fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
@@ -77,19 +77,6 @@ impl TryFrom<&str> for FieldAddress {
     }
 }
 
-impl TryFrom<String> for FieldAddress {
-    type Error = FieldAddressError;
-
-    /// Parse an owned string into a field address.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`TryFrom<&str>`](TryFrom) for [`FieldAddress`].
-    fn try_from(raw: String) -> Result<Self, Self::Error> {
-        Self::try_from(raw.as_str())
-    }
-}
-
 impl From<FieldAddressRef<'_>> for FieldAddress {
     fn from(address: FieldAddressRef<'_>) -> Self {
         Self {
@@ -120,7 +107,7 @@ impl fmt::Display for FieldAddress {
 
 impl fmt::Debug for FieldAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.to_string(), f)
+        write!(f, "\"#{}/{}\"", self.schema, self.field)
     }
 }
 
@@ -129,8 +116,8 @@ impl<'de> Deserialize<'de> for FieldAddress {
     where
         D: Deserializer<'de>,
     {
-        let raw = String::deserialize(deserializer)?;
-        Self::try_from(raw).map_err(serde::de::Error::custom)
+        let raw = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::try_from(raw.as_ref()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -241,14 +228,6 @@ mod tests {
 
         assert_eq!(reference.schema().as_str(), "book");
         assert_eq!(reference.field().as_str(), "status");
-    }
-
-    #[test]
-    fn try_from_string_parses_an_owned_input_the_same_as_a_borrowed_one() {
-        let address =
-            FieldAddress::try_from("#book/status".to_owned()).expect("parses");
-
-        assert_eq!(address.to_string(), "#book/status");
     }
 
     #[test]

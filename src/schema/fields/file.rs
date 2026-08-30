@@ -87,14 +87,18 @@ impl SchemaFileField {
         options: &IndexMap<String, FieldValue>,
         base: Option<&Self>,
     ) -> SchemaFieldType {
-        let (base_folders, base_ext, base_class) = base
-            .map_or((Vec::new(), None, Vec::new()), |base| {
-                (base.folders.clone(), base.ext.clone(), base.class.clone())
-            });
-
-        let folders = parser.string_list(options, "folders", base_folders);
-        let ext = parser.string(options, "ext", base_ext);
-        let class = parser.string_list(options, "class", base_class);
+        let folders = parser.string_list(
+            options,
+            "folders",
+            base.map(|b| b.folders.clone()).unwrap_or_default(),
+        );
+        let ext =
+            parser.string(options, "ext", base.and_then(|b| b.ext.clone()));
+        let class = parser.string_list(
+            options,
+            "class",
+            base.map(|b| b.class.clone()).unwrap_or_default(),
+        );
 
         SchemaFieldType::File(Arc::new(Self {
             folders,

@@ -64,10 +64,10 @@ impl SchemaSelectField {
         let error_mark = parser.mark_errors();
         let raw = parser.raw_value(options, "values");
         let values = match raw {
-            None => base.map_or_else(Vec::new, |b| b.values.clone()),
+            None => base.map(|b| b.values.clone()).unwrap_or_default(),
             Some(FieldValue::List(items)) => {
                 if items.is_empty() {
-                    base.map_or_else(Vec::new, |b| b.values.clone())
+                    base.map(|b| b.values.clone()).unwrap_or_default()
                 } else if items
                     .iter()
                     .all(|item| matches!(item, FieldValue::String(_)))
@@ -115,7 +115,7 @@ impl SchemaSelectField {
         };
 
         let values = if parser.has_errors_since(error_mark) {
-            base.map_or_else(Vec::new, |b| b.values.clone())
+            base.map(|b| b.values.clone()).unwrap_or_default()
         } else {
             values
         };
