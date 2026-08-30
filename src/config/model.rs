@@ -14,8 +14,14 @@ use std::{
     sync::Arc,
 };
 
-use super::raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig};
-use crate::field::{FieldName, FieldNameError};
+use super::{
+    error::ConfigFileError,
+    raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig},
+};
+use crate::{
+    field::{FieldName, FieldNameError},
+    path::{PathError, RootConfinedPath, SafeRelativePath},
+};
 
 /// Default `[schemas] class_field` when unconfigured.
 const DEFAULT_CLASS_FIELD: &str = "class";
@@ -151,7 +157,10 @@ impl Config {
     #[inline]
     #[must_use]
     pub(crate) fn resolved_schema_directory(&self) -> PathBuf {
-        self.root().join(self.schemas().directory())
+        self.schemas
+            .directory
+            .resolve_against(self.root())
+            .unwrap_or_else(|_| self.root().join(self.schemas().directory()))
     }
 
     /// Builds config directly for tests that do not exercise discovery.
@@ -237,10 +246,104 @@ impl TemplateConfig {
 
 /// Resolved `[schemas]` settings providing the class field name and registry
 /// directory for template lookup.
-#[derive(Clone, Debug)]
+/// A safe, root-relative subdirectory path configured in TOML (e.g. `[schemas]
+/// directory`).
+///
+/// Guaranteed to be relative, contain only normal components (no `..`), and be
+/// non-empty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConfigSubDir(SafeRelativePath);
+
+impl ConfigSubDir {
+    /// Returns the subdirectory as a relative [`Path`].
+    #[inline]
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        self.0.as_ref()
+    }
+
+    /// Resolves this subdirectory against `root`, guaranteeing the resolved
+    /// path stays within `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigFileError::InvalidSubDir`] if the resolved path escapes
+    /// `root` or fails verification.
+    pub(crate) fn resolve_against(
+        &self,
+        root: &Path,
+    ) -> Result<PathBuf, ConfigFileError> {
+        RootConfinedPath::parse(root, self.as_path())
+            .map(RootConfinedPath::into_path_buf)
+            .map_err(|source| ConfigFileError::InvalidSubDir {
+                path: self.as_path().to_path_buf(),
+                source,
+            })
+    }
+}
+
+impl Default for ConfigSubDir {
+    /// # Panics
+    ///
+    /// Never in practice: [`DEFAULT_SCHEMAS_DIR`] is a hardcoded, safe relative
+    /// path.
+    #[inline]
+    #[expect(
+        clippy::expect_used,
+        reason = "DEFAULT_SCHEMAS_DIR is a hardcoded constant"
+    )]
+    fn default() -> Self {
+        Self::try_from(DEFAULT_SCHEMAS_DIR)
+            .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path")
+    }
+}
+
+impl AsRef<Path> for ConfigSubDir {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl std::fmt::Display for ConfigSubDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_path().display())
+    }
+}
+
+impl TryFrom<PathBuf> for ConfigSubDir {
+    type Error = PathError;
+
+    #[inline]
+    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        SafeRelativePath::parse(&path).map(Self)
+    }
+}
+
+impl TryFrom<&str> for ConfigSubDir {
+    type Error = PathError;
+
+    #[inline]
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        SafeRelativePath::parse(Path::new(s)).map(Self)
+    }
+}
+
+impl TryFrom<String> for ConfigSubDir {
+    type Error = PathError;
+
+    #[inline]
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::try_from(s.as_str())
+    }
+}
+
+/// Resolved `[schemas]` settings providing the class field name and registry
+/// directory for template lookup.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemasConfig {
     class_field: FieldName,
-    directory: PathBuf,
+    directory: ConfigSubDir,
 }
 
 impl SchemasConfig {
@@ -260,7 +363,7 @@ impl SchemasConfig {
     #[inline]
     #[must_use]
     pub fn directory(&self) -> &Path {
-        &self.directory
+        self.directory.as_path()
     }
 }
 
@@ -280,28 +383,43 @@ impl Default for SchemasConfig {
         Self {
             class_field: FieldName::try_from(DEFAULT_CLASS_FIELD)
                 .expect("DEFAULT_CLASS_FIELD is a valid field key"),
-            directory: PathBuf::from(DEFAULT_SCHEMAS_DIR),
+            directory: ConfigSubDir::default(),
         }
     }
 }
 
 impl TryFrom<RawSchemasConfig> for SchemasConfig {
-    type Error = FieldNameError;
+    type Error = ConfigFileError;
 
     /// # Errors
     ///
-    /// See [`FieldName::try_from`] for when `raw.class_field` fails
-    /// validation.
+    /// See [`FieldName::try_from`] and [`ConfigSubDir::try_from`] for when
+    /// fields fail validation.
     #[inline]
     fn try_from(raw: RawSchemasConfig) -> Result<Self, Self::Error> {
+        let class_field = FieldName::try_from(
+            raw.class_field.unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
+        )
+        .map_err(|source| ConfigFileError::InvalidFieldKey {
+            table: "schemas",
+            source,
+        })?;
+
+        let directory = match raw.directory {
+            Some(dir) => {
+                ConfigSubDir::try_from(dir.clone()).map_err(|source| {
+                    ConfigFileError::InvalidSubDir {
+                        path: dir,
+                        source,
+                    }
+                })?
+            }
+            None => ConfigSubDir::default(),
+        };
+
         Ok(Self {
-            class_field: FieldName::try_from(
-                raw.class_field
-                    .unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
-            )?,
-            directory: raw
-                .directory
-                .unwrap_or_else(|| PathBuf::from(DEFAULT_SCHEMAS_DIR)),
+            class_field,
+            directory,
         })
     }
 }
@@ -588,6 +706,25 @@ mod tests {
 
             assert_eq!(config.title_name(), "heading");
             assert_eq!(config.aliases_name(), "also_known");
+        }
+    }
+    mod config_sub_dir {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn accepts_safe_relative_path() {
+            let subdir = ConfigSubDir::try_from("schemas/dir")
+                .expect("valid safe relative path");
+            assert_eq!(subdir.as_path(), Path::new("schemas/dir"));
+        }
+
+        #[test]
+        fn rejects_absolute_and_parent_paths() {
+            assert!(ConfigSubDir::try_from("/absolute/path").is_err());
+            assert!(ConfigSubDir::try_from("../parent").is_err());
+            assert!(ConfigSubDir::try_from("dir/../../escaped").is_err());
         }
     }
 }

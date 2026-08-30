@@ -215,7 +215,7 @@ impl ConfigStateStore {
             })
         })?;
         let current = Blake3FileHash::from(content.as_str());
-        if recorded.trim() == current.to_string() {
+        if recorded.trim() == current.to_hex().as_ref() {
             Ok(ConfigTrustCheck::Trusted(content))
         } else {
             Ok(ConfigTrustCheck::Stale)

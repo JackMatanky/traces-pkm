@@ -24,6 +24,7 @@
 //!
 //! Filesystem paths are resolved by the [`crate::dirs`] module.
 
+mod builder;
 mod discovery;
 mod error;
 mod file;
@@ -33,6 +34,7 @@ mod service;
 mod store;
 mod trust;
 
+pub(crate) use builder::ConfigBuilder;
 pub(crate) use discovery::{
     DiscoveryScope, LOCAL_CONFIG_DIR, LOCAL_CONFIG_FILE,
 };

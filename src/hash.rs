@@ -60,6 +60,14 @@ impl From<&str> for Blake3FileHash {
         Self(blake3::hash(content.as_bytes()))
     }
 }
+impl Blake3FileHash {
+    /// Returns the BLAKE3 hex representation without heap allocation.
+    #[inline]
+    #[must_use]
+    pub fn to_hex(&self) -> impl AsRef<str> + Display {
+        self.0.to_hex()
+    }
+}
 
 impl Display for Blake3FileHash {
     #[inline]

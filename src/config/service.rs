@@ -20,12 +20,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use figment::{Figment, providers::Serialized};
-
 #[cfg(test)]
 use super::error::ConfigFileError;
 use super::{
-    LOCAL_CONFIG_FILE,
+    ConfigBuilder, LOCAL_CONFIG_FILE,
     discovery::{
         DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryOutcome,
         DiscoveryScope,
@@ -36,9 +34,9 @@ use super::{
     },
     file::{
         Discovered as FileDiscovered, GlobalConfigFile, LocalConfigFile,
-        Parsed, Tracked, TrustOutcome, Trusted,
+        Parsed, TrustOutcome, Trusted,
     },
-    model::{Config, FrontmatterConfig, SchemasConfig, TemplateConfig},
+    model::Config,
     raw::{RawConfig, RawTemplateConfig},
     store::ConfigStateStore,
     trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
@@ -188,9 +186,12 @@ impl ConfigService {
     ) -> Result<Config, ConfigBuilderError> {
         let input = ConfigBuilderInput::try_from(discovered)?;
         let (root, trusted_local) = self.verify_trust(input.local)?;
-        let (templates, schemas, frontmatter) =
-            Self::parse_and_merge(&root, trusted_local, input.global)?;
-        Ok(Config::new(root, templates, schemas, frontmatter))
+        let parsed_local = LocalConfigFile::<Parsed>::try_from(trusted_local)?;
+        let parsed_global = match input.global {
+            Some(global) => Some(GlobalConfigFile::<Parsed>::try_from(global)?),
+            None => None,
+        };
+        ConfigBuilder::new(root, parsed_local, parsed_global).build()
     }
 
     /// Verifies trust for `local`, returning its project root and the trusted
@@ -204,8 +205,7 @@ impl ConfigService {
         &self,
         local: LocalConfigFile<FileDiscovered>,
     ) -> Result<(PathBuf, LocalConfigFile<Trusted>), ConfigBuilderError> {
-        let tracked_local =
-            LocalConfigFile::<Tracked>::from((local, &self.state));
+        let tracked_local = local.into_tracked(&self.state);
         let trusted_local = match tracked_local.verify_trust(&self.state)? {
             TrustOutcome::Trusted(trusted) => trusted,
             TrustOutcome::Halted(file, status) => {
@@ -217,66 +217,6 @@ impl ConfigService {
         };
         let root = trusted_local.root().to_path_buf();
         Ok((root, trusted_local))
-    }
-
-    /// Parses local (and optional global) config, merges local over global
-    /// via Figment, and resolves the merged raw tables into typed settings.
-    ///
-    /// # Errors
-    ///
-    /// - [`ConfigBuilderError::ConfigFile`] if either config file fails to
-    ///   parse.
-    /// - [`ConfigBuilderError::Merge`] if the merged config cannot be
-    ///   re-extracted.
-    /// - [`ConfigBuilderError::InvalidFieldKey`] if a `[frontmatter]` or
-    ///   `[schemas]` key name is invalid.
-    fn parse_and_merge(
-        root: &Path,
-        trusted_local: LocalConfigFile<Trusted>,
-        global: Option<GlobalConfigFile<FileDiscovered>>,
-    ) -> Result<
-        (TemplateConfig, SchemasConfig, FrontmatterConfig),
-        ConfigBuilderError,
-    > {
-        let mut figment = Figment::new();
-        let mut global_dir = None;
-
-        if let Some(global) = global {
-            let parsed = GlobalConfigFile::<Parsed>::try_from(global)?;
-            global_dir = parsed.resolved_template_dir();
-            figment = figment.merge(Serialized::defaults(parsed.raw()));
-        }
-
-        let parsed_local = LocalConfigFile::<Parsed>::try_from(trusted_local)?;
-        let local_dir = parsed_local.resolved_template_dir();
-        figment = figment.merge(Serialized::defaults(parsed_local.raw()));
-
-        let merged = figment.extract::<RawConfig>().map_err(|source| {
-            ConfigBuilderError::Merge {
-                source: Box::new(source),
-            }
-        })?;
-        let output =
-            merged.templates.output_dir.unwrap_or_else(|| root.to_path_buf());
-
-        let schemas =
-            SchemasConfig::try_from(merged.schemas).map_err(|source| {
-                ConfigBuilderError::InvalidFieldKey {
-                    table: "schemas",
-                    source,
-                }
-            })?;
-        let frontmatter = FrontmatterConfig::try_from(merged.frontmatter)
-            .map_err(|source| ConfigBuilderError::InvalidFieldKey {
-                table: "frontmatter",
-                source,
-            })?;
-
-        Ok((
-            TemplateConfig::new(local_dir, global_dir, output),
-            schemas,
-            frontmatter,
-        ))
     }
 
     /// Resolves trust subjects from one user-supplied filesystem path.
