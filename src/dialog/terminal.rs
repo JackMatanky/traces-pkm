@@ -119,7 +119,7 @@ impl DialogProvider for TerminalDialogProvider {
 /// Returns `true` when stdin is connected to an interactive terminal.
 #[inline]
 fn stdin_is_tty() -> bool {
-    use is_terminal::IsTerminal as _;
+    use std::io::IsTerminal as _;
     std::io::stdin().is_terminal()
 }
 

@@ -5,6 +5,9 @@
 #              package metadata, dependencies, and workspace-wide lints.
 # -----------------------------------------------------------------------------
 
+# ------------------------------------------------------------- #
+#                           Package                             #
+# ------------------------------------------------------------- #
 [package]
 name = "traces-pkm"
 version = "0.1.0"
@@ -16,9 +19,16 @@ license = "MIT"
 keywords = ["notes", "pkm", "templates"]
 categories = ["command-line-utilities", "development-tools"]
 
+# ------------------------------------------------------------- #
+#                            Benchmarks                         #
+# ------------------------------------------------------------- #
 [[bench]]
 harness = false
-name = "note_parsing"
+name = "codec"
+
+[[bench]]
+harness = false
+name = "hash"
 
 [[bench]]
 harness = false
@@ -30,16 +40,15 @@ name = "index_query"
 
 [[bench]]
 harness = false
-name = "hash"
+name = "note_parsing"
 
 [[bench]]
 harness = false
 name = "template_render"
 
-[[bench]]
-harness = false
-name = "codec"
-
+# ------------------------------------------------------------- #
+#                         Dependencies                          #
+# ------------------------------------------------------------- #
 [dependencies]
 bit-vec = "0.10"
 blake3 = "1.8"
@@ -51,7 +60,6 @@ convert_case = "0.11.0"
 figment = { version = "0.10", features = ["toml"] }
 indexmap = { version = "2.14", features = ["serde"] }
 inquire = "0.9"
-is-terminal = "0.4"
 logos = "0.16"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
 minijinja = "2.21.0"
@@ -75,9 +83,15 @@ rstest = "0.24"
 tempfile = "3.27.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
+# ------------------------------------------------------------- #
+#                          Features                             #
+# ------------------------------------------------------------- #
 [features]
 test-utils = []
 
+# ------------------------------------------------------------- #
+#                          Lint Config                          #
+# ------------------------------------------------------------- #
 [lints.clippy]
 # ------------------------------------------------------------- #
 #                        Lint Categories                        #
@@ -156,3 +170,13 @@ single_call_fn = "allow"
 std_instead_of_alloc = "allow"
 std_instead_of_core = "allow"
 unseparated_literal_suffix = "allow"
+
+# ------------------------------------------------------------- #
+#                        Build Profiles                         #
+# ------------------------------------------------------------- #
+[profile.release]
+opt-level = "z"
+strip = true
+lto = true
+panic = "abort"
+codegen-units = 1
