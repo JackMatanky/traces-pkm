@@ -1,0 +1,17 @@
+extends = ["task"]
+excludes = ["date_start", "date_end"]
+
+[fields.type]
+type = "select"
+values = ["action_item", "meeting", "phone_call", "video_call", "interview", "appointment", "event", "gathering", "hangout", "habit", "morning_ritual", "workday_startup_ritual", "workday_shutdown_ritual", "evening_ritual"]
+
+[fields.time_start]
+type = "date"
+format = "%H:%M"
+
+[fields.time_end]
+type = "date"
+format = "%H:%M"
+
+[fields.duration_est]
+type = "number"

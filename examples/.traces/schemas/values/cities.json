@@ -1,0 +1,1676 @@
+{
+  "entries": [
+    {
+      "label": "Abilene",
+      "value": "abilene"
+    },
+    {
+      "label": "Adelaide",
+      "value": "adelaide"
+    },
+    {
+      "label": "Afula",
+      "value": "afula"
+    },
+    {
+      "label": "Akko",
+      "value": "akko"
+    },
+    {
+      "label": "Akron",
+      "value": "akron"
+    },
+    {
+      "label": "Albuquerque",
+      "value": "albuquerque"
+    },
+    {
+      "label": "Alexandria",
+      "value": "alexandria"
+    },
+    {
+      "label": "Allen",
+      "value": "allen"
+    },
+    {
+      "label": "Allentown",
+      "value": "allentown"
+    },
+    {
+      "label": "Amarillo",
+      "value": "amarillo"
+    },
+    {
+      "label": "Amsterdam",
+      "value": "amsterdam"
+    },
+    {
+      "label": "Anaheim",
+      "value": "anaheim"
+    },
+    {
+      "label": "Anchorage",
+      "value": "anchorage"
+    },
+    {
+      "label": "Ann Arbor",
+      "value": "ann_arbor"
+    },
+    {
+      "label": "Antioch",
+      "value": "antioch"
+    },
+    {
+      "label": "Arad",
+      "value": "arad"
+    },
+    {
+      "label": "Arlington",
+      "value": "arlington"
+    },
+    {
+      "label": "Arvada",
+      "value": "arvada"
+    },
+    {
+      "label": "Ashdod",
+      "value": "ashdod"
+    },
+    {
+      "label": "Ashqelon",
+      "value": "ashqelon"
+    },
+    {
+      "label": "Athens",
+      "value": "athens"
+    },
+    {
+      "label": "Atlanta",
+      "value": "atlanta"
+    },
+    {
+      "label": "Auckland",
+      "value": "auckland"
+    },
+    {
+      "label": "Augusta",
+      "value": "augusta"
+    },
+    {
+      "label": "Aurora",
+      "value": "aurora"
+    },
+    {
+      "label": "Austin",
+      "value": "austin"
+    },
+    {
+      "label": "Bakersfield",
+      "value": "bakersfield"
+    },
+    {
+      "label": "Baltimore",
+      "value": "baltimore"
+    },
+    {
+      "label": "Barcelona",
+      "value": "barcelona"
+    },
+    {
+      "label": "Bat Yam",
+      "value": "bat_yam"
+    },
+    {
+      "label": "Baton Rouge",
+      "value": "baton_rouge"
+    },
+    {
+      "label": "Beaumont",
+      "value": "beaumont"
+    },
+    {
+      "label": "Beer Sheba",
+      "value": "beer_sheba"
+    },
+    {
+      "label": "Beer Sheva",
+      "value": "beer_sheva"
+    },
+    {
+      "label": "Beit Shemesh",
+      "value": "beit_shemesh"
+    },
+    {
+      "label": "Belfast",
+      "value": "belfast"
+    },
+    {
+      "label": "Bellevue",
+      "value": "bellevue"
+    },
+    {
+      "label": "Bend",
+      "value": "bend"
+    },
+    {
+      "label": "Berkeley",
+      "value": "berkeley"
+    },
+    {
+      "label": "Berlin",
+      "value": "berlin"
+    },
+    {
+      "label": "Bet Shean",
+      "value": "bet_shean"
+    },
+    {
+      "label": "Bet Shearim",
+      "value": "bet_shearim"
+    },
+    {
+      "label": "Billings",
+      "value": "billings"
+    },
+    {
+      "label": "Birmingham",
+      "value": "birmingham"
+    },
+    {
+      "label": "Bnei Brak",
+      "value": "bnei_brak"
+    },
+    {
+      "label": "Boise",
+      "value": "boise"
+    },
+    {
+      "label": "Boston",
+      "value": "boston"
+    },
+    {
+      "label": "Boulder",
+      "value": "boulder"
+    },
+    {
+      "label": "Bridgeport",
+      "value": "bridgeport"
+    },
+    {
+      "label": "Brisbane",
+      "value": "brisbane"
+    },
+    {
+      "label": "Bristol",
+      "value": "bristol"
+    },
+    {
+      "label": "Brockton",
+      "value": "brockton"
+    },
+    {
+      "label": "Broken Arrow",
+      "value": "broken_arrow"
+    },
+    {
+      "label": "Brownsville",
+      "value": "brownsville"
+    },
+    {
+      "label": "Brussels",
+      "value": "brussels"
+    },
+    {
+      "label": "Buckeye",
+      "value": "buckeye"
+    },
+    {
+      "label": "Budapest",
+      "value": "budapest"
+    },
+    {
+      "label": "Buffalo",
+      "value": "buffalo"
+    },
+    {
+      "label": "Burbank",
+      "value": "burbank"
+    },
+    {
+      "label": "Caesarea",
+      "value": "caesarea"
+    },
+    {
+      "label": "Calgary",
+      "value": "calgary"
+    },
+    {
+      "label": "Cambridge",
+      "value": "cambridge"
+    },
+    {
+      "label": "Canberra",
+      "value": "canberra"
+    },
+    {
+      "label": "Cape Coral",
+      "value": "cape_coral"
+    },
+    {
+      "label": "Cardiff",
+      "value": "cardiff"
+    },
+    {
+      "label": "Carlsbad",
+      "value": "carlsbad"
+    },
+    {
+      "label": "Carmel",
+      "value": "carmel"
+    },
+    {
+      "label": "Carrollton",
+      "value": "carrollton"
+    },
+    {
+      "label": "Cary",
+      "value": "cary"
+    },
+    {
+      "label": "Cedar Rapids",
+      "value": "cedar_rapids"
+    },
+    {
+      "label": "Centennial",
+      "value": "centennial"
+    },
+    {
+      "label": "Chandler",
+      "value": "chandler"
+    },
+    {
+      "label": "Charleston",
+      "value": "charleston"
+    },
+    {
+      "label": "Charlotte",
+      "value": "charlotte"
+    },
+    {
+      "label": "Chattanooga",
+      "value": "chattanooga"
+    },
+    {
+      "label": "Chesapeake",
+      "value": "chesapeake"
+    },
+    {
+      "label": "Chicago",
+      "value": "chicago"
+    },
+    {
+      "label": "Chico",
+      "value": "chico"
+    },
+    {
+      "label": "Chula Vista",
+      "value": "chula_vista"
+    },
+    {
+      "label": "Cincinnati",
+      "value": "cincinnati"
+    },
+    {
+      "label": "Clarksville",
+      "value": "clarksville"
+    },
+    {
+      "label": "Clearwater",
+      "value": "clearwater"
+    },
+    {
+      "label": "Cleveland",
+      "value": "cleveland"
+    },
+    {
+      "label": "Clovis",
+      "value": "clovis"
+    },
+    {
+      "label": "College Station",
+      "value": "college_station"
+    },
+    {
+      "label": "Colorado Springs",
+      "value": "colorado_springs"
+    },
+    {
+      "label": "Columbia",
+      "value": "columbia"
+    },
+    {
+      "label": "Columbus",
+      "value": "columbus"
+    },
+    {
+      "label": "Concord",
+      "value": "concord"
+    },
+    {
+      "label": "Copenhagen",
+      "value": "copenhagen"
+    },
+    {
+      "label": "Coral Springs",
+      "value": "coral_springs"
+    },
+    {
+      "label": "Corona",
+      "value": "corona"
+    },
+    {
+      "label": "Corpus Christi",
+      "value": "corpus_christi"
+    },
+    {
+      "label": "Costa Mesa",
+      "value": "costa_mesa"
+    },
+    {
+      "label": "Dallas",
+      "value": "dallas"
+    },
+    {
+      "label": "Daly City",
+      "value": "daly_city"
+    },
+    {
+      "label": "Davenport",
+      "value": "davenport"
+    },
+    {
+      "label": "Davie",
+      "value": "davie"
+    },
+    {
+      "label": "Dayton",
+      "value": "dayton"
+    },
+    {
+      "label": "Dearborn",
+      "value": "dearborn"
+    },
+    {
+      "label": "Denton",
+      "value": "denton"
+    },
+    {
+      "label": "Denver",
+      "value": "denver"
+    },
+    {
+      "label": "Des Moines",
+      "value": "des_moines"
+    },
+    {
+      "label": "Detroit",
+      "value": "detroit"
+    },
+    {
+      "label": "Dimona",
+      "value": "dimona"
+    },
+    {
+      "label": "Dor",
+      "value": "dor"
+    },
+    {
+      "label": "Downey",
+      "value": "downey"
+    },
+    {
+      "label": "Dublin",
+      "value": "dublin"
+    },
+    {
+      "label": "Durham",
+      "value": "durham"
+    },
+    {
+      "label": "Edinburg",
+      "value": "edinburg"
+    },
+    {
+      "label": "Edinburgh",
+      "value": "edinburgh"
+    },
+    {
+      "label": "Edison",
+      "value": "edison"
+    },
+    {
+      "label": "Edmonton",
+      "value": "edmonton"
+    },
+    {
+      "label": "El Cajon",
+      "value": "el_cajon"
+    },
+    {
+      "label": "El Monte",
+      "value": "el_monte"
+    },
+    {
+      "label": "El Paso",
+      "value": "el_paso"
+    },
+    {
+      "label": "Elat",
+      "value": "elat"
+    },
+    {
+      "label": "Elgin",
+      "value": "elgin"
+    },
+    {
+      "label": "Elizabeth",
+      "value": "elizabeth"
+    },
+    {
+      "label": "Elk Grove",
+      "value": "elk_grove"
+    },
+    {
+      "label": "En Gedi",
+      "value": "en_gedi"
+    },
+    {
+      "label": "Escondido",
+      "value": "escondido"
+    },
+    {
+      "label": "Eugene",
+      "value": "eugene"
+    },
+    {
+      "label": "Evansville",
+      "value": "evansville"
+    },
+    {
+      "label": "Everett",
+      "value": "everett"
+    },
+    {
+      "label": "Fairfield",
+      "value": "fairfield"
+    },
+    {
+      "label": "Fargo",
+      "value": "fargo"
+    },
+    {
+      "label": "Fayetteville",
+      "value": "fayetteville"
+    },
+    {
+      "label": "Fishers",
+      "value": "fishers"
+    },
+    {
+      "label": "Fontana",
+      "value": "fontana"
+    },
+    {
+      "label": "Fort Collins",
+      "value": "fort_collins"
+    },
+    {
+      "label": "Fort Lauderdale",
+      "value": "fort_lauderdale"
+    },
+    {
+      "label": "Fort Wayne",
+      "value": "fort_wayne"
+    },
+    {
+      "label": "Fort Worth",
+      "value": "fort_worth"
+    },
+    {
+      "label": "Frankfurt",
+      "value": "frankfurt"
+    },
+    {
+      "label": "Fremont",
+      "value": "fremont"
+    },
+    {
+      "label": "Fresno",
+      "value": "fresno"
+    },
+    {
+      "label": "Frisco",
+      "value": "frisco"
+    },
+    {
+      "label": "Fullerton",
+      "value": "fullerton"
+    },
+    {
+      "label": "Gainesville",
+      "value": "gainesville"
+    },
+    {
+      "label": "Garden Grove",
+      "value": "garden_grove"
+    },
+    {
+      "label": "Garland",
+      "value": "garland"
+    },
+    {
+      "label": "Geneva",
+      "value": "geneva"
+    },
+    {
+      "label": "Gilbert",
+      "value": "gilbert"
+    },
+    {
+      "label": "Givaatayim",
+      "value": "givaatayim"
+    },
+    {
+      "label": "Givatayim",
+      "value": "givatayim"
+    },
+    {
+      "label": "Glasgow",
+      "value": "glasgow"
+    },
+    {
+      "label": "Glendale",
+      "value": "glendale"
+    },
+    {
+      "label": "Goodyear",
+      "value": "goodyear"
+    },
+    {
+      "label": "Grand Prairie",
+      "value": "grand_prairie"
+    },
+    {
+      "label": "Grand Rapids",
+      "value": "grand_rapids"
+    },
+    {
+      "label": "Greeley",
+      "value": "greeley"
+    },
+    {
+      "label": "Green Bay",
+      "value": "green_bay"
+    },
+    {
+      "label": "Greensboro",
+      "value": "greensboro"
+    },
+    {
+      "label": "Gresham",
+      "value": "gresham"
+    },
+    {
+      "label": "Hadera",
+      "value": "hadera"
+    },
+    {
+      "label": "Haifa",
+      "value": "haifa"
+    },
+    {
+      "label": "Hamburg",
+      "value": "hamburg"
+    },
+    {
+      "label": "Hampton",
+      "value": "hampton"
+    },
+    {
+      "label": "Hartford",
+      "value": "hartford"
+    },
+    {
+      "label": "Hayward",
+      "value": "hayward"
+    },
+    {
+      "label": "Helsinki",
+      "value": "helsinki"
+    },
+    {
+      "label": "Henderson",
+      "value": "henderson"
+    },
+    {
+      "label": "Herzliya",
+      "value": "herzliya"
+    },
+    {
+      "label": "Hesperia",
+      "value": "hesperia"
+    },
+    {
+      "label": "Hialeah",
+      "value": "hialeah"
+    },
+    {
+      "label": "High Point",
+      "value": "high_point"
+    },
+    {
+      "label": "Hillsboro",
+      "value": "hillsboro"
+    },
+    {
+      "label": "Hod Hasharon",
+      "value": "hod_hasharon"
+    },
+    {
+      "label": "Hollywood",
+      "value": "hollywood"
+    },
+    {
+      "label": "Holon",
+      "value": "holon"
+    },
+    {
+      "label": "Honolulu",
+      "value": "honolulu"
+    },
+    {
+      "label": "Houston",
+      "value": "houston"
+    },
+    {
+      "label": "Huntington Beach",
+      "value": "huntington_beach"
+    },
+    {
+      "label": "Huntsville",
+      "value": "huntsville"
+    },
+    {
+      "label": "Independence",
+      "value": "independence"
+    },
+    {
+      "label": "Indianapolis",
+      "value": "indianapolis"
+    },
+    {
+      "label": "Inglewood",
+      "value": "inglewood"
+    },
+    {
+      "label": "Irvine",
+      "value": "irvine"
+    },
+    {
+      "label": "Irving",
+      "value": "irving"
+    },
+    {
+      "label": "Jackson",
+      "value": "jackson"
+    },
+    {
+      "label": "Jacksonville",
+      "value": "jacksonville"
+    },
+    {
+      "label": "Jersey City",
+      "value": "jersey_city"
+    },
+    {
+      "label": "Jerusalem",
+      "value": "jerusalem"
+    },
+    {
+      "label": "Joliet",
+      "value": "joliet"
+    },
+    {
+      "label": "Jurupa Valley",
+      "value": "jurupa_valley"
+    },
+    {
+      "label": "Kansas City",
+      "value": "kansas_city"
+    },
+    {
+      "label": "Karmiel",
+      "value": "karmiel"
+    },
+    {
+      "label": "Kefar Sava",
+      "value": "kefar_sava"
+    },
+    {
+      "label": "Kent",
+      "value": "kent"
+    },
+    {
+      "label": "Kfar Saba",
+      "value": "kfar_saba"
+    },
+    {
+      "label": "Killeen",
+      "value": "killeen"
+    },
+    {
+      "label": "Kiryat Ono",
+      "value": "kiryat_ono"
+    },
+    {
+      "label": "Knoxville",
+      "value": "knoxville"
+    },
+    {
+      "label": "Lafayette",
+      "value": "lafayette"
+    },
+    {
+      "label": "Lakeland",
+      "value": "lakeland"
+    },
+    {
+      "label": "Lakewood",
+      "value": "lakewood"
+    },
+    {
+      "label": "Lancaster",
+      "value": "lancaster"
+    },
+    {
+      "label": "Lansing",
+      "value": "lansing"
+    },
+    {
+      "label": "Laredo",
+      "value": "laredo"
+    },
+    {
+      "label": "Las Cruces",
+      "value": "las_cruces"
+    },
+    {
+      "label": "Las Vegas",
+      "value": "las_vegas"
+    },
+    {
+      "label": "League City",
+      "value": "league_city"
+    },
+    {
+      "label": "Leeds",
+      "value": "leeds"
+    },
+    {
+      "label": "Lees Summit",
+      "value": "lees_summit"
+    },
+    {
+      "label": "Lewisville",
+      "value": "lewisville"
+    },
+    {
+      "label": "Lexington",
+      "value": "lexington"
+    },
+    {
+      "label": "Lincoln",
+      "value": "lincoln"
+    },
+    {
+      "label": "Lisbon",
+      "value": "lisbon"
+    },
+    {
+      "label": "Little Rock",
+      "value": "little_rock"
+    },
+    {
+      "label": "Liverpool",
+      "value": "liverpool"
+    },
+    {
+      "label": "Lod",
+      "value": "lod"
+    },
+    {
+      "label": "London",
+      "value": "london"
+    },
+    {
+      "label": "Long Beach",
+      "value": "long_beach"
+    },
+    {
+      "label": "Longmont",
+      "value": "longmont"
+    },
+    {
+      "label": "Los Altos",
+      "value": "los_altos"
+    },
+    {
+      "label": "Los Angeles",
+      "value": "los_angeles"
+    },
+    {
+      "label": "Louisville",
+      "value": "louisville"
+    },
+    {
+      "label": "Lowell",
+      "value": "lowell"
+    },
+    {
+      "label": "Lubbock",
+      "value": "lubbock"
+    },
+    {
+      "label": "Lynn",
+      "value": "lynn"
+    },
+    {
+      "label": "Macon",
+      "value": "macon"
+    },
+    {
+      "label": "Madison",
+      "value": "madison"
+    },
+    {
+      "label": "Madrid",
+      "value": "madrid"
+    },
+    {
+      "label": "Manchester",
+      "value": "manchester"
+    },
+    {
+      "label": "Mcallen",
+      "value": "mcallen"
+    },
+    {
+      "label": "Mckinney",
+      "value": "mckinney"
+    },
+    {
+      "label": "Melbourne",
+      "value": "melbourne"
+    },
+    {
+      "label": "Memphis",
+      "value": "memphis"
+    },
+    {
+      "label": "Menifee",
+      "value": "menifee"
+    },
+    {
+      "label": "Meridian",
+      "value": "meridian"
+    },
+    {
+      "label": "Meron",
+      "value": "meron"
+    },
+    {
+      "label": "Mesa",
+      "value": "mesa"
+    },
+    {
+      "label": "Mesquite",
+      "value": "mesquite"
+    },
+    {
+      "label": "Miami",
+      "value": "miami"
+    },
+    {
+      "label": "Miami Gardens",
+      "value": "miami_gardens"
+    },
+    {
+      "label": "Midland",
+      "value": "midland"
+    },
+    {
+      "label": "Milan",
+      "value": "milan"
+    },
+    {
+      "label": "Milwaukee",
+      "value": "milwaukee"
+    },
+    {
+      "label": "Minneapolis",
+      "value": "minneapolis"
+    },
+    {
+      "label": "Miramar",
+      "value": "miramar"
+    },
+    {
+      "label": "Mobile",
+      "value": "mobile"
+    },
+    {
+      "label": "Modesto",
+      "value": "modesto"
+    },
+    {
+      "label": "Modi'in",
+      "value": "modiin"
+    },
+    {
+      "label": "Modi'in-Maccabim-Re'ut",
+      "value": "modiin_maccabim_reut"
+    },
+    {
+      "label": "Montgomery",
+      "value": "montgomery"
+    },
+    {
+      "label": "Montreal",
+      "value": "montreal"
+    },
+    {
+      "label": "Moreno Valley",
+      "value": "moreno_valley"
+    },
+    {
+      "label": "Munich",
+      "value": "munich"
+    },
+    {
+      "label": "Murfreesboro",
+      "value": "murfreesboro"
+    },
+    {
+      "label": "Murrieta",
+      "value": "murrieta"
+    },
+    {
+      "label": "Nahariyya",
+      "value": "nahariyya"
+    },
+    {
+      "label": "Nampa",
+      "value": "nampa"
+    },
+    {
+      "label": "Naperville",
+      "value": "naperville"
+    },
+    {
+      "label": "Nashville",
+      "value": "nashville"
+    },
+    {
+      "label": "Nazareth",
+      "value": "nazareth"
+    },
+    {
+      "label": "Netanya",
+      "value": "netanya"
+    },
+    {
+      "label": "New Bedford",
+      "value": "new_bedford"
+    },
+    {
+      "label": "New Haven",
+      "value": "new_haven"
+    },
+    {
+      "label": "New Orleans",
+      "value": "new_orleans"
+    },
+    {
+      "label": "New York",
+      "value": "new_york"
+    },
+    {
+      "label": "Newark",
+      "value": "newark"
+    },
+    {
+      "label": "Newcastle",
+      "value": "newcastle"
+    },
+    {
+      "label": "Newport News",
+      "value": "newport_news"
+    },
+    {
+      "label": "Norfolk",
+      "value": "norfolk"
+    },
+    {
+      "label": "Norman",
+      "value": "norman"
+    },
+    {
+      "label": "North Charleston",
+      "value": "north_charleston"
+    },
+    {
+      "label": "North Las Vegas",
+      "value": "north_las_vegas"
+    },
+    {
+      "label": "Norwalk",
+      "value": "norwalk"
+    },
+    {
+      "label": "Oakland",
+      "value": "oakland"
+    },
+    {
+      "label": "Oceanside",
+      "value": "oceanside"
+    },
+    {
+      "label": "Odessa",
+      "value": "odessa"
+    },
+    {
+      "label": "Oklahoma City",
+      "value": "oklahoma_city"
+    },
+    {
+      "label": "Olathe",
+      "value": "olathe"
+    },
+    {
+      "label": "Omaha",
+      "value": "omaha"
+    },
+    {
+      "label": "Ontario",
+      "value": "ontario"
+    },
+    {
+      "label": "Orange",
+      "value": "orange"
+    },
+    {
+      "label": "Orlando",
+      "value": "orlando"
+    },
+    {
+      "label": "Oslo",
+      "value": "oslo"
+    },
+    {
+      "label": "Ottawa",
+      "value": "ottawa"
+    },
+    {
+      "label": "Overland Park",
+      "value": "overland_park"
+    },
+    {
+      "label": "Oxford",
+      "value": "oxford"
+    },
+    {
+      "label": "Oxnard",
+      "value": "oxnard"
+    },
+    {
+      "label": "Palm Bay",
+      "value": "palm_bay"
+    },
+    {
+      "label": "Palmdale",
+      "value": "palmdale"
+    },
+    {
+      "label": "Paris",
+      "value": "paris"
+    },
+    {
+      "label": "Pasadena",
+      "value": "pasadena"
+    },
+    {
+      "label": "Paterson",
+      "value": "paterson"
+    },
+    {
+      "label": "Pearland",
+      "value": "pearland"
+    },
+    {
+      "label": "Pembroke Pines",
+      "value": "pembroke_pines"
+    },
+    {
+      "label": "Peoria",
+      "value": "peoria"
+    },
+    {
+      "label": "Perth",
+      "value": "perth"
+    },
+    {
+      "label": "Petah Tikva",
+      "value": "petah_tikva"
+    },
+    {
+      "label": "Petah Tiqwah",
+      "value": "petah_tiqwah"
+    },
+    {
+      "label": "Philadelphia",
+      "value": "philadelphia"
+    },
+    {
+      "label": "Phoenix",
+      "value": "phoenix"
+    },
+    {
+      "label": "Pittsburgh",
+      "value": "pittsburgh"
+    },
+    {
+      "label": "Plano",
+      "value": "plano"
+    },
+    {
+      "label": "Pomona",
+      "value": "pomona"
+    },
+    {
+      "label": "Pompano Beach",
+      "value": "pompano_beach"
+    },
+    {
+      "label": "Port St Lucie",
+      "value": "port_st_lucie"
+    },
+    {
+      "label": "Portland",
+      "value": "portland"
+    },
+    {
+      "label": "Prague",
+      "value": "prague"
+    },
+    {
+      "label": "Providence",
+      "value": "providence"
+    },
+    {
+      "label": "Provo",
+      "value": "provo"
+    },
+    {
+      "label": "Pueblo",
+      "value": "pueblo"
+    },
+    {
+      "label": "Qiryat Shemona",
+      "value": "qiryat_shemona"
+    },
+    {
+      "label": "Quebec City",
+      "value": "quebec_city"
+    },
+    {
+      "label": "Quincy",
+      "value": "quincy"
+    },
+    {
+      "label": "Raanana",
+      "value": "raanana"
+    },
+    {
+      "label": "Raleigh",
+      "value": "raleigh"
+    },
+    {
+      "label": "Ramat Gan",
+      "value": "ramat_gan"
+    },
+    {
+      "label": "Ramla",
+      "value": "ramla"
+    },
+    {
+      "label": "Rancho Cucamonga",
+      "value": "rancho_cucamonga"
+    },
+    {
+      "label": "Rehovot",
+      "value": "rehovot"
+    },
+    {
+      "label": "Reno",
+      "value": "reno"
+    },
+    {
+      "label": "Renton",
+      "value": "renton"
+    },
+    {
+      "label": "Rialto",
+      "value": "rialto"
+    },
+    {
+      "label": "Richardson",
+      "value": "richardson"
+    },
+    {
+      "label": "Richmond",
+      "value": "richmond"
+    },
+    {
+      "label": "Rio Rancho",
+      "value": "rio_rancho"
+    },
+    {
+      "label": "Rishon Leziyyon",
+      "value": "rishon_leziyyon"
+    },
+    {
+      "label": "Riverside",
+      "value": "riverside"
+    },
+    {
+      "label": "Rochester",
+      "value": "rochester"
+    },
+    {
+      "label": "Rockford",
+      "value": "rockford"
+    },
+    {
+      "label": "Rome",
+      "value": "rome"
+    },
+    {
+      "label": "Roseville",
+      "value": "roseville"
+    },
+    {
+      "label": "Rosh Haayin",
+      "value": "rosh_haayin"
+    },
+    {
+      "label": "Round Rock",
+      "value": "round_rock"
+    },
+    {
+      "label": "Sacramento",
+      "value": "sacramento"
+    },
+    {
+      "label": "Saint Paul",
+      "value": "saint_paul"
+    },
+    {
+      "label": "Salem",
+      "value": "salem"
+    },
+    {
+      "label": "Salinas",
+      "value": "salinas"
+    },
+    {
+      "label": "Salt Lake City",
+      "value": "salt_lake_city"
+    },
+    {
+      "label": "San Antonio",
+      "value": "san_antonio"
+    },
+    {
+      "label": "San Bernardino",
+      "value": "san_bernardino"
+    },
+    {
+      "label": "San Diego",
+      "value": "san_diego"
+    },
+    {
+      "label": "San Francisco",
+      "value": "san_francisco"
+    },
+    {
+      "label": "San Jose",
+      "value": "san_jose"
+    },
+    {
+      "label": "San Mateo",
+      "value": "san_mateo"
+    },
+    {
+      "label": "Sandy Springs",
+      "value": "sandy_springs"
+    },
+    {
+      "label": "Santa Ana",
+      "value": "santa_ana"
+    },
+    {
+      "label": "Santa Clara",
+      "value": "santa_clara"
+    },
+    {
+      "label": "Santa Clarita",
+      "value": "santa_clarita"
+    },
+    {
+      "label": "Santa Maria",
+      "value": "santa_maria"
+    },
+    {
+      "label": "Santa Rosa",
+      "value": "santa_rosa"
+    },
+    {
+      "label": "Savannah",
+      "value": "savannah"
+    },
+    {
+      "label": "Scottsdale",
+      "value": "scottsdale"
+    },
+    {
+      "label": "Seattle",
+      "value": "seattle"
+    },
+    {
+      "label": "Sebastopol",
+      "value": "sebastopol"
+    },
+    {
+      "label": "Sedom",
+      "value": "sedom"
+    },
+    {
+      "label": "Shreveport",
+      "value": "shreveport"
+    },
+    {
+      "label": "Simi Valley",
+      "value": "simi_valley"
+    },
+    {
+      "label": "Sioux Falls",
+      "value": "sioux_falls"
+    },
+    {
+      "label": "South Bend",
+      "value": "south_bend"
+    },
+    {
+      "label": "South Fulton",
+      "value": "south_fulton"
+    },
+    {
+      "label": "Sparks",
+      "value": "sparks"
+    },
+    {
+      "label": "Spokane",
+      "value": "spokane"
+    },
+    {
+      "label": "Spokane Valley",
+      "value": "spokane_valley"
+    },
+    {
+      "label": "Springfield",
+      "value": "springfield"
+    },
+    {
+      "label": "St Louis",
+      "value": "st_louis"
+    },
+    {
+      "label": "St Petersburg",
+      "value": "st_petersburg"
+    },
+    {
+      "label": "Stamford",
+      "value": "stamford"
+    },
+    {
+      "label": "Sterling Heights",
+      "value": "sterling_heights"
+    },
+    {
+      "label": "Stockholm",
+      "value": "stockholm"
+    },
+    {
+      "label": "Stockton",
+      "value": "stockton"
+    },
+    {
+      "label": "Sugar Land",
+      "value": "sugar_land"
+    },
+    {
+      "label": "Sunnyvale",
+      "value": "sunnyvale"
+    },
+    {
+      "label": "Surprise",
+      "value": "surprise"
+    },
+    {
+      "label": "Sydney",
+      "value": "sydney"
+    },
+    {
+      "label": "Syracuse",
+      "value": "syracuse"
+    },
+    {
+      "label": "Tacoma",
+      "value": "tacoma"
+    },
+    {
+      "label": "Tallahassee",
+      "value": "tallahassee"
+    },
+    {
+      "label": "Tampa",
+      "value": "tampa"
+    },
+    {
+      "label": "Tel Aviv Yafo",
+      "value": "tel_aviv_yafo"
+    },
+    {
+      "label": "Temecula",
+      "value": "temecula"
+    },
+    {
+      "label": "Tempe",
+      "value": "tempe"
+    },
+    {
+      "label": "Thornton",
+      "value": "thornton"
+    },
+    {
+      "label": "Thousand Oaks",
+      "value": "thousand_oaks"
+    },
+    {
+      "label": "Tiberias",
+      "value": "tiberias"
+    },
+    {
+      "label": "Toledo",
+      "value": "toledo"
+    },
+    {
+      "label": "Topeka",
+      "value": "topeka"
+    },
+    {
+      "label": "Toronto",
+      "value": "toronto"
+    },
+    {
+      "label": "Torrance",
+      "value": "torrance"
+    },
+    {
+      "label": "Tucson",
+      "value": "tucson"
+    },
+    {
+      "label": "Tulsa",
+      "value": "tulsa"
+    },
+    {
+      "label": "Tuscaloosa",
+      "value": "tuscaloosa"
+    },
+    {
+      "label": "Tyler",
+      "value": "tyler"
+    },
+    {
+      "label": "Vacaville",
+      "value": "vacaville"
+    },
+    {
+      "label": "Vallejo",
+      "value": "vallejo"
+    },
+    {
+      "label": "Vancouver",
+      "value": "vancouver"
+    },
+    {
+      "label": "Ventura",
+      "value": "ventura"
+    },
+    {
+      "label": "Victorville",
+      "value": "victorville"
+    },
+    {
+      "label": "Vienna",
+      "value": "vienna"
+    },
+    {
+      "label": "Virginia Beach",
+      "value": "virginia_beach"
+    },
+    {
+      "label": "Visalia",
+      "value": "visalia"
+    },
+    {
+      "label": "Waco",
+      "value": "waco"
+    },
+    {
+      "label": "Warren",
+      "value": "warren"
+    },
+    {
+      "label": "Warsaw",
+      "value": "warsaw"
+    },
+    {
+      "label": "Washington",
+      "value": "washington"
+    },
+    {
+      "label": "Waterbury",
+      "value": "waterbury"
+    },
+    {
+      "label": "Wellington",
+      "value": "wellington"
+    },
+    {
+      "label": "West Covina",
+      "value": "west_covina"
+    },
+    {
+      "label": "West Jordan",
+      "value": "west_jordan"
+    },
+    {
+      "label": "West Palm Beach",
+      "value": "west_palm_beach"
+    },
+    {
+      "label": "West Valley City",
+      "value": "west_valley_city"
+    },
+    {
+      "label": "Westminster",
+      "value": "westminster"
+    },
+    {
+      "label": "Wichita",
+      "value": "wichita"
+    },
+    {
+      "label": "Wichita Falls",
+      "value": "wichita_falls"
+    },
+    {
+      "label": "Wilmington",
+      "value": "wilmington"
+    },
+    {
+      "label": "Winston Salem",
+      "value": "winston-salem"
+    },
+    {
+      "label": "Woodbridge",
+      "value": "woodbridge"
+    },
+    {
+      "label": "Worcester",
+      "value": "worcester"
+    },
+    {
+      "label": "Yaqum",
+      "value": "yaqum"
+    },
+    {
+      "label": "Yavne",
+      "value": "yavne"
+    },
+    {
+      "label": "Yonkers",
+      "value": "yonkers"
+    },
+    {
+      "label": "Zefat",
+      "value": "zefat"
+    },
+    {
+      "label": "Zurich",
+      "value": "zurich"
+    }
+  ]
+}

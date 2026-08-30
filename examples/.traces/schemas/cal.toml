@@ -1,0 +1,48 @@
+[fields.date]
+"$ref" = "#global/date"
+
+[fields.date_start]
+"$ref" = "#global/date_start"
+
+[fields.date_end]
+"$ref" = "#global/date_end"
+
+[fields.year]
+type = "date"
+format = "%Y"
+
+[fields.year_day]
+type = "date"
+format = "%j"
+
+[fields.quarter]
+type = "date"
+format = "%q"
+
+[fields.month_name]
+type = "select"
+values = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+[fields.month_number]
+type = "select"
+values = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+
+[fields.month_day]
+type = "date"
+format = "%d"
+
+[fields.week_number]
+type = "date"
+format = "%U"
+
+[fields.weekday_name]
+type = "select"
+values = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+[fields.weekday_number]
+type = "select"
+values = ["00", "01", "02", "03", "04", "05", "06"]
+
+[fields.type]
+type = "select"
+values = ["day", "week", "month", "quarter", "year"]

@@ -1,0 +1,6 @@
+extends = ["lib"]
+excludes = ["city", "edition", "series", "volume", "issue", "page_start", "page_end", "isbn10", "isbn13", "doi", "cover_url", "cover_path"]
+
+[fields.type]
+type = "select"
+values = ["webpage", "blog"]

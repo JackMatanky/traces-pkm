@@ -1,0 +1,29 @@
+extends = ["dir"]
+
+[fields.name_first]
+type = "input"
+
+[fields.name_last]
+type = "input"
+
+[fields.phone_mobile]
+type = "input"
+
+[fields.email_personal]
+type = "input"
+
+[fields.job_title]
+type = "select"
+values = { path = "values/job_titles.json", value = "link", label = "value" }
+
+[fields.city]
+"$ref" = "#global/city"
+
+[fields.country]
+type = "select"
+values = { path = "values/countries.json", value = "value", label = "label" }
+
+[fields.organization_current]
+type = "file"
+folders = ["52_organizations"]
+class = ["dir_organization"]

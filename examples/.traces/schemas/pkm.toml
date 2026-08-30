@@ -1,0 +1,55 @@
+[fields.title]
+"$ref" = "#global/title"
+
+[fields.aliases]
+"$ref" = "#global/aliases"
+
+[fields.type]
+type = "select"
+values = ["quote", "idea", "summary", "question", "evidence", "step", "conclusion", "definition", "general", "category", "branch", "subject", "topic", "subtopic"]
+
+[fields.status]
+type = "select"
+values = ["review", "clarify", "develop", "permanent", "resource"]
+
+[fields.pillar]
+"$ref" = "#global/pillar"
+
+[fields.category]
+type = "file"
+multi = true
+folders = ["70_pkm"]
+class = ["pkm_tree"]
+
+[fields.branch]
+type = "file"
+multi = true
+folders = ["70_pkm"]
+class = ["pkm_tree"]
+
+[fields.field]
+type = "file"
+multi = true
+folders = ["70_pkm"]
+class = ["pkm_tree"]
+
+[fields.subject]
+type = "file"
+multi = true
+folders = ["70_pkm"]
+class = ["pkm_tree"]
+
+[fields.topic]
+type = "file"
+multi = true
+folders = ["70_pkm"]
+class = ["pkm_tree"]
+
+[fields.subtopic]
+type = "file"
+multi = true
+folders = ["70_pkm"]
+class = ["pkm_tree"]
+
+[fields.library]
+"$ref" = "#global/library"

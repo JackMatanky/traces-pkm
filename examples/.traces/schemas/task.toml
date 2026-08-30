@@ -1,0 +1,42 @@
+[fields.date]
+"$ref" = "#global/date"
+
+[fields.task_start]
+"$ref" = "#global/task_start"
+
+[fields.task_end]
+"$ref" = "#global/task_end"
+
+[fields.due_do]
+"$ref" = "#global/due_do"
+
+[fields.pillar]
+"$ref" = "#global/pillar"
+
+[fields.goal]
+"$ref" = "#global/goal"
+
+[fields.context]
+"$ref" = "#global/context"
+
+[fields.project]
+"$ref" = "#global/project"
+
+[fields.parent_task]
+"$ref" = "#global/parent_task"
+
+[fields.status]
+"$ref" = "#global/status"
+
+[fields.type]
+type = "select"
+values = ["project", "parent_task", "action_item", "meeting", "ritual", "habit"]
+
+[fields.organization]
+"$ref" = "#global/organization"
+
+[fields.contact]
+"$ref" = "#global/contact"
+
+[fields.library]
+"$ref" = "#global/library"

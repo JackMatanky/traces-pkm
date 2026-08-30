@@ -1,0 +1,5 @@
+[fields.title]
+"$ref" = "#global/title"
+
+[fields.aliases]
+"$ref" = "#global/aliases"

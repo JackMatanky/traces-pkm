@@ -1,0 +1,15 @@
+extends = ["dir"]
+
+[fields.name]
+type = "input"
+
+[fields.industry]
+type = "select"
+values = { path = "values/industries.json", value = "link", label = "value" }
+
+[fields.city]
+"$ref" = "#global/city"
+
+[fields.country]
+type = "select"
+values = { path = "values/countries.json", value = "value", label = "label" }

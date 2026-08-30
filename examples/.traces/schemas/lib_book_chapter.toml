@@ -1,0 +1,9 @@
+extends = ["lib"]
+
+[fields.type]
+type = "select"
+values = ["book_chapter"]
+
+[fields.book]
+type = "file"
+class = ["lib_book"]

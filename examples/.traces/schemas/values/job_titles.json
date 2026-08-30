@@ -1,0 +1,3734 @@
+{
+  "entries": [
+    {
+      "key": "account_collector",
+      "value": "Account Collector",
+      "link": "[[account_collector|Account Collector]]"
+    },
+    {
+      "key": "account_executive",
+      "value": "Account Executive",
+      "link": "[[account_executive|Account Executive]]"
+    },
+    {
+      "key": "account_manager",
+      "value": "Account Manager",
+      "link": "[[account_manager|Account Manager]]"
+    },
+    {
+      "key": "account_representative",
+      "value": "Account Representative",
+      "link": "[[account_representative|Account Representative]]"
+    },
+    {
+      "key": "accountant",
+      "value": "Accountant",
+      "link": "[[accountant|Accountant]]"
+    },
+    {
+      "key": "accounting_analyst",
+      "value": "Accounting Analyst",
+      "link": "[[accounting_analyst|Accounting Analyst]]"
+    },
+    {
+      "key": "accounting_director",
+      "value": "Accounting Director",
+      "link": "[[accounting_director|Accounting Director]]"
+    },
+    {
+      "key": "acquisitions_editor",
+      "value": "Acquisitions Editor",
+      "link": "[[acquisitions_editor|Acquisitions Editor]]"
+    },
+    {
+      "key": "administrative_analyst",
+      "value": "Administrative Analyst",
+      "link": "[[administrative_analyst|Administrative Analyst]]"
+    },
+    {
+      "key": "administrative_assistant",
+      "value": "Administrative Assistant",
+      "link": "[[administrative_assistant|Administrative Assistant]]"
+    },
+    {
+      "key": "administrative_manager",
+      "value": "Administrative Manager",
+      "link": "[[administrative_manager|Administrative Manager]]"
+    },
+    {
+      "key": "administrative_specialist",
+      "value": "Administrative Specialist",
+      "link": "[[administrative_specialist|Administrative Specialist]]"
+    },
+    {
+      "key": "administrator",
+      "value": "Administrator",
+      "link": "[[administrator|Administrator]]"
+    },
+    {
+      "key": "advertising_manager",
+      "value": "Advertising Manager",
+      "link": "[[advertising_manager|Advertising Manager]]"
+    },
+    {
+      "key": "advisor",
+      "value": "Advisor",
+      "link": "[[advisor|Advisor]]"
+    },
+    {
+      "key": "aerospace_engineer",
+      "value": "Aerospace Engineer",
+      "link": "[[aerospace_engineer|Aerospace Engineer]]"
+    },
+    {
+      "key": "agent",
+      "value": "Agent",
+      "link": "[[agent|Agent]]"
+    },
+    {
+      "key": "agricultural_engineer",
+      "value": "Agricultural Engineer",
+      "link": "[[agricultural_engineer|Agricultural Engineer]]"
+    },
+    {
+      "key": "agricultural_scientist",
+      "value": "Agricultural Scientist",
+      "link": "[[agricultural_scientist|Agricultural Scientist]]"
+    },
+    {
+      "key": "ai_ml_engineer",
+      "value": "AI/ML Engineer",
+      "link": "[[ai_ml_engineer|AI/ML Engineer]]"
+    },
+    {
+      "key": "aide",
+      "value": "Aide",
+      "link": "[[aide|Aide]]"
+    },
+    {
+      "key": "air_traffic_controller",
+      "value": "Air Traffic Controller",
+      "link": "[[air_traffic_controller|Air Traffic Controller]]"
+    },
+    {
+      "key": "aircraft_mechanic",
+      "value": "Aircraft Mechanic",
+      "link": "[[aircraft_mechanic|Aircraft Mechanic]]"
+    },
+    {
+      "key": "analyst",
+      "value": "Analyst",
+      "link": "[[analyst|Analyst]]"
+    },
+    {
+      "key": "animator",
+      "value": "Animator",
+      "link": "[[animator|Animator]]"
+    },
+    {
+      "key": "app_developer",
+      "value": "App Developer",
+      "link": "[[app_developer|App Developer]]"
+    },
+    {
+      "key": "application_developer",
+      "value": "Application Developer",
+      "link": "[[application_developer|Application Developer]]"
+    },
+    {
+      "key": "architect",
+      "value": "Architect",
+      "link": "[[architect|Architect]]"
+    },
+    {
+      "key": "archivist",
+      "value": "Archivist",
+      "link": "[[archivist|Archivist]]"
+    },
+    {
+      "key": "area_sales_manager",
+      "value": "Area Sales Manager",
+      "link": "[[area_sales_manager|Area Sales Manager]]"
+    },
+    {
+      "key": "art_director",
+      "value": "Art Director",
+      "link": "[[art_director|Art Director]]"
+    },
+    {
+      "key": "artificial_intelligence_engineer",
+      "value": "Artificial Intelligence Engineer",
+      "link": "[[artificial_intelligence_engineer|Artificial Intelligence Engineer]]"
+    },
+    {
+      "key": "artificial_intelligence_specialist",
+      "value": "Artificial Intelligence Specialist",
+      "link": "[[artificial_intelligence_specialist|Artificial Intelligence Specialist]]"
+    },
+    {
+      "key": "artist",
+      "value": "Artist",
+      "link": "[[artist|Artist]]"
+    },
+    {
+      "key": "assistant",
+      "value": "Assistant",
+      "link": "[[assistant|Assistant]]"
+    },
+    {
+      "key": "assistant_editor",
+      "value": "Assistant Editor",
+      "link": "[[assistant_editor|Assistant Editor]]"
+    },
+    {
+      "key": "assistant_engineer",
+      "value": "Assistant Engineer",
+      "link": "[[assistant_engineer|Assistant Engineer]]"
+    },
+    {
+      "key": "assistant_manager",
+      "value": "Assistant Manager",
+      "link": "[[assistant_manager|Assistant Manager]]"
+    },
+    {
+      "key": "assistant_professor",
+      "value": "Assistant Professor",
+      "link": "[[assistant_professor|Assistant Professor]]"
+    },
+    {
+      "key": "associate_editor",
+      "value": "Associate Editor",
+      "link": "[[associate_editor|Associate Editor]]"
+    },
+    {
+      "key": "astronomer",
+      "value": "Astronomer",
+      "link": "[[astronomer|Astronomer]]"
+    },
+    {
+      "key": "atmospheric_scientist",
+      "value": "Atmospheric Scientist",
+      "link": "[[atmospheric_scientist|Atmospheric Scientist]]"
+    },
+    {
+      "key": "attendant",
+      "value": "Attendant",
+      "link": "[[attendant|Attendant]]"
+    },
+    {
+      "key": "attorney",
+      "value": "Attorney",
+      "link": "[[attorney|Attorney]]"
+    },
+    {
+      "key": "audio_engineer",
+      "value": "Audio Engineer",
+      "link": "[[audio_engineer|Audio Engineer]]"
+    },
+    {
+      "key": "audiovisual_specialist",
+      "value": "Audiovisual Specialist",
+      "link": "[[audiovisual_specialist|Audiovisual Specialist]]"
+    },
+    {
+      "key": "auditing_clerk",
+      "value": "Auditing Clerk",
+      "link": "[[auditing_clerk|Auditing Clerk]]"
+    },
+    {
+      "key": "auditor",
+      "value": "Auditor",
+      "link": "[[auditor|Auditor]]"
+    },
+    {
+      "key": "author",
+      "value": "Author",
+      "link": "[[author|Author]]"
+    },
+    {
+      "key": "auto_mechanic",
+      "value": "Auto Mechanic",
+      "link": "[[auto_mechanic|Auto Mechanic]]"
+    },
+    {
+      "key": "automotive_designer",
+      "value": "Automotive Designer",
+      "link": "[[automotive_designer|Automotive Designer]]"
+    },
+    {
+      "key": "b2b_sales_specialist",
+      "value": "B2B Sales Specialist",
+      "link": "[[b2b_sales_specialist|B2B Sales Specialist]]"
+    },
+    {
+      "key": "back-end_developer",
+      "value": "Back-end Developer",
+      "link": "[[back-end_developer|Back-end Developer]]"
+    },
+    {
+      "key": "baker",
+      "value": "Baker",
+      "link": "[[baker|Baker]]"
+    },
+    {
+      "key": "bank_teller",
+      "value": "Bank Teller",
+      "link": "[[bank_teller|Bank Teller]]"
+    },
+    {
+      "key": "barber",
+      "value": "Barber",
+      "link": "[[barber|Barber]]"
+    },
+    {
+      "key": "barista",
+      "value": "Barista",
+      "link": "[[barista|Barista]]"
+    },
+    {
+      "key": "bartender",
+      "value": "Bartender",
+      "link": "[[bartender|Bartender]]"
+    },
+    {
+      "key": "benefits_coordinator",
+      "value": "Benefits Coordinator",
+      "link": "[[benefits_coordinator|Benefits Coordinator]]"
+    },
+    {
+      "key": "benefits_manager",
+      "value": "Benefits Manager",
+      "link": "[[benefits_manager|Benefits Manager]]"
+    },
+    {
+      "key": "big_data_engineer",
+      "value": "Big Data Engineer",
+      "link": "[[big_data_engineer|Big Data Engineer]]"
+    },
+    {
+      "key": "biological_engineer",
+      "value": "Biological Engineer",
+      "link": "[[biological_engineer|Biological Engineer]]"
+    },
+    {
+      "key": "biologist",
+      "value": "Biologist",
+      "link": "[[biologist|Biologist]]"
+    },
+    {
+      "key": "biomedical_engineer",
+      "value": "Biomedical Engineer",
+      "link": "[[biomedical_engineer|Biomedical Engineer]]"
+    },
+    {
+      "key": "biostatistician",
+      "value": "Biostatistician",
+      "link": "[[biostatistician|Biostatistician]]"
+    },
+    {
+      "key": "boilermaker",
+      "value": "Boilermaker",
+      "link": "[[boilermaker|Boilermaker]]"
+    },
+    {
+      "key": "bookkeeper",
+      "value": "Bookkeeper",
+      "link": "[[bookkeeper|Bookkeeper]]"
+    },
+    {
+      "key": "branch_manager",
+      "value": "Branch Manager",
+      "link": "[[branch_manager|Branch Manager]]"
+    },
+    {
+      "key": "brand_manager",
+      "value": "Brand Manager",
+      "link": "[[brand_manager|Brand Manager]]"
+    },
+    {
+      "key": "brand_strategist",
+      "value": "Brand Strategist",
+      "link": "[[brand_strategist|Brand Strategist]]"
+    },
+    {
+      "key": "broker",
+      "value": "Broker",
+      "link": "[[broker|Broker]]"
+    },
+    {
+      "key": "budget_analyst",
+      "value": "Budget Analyst",
+      "link": "[[budget_analyst|Budget Analyst]]"
+    },
+    {
+      "key": "building_inspector",
+      "value": "Building Inspector",
+      "link": "[[building_inspector|Building Inspector]]"
+    },
+    {
+      "key": "business_analyst",
+      "value": "Business Analyst",
+      "link": "[[business_analyst|Business Analyst]]"
+    },
+    {
+      "key": "business_data_analyst",
+      "value": "Business Data Analyst",
+      "link": "[[business_data_analyst|Business Data Analyst]]"
+    },
+    {
+      "key": "business_development_manager",
+      "value": "Business Development Manager",
+      "link": "[[business_development_manager|Business Development Manager]]"
+    },
+    {
+      "key": "business_intelligence_analyst",
+      "value": "Business Intelligence Analyst",
+      "link": "[[business_intelligence_analyst|Business Intelligence Analyst]]"
+    },
+    {
+      "key": "business_intelligence_consultant",
+      "value": "Business Intelligence Consultant",
+      "link": "[[business_intelligence_consultant|Business Intelligence Consultant]]"
+    },
+    {
+      "key": "business_intelligence_developer",
+      "value": "Business Intelligence Developer",
+      "link": "[[business_intelligence_developer|Business Intelligence Developer]]"
+    },
+    {
+      "key": "business_intelligence_director",
+      "value": "Business Intelligence Director",
+      "link": "[[business_intelligence_director|Business Intelligence Director]]"
+    },
+    {
+      "key": "business_intelligence_intern",
+      "value": "Business Intelligence Intern",
+      "link": "[[business_intelligence_intern|Business Intelligence Intern]]"
+    },
+    {
+      "key": "business_intelligence_lead",
+      "value": "Business Intelligence Lead",
+      "link": "[[business_intelligence_lead|Business Intelligence Lead]]"
+    },
+    {
+      "key": "business_intelligence_manager",
+      "value": "Business Intelligence Manager",
+      "link": "[[business_intelligence_manager|Business Intelligence Manager]]"
+    },
+    {
+      "key": "business_intelligence_specialist",
+      "value": "Business Intelligence Specialist",
+      "link": "[[business_intelligence_specialist|Business Intelligence Specialist]]"
+    },
+    {
+      "key": "business_manager",
+      "value": "Business Manager",
+      "link": "[[business_manager|Business Manager]]"
+    },
+    {
+      "key": "business_operations_manager",
+      "value": "Business Operations Manager",
+      "link": "[[business_operations_manager|Business Operations Manager]]"
+    },
+    {
+      "key": "business_transformation_manager",
+      "value": "Business Transformation Manager",
+      "link": "[[business_transformation_manager|Business Transformation Manager]]"
+    },
+    {
+      "key": "buyer",
+      "value": "Buyer",
+      "link": "[[buyer|Buyer]]"
+    },
+    {
+      "key": "call_center_representative",
+      "value": "Call Center Representative",
+      "link": "[[call_center_representative|Call Center Representative]]"
+    },
+    {
+      "key": "camera_operator",
+      "value": "Camera Operator",
+      "link": "[[camera_operator|Camera Operator]]"
+    },
+    {
+      "key": "caregiver",
+      "value": "Caregiver",
+      "link": "[[caregiver|Caregiver]]"
+    },
+    {
+      "key": "carpenter",
+      "value": "Carpenter",
+      "link": "[[carpenter|Carpenter]]"
+    },
+    {
+      "key": "cashier",
+      "value": "Cashier",
+      "link": "[[cashier|Cashier]]"
+    },
+    {
+      "key": "cco",
+      "value": "Chief Customer Officer",
+      "link": "[[cco|Chief Customer Officer]]"
+    },
+    {
+      "key": "cdo",
+      "value": "Chief Data Officer",
+      "link": "[[cdo|Chief Data Officer]]"
+    },
+    {
+      "key": "ceo",
+      "value": "Chief Executive Officer",
+      "link": "[[ceo|Chief Executive Officer]]"
+    },
+    {
+      "key": "cfo",
+      "value": "Chief Financial Officer",
+      "link": "[[cfo|Chief Financial Officer]]"
+    },
+    {
+      "key": "chef",
+      "value": "Chef",
+      "link": "[[chef|Chef]]"
+    },
+    {
+      "key": "chemical_engineer",
+      "value": "Chemical Engineer",
+      "link": "[[chemical_engineer|Chemical Engineer]]"
+    },
+    {
+      "key": "chemist",
+      "value": "Chemist",
+      "link": "[[chemist|Chemist]]"
+    },
+    {
+      "key": "chief_architect",
+      "value": "Chief Architect",
+      "link": "[[chief_architect|Chief Architect]]"
+    },
+    {
+      "key": "chief_engineer",
+      "value": "Chief Engineer",
+      "link": "[[chief_engineer|Chief Engineer]]"
+    },
+    {
+      "key": "chr",
+      "value": "Chief Human Resources Officer",
+      "link": "[[chr|Chief Human Resources Officer]]"
+    },
+    {
+      "key": "cio",
+      "value": "Chief Information Officer",
+      "link": "[[cio|Chief Information Officer]]"
+    },
+    {
+      "key": "cis",
+      "value": "Chief Information Security Officer",
+      "link": "[[cis|Chief Information Security Officer]]"
+    },
+    {
+      "key": "civil_engineer",
+      "value": "Civil Engineer",
+      "link": "[[civil_engineer|Civil Engineer]]"
+    },
+    {
+      "key": "claims_adjuster",
+      "value": "Claims Adjuster",
+      "link": "[[claims_adjuster|Claims Adjuster]]"
+    },
+    {
+      "key": "clerk",
+      "value": "Clerk",
+      "link": "[[clerk|Clerk]]"
+    },
+    {
+      "key": "client_partner",
+      "value": "Client Partner",
+      "link": "[[client_partner|Client Partner]]"
+    },
+    {
+      "key": "client_service_specialist",
+      "value": "Client Service Specialist",
+      "link": "[[client_service_specialist|Client Service Specialist]]"
+    },
+    {
+      "key": "clinical_psychologist",
+      "value": "Clinical Psychologist",
+      "link": "[[clinical_psychologist|Clinical Psychologist]]"
+    },
+    {
+      "key": "clo",
+      "value": "Chief Learning Officer",
+      "link": "[[clo|Chief Learning Officer]]"
+    },
+    {
+      "key": "cloud_architect",
+      "value": "Cloud Architect",
+      "link": "[[cloud_architect|Cloud Architect]]"
+    },
+    {
+      "key": "cloud_data_analyst",
+      "value": "Cloud Data Analyst",
+      "link": "[[cloud_data_analyst|Cloud Data Analyst]]"
+    },
+    {
+      "key": "cloud_data_architect",
+      "value": "Cloud Data Architect",
+      "link": "[[cloud_data_architect|Cloud Data Architect]]"
+    },
+    {
+      "key": "cloud_data_engineer",
+      "value": "Cloud Data Engineer",
+      "link": "[[cloud_data_engineer|Cloud Data Engineer]]"
+    },
+    {
+      "key": "cloud_data_lead",
+      "value": "Cloud Data Lead",
+      "link": "[[cloud_data_lead|Cloud Data Lead]]"
+    },
+    {
+      "key": "cloud_data_scientist",
+      "value": "Cloud Data Scientist",
+      "link": "[[cloud_data_scientist|Cloud Data Scientist]]"
+    },
+    {
+      "key": "cloud_data_specialist",
+      "value": "Cloud Data Specialist",
+      "link": "[[cloud_data_specialist|Cloud Data Specialist]]"
+    },
+    {
+      "key": "cloud_engineer",
+      "value": "Cloud Engineer",
+      "link": "[[cloud_engineer|Cloud Engineer]]"
+    },
+    {
+      "key": "cmo",
+      "value": "Chief Marketing Officer",
+      "link": "[[cmo|Chief Marketing Officer]]"
+    },
+    {
+      "key": "cna",
+      "value": "CNA",
+      "link": "[[cna|CNA]]"
+    },
+    {
+      "key": "coach",
+      "value": "Coach",
+      "link": "[[coach|Coach]]"
+    },
+    {
+      "key": "columnist",
+      "value": "Columnist",
+      "link": "[[columnist|Columnist]]"
+    },
+    {
+      "key": "commercial_loan_officer",
+      "value": "Commercial Loan Officer",
+      "link": "[[commercial_loan_officer|Commercial Loan Officer]]"
+    },
+    {
+      "key": "commercial_pilot",
+      "value": "Commercial Pilot",
+      "link": "[[commercial_pilot|Commercial Pilot]]"
+    },
+    {
+      "key": "communications_director",
+      "value": "Communications Director",
+      "link": "[[communications_director|Communications Director]]"
+    },
+    {
+      "key": "communications_director",
+      "value": "Director of Communications",
+      "link": "[[communications_director|Director of Communications]]"
+    },
+    {
+      "key": "communications_manager",
+      "value": "Communications Manager",
+      "link": "[[communications_manager|Communications Manager]]"
+    },
+    {
+      "key": "community_health_worker",
+      "value": "Community Health Worker",
+      "link": "[[community_health_worker|Community Health Worker]]"
+    },
+    {
+      "key": "community_organizer",
+      "value": "Community Organizer",
+      "link": "[[community_organizer|Community Organizer]]"
+    },
+    {
+      "key": "compensation_analyst",
+      "value": "Compensation Analyst",
+      "link": "[[compensation_analyst|Compensation Analyst]]"
+    },
+    {
+      "key": "compensation_and_benefits_analyst",
+      "value": "Compensation and Benefits Analyst",
+      "link": "[[compensation_and_benefits_analyst|Compensation and Benefits Analyst]]"
+    },
+    {
+      "key": "computer_hardware_engineer",
+      "value": "Computer Hardware Engineer",
+      "link": "[[computer_hardware_engineer|Computer Hardware Engineer]]"
+    },
+    {
+      "key": "computer_network_architect",
+      "value": "Computer Network Architect",
+      "link": "[[computer_network_architect|Computer Network Architect]]"
+    },
+    {
+      "key": "computer_programmer",
+      "value": "Computer Programmer",
+      "link": "[[computer_programmer|Computer Programmer]]"
+    },
+    {
+      "key": "computer_scientist",
+      "value": "Computer Scientist",
+      "link": "[[computer_scientist|Computer Scientist]]"
+    },
+    {
+      "key": "computer_systems_analyst",
+      "value": "Computer Systems Analyst",
+      "link": "[[computer_systems_analyst|Computer Systems Analyst]]"
+    },
+    {
+      "key": "computer_technician",
+      "value": "Computer Technician",
+      "link": "[[computer_technician|Computer Technician]]"
+    },
+    {
+      "key": "concierge",
+      "value": "Concierge",
+      "link": "[[concierge|Concierge]]"
+    },
+    {
+      "key": "conservation_scientist",
+      "value": "Conservation Scientist",
+      "link": "[[conservation_scientist|Conservation Scientist]]"
+    },
+    {
+      "key": "construction_manager",
+      "value": "Construction Manager",
+      "link": "[[construction_manager|Construction Manager]]"
+    },
+    {
+      "key": "construction_worker",
+      "value": "Construction Worker",
+      "link": "[[construction_worker|Construction Worker]]"
+    },
+    {
+      "key": "consultant",
+      "value": "Consultant",
+      "link": "[[consultant|Consultant]]"
+    },
+    {
+      "key": "content_creator",
+      "value": "Content Creator",
+      "link": "[[content_creator|Content Creator]]"
+    },
+    {
+      "key": "content_marketing_manager",
+      "value": "Content Marketing Manager",
+      "link": "[[content_marketing_manager|Content Marketing Manager]]"
+    },
+    {
+      "key": "content_strategist",
+      "value": "Content Strategist",
+      "link": "[[content_strategist|Content Strategist]]"
+    },
+    {
+      "key": "content_writer",
+      "value": "Content Writer",
+      "link": "[[content_writer|Content Writer]]"
+    },
+    {
+      "key": "continuous_improvement_consultant",
+      "value": "Continuous Improvement Consultant",
+      "link": "[[continuous_improvement_consultant|Continuous Improvement Consultant]]"
+    },
+    {
+      "key": "continuous_improvement_lead",
+      "value": "Continuous Improvement Lead",
+      "link": "[[continuous_improvement_lead|Continuous Improvement Lead]]"
+    },
+    {
+      "key": "contract_administrator",
+      "value": "Contract Administrator",
+      "link": "[[contract_administrator|Contract Administrator]]"
+    },
+    {
+      "key": "controller",
+      "value": "Controller",
+      "link": "[[controller|Controller]]"
+    },
+    {
+      "key": "coo",
+      "value": "Chief Operating Officer",
+      "link": "[[coo|Chief Operating Officer]]"
+    },
+    {
+      "key": "coordinator",
+      "value": "Coordinator",
+      "link": "[[coordinator|Coordinator]]"
+    },
+    {
+      "key": "copy_editor",
+      "value": "Copy Editor",
+      "link": "[[copy_editor|Copy Editor]]"
+    },
+    {
+      "key": "copywriter",
+      "value": "Copywriter",
+      "link": "[[copywriter|Copywriter]]"
+    },
+    {
+      "key": "corporate_attorney",
+      "value": "Corporate Attorney",
+      "link": "[[corporate_attorney|Corporate Attorney]]"
+    },
+    {
+      "key": "corporate_trainer",
+      "value": "Corporate Trainer",
+      "link": "[[corporate_trainer|Corporate Trainer]]"
+    },
+    {
+      "key": "cost_analyst",
+      "value": "Cost Analyst",
+      "link": "[[cost_analyst|Cost Analyst]]"
+    },
+    {
+      "key": "cost_estimator",
+      "value": "Cost Estimator",
+      "link": "[[cost_estimator|Cost Estimator]]"
+    },
+    {
+      "key": "counsel",
+      "value": "Counsel",
+      "link": "[[counsel|Counsel]]"
+    },
+    {
+      "key": "counselor",
+      "value": "Counselor",
+      "link": "[[counselor|Counselor]]"
+    },
+    {
+      "key": "counterparty_risk_analyst",
+      "value": "Counterparty Risk Analyst",
+      "link": "[[counterparty_risk_analyst|Counterparty Risk Analyst]]"
+    },
+    {
+      "key": "cpo",
+      "value": "Chief People Officer",
+      "link": "[[cpo|Chief People Officer]]"
+    },
+    {
+      "key": "cpo",
+      "value": "Chief Product Officer",
+      "link": "[[cpo|Chief Product Officer]]"
+    },
+    {
+      "key": "crane_operator",
+      "value": "Crane Operator",
+      "link": "[[crane_operator|Crane Operator]]"
+    },
+    {
+      "key": "creative_director",
+      "value": "Creative Director",
+      "link": "[[creative_director|Creative Director]]"
+    },
+    {
+      "key": "credit_analyst",
+      "value": "Credit Analyst",
+      "link": "[[credit_analyst|Credit Analyst]]"
+    },
+    {
+      "key": "credit_authorizer",
+      "value": "Credit Authorizer",
+      "link": "[[credit_authorizer|Credit Authorizer]]"
+    },
+    {
+      "key": "credit_counselor",
+      "value": "Credit Counselor",
+      "link": "[[credit_counselor|Credit Counselor]]"
+    },
+    {
+      "key": "crew",
+      "value": "Crew",
+      "link": "[[crew|Crew]]"
+    },
+    {
+      "key": "cso",
+      "value": "Chief Security Officer",
+      "link": "[[cso|Chief Security Officer]]"
+    },
+    {
+      "key": "cto",
+      "value": "Chief Technology Officer",
+      "link": "[[cto|Chief Technology Officer]]"
+    },
+    {
+      "key": "curator",
+      "value": "Curator",
+      "link": "[[curator|Curator]]"
+    },
+    {
+      "key": "customer_advocate",
+      "value": "Customer Advocate",
+      "link": "[[customer_advocate|Customer Advocate]]"
+    },
+    {
+      "key": "customer_care_associate",
+      "value": "Customer Care Associate",
+      "link": "[[customer_care_associate|Customer Care Associate]]"
+    },
+    {
+      "key": "customer_service",
+      "value": "Customer Service",
+      "link": "[[customer_service|Customer Service]]"
+    },
+    {
+      "key": "customer_service_manager",
+      "value": "Customer Service Manager",
+      "link": "[[customer_service_manager|Customer Service Manager]]"
+    },
+    {
+      "key": "customer_service_representative",
+      "value": "Customer Service Representative",
+      "link": "[[customer_service_representative|Customer Service Representative]]"
+    },
+    {
+      "key": "customer_success_manager",
+      "value": "Customer Success Manager",
+      "link": "[[customer_success_manager|Customer Success Manager]]"
+    },
+    {
+      "key": "customer_support",
+      "value": "Customer Support",
+      "link": "[[customer_support|Customer Support]]"
+    },
+    {
+      "key": "cybersecurity_analyst",
+      "value": "Cybersecurity Analyst",
+      "link": "[[cybersecurity_analyst|Cybersecurity Analyst]]"
+    },
+    {
+      "key": "data_analyst",
+      "value": "Data Analyst",
+      "link": "[[data_analyst|Data Analyst]]"
+    },
+    {
+      "key": "data_analyst_advisor",
+      "value": "Data Analyst Advisor",
+      "link": "[[data_analyst_advisor|Data Analyst Advisor]]"
+    },
+    {
+      "key": "data_analyst_architect",
+      "value": "Data Analyst Architect",
+      "link": "[[data_analyst_architect|Data Analyst Architect]]"
+    },
+    {
+      "key": "data_analyst_auditor",
+      "value": "Data Analyst Auditor",
+      "link": "[[data_analyst_auditor|Data Analyst Auditor]]"
+    },
+    {
+      "key": "data_analyst_business_partner",
+      "value": "Data Analyst Business Partner",
+      "link": "[[data_analyst_business_partner|Data Analyst Business Partner]]"
+    },
+    {
+      "key": "data_analyst_coach",
+      "value": "Data Analyst Coach",
+      "link": "[[data_analyst_coach|Data Analyst Coach]]"
+    },
+    {
+      "key": "data_analyst_consultant",
+      "value": "Data Analyst Consultant",
+      "link": "[[data_analyst_consultant|Data Analyst Consultant]]"
+    },
+    {
+      "key": "data_analyst_coordinator",
+      "value": "Data Analyst Coordinator",
+      "link": "[[data_analyst_coordinator|Data Analyst Coordinator]]"
+    },
+    {
+      "key": "data_analyst_director",
+      "value": "Data Analyst Director",
+      "link": "[[data_analyst_director|Data Analyst Director]]"
+    },
+    {
+      "key": "data_analyst_educator",
+      "value": "Data Analyst Educator",
+      "link": "[[data_analyst_educator|Data Analyst Educator]]"
+    },
+    {
+      "key": "data_analyst_facilitator",
+      "value": "Data Analyst Facilitator",
+      "link": "[[data_analyst_facilitator|Data Analyst Facilitator]]"
+    },
+    {
+      "key": "data_analyst_intern",
+      "value": "Data Analyst Intern",
+      "link": "[[data_analyst_intern|Data Analyst Intern]]"
+    },
+    {
+      "key": "data_analyst_jr",
+      "value": "Junior Data Analyst",
+      "link": "[[data_analyst_jr|Junior Data Analyst]]"
+    },
+    {
+      "key": "data_analyst_lead",
+      "value": "Data Analyst Lead",
+      "link": "[[data_analyst_lead|Data Analyst Lead]]"
+    },
+    {
+      "key": "data_analyst_lead_consultant",
+      "value": "Data Analyst Lead Consultant",
+      "link": "[[data_analyst_lead_consultant|Data Analyst Lead Consultant]]"
+    },
+    {
+      "key": "data_analyst_manager",
+      "value": "Data Analyst Manager",
+      "link": "[[data_analyst_manager|Data Analyst Manager]]"
+    },
+    {
+      "key": "data_analyst_manager_consultant",
+      "value": "Data Analyst Manager Consultant",
+      "link": "[[data_analyst_manager_consultant|Data Analyst Manager Consultant]]"
+    },
+    {
+      "key": "data_analyst_officer",
+      "value": "Data Analyst Officer",
+      "link": "[[data_analyst_officer|Data Analyst Officer]]"
+    },
+    {
+      "key": "data_analyst_planner",
+      "value": "Data Analyst Planner",
+      "link": "[[data_analyst_planner|Data Analyst Planner]]"
+    },
+    {
+      "key": "data_analyst_process_specialist",
+      "value": "Data Analyst Process Specialist",
+      "link": "[[data_analyst_process_specialist|Data Analyst Process Specialist]]"
+    },
+    {
+      "key": "data_analyst_program_manager",
+      "value": "Data Analyst Program Manager",
+      "link": "[[data_analyst_program_manager|Data Analyst Program Manager]]"
+    },
+    {
+      "key": "data_analyst_project_manager",
+      "value": "Data Analyst Project Manager",
+      "link": "[[data_analyst_project_manager|Data Analyst Project Manager]]"
+    },
+    {
+      "key": "data_analyst_recruiter",
+      "value": "Data Analyst Recruiter",
+      "link": "[[data_analyst_recruiter|Data Analyst Recruiter]]"
+    },
+    {
+      "key": "data_analyst_relationship_manager",
+      "value": "Data Analyst Relationship Manager",
+      "link": "[[data_analyst_relationship_manager|Data Analyst Relationship Manager]]"
+    },
+    {
+      "key": "data_analyst_researcher",
+      "value": "Data Analyst Researcher",
+      "link": "[[data_analyst_researcher|Data Analyst Researcher]]"
+    },
+    {
+      "key": "data_analyst_specialist",
+      "value": "Data Analyst Specialist",
+      "link": "[[data_analyst_specialist|Data Analyst Specialist]]"
+    },
+    {
+      "key": "data_analyst_specialist",
+      "value": "Data Analyst Specialist",
+      "link": "[[data_analyst_specialist|Data Analyst Specialist]]"
+    },
+    {
+      "key": "data_analyst_sr",
+      "value": "Senior Data Analyst",
+      "link": "[[data_analyst_sr|Senior Data Analyst]]"
+    },
+    {
+      "key": "data_analyst_strategist",
+      "value": "Data Analyst Strategist",
+      "link": "[[data_analyst_strategist|Data Analyst Strategist]]"
+    },
+    {
+      "key": "data_analyst_supervisor",
+      "value": "Data Analyst Supervisor",
+      "link": "[[data_analyst_supervisor|Data Analyst Supervisor]]"
+    },
+    {
+      "key": "data_analyst_support",
+      "value": "Data Analyst Support",
+      "link": "[[data_analyst_support|Data Analyst Support]]"
+    },
+    {
+      "key": "data_analyst_surveyor",
+      "value": "Data Analyst Surveyor",
+      "link": "[[data_analyst_surveyor|Data Analyst Surveyor]]"
+    },
+    {
+      "key": "data_analyst_systems_analyst",
+      "value": "Data Analyst Systems Analyst",
+      "link": "[[data_analyst_systems_analyst|Data Analyst Systems Analyst]]"
+    },
+    {
+      "key": "data_analyst_team_leader",
+      "value": "Data Analyst Team Leader",
+      "link": "[[data_analyst_team_leader|Data Analyst Team Leader]]"
+    },
+    {
+      "key": "data_analyst_technical_specialist",
+      "value": "Data Analyst Technical Specialist",
+      "link": "[[data_analyst_technical_specialist|Data Analyst Technical Specialist]]"
+    },
+    {
+      "key": "data_analyst_trainer",
+      "value": "Data Analyst Trainer",
+      "link": "[[data_analyst_trainer|Data Analyst Trainer]]"
+    },
+    {
+      "key": "data_analyst_trainer_coach",
+      "value": "Data Analyst Trainer/Coach",
+      "link": "[[data_analyst_trainer_coach|Data Analyst Trainer/Coach]]"
+    },
+    {
+      "key": "data_analyst_training_coordinator",
+      "value": "Data Analyst Training Coordinator",
+      "link": "[[data_analyst_training_coordinator|Data Analyst Training Coordinator]]"
+    },
+    {
+      "key": "data_analyst_validation_specialist",
+      "value": "Data Analyst Validation Specialist",
+      "link": "[[data_analyst_validation_specialist|Data Analyst Validation Specialist]]"
+    },
+    {
+      "key": "data_analyst_workflow_analyst",
+      "value": "Data Analyst Workflow Analyst",
+      "link": "[[data_analyst_workflow_analyst|Data Analyst Workflow Analyst]]"
+    },
+    {
+      "key": "data_analytics_architect",
+      "value": "Data Analytics Architect",
+      "link": "[[data_analytics_architect|Data Analytics Architect]]"
+    },
+    {
+      "key": "data_analytics_associate",
+      "value": "Data Analytics Associate",
+      "link": "[[data_analytics_associate|Data Analytics Associate]]"
+    },
+    {
+      "key": "data_analytics_auditor",
+      "value": "Data Analytics Auditor",
+      "link": "[[data_analytics_auditor|Data Analytics Auditor]]"
+    },
+    {
+      "key": "data_analytics_business_partner",
+      "value": "Data Analytics Business Partner",
+      "link": "[[data_analytics_business_partner|Data Analytics Business Partner]]"
+    },
+    {
+      "key": "data_analytics_coach",
+      "value": "Data Analytics Coach",
+      "link": "[[data_analytics_coach|Data Analytics Coach]]"
+    },
+    {
+      "key": "data_analytics_consultant",
+      "value": "Data Analytics Consultant",
+      "link": "[[data_analytics_consultant|Data Analytics Consultant]]"
+    },
+    {
+      "key": "data_analytics_coordinator",
+      "value": "Data Analytics Coordinator",
+      "link": "[[data_analytics_coordinator|Data Analytics Coordinator]]"
+    },
+    {
+      "key": "data_analytics_developer",
+      "value": "Data Analytics Developer",
+      "link": "[[data_analytics_developer|Data Analytics Developer]]"
+    },
+    {
+      "key": "data_analytics_director",
+      "value": "Data Analytics Director",
+      "link": "[[data_analytics_director|Data Analytics Director]]"
+    },
+    {
+      "key": "data_analytics_educator",
+      "value": "Data Analytics Educator",
+      "link": "[[data_analytics_educator|Data Analytics Educator]]"
+    },
+    {
+      "key": "data_analytics_facilitator",
+      "value": "Data Analytics Facilitator",
+      "link": "[[data_analytics_facilitator|Data Analytics Facilitator]]"
+    },
+    {
+      "key": "data_analytics_lead",
+      "value": "Data Analytics Lead",
+      "link": "[[data_analytics_lead|Data Analytics Lead]]"
+    },
+    {
+      "key": "data_analytics_manager",
+      "value": "Data Analytics Manager",
+      "link": "[[data_analytics_manager|Data Analytics Manager]]"
+    },
+    {
+      "key": "data_analytics_officer",
+      "value": "Data Analytics Officer",
+      "link": "[[data_analytics_officer|Data Analytics Officer]]"
+    },
+    {
+      "key": "data_analytics_specialist",
+      "value": "Data Analytics Specialist",
+      "link": "[[data_analytics_specialist|Data Analytics Specialist]]"
+    },
+    {
+      "key": "data_analytics_strategist",
+      "value": "Data Analytics Strategist",
+      "link": "[[data_analytics_strategist|Data Analytics Strategist]]"
+    },
+    {
+      "key": "data_analytics_supervisor",
+      "value": "Data Analytics Supervisor",
+      "link": "[[data_analytics_supervisor|Data Analytics Supervisor]]"
+    },
+    {
+      "key": "data_analytics_technician",
+      "value": "Data Analytics Technician",
+      "link": "[[data_analytics_technician|Data Analytics Technician]]"
+    },
+    {
+      "key": "data_analytics_trainer",
+      "value": "Data Analytics Trainer",
+      "link": "[[data_analytics_trainer|Data Analytics Trainer]]"
+    },
+    {
+      "key": "data_architect",
+      "value": "Data Architect",
+      "link": "[[data_architect|Data Architect]]"
+    },
+    {
+      "key": "data_center_analyst",
+      "value": "Data Center Analyst",
+      "link": "[[data_center_analyst|Data Center Analyst]]"
+    },
+    {
+      "key": "data_center_architect",
+      "value": "Data Center Architect",
+      "link": "[[data_center_architect|Data Center Architect]]"
+    },
+    {
+      "key": "data_center_engineer",
+      "value": "Data Center Engineer",
+      "link": "[[data_center_engineer|Data Center Engineer]]"
+    },
+    {
+      "key": "data_center_manager",
+      "value": "Data Center Manager",
+      "link": "[[data_center_manager|Data Center Manager]]"
+    },
+    {
+      "key": "data_center_technician",
+      "value": "Data Center Technician",
+      "link": "[[data_center_technician|Data Center Technician]]"
+    },
+    {
+      "key": "data_compliance_analyst",
+      "value": "Data Compliance Analyst",
+      "link": "[[data_compliance_analyst|Data Compliance Analyst]]"
+    },
+    {
+      "key": "data_compliance_lead",
+      "value": "Data Compliance Lead",
+      "link": "[[data_compliance_lead|Data Compliance Lead]]"
+    },
+    {
+      "key": "data_compliance_manager",
+      "value": "Data Compliance Manager",
+      "link": "[[data_compliance_manager|Data Compliance Manager]]"
+    },
+    {
+      "key": "data_compliance_specialist",
+      "value": "Data Compliance Specialist",
+      "link": "[[data_compliance_specialist|Data Compliance Specialist]]"
+    },
+    {
+      "key": "data_conversion_specialist",
+      "value": "Data Conversion Specialist",
+      "link": "[[data_conversion_specialist|Data Conversion Specialist]]"
+    },
+    {
+      "key": "data_engineer",
+      "value": "Data Engineer",
+      "link": "[[data_engineer|Data Engineer]]"
+    },
+    {
+      "key": "data_engineer_intern",
+      "value": "Data Engineer Intern",
+      "link": "[[data_engineer_intern|Data Engineer Intern]]"
+    },
+    {
+      "key": "data_engineering_lead",
+      "value": "Data Engineering Lead",
+      "link": "[[data_engineering_lead|Data Engineering Lead]]"
+    },
+    {
+      "key": "data_engineering_specialist",
+      "value": "Data Engineering Specialist",
+      "link": "[[data_engineering_specialist|Data Engineering Specialist]]"
+    },
+    {
+      "key": "data_entry",
+      "value": "Data Entry",
+      "link": "[[data_entry|Data Entry]]"
+    },
+    {
+      "key": "data_entry_clerk",
+      "value": "Data Entry Clerk",
+      "link": "[[data_entry_clerk|Data Entry Clerk]]"
+    },
+    {
+      "key": "data_entry_specialist",
+      "value": "Data Entry Specialist",
+      "link": "[[data_entry_specialist|Data Entry Specialist]]"
+    },
+    {
+      "key": "data_governance_administrator",
+      "value": "Data Governance Administrator",
+      "link": "[[data_governance_administrator|Data Governance Administrator]]"
+    },
+    {
+      "key": "data_governance_analyst",
+      "value": "Data Governance Analyst",
+      "link": "[[data_governance_analyst|Data Governance Analyst]]"
+    },
+    {
+      "key": "data_governance_architect",
+      "value": "Data Governance Architect",
+      "link": "[[data_governance_architect|Data Governance Architect]]"
+    },
+    {
+      "key": "data_governance_consultant",
+      "value": "Data Governance Consultant",
+      "link": "[[data_governance_consultant|Data Governance Consultant]]"
+    },
+    {
+      "key": "data_governance_coordinator",
+      "value": "Data Governance Coordinator",
+      "link": "[[data_governance_coordinator|Data Governance Coordinator]]"
+    },
+    {
+      "key": "data_governance_director",
+      "value": "Data Governance Director",
+      "link": "[[data_governance_director|Data Governance Director]]"
+    },
+    {
+      "key": "data_governance_lead",
+      "value": "Data Governance Lead",
+      "link": "[[data_governance_lead|Data Governance Lead]]"
+    },
+    {
+      "key": "data_governance_manager",
+      "value": "Data Governance Manager",
+      "link": "[[data_governance_manager|Data Governance Manager]]"
+    },
+    {
+      "key": "data_governance_officer",
+      "value": "Data Governance Officer",
+      "link": "[[data_governance_officer|Data Governance Officer]]"
+    },
+    {
+      "key": "data_governance_specialist",
+      "value": "Data Governance Specialist",
+      "link": "[[data_governance_specialist|Data Governance Specialist]]"
+    },
+    {
+      "key": "data_integration_developer",
+      "value": "Data Integration Developer",
+      "link": "[[data_integration_developer|Data Integration Developer]]"
+    },
+    {
+      "key": "data_integration_specialist",
+      "value": "Data Integration Specialist",
+      "link": "[[data_integration_specialist|Data Integration Specialist]]"
+    },
+    {
+      "key": "data_management_analyst",
+      "value": "Data Management Analyst",
+      "link": "[[data_management_analyst|Data Management Analyst]]"
+    },
+    {
+      "key": "data_management_consultant",
+      "value": "Data Management Consultant",
+      "link": "[[data_management_consultant|Data Management Consultant]]"
+    },
+    {
+      "key": "data_management_coordinator",
+      "value": "Data Management Coordinator",
+      "link": "[[data_management_coordinator|Data Management Coordinator]]"
+    },
+    {
+      "key": "data_management_director",
+      "value": "Data Management Director",
+      "link": "[[data_management_director|Data Management Director]]"
+    },
+    {
+      "key": "data_management_engineer",
+      "value": "Data Management Engineer",
+      "link": "[[data_management_engineer|Data Management Engineer]]"
+    },
+    {
+      "key": "data_management_lead",
+      "value": "Data Management Lead",
+      "link": "[[data_management_lead|Data Management Lead]]"
+    },
+    {
+      "key": "data_management_manager",
+      "value": "Data Management Manager",
+      "link": "[[data_management_manager|Data Management Manager]]"
+    },
+    {
+      "key": "data_management_specialist",
+      "value": "Data Management Specialist",
+      "link": "[[data_management_specialist|Data Management Specialist]]"
+    },
+    {
+      "key": "data_migration_lead",
+      "value": "Data Migration Lead",
+      "link": "[[data_migration_lead|Data Migration Lead]]"
+    },
+    {
+      "key": "data_migration_manager",
+      "value": "Data Migration Manager",
+      "link": "[[data_migration_manager|Data Migration Manager]]"
+    },
+    {
+      "key": "data_migration_specialist",
+      "value": "Data Migration Specialist",
+      "link": "[[data_migration_specialist|Data Migration Specialist]]"
+    },
+    {
+      "key": "data_mining_analyst",
+      "value": "Data Mining Analyst",
+      "link": "[[data_mining_analyst|Data Mining Analyst]]"
+    },
+    {
+      "key": "data_mining_engineer",
+      "value": "Data Mining Engineer",
+      "link": "[[data_mining_engineer|Data Mining Engineer]]"
+    },
+    {
+      "key": "data_mining_lead",
+      "value": "Data Mining Lead",
+      "link": "[[data_mining_lead|Data Mining Lead]]"
+    },
+    {
+      "key": "data_mining_manager",
+      "value": "Data Mining Manager",
+      "link": "[[data_mining_manager|Data Mining Manager]]"
+    },
+    {
+      "key": "data_mining_specialist",
+      "value": "Data Mining Specialist",
+      "link": "[[data_mining_specialist|Data Mining Specialist]]"
+    },
+    {
+      "key": "data_modeler",
+      "value": "Data Modeler",
+      "link": "[[data_modeler|Data Modeler]]"
+    },
+    {
+      "key": "data_operations_manager",
+      "value": "Data Operations Manager",
+      "link": "[[data_operations_manager|Data Operations Manager]]"
+    },
+    {
+      "key": "data_privacy_analyst",
+      "value": "Data Privacy Analyst",
+      "link": "[[data_privacy_analyst|Data Privacy Analyst]]"
+    },
+    {
+      "key": "data_privacy_lead",
+      "value": "Data Privacy Lead",
+      "link": "[[data_privacy_lead|Data Privacy Lead]]"
+    },
+    {
+      "key": "data_privacy_manager",
+      "value": "Data Privacy Manager",
+      "link": "[[data_privacy_manager|Data Privacy Manager]]"
+    },
+    {
+      "key": "data_privacy_officer",
+      "value": "Data Privacy Officer",
+      "link": "[[data_privacy_officer|Data Privacy Officer]]"
+    },
+    {
+      "key": "data_privacy_specialist",
+      "value": "Data Privacy Specialist",
+      "link": "[[data_privacy_specialist|Data Privacy Specialist]]"
+    },
+    {
+      "key": "data_protection_officer",
+      "value": "Data Protection Officer",
+      "link": "[[data_protection_officer|Data Protection Officer]]"
+    },
+    {
+      "key": "data_quality_analyst",
+      "value": "Data Quality Analyst",
+      "link": "[[data_quality_analyst|Data Quality Analyst]]"
+    },
+    {
+      "key": "data_quality_consultant",
+      "value": "Data Quality Consultant",
+      "link": "[[data_quality_consultant|Data Quality Consultant]]"
+    },
+    {
+      "key": "data_quality_developer",
+      "value": "Data Quality Developer",
+      "link": "[[data_quality_developer|Data Quality Developer]]"
+    },
+    {
+      "key": "data_quality_lead",
+      "value": "Data Quality Lead",
+      "link": "[[data_quality_lead|Data Quality Lead]]"
+    },
+    {
+      "key": "data_quality_manager",
+      "value": "Data Quality Manager",
+      "link": "[[data_quality_manager|Data Quality Manager]]"
+    },
+    {
+      "key": "data_quality_specialist",
+      "value": "Data Quality Specialist",
+      "link": "[[data_quality_specialist|Data Quality Specialist]]"
+    },
+    {
+      "key": "data_science_analyst",
+      "value": "Data Science Analyst",
+      "link": "[[data_science_analyst|Data Science Analyst]]"
+    },
+    {
+      "key": "data_science_consultant",
+      "value": "Data Science Consultant",
+      "link": "[[data_science_consultant|Data Science Consultant]]"
+    },
+    {
+      "key": "data_science_developer",
+      "value": "Data Science Developer",
+      "link": "[[data_science_developer|Data Science Developer]]"
+    },
+    {
+      "key": "data_science_director",
+      "value": "Data Science Director",
+      "link": "[[data_science_director|Data Science Director]]"
+    },
+    {
+      "key": "data_science_intern",
+      "value": "Data Science Intern",
+      "link": "[[data_science_intern|Data Science Intern]]"
+    },
+    {
+      "key": "data_science_lead",
+      "value": "Data Science Lead",
+      "link": "[[data_science_lead|Data Science Lead]]"
+    },
+    {
+      "key": "data_science_manager",
+      "value": "Data Science Manager",
+      "link": "[[data_science_manager|Data Science Manager]]"
+    },
+    {
+      "key": "data_science_specialist",
+      "value": "Data Science Specialist",
+      "link": "[[data_science_specialist|Data Science Specialist]]"
+    },
+    {
+      "key": "data_scientist",
+      "value": "Data Scientist",
+      "link": "[[data_scientist|Data Scientist]]"
+    },
+    {
+      "key": "data_scientist_consultant",
+      "value": "Data Scientist Consultant",
+      "link": "[[data_scientist_consultant|Data Scientist Consultant]]"
+    },
+    {
+      "key": "data_scientist_sr",
+      "value": "Senior Data Scientist",
+      "link": "[[data_scientist_sr|Senior Data Scientist]]"
+    },
+    {
+      "key": "data_security_analyst",
+      "value": "Data Security Analyst",
+      "link": "[[data_security_analyst|Data Security Analyst]]"
+    },
+    {
+      "key": "data_security_lead",
+      "value": "Data Security Lead",
+      "link": "[[data_security_lead|Data Security Lead]]"
+    },
+    {
+      "key": "data_security_manager",
+      "value": "Data Security Manager",
+      "link": "[[data_security_manager|Data Security Manager]]"
+    },
+    {
+      "key": "data_security_specialist",
+      "value": "Data Security Specialist",
+      "link": "[[data_security_specialist|Data Security Specialist]]"
+    },
+    {
+      "key": "data_steward",
+      "value": "Data Steward",
+      "link": "[[data_steward|Data Steward]]"
+    },
+    {
+      "key": "data_storyteller",
+      "value": "Data Storyteller",
+      "link": "[[data_storyteller|Data Storyteller]]"
+    },
+    {
+      "key": "data_strategy_lead",
+      "value": "Data Strategy Lead",
+      "link": "[[data_strategy_lead|Data Strategy Lead]]"
+    },
+    {
+      "key": "data_strategy_manager",
+      "value": "Data Strategy Manager",
+      "link": "[[data_strategy_manager|Data Strategy Manager]]"
+    },
+    {
+      "key": "data_strategy_specialist",
+      "value": "Data Strategy Specialist",
+      "link": "[[data_strategy_specialist|Data Strategy Specialist]]"
+    },
+    {
+      "key": "data_visualization_analyst",
+      "value": "Data Visualization Analyst",
+      "link": "[[data_visualization_analyst|Data Visualization Analyst]]"
+    },
+    {
+      "key": "data_visualization_developer",
+      "value": "Data Visualization Developer",
+      "link": "[[data_visualization_developer|Data Visualization Developer]]"
+    },
+    {
+      "key": "data_visualization_lead",
+      "value": "Data Visualization Lead",
+      "link": "[[data_visualization_lead|Data Visualization Lead]]"
+    },
+    {
+      "key": "data_visualization_manager",
+      "value": "Data Visualization Manager",
+      "link": "[[data_visualization_manager|Data Visualization Manager]]"
+    },
+    {
+      "key": "data_visualization_specialist",
+      "value": "Data Visualization Specialist",
+      "link": "[[data_visualization_specialist|Data Visualization Specialist]]"
+    },
+    {
+      "key": "data_warehouse_administrator",
+      "value": "Data Warehouse Administrator",
+      "link": "[[data_warehouse_administrator|Data Warehouse Administrator]]"
+    },
+    {
+      "key": "data_warehouse_analyst",
+      "value": "Data Warehouse Analyst",
+      "link": "[[data_warehouse_analyst|Data Warehouse Analyst]]"
+    },
+    {
+      "key": "data_warehouse_architect",
+      "value": "Data Warehouse Architect",
+      "link": "[[data_warehouse_architect|Data Warehouse Architect]]"
+    },
+    {
+      "key": "data_warehouse_consultant",
+      "value": "Data Warehouse Consultant",
+      "link": "[[data_warehouse_consultant|Data Warehouse Consultant]]"
+    },
+    {
+      "key": "data_warehouse_developer",
+      "value": "Data Warehouse Developer",
+      "link": "[[data_warehouse_developer|Data Warehouse Developer]]"
+    },
+    {
+      "key": "data_warehouse_engineer",
+      "value": "Data Warehouse Engineer",
+      "link": "[[data_warehouse_engineer|Data Warehouse Engineer]]"
+    },
+    {
+      "key": "data_warehouse_lead",
+      "value": "Data Warehouse Lead",
+      "link": "[[data_warehouse_lead|Data Warehouse Lead]]"
+    },
+    {
+      "key": "data_warehouse_manager",
+      "value": "Data Warehouse Manager",
+      "link": "[[data_warehouse_manager|Data Warehouse Manager]]"
+    },
+    {
+      "key": "data_warehouse_specialist",
+      "value": "Data Warehouse Specialist",
+      "link": "[[data_warehouse_specialist|Data Warehouse Specialist]]"
+    },
+    {
+      "key": "data_wrangler",
+      "value": "Data Wrangler",
+      "link": "[[data_wrangler|Data Wrangler]]"
+    },
+    {
+      "key": "database_administrator",
+      "value": "Database Administrator",
+      "link": "[[database_administrator|Database Administrator]]"
+    },
+    {
+      "key": "database_administrator_intern",
+      "value": "Database Administrator Intern",
+      "link": "[[database_administrator_intern|Database Administrator Intern]]"
+    },
+    {
+      "key": "dental_assistant",
+      "value": "Dental Assistant",
+      "link": "[[dental_assistant|Dental Assistant]]"
+    },
+    {
+      "key": "dental_hygienist",
+      "value": "Dental Hygienist",
+      "link": "[[dental_hygienist|Dental Hygienist]]"
+    },
+    {
+      "key": "dentist",
+      "value": "Dentist",
+      "link": "[[dentist|Dentist]]"
+    },
+    {
+      "key": "dermatologist",
+      "value": "Dermatologist",
+      "link": "[[dermatologist|Dermatologist]]"
+    },
+    {
+      "key": "design_engineer",
+      "value": "Design Engineer",
+      "link": "[[design_engineer|Design Engineer]]"
+    },
+    {
+      "key": "designer",
+      "value": "Designer",
+      "link": "[[designer|Designer]]"
+    },
+    {
+      "key": "desktop_publisher",
+      "value": "Desktop Publisher",
+      "link": "[[desktop_publisher|Desktop Publisher]]"
+    },
+    {
+      "key": "detective",
+      "value": "Detective",
+      "link": "[[detective|Detective]]"
+    },
+    {
+      "key": "developer_advocate_sr",
+      "value": "Senior Developer Advocate",
+      "link": "[[developer_advocate_sr|Senior Developer Advocate]]"
+    },
+    {
+      "key": "development_director",
+      "value": "Director of Development",
+      "link": "[[development_director|Director of Development]]"
+    },
+    {
+      "key": "devops_engineer",
+      "value": "DevOps Engineer",
+      "link": "[[devops_engineer|DevOps Engineer]]"
+    },
+    {
+      "key": "digital_marketer",
+      "value": "Digital Marketer",
+      "link": "[[digital_marketer|Digital Marketer]]"
+    },
+    {
+      "key": "digital_marketing_manager",
+      "value": "Digital Marketing Manager",
+      "link": "[[digital_marketing_manager|Digital Marketing Manager]]"
+    },
+    {
+      "key": "digital_strategist",
+      "value": "Digital Strategist",
+      "link": "[[digital_strategist|Digital Strategist]]"
+    },
+    {
+      "key": "direct_salesperson",
+      "value": "Direct Salesperson",
+      "link": "[[direct_salesperson|Direct Salesperson]]"
+    },
+    {
+      "key": "director",
+      "value": "Director",
+      "link": "[[director|Director]]"
+    },
+    {
+      "key": "dispatcher",
+      "value": "Dispatcher",
+      "link": "[[dispatcher|Dispatcher]]"
+    },
+    {
+      "key": "distribution_manager",
+      "value": "Distribution Manager",
+      "link": "[[distribution_manager|Distribution Manager]]"
+    },
+    {
+      "key": "district_manager",
+      "value": "District Manager",
+      "link": "[[district_manager|District Manager]]"
+    },
+    {
+      "key": "dj",
+      "value": "DJ",
+      "link": "[[dj|DJ]]"
+    },
+    {
+      "key": "doctor",
+      "value": "Doctor",
+      "link": "[[doctor|Doctor]]"
+    },
+    {
+      "key": "document_control_specialist",
+      "value": "Document Control Specialist",
+      "link": "[[document_control_specialist|Document Control Specialist]]"
+    },
+    {
+      "key": "drafter",
+      "value": "Drafter",
+      "link": "[[drafter|Drafter]]"
+    },
+    {
+      "key": "driver",
+      "value": "Driver",
+      "link": "[[driver|Driver]]"
+    },
+    {
+      "key": "ecommerce_marketing_specialist",
+      "value": "eCommerce Marketing Specialist",
+      "link": "[[ecommerce_marketing_specialist|eCommerce Marketing Specialist]]"
+    },
+    {
+      "key": "economist",
+      "value": "Economist",
+      "link": "[[economist|Economist]]"
+    },
+    {
+      "key": "Editor",
+      "value": "Editor",
+      "link": "[[Editor|Editor]]"
+    },
+    {
+      "key": "educational_director",
+      "value": "Educational Director",
+      "link": "[[educational_director|Educational Director]]"
+    },
+    {
+      "key": "electrical_engineer",
+      "value": "Electrical Engineer",
+      "link": "[[electrical_engineer|Electrical Engineer]]"
+    },
+    {
+      "key": "electrician",
+      "value": "Electrician",
+      "link": "[[electrician|Electrician]]"
+    },
+    {
+      "key": "electronic_technician",
+      "value": "Electronic Technician",
+      "link": "[[electronic_technician|Electronic Technician]]"
+    },
+    {
+      "key": "elementary_school_teacher",
+      "value": "Elementary School Teacher",
+      "link": "[[elementary_school_teacher|Elementary School Teacher]]"
+    },
+    {
+      "key": "employee_engagement_specialist",
+      "value": "Employee Engagement Specialist",
+      "link": "[[employee_engagement_specialist|Employee Engagement Specialist]]"
+    },
+    {
+      "key": "engineer",
+      "value": "Engineer",
+      "link": "[[engineer|Engineer]]"
+    },
+    {
+      "key": "engineering_manager",
+      "value": "Engineering Manager",
+      "link": "[[engineering_manager|Engineering Manager]]"
+    },
+    {
+      "key": "engineering_technician",
+      "value": "Engineering Technician",
+      "link": "[[engineering_technician|Engineering Technician]]"
+    },
+    {
+      "key": "english_teacher",
+      "value": "English Teacher",
+      "link": "[[english_teacher|English Teacher]]"
+    },
+    {
+      "key": "entrepreneur",
+      "value": "Entrepreneur",
+      "link": "[[entrepreneur|Entrepreneur]]"
+    },
+    {
+      "key": "environmental_engineer",
+      "value": "Environmental Engineer",
+      "link": "[[environmental_engineer|Environmental Engineer]]"
+    },
+    {
+      "key": "environmental_scientist",
+      "value": "Environmental Scientist",
+      "link": "[[environmental_scientist|Environmental Scientist]]"
+    },
+    {
+      "key": "epidemiologist",
+      "value": "Epidemiologist",
+      "link": "[[epidemiologist|Epidemiologist]]"
+    },
+    {
+      "key": "equipment_operator",
+      "value": "Equipment Operator",
+      "link": "[[equipment_operator|Equipment Operator]]"
+    },
+    {
+      "key": "etl_developer",
+      "value": "ETL Developer",
+      "link": "[[etl_developer|ETL Developer]]"
+    },
+    {
+      "key": "evangelist",
+      "value": "Evangelist",
+      "link": "[[evangelist|Evangelist]]"
+    },
+    {
+      "key": "event_coordinator",
+      "value": "Event Coordinator",
+      "link": "[[event_coordinator|Event Coordinator]]"
+    },
+    {
+      "key": "event_planner",
+      "value": "Event Planner",
+      "link": "[[event_planner|Event Planner]]"
+    },
+    {
+      "key": "executive_assistant",
+      "value": "Executive Assistant",
+      "link": "[[executive_assistant|Executive Assistant]]"
+    },
+    {
+      "key": "executive_chef",
+      "value": "Executive Chef",
+      "link": "[[executive_chef|Executive Chef]]"
+    },
+    {
+      "key": "expert",
+      "value": "Expert",
+      "link": "[[expert|Expert]]"
+    },
+    {
+      "key": "f_p_a_analyst",
+      "value": "Financial Planning and Analysis Analyst",
+      "link": "[[f_p_a_analyst|Financial Planning and Analysis Analyst]]"
+    },
+    {
+      "key": "f_p_a_analyst_jr",
+      "value": "Junior Financial Planning and Analysis Analyst",
+      "link": "[[f_p_a_analyst_jr|Junior Financial Planning and Analysis Analyst]]"
+    },
+    {
+      "key": "facilities_manager",
+      "value": "Facilities Manager",
+      "link": "[[facilities_manager|Facilities Manager]]"
+    },
+    {
+      "key": "family_physician",
+      "value": "Family Physician",
+      "link": "[[family_physician|Family Physician]]"
+    },
+    {
+      "key": "fashion_designer",
+      "value": "Fashion Designer",
+      "link": "[[fashion_designer|Fashion Designer]]"
+    },
+    {
+      "key": "federal_agent",
+      "value": "Federal Agent",
+      "link": "[[federal_agent|Federal Agent]]"
+    },
+    {
+      "key": "field_service_technician",
+      "value": "Field Service Technician",
+      "link": "[[field_service_technician|Field Service Technician]]"
+    },
+    {
+      "key": "file_clerk",
+      "value": "File Clerk",
+      "link": "[[file_clerk|File Clerk]]"
+    },
+    {
+      "key": "film_critic",
+      "value": "Film Critic",
+      "link": "[[film_critic|Film Critic]]"
+    },
+    {
+      "key": "film_director",
+      "value": "Film Director",
+      "link": "[[film_director|Film Director]]"
+    },
+    {
+      "key": "film_producer",
+      "value": "Film Producer",
+      "link": "[[film_producer|Film Producer]]"
+    },
+    {
+      "key": "finance_director",
+      "value": "Finance Director",
+      "link": "[[finance_director|Finance Director]]"
+    },
+    {
+      "key": "finance_manager",
+      "value": "Finance Manager",
+      "link": "[[finance_manager|Finance Manager]]"
+    },
+    {
+      "key": "finance_vp",
+      "value": "Vice President of Finance",
+      "link": "[[finance_vp|Vice President of Finance]]"
+    },
+    {
+      "key": "financial_analyst",
+      "value": "Financial Analyst",
+      "link": "[[financial_analyst|Financial Analyst]]"
+    },
+    {
+      "key": "financial_manager",
+      "value": "Financial Manager",
+      "link": "[[financial_manager|Financial Manager]]"
+    },
+    {
+      "key": "financial_planner",
+      "value": "Financial Planner",
+      "link": "[[financial_planner|Financial Planner]]"
+    },
+    {
+      "key": "financial_services_representative",
+      "value": "Financial Services Representative",
+      "link": "[[financial_services_representative|Financial Services Representative]]"
+    },
+    {
+      "key": "finops_analyst",
+      "value": "Finops Analyst",
+      "link": "[[finops_analyst|Finops Analyst]]"
+    },
+    {
+      "key": "firefighter",
+      "value": "Firefighter",
+      "link": "[[firefighter|Firefighter]]"
+    },
+    {
+      "key": "fitness_trainer",
+      "value": "Fitness Trainer",
+      "link": "[[fitness_trainer|Fitness Trainer]]"
+    },
+    {
+      "key": "flight_attendant",
+      "value": "Flight Attendant",
+      "link": "[[flight_attendant|Flight Attendant]]"
+    },
+    {
+      "key": "food_scientist",
+      "value": "Food Scientist",
+      "link": "[[food_scientist|Food Scientist]]"
+    },
+    {
+      "key": "food_service_manager",
+      "value": "Food Service Manager",
+      "link": "[[food_service_manager|Food Service Manager]]"
+    },
+    {
+      "key": "foreign_language_teacher",
+      "value": "Foreign Language Teacher",
+      "link": "[[foreign_language_teacher|Foreign Language Teacher]]"
+    },
+    {
+      "key": "forensic_scientist",
+      "value": "Forensic Scientist",
+      "link": "[[forensic_scientist|Forensic Scientist]]"
+    },
+    {
+      "key": "forklift_operator",
+      "value": "Forklift Operator",
+      "link": "[[forklift_operator|Forklift Operator]]"
+    },
+    {
+      "key": "founder",
+      "value": "Founder",
+      "link": "[[founder|Founder]]"
+    },
+    {
+      "key": "freelance_writer",
+      "value": "Freelance Writer",
+      "link": "[[freelance_writer|Freelance Writer]]"
+    },
+    {
+      "key": "front_desk_clerk",
+      "value": "Front Desk Clerk",
+      "link": "[[front_desk_clerk|Front Desk Clerk]]"
+    },
+    {
+      "key": "front-end_developer",
+      "value": "Front-end Developer",
+      "link": "[[front-end_developer|Front-end Developer]]"
+    },
+    {
+      "key": "full-stack_developer",
+      "value": "Full-stack Developer",
+      "link": "[[full-stack_developer|Full-stack Developer]]"
+    },
+    {
+      "key": "fundraiser",
+      "value": "Fundraiser",
+      "link": "[[fundraiser|Fundraiser]]"
+    },
+    {
+      "key": "furniture_designer",
+      "value": "Furniture Designer",
+      "link": "[[furniture_designer|Furniture Designer]]"
+    },
+    {
+      "key": "game_designer",
+      "value": "Game Designer",
+      "link": "[[game_designer|Game Designer]]"
+    },
+    {
+      "key": "game_developer",
+      "value": "Game Developer",
+      "link": "[[game_developer|Game Developer]]"
+    },
+    {
+      "key": "general_counsel",
+      "value": "General Counsel",
+      "link": "[[general_counsel|General Counsel]]"
+    },
+    {
+      "key": "generalist",
+      "value": "Generalist",
+      "link": "[[generalist|Generalist]]"
+    },
+    {
+      "key": "geological_engineer",
+      "value": "Geological Engineer",
+      "link": "[[geological_engineer|Geological Engineer]]"
+    },
+    {
+      "key": "geologist",
+      "value": "Geologist",
+      "link": "[[geologist|Geologist]]"
+    },
+    {
+      "key": "ghostwriter",
+      "value": "Ghostwriter",
+      "link": "[[ghostwriter|Ghostwriter]]"
+    },
+    {
+      "key": "global_operations_director",
+      "value": "Director of Global Operations",
+      "link": "[[global_operations_director|Director of Global Operations]]"
+    },
+    {
+      "key": "grant_writer",
+      "value": "Grant Writer",
+      "link": "[[grant_writer|Grant Writer]]"
+    },
+    {
+      "key": "graphic_designer",
+      "value": "Graphic Designer",
+      "link": "[[graphic_designer|Graphic Designer]]"
+    },
+    {
+      "key": "growth_analyst",
+      "value": "Growth Analyst",
+      "link": "[[growth_analyst|Growth Analyst]]"
+    },
+    {
+      "key": "growth_head",
+      "value": "Head of Growth",
+      "link": "[[growth_head|Head of Growth]]"
+    },
+    {
+      "key": "handyman",
+      "value": "Handyman",
+      "link": "[[handyman|Handyman]]"
+    },
+    {
+      "key": "hardware_engineer",
+      "value": "Hardware Engineer",
+      "link": "[[hardware_engineer|Hardware Engineer]]"
+    },
+    {
+      "key": "heavy_equipment_operator",
+      "value": "Heavy Equipment Operator",
+      "link": "[[heavy_equipment_operator|Heavy Equipment Operator]]"
+    },
+    {
+      "key": "help_desk",
+      "value": "Help Desk",
+      "link": "[[help_desk|Help Desk]]"
+    },
+    {
+      "key": "help_desk_worker",
+      "value": "Help Desk Worker",
+      "link": "[[help_desk_worker|Help Desk Worker]]"
+    },
+    {
+      "key": "hr",
+      "value": "Human Resources",
+      "link": "[[hr|Human Resources]]"
+    },
+    {
+      "key": "hr_administrator",
+      "value": "Human Resources Administrator",
+      "link": "[[hr_administrator|Human Resources Administrator]]"
+    },
+    {
+      "key": "hr_advisor",
+      "value": "Human Resources Advisor",
+      "link": "[[hr_advisor|Human Resources Advisor]]"
+    },
+    {
+      "key": "hr_analyst",
+      "value": "Human Resources Analyst",
+      "link": "[[hr_analyst|Human Resources Analyst]]"
+    },
+    {
+      "key": "hr_assistant",
+      "value": "Human Resources Assistant",
+      "link": "[[hr_assistant|Human Resources Assistant]]"
+    },
+    {
+      "key": "hr_assistant_manager",
+      "value": "Human Resources Assistant Manager",
+      "link": "[[hr_assistant_manager|Human Resources Assistant Manager]]"
+    },
+    {
+      "key": "hr_associate",
+      "value": "Human Resources Associate",
+      "link": "[[hr_associate|Human Resources Associate]]"
+    },
+    {
+      "key": "hr_audit_consultant",
+      "value": "Human Resources Audit Consultant",
+      "link": "[[hr_audit_consultant|Human Resources Audit Consultant]]"
+    },
+    {
+      "key": "hr_audit_coordinator",
+      "value": "Human Resources Audit Coordinator",
+      "link": "[[hr_audit_coordinator|Human Resources Audit Coordinator]]"
+    },
+    {
+      "key": "hr_audit_director",
+      "value": "Human Resources Audit Director",
+      "link": "[[hr_audit_director|Human Resources Audit Director]]"
+    },
+    {
+      "key": "hr_audit_manager",
+      "value": "Human Resources Audit Manager",
+      "link": "[[hr_audit_manager|Human Resources Audit Manager]]"
+    },
+    {
+      "key": "hr_audit_specialist",
+      "value": "Human Resources Audit Specialist",
+      "link": "[[hr_audit_specialist|Human Resources Audit Specialist]]"
+    },
+    {
+      "key": "hr_benefits_administrator",
+      "value": "Human Resources Benefits Administrator",
+      "link": "[[hr_benefits_administrator|Human Resources Benefits Administrator]]"
+    },
+    {
+      "key": "hr_benefits_analyst",
+      "value": "Human Resources Benefits Analyst",
+      "link": "[[hr_benefits_analyst|Human Resources Benefits Analyst]]"
+    },
+    {
+      "key": "hr_benefits_consultant",
+      "value": "Human Resources Benefits Consultant",
+      "link": "[[hr_benefits_consultant|Human Resources Benefits Consultant]]"
+    },
+    {
+      "key": "hr_benefits_coordinator",
+      "value": "Human Resources Benefits Coordinator",
+      "link": "[[hr_benefits_coordinator|Human Resources Benefits Coordinator]]"
+    },
+    {
+      "key": "hr_benefits_manager",
+      "value": "Human Resources Benefits Manager",
+      "link": "[[hr_benefits_manager|Human Resources Benefits Manager]]"
+    },
+    {
+      "key": "hr_benefits_specialist",
+      "value": "Human Resources Benefits Specialist",
+      "link": "[[hr_benefits_specialist|Human Resources Benefits Specialist]]"
+    },
+    {
+      "key": "hr_business_analyst",
+      "value": "Human Resources Business Analyst",
+      "link": "[[hr_business_analyst|Human Resources Business Analyst]]"
+    },
+    {
+      "key": "hr_communications_consultant",
+      "value": "Human Resources Communications Consultant",
+      "link": "[[hr_communications_consultant|Human Resources Communications Consultant]]"
+    },
+    {
+      "key": "hr_communications_coordinator",
+      "value": "Human Resources Communications Coordinator",
+      "link": "[[hr_communications_coordinator|Human Resources Communications Coordinator]]"
+    },
+    {
+      "key": "hr_communications_director",
+      "value": "Human Resources Communications Director",
+      "link": "[[hr_communications_director|Human Resources Communications Director]]"
+    },
+    {
+      "key": "hr_communications_manager",
+      "value": "Human Resources Communications Manager",
+      "link": "[[hr_communications_manager|Human Resources Communications Manager]]"
+    },
+    {
+      "key": "hr_communications_specialist",
+      "value": "Human Resources Communications Specialist",
+      "link": "[[hr_communications_specialist|Human Resources Communications Specialist]]"
+    },
+    {
+      "key": "hr_compliance_analyst",
+      "value": "Human Resources Compliance Analyst",
+      "link": "[[hr_compliance_analyst|Human Resources Compliance Analyst]]"
+    },
+    {
+      "key": "hr_compliance_consultant",
+      "value": "Human Resources Compliance Consultant",
+      "link": "[[hr_compliance_consultant|Human Resources Compliance Consultant]]"
+    },
+    {
+      "key": "hr_compliance_coordinator",
+      "value": "Human Resources Compliance Coordinator",
+      "link": "[[hr_compliance_coordinator|Human Resources Compliance Coordinator]]"
+    },
+    {
+      "key": "hr_compliance_manager",
+      "value": "Human Resources Compliance Manager",
+      "link": "[[hr_compliance_manager|Human Resources Compliance Manager]]"
+    },
+    {
+      "key": "hr_compliance_specialist",
+      "value": "Human Resources Compliance Specialist",
+      "link": "[[hr_compliance_specialist|Human Resources Compliance Specialist]]"
+    },
+    {
+      "key": "hr_consultant",
+      "value": "Human Resources Consultant",
+      "link": "[[hr_consultant|Human Resources Consultant]]"
+    },
+    {
+      "key": "hr_coordinator",
+      "value": "Human Resources Coordinator",
+      "link": "[[hr_coordinator|Human Resources Coordinator]]"
+    },
+    {
+      "key": "hr_data_analyst",
+      "value": "Human Resources Data Analyst",
+      "link": "[[hr_data_analyst|Human Resources Data Analyst]]"
+    },
+    {
+      "key": "hr_data_coordinator",
+      "value": "Human Resources Data Coordinator",
+      "link": "[[hr_data_coordinator|Human Resources Data Coordinator]]"
+    },
+    {
+      "key": "hr_director",
+      "value": "Human Resources Director",
+      "link": "[[hr_director|Human Resources Director]]"
+    },
+    {
+      "key": "hr_executive",
+      "value": "Human Resources Executive",
+      "link": "[[hr_executive|Human Resources Executive]]"
+    },
+    {
+      "key": "hr_generalist",
+      "value": "Human Resources Generalist",
+      "link": "[[hr_generalist|Human Resources Generalist]]"
+    },
+    {
+      "key": "hr_head",
+      "value": "Head of Human Resources",
+      "link": "[[hr_head|Head of Human Resources]]"
+    },
+    {
+      "key": "hr_information_analyst",
+      "value": "Human Resources Information Analyst",
+      "link": "[[hr_information_analyst|Human Resources Information Analyst]]"
+    },
+    {
+      "key": "hr_information_systems_administrator",
+      "value": "Human Resources Information Systems Administrator",
+      "link": "[[hr_information_systems_administrator|Human Resources Information Systems Administrator]]"
+    },
+    {
+      "key": "hr_information_systems_analyst",
+      "value": "Human Resources Information Systems Analyst",
+      "link": "[[hr_information_systems_analyst|Human Resources Information Systems Analyst]]"
+    },
+    {
+      "key": "hr_information_systems_business_analyst",
+      "value": "Human Resources Information Systems Business Analyst",
+      "link": "[[hr_information_systems_business_analyst|Human Resources Information Systems Business Analyst]]"
+    },
+    {
+      "key": "hr_information_systems_consultant",
+      "value": "Human Resources Information Systems Consultant",
+      "link": "[[hr_information_systems_consultant|Human Resources Information Systems Consultant]]"
+    },
+    {
+      "key": "hr_information_systems_coordinator",
+      "value": "Human Resources Information Systems Coordinator",
+      "link": "[[hr_information_systems_coordinator|Human Resources Information Systems Coordinator]]"
+    },
+    {
+      "key": "hr_information_systems_data_analyst",
+      "value": "Human Resources Information Systems Data Analyst",
+      "link": "[[hr_information_systems_data_analyst|Human Resources Information Systems Data Analyst]]"
+    },
+    {
+      "key": "hr_information_systems_director",
+      "value": "Human Resources Information Systems Director",
+      "link": "[[hr_information_systems_director|Human Resources Information Systems Director]]"
+    },
+    {
+      "key": "hr_information_systems_manager",
+      "value": "Human Resources Information Systems Manager",
+      "link": "[[hr_information_systems_manager|Human Resources Information Systems Manager]]"
+    },
+    {
+      "key": "hr_information_systems_project_manager",
+      "value": "Human Resources Information Systems Project Manager",
+      "link": "[[hr_information_systems_project_manager|Human Resources Information Systems Project Manager]]"
+    },
+    {
+      "key": "hr_information_systems_specialist",
+      "value": "Human Resources Information Systems Specialist",
+      "link": "[[hr_information_systems_specialist|Human Resources Information Systems Specialist]]"
+    },
+    {
+      "key": "hr_information_systems_support_specialist",
+      "value": "Human Resources Information Systems Support Specialist",
+      "link": "[[hr_information_systems_support_specialist|Human Resources Information Systems Support Specialist]]"
+    },
+    {
+      "key": "hr_information_systems_trainer",
+      "value": "Human Resources Information Systems Trainer",
+      "link": "[[hr_information_systems_trainer|Human Resources Information Systems Trainer]]"
+    },
+    {
+      "key": "hr_manager",
+      "value": "Human Resources Manager",
+      "link": "[[hr_manager|Human Resources Manager]]"
+    },
+    {
+      "key": "hr_metrics_analyst",
+      "value": "Human Resources Metrics Analyst",
+      "link": "[[hr_metrics_analyst|Human Resources Metrics Analyst]]"
+    },
+    {
+      "key": "hr_officer",
+      "value": "Human Resources Officer",
+      "link": "[[hr_officer|Human Resources Officer]]"
+    },
+    {
+      "key": "hr_operations_analyst",
+      "value": "Human Resources Operations Analyst",
+      "link": "[[hr_operations_analyst|Human Resources Operations Analyst]]"
+    },
+    {
+      "key": "hr_operations_consultant",
+      "value": "Human Resources Operations Consultant",
+      "link": "[[hr_operations_consultant|Human Resources Operations Consultant]]"
+    },
+    {
+      "key": "hr_operations_coordinator",
+      "value": "Human Resources Operations Coordinator",
+      "link": "[[hr_operations_coordinator|Human Resources Operations Coordinator]]"
+    },
+    {
+      "key": "hr_operations_director",
+      "value": "Human Resources Operations Director",
+      "link": "[[hr_operations_director|Human Resources Operations Director]]"
+    },
+    {
+      "key": "hr_operations_manager",
+      "value": "Human Resources Operations Manager",
+      "link": "[[hr_operations_manager|Human Resources Operations Manager]]"
+    },
+    {
+      "key": "hr_operations_specialist",
+      "value": "Human Resources Operations Specialist",
+      "link": "[[hr_operations_specialist|Human Resources Operations Specialist]]"
+    },
+    {
+      "key": "hr_recruiter",
+      "value": "Human Resources Recruiter",
+      "link": "[[hr_recruiter|Human Resources Recruiter]]"
+    },
+    {
+      "key": "hr_reporting_analyst",
+      "value": "Human Resources Reporting Analyst",
+      "link": "[[hr_reporting_analyst|Human Resources Reporting Analyst]]"
+    },
+    {
+      "key": "hr_representative",
+      "value": "Human Resources Representative",
+      "link": "[[hr_representative|Human Resources Representative]]"
+    },
+    {
+      "key": "hr_service_center_analyst",
+      "value": "Human Resources Service Center Analyst",
+      "link": "[[hr_service_center_analyst|Human Resources Service Center Analyst]]"
+    },
+    {
+      "key": "hr_service_center_consultant",
+      "value": "Human Resources Service Center Consultant",
+      "link": "[[hr_service_center_consultant|Human Resources Service Center Consultant]]"
+    },
+    {
+      "key": "hr_service_center_coordinator",
+      "value": "Human Resources Service Center Coordinator",
+      "link": "[[hr_service_center_coordinator|Human Resources Service Center Coordinator]]"
+    },
+    {
+      "key": "hr_service_center_manager",
+      "value": "Human Resources Service Center Manager",
+      "link": "[[hr_service_center_manager|Human Resources Service Center Manager]]"
+    },
+    {
+      "key": "hr_service_center_specialist",
+      "value": "Human Resources Service Center Specialist",
+      "link": "[[hr_service_center_specialist|Human Resources Service Center Specialist]]"
+    },
+    {
+      "key": "hr_specialist",
+      "value": "Human Resources Specialist",
+      "link": "[[hr_specialist|Human Resources Specialist]]"
+    },
+    {
+      "key": "hr_support",
+      "value": "Human Resources Support",
+      "link": "[[hr_support|Human Resources Support]]"
+    },
+    {
+      "key": "hr_systems_processes_and_benefits_specialist",
+      "value": "Human Resources Systems, Processes, and Benefits Specialist",
+      "link": "[[hr_systems_processes_and_benefits_specialist|Human Resources Systems, Processes, and Benefits Specialist]]"
+    },
+    {
+      "key": "hr_vp",
+      "value": "Vice President of Human Resources",
+      "link": "[[hr_vp|Vice President of Human Resources]]"
+    },
+    {
+      "key": "hrbp",
+      "value": "Human Resources Business Partner",
+      "link": "[[hrbp|Human Resources Business Partner]]"
+    },
+    {
+      "key": "hrbp_consultant",
+      "value": "Human Resources Business Partner Consultant",
+      "link": "[[hrbp_consultant|Human Resources Business Partner Consultant]]"
+    },
+    {
+      "key": "hrbp_coordinator",
+      "value": "Human Resources Business Partner Coordinator",
+      "link": "[[hrbp_coordinator|Human Resources Business Partner Coordinator]]"
+    },
+    {
+      "key": "hrbp_director",
+      "value": "Human Resources Business Partner Director",
+      "link": "[[hrbp_director|Human Resources Business Partner Director]]"
+    },
+    {
+      "key": "hrbp_manager",
+      "value": "Human Resources Business Partner Manager",
+      "link": "[[hrbp_manager|Human Resources Business Partner Manager]]"
+    },
+    {
+      "key": "hrbp_specialist",
+      "value": "Human Resources Business Partner Specialist",
+      "link": "[[hrbp_specialist|Human Resources Business Partner Specialist]]"
+    },
+    {
+      "key": "information_security_analyst",
+      "value": "Information Security Analyst",
+      "link": "[[information_security_analyst|Information Security Analyst]]"
+    },
+    {
+      "key": "information_technology_specialist",
+      "value": "Information Technology Specialist",
+      "link": "[[information_technology_specialist|Information Technology Specialist]]"
+    },
+    {
+      "key": "inside_sales_director",
+      "value": "Director of Inside Sales",
+      "link": "[[inside_sales_director|Director of Inside Sales]]"
+    },
+    {
+      "key": "instructor",
+      "value": "Instructor",
+      "link": "[[instructor|Instructor]]"
+    },
+    {
+      "key": "interaction_designer",
+      "value": "Interaction Designer",
+      "link": "[[interaction_designer|Interaction Designer]]"
+    },
+    {
+      "key": "intern",
+      "value": "Intern",
+      "link": "[[intern|Intern]]"
+    },
+    {
+      "key": "interpreter",
+      "value": "Interpreter",
+      "link": "[[interpreter|Interpreter]]"
+    },
+    {
+      "key": "iron_worker",
+      "value": "Iron Worker",
+      "link": "[[iron_worker|Iron Worker]]"
+    },
+    {
+      "key": "it_manager",
+      "value": "IT Manager",
+      "link": "[[it_manager|IT Manager]]"
+    },
+    {
+      "key": "it_professional",
+      "value": "IT Professional",
+      "link": "[[it_professional|IT Professional]]"
+    },
+    {
+      "key": "journalist",
+      "value": "Journalist",
+      "link": "[[journalist|Journalist]]"
+    },
+    {
+      "key": "learning_and_development_director",
+      "value": "Director of Learning and Development",
+      "link": "[[learning_and_development_director|Director of Learning and Development]]"
+    },
+    {
+      "key": "learning_and_development_specialist",
+      "value": "Learning and Development Specialist",
+      "link": "[[learning_and_development_specialist|Learning and Development Specialist]]"
+    },
+    {
+      "key": "lecturer",
+      "value": "Lecturer",
+      "link": "[[lecturer|Lecturer]]"
+    },
+    {
+      "key": "librarian",
+      "value": "Librarian",
+      "link": "[[librarian|Librarian]]"
+    },
+    {
+      "key": "maintenance_engineer",
+      "value": "Maintenance Engineer",
+      "link": "[[maintenance_engineer|Maintenance Engineer]]"
+    },
+    {
+      "key": "manager",
+      "value": "Manager",
+      "link": "[[manager|Manager]]"
+    },
+    {
+      "key": "managing_director",
+      "value": "Managing Director",
+      "link": "[[managing_director|Managing Director]]"
+    },
+    {
+      "key": "managing_member",
+      "value": "Managing Member",
+      "link": "[[managing_member|Managing Member]]"
+    },
+    {
+      "key": "managing_partner",
+      "value": "Managing Partner",
+      "link": "[[managing_partner|Managing Partner]]"
+    },
+    {
+      "key": "market_development_manager",
+      "value": "Market Development Manager",
+      "link": "[[market_development_manager|Market Development Manager]]"
+    },
+    {
+      "key": "market_researcher",
+      "value": "Market Researcher",
+      "link": "[[market_researcher|Market Researcher]]"
+    },
+    {
+      "key": "marketing_analyst",
+      "value": "Marketing Analyst",
+      "link": "[[marketing_analyst|Marketing Analyst]]"
+    },
+    {
+      "key": "marketing_analyst_jr",
+      "value": "Junior Marketing Analyst",
+      "link": "[[marketing_analyst_jr|Junior Marketing Analyst]]"
+    },
+    {
+      "key": "marketing_communications_manager",
+      "value": "Marketing Communications Manager",
+      "link": "[[marketing_communications_manager|Marketing Communications Manager]]"
+    },
+    {
+      "key": "marketing_consultant",
+      "value": "Marketing Consultant",
+      "link": "[[marketing_consultant|Marketing Consultant]]"
+    },
+    {
+      "key": "marketing_data_analyst",
+      "value": "Marketing Data Analyst",
+      "link": "[[marketing_data_analyst|Marketing Data Analyst]]"
+    },
+    {
+      "key": "marketing_director",
+      "value": "Marketing Director",
+      "link": "[[marketing_director|Marketing Director]]"
+    },
+    {
+      "key": "marketing_insights_analyst",
+      "value": "Marketing Insights Analyst",
+      "link": "[[marketing_insights_analyst|Marketing Insights Analyst]]"
+    },
+    {
+      "key": "marketing_manager",
+      "value": "Marketing Manager",
+      "link": "[[marketing_manager|Marketing Manager]]"
+    },
+    {
+      "key": "marketing_research_analyst",
+      "value": "Marketing Research Analyst",
+      "link": "[[marketing_research_analyst|Marketing Research Analyst]]"
+    },
+    {
+      "key": "marketing_specialist",
+      "value": "Marketing Specialist",
+      "link": "[[marketing_specialist|Marketing Specialist]]"
+    },
+    {
+      "key": "marketing_vp",
+      "value": "Vice President of Marketing",
+      "link": "[[marketing_vp|Vice President of Marketing]]"
+    },
+    {
+      "key": "mason",
+      "value": "Mason",
+      "link": "[[mason|Mason]]"
+    },
+    {
+      "key": "massage_therapy",
+      "value": "Massage Therapy",
+      "link": "[[massage_therapy|Massage Therapy]]"
+    },
+    {
+      "key": "master_data_management_(mdm)_analyst",
+      "value": "Master Data Management (MDM) Analyst",
+      "link": "[[master_data_management_(mdm)_analyst|Master Data Management (MDM) Analyst]]"
+    },
+    {
+      "key": "master_data_management_lead",
+      "value": "Master Data Management Lead",
+      "link": "[[master_data_management_lead|Master Data Management Lead]]"
+    },
+    {
+      "key": "master_data_management_specialist",
+      "value": "Master Data Management Specialist",
+      "link": "[[master_data_management_specialist|Master Data Management Specialist]]"
+    },
+    {
+      "key": "mdm_architect",
+      "value": "MDM Architect",
+      "link": "[[mdm_architect|MDM Architect]]"
+    },
+    {
+      "key": "mdm_developer",
+      "value": "MDM Developer",
+      "link": "[[mdm_developer|MDM Developer]]"
+    },
+    {
+      "key": "mdm_manager",
+      "value": "MDM Manager",
+      "link": "[[mdm_manager|MDM Manager]]"
+    },
+    {
+      "key": "mechanical_engineer",
+      "value": "Mechanical Engineer",
+      "link": "[[mechanical_engineer|Mechanical Engineer]]"
+    },
+    {
+      "key": "media_buyer",
+      "value": "Media Buyer",
+      "link": "[[media_buyer|Media Buyer]]"
+    },
+    {
+      "key": "media_producer",
+      "value": "Media Producer",
+      "link": "[[media_producer|Media Producer]]"
+    },
+    {
+      "key": "media_relations_coordinator",
+      "value": "Media Relations Coordinator",
+      "link": "[[media_relations_coordinator|Media Relations Coordinator]]"
+    },
+    {
+      "key": "medical_administrator",
+      "value": "Medical Administrator",
+      "link": "[[medical_administrator|Medical Administrator]]"
+    },
+    {
+      "key": "medical_laboratory_tech",
+      "value": "Medical Laboratory Tech",
+      "link": "[[medical_laboratory_tech|Medical Laboratory Tech]]"
+    },
+    {
+      "key": "medical_researcher",
+      "value": "Medical Researcher",
+      "link": "[[medical_researcher|Medical Researcher]]"
+    },
+    {
+      "key": "medical_transcriptionist",
+      "value": "Medical Transcriptionist",
+      "link": "[[medical_transcriptionist|Medical Transcriptionist]]"
+    },
+    {
+      "key": "mep_engineer",
+      "value": "MEP Engineer",
+      "link": "[[mep_engineer|MEP Engineer]]"
+    },
+    {
+      "key": "merchandising_associate",
+      "value": "Merchandising Associate",
+      "link": "[[merchandising_associate|Merchandising Associate]]"
+    },
+    {
+      "key": "mining_engineer",
+      "value": "Mining Engineer",
+      "link": "[[mining_engineer|Mining Engineer]]"
+    },
+    {
+      "key": "ml_analyst",
+      "value": "Machine Learning Analyst",
+      "link": "[[ml_analyst|Machine Learning Analyst]]"
+    },
+    {
+      "key": "ml_engineer",
+      "value": "Machine Learning Engineer",
+      "link": "[[ml_engineer|Machine Learning Engineer]]"
+    },
+    {
+      "key": "ml_lead",
+      "value": "Machine Learning Lead",
+      "link": "[[ml_lead|Machine Learning Lead]]"
+    },
+    {
+      "key": "ml_manager",
+      "value": "Machine Learning Manager",
+      "link": "[[ml_manager|Machine Learning Manager]]"
+    },
+    {
+      "key": "ml_scientist",
+      "value": "Machine Learning Scientist",
+      "link": "[[ml_scientist|Machine Learning Scientist]]"
+    },
+    {
+      "key": "ml_specialist",
+      "value": "Machine Learning Specialist",
+      "link": "[[ml_specialist|Machine Learning Specialist]]"
+    },
+    {
+      "key": "mobile_developer",
+      "value": "Mobile Developer",
+      "link": "[[mobile_developer|Mobile Developer]]"
+    },
+    {
+      "key": "molecular_scientist",
+      "value": "Molecular Scientist",
+      "link": "[[molecular_scientist|Molecular Scientist]]"
+    },
+    {
+      "key": "musician",
+      "value": "Musician",
+      "link": "[[musician|Musician]]"
+    },
+    {
+      "key": "network_administrator",
+      "value": "Network Administrator",
+      "link": "[[network_administrator|Network Administrator]]"
+    },
+    {
+      "key": "network_engineer",
+      "value": "Network Engineer",
+      "link": "[[network_engineer|Network Engineer]]"
+    },
+    {
+      "key": "nuclear_engineer",
+      "value": "Nuclear Engineer",
+      "link": "[[nuclear_engineer|Nuclear Engineer]]"
+    },
+    {
+      "key": "nurse",
+      "value": "Nurse",
+      "link": "[[nurse|Nurse]]"
+    },
+    {
+      "key": "nurse_practitioner",
+      "value": "Nurse Practitioner",
+      "link": "[[nurse_practitioner|Nurse Practitioner]]"
+    },
+    {
+      "key": "office_assistant",
+      "value": "Office Assistant",
+      "link": "[[office_assistant|Office Assistant]]"
+    },
+    {
+      "key": "office_clerk",
+      "value": "Office Clerk",
+      "link": "[[office_clerk|Office Clerk]]"
+    },
+    {
+      "key": "office_manager",
+      "value": "Office Manager",
+      "link": "[[office_manager|Office Manager]]"
+    },
+    {
+      "key": "operations_analyst",
+      "value": "Operations Analyst",
+      "link": "[[operations_analyst|Operations Analyst]]"
+    },
+    {
+      "key": "operations_analyst_jr",
+      "value": "Junior Operations Analyst",
+      "link": "[[operations_analyst_jr|Junior Operations Analyst]]"
+    },
+    {
+      "key": "operations_assistant",
+      "value": "Operations Assistant",
+      "link": "[[operations_assistant|Operations Assistant]]"
+    },
+    {
+      "key": "operations_coordinator",
+      "value": "Operations Coordinator",
+      "link": "[[operations_coordinator|Operations Coordinator]]"
+    },
+    {
+      "key": "operations_director",
+      "value": "Director of Operations",
+      "link": "[[operations_director|Director of Operations]]"
+    },
+    {
+      "key": "operations_director",
+      "value": "Operations Director",
+      "link": "[[operations_director|Operations Director]]"
+    },
+    {
+      "key": "operations_manager",
+      "value": "Operations Manager",
+      "link": "[[operations_manager|Operations Manager]]"
+    },
+    {
+      "key": "operations_professional",
+      "value": "Operations Professional",
+      "link": "[[operations_professional|Operations Professional]]"
+    },
+    {
+      "key": "operations_vp",
+      "value": "Vice President of Operations",
+      "link": "[[operations_vp|Vice President of Operations]]"
+    },
+    {
+      "key": "operator",
+      "value": "Operator",
+      "link": "[[operator|Operator]]"
+    },
+    {
+      "key": "orderly",
+      "value": "Orderly",
+      "link": "[[orderly|Orderly]]"
+    },
+    {
+      "key": "outside_sales_manager",
+      "value": "Outside Sales Manager",
+      "link": "[[outside_sales_manager|Outside Sales Manager]]"
+    },
+    {
+      "key": "owner",
+      "value": "Owner",
+      "link": "[[owner|Owner]]"
+    },
+    {
+      "key": "painter",
+      "value": "Painter",
+      "link": "[[painter|Painter]]"
+    },
+    {
+      "key": "partner",
+      "value": "Partner",
+      "link": "[[partner|Partner]]"
+    },
+    {
+      "key": "partner_sr",
+      "value": "Senior Partner",
+      "link": "[[partner_sr|Senior Partner]]"
+    },
+    {
+      "key": "payroll_clerk",
+      "value": "Payroll Clerk",
+      "link": "[[payroll_clerk|Payroll Clerk]]"
+    },
+    {
+      "key": "payroll_manager",
+      "value": "Payroll Manager",
+      "link": "[[payroll_manager|Payroll Manager]]"
+    },
+    {
+      "key": "people_analyst",
+      "value": "People Analyst",
+      "link": "[[people_analyst|People Analyst]]"
+    },
+    {
+      "key": "people_and_talent_director",
+      "value": "Director of People and Talent",
+      "link": "[[people_and_talent_director|Director of People and Talent]]"
+    },
+    {
+      "key": "performance_analyst",
+      "value": "Performance Analyst",
+      "link": "[[performance_analyst|Performance Analyst]]"
+    },
+    {
+      "key": "performance_marketing_analyst",
+      "value": "Performance Marketing Analyst",
+      "link": "[[performance_marketing_analyst|Performance Marketing Analyst]]"
+    },
+    {
+      "key": "personal_assistant",
+      "value": "Personal Assistant",
+      "link": "[[personal_assistant|Personal Assistant]]"
+    },
+    {
+      "key": "personal_trainer",
+      "value": "Personal Trainer",
+      "link": "[[personal_trainer|Personal Trainer]]"
+    },
+    {
+      "key": "petroleum_engineer",
+      "value": "Petroleum Engineer",
+      "link": "[[petroleum_engineer|Petroleum Engineer]]"
+    },
+    {
+      "key": "pharmacist",
+      "value": "Pharmacist",
+      "link": "[[pharmacist|Pharmacist]]"
+    },
+    {
+      "key": "pharmacy_assistant",
+      "value": "Pharmacy Assistant",
+      "link": "[[pharmacy_assistant|Pharmacy Assistant]]"
+    },
+    {
+      "key": "phlebotomist",
+      "value": "Phlebotomist",
+      "link": "[[phlebotomist|Phlebotomist]]"
+    },
+    {
+      "key": "physical_therapist",
+      "value": "Physical Therapist",
+      "link": "[[physical_therapist|Physical Therapist]]"
+    },
+    {
+      "key": "physical_therapy_assistant",
+      "value": "Physical Therapy Assistant",
+      "link": "[[physical_therapy_assistant|Physical Therapy Assistant]]"
+    },
+    {
+      "key": "physicist",
+      "value": "Physicist",
+      "link": "[[physicist|Physicist]]"
+    },
+    {
+      "key": "pipefitter",
+      "value": "Pipefitter",
+      "link": "[[pipefitter|Pipefitter]]"
+    },
+    {
+      "key": "plant_engineer",
+      "value": "Plant Engineer",
+      "link": "[[plant_engineer|Plant Engineer]]"
+    },
+    {
+      "key": "plumber",
+      "value": "Plumber",
+      "link": "[[plumber|Plumber]]"
+    },
+    {
+      "key": "political_scientist",
+      "value": "Political Scientist",
+      "link": "[[political_scientist|Political Scientist]]"
+    },
+    {
+      "key": "ppc_analyst",
+      "value": "PPC Analyst",
+      "link": "[[ppc_analyst|PPC Analyst]]"
+    },
+    {
+      "key": "predictive_analytics_developer",
+      "value": "Predictive Analytics Developer",
+      "link": "[[predictive_analytics_developer|Predictive Analytics Developer]]"
+    },
+    {
+      "key": "predictive_analytics_lead",
+      "value": "Predictive Analytics Lead",
+      "link": "[[predictive_analytics_lead|Predictive Analytics Lead]]"
+    },
+    {
+      "key": "predictive_analytics_manager",
+      "value": "Predictive Analytics Manager",
+      "link": "[[predictive_analytics_manager|Predictive Analytics Manager]]"
+    },
+    {
+      "key": "predictive_analytics_modeler",
+      "value": "Predictive Analytics Modeler",
+      "link": "[[predictive_analytics_modeler|Predictive Analytics Modeler]]"
+    },
+    {
+      "key": "predictive_analytics_specialist",
+      "value": "Predictive Analytics Specialist",
+      "link": "[[predictive_analytics_specialist|Predictive Analytics Specialist]]"
+    },
+    {
+      "key": "president",
+      "value": "President",
+      "link": "[[president|President]]"
+    },
+    {
+      "key": "principal",
+      "value": "Principal",
+      "link": "[[principal|Principal]]"
+    },
+    {
+      "key": "principal_research_scientist",
+      "value": "Principal Research Scientist",
+      "link": "[[principal_research_scientist|Principal Research Scientist]]"
+    },
+    {
+      "key": "producer",
+      "value": "Producer",
+      "link": "[[producer|Producer]]"
+    },
+    {
+      "key": "product_analyst",
+      "value": "Product Analyst",
+      "link": "[[product_analyst|Product Analyst]]"
+    },
+    {
+      "key": "product_data_analyst",
+      "value": "Product Data Analyst",
+      "link": "[[product_data_analyst|Product Data Analyst]]"
+    },
+    {
+      "key": "product_manager",
+      "value": "Product Manager",
+      "link": "[[product_manager|Product Manager]]"
+    },
+    {
+      "key": "product_owner",
+      "value": "Product Owner",
+      "link": "[[product_owner|Product Owner]]"
+    },
+    {
+      "key": "production_engineer",
+      "value": "Production Engineer",
+      "link": "[[production_engineer|Production Engineer]]"
+    },
+    {
+      "key": "professor",
+      "value": "Professor",
+      "link": "[[professor|Professor]]"
+    },
+    {
+      "key": "program_administrator",
+      "value": "Program Administrator",
+      "link": "[[program_administrator|Program Administrator]]"
+    },
+    {
+      "key": "program_manager",
+      "value": "Program Manager",
+      "link": "[[program_manager|Program Manager]]"
+    },
+    {
+      "key": "project_manager",
+      "value": "Project Manager",
+      "link": "[[project_manager|Project Manager]]"
+    },
+    {
+      "key": "proofreader",
+      "value": "Proofreader",
+      "link": "[[proofreader|Proofreader]]"
+    },
+    {
+      "key": "proposal_writer",
+      "value": "Proposal Writer",
+      "link": "[[proposal_writer|Proposal Writer]]"
+    },
+    {
+      "key": "proprietor",
+      "value": "Proprietor",
+      "link": "[[proprietor|Proprietor]]"
+    },
+    {
+      "key": "public_relations",
+      "value": "Public Relations",
+      "link": "[[public_relations|Public Relations]]"
+    },
+    {
+      "key": "public_relations_specialist",
+      "value": "Public Relations Specialist",
+      "link": "[[public_relations_specialist|Public Relations Specialist]]"
+    },
+    {
+      "key": "python_and_data_science_corporate_trainer_and_consultant",
+      "value": "Python and Data Science Corporate Trainer and Consultant",
+      "link": "[[python_and_data_science_corporate_trainer_and_consultant|Python and Data Science Corporate Trainer and Consultant]]"
+    },
+    {
+      "key": "qa_engineer",
+      "value": "QA Engineer",
+      "link": "[[qa_engineer|QA Engineer]]"
+    },
+    {
+      "key": "quality_control_coordinator",
+      "value": "Quality Control Coordinator",
+      "link": "[[quality_control_coordinator|Quality Control Coordinator]]"
+    },
+    {
+      "key": "quality_engineer",
+      "value": "Quality Engineer",
+      "link": "[[quality_engineer|Quality Engineer]]"
+    },
+    {
+      "key": "quantitative_analyst",
+      "value": "Quantitative Analyst",
+      "link": "[[quantitative_analyst|Quantitative Analyst]]"
+    },
+    {
+      "key": "real_estate_broker",
+      "value": "Real Estate Broker",
+      "link": "[[real_estate_broker|Real Estate Broker]]"
+    },
+    {
+      "key": "receptionist",
+      "value": "Receptionist",
+      "link": "[[receptionist|Receptionist]]"
+    },
+    {
+      "key": "records_clerk",
+      "value": "Records Clerk",
+      "link": "[[records_clerk|Records Clerk]]"
+    },
+    {
+      "key": "recruiter",
+      "value": "Recruiter",
+      "link": "[[recruiter|Recruiter]]"
+    },
+    {
+      "key": "recruiting_director",
+      "value": "Director of Recruiting",
+      "link": "[[recruiting_director|Director of Recruiting]]"
+    },
+    {
+      "key": "research_and_development_vp",
+      "value": "Vice President of Research and Development",
+      "link": "[[research_and_development_vp|Vice President of Research and Development]]"
+    },
+    {
+      "key": "research_assistant",
+      "value": "Research Assistant",
+      "link": "[[research_assistant|Research Assistant]]"
+    },
+    {
+      "key": "research_informatics_senior_scientist",
+      "value": "Research Informatics Senior Scientist",
+      "link": "[[research_informatics_senior_scientist|Research Informatics Senior Scientist]]"
+    },
+    {
+      "key": "research_manager",
+      "value": "Research Manager",
+      "link": "[[research_manager|Research Manager]]"
+    },
+    {
+      "key": "research_scientist",
+      "value": "Research Scientist",
+      "link": "[[research_scientist|Research Scientist]]"
+    },
+    {
+      "key": "researcher",
+      "value": "Researcher",
+      "link": "[[researcher|Researcher]]"
+    },
+    {
+      "key": "resource_development_manager",
+      "value": "Resource Development Manager",
+      "link": "[[resource_development_manager|Resource Development Manager]]"
+    },
+    {
+      "key": "retail_worker",
+      "value": "Retail Worker",
+      "link": "[[retail_worker|Retail Worker]]"
+    },
+    {
+      "key": "risk_analyst",
+      "value": "Risk Analyst",
+      "link": "[[risk_analyst|Risk Analyst]]"
+    },
+    {
+      "key": "risk_manager",
+      "value": "Risk Manager",
+      "link": "[[risk_manager|Risk Manager]]"
+    },
+    {
+      "key": "roofer",
+      "value": "Roofer",
+      "link": "[[roofer|Roofer]]"
+    },
+    {
+      "key": "safety_engineer",
+      "value": "Safety Engineer",
+      "link": "[[safety_engineer|Safety Engineer]]"
+    },
+    {
+      "key": "sales_analyst",
+      "value": "Sales Analyst",
+      "link": "[[sales_analyst|Sales Analyst]]"
+    },
+    {
+      "key": "sales_and_marketing_specialist",
+      "value": "Sales And Marketing Specialist",
+      "link": "[[sales_and_marketing_specialist|Sales And Marketing Specialist]]"
+    },
+    {
+      "key": "sales_associate",
+      "value": "Sales Associate",
+      "link": "[[sales_associate|Sales Associate]]"
+    },
+    {
+      "key": "sales_director",
+      "value": "Director of Sales",
+      "link": "[[sales_director|Director of Sales]]"
+    },
+    {
+      "key": "sales_engineer",
+      "value": "Sales Engineer",
+      "link": "[[sales_engineer|Sales Engineer]]"
+    },
+    {
+      "key": "sales_head",
+      "value": "Head of Sales",
+      "link": "[[sales_head|Head of Sales]]"
+    },
+    {
+      "key": "sales_manager",
+      "value": "Sales Manager",
+      "link": "[[sales_manager|Sales Manager]]"
+    },
+    {
+      "key": "sales_representative",
+      "value": "Sales Representative",
+      "link": "[[sales_representative|Sales Representative]]"
+    },
+    {
+      "key": "sales_specialist",
+      "value": "Sales Specialist",
+      "link": "[[sales_specialist|Sales Specialist]]"
+    },
+    {
+      "key": "sales_vp",
+      "value": "Vice President of Sales",
+      "link": "[[sales_vp|Vice President of Sales]]"
+    },
+    {
+      "key": "scientist",
+      "value": "Scientist",
+      "link": "[[scientist|Scientist]]"
+    },
+    {
+      "key": "screenwriter",
+      "value": "Screenwriter",
+      "link": "[[screenwriter|Screenwriter]]"
+    },
+    {
+      "key": "scrum_master",
+      "value": "Scrum Master",
+      "link": "[[scrum_master|Scrum Master]]"
+    },
+    {
+      "key": "secretary",
+      "value": "Secretary",
+      "link": "[[secretary|Secretary]]"
+    },
+    {
+      "key": "security_engineer",
+      "value": "Security Engineer",
+      "link": "[[security_engineer|Security Engineer]]"
+    },
+    {
+      "key": "seo_manager",
+      "value": "SEO Manager",
+      "link": "[[seo_manager|SEO Manager]]"
+    },
+    {
+      "key": "sheet_metal_worker",
+      "value": "Sheet Metal Worker",
+      "link": "[[sheet_metal_worker|Sheet Metal Worker]]"
+    },
+    {
+      "key": "social_media_assistant",
+      "value": "Social Media Assistant",
+      "link": "[[social_media_assistant|Social Media Assistant]]"
+    },
+    {
+      "key": "social_media_manager",
+      "value": "Social Media Manager",
+      "link": "[[social_media_manager|Social Media Manager]]"
+    },
+    {
+      "key": "social_media_specialist",
+      "value": "Social Media Specialist",
+      "link": "[[social_media_specialist|Social Media Specialist]]"
+    },
+    {
+      "key": "sociologist",
+      "value": "Sociologist",
+      "link": "[[sociologist|Sociologist]]"
+    },
+    {
+      "key": "software_architect",
+      "value": "Software Architect",
+      "link": "[[software_architect|Software Architect]]"
+    },
+    {
+      "key": "software_developer",
+      "value": "Software Developer",
+      "link": "[[software_developer|Software Developer]]"
+    },
+    {
+      "key": "software_developer_advocate",
+      "value": "Software Developer Advocate",
+      "link": "[[software_developer_advocate|Software Developer Advocate]]"
+    },
+    {
+      "key": "software_engineer",
+      "value": "Software Engineer",
+      "link": "[[software_engineer|Software Engineer]]"
+    },
+    {
+      "key": "solar_photovoltaic_installer",
+      "value": "Solar Photovoltaic Installer",
+      "link": "[[solar_photovoltaic_installer|Solar Photovoltaic Installer]]"
+    },
+    {
+      "key": "solutions_architect",
+      "value": "Solutions Architect",
+      "link": "[[solutions_architect|Solutions Architect]]"
+    },
+    {
+      "key": "specialist",
+      "value": "Specialist",
+      "link": "[[specialist|Specialist]]"
+    },
+    {
+      "key": "speechwriter",
+      "value": "Speechwriter",
+      "link": "[[speechwriter|Speechwriter]]"
+    },
+    {
+      "key": "sql_developer",
+      "value": "SQL Developer",
+      "link": "[[sql_developer|SQL Developer]]"
+    },
+    {
+      "key": "staff",
+      "value": "Staff",
+      "link": "[[staff|Staff]]"
+    },
+    {
+      "key": "statistician",
+      "value": "Statistician",
+      "link": "[[statistician|Statistician]]"
+    },
+    {
+      "key": "store_manager",
+      "value": "Store Manager",
+      "link": "[[store_manager|Store Manager]]"
+    },
+    {
+      "key": "strategist",
+      "value": "Strategist",
+      "link": "[[strategist|Strategist]]"
+    },
+    {
+      "key": "superintendent",
+      "value": "Superintendent",
+      "link": "[[superintendent|Superintendent]]"
+    },
+    {
+      "key": "supervisor",
+      "value": "Supervisor",
+      "link": "[[supervisor|Supervisor]]"
+    },
+    {
+      "key": "supply_manager",
+      "value": "Supply Manager",
+      "link": "[[supply_manager|Supply Manager]]"
+    },
+    {
+      "key": "support_specialist",
+      "value": "Support Specialist",
+      "link": "[[support_specialist|Support Specialist]]"
+    },
+    {
+      "key": "system_administrator",
+      "value": "System Administrator",
+      "link": "[[system_administrator|System Administrator]]"
+    },
+    {
+      "key": "systems_administrator",
+      "value": "Systems Administrator",
+      "link": "[[systems_administrator|Systems Administrator]]"
+    },
+    {
+      "key": "systems_developer",
+      "value": "Systems Developer",
+      "link": "[[systems_developer|Systems Developer]]"
+    },
+    {
+      "key": "talent_acquisition_manager",
+      "value": "Talent Acquisition Manager",
+      "link": "[[talent_acquisition_manager|Talent Acquisition Manager]]"
+    },
+    {
+      "key": "talent_acquisition_partner",
+      "value": "Talent Acquisition Partner",
+      "link": "[[talent_acquisition_partner|Talent Acquisition Partner]]"
+    },
+    {
+      "key": "talent_acquisition_recruiter",
+      "value": "Talent Acquisition Recruiter",
+      "link": "[[talent_acquisition_recruiter|Talent Acquisition Recruiter]]"
+    },
+    {
+      "key": "talent_acquisition_specialist",
+      "value": "Talent Acquisition Specialist",
+      "link": "[[talent_acquisition_specialist|Talent Acquisition Specialist]]"
+    },
+    {
+      "key": "talent_acquisition_vp",
+      "value": "Vice President of Talent Acquisition",
+      "link": "[[talent_acquisition_vp|Vice President of Talent Acquisition]]"
+    },
+    {
+      "key": "taper",
+      "value": "Taper",
+      "link": "[[taper|Taper]]"
+    },
+    {
+      "key": "teacher",
+      "value": "Teacher",
+      "link": "[[teacher|Teacher]]"
+    },
+    {
+      "key": "teaching_assistant",
+      "value": "Teaching Assistant",
+      "link": "[[teaching_assistant|Teaching Assistant]]"
+    },
+    {
+      "key": "tech_lead",
+      "value": "Tech Lead",
+      "link": "[[tech_lead|Tech Lead]]"
+    },
+    {
+      "key": "technical_recruiter",
+      "value": "Technical Recruiter",
+      "link": "[[technical_recruiter|Technical Recruiter]]"
+    },
+    {
+      "key": "technical_specialist",
+      "value": "Technical Specialist",
+      "link": "[[technical_specialist|Technical Specialist]]"
+    },
+    {
+      "key": "technical_support_specialist",
+      "value": "Technical Support Specialist",
+      "link": "[[technical_support_specialist|Technical Support Specialist]]"
+    },
+    {
+      "key": "technical_writer",
+      "value": "Technical Writer",
+      "link": "[[technical_writer|Technical Writer]]"
+    },
+    {
+      "key": "technician",
+      "value": "Technician",
+      "link": "[[technician|Technician]]"
+    },
+    {
+      "key": "test_engineer",
+      "value": "Test Engineer",
+      "link": "[[test_engineer|Test Engineer]]"
+    },
+    {
+      "key": "title_analyst",
+      "value": "Title Analyst",
+      "link": "[[title_analyst|Title Analyst]]"
+    },
+    {
+      "key": "title_researcher",
+      "value": "Title Researcher",
+      "link": "[[title_researcher|Title Researcher]]"
+    },
+    {
+      "key": "trainee",
+      "value": "Trainee",
+      "link": "[[trainee|Trainee]]"
+    },
+    {
+      "key": "trainer",
+      "value": "Trainer",
+      "link": "[[trainer|Trainer]]"
+    },
+    {
+      "key": "translator",
+      "value": "Translator",
+      "link": "[[translator|Translator]]"
+    },
+    {
+      "key": "travel_nurse",
+      "value": "Travel Nurse",
+      "link": "[[travel_nurse|Travel Nurse]]"
+    },
+    {
+      "key": "travel_writer",
+      "value": "Travel Writer",
+      "link": "[[travel_writer|Travel Writer]]"
+    },
+    {
+      "key": "tutor",
+      "value": "Tutor",
+      "link": "[[tutor|Tutor]]"
+    },
+    {
+      "key": "ux_designer",
+      "value": "UX Designer",
+      "link": "[[ux_designer|UX Designer]]"
+    },
+    {
+      "key": "ux_designer_and_ui_developer",
+      "value": "UX Designer and UI Developer",
+      "link": "[[ux_designer_and_ui_developer|UX Designer and UI Developer]]"
+    },
+    {
+      "key": "ux_ui_designer",
+      "value": "UX/UI Designer",
+      "link": "[[ux_ui_designer|UX/UI Designer]]"
+    },
+    {
+      "key": "vehicle_or_equipment_cleaner",
+      "value": "Vehicle or Equipment Cleaner",
+      "link": "[[vehicle_or_equipment_cleaner|Vehicle or Equipment Cleaner]]"
+    },
+    {
+      "key": "video_game_writer",
+      "value": "Video Game Writer",
+      "link": "[[video_game_writer|Video Game Writer]]"
+    },
+    {
+      "key": "videographer",
+      "value": "Videographer",
+      "link": "[[videographer|Videographer]]"
+    },
+    {
+      "key": "virtual_assistant",
+      "value": "Virtual Assistant",
+      "link": "[[virtual_assistant|Virtual Assistant]]"
+    },
+    {
+      "key": "waiter",
+      "value": "Waiter",
+      "link": "[[waiter|Waiter]]"
+    },
+    {
+      "key": "waitress",
+      "value": "Waitress",
+      "link": "[[waitress|Waitress]]"
+    },
+    {
+      "key": "web_designer",
+      "value": "Web Designer",
+      "link": "[[web_designer|Web Designer]]"
+    },
+    {
+      "key": "web_developer",
+      "value": "Web Developer",
+      "link": "[[web_developer|Web Developer]]"
+    },
+    {
+      "key": "web_producer",
+      "value": "Web Producer",
+      "link": "[[web_producer|Web Producer]]"
+    },
+    {
+      "key": "welder",
+      "value": "Welder",
+      "link": "[[welder|Welder]]"
+    },
+    {
+      "key": "welfare_manager",
+      "value": "Welfare Manager",
+      "link": "[[welfare_manager|Welfare Manager]]"
+    },
+    {
+      "key": "well_driller",
+      "value": "Well Driller",
+      "link": "[[well_driller|Well Driller]]"
+    },
+    {
+      "key": "worker",
+      "value": "Worker",
+      "link": "[[worker|Worker]]"
+    },
+    {
+      "key": "writer",
+      "value": "Writer",
+      "link": "[[writer|Writer]]"
+    }
+  ]
+}

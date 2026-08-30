@@ -1,0 +1,8 @@
+extends = ["lib"]
+excludes = ["date_published", "city", "edition", "volume"]
+
+[fields.lecturer]
+"$ref" = "#global/contact"
+
+[fields.institution]
+"$ref" = "#global/organization"

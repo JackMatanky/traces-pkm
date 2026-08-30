@@ -1,0 +1,6 @@
+extends = ["cal"]
+excludes = ["date_start", "date_end"]
+
+[fields.type]
+type = "select"
+values = ["lib", "pdev", "pkm", "task_event"]

@@ -1,0 +1,30 @@
+extends = ["lib"]
+
+[fields.type]
+type = "select"
+values = ["book"]
+
+[fields.doi]
+type = "input"
+
+[fields.isbn10]
+type = "input"
+
+[fields.isbn13]
+type = "input"
+
+[fields.year_published]
+"$ref" = "#global/year_published"
+
+[fields.city]
+"$ref" = "#global/city"
+
+[fields.edition]
+type = "number"
+step = 1.0
+
+[fields.cover_url]
+type = "input"
+
+[fields.cover_path]
+type = "file"

@@ -1,0 +1,6 @@
+extends = ["task"]
+excludes = ["date", "project", "parent_task"]
+
+[fields.type]
+type = "select"
+values = ["project"]

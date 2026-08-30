@@ -1,0 +1,10 @@
+extends = ["task"]
+excludes = ["date"]
+
+[fields.type]
+type = "select"
+values = ["parent_task", "habit", "morning_ritual", "workday_startup_ritual", "workday_shutdown_ritual", "evening_ritual", "job_application"]
+
+[fields.status]
+type = "select"
+values = ["to_do", "in_progress", "done", "discarded", "schedule", "on_hold", "applied", "offer", "rejected"]

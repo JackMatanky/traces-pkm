@@ -1,0 +1,6 @@
+extends = ["task"]
+excludes = ["date_start", "date_end"]
+
+[fields.subtype]
+type = "select"
+values = ["meeting", "phone_call", "video_call", "interview", "appointment", "lecture", "tutorial", "event", "gathering", "hangout"]

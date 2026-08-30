@@ -1,0 +1,93 @@
+[fields.date]
+type = "date"
+format = "%Y-%m-%d"
+
+[fields.date_start]
+type = "date"
+format = "%Y-%m-%dT%H:%M"
+
+[fields.date_end]
+type = "date"
+format = "%Y-%m-%dT%H:%M"
+
+[fields.task_start]
+type = "date"
+format = "%Y-%m-%d"
+
+[fields.task_end]
+type = "date"
+format = "%Y-%m-%d"
+
+[fields.due_do]
+type = "select"
+values = ["do", "due"]
+
+[fields.pillar]
+type = "file"
+multi = true
+folders = ["20_pillars"]
+
+[fields.goal]
+type = "file"
+multi = true
+folders = ["30_goals"]
+
+[fields.context]
+type = "select"
+values = ["personal", "habit_ritual", "education", "professional", "work"]
+
+[fields.project]
+type = "file"
+multi = true
+folders = ["41_personal", "42_education", "43_professional", "44_work", "45_habit_ritual"]
+class = ["project"]
+
+[fields.parent_task]
+type = "file"
+multi = true
+folders = ["41_personal", "42_education", "43_professional", "44_work", "45_habit_ritual"]
+class = ["task_parent"]
+
+[fields.status]
+type = "select"
+values = ["to_do", "in_progress", "done", "discarded", "schedule", "on_hold"]
+
+[fields.organization]
+type = "file"
+multi = true
+folders = ["52_organizations"]
+
+[fields.contact]
+type = "file"
+multi = true
+folders = ["51_contacts"]
+
+[fields.library]
+type = "file"
+multi = true
+folders = ["60_library"]
+
+[fields.city]
+type = "select"
+multi = true
+values = { path = "values/cities.json", value = "value", label = "label" }
+
+[fields.title]
+type = "input"
+
+[fields.aliases]
+type = "input"
+
+[fields.url]
+type = "input"
+
+[fields.about]
+type = "input"
+
+[fields.volume]
+type = "number"
+step = 1.0
+
+[fields.year_published]
+type = "date"
+format = "%Y"

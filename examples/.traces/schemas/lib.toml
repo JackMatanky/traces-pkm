@@ -1,0 +1,47 @@
+[fields.title]
+"$ref" = "#global/title"
+
+[fields.aliases]
+"$ref" = "#global/aliases"
+
+[fields.main_title]
+type = "input"
+
+[fields.subtitle]
+type = "input"
+
+[fields.date_published]
+type = "date"
+format = "%Y-%m-%d"
+
+[fields.series]
+type = "input"
+
+[fields.volume]
+"$ref" = "#global/volume"
+
+[fields.url]
+"$ref" = "#global/url"
+
+[fields.about]
+"$ref" = "#global/about"
+
+[fields.status]
+type = "select"
+values = ["undetermined", "schedule", "to_do", "in_progress", "done", "resource", "on_hold"]
+
+[fields.type]
+type = "select"
+values = ["book", "book_chapter", "journal", "report", "news", "magazine", "webpage", "blog", "video", "youtube", "documentary", "audio", "podcast", "documentation", "course", "course_lecture"]
+
+[fields.author]
+"$ref" = "#global/contact"
+
+[fields.editor]
+"$ref" = "#global/contact"
+
+[fields.translator]
+"$ref" = "#global/contact"
+
+[fields.publisher]
+"$ref" = "#global/organization"

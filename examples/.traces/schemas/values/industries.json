@@ -1,0 +1,2109 @@
+{
+  "entries": [
+    {
+      "key": "abrasives_and_nonmetallic_minerals_manufacturing",
+      "value": "Abrasives and Nonmetallic Minerals Manufacturing",
+      "link": "[[abrasives_and_nonmetallic_minerals_manufacturing|Abrasives and Nonmetallic Minerals Manufacturing]]"
+    },
+    {
+      "key": "accommodation",
+      "value": "Accommodation",
+      "link": "[[accommodation|Accommodation]]"
+    },
+    {
+      "key": "accounting",
+      "value": "Accounting",
+      "link": "[[accounting|Accounting]]"
+    },
+    {
+      "key": "administration_of_justice",
+      "value": "Administration of Justice",
+      "link": "[[administration_of_justice|Administration of Justice]]"
+    },
+    {
+      "key": "administrative_and_support_services",
+      "value": "Administrative and Support Services",
+      "link": "[[administrative_and_support_services|Administrative and Support Services]]"
+    },
+    {
+      "key": "advertising_services",
+      "value": "Advertising Services",
+      "link": "[[advertising_services|Advertising Services]]"
+    },
+    {
+      "key": "agricultural_chemical_manufacturing",
+      "value": "Agricultural Chemical Manufacturing",
+      "link": "[[agricultural_chemical_manufacturing|Agricultural Chemical Manufacturing]]"
+    },
+    {
+      "key": "agriculture_construction_mining_machinery_manufacturing",
+      "value": "Agriculture, Construction, Mining Machinery Manufacturing",
+      "link": "[[agriculture_construction_mining_machinery_manufacturing|Agriculture, Construction, Mining Machinery Manufacturing]]"
+    },
+    {
+      "key": "air_water_and_waste_program_management",
+      "value": "Air, Water, and Waste Program Management",
+      "link": "[[air_water_and_waste_program_management|Air, Water, and Waste Program Management]]"
+    },
+    {
+      "key": "airlines_and_aviation",
+      "value": "Airlines and Aviation",
+      "link": "[[airlines_and_aviation|Airlines and Aviation]]"
+    },
+    {
+      "key": "alternative_dispute_resolution",
+      "value": "Alternative Dispute Resolution",
+      "link": "[[alternative_dispute_resolution|Alternative Dispute Resolution]]"
+    },
+    {
+      "key": "alternative_medicine",
+      "value": "Alternative Medicine",
+      "link": "[[alternative_medicine|Alternative Medicine]]"
+    },
+    {
+      "key": "ambulance_services",
+      "value": "Ambulance Services",
+      "link": "[[ambulance_services|Ambulance Services]]"
+    },
+    {
+      "key": "amusement_parks_and_arcades",
+      "value": "Amusement Parks and Arcades",
+      "link": "[[amusement_parks_and_arcades|Amusement Parks and Arcades]]"
+    },
+    {
+      "key": "animal_feed_manufacturing",
+      "value": "Animal Feed Manufacturing",
+      "link": "[[animal_feed_manufacturing|Animal Feed Manufacturing]]"
+    },
+    {
+      "key": "animation_and_post-production",
+      "value": "Animation and Post-production",
+      "link": "[[animation_and_post-production|Animation and Post-production]]"
+    },
+    {
+      "key": "apparel_manufacturing",
+      "value": "Apparel Manufacturing",
+      "link": "[[apparel_manufacturing|Apparel Manufacturing]]"
+    },
+    {
+      "key": "appliances_electrical_and_electronics_manufacturing",
+      "value": "Appliances, Electrical, and Electronics Manufacturing",
+      "link": "[[appliances_electrical_and_electronics_manufacturing|Appliances, Electrical, and Electronics Manufacturing]]"
+    },
+    {
+      "key": "architectural_and_structural_metal_manufacturing",
+      "value": "Architectural and Structural Metal Manufacturing",
+      "link": "[[architectural_and_structural_metal_manufacturing|Architectural and Structural Metal Manufacturing]]"
+    },
+    {
+      "key": "architecture_and_planning",
+      "value": "Architecture and Planning",
+      "link": "[[architecture_and_planning|Architecture and Planning]]"
+    },
+    {
+      "key": "armed_forces",
+      "value": "Armed Forces",
+      "link": "[[armed_forces|Armed Forces]]"
+    },
+    {
+      "key": "artificial_rubber_and_synthetic_fiber_manufacturing",
+      "value": "Artificial Rubber and Synthetic Fiber Manufacturing",
+      "link": "[[artificial_rubber_and_synthetic_fiber_manufacturing|Artificial Rubber and Synthetic Fiber Manufacturing]]"
+    },
+    {
+      "key": "artists_and_writers",
+      "value": "Artists and Writers",
+      "link": "[[artists_and_writers|Artists and Writers]]"
+    },
+    {
+      "key": "audio_and_video_equipment_manufacturing",
+      "value": "Audio and Video Equipment Manufacturing",
+      "link": "[[audio_and_video_equipment_manufacturing|Audio and Video Equipment Manufacturing]]"
+    },
+    {
+      "key": "automation_machinery_manufacturing",
+      "value": "Automation Machinery Manufacturing",
+      "link": "[[automation_machinery_manufacturing|Automation Machinery Manufacturing]]"
+    },
+    {
+      "key": "aviation_and_aerospace_component_manufacturing",
+      "value": "Aviation and Aerospace Component Manufacturing",
+      "link": "[[aviation_and_aerospace_component_manufacturing|Aviation and Aerospace Component Manufacturing]]"
+    },
+    {
+      "key": "baked_goods_manufacturing",
+      "value": "Baked Goods Manufacturing",
+      "link": "[[baked_goods_manufacturing|Baked Goods Manufacturing]]"
+    },
+    {
+      "key": "banking",
+      "value": "Banking",
+      "link": "[[banking|Banking]]"
+    },
+    {
+      "key": "bars_taverns_and_nightclubs",
+      "value": "Bars, Taverns, and Nightclubs",
+      "link": "[[bars_taverns_and_nightclubs|Bars, Taverns, and Nightclubs]]"
+    },
+    {
+      "key": "bed-and-breakfasts_hostels_homestays",
+      "value": "Bed-and-Breakfasts, Hostels, Homestays",
+      "link": "[[bed-and-breakfasts_hostels_homestays|Bed-and-Breakfasts, Hostels, Homestays]]"
+    },
+    {
+      "key": "beverage_manufacturing",
+      "value": "Beverage Manufacturing",
+      "link": "[[beverage_manufacturing|Beverage Manufacturing]]"
+    },
+    {
+      "key": "biomass_electric_power_generation",
+      "value": "Biomass Electric Power Generation",
+      "link": "[[biomass_electric_power_generation|Biomass Electric Power Generation]]"
+    },
+    {
+      "key": "biotechnology_research",
+      "value": "Biotechnology Research",
+      "link": "[[biotechnology_research|Biotechnology Research]]"
+    },
+    {
+      "key": "blockchain_services",
+      "value": "Blockchain Services",
+      "link": "[[blockchain_services|Blockchain Services]]"
+    },
+    {
+      "key": "blogs",
+      "value": "Blogs",
+      "link": "[[blogs|Blogs]]"
+    },
+    {
+      "key": "boilers_tanks_and_shipping_container_manufacturing",
+      "value": "Boilers, Tanks, and Shipping Container Manufacturing",
+      "link": "[[boilers_tanks_and_shipping_container_manufacturing|Boilers, Tanks, and Shipping Container Manufacturing]]"
+    },
+    {
+      "key": "book_and_periodical_publishing",
+      "value": "Book and Periodical Publishing",
+      "link": "[[book_and_periodical_publishing|Book and Periodical Publishing]]"
+    },
+    {
+      "key": "book_publishing",
+      "value": "Book Publishing",
+      "link": "[[book_publishing|Book Publishing]]"
+    },
+    {
+      "key": "breweries",
+      "value": "Breweries",
+      "link": "[[breweries|Breweries]]"
+    },
+    {
+      "key": "broadcast_media_production_and_distribution",
+      "value": "Broadcast Media Production and Distribution",
+      "link": "[[broadcast_media_production_and_distribution|Broadcast Media Production and Distribution]]"
+    },
+    {
+      "key": "building_construction",
+      "value": "Building Construction",
+      "link": "[[building_construction|Building Construction]]"
+    },
+    {
+      "key": "building_equipment_contractors",
+      "value": "Building Equipment Contractors",
+      "link": "[[building_equipment_contractors|Building Equipment Contractors]]"
+    },
+    {
+      "key": "building_finishing_contractors",
+      "value": "Building Finishing Contractors",
+      "link": "[[building_finishing_contractors|Building Finishing Contractors]]"
+    },
+    {
+      "key": "building_structure_and_exterior_contractors",
+      "value": "Building Structure and Exterior Contractors",
+      "link": "[[building_structure_and_exterior_contractors|Building Structure and Exterior Contractors]]"
+    },
+    {
+      "key": "business_consulting_and_services",
+      "value": "Business Consulting and Services",
+      "link": "[[business_consulting_and_services|Business Consulting and Services]]"
+    },
+    {
+      "key": "business_content",
+      "value": "Business Content",
+      "link": "[[business_content|Business Content]]"
+    },
+    {
+      "key": "business_intelligence_platforms",
+      "value": "Business Intelligence Platforms",
+      "link": "[[business_intelligence_platforms|Business Intelligence Platforms]]"
+    },
+    {
+      "key": "cable_and_satellite_programming",
+      "value": "Cable and Satellite Programming",
+      "link": "[[cable_and_satellite_programming|Cable and Satellite Programming]]"
+    },
+    {
+      "key": "capital_markets",
+      "value": "Capital Markets",
+      "link": "[[capital_markets|Capital Markets]]"
+    },
+    {
+      "key": "caterers",
+      "value": "Caterers",
+      "link": "[[caterers|Caterers]]"
+    },
+    {
+      "key": "chemical_manufacturing",
+      "value": "Chemical Manufacturing",
+      "link": "[[chemical_manufacturing|Chemical Manufacturing]]"
+    },
+    {
+      "key": "chemical_raw_materials_manufacturing",
+      "value": "Chemical Raw Materials Manufacturing",
+      "link": "[[chemical_raw_materials_manufacturing|Chemical Raw Materials Manufacturing]]"
+    },
+    {
+      "key": "child_day_care_services",
+      "value": "Child Day Care Services",
+      "link": "[[child_day_care_services|Child Day Care Services]]"
+    },
+    {
+      "key": "chiropractors",
+      "value": "Chiropractors",
+      "link": "[[chiropractors|Chiropractors]]"
+    },
+    {
+      "key": "circuses_and_magic_shows",
+      "value": "Circuses and Magic Shows",
+      "link": "[[circuses_and_magic_shows|Circuses and Magic Shows]]"
+    },
+    {
+      "key": "civic_and_social_organizations",
+      "value": "Civic and Social Organizations",
+      "link": "[[civic_and_social_organizations|Civic and Social Organizations]]"
+    },
+    {
+      "key": "civil_engineering",
+      "value": "Civil Engineering",
+      "link": "[[civil_engineering|Civil Engineering]]"
+    },
+    {
+      "key": "claims_adjusting_actuarial_services",
+      "value": "Claims Adjusting, Actuarial Services",
+      "link": "[[claims_adjusting_actuarial_services|Claims Adjusting, Actuarial Services]]"
+    },
+    {
+      "key": "clay_and_refractory_products_manufacturing",
+      "value": "Clay and Refractory Products Manufacturing",
+      "link": "[[clay_and_refractory_products_manufacturing|Clay and Refractory Products Manufacturing]]"
+    },
+    {
+      "key": "coal_mining",
+      "value": "Coal Mining",
+      "link": "[[coal_mining|Coal Mining]]"
+    },
+    {
+      "key": "collection_agencies",
+      "value": "Collection Agencies",
+      "link": "[[collection_agencies|Collection Agencies]]"
+    },
+    {
+      "key": "commercial_and_industrial_equipment_rental",
+      "value": "Commercial and Industrial Equipment Rental",
+      "link": "[[commercial_and_industrial_equipment_rental|Commercial and Industrial Equipment Rental]]"
+    },
+    {
+      "key": "commercial_and_industrial_machinery_maintenance",
+      "value": "Commercial and Industrial Machinery Maintenance",
+      "link": "[[commercial_and_industrial_machinery_maintenance|Commercial and Industrial Machinery Maintenance]]"
+    },
+    {
+      "key": "commercial_and_service_industry_machinery_manufacturing",
+      "value": "Commercial and Service Industry Machinery Manufacturing",
+      "link": "[[commercial_and_service_industry_machinery_manufacturing|Commercial and Service Industry Machinery Manufacturing]]"
+    },
+    {
+      "key": "communications_equipment_manufacturing",
+      "value": "Communications Equipment Manufacturing",
+      "link": "[[communications_equipment_manufacturing|Communications Equipment Manufacturing]]"
+    },
+    {
+      "key": "community_development_and_urban_planning",
+      "value": "Community Development and Urban Planning",
+      "link": "[[community_development_and_urban_planning|Community Development and Urban Planning]]"
+    },
+    {
+      "key": "community_services",
+      "value": "Community Services",
+      "link": "[[community_services|Community Services]]"
+    },
+    {
+      "key": "computer_and_network_security",
+      "value": "Computer and Network Security",
+      "link": "[[computer_and_network_security|Computer and Network Security]]"
+    },
+    {
+      "key": "computer_games",
+      "value": "Computer Games",
+      "link": "[[computer_games|Computer Games]]"
+    },
+    {
+      "key": "computer_hardware_manufacturing",
+      "value": "Computer Hardware Manufacturing",
+      "link": "[[computer_hardware_manufacturing|Computer Hardware Manufacturing]]"
+    },
+    {
+      "key": "computer_networking_products",
+      "value": "Computer Networking Products",
+      "link": "[[computer_networking_products|Computer Networking Products]]"
+    },
+    {
+      "key": "computers_and_electronics_manufacturing",
+      "value": "Computers and Electronics Manufacturing",
+      "link": "[[computers_and_electronics_manufacturing|Computers and Electronics Manufacturing]]"
+    },
+    {
+      "key": "conservation_programs",
+      "value": "Conservation Programs",
+      "link": "[[conservation_programs|Conservation Programs]]"
+    },
+    {
+      "key": "construction",
+      "value": "Construction",
+      "link": "[[construction|Construction]]"
+    },
+    {
+      "key": "construction_hardware_manufacturing",
+      "value": "Construction Hardware Manufacturing",
+      "link": "[[construction_hardware_manufacturing|Construction Hardware Manufacturing]]"
+    },
+    {
+      "key": "consumer_goods_rental",
+      "value": "Consumer Goods Rental",
+      "link": "[[consumer_goods_rental|Consumer Goods Rental]]"
+    },
+    {
+      "key": "consumer_services",
+      "value": "Consumer Services",
+      "link": "[[consumer_services|Consumer Services]]"
+    },
+    {
+      "key": "correctional_institutions",
+      "value": "Correctional Institutions",
+      "link": "[[correctional_institutions|Correctional Institutions]]"
+    },
+    {
+      "key": "cosmetology_and_barber_schools",
+      "value": "Cosmetology and Barber Schools",
+      "link": "[[cosmetology_and_barber_schools|Cosmetology and Barber Schools]]"
+    },
+    {
+      "key": "courts_of_law",
+      "value": "Courts of Law",
+      "link": "[[courts_of_law|Courts of Law]]"
+    },
+    {
+      "key": "credit_intermediation",
+      "value": "Credit Intermediation",
+      "link": "[[credit_intermediation|Credit Intermediation]]"
+    },
+    {
+      "key": "cutlery_and_handtool_manufacturing",
+      "value": "Cutlery and Handtool Manufacturing",
+      "link": "[[cutlery_and_handtool_manufacturing|Cutlery and Handtool Manufacturing]]"
+    },
+    {
+      "key": "dairy_product_manufacturing",
+      "value": "Dairy Product Manufacturing",
+      "link": "[[dairy_product_manufacturing|Dairy Product Manufacturing]]"
+    },
+    {
+      "key": "dance_companies",
+      "value": "Dance Companies",
+      "link": "[[dance_companies|Dance Companies]]"
+    },
+    {
+      "key": "data_infrastructure_and_analytics",
+      "value": "Data Infrastructure and Analytics",
+      "link": "[[data_infrastructure_and_analytics|Data Infrastructure and Analytics]]"
+    },
+    {
+      "key": "data_security_software_products",
+      "value": "Data Security Software Products",
+      "link": "[[data_security_software_products|Data Security Software Products]]"
+    },
+    {
+      "key": "defense_and_space_manufacturing",
+      "value": "Defense and Space Manufacturing",
+      "link": "[[defense_and_space_manufacturing|Defense and Space Manufacturing]]"
+    },
+    {
+      "key": "dentists",
+      "value": "Dentists",
+      "link": "[[dentists|Dentists]]"
+    },
+    {
+      "key": "design_services",
+      "value": "Design Services",
+      "link": "[[design_services|Design Services]]"
+    },
+    {
+      "key": "desktop_computing_software_products",
+      "value": "Desktop Computing Software Products",
+      "link": "[[desktop_computing_software_products|Desktop Computing Software Products]]"
+    },
+    {
+      "key": "distilleries",
+      "value": "Distilleries",
+      "link": "[[distilleries|Distilleries]]"
+    },
+    {
+      "key": "e-learning_providers",
+      "value": "E-Learning Providers",
+      "link": "[[e-learning_providers|E-Learning Providers]]"
+    },
+    {
+      "key": "economic_programs",
+      "value": "Economic Programs",
+      "link": "[[economic_programs|Economic Programs]]"
+    },
+    {
+      "key": "education",
+      "value": "Education",
+      "link": "[[education|Education]]"
+    },
+    {
+      "key": "education_administration_programs",
+      "value": "Education Administration Programs",
+      "link": "[[education_administration_programs|Education Administration Programs]]"
+    },
+    {
+      "key": "education_management",
+      "value": "Education Management",
+      "link": "[[education_management|Education Management]]"
+    },
+    {
+      "key": "electric_lighting_equipment_manufacturing",
+      "value": "Electric Lighting Equipment Manufacturing",
+      "link": "[[electric_lighting_equipment_manufacturing|Electric Lighting Equipment Manufacturing]]"
+    },
+    {
+      "key": "electric_power_generation",
+      "value": "Electric Power Generation",
+      "link": "[[electric_power_generation|Electric Power Generation]]"
+    },
+    {
+      "key": "electric_power_transmission_control_and_distribution",
+      "value": "Electric Power Transmission, Control, and Distribution",
+      "link": "[[electric_power_transmission_control_and_distribution|Electric Power Transmission, Control, and Distribution]]"
+    },
+    {
+      "key": "electrical_equipment_manufacturing",
+      "value": "Electrical Equipment Manufacturing",
+      "link": "[[electrical_equipment_manufacturing|Electrical Equipment Manufacturing]]"
+    },
+    {
+      "key": "electronic_and_precision_equipment_maintenance",
+      "value": "Electronic and Precision Equipment Maintenance",
+      "link": "[[electronic_and_precision_equipment_maintenance|Electronic and Precision Equipment Maintenance]]"
+    },
+    {
+      "key": "embedded_software_products",
+      "value": "Embedded Software Products",
+      "link": "[[embedded_software_products|Embedded Software Products]]"
+    },
+    {
+      "key": "emergency_and_relief_services",
+      "value": "Emergency and Relief Services",
+      "link": "[[emergency_and_relief_services|Emergency and Relief Services]]"
+    },
+    {
+      "key": "engineering_services",
+      "value": "Engineering Services",
+      "link": "[[engineering_services|Engineering Services]]"
+    },
+    {
+      "key": "engines_and_power_transmission_equipment_manufacturing",
+      "value": "Engines and Power Transmission Equipment Manufacturing",
+      "link": "[[engines_and_power_transmission_equipment_manufacturing|Engines and Power Transmission Equipment Manufacturing]]"
+    },
+    {
+      "key": "entertainment_providers",
+      "value": "Entertainment Providers",
+      "link": "[[entertainment_providers|Entertainment Providers]]"
+    },
+    {
+      "key": "environmental_quality_programs",
+      "value": "Environmental Quality Programs",
+      "link": "[[environmental_quality_programs|Environmental Quality Programs]]"
+    },
+    {
+      "key": "environmental_services",
+      "value": "Environmental Services",
+      "link": "[[environmental_services|Environmental Services]]"
+    },
+    {
+      "key": "equipment_rental_services",
+      "value": "Equipment Rental Services",
+      "link": "[[equipment_rental_services|Equipment Rental Services]]"
+    },
+    {
+      "key": "events_services",
+      "value": "Events Services",
+      "link": "[[events_services|Events Services]]"
+    },
+    {
+      "key": "executive_offices",
+      "value": "Executive Offices",
+      "link": "[[executive_offices|Executive Offices]]"
+    },
+    {
+      "key": "executive_search_services",
+      "value": "Executive Search Services",
+      "link": "[[executive_search_services|Executive Search Services]]"
+    },
+    {
+      "key": "fabricated_metal_products",
+      "value": "Fabricated Metal Products",
+      "link": "[[fabricated_metal_products|Fabricated Metal Products]]"
+    },
+    {
+      "key": "facilities_services",
+      "value": "Facilities Services",
+      "link": "[[facilities_services|Facilities Services]]"
+    },
+    {
+      "key": "family_planning_centers",
+      "value": "Family Planning Centers",
+      "link": "[[family_planning_centers|Family Planning Centers]]"
+    },
+    {
+      "key": "farming",
+      "value": "Farming",
+      "link": "[[farming|Farming]]"
+    },
+    {
+      "key": "farming_ranching_forestry",
+      "value": "Farming, Ranching, Forestry",
+      "link": "[[farming_ranching_forestry|Farming, Ranching, Forestry]]"
+    },
+    {
+      "key": "fashion_accessories_manufacturing",
+      "value": "Fashion Accessories Manufacturing",
+      "link": "[[fashion_accessories_manufacturing|Fashion Accessories Manufacturing]]"
+    },
+    {
+      "key": "financial_services",
+      "value": "Financial Services",
+      "link": "[[financial_services|Financial Services]]"
+    },
+    {
+      "key": "fine_arts_schools",
+      "value": "Fine Arts Schools",
+      "link": "[[fine_arts_schools|Fine Arts Schools]]"
+    },
+    {
+      "key": "fisheries",
+      "value": "Fisheries",
+      "link": "[[fisheries|Fisheries]]"
+    },
+    {
+      "key": "flight_training",
+      "value": "Flight Training",
+      "link": "[[flight_training|Flight Training]]"
+    },
+    {
+      "key": "food_and_beverage_manufacturing",
+      "value": "Food and Beverage Manufacturing",
+      "link": "[[food_and_beverage_manufacturing|Food and Beverage Manufacturing]]"
+    },
+    {
+      "key": "food_and_beverage_retail",
+      "value": "Food and Beverage Retail",
+      "link": "[[food_and_beverage_retail|Food and Beverage Retail]]"
+    },
+    {
+      "key": "food_and_beverage_services",
+      "value": "Food and Beverage Services",
+      "link": "[[food_and_beverage_services|Food and Beverage Services]]"
+    },
+    {
+      "key": "footwear_and_leather_goods_repair",
+      "value": "Footwear and Leather Goods Repair",
+      "link": "[[footwear_and_leather_goods_repair|Footwear and Leather Goods Repair]]"
+    },
+    {
+      "key": "footwear_manufacturing",
+      "value": "Footwear Manufacturing",
+      "link": "[[footwear_manufacturing|Footwear Manufacturing]]"
+    },
+    {
+      "key": "forestry_and_logging",
+      "value": "Forestry and Logging",
+      "link": "[[forestry_and_logging|Forestry and Logging]]"
+    },
+    {
+      "key": "fossil_fuel_electric_power_generation",
+      "value": "Fossil Fuel Electric Power Generation",
+      "link": "[[fossil_fuel_electric_power_generation|Fossil Fuel Electric Power Generation]]"
+    },
+    {
+      "key": "freight_and_package_transportation",
+      "value": "Freight and Package Transportation",
+      "link": "[[freight_and_package_transportation|Freight and Package Transportation]]"
+    },
+    {
+      "key": "fruit_and_vegetable_preserves_manufacturing",
+      "value": "Fruit and Vegetable Preserves Manufacturing",
+      "link": "[[fruit_and_vegetable_preserves_manufacturing|Fruit and Vegetable Preserves Manufacturing]]"
+    },
+    {
+      "key": "fundraising",
+      "value": "Fundraising",
+      "link": "[[fundraising|Fundraising]]"
+    },
+    {
+      "key": "funds_and_trusts",
+      "value": "Funds and Trusts",
+      "link": "[[funds_and_trusts|Funds and Trusts]]"
+    },
+    {
+      "key": "furniture_and_home_furnishings_manufacturing",
+      "value": "Furniture and Home Furnishings Manufacturing",
+      "link": "[[furniture_and_home_furnishings_manufacturing|Furniture and Home Furnishings Manufacturing]]"
+    },
+    {
+      "key": "gambling_facilities_and_casinos",
+      "value": "Gambling Facilities and Casinos",
+      "link": "[[gambling_facilities_and_casinos|Gambling Facilities and Casinos]]"
+    },
+    {
+      "key": "geothermal_electric_power_generation",
+      "value": "Geothermal Electric Power Generation",
+      "link": "[[geothermal_electric_power_generation|Geothermal Electric Power Generation]]"
+    },
+    {
+      "key": "glass_product_manufacturing",
+      "value": "Glass Product Manufacturing",
+      "link": "[[glass_product_manufacturing|Glass Product Manufacturing]]"
+    },
+    {
+      "key": "glass_ceramics_and_concrete_manufacturing",
+      "value": "Glass, Ceramics and Concrete Manufacturing",
+      "link": "[[glass_ceramics_and_concrete_manufacturing|Glass, Ceramics and Concrete Manufacturing]]"
+    },
+    {
+      "key": "golf_courses_and_country_clubs",
+      "value": "Golf Courses and Country Clubs",
+      "link": "[[golf_courses_and_country_clubs|Golf Courses and Country Clubs]]"
+    },
+    {
+      "key": "government_administration",
+      "value": "Government Administration",
+      "link": "[[government_administration|Government Administration]]"
+    },
+    {
+      "key": "government_relations_services",
+      "value": "Government Relations Services",
+      "link": "[[government_relations_services|Government Relations Services]]"
+    },
+    {
+      "key": "graphic_design",
+      "value": "Graphic Design",
+      "link": "[[graphic_design|Graphic Design]]"
+    },
+    {
+      "key": "ground_passenger_transportation",
+      "value": "Ground Passenger Transportation",
+      "link": "[[ground_passenger_transportation|Ground Passenger Transportation]]"
+    },
+    {
+      "key": "health_and_human_services",
+      "value": "Health and Human Services",
+      "link": "[[health_and_human_services|Health and Human Services]]"
+    },
+    {
+      "key": "higher_education",
+      "value": "Higher Education",
+      "link": "[[higher_education|Higher Education]]"
+    },
+    {
+      "key": "highway_street_and_bridge_construction",
+      "value": "Highway, Street, and Bridge Construction",
+      "link": "[[highway_street_and_bridge_construction|Highway, Street, and Bridge Construction]]"
+    },
+    {
+      "key": "historical_sites",
+      "value": "Historical Sites",
+      "link": "[[historical_sites|Historical Sites]]"
+    },
+    {
+      "key": "holding_companies",
+      "value": "Holding Companies",
+      "link": "[[holding_companies|Holding Companies]]"
+    },
+    {
+      "key": "home_health_care_services",
+      "value": "Home Health Care Services",
+      "link": "[[home_health_care_services|Home Health Care Services]]"
+    },
+    {
+      "key": "horticulture",
+      "value": "Horticulture",
+      "link": "[[horticulture|Horticulture]]"
+    },
+    {
+      "key": "hospitality",
+      "value": "Hospitality",
+      "link": "[[hospitality|Hospitality]]"
+    },
+    {
+      "key": "hospitals",
+      "value": "Hospitals",
+      "link": "[[hospitals|Hospitals]]"
+    },
+    {
+      "key": "hospitals_and_health_care",
+      "value": "Hospitals and Health Care",
+      "link": "[[hospitals_and_health_care|Hospitals and Health Care]]"
+    },
+    {
+      "key": "hotels_and_motels",
+      "value": "Hotels and Motels",
+      "link": "[[hotels_and_motels|Hotels and Motels]]"
+    },
+    {
+      "key": "household_and_institutional_furniture_manufacturing",
+      "value": "Household and Institutional Furniture Manufacturing",
+      "link": "[[household_and_institutional_furniture_manufacturing|Household and Institutional Furniture Manufacturing]]"
+    },
+    {
+      "key": "household_appliance_manufacturing",
+      "value": "Household Appliance Manufacturing",
+      "link": "[[household_appliance_manufacturing|Household Appliance Manufacturing]]"
+    },
+    {
+      "key": "household_services",
+      "value": "Household Services",
+      "link": "[[household_services|Household Services]]"
+    },
+    {
+      "key": "housing_and_community_development",
+      "value": "Housing and Community Development",
+      "link": "[[housing_and_community_development|Housing and Community Development]]"
+    },
+    {
+      "key": "housing_programs",
+      "value": "Housing Programs",
+      "link": "[[housing_programs|Housing Programs]]"
+    },
+    {
+      "key": "human_resources_services",
+      "value": "Human Resources Services",
+      "link": "[[human_resources_services|Human Resources Services]]"
+    },
+    {
+      "key": "hvac_and_refrigeration_equipment_manufacturing",
+      "value": "HVAC and Refrigeration Equipment Manufacturing",
+      "link": "[[hvac_and_refrigeration_equipment_manufacturing|HVAC and Refrigeration Equipment Manufacturing]]"
+    },
+    {
+      "key": "hydroelectric_power_generation",
+      "value": "Hydroelectric Power Generation",
+      "link": "[[hydroelectric_power_generation|Hydroelectric Power Generation]]"
+    },
+    {
+      "key": "individual_and_family_services",
+      "value": "Individual and Family Services",
+      "link": "[[individual_and_family_services|Individual and Family Services]]"
+    },
+    {
+      "key": "industrial_machinery_manufacturing",
+      "value": "Industrial Machinery Manufacturing",
+      "link": "[[industrial_machinery_manufacturing|Industrial Machinery Manufacturing]]"
+    },
+    {
+      "key": "industry_associations",
+      "value": "Industry Associations",
+      "link": "[[industry_associations|Industry Associations]]"
+    },
+    {
+      "key": "information_services",
+      "value": "Information Services",
+      "link": "[[information_services|Information Services]]"
+    },
+    {
+      "key": "insurance",
+      "value": "Insurance",
+      "link": "[[insurance|Insurance]]"
+    },
+    {
+      "key": "insurance_agencies_and_brokerages",
+      "value": "Insurance Agencies and Brokerages",
+      "link": "[[insurance_agencies_and_brokerages|Insurance Agencies and Brokerages]]"
+    },
+    {
+      "key": "insurance_and_employee_benefit_funds",
+      "value": "Insurance and Employee Benefit Funds",
+      "link": "[[insurance_and_employee_benefit_funds|Insurance and Employee Benefit Funds]]"
+    },
+    {
+      "key": "insurance_carriers",
+      "value": "Insurance Carriers",
+      "link": "[[insurance_carriers|Insurance Carriers]]"
+    },
+    {
+      "key": "interior_design",
+      "value": "Interior Design",
+      "link": "[[interior_design|Interior Design]]"
+    },
+    {
+      "key": "international_affairs",
+      "value": "International Affairs",
+      "link": "[[international_affairs|International Affairs]]"
+    },
+    {
+      "key": "international_trade_and_development",
+      "value": "International Trade and Development",
+      "link": "[[international_trade_and_development|International Trade and Development]]"
+    },
+    {
+      "key": "internet_marketplace_platforms",
+      "value": "Internet Marketplace Platforms",
+      "link": "[[internet_marketplace_platforms|Internet Marketplace Platforms]]"
+    },
+    {
+      "key": "internet_news",
+      "value": "Internet News",
+      "link": "[[internet_news|Internet News]]"
+    },
+    {
+      "key": "internet_publishing",
+      "value": "Internet Publishing",
+      "link": "[[internet_publishing|Internet Publishing]]"
+    },
+    {
+      "key": "interurban_and_rural_bus_services",
+      "value": "Interurban and Rural Bus Services",
+      "link": "[[interurban_and_rural_bus_services|Interurban and Rural Bus Services]]"
+    },
+    {
+      "key": "investment_advice",
+      "value": "Investment Advice",
+      "link": "[[investment_advice|Investment Advice]]"
+    },
+    {
+      "key": "investment_banking",
+      "value": "Investment Banking",
+      "link": "[[investment_banking|Investment Banking]]"
+    },
+    {
+      "key": "investment_management",
+      "value": "Investment Management",
+      "link": "[[investment_management|Investment Management]]"
+    },
+    {
+      "key": "it_services_and_it_consulting",
+      "value": "IT Services and IT Consulting",
+      "link": "[[it_services_and_it_consulting|IT Services and IT Consulting]]"
+    },
+    {
+      "key": "it_system_custom_software_development",
+      "value": "IT System Custom Software Development",
+      "link": "[[it_system_custom_software_development|IT System Custom Software Development]]"
+    },
+    {
+      "key": "it_system_data_services",
+      "value": "IT System Data Services",
+      "link": "[[it_system_data_services|IT System Data Services]]"
+    },
+    {
+      "key": "it_system_design_services",
+      "value": "IT System Design Services",
+      "link": "[[it_system_design_services|IT System Design Services]]"
+    },
+    {
+      "key": "it_system_installation_and_disposal",
+      "value": "IT System Installation and Disposal",
+      "link": "[[it_system_installation_and_disposal|IT System Installation and Disposal]]"
+    },
+    {
+      "key": "it_system_operations_and_maintenance",
+      "value": "IT System Operations and Maintenance",
+      "link": "[[it_system_operations_and_maintenance|IT System Operations and Maintenance]]"
+    },
+    {
+      "key": "it_system_testing_and_evaluation",
+      "value": "IT System Testing and Evaluation",
+      "link": "[[it_system_testing_and_evaluation|IT System Testing and Evaluation]]"
+    },
+    {
+      "key": "it_system_training_and_support",
+      "value": "IT System Training and Support",
+      "link": "[[it_system_training_and_support|IT System Training and Support]]"
+    },
+    {
+      "key": "janitorial_services",
+      "value": "Janitorial Services",
+      "link": "[[janitorial_services|Janitorial Services]]"
+    },
+    {
+      "key": "landscaping_services",
+      "value": "Landscaping Services",
+      "link": "[[landscaping_services|Landscaping Services]]"
+    },
+    {
+      "key": "language_schools",
+      "value": "Language Schools",
+      "link": "[[language_schools|Language Schools]]"
+    },
+    {
+      "key": "laundry_and_drycleaning_services",
+      "value": "Laundry and Drycleaning Services",
+      "link": "[[laundry_and_drycleaning_services|Laundry and Drycleaning Services]]"
+    },
+    {
+      "key": "law_enforcement",
+      "value": "Law Enforcement",
+      "link": "[[law_enforcement|Law Enforcement]]"
+    },
+    {
+      "key": "law_practice",
+      "value": "Law Practice",
+      "link": "[[law_practice|Law Practice]]"
+    },
+    {
+      "key": "leasing_non-residential_real_estate",
+      "value": "Leasing Non-residential Real Estate",
+      "link": "[[leasing_non-residential_real_estate|Leasing Non-residential Real Estate]]"
+    },
+    {
+      "key": "leasing_residential_real_estate",
+      "value": "Leasing Residential Real Estate",
+      "link": "[[leasing_residential_real_estate|Leasing Residential Real Estate]]"
+    },
+    {
+      "key": "leather_product_manufacturing",
+      "value": "Leather Product Manufacturing",
+      "link": "[[leather_product_manufacturing|Leather Product Manufacturing]]"
+    },
+    {
+      "key": "legal_services",
+      "value": "Legal Services",
+      "link": "[[legal_services|Legal Services]]"
+    },
+    {
+      "key": "legislative_offices",
+      "value": "Legislative Offices",
+      "link": "[[legislative_offices|Legislative Offices]]"
+    },
+    {
+      "key": "libraries",
+      "value": "Libraries",
+      "link": "[[libraries|Libraries]]"
+    },
+    {
+      "key": "lime_and_gypsum_products_manufacturing",
+      "value": "Lime and Gypsum Products Manufacturing",
+      "link": "[[lime_and_gypsum_products_manufacturing|Lime and Gypsum Products Manufacturing]]"
+    },
+    {
+      "key": "loan_brokers",
+      "value": "Loan Brokers",
+      "link": "[[loan_brokers|Loan Brokers]]"
+    },
+    {
+      "key": "machinery_manufacturing",
+      "value": "Machinery Manufacturing",
+      "link": "[[machinery_manufacturing|Machinery Manufacturing]]"
+    },
+    {
+      "key": "magnetic_and_optical_media_manufacturing",
+      "value": "Magnetic and Optical Media Manufacturing",
+      "link": "[[magnetic_and_optical_media_manufacturing|Magnetic and Optical Media Manufacturing]]"
+    },
+    {
+      "key": "manufacturing",
+      "value": "Manufacturing",
+      "link": "[[manufacturing|Manufacturing]]"
+    },
+    {
+      "key": "maritime_transportation",
+      "value": "Maritime Transportation",
+      "link": "[[maritime_transportation|Maritime Transportation]]"
+    },
+    {
+      "key": "market_research",
+      "value": "Market Research",
+      "link": "[[market_research|Market Research]]"
+    },
+    {
+      "key": "marketing_services",
+      "value": "Marketing Services",
+      "link": "[[marketing_services|Marketing Services]]"
+    },
+    {
+      "key": "mattress_and_blinds_manufacturing",
+      "value": "Mattress and Blinds Manufacturing",
+      "link": "[[mattress_and_blinds_manufacturing|Mattress and Blinds Manufacturing]]"
+    },
+    {
+      "key": "measuring_and_control_instrument_manufacturing",
+      "value": "Measuring and Control Instrument Manufacturing",
+      "link": "[[measuring_and_control_instrument_manufacturing|Measuring and Control Instrument Manufacturing]]"
+    },
+    {
+      "key": "meat_products_manufacturing",
+      "value": "Meat Products Manufacturing",
+      "link": "[[meat_products_manufacturing|Meat Products Manufacturing]]"
+    },
+    {
+      "key": "media_and_telecommunications",
+      "value": "Media and Telecommunications",
+      "link": "[[media_and_telecommunications|Media and Telecommunications]]"
+    },
+    {
+      "key": "media_production",
+      "value": "Media Production",
+      "link": "[[media_production|Media Production]]"
+    },
+    {
+      "key": "medical_and_diagnostic_laboratories",
+      "value": "Medical and Diagnostic Laboratories",
+      "link": "[[medical_and_diagnostic_laboratories|Medical and Diagnostic Laboratories]]"
+    },
+    {
+      "key": "medical_equipment_manufacturing",
+      "value": "Medical Equipment Manufacturing",
+      "link": "[[medical_equipment_manufacturing|Medical Equipment Manufacturing]]"
+    },
+    {
+      "key": "medical_practices",
+      "value": "Medical Practices",
+      "link": "[[medical_practices|Medical Practices]]"
+    },
+    {
+      "key": "mental_health_care",
+      "value": "Mental Health Care",
+      "link": "[[mental_health_care|Mental Health Care]]"
+    },
+    {
+      "key": "metal_ore_mining",
+      "value": "Metal Ore Mining",
+      "link": "[[metal_ore_mining|Metal Ore Mining]]"
+    },
+    {
+      "key": "metal_treatments",
+      "value": "Metal Treatments",
+      "link": "[[metal_treatments|Metal Treatments]]"
+    },
+    {
+      "key": "metal_valve_ball_and_roller_manufacturing",
+      "value": "Metal Valve, Ball, and Roller Manufacturing",
+      "link": "[[metal_valve_ball_and_roller_manufacturing|Metal Valve, Ball, and Roller Manufacturing]]"
+    },
+    {
+      "key": "metalworking_machinery_manufacturing",
+      "value": "Metalworking Machinery Manufacturing",
+      "link": "[[metalworking_machinery_manufacturing|Metalworking Machinery Manufacturing]]"
+    },
+    {
+      "key": "military_and_international_affairs",
+      "value": "Military and International Affairs",
+      "link": "[[military_and_international_affairs|Military and International Affairs]]"
+    },
+    {
+      "key": "mining",
+      "value": "Mining",
+      "link": "[[mining|Mining]]"
+    },
+    {
+      "key": "mobile_computing_software_products",
+      "value": "Mobile Computing Software Products",
+      "link": "[[mobile_computing_software_products|Mobile Computing Software Products]]"
+    },
+    {
+      "key": "mobile_food_services",
+      "value": "Mobile Food Services",
+      "link": "[[mobile_food_services|Mobile Food Services]]"
+    },
+    {
+      "key": "mobile_gaming_apps",
+      "value": "Mobile Gaming Apps",
+      "link": "[[mobile_gaming_apps|Mobile Gaming Apps]]"
+    },
+    {
+      "key": "motor_vehicle_manufacturing",
+      "value": "Motor Vehicle Manufacturing",
+      "link": "[[motor_vehicle_manufacturing|Motor Vehicle Manufacturing]]"
+    },
+    {
+      "key": "motor_vehicle_parts_manufacturing",
+      "value": "Motor Vehicle Parts Manufacturing",
+      "link": "[[motor_vehicle_parts_manufacturing|Motor Vehicle Parts Manufacturing]]"
+    },
+    {
+      "key": "movies_and_sound_recording",
+      "value": "Movies and Sound Recording",
+      "link": "[[movies_and_sound_recording|Movies and Sound Recording]]"
+    },
+    {
+      "key": "movies_videos_and_sound",
+      "value": "Movies, Videos, and Sound",
+      "link": "[[movies_videos_and_sound|Movies, Videos, and Sound]]"
+    },
+    {
+      "key": "museums",
+      "value": "Museums",
+      "link": "[[museums|Museums]]"
+    },
+    {
+      "key": "museums_historical_sites_and_zoos",
+      "value": "Museums, Historical Sites, and Zoos",
+      "link": "[[museums_historical_sites_and_zoos|Museums, Historical Sites, and Zoos]]"
+    },
+    {
+      "key": "musicians",
+      "value": "Musicians",
+      "link": "[[musicians|Musicians]]"
+    },
+    {
+      "key": "nanotechnology_research",
+      "value": "Nanotechnology Research",
+      "link": "[[nanotechnology_research|Nanotechnology Research]]"
+    },
+    {
+      "key": "natural_gas_distribution",
+      "value": "Natural Gas Distribution",
+      "link": "[[natural_gas_distribution|Natural Gas Distribution]]"
+    },
+    {
+      "key": "natural_gas_extraction",
+      "value": "Natural Gas Extraction",
+      "link": "[[natural_gas_extraction|Natural Gas Extraction]]"
+    },
+    {
+      "key": "newspaper_publishing",
+      "value": "Newspaper Publishing",
+      "link": "[[newspaper_publishing|Newspaper Publishing]]"
+    },
+    {
+      "key": "non-profit_organizations",
+      "value": "Non-profit Organizations",
+      "link": "[[non-profit_organizations|Non-profit Organizations]]"
+    },
+    {
+      "key": "nonmetallic_mineral_mining",
+      "value": "Nonmetallic Mineral Mining",
+      "link": "[[nonmetallic_mineral_mining|Nonmetallic Mineral Mining]]"
+    },
+    {
+      "key": "nonresidential_building_construction",
+      "value": "Nonresidential Building Construction",
+      "link": "[[nonresidential_building_construction|Nonresidential Building Construction]]"
+    },
+    {
+      "key": "nuclear_electric_power_generation",
+      "value": "Nuclear Electric Power Generation",
+      "link": "[[nuclear_electric_power_generation|Nuclear Electric Power Generation]]"
+    },
+    {
+      "key": "nursing_homes_and_residential_care_facilities",
+      "value": "Nursing Homes and Residential Care Facilities",
+      "link": "[[nursing_homes_and_residential_care_facilities|Nursing Homes and Residential Care Facilities]]"
+    },
+    {
+      "key": "office_administration",
+      "value": "Office Administration",
+      "link": "[[office_administration|Office Administration]]"
+    },
+    {
+      "key": "office_furniture_and_fixtures_manufacturing",
+      "value": "Office Furniture and Fixtures Manufacturing",
+      "link": "[[office_furniture_and_fixtures_manufacturing|Office Furniture and Fixtures Manufacturing]]"
+    },
+    {
+      "key": "oil_and_coal_product_manufacturing",
+      "value": "Oil and Coal Product Manufacturing",
+      "link": "[[oil_and_coal_product_manufacturing|Oil and Coal Product Manufacturing]]"
+    },
+    {
+      "key": "oil_and_gas",
+      "value": "Oil and Gas",
+      "link": "[[oil_and_gas|Oil and Gas]]"
+    },
+    {
+      "key": "oil_extraction",
+      "value": "Oil Extraction",
+      "link": "[[oil_extraction|Oil Extraction]]"
+    },
+    {
+      "key": "oil_gas_and_mining",
+      "value": "Oil, Gas, and Mining",
+      "link": "[[oil_gas_and_mining|Oil, Gas, and Mining]]"
+    },
+    {
+      "key": "online_and_mail_order_retail",
+      "value": "Online and Mail Order Retail",
+      "link": "[[online_and_mail_order_retail|Online and Mail Order Retail]]"
+    },
+    {
+      "key": "online_audio_and_video_media",
+      "value": "Online Audio and Video Media",
+      "link": "[[online_audio_and_video_media|Online Audio and Video Media]]"
+    },
+    {
+      "key": "operations_consulting",
+      "value": "Operations Consulting",
+      "link": "[[operations_consulting|Operations Consulting]]"
+    },
+    {
+      "key": "optometrists",
+      "value": "Optometrists",
+      "link": "[[optometrists|Optometrists]]"
+    },
+    {
+      "key": "outpatient_care_centers",
+      "value": "Outpatient Care Centers",
+      "link": "[[outpatient_care_centers|Outpatient Care Centers]]"
+    },
+    {
+      "key": "outsourcing_and_offshoring_consulting",
+      "value": "Outsourcing and Offshoring Consulting",
+      "link": "[[outsourcing_and_offshoring_consulting|Outsourcing and Offshoring Consulting]]"
+    },
+    {
+      "key": "packaging_and_containers_manufacturing",
+      "value": "Packaging and Containers Manufacturing",
+      "link": "[[packaging_and_containers_manufacturing|Packaging and Containers Manufacturing]]"
+    },
+    {
+      "key": "paint_coating_and_adhesive_manufacturing",
+      "value": "Paint, Coating, and Adhesive Manufacturing",
+      "link": "[[paint_coating_and_adhesive_manufacturing|Paint, Coating, and Adhesive Manufacturing]]"
+    },
+    {
+      "key": "paper_and_forest_product_manufacturing",
+      "value": "Paper and Forest Product Manufacturing",
+      "link": "[[paper_and_forest_product_manufacturing|Paper and Forest Product Manufacturing]]"
+    },
+    {
+      "key": "pension_funds",
+      "value": "Pension Funds",
+      "link": "[[pension_funds|Pension Funds]]"
+    },
+    {
+      "key": "performing_arts",
+      "value": "Performing Arts",
+      "link": "[[performing_arts|Performing Arts]]"
+    },
+    {
+      "key": "performing_arts_and_spectator_sports",
+      "value": "Performing Arts and Spectator Sports",
+      "link": "[[performing_arts_and_spectator_sports|Performing Arts and Spectator Sports]]"
+    },
+    {
+      "key": "periodical_publishing",
+      "value": "Periodical Publishing",
+      "link": "[[periodical_publishing|Periodical Publishing]]"
+    },
+    {
+      "key": "personal_and_laundry_services",
+      "value": "Personal and Laundry Services",
+      "link": "[[personal_and_laundry_services|Personal and Laundry Services]]"
+    },
+    {
+      "key": "personal_care_product_manufacturing",
+      "value": "Personal Care Product Manufacturing",
+      "link": "[[personal_care_product_manufacturing|Personal Care Product Manufacturing]]"
+    },
+    {
+      "key": "personal_care_services",
+      "value": "Personal Care Services",
+      "link": "[[personal_care_services|Personal Care Services]]"
+    },
+    {
+      "key": "pet_services",
+      "value": "Pet Services",
+      "link": "[[pet_services|Pet Services]]"
+    },
+    {
+      "key": "pharmaceutical_manufacturing",
+      "value": "Pharmaceutical Manufacturing",
+      "link": "[[pharmaceutical_manufacturing|Pharmaceutical Manufacturing]]"
+    },
+    {
+      "key": "philanthropic_fundraising_services",
+      "value": "Philanthropic Fundraising Services",
+      "link": "[[philanthropic_fundraising_services|Philanthropic Fundraising Services]]"
+    },
+    {
+      "key": "photography",
+      "value": "Photography",
+      "link": "[[photography|Photography]]"
+    },
+    {
+      "key": "physical_occupational_and_speech_therapists",
+      "value": "Physical, Occupational and Speech Therapists",
+      "link": "[[physical_occupational_and_speech_therapists|Physical, Occupational and Speech Therapists]]"
+    },
+    {
+      "key": "physicians",
+      "value": "Physicians",
+      "link": "[[physicians|Physicians]]"
+    },
+    {
+      "key": "pipeline_transportation",
+      "value": "Pipeline Transportation",
+      "link": "[[pipeline_transportation|Pipeline Transportation]]"
+    },
+    {
+      "key": "plastics_and_rubber_product_manufacturing",
+      "value": "Plastics and Rubber Product Manufacturing",
+      "link": "[[plastics_and_rubber_product_manufacturing|Plastics and Rubber Product Manufacturing]]"
+    },
+    {
+      "key": "plastics_manufacturing",
+      "value": "Plastics Manufacturing",
+      "link": "[[plastics_manufacturing|Plastics Manufacturing]]"
+    },
+    {
+      "key": "political_organizations",
+      "value": "Political Organizations",
+      "link": "[[political_organizations|Political Organizations]]"
+    },
+    {
+      "key": "postal_services",
+      "value": "Postal Services",
+      "link": "[[postal_services|Postal Services]]"
+    },
+    {
+      "key": "primary_and_secondary_education",
+      "value": "Primary and Secondary Education",
+      "link": "[[primary_and_secondary_education|Primary and Secondary Education]]"
+    },
+    {
+      "key": "primary_metal_manufacturing",
+      "value": "Primary Metal Manufacturing",
+      "link": "[[primary_metal_manufacturing|Primary Metal Manufacturing]]"
+    },
+    {
+      "key": "printing_services",
+      "value": "Printing Services",
+      "link": "[[printing_services|Printing Services]]"
+    },
+    {
+      "key": "professional_organizations",
+      "value": "Professional Organizations",
+      "link": "[[professional_organizations|Professional Organizations]]"
+    },
+    {
+      "key": "professional_services",
+      "value": "Professional Services",
+      "link": "[[professional_services|Professional Services]]"
+    },
+    {
+      "key": "professional_training_and_coaching",
+      "value": "Professional Training and Coaching",
+      "link": "[[professional_training_and_coaching|Professional Training and Coaching]]"
+    },
+    {
+      "key": "public_assistance_programs",
+      "value": "Public Assistance Programs",
+      "link": "[[public_assistance_programs|Public Assistance Programs]]"
+    },
+    {
+      "key": "public_health",
+      "value": "Public Health",
+      "link": "[[public_health|Public Health]]"
+    },
+    {
+      "key": "public_policy_offices",
+      "value": "Public Policy Offices",
+      "link": "[[public_policy_offices|Public Policy Offices]]"
+    },
+    {
+      "key": "public_relations_and_communications_services",
+      "value": "Public Relations and Communications Services",
+      "link": "[[public_relations_and_communications_services|Public Relations and Communications Services]]"
+    },
+    {
+      "key": "public_safety",
+      "value": "Public Safety",
+      "link": "[[public_safety|Public Safety]]"
+    },
+    {
+      "key": "racetracks",
+      "value": "Racetracks",
+      "link": "[[racetracks|Racetracks]]"
+    },
+    {
+      "key": "radio_and_television_broadcasting",
+      "value": "Radio and Television Broadcasting",
+      "link": "[[radio_and_television_broadcasting|Radio and Television Broadcasting]]"
+    },
+    {
+      "key": "rail_transportation",
+      "value": "Rail Transportation",
+      "link": "[[rail_transportation|Rail Transportation]]"
+    },
+    {
+      "key": "railroad_equipment_manufacturing",
+      "value": "Railroad Equipment Manufacturing",
+      "link": "[[railroad_equipment_manufacturing|Railroad Equipment Manufacturing]]"
+    },
+    {
+      "key": "ranching",
+      "value": "Ranching",
+      "link": "[[ranching|Ranching]]"
+    },
+    {
+      "key": "ranching_and_fisheries",
+      "value": "Ranching and Fisheries",
+      "link": "[[ranching_and_fisheries|Ranching and Fisheries]]"
+    },
+    {
+      "key": "real_estate",
+      "value": "Real Estate",
+      "link": "[[real_estate|Real Estate]]"
+    },
+    {
+      "key": "real_estate_agents_and_brokers",
+      "value": "Real Estate Agents and Brokers",
+      "link": "[[real_estate_agents_and_brokers|Real Estate Agents and Brokers]]"
+    },
+    {
+      "key": "real_estate_and_equipment_rental_services",
+      "value": "Real Estate and Equipment Rental Services",
+      "link": "[[real_estate_and_equipment_rental_services|Real Estate and Equipment Rental Services]]"
+    },
+    {
+      "key": "recreational_facilities",
+      "value": "Recreational Facilities",
+      "link": "[[recreational_facilities|Recreational Facilities]]"
+    },
+    {
+      "key": "religious_institutions",
+      "value": "Religious Institutions",
+      "link": "[[religious_institutions|Religious Institutions]]"
+    },
+    {
+      "key": "renewable_energy_equipment_manufacturing",
+      "value": "Renewable Energy Equipment Manufacturing",
+      "link": "[[renewable_energy_equipment_manufacturing|Renewable Energy Equipment Manufacturing]]"
+    },
+    {
+      "key": "renewable_energy_power_generation",
+      "value": "Renewable Energy Power Generation",
+      "link": "[[renewable_energy_power_generation|Renewable Energy Power Generation]]"
+    },
+    {
+      "key": "renewable_energy_semiconductor_manufacturing",
+      "value": "Renewable Energy Semiconductor Manufacturing",
+      "link": "[[renewable_energy_semiconductor_manufacturing|Renewable Energy Semiconductor Manufacturing]]"
+    },
+    {
+      "key": "repair_and_maintenance",
+      "value": "Repair and Maintenance",
+      "link": "[[repair_and_maintenance|Repair and Maintenance]]"
+    },
+    {
+      "key": "research_services",
+      "value": "Research Services",
+      "link": "[[research_services|Research Services]]"
+    },
+    {
+      "key": "residential_building_construction",
+      "value": "Residential Building Construction",
+      "link": "[[residential_building_construction|Residential Building Construction]]"
+    },
+    {
+      "key": "restaurants",
+      "value": "Restaurants",
+      "link": "[[restaurants|Restaurants]]"
+    },
+    {
+      "key": "retail",
+      "value": "Retail",
+      "link": "[[retail|Retail]]"
+    },
+    {
+      "key": "retail_apparel_and_fashion",
+      "value": "Retail Apparel and Fashion",
+      "link": "[[retail_apparel_and_fashion|Retail Apparel and Fashion]]"
+    },
+    {
+      "key": "retail_appliances_electrical_and_electronic_equipment",
+      "value": "Retail Appliances, Electrical, and Electronic Equipment",
+      "link": "[[retail_appliances_electrical_and_electronic_equipment|Retail Appliances, Electrical, and Electronic Equipment]]"
+    },
+    {
+      "key": "retail_art_dealers",
+      "value": "Retail Art Dealers",
+      "link": "[[retail_art_dealers|Retail Art Dealers]]"
+    },
+    {
+      "key": "retail_art_supplies",
+      "value": "Retail Art Supplies",
+      "link": "[[retail_art_supplies|Retail Art Supplies]]"
+    },
+    {
+      "key": "retail_books_and_printed_news",
+      "value": "Retail Books and Printed News",
+      "link": "[[retail_books_and_printed_news|Retail Books and Printed News]]"
+    },
+    {
+      "key": "retail_building_materials_and_garden_equipment",
+      "value": "Retail Building Materials and Garden Equipment",
+      "link": "[[retail_building_materials_and_garden_equipment|Retail Building Materials and Garden Equipment]]"
+    },
+    {
+      "key": "retail_florists",
+      "value": "Retail Florists",
+      "link": "[[retail_florists|Retail Florists]]"
+    },
+    {
+      "key": "retail_furniture_and_home_furnishings",
+      "value": "Retail Furniture and Home Furnishings",
+      "link": "[[retail_furniture_and_home_furnishings|Retail Furniture and Home Furnishings]]"
+    },
+    {
+      "key": "retail_gasoline",
+      "value": "Retail Gasoline",
+      "link": "[[retail_gasoline|Retail Gasoline]]"
+    },
+    {
+      "key": "retail_groceries",
+      "value": "Retail Groceries",
+      "link": "[[retail_groceries|Retail Groceries]]"
+    },
+    {
+      "key": "retail_health_and_personal_care_products",
+      "value": "Retail Health and Personal Care Products",
+      "link": "[[retail_health_and_personal_care_products|Retail Health and Personal Care Products]]"
+    },
+    {
+      "key": "retail_luxury_goods_and_jewelry",
+      "value": "Retail Luxury Goods and Jewelry",
+      "link": "[[retail_luxury_goods_and_jewelry|Retail Luxury Goods and Jewelry]]"
+    },
+    {
+      "key": "retail_motor_vehicles",
+      "value": "Retail Motor Vehicles",
+      "link": "[[retail_motor_vehicles|Retail Motor Vehicles]]"
+    },
+    {
+      "key": "retail_musical_instruments",
+      "value": "Retail Musical Instruments",
+      "link": "[[retail_musical_instruments|Retail Musical Instruments]]"
+    },
+    {
+      "key": "retail_office_equipment",
+      "value": "Retail Office Equipment",
+      "link": "[[retail_office_equipment|Retail Office Equipment]]"
+    },
+    {
+      "key": "retail_office_supplies_and_gifts",
+      "value": "Retail Office Supplies and Gifts",
+      "link": "[[retail_office_supplies_and_gifts|Retail Office Supplies and Gifts]]"
+    },
+    {
+      "key": "retail_recyclable_materials_and_used_merchandise",
+      "value": "Retail Recyclable Materials and Used Merchandise",
+      "link": "[[retail_recyclable_materials_and_used_merchandise|Retail Recyclable Materials and Used Merchandise]]"
+    },
+    {
+      "key": "reupholstery_and_furniture_repair",
+      "value": "Reupholstery and Furniture Repair",
+      "link": "[[reupholstery_and_furniture_repair|Reupholstery and Furniture Repair]]"
+    },
+    {
+      "key": "rubber_products_manufacturing",
+      "value": "Rubber Products Manufacturing",
+      "link": "[[rubber_products_manufacturing|Rubber Products Manufacturing]]"
+    },
+    {
+      "key": "satellite_telecommunications",
+      "value": "Satellite Telecommunications",
+      "link": "[[satellite_telecommunications|Satellite Telecommunications]]"
+    },
+    {
+      "key": "savings_institutions",
+      "value": "Savings Institutions",
+      "link": "[[savings_institutions|Savings Institutions]]"
+    },
+    {
+      "key": "school_and_employee_bus_services",
+      "value": "School and Employee Bus Services",
+      "link": "[[school_and_employee_bus_services|School and Employee Bus Services]]"
+    },
+    {
+      "key": "seafood_product_manufacturing",
+      "value": "Seafood Product Manufacturing",
+      "link": "[[seafood_product_manufacturing|Seafood Product Manufacturing]]"
+    },
+    {
+      "key": "secretarial_schools",
+      "value": "Secretarial Schools",
+      "link": "[[secretarial_schools|Secretarial Schools]]"
+    },
+    {
+      "key": "securities_and_commodity_exchanges",
+      "value": "Securities and Commodity Exchanges",
+      "link": "[[securities_and_commodity_exchanges|Securities and Commodity Exchanges]]"
+    },
+    {
+      "key": "security_and_investigations",
+      "value": "Security and Investigations",
+      "link": "[[security_and_investigations|Security and Investigations]]"
+    },
+    {
+      "key": "security_guards_and_patrol_services",
+      "value": "Security Guards and Patrol Services",
+      "link": "[[security_guards_and_patrol_services|Security Guards and Patrol Services]]"
+    },
+    {
+      "key": "security_systems_services",
+      "value": "Security Systems Services",
+      "link": "[[security_systems_services|Security Systems Services]]"
+    },
+    {
+      "key": "semiconductor_manufacturing",
+      "value": "Semiconductor Manufacturing",
+      "link": "[[semiconductor_manufacturing|Semiconductor Manufacturing]]"
+    },
+    {
+      "key": "services_for_renewable_energy",
+      "value": "Services for Renewable Energy",
+      "link": "[[services_for_renewable_energy|Services for Renewable Energy]]"
+    },
+    {
+      "key": "services_for_the_elderly_and_disabled",
+      "value": "Services for the Elderly and Disabled",
+      "link": "[[services_for_the_elderly_and_disabled|Services for the Elderly and Disabled]]"
+    },
+    {
+      "key": "sheet_music_publishing",
+      "value": "Sheet Music Publishing",
+      "link": "[[sheet_music_publishing|Sheet Music Publishing]]"
+    },
+    {
+      "key": "shipbuilding",
+      "value": "Shipbuilding",
+      "link": "[[shipbuilding|Shipbuilding]]"
+    },
+    {
+      "key": "shuttles_and_special_needs_transportation_services",
+      "value": "Shuttles and Special Needs Transportation Services",
+      "link": "[[shuttles_and_special_needs_transportation_services|Shuttles and Special Needs Transportation Services]]"
+    },
+    {
+      "key": "sightseeing_transportation",
+      "value": "Sightseeing Transportation",
+      "link": "[[sightseeing_transportation|Sightseeing Transportation]]"
+    },
+    {
+      "key": "skiing_facilities",
+      "value": "Skiing Facilities",
+      "link": "[[skiing_facilities|Skiing Facilities]]"
+    },
+    {
+      "key": "soap_and_cleaning_product_manufacturing",
+      "value": "Soap and Cleaning Product Manufacturing",
+      "link": "[[soap_and_cleaning_product_manufacturing|Soap and Cleaning Product Manufacturing]]"
+    },
+    {
+      "key": "social_networking_platforms",
+      "value": "Social Networking Platforms",
+      "link": "[[social_networking_platforms|Social Networking Platforms]]"
+    },
+    {
+      "key": "software_development",
+      "value": "Software Development",
+      "link": "[[software_development|Software Development]]"
+    },
+    {
+      "key": "solar_electric_power_generation",
+      "value": "Solar Electric Power Generation",
+      "link": "[[solar_electric_power_generation|Solar Electric Power Generation]]"
+    },
+    {
+      "key": "sound_recording",
+      "value": "Sound Recording",
+      "link": "[[sound_recording|Sound Recording]]"
+    },
+    {
+      "key": "space_research_and_technology",
+      "value": "Space Research and Technology",
+      "link": "[[space_research_and_technology|Space Research and Technology]]"
+    },
+    {
+      "key": "specialty_trade_contractors",
+      "value": "Specialty Trade Contractors",
+      "link": "[[specialty_trade_contractors|Specialty Trade Contractors]]"
+    },
+    {
+      "key": "spectator_sports",
+      "value": "Spectator Sports",
+      "link": "[[spectator_sports|Spectator Sports]]"
+    },
+    {
+      "key": "sporting_goods_manufacturing",
+      "value": "Sporting Goods Manufacturing",
+      "link": "[[sporting_goods_manufacturing|Sporting Goods Manufacturing]]"
+    },
+    {
+      "key": "sports_and_recreation_instruction",
+      "value": "Sports and Recreation Instruction",
+      "link": "[[sports_and_recreation_instruction|Sports and Recreation Instruction]]"
+    },
+    {
+      "key": "sports_teams_and_clubs",
+      "value": "Sports Teams and Clubs",
+      "link": "[[sports_teams_and_clubs|Sports Teams and Clubs]]"
+    },
+    {
+      "key": "spring_and_wire_product_manufacturing",
+      "value": "Spring and Wire Product Manufacturing",
+      "link": "[[spring_and_wire_product_manufacturing|Spring and Wire Product Manufacturing]]"
+    },
+    {
+      "key": "staffing_and_recruiting",
+      "value": "Staffing and Recruiting",
+      "link": "[[staffing_and_recruiting|Staffing and Recruiting]]"
+    },
+    {
+      "key": "steam_and_air-conditioning_supply",
+      "value": "Steam and Air-Conditioning Supply",
+      "link": "[[steam_and_air-conditioning_supply|Steam and Air-Conditioning Supply]]"
+    },
+    {
+      "key": "strategic_management_services",
+      "value": "Strategic Management Services",
+      "link": "[[strategic_management_services|Strategic Management Services]]"
+    },
+    {
+      "key": "subdivision_of_land",
+      "value": "Subdivision of Land",
+      "link": "[[subdivision_of_land|Subdivision of Land]]"
+    },
+    {
+      "key": "sugar_and_confectionery_product_manufacturing",
+      "value": "Sugar and Confectionery Product Manufacturing",
+      "link": "[[sugar_and_confectionery_product_manufacturing|Sugar and Confectionery Product Manufacturing]]"
+    },
+    {
+      "key": "taxi_and_limousine_services",
+      "value": "Taxi and Limousine Services",
+      "link": "[[taxi_and_limousine_services|Taxi and Limousine Services]]"
+    },
+    {
+      "key": "technical_and_vocational_training",
+      "value": "Technical and Vocational Training",
+      "link": "[[technical_and_vocational_training|Technical and Vocational Training]]"
+    },
+    {
+      "key": "technology_information_and_internet",
+      "value": "Technology, Information and Internet",
+      "link": "[[technology_information_and_internet|Technology, Information and Internet]]"
+    },
+    {
+      "key": "technology_information_and_media",
+      "value": "Technology, Information and Media",
+      "link": "[[technology_information_and_media|Technology, Information and Media]]"
+    },
+    {
+      "key": "telecommunications",
+      "value": "Telecommunications",
+      "link": "[[telecommunications|Telecommunications]]"
+    },
+    {
+      "key": "telecommunications_carriers",
+      "value": "Telecommunications Carriers",
+      "link": "[[telecommunications_carriers|Telecommunications Carriers]]"
+    },
+    {
+      "key": "telephone_call_centers",
+      "value": "Telephone Call Centers",
+      "link": "[[telephone_call_centers|Telephone Call Centers]]"
+    },
+    {
+      "key": "temporary_help_services",
+      "value": "Temporary Help Services",
+      "link": "[[temporary_help_services|Temporary Help Services]]"
+    },
+    {
+      "key": "textile_manufacturing",
+      "value": "Textile Manufacturing",
+      "link": "[[textile_manufacturing|Textile Manufacturing]]"
+    },
+    {
+      "key": "theater_companies",
+      "value": "Theater Companies",
+      "link": "[[theater_companies|Theater Companies]]"
+    },
+    {
+      "key": "think_tanks",
+      "value": "Think Tanks",
+      "link": "[[think_tanks|Think Tanks]]"
+    },
+    {
+      "key": "tobacco_manufacturing",
+      "value": "Tobacco Manufacturing",
+      "link": "[[tobacco_manufacturing|Tobacco Manufacturing]]"
+    },
+    {
+      "key": "translation_and_localization",
+      "value": "Translation and Localization",
+      "link": "[[translation_and_localization|Translation and Localization]]"
+    },
+    {
+      "key": "transportation_equipment_manufacturing",
+      "value": "Transportation Equipment Manufacturing",
+      "link": "[[transportation_equipment_manufacturing|Transportation Equipment Manufacturing]]"
+    },
+    {
+      "key": "transportation_programs",
+      "value": "Transportation Programs",
+      "link": "[[transportation_programs|Transportation Programs]]"
+    },
+    {
+      "key": "transportation_logistics_supply_chain_and_storage",
+      "value": "Transportation, Logistics, Supply Chain and Storage",
+      "link": "[[transportation_logistics_supply_chain_and_storage|Transportation, Logistics, Supply Chain and Storage]]"
+    },
+    {
+      "key": "travel_arrangements",
+      "value": "Travel Arrangements",
+      "link": "[[travel_arrangements|Travel Arrangements]]"
+    },
+    {
+      "key": "truck_transportation",
+      "value": "Truck Transportation",
+      "link": "[[truck_transportation|Truck Transportation]]"
+    },
+    {
+      "key": "trusts_and_estates",
+      "value": "Trusts and Estates",
+      "link": "[[trusts_and_estates|Trusts and Estates]]"
+    },
+    {
+      "key": "turned_products_and_fastener_manufacturing",
+      "value": "Turned Products and Fastener Manufacturing",
+      "link": "[[turned_products_and_fastener_manufacturing|Turned Products and Fastener Manufacturing]]"
+    },
+    {
+      "key": "urban_transit_services",
+      "value": "Urban Transit Services",
+      "link": "[[urban_transit_services|Urban Transit Services]]"
+    },
+    {
+      "key": "utilities",
+      "value": "Utilities",
+      "link": "[[utilities|Utilities]]"
+    },
+    {
+      "key": "utilities_administration",
+      "value": "Utilities Administration",
+      "link": "[[utilities_administration|Utilities Administration]]"
+    },
+    {
+      "key": "utility_system_construction",
+      "value": "Utility System Construction",
+      "link": "[[utility_system_construction|Utility System Construction]]"
+    },
+    {
+      "key": "vehicle_repair_and_maintenance",
+      "value": "Vehicle Repair and Maintenance",
+      "link": "[[vehicle_repair_and_maintenance|Vehicle Repair and Maintenance]]"
+    },
+    {
+      "key": "venture_capital_and_private_equity_principals",
+      "value": "Venture Capital and Private Equity Principals",
+      "link": "[[venture_capital_and_private_equity_principals|Venture Capital and Private Equity Principals]]"
+    },
+    {
+      "key": "veterinary_services",
+      "value": "Veterinary Services",
+      "link": "[[veterinary_services|Veterinary Services]]"
+    },
+    {
+      "key": "vocational_rehabilitation_services",
+      "value": "Vocational Rehabilitation Services",
+      "link": "[[vocational_rehabilitation_services|Vocational Rehabilitation Services]]"
+    },
+    {
+      "key": "warehousing_and_storage",
+      "value": "Warehousing and Storage",
+      "link": "[[warehousing_and_storage|Warehousing and Storage]]"
+    },
+    {
+      "key": "waste_collection",
+      "value": "Waste Collection",
+      "link": "[[waste_collection|Waste Collection]]"
+    },
+    {
+      "key": "waste_treatment_and_disposal",
+      "value": "Waste Treatment and Disposal",
+      "link": "[[waste_treatment_and_disposal|Waste Treatment and Disposal]]"
+    },
+    {
+      "key": "water_supply_and_irrigation_systems",
+      "value": "Water Supply and Irrigation Systems",
+      "link": "[[water_supply_and_irrigation_systems|Water Supply and Irrigation Systems]]"
+    },
+    {
+      "key": "water_waste_steam_and_air_conditioning_services",
+      "value": "Water, Waste, Steam, and Air Conditioning Services",
+      "link": "[[water_waste_steam_and_air_conditioning_services|Water, Waste, Steam, and Air Conditioning Services]]"
+    },
+    {
+      "key": "wellness_and_fitness_services",
+      "value": "Wellness and Fitness Services",
+      "link": "[[wellness_and_fitness_services|Wellness and Fitness Services]]"
+    },
+    {
+      "key": "wholesale",
+      "value": "Wholesale",
+      "link": "[[wholesale|Wholesale]]"
+    },
+    {
+      "key": "wholesale_alcoholic_beverages",
+      "value": "Wholesale Alcoholic Beverages",
+      "link": "[[wholesale_alcoholic_beverages|Wholesale Alcoholic Beverages]]"
+    },
+    {
+      "key": "wholesale_apparel_and_sewing_supplies",
+      "value": "Wholesale Apparel and Sewing Supplies",
+      "link": "[[wholesale_apparel_and_sewing_supplies|Wholesale Apparel and Sewing Supplies]]"
+    },
+    {
+      "key": "wholesale_appliances_electrical_and_electronics",
+      "value": "Wholesale Appliances, Electrical, and Electronics",
+      "link": "[[wholesale_appliances_electrical_and_electronics|Wholesale Appliances, Electrical, and Electronics]]"
+    },
+    {
+      "key": "wholesale_building_materials",
+      "value": "Wholesale Building Materials",
+      "link": "[[wholesale_building_materials|Wholesale Building Materials]]"
+    },
+    {
+      "key": "wholesale_chemical_and_allied_products",
+      "value": "Wholesale Chemical and Allied Products",
+      "link": "[[wholesale_chemical_and_allied_products|Wholesale Chemical and Allied Products]]"
+    },
+    {
+      "key": "wholesale_computer_equipment",
+      "value": "Wholesale Computer Equipment",
+      "link": "[[wholesale_computer_equipment|Wholesale Computer Equipment]]"
+    },
+    {
+      "key": "wholesale_drugs_and_sundries",
+      "value": "Wholesale Drugs and Sundries",
+      "link": "[[wholesale_drugs_and_sundries|Wholesale Drugs and Sundries]]"
+    },
+    {
+      "key": "wholesale_food_and_beverage",
+      "value": "Wholesale Food and Beverage",
+      "link": "[[wholesale_food_and_beverage|Wholesale Food and Beverage]]"
+    },
+    {
+      "key": "wholesale_footwear",
+      "value": "Wholesale Footwear",
+      "link": "[[wholesale_footwear|Wholesale Footwear]]"
+    },
+    {
+      "key": "wholesale_furniture_and_home_furnishings",
+      "value": "Wholesale Furniture and Home Furnishings",
+      "link": "[[wholesale_furniture_and_home_furnishings|Wholesale Furniture and Home Furnishings]]"
+    },
+    {
+      "key": "wholesale_hardware_plumbing_heating_equipment",
+      "value": "Wholesale Hardware, Plumbing, Heating Equipment",
+      "link": "[[wholesale_hardware_plumbing_heating_equipment|Wholesale Hardware, Plumbing, Heating Equipment]]"
+    },
+    {
+      "key": "wholesale_import_and_export",
+      "value": "Wholesale Import and Export",
+      "link": "[[wholesale_import_and_export|Wholesale Import and Export]]"
+    },
+    {
+      "key": "wholesale_luxury_goods_and_jewelry",
+      "value": "Wholesale Luxury Goods and Jewelry",
+      "link": "[[wholesale_luxury_goods_and_jewelry|Wholesale Luxury Goods and Jewelry]]"
+    },
+    {
+      "key": "wholesale_machinery",
+      "value": "Wholesale Machinery",
+      "link": "[[wholesale_machinery|Wholesale Machinery]]"
+    },
+    {
+      "key": "wholesale_metals_and_minerals",
+      "value": "Wholesale Metals and Minerals",
+      "link": "[[wholesale_metals_and_minerals|Wholesale Metals and Minerals]]"
+    },
+    {
+      "key": "wholesale_motor_vehicles_and_parts",
+      "value": "Wholesale Motor Vehicles and Parts",
+      "link": "[[wholesale_motor_vehicles_and_parts|Wholesale Motor Vehicles and Parts]]"
+    },
+    {
+      "key": "wholesale_paper_products",
+      "value": "Wholesale Paper Products",
+      "link": "[[wholesale_paper_products|Wholesale Paper Products]]"
+    },
+    {
+      "key": "wholesale_petroleum_and_petroleum_products",
+      "value": "Wholesale Petroleum and Petroleum Products",
+      "link": "[[wholesale_petroleum_and_petroleum_products|Wholesale Petroleum and Petroleum Products]]"
+    },
+    {
+      "key": "wholesale_photography_equipment_and_supplies",
+      "value": "Wholesale Photography Equipment and Supplies",
+      "link": "[[wholesale_photography_equipment_and_supplies|Wholesale Photography Equipment and Supplies]]"
+    },
+    {
+      "key": "wholesale_raw_farm_products",
+      "value": "Wholesale Raw Farm Products",
+      "link": "[[wholesale_raw_farm_products|Wholesale Raw Farm Products]]"
+    },
+    {
+      "key": "wholesale_recyclable_materials",
+      "value": "Wholesale Recyclable Materials",
+      "link": "[[wholesale_recyclable_materials|Wholesale Recyclable Materials]]"
+    },
+    {
+      "key": "wind_electric_power_generation",
+      "value": "Wind Electric Power Generation",
+      "link": "[[wind_electric_power_generation|Wind Electric Power Generation]]"
+    },
+    {
+      "key": "wineries",
+      "value": "Wineries",
+      "link": "[[wineries|Wineries]]"
+    },
+    {
+      "key": "wireless_services",
+      "value": "Wireless Services",
+      "link": "[[wireless_services|Wireless Services]]"
+    },
+    {
+      "key": "women's_handbag_manufacturing",
+      "value": "Women's Handbag Manufacturing",
+      "link": "[[women's_handbag_manufacturing|Women's Handbag Manufacturing]]"
+    },
+    {
+      "key": "wood_product_manufacturing",
+      "value": "Wood Product Manufacturing",
+      "link": "[[wood_product_manufacturing|Wood Product Manufacturing]]"
+    },
+    {
+      "key": "writing_and_editing",
+      "value": "Writing and Editing",
+      "link": "[[writing_and_editing|Writing and Editing]]"
+    },
+    {
+      "key": "zoos_and_botanical_gardens",
+      "value": "Zoos and Botanical Gardens",
+      "link": "[[zoos_and_botanical_gardens|Zoos and Botanical Gardens]]"
+    }
+  ]
+}

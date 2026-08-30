@@ -1,0 +1,12 @@
+[fields.title]
+"$ref" = "#global/title"
+
+[fields.aliases]
+"$ref" = "#global/aliases"
+
+[fields.pillar]
+"$ref" = "#global/pillar"
+
+[fields.status]
+type = "select"
+values = ["active", "achieved", "paused", "discarded"]
