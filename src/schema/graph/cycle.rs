@@ -45,7 +45,7 @@ impl<'a> CycleDetector<'a, '_> {
         }
         for start in 0..DenseIndex::saturating_u32(self.adjacency.node_count())
         {
-            let start = DenseIndex(start);
+            let start = DenseIndex::from_u32(start);
             if self.is_kahn_visited(start) || self.search.is_discovered(start) {
                 continue;
             }
@@ -171,9 +171,9 @@ impl<'a> CycleDetector<'a, '_> {
         if !is_cyclic {
             return;
         }
-        // Insertion order, not Tarjan pop order: matches the resolver's
-        // error-reporting convention.
-        component.sort_by_key(|idx| idx.0);
+        // Insertion order, not Tarjan pop order: matches
+        // SchemaBuilder::compute_hierarchy's error-reporting convention.
+        component.sort_by_key(|idx| idx.index());
         let adjacency = &self.adjacency;
         self.cyclic.extend(
             component

@@ -211,30 +211,11 @@ impl<'a> SchemaBuilder<'a> {
         type HierarchyUpdate =
             (SchemaName, IndexSet<SchemaName>, IndexSet<SchemaName>);
 
-        let children_by_name = graph.children_by_name();
-        let descendants_by_name = graph.descendants_by_name();
-        let hierarchy: Vec<HierarchyUpdate> = self
-            .resolved
-            .keys()
-            .map(|name| {
-                let children: IndexSet<SchemaName> = children_by_name
-                    .get(name.as_str())
-                    .into_iter()
-                    .flatten()
-                    .map(|&child| SchemaName::from(child))
-                    .filter(|child| self.still_descends_from(child, name))
-                    .collect();
-                let descendants: IndexSet<SchemaName> = descendants_by_name
-                    .get(name)
-                    .into_iter()
-                    .flatten()
-                    .filter(|descendant| {
-                        self.still_descends_from(descendant, name)
-                    })
-                    .cloned()
-                    .collect();
-                (name.clone(), children, descendants)
+        let hierarchy: Vec<HierarchyUpdate> = graph
+            .hierarchy(|candidate, name| {
+                self.still_descends_from(candidate, name)
             })
+            .filter(|(name, _, _)| self.resolved.contains_key(name.as_str()))
             .collect();
         for (name, children, descendants) in hierarchy {
             if let Some(schema) = self.resolved.get_mut(&name) {
@@ -248,12 +229,12 @@ impl<'a> SchemaBuilder<'a> {
     /// drop a Schema from a hierarchy set it would otherwise belong to.
     fn still_descends_from(
         &self,
-        candidate: &SchemaName,
-        name: &SchemaName,
+        candidate: SchemaNameRef<'_>,
+        name: SchemaNameRef<'_>,
     ) -> bool {
         self.resolved
-            .get(candidate)
-            .is_some_and(|schema| schema.ancestors().contains(name))
+            .get(candidate.as_str())
+            .is_some_and(|schema| schema.ancestors().contains(name.as_str()))
     }
 
     fn finish(self) -> ResolvedSchemas {

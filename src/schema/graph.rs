@@ -1,9 +1,9 @@
 //! DAG bookkeeping for the `extends` relationship, linearized via Kahn's
 //! topological sort.
 //!
-//! [`SchemaGraph`] owns graph mechanics so [`super::resolver`] can drive
-//! resolution order without tangling traversal into field-merge logic.
-//! Adjacency is stored as a CSR (compressed sparse row) graph over dense
+//! [`SchemaGraph`] owns graph mechanics so [`super::builder::SchemaBuilder`]
+//! can drive resolution order without tangling traversal into field-merge
+//! logic. Adjacency is stored as a compressed sparse row (CSR) graph over dense
 //! [`u32`] indices, making lookups array accesses rather than hash probes.
 //!
 //! # Ordering
@@ -23,12 +23,11 @@
 //!    API. Returns a [`SchemaGraph`] on success, or the list of cyclic Schemas
 //!    on failure.
 //! 3. Query the resulting [`SchemaGraph`]: [`topological_order`],
-//!    [`parents_of`], [`children_by_name`], [`descendants_by_name`].
+//!    [`parents_of`], [`hierarchy`].
 //!
 //! [`topological_order`]: SchemaGraph::topological_order
 //! [`parents_of`]: SchemaGraph::parents_of
-//! [`children_by_name`]: SchemaGraph::children_by_name
-//! [`descendants_by_name`]: SchemaGraph::descendants_by_name
+//! [`hierarchy`]: SchemaGraph::hierarchy
 
 mod adjacency;
 mod builder;
@@ -36,7 +35,9 @@ mod cycle;
 
 use adjacency::{DenseIndex, SchemaAdjacency};
 pub(super) use builder::SchemaGraphBuilder;
-use indexmap::{IndexMap, IndexSet};
+#[cfg(test)]
+use indexmap::IndexMap;
+use indexmap::IndexSet;
 
 use super::{SchemaName, SchemaNameRef};
 
@@ -67,42 +68,64 @@ impl<'a> SchemaGraph<'a> {
         self.adjacency.parents_of(name)
     }
 
-    /// Returns every Schema's direct `extends` children, keyed by parent name.
-    /// Only Schemas with at least one child appear.
-    #[must_use]
-    pub(super) fn children_by_name(
-        &self,
-    ) -> IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
-        let mut map: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> =
-            IndexMap::new();
-        for (i, &name) in self.adjacency.names.iter().enumerate() {
-            let slice =
-                self.adjacency.children_slice(DenseIndex::from_usize(i));
-            if slice.is_empty() {
-                continue;
-            }
-            let children: Vec<SchemaNameRef<'a>> = slice
-                .iter()
-                .filter_map(|&child| self.adjacency.names.get(child.index()))
-                .copied()
-                .collect();
-            map.insert(name, children);
-        }
-        map
+    /// Returns every Schema's direct children and transitive descendants,
+    /// filtered by `keep`.
+    ///
+    /// `keep(candidate, ancestor)` decides whether `candidate` still counts as
+    /// a child/descendant of `ancestor` — callers use this to drop links a
+    /// failed parent resolution invalidated. Descendant closure is computed
+    /// once, then converted straight into the owned sets the caller stores.
+    pub(super) fn hierarchy<'b>(
+        &'b self,
+        mut keep: impl FnMut(SchemaNameRef<'a>, SchemaNameRef<'a>) -> bool + 'b,
+    ) -> impl Iterator<
+        Item = (SchemaName, IndexSet<SchemaName>, IndexSet<SchemaName>),
+    > + 'b {
+        let descendant_indices = self.descendant_indices();
+        self.adjacency.names_iter().enumerate().map(move |(i, name)| {
+            let node = DenseIndex::from_usize(i);
+            let children = Self::resolve_names(
+                &self.adjacency,
+                self.adjacency.children_slice(node),
+                name,
+                &mut keep,
+            );
+            let descendants: &[DenseIndex] =
+                descendant_indices.get(i).map_or(&[], Vec::as_slice);
+            let descendants = Self::resolve_names(
+                &self.adjacency,
+                descendants,
+                name,
+                &mut keep,
+            );
+            (SchemaName::from(name), children, descendants)
+        })
     }
 
-    /// Returns every Schema's transitive `extends` descendants, keyed by
-    /// ancestor name.
+    /// Resolves `indices` to names, keeping only those `keep(name, ancestor)`
+    /// accepts.
+    fn resolve_names(
+        adjacency: &SchemaAdjacency<'a>,
+        indices: &[DenseIndex],
+        ancestor: SchemaNameRef<'a>,
+        keep: &mut impl FnMut(SchemaNameRef<'a>, SchemaNameRef<'a>) -> bool,
+    ) -> IndexSet<SchemaName> {
+        indices
+            .iter()
+            .filter_map(|&index| adjacency.name_of(index))
+            .filter(|&name| keep(name, ancestor))
+            .map(SchemaName::from)
+            .collect()
+    }
+
+    /// Returns every node's transitive descendants as dense indices.
     ///
     /// Output-sensitive Habib-Morvan-Rampon transitive closure, `O(V + E +
     /// Σ|closure(x)|)`, proportional to the closure's actual size rather than
     /// the `O(V²/w)` a bitset DP pays unconditionally. Requires children
     /// iterated in topological-rank order, which [`SchemaGraphBuilder::build`]
     /// already sorted `child_targets` into.
-    #[must_use]
-    pub(super) fn descendants_by_name(
-        &self,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+    fn descendant_indices(&self) -> Vec<Vec<DenseIndex>> {
         let count = self.adjacency.node_count();
         let topo_rank =
             self.adjacency.compute_topo_rank(&self.topological_order);
@@ -117,12 +140,12 @@ impl<'a> SchemaGraph<'a> {
             accumulator.accumulate(node, self.adjacency.children_slice(node));
         }
 
-        accumulator.into_descendant_names(&self.adjacency)
+        accumulator.into_descendant_indices()
     }
 }
 
-/// Per-node transitive-descendant accumulator for
-/// [`SchemaGraph::descendants_by_name`]'s reverse-topological sweep.
+/// Per-node transitive-descendant accumulator for [`SchemaGraph::hierarchy`]'s
+/// reverse-topological sweep.
 ///
 /// `seen` is scratch, cleared before each `accumulate` call returns, so
 /// deduplication costs `O(|descendants(node)|)` rather than a full-array clear
@@ -149,74 +172,55 @@ impl DescendantAccumulator {
     /// Accumulates `node`'s direct-plus-inherited descendants from its
     /// already-topological-rank-sorted `children`.
     fn accumulate(&mut self, node: DenseIndex, children: &[DenseIndex]) {
-        for &child in children {
-            self.merge_child(node, child);
-        }
-        let Some(node_descendants) = self.descendants.get_mut(node.index())
+        let node_index = node.index();
+        let Some(node_descendants) = self.descendants.get_mut(node_index)
         else {
             return;
         };
+        let mut node_descendants = std::mem::take(node_descendants);
+        for &child in children {
+            self.merge_child_into(&mut node_descendants, child);
+        }
         // Required: without this, node_descendants' order is
         // child-processing-interleaved, not globally topological.
         let rank = &self.rank;
         node_descendants
             .sort_by_key(|d| rank.get(d.index()).copied().unwrap_or(u32::MAX));
-        for &descendant in node_descendants.iter() {
+        for &descendant in &node_descendants {
             self.seen.set(descendant.index(), false);
+        }
+        if let Some(slot) = self.descendants.get_mut(node_index) {
+            *slot = node_descendants;
         }
     }
 
-    /// Folds `child`'s already-finalized descendant list into `node`'s,
-    /// deduplicating via `self.seen`.
-    fn merge_child(&mut self, node: DenseIndex, child: DenseIndex) {
+    /// Folds `child`'s already-finalized descendant list into
+    /// `node_descendants`, deduplicating via `self.seen`.
+    fn merge_child_into(
+        &mut self,
+        node_descendants: &mut Vec<DenseIndex>,
+        child: DenseIndex,
+    ) {
         if self.seen.get(child.index()) == Some(true) {
             return;
         }
         self.seen.set(child.index(), true);
-        self.record(node, child);
-        let child_descendants: Vec<DenseIndex> =
-            self.descendants.get(child.index()).cloned().unwrap_or_default();
-        for descendant in child_descendants {
-            if self.seen.get(descendant.index()) == Some(true) {
-                continue;
+        node_descendants.push(child);
+        if let Some(child_descendants) = self.descendants.get(child.index()) {
+            for &descendant in child_descendants {
+                if self.seen.get(descendant.index()) == Some(true) {
+                    continue;
+                }
+                self.seen.set(descendant.index(), true);
+                node_descendants.push(descendant);
             }
-            self.seen.set(descendant.index(), true);
-            self.record(node, descendant);
         }
     }
 
-    /// Appends `descendant` to `node`'s list. No-op if `node` is out of range.
-    fn record(&mut self, node: DenseIndex, descendant: DenseIndex) {
-        if let Some(list) = self.descendants.get_mut(node.index()) {
-            list.push(descendant);
-        }
-    }
-
-    /// Consumes the accumulator, returning every node's transitive descendants
-    /// as owned [`SchemaName`] sets keyed by ancestor name. Schemas with no
-    /// descendants are omitted.
-    fn into_descendant_names(
-        self,
-        adjacency: &SchemaAdjacency<'_>,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let lists = self.descendants;
-        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
-        for (i, name) in adjacency.names.iter().enumerate() {
-            let Some(node_descendants) = lists.get(i) else {
-                continue;
-            };
-            if node_descendants.is_empty() {
-                continue;
-            }
-            let descendants: IndexSet<SchemaName> = node_descendants
-                .iter()
-                .filter_map(|&d| adjacency.names.get(d.index()))
-                .map(|&n| SchemaName::from(n))
-                .collect();
-            result.insert(SchemaName::from(*name), descendants);
-        }
-        result
+    /// Consumes the accumulator, returning every node's transitive descendant
+    /// indices. Nodes with no descendants keep an empty list.
+    fn into_descendant_indices(self) -> Vec<Vec<DenseIndex>> {
+        self.descendants
     }
 }
 
@@ -230,6 +234,38 @@ mod tests {
             extends: extends.iter().map(|&s| SchemaName::from(s)).collect(),
             ..super::super::RawSchema::default()
         }
+    }
+
+    fn hierarchy_for(
+        graph: &SchemaGraph<'_>,
+        target: &str,
+    ) -> (Vec<String>, IndexSet<SchemaName>) {
+        graph
+            .hierarchy(|_, _| true)
+            .find(|(name, _, _)| name.as_str() == target)
+            .map(|(_, children, descendants)| {
+                (
+                    children
+                        .iter()
+                        .map(|child| child.as_str().to_owned())
+                        .collect(),
+                    descendants,
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    /// Builds a graph from `raw`, discarding construction warnings.
+    /// Test-only: eliminates the `SchemaGraphBuilder::new(...).0.build()`
+    /// postfix-tuple-indexing chain that appears at every call site below.
+    fn build_graph(
+        raw: &IndexMap<SchemaName, super::super::RawSchema>,
+    ) -> SchemaGraph<'_> {
+        let (builder, _warnings) = SchemaGraphBuilder::new(
+            raw,
+            SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+        );
+        builder.build().expect("acyclic fixture resolves")
     }
 
     mod topological_order {
@@ -287,31 +323,14 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("memoir"), schema(&["book"]));
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let children = graph.children_by_name();
+            let graph = build_graph(&raw);
 
-            let thing_children: Vec<&str> = children
-                .get("thing")
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str())
-                .collect();
-            assert_eq!(thing_children, vec!["book"]);
-            let book_children: Vec<&str> = children
-                .get("book")
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str())
-                .collect();
-            assert_eq!(book_children, vec!["sci_fi", "memoir"]);
-            assert_eq!(children.get("sci_fi"), None);
-            assert_eq!(children.get("memoir"), None);
+            assert_eq!(hierarchy_for(&graph, "thing").0, vec!["book"]);
+            assert_eq!(hierarchy_for(&graph, "book").0, vec![
+                "sci_fi", "memoir"
+            ]);
+            assert!(hierarchy_for(&graph, "sci_fi").0.is_empty());
+            assert!(hierarchy_for(&graph, "memoir").0.is_empty());
         }
 
         #[test]
@@ -325,53 +344,22 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let children = graph.children_by_name();
+            let graph = build_graph(&raw);
 
-            let book_children: Vec<&str> = children
-                .get("book")
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str())
-                .collect();
-            assert_eq!(book_children, vec!["adaptation"]);
-            let film_children: Vec<&str> = children
-                .get("film")
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str())
-                .collect();
-            assert_eq!(film_children, vec!["adaptation"]);
-            let thing_children: Vec<&str> = children
-                .get("thing")
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str())
-                .collect();
-            assert_eq!(thing_children, vec!["book", "film"]);
+            assert_eq!(hierarchy_for(&graph, "book").0, vec!["adaptation"]);
+            assert_eq!(hierarchy_for(&graph, "film").0, vec!["adaptation"]);
+            assert_eq!(hierarchy_for(&graph, "thing").0, vec!["book", "film"]);
         }
 
         #[test]
-        fn returns_empty_map_when_no_schema_has_children() {
+        fn returns_empty_children_when_no_schema_has_children() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&[]));
             raw.insert(SchemaName::from("b"), schema(&[]));
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let children = graph.children_by_name();
+            let graph = build_graph(&raw);
 
-            assert!(children.is_empty());
+            assert!(hierarchy_for(&graph, "a").0.is_empty());
+            assert!(hierarchy_for(&graph, "b").0.is_empty());
         }
 
         #[test]
@@ -386,23 +374,10 @@ mod tests {
             raw.insert(SchemaName::from("parent"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["parent", "book"]));
             raw.insert(SchemaName::from("book"), schema(&["parent"]));
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let children = graph.children_by_name();
+            let graph = build_graph(&raw);
 
-            let parent_children: Vec<&str> = children
-                .get("parent")
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str())
-                .collect();
             assert_eq!(
-                parent_children,
+                hierarchy_for(&graph, "parent").0,
                 vec!["book", "sci_fi"],
                 "children must be in topological order (book before sci_fi), \
                  not raw CSR insertion order"
@@ -430,18 +405,11 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let descendants = graph.descendants_by_name();
+            let graph = build_graph(&raw);
 
             assert_eq!(
-                descendants.get("thing"),
-                Some(&set(&["adaptation", "book", "film"]))
+                hierarchy_for(&graph, "thing").1,
+                set(&["adaptation", "book", "film"])
             );
         }
 
@@ -452,42 +420,31 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("space_opera"), schema(&["sci_fi"]));
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let descendants = graph.descendants_by_name();
+            let graph = build_graph(&raw);
 
             assert_eq!(
-                descendants.get("thing"),
-                Some(&set(&["book", "sci_fi", "space_opera"]))
+                hierarchy_for(&graph, "thing").1,
+                set(&["book", "sci_fi", "space_opera"])
             );
             assert_eq!(
-                descendants.get("book"),
-                Some(&set(&["sci_fi", "space_opera"]))
+                hierarchy_for(&graph, "book").1,
+                set(&["sci_fi", "space_opera"])
             );
-            assert_eq!(descendants.get("sci_fi"), Some(&set(&["space_opera"])));
-            assert_eq!(descendants.get("space_opera"), None);
+            assert_eq!(
+                hierarchy_for(&graph, "sci_fi").1,
+                set(&["space_opera"])
+            );
+            assert!(hierarchy_for(&graph, "space_opera").1.is_empty());
         }
 
         #[test]
-        fn excludes_leaf_from_result_map() {
+        fn excludes_leaf_from_descendants() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let descendants = graph.descendants_by_name();
+            let graph = build_graph(&raw);
 
-            assert_eq!(descendants.get("sci_fi"), None);
+            assert!(hierarchy_for(&graph, "sci_fi").1.is_empty());
         }
 
         #[test]
@@ -497,19 +454,12 @@ mod tests {
             raw.insert(SchemaName::from("b"), schema(&["a"]));
             raw.insert(SchemaName::from("c"), schema(&[]));
             raw.insert(SchemaName::from("d"), schema(&["c"]));
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let descendants = graph.descendants_by_name();
+            let graph = build_graph(&raw);
 
-            assert_eq!(descendants.get("a"), Some(&set(&["b"])));
-            assert_eq!(descendants.get("c"), Some(&set(&["d"])));
-            assert_eq!(descendants.get("b"), None);
-            assert_eq!(descendants.get("d"), None);
+            assert_eq!(hierarchy_for(&graph, "a").1, set(&["b"]));
+            assert_eq!(hierarchy_for(&graph, "c").1, set(&["d"]));
+            assert!(hierarchy_for(&graph, "b").1.is_empty());
+            assert!(hierarchy_for(&graph, "d").1.is_empty());
         }
 
         #[test]
@@ -526,20 +476,12 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let graph = SchemaGraphBuilder::new(
-                &raw,
-                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-            )
-            .0
-            .build()
-            .unwrap();
-            let descendants = graph.descendants_by_name();
+            let graph = build_graph(&raw);
 
-            let expected: IndexSet<SchemaName> = ["adaptation", "book", "film"]
-                .iter()
-                .map(|&s| SchemaName::from(s))
-                .collect();
-            assert_eq!(descendants.get("thing"), Some(&expected));
+            assert_eq!(
+                hierarchy_for(&graph, "thing").1,
+                set(&["adaptation", "book", "film"])
+            );
         }
     }
 }

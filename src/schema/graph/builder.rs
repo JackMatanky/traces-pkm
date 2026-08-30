@@ -44,7 +44,7 @@ impl<'a> SchemaGraphBuilder<'a> {
         // (occurrences of a node across every parent's children list) rather
         // than re-scanning raw `extends` lists a second time.
         let mut unresolved_parent_count: Vec<u32> = vec![0; node_count];
-        for &child in &adjacency.child_targets {
+        for child in adjacency.child_targets_iter() {
             if let Some(count) = unresolved_parent_count.get_mut(child.index())
             {
                 *count = count.saturating_add(1);
@@ -53,7 +53,7 @@ impl<'a> SchemaGraphBuilder<'a> {
 
         let ready_queue: VecDeque<DenseIndex> = (0
             ..DenseIndex::saturating_u32(node_count))
-            .map(DenseIndex)
+            .map(DenseIndex::from_u32)
             .filter(|idx| {
                 unresolved_parent_count.get(idx.index()).copied() == Some(0)
             })
@@ -74,8 +74,8 @@ impl<'a> SchemaGraphBuilder<'a> {
     /// [`SchemaGraph`].
     ///
     /// After topological sort completes, sorts every node's CSR children into
-    /// topological-rank order (a precondition for
-    /// [`SchemaGraph::descendants_by_name`]'s closure sweep).
+    /// topological-rank order (a precondition for [`SchemaGraph::hierarchy`]'s
+    /// closure sweep).
     ///
     /// # Errors
     ///
@@ -97,7 +97,7 @@ impl<'a> SchemaGraphBuilder<'a> {
         };
         for i in 0..DenseIndex::saturating_u32(self.adjacency.node_count()) {
             self.adjacency
-                .children_slice_mut(DenseIndex(i))
+                .children_slice_mut(DenseIndex::from_u32(i))
                 .sort_by_key(rank_of);
         }
 

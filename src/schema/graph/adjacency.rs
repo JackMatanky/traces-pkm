@@ -14,7 +14,10 @@ use super::super::{
 };
 
 /// A validated parent→child edge between two dense indices.
-type Edge = (DenseIndex, DenseIndex);
+struct SchemaGraphEdge {
+    source: DenseIndex,
+    target: DenseIndex,
+}
 
 /// Dense per-schema array index, assigned once at construction in raw-map
 /// insertion order.
@@ -23,7 +26,7 @@ type Edge = (DenseIndex, DenseIndex);
 /// a schema set at `u32::MAX` entries, which is not a real constraint for a
 /// filesystem-enumerated `.traces/schemas/*.toml` registry.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct DenseIndex(pub(super) u32);
+pub(super) struct DenseIndex(u32);
 
 impl DenseIndex {
     /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow.
@@ -35,6 +38,13 @@ impl DenseIndex {
     /// [`Self::saturating_u32`].
     pub(super) fn from_usize(n: usize) -> Self {
         Self(Self::saturating_u32(n))
+    }
+
+    /// Builds a dense index from an already-valid `u32` position (e.g. a loop
+    /// counter already bounded by [`Self::saturating_u32`]). Unlike
+    /// [`Self::from_usize`], performs no saturation.
+    pub(super) const fn from_u32(n: u32) -> Self {
+        Self(n)
     }
 
     /// Widens back to `usize` for slice indexing.
@@ -58,21 +68,24 @@ impl DenseIndex {
 /// or appear in any hierarchy query.
 #[derive(Debug)]
 pub(super) struct SchemaAdjacency<'a> {
-    /// Every raw Schema, including `excluded`. The Global Schema is skipped by
-    /// index, not by omission from this map.
-    pub(super) raw: &'a IndexMap<SchemaName, RawSchema>,
     /// The Global Schema name, excluded from the graph.
-    pub(super) excluded: SchemaNameRef<'a>,
+    excluded: SchemaNameRef<'a>,
     /// Dense index to name, in raw-map insertion order, `excluded` skipped.
-    pub(super) names: Vec<SchemaNameRef<'a>>,
+    names: Vec<SchemaNameRef<'a>>,
     /// Name to dense index, built once at construction.
-    pub(super) index_of: IndexMap<SchemaNameRef<'a>, DenseIndex>,
+    index_of: IndexMap<SchemaNameRef<'a>, DenseIndex>,
+    /// Each schema's raw `extends` list, deduplicated by first occurrence and
+    /// order-preserved. [`Self::parents_of`] exposes this instead of the raw
+    /// list so a duplicated `extends` target (already warned via
+    /// [`DuplicateExtendsTarget`](SchemaWarning::DuplicateExtendsTarget)) is
+    /// processed once by callers, not once per repetition.
+    declared_parents: IndexMap<SchemaNameRef<'a>, Vec<SchemaName>>,
     /// CSR parent→child offsets: node `i`'s children occupy
     /// `child_targets[child_offsets[i]..child_offsets[i + 1]]`.
-    pub(super) child_offsets: Vec<u32>,
+    child_offsets: Vec<u32>,
     /// CSR parent→child targets, indexed via
     /// [`child_offsets`](Self::child_offsets).
-    pub(super) child_targets: Vec<DenseIndex>,
+    child_targets: Vec<DenseIndex>,
 }
 
 impl<'a> SchemaAdjacency<'a> {
@@ -98,19 +111,39 @@ impl<'a> SchemaAdjacency<'a> {
         let (names, index_of) = Self::assign_indices(raw, excluded);
         let count = names.len();
         let (edges, warnings) =
-            Self::validate_edges(raw, excluded, &names, &index_of, count);
+            Self::validate_edges(raw, excluded, &names, &index_of);
         let (child_offsets, child_targets) = Self::build_csr(edges, count);
+        let declared_parents = Self::dedupe_declared_parents(raw);
         (
             Self {
-                raw,
                 excluded,
                 names,
                 index_of,
+                declared_parents,
                 child_offsets,
                 child_targets,
             },
             warnings,
         )
+    }
+
+    /// Deduplicates each schema's raw `extends` list by first occurrence,
+    /// preserving declaration order. See [`Self::declared_parents`].
+    fn dedupe_declared_parents(
+        raw: &'a IndexMap<SchemaName, RawSchema>,
+    ) -> IndexMap<SchemaNameRef<'a>, Vec<SchemaName>> {
+        raw.iter()
+            .map(|(name, raw_schema)| {
+                let mut seen = IndexSet::new();
+                let parents = raw_schema
+                    .extends
+                    .iter()
+                    .filter(|target| seen.insert(target.as_str()))
+                    .cloned()
+                    .collect();
+                (name.as_ref(), parents)
+            })
+            .collect()
     }
 
     /// Assigns dense indices in raw-map insertion order, skipping `excluded`.
@@ -138,16 +171,15 @@ impl<'a> SchemaAdjacency<'a> {
         excluded: SchemaNameRef<'a>,
         names: &[SchemaNameRef<'a>],
         index_of: &IndexMap<SchemaNameRef<'a>, DenseIndex>,
-        count: usize,
-    ) -> (Vec<Edge>, Vec<SchemaWarning>) {
+    ) -> (Vec<SchemaGraphEdge>, Vec<SchemaWarning>) {
         let mut warnings = Vec::new();
-        let mut out_degree: Vec<u32> = vec![0; count];
-        let mut valid_edges: Vec<Edge> = Vec::new();
+        let mut valid_edges: Vec<SchemaGraphEdge> = Vec::new();
+        let mut seen_targets = IndexSet::new();
         for (i, &name) in names.iter().enumerate() {
             let Some(raw_schema) = raw.get(name.as_str()) else {
                 continue;
             };
-            let mut seen_targets = IndexSet::new();
+            seen_targets.clear();
             for target in &raw_schema.extends {
                 if target.as_str() == excluded.as_str() {
                     continue;
@@ -166,10 +198,10 @@ impl<'a> SchemaAdjacency<'a> {
                     });
                     continue;
                 };
-                if let Some(degree) = out_degree.get_mut(target_index.index()) {
-                    *degree = degree.saturating_add(1);
-                }
-                valid_edges.push((DenseIndex::from_usize(i), target_index));
+                valid_edges.push(SchemaGraphEdge {
+                    source: DenseIndex::from_usize(i),
+                    target: target_index,
+                });
             }
         }
         (valid_edges, warnings)
@@ -177,7 +209,7 @@ impl<'a> SchemaAdjacency<'a> {
 
     /// Builds CSR offsets and targets from the validated edge list.
     fn build_csr(
-        valid_edges: Vec<Edge>,
+        valid_edges: Vec<SchemaGraphEdge>,
         count: usize,
     ) -> (Vec<u32>, Vec<DenseIndex>) {
         let mut child_offsets: Vec<u32> =
@@ -187,8 +219,8 @@ impl<'a> SchemaAdjacency<'a> {
 
         // Compute out-degree per node from the edge list.
         let mut out_degree: Vec<u32> = vec![0; count];
-        for &(_, target) in &valid_edges {
-            if let Some(degree) = out_degree.get_mut(target.index()) {
+        for edge in &valid_edges {
+            if let Some(degree) = out_degree.get_mut(edge.target.index()) {
                 *degree = degree.saturating_add(1);
             }
         }
@@ -202,15 +234,15 @@ impl<'a> SchemaAdjacency<'a> {
         let mut cursor: Vec<u32> =
             child_offsets.iter().take(count).copied().collect();
         let mut child_targets: Vec<DenseIndex> =
-            vec![DenseIndex(0); edge_count];
-        for (schema_index, target_index) in valid_edges {
-            let Some(slot) = cursor.get_mut(target_index.index()) else {
+            vec![DenseIndex::from_u32(0); edge_count];
+        for edge in valid_edges {
+            let Some(slot) = cursor.get_mut(edge.target.index()) else {
                 continue;
             };
             if let Some(target_slot) =
                 child_targets.get_mut(DenseIndex::widen_usize(*slot))
             {
-                *target_slot = schema_index;
+                *target_slot = edge.source;
             }
             *slot = slot.saturating_add(1);
         }
@@ -220,7 +252,7 @@ impl<'a> SchemaAdjacency<'a> {
     /// Computes a topological rank vector from `topo_order`.
     ///
     /// Nodes not present in `topo_order` receive rank `u32::MAX`. Used by
-    /// both [`SchemaGraph::descendants_by_name`] and
+    /// both [`SchemaGraph::hierarchy`] and
     /// [`SchemaGraphBuilder::build`](super::builder::SchemaGraphBuilder::build).
     pub(super) fn compute_topo_rank(
         &self,
@@ -272,13 +304,13 @@ impl<'a> SchemaAdjacency<'a> {
         }
     }
 
-    /// Borrows `name`'s raw `extends` parent list. Returns an empty slice if
-    /// `name` is unknown or is `excluded`.
+    /// Borrows `name`'s deduplicated, declaration-order `extends` parent list.
+    /// Returns an empty slice if `name` is unknown or is `excluded`.
     pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
         if name == self.excluded {
             return &[];
         }
-        self.raw.get(name.as_str()).map_or(&[], |s| s.extends.as_slice())
+        self.declared_parents.get(name.as_str()).map_or(&[], Vec::as_slice)
     }
 
     /// Returns `name`'s dense index, or `None` if unknown or `excluded`.
@@ -300,6 +332,22 @@ impl<'a> SchemaAdjacency<'a> {
     /// Returns the number of nodes (Schemas excluding `excluded`).
     pub(super) fn node_count(&self) -> usize {
         self.names.len()
+    }
+
+    /// Borrows every dense-indexed Schema name, in construction order.
+    pub(super) fn names_iter(
+        &self,
+    ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
+        self.names.iter().copied()
+    }
+
+    /// Borrows every CSR child target, across every node, in CSR storage order.
+    /// Used to derive per-node in-degree without re-scanning raw `extends`
+    /// lists.
+    pub(super) fn child_targets_iter(
+        &self,
+    ) -> impl Iterator<Item = DenseIndex> + '_ {
+        self.child_targets.iter().copied()
     }
 }
 
@@ -454,14 +502,13 @@ mod tests {
         }
 
         #[test]
-        fn returns_raw_extends_including_duplicates() {
+        fn deduplicates_repeated_extends_targets_by_first_occurrence() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
             let adj = build_adj(&raw);
 
             assert_eq!(adj.parents_of(SchemaNameRef::from("child")), &[
-                SchemaName::from("book"),
                 SchemaName::from("book"),
             ]);
         }
