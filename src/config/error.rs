@@ -106,14 +106,6 @@ pub(crate) enum ConfigBuilderError {
         /// The trust status that caused the halt.
         status: ConfigTrustStatus,
     },
-    /// The merged local/global config could not be re-extracted to resolve the
-    /// effective output directory.
-    #[error("failed to merge local and global config")]
-    Merge {
-        /// Source figment error.
-        #[source]
-        source: Box<figment::Error>,
-    },
     /// A config file failed path validation, tracking, or parsing.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
@@ -155,9 +147,9 @@ pub(crate) enum ConfigFileError {
     Read {
         /// File that failed to load.
         path: PathBuf,
-        /// TOML provider error from `figment`.
+        /// TOML deserialization error.
         #[source]
-        source: Box<figment::Error>,
+        source: Box<toml::de::Error>,
     },
     /// Trust verification failed before the file could be parsed.
     #[error("failed to check trust for {root}")]
@@ -166,6 +158,26 @@ pub(crate) enum ConfigFileError {
         root: PathBuf,
         /// Underlying trust-store or hash error.
         source: Box<ConfigStateError>,
+    },
+    /// A configured subdirectory path was invalid (absolute, contained `..`, or
+    /// escaped root).
+    #[error("invalid config subdirectory path {path}")]
+    InvalidSubDir {
+        /// Subdirectory path that failed validation.
+        path: PathBuf,
+        /// Underlying path validation failure.
+        #[source]
+        source: crate::path::PathError,
+    },
+    /// A `[frontmatter]` or `[schemas]` config table named an invalid field
+    /// key.
+    #[error("invalid `{table}` config")]
+    InvalidFieldKey {
+        /// The TOML table that failed validation ("frontmatter" or "schemas").
+        table: &'static str,
+        /// The underlying validation failure.
+        #[source]
+        source: FieldNameError,
     },
 }
 

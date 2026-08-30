@@ -485,12 +485,6 @@ fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
             "check that the config file contains valid TOML and its structure \
              matches the expected schema",
         ),
-        ConfigBuilderError::Merge {
-            ..
-        } => Box::new(
-            "this is an internal error — the local and global config could \
-             not be merged to resolve the output directory",
-        ),
         ConfigBuilderError::InvalidFieldKey {
             ..
         } => Box::new(
@@ -565,9 +559,6 @@ const fn config_load_code(source: &ConfigLoadError) -> &'static str {
         ConfigLoadError::Build(ConfigBuilderError::ConfigFile(_)) => {
             "traces::cli::config_build_config_file_failed"
         }
-        ConfigLoadError::Build(ConfigBuilderError::Merge {
-            ..
-        }) => "traces::cli::config_build_merge_failed",
         ConfigLoadError::Build(ConfigBuilderError::InvalidFieldKey {
             ..
         }) => "traces::cli::config_build_invalid_field_key",
@@ -889,32 +880,6 @@ mod tests {
                 Some(
                     "check that the config file contains valid TOML and its \
                      structure matches the expected schema"
-                        .to_owned()
-                )
-            );
-        }
-
-        #[test]
-        fn config_load_build_merge() {
-            let cwd = PathBuf::from("/some/project");
-            let error = CliError::ConfigLoad {
-                cwd,
-                source: ConfigLoadError::Build(
-                    crate::config::ConfigBuilderError::Merge {
-                        source: Box::new(figment::Error::from("merge boom")),
-                    },
-                ),
-            };
-
-            assert_eq!(
-                error.code().map(|code| code.to_string()),
-                Some("traces::cli::config_build_merge_failed".to_owned())
-            );
-            assert_eq!(
-                error.help().map(|help| help.to_string()),
-                Some(
-                    "this is an internal error — the local and global config \
-                     could not be merged to resolve the output directory"
                         .to_owned()
                 )
             );

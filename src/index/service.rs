@@ -183,7 +183,10 @@ impl IndexerService {
         let index_db = self.root.join(INDEX_FILE);
         let mut files = Vec::new();
         let nodes = DirTree::descendants(&self.root)
-            .filter(|node| node.file_name() == ".git")
+            .filter(|node| {
+                node.file_name() != ".traces"
+                    && crate::env_vars::is_ignored_dir(node.file_name())
+            })
             .sorted_by(|a, b| a.file_name().cmp(b.file_name()));
         for node in nodes {
             let node = node.map_err(scan_error)?;

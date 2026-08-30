@@ -12,11 +12,9 @@
 //! - [`Trusted`] carries local TOML content verified against a trust baseline.
 //! - [`Parsed`] carries TOML decoded into [`RawConfig`].
 
-use std::path::{Path, PathBuf};
-
-use figment::{
-    Figment,
-    providers::{Format, Toml},
+use std::{
+    marker::PhantomData,
+    path::{Path, PathBuf},
 };
 
 #[cfg(test)]
@@ -55,8 +53,8 @@ pub(crate) struct Trusted {
 
 /// Raw config data parsed from one validated config file.
 #[derive(Clone, Debug)]
-pub(super) struct Parsed {
-    raw: RawConfig,
+pub(crate) struct Parsed {
+    raw: Box<RawConfig>,
 }
 
 impl Parsed {
@@ -70,15 +68,14 @@ impl Parsed {
     /// Returns [`ConfigFileError::Read`] when `path` cannot be read or its
     /// content cannot be parsed as TOML.
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
-        let raw = Figment::from(Toml::file_exact(path))
-            .extract::<RawConfig>()
-            .map_err(|source| ConfigFileError::Read {
+        let content = std::fs::read_to_string(path).map_err(|source| {
+            use serde::de::Error as _;
+            ConfigFileError::Read {
                 path: path.to_path_buf(),
-                source: Box::new(source),
-            })?;
-        Ok(Self {
-            raw,
-        })
+                source: Box::new(toml::de::Error::custom(source)),
+            }
+        })?;
+        Self::from_content(path, &content)
     }
 
     /// Parses already-read `content` for `path`.
@@ -95,14 +92,14 @@ impl Parsed {
         path: &Path,
         content: &str,
     ) -> Result<Self, ConfigFileError> {
-        let raw = Figment::from(Toml::string(content))
-            .extract::<RawConfig>()
-            .map_err(|source| ConfigFileError::Read {
-            path: path.to_path_buf(),
-            source: Box::new(source),
+        let raw = toml::from_str::<RawConfig>(content).map_err(|source| {
+            ConfigFileError::Read {
+                path: path.to_path_buf(),
+                source: Box::new(source),
+            }
         })?;
         Ok(Self {
-            raw,
+            raw: Box::new(raw),
         })
     }
 }
@@ -122,7 +119,7 @@ pub(crate) struct ConfigFile<Source, State> {
     root: PathBuf,
     path: PathBuf,
     state: State,
-    _marker: std::marker::PhantomData<Source>,
+    _marker: PhantomData<Source>,
 }
 
 impl<Source, State> ConfigFile<Source, State> {
@@ -148,7 +145,7 @@ impl<Source, State> ConfigFile<Source, State> {
             root,
             path,
             state,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -161,7 +158,7 @@ impl<Source, State> ConfigFile<Source, State> {
             root: self.root,
             path: self.path,
             state: next_state,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 }
@@ -196,6 +193,15 @@ impl LocalConfigFile<Discovered> {
             });
         };
         Ok(Self::new(root.to_path_buf(), path, Discovered))
+    }
+
+    #[inline]
+    pub(crate) fn into_tracked(
+        self,
+        store: &ConfigStateStore,
+    ) -> LocalConfigFile<Tracked> {
+        store.track_seen_config(&self);
+        self.transition_to(Tracked)
     }
 }
 
@@ -273,41 +279,12 @@ impl LocalConfigFile<Tracked> {
         }
     }
 }
-
-impl From<(LocalConfigFile<Discovered>, &ConfigStateStore)>
-    for LocalConfigFile<Tracked>
-{
-    #[inline]
-    fn from(
-        (file, state): (LocalConfigFile<Discovered>, &ConfigStateStore),
-    ) -> Self {
-        state.track_seen_config(&file);
-        file.transition_to(Tracked)
-    }
-}
-
 impl<Source> ConfigFile<Source, Parsed> {
     /// Parsed raw config data.
     #[inline]
     #[must_use]
-    pub(super) const fn raw(&self) -> &RawConfig {
+    pub(super) fn raw(&self) -> &RawConfig {
         &self.state.raw
-    }
-
-    /// The template directory resolved against this config file's root.
-    ///
-    /// For a local config the root is the project root; for a global config the
-    /// root is the global config directory (`~/.config/traces`). Absent means
-    /// no template directory was configured in this layer.
-    #[inline]
-    #[must_use]
-    pub(super) fn resolved_template_dir(&self) -> Option<PathBuf> {
-        self.state
-            .raw
-            .templates
-            .directory
-            .as_ref()
-            .map(|dir| self.root.join(dir))
     }
 }
 
@@ -330,6 +307,29 @@ impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
     ) -> Result<Self, Self::Error> {
         let parsed = Parsed::read(file.path())?;
         Ok(file.transition_to(parsed))
+    }
+}
+#[cfg(test)]
+impl LocalConfigFile<Parsed> {
+    pub(crate) fn from_content_for_test(
+        root: PathBuf,
+        path: PathBuf,
+        content: &str,
+    ) -> Result<Self, ConfigFileError> {
+        let parsed = Parsed::from_content(&path, content)?;
+        Ok(Self::new(root, path, parsed))
+    }
+}
+
+#[cfg(test)]
+impl GlobalConfigFile<Parsed> {
+    pub(crate) fn from_content_for_test(
+        root: PathBuf,
+        path: PathBuf,
+        content: &str,
+    ) -> Result<Self, ConfigFileError> {
+        let parsed = Parsed::from_content(&path, content)?;
+        Ok(Self::new(root, path, parsed))
     }
 }
 
@@ -422,7 +422,7 @@ mod tests {
             ))
             .unwrap();
 
-            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            let tracked = file.into_tracked(&state);
 
             assert_eq!(
                 tracked.path(),
@@ -449,7 +449,7 @@ mod tests {
                     .unwrap();
 
             // Act
-            let _ = LocalConfigFile::<Tracked>::from((file, &state));
+            let _ = file.into_tracked(&state);
 
             let tracked =
                 crate::FileStateStore::at(temp.path().join("tracked"));
@@ -477,7 +477,7 @@ mod tests {
                 temp.path().join("trust"),
             );
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
-            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            let tracked = file.into_tracked(&state);
             state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
 
             let result = tracked.verify_trust(&state);
@@ -498,7 +498,7 @@ mod tests {
             );
 
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
-            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            let tracked = file.into_tracked(&state);
 
             let result = tracked.verify_trust(&state);
             assert!(matches!(
@@ -520,7 +520,7 @@ mod tests {
                 temp.path().join("trust"),
             );
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
-            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            let tracked = file.into_tracked(&state);
 
             // Grant trust to the WORKSPACE, which creates no baseline config
             // hash.
@@ -547,7 +547,7 @@ mod tests {
             );
             let file =
                 LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
-            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            let tracked = file.into_tracked(&state);
 
             state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
 
@@ -575,7 +575,7 @@ mod tests {
             );
             let file =
                 LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
-            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            let tracked = file.into_tracked(&state);
 
             // Grant trust so the companion file exists.
             state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
@@ -651,7 +651,14 @@ mod tests {
             let file =
                 LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
 
-            assert_eq!(file.resolved_template_dir(), Some(root.join("tmpl")));
+            assert_eq!(
+                file.raw()
+                    .templates
+                    .directory
+                    .as_ref()
+                    .map(|dir| file.root().join(dir)),
+                Some(root.join("tmpl"))
+            );
         }
 
         #[test]
@@ -665,7 +672,14 @@ mod tests {
             let parsed = Parsed::read(&path).unwrap();
             let file = LocalConfigFile::<Parsed>::new(root, path, parsed);
 
-            assert_eq!(file.resolved_template_dir(), None);
+            assert_eq!(
+                file.raw()
+                    .templates
+                    .directory
+                    .as_ref()
+                    .map(|dir| file.root().join(dir)),
+                None
+            );
         }
     }
 }

@@ -56,6 +56,7 @@ mod config;
 mod dialog;
 mod dirs;
 mod dirtree;
+mod env_vars;
 mod field;
 mod file;
 mod file_class_expander;

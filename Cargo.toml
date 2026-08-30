@@ -57,7 +57,6 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4.6.7"
 comfy-table = { version = "7.2.2", default-features = false }
 convert_case = "0.11.0"
-figment = { version = "0.10", features = ["toml"] }
 indexmap = { version = "2.14", features = ["serde"] }
 inquire = "0.9"
 logos = "0.16"

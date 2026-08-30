@@ -383,6 +383,9 @@ impl DiscoveryEngine {
         cwd: &Path,
     ) -> Result<LocalConfigFile<Discovered>, DiscoveryError> {
         for ancestor in cwd.ancestors() {
+            if crate::env_vars::CEILING_DIRS.iter().any(|c| c == ancestor) {
+                break;
+            }
             let path = ancestor.join(LOCAL_CONFIG_FILE);
             if Self::is_config_file(&path)? {
                 return LocalConfigFile::<Discovered>::try_new(path)
@@ -424,7 +427,9 @@ impl DiscoveryEngine {
         dir: &Path,
     ) -> Result<Vec<LocalConfigFile<Discovered>>, DiscoveryError> {
         let mut configs = Vec::new();
-        for node in DirTree::descendants(dir) {
+        for node in DirTree::descendants(dir)
+            .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
+        {
             let node = node.map_err(|error| {
                 let (path, source) = error.into_parts();
                 DiscoveryError::PathInaccessible {
@@ -816,6 +821,33 @@ mod tests {
             assert!(!DiscoveryEngine::is_local_config_path(&PathBuf::from(
                 "/project/.traces/other.toml"
             )));
+        }
+    }
+    #[test]
+    fn nearest_local_stops_at_ceiling_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let ceiling_dir = temp.path().join("ceiling");
+        let nested_dir = ceiling_dir.join("a/b/c");
+        std::fs::create_dir_all(&nested_dir).unwrap();
+
+        // Set ceiling directory
+        // SAFETY: single-threaded test environment variable set
+        unsafe {
+            std::env::set_var(
+                "TRACES_CEILING_DIRS",
+                ceiling_dir.to_str().unwrap(),
+            );
+        }
+
+        let result = DiscoveryEngine::nearest_local_from_dir(&nested_dir);
+        assert!(matches!(
+            result,
+            Err(DiscoveryError::LocalConfigAbsent { .. })
+        ));
+
+        // SAFETY: single-threaded test environment variable cleanup
+        unsafe {
+            std::env::remove_var("TRACES_CEILING_DIRS");
         }
     }
 }
