@@ -144,7 +144,12 @@ impl Object for DateOps {
                  -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
                     let datetime = chrono::DateTime::from_timestamp(unix_ts, 0)
-                        .ok_or_else(|| invalid_timestamp_error(unix_ts))?
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::InvalidOperation,
+                                format!("timestamp {unix_ts} is out of range"),
+                            )
+                        })?
                         .naive_utc();
                     format_with(datetime.format(format), format)
                 },
@@ -206,7 +211,12 @@ impl ParsedDate {
                 datetime,
                 precision: DatePrecision::Date,
             })
-            .ok_or_else(|| invalid_date_error(s))
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("invalid date {s:?}"),
+                )
+            })
     }
 }
 
@@ -804,22 +814,6 @@ fn leap_year_input_error(value: &Value) -> Error {
             "is_leap_year expects an integer year or a date string, got \
              {value:?}"
         ),
-    )
-}
-
-/// Builds the error for a date/time string matching none of
-/// [`ParsedDate::parse`]'s accepted formats.
-fn invalid_date_error(s: &str) -> Error {
-    Error::new(ErrorKind::InvalidOperation, format!("invalid date {s:?}"))
-}
-
-/// Builds the error for a Unix timestamp chrono can't represent as a
-/// `NaiveDateTime` (`date.from_timestamp`'s `unix_ts` argument, roughly
-/// ±262,000 years from the epoch).
-fn invalid_timestamp_error(unix_ts: i64) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!("timestamp {unix_ts} is out of range"),
     )
 }
 

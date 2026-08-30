@@ -131,7 +131,12 @@ impl Object for SchemaOps {
                             .get(name)
                             .cloned()
                             .map(Value::from_dyn_object)
-                            .ok_or_else(|| unknown_schema_error(name))
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::InvalidOperation,
+                                    format!("unknown Schema {name:?}"),
+                                )
+                            })
                     },
                 ))
             }
@@ -339,12 +344,6 @@ fn glob_for(
 /// [`source`]: std::error::Error::source
 fn glob_compile_error(source: regex::Error) -> Error {
     super::error::invalid_operation("failed to compile file field glob", source)
-}
-
-/// Builds the error for `schema.get(name)` naming a Schema that did not
-/// resolve.
-fn unknown_schema_error(name: &str) -> Error {
-    Error::new(ErrorKind::InvalidOperation, format!("unknown Schema {name:?}"))
 }
 
 /// Builds the error for `.field(name)` naming a field absent from `schema`'s

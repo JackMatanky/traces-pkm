@@ -23,7 +23,7 @@
 use std::{path::Path, sync::Arc};
 
 use minijinja::{
-    Environment, Error, State,
+    Environment, State,
     value::{Enumerator, Object, Value},
 };
 
@@ -84,8 +84,14 @@ impl Object for FileOps {
                                 .map_err(|source| {
                                     confine_error(path, source)
                                 })?;
-                        std::fs::read_to_string(confined.as_ref())
-                            .map_err(|source| read_error(path, source))
+                        std::fs::read_to_string(confined.as_ref()).map_err(
+                            |source| {
+                                super::error::invalid_operation(
+                                    format!("failed to read {path}"),
+                                    source,
+                                )
+                            },
+                        )
                     },
                 ))
             }
@@ -98,13 +104,6 @@ impl Object for FileOps {
     }
 }
 
-/// Wraps a [`std::io::Error`] from reading `path` in a [`minijinja::Error`].
-///
-/// Used by `file.include()` when reading `path` fails after root confinement
-/// checks pass.
-fn read_error(path: &str, source: std::io::Error) -> Error {
-    super::error::invalid_operation(format!("failed to read {path}"), source)
-}
 #[cfg(test)]
 mod tests {
     use minijinja::Environment;

@@ -103,9 +103,8 @@ impl Object for UiOps {
                           kwargs: Kwargs|
                           -> TemplateEngineResult<Value> {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
-                        let labels = opts.labels();
                         let index = provider
-                            .select(label, labels)
+                            .select(label, &opts.labels)
                             .map_err(dialog_error)?;
                         opts.recover(index)
                     },
@@ -119,9 +118,8 @@ impl Object for UiOps {
                           kwargs: Kwargs|
                           -> TemplateEngineResult<Vec<Value>> {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
-                        let labels = opts.labels();
                         let indices = provider
-                            .multi_select(label, labels)
+                            .multi_select(label, &opts.labels)
                             .map_err(dialog_error)?;
                         indices
                             .into_iter()
@@ -209,15 +207,6 @@ impl SelectOptions {
         })
     }
 
-    /// Returns display labels for all selectable items.
-    fn labels(&self) -> &[String] {
-        &self.labels
-    }
-
-    /// Recovers the original [`Value`] picked by `index`.
-    ///
-    /// # Errors
-    ///
     /// - [`ErrorKind::InvalidOperation`] if `index` is out of bounds.
     fn recover(&self, index: usize) -> TemplateEngineResult<Value> {
         self.values.get(index).cloned().ok_or_else(|| {
@@ -722,7 +711,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), vec!["US".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels, vec!["US".to_owned(), "GB".to_owned()]);
         }
 
         #[test]
@@ -738,7 +727,7 @@ mod tests {
             )
             .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), vec!["US".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels, vec!["US".to_owned(), "GB".to_owned()]);
         }
 
         #[test]
@@ -754,7 +743,7 @@ mod tests {
             )
             .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), vec!["NYC".to_owned(), "LA".to_owned()]);
+            assert_eq!(opts.labels, vec!["NYC".to_owned(), "LA".to_owned()]);
         }
 
         #[test]
@@ -774,7 +763,7 @@ mod tests {
             )
             .expect("a missing intermediate segment falls back to default");
 
-            assert_eq!(opts.labels(), vec![
+            assert_eq!(opts.labels, vec![
                 "Unknown".to_owned(),
                 "LA".to_owned()
             ]);
@@ -793,7 +782,7 @@ mod tests {
             )
             .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), vec![
+            assert_eq!(opts.labels, vec![
                 "Unnamed".to_owned(),
                 "GB".to_owned()
             ]);
@@ -806,7 +795,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), vec![
+            assert_eq!(opts.labels, vec![
                 "1".to_owned(),
                 "2".to_owned(),
                 "3".to_owned()
@@ -820,7 +809,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), vec!["42".to_owned()]);
+            assert_eq!(opts.labels, vec!["42".to_owned()]);
         }
 
         #[test]
@@ -856,7 +845,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels(), Vec::<String>::new());
+            assert_eq!(opts.labels, Vec::<String>::new());
             assert_eq!(opts.labels.len(), 0);
         }
     }

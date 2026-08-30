@@ -47,7 +47,9 @@ impl StrOps {
         env.add_filter("trim_suffix", trim_suffix);
         env.add_filter("truncate", truncate);
         env.add_filter("truncate_words", truncate_words);
-        env.add_filter("word_count", word_count);
+        env.add_filter("word_count", |value: &str| {
+            value.split_whitespace().count()
+        });
         env.add_filter("repeat", str::repeat);
         env.add_filter("regex_replace", regex_replace);
         env.add_filter("regex_match", regex_match);
@@ -159,14 +161,6 @@ fn truncate_words(
     kept.push(' ');
     kept.push_str(ellipsis);
     Ok(kept)
-}
-
-/// Counts whitespace-separated words in `value`.
-///
-/// Uses [`str::split_whitespace`], which collapses consecutive whitespace and
-/// ignores leading or trailing whitespace.
-fn word_count(value: &str) -> usize {
-    value.split_whitespace().count()
 }
 
 /// Extracts the `ellipsis` kwarg for truncation filters.

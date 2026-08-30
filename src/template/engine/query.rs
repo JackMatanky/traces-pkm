@@ -281,17 +281,13 @@ fn resolve_from_arg(
     if let Some(source) = value.downcast_object_ref::<SourceSelector>() {
         return Ok(source.clone());
     }
-    let text = value.as_str().ok_or_else(from_arg_type_error)?;
+    let text = value.as_str().ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidOperation,
+            "from() expects a source expression string or a Schema file field",
+        )
+    })?;
     SourceSelector::parse(text).map_err(query_error)
-}
-
-/// Builds the error for `.from()`'s argument being neither a `SourceSelector`
-/// nor a string.
-fn from_arg_type_error() -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        "from() expects a source expression string or a Schema file field",
-    )
 }
 
 /// Lets `.field()` hand a [`SourceSelector`] filter across the minijinja
@@ -364,8 +360,12 @@ impl Object for QueryRecordSet {
             "table" => {
                 let (headers, columns): (Vec<String>, Vec<String>) =
                     from_args(args)?;
+                let headers_slice: Vec<&str> =
+                    headers.iter().map(String::as_str).collect();
+                let columns_slice: Vec<&str> =
+                    columns.iter().map(String::as_str).collect();
                 return self
-                    .table(&as_str_slice(&headers), &as_str_slice(&columns))
+                    .table(&headers_slice, &columns_slice)
                     .map(Value::from)
                     .map_err(query_error);
             }
@@ -434,17 +434,9 @@ fn table_filter(
     headers: Vec<String>,
     columns: Vec<String>,
 ) -> TemplateEngineResult<String> {
-    let headers = as_str_slice(&headers);
-    let columns = as_str_slice(&columns);
-    outcome.table(&headers, &columns).map_err(query_error)
-}
-
-/// Borrows each entry of `values` as `&str`. Shared by
-/// [`Object::call_method`]'s `"table"` branch and [`table_filter`]: both must
-/// build an owned `Vec<String>` first (see [`table_filter`]'s docs for why),
-/// then borrow a `&[&str]` slice from it to call [`QueryRecordSet::table`].
-fn as_str_slice(values: &[String]) -> Vec<&str> {
-    values.iter().map(String::as_str).collect()
+    let headers_slice: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let columns_slice: Vec<&str> = columns.iter().map(String::as_str).collect();
+    outcome.table(&headers_slice, &columns_slice).map_err(query_error)
 }
 
 /// `outcome | list(path)` filter body. See [`QueryRecordSet::list`].

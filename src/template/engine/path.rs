@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 
-use minijinja::{Environment, Error};
+use minijinja::Environment;
 
 use super::error::{TemplateEngineResult, confine_error};
 use crate::{
@@ -125,7 +125,10 @@ fn inspect(
             PathQuery::IsDir => metadata.is_dir(),
         }),
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(inspect_error(path, source)),
+        Err(source) => Err(super::error::invalid_operation(
+            format!("failed to inspect {path}"),
+            source,
+        )),
     }
 }
 
@@ -186,32 +189,16 @@ impl AsRef<Path> for InspectTarget {
     }
 }
 
-/// Wraps an I/O failure during `path` inspection into a [`minijinja::Error`].
-///
-/// Used for I/O errors other than "not found" (such as permission denied or a
-/// broken symlink loop).
-fn inspect_error(path: &str, source: io::Error) -> Error {
-    super::error::invalid_operation(format!("failed to inspect {path}"), source)
-}
-
-/// Converts an optional path component to an owned `String`.
-///
-/// Accepts an [`OsStr`] from [`Path::file_name`], [`Path::file_stem`], or
-/// [`Path::extension`], and a [`Path`] from [`Path::parent`]. Returns an empty
-/// string when there is no component. This is the shared tail of the four pure
-/// string filters below.
-fn component_or_empty(component: Option<impl AsRef<OsStr>>) -> String {
-    component
-        .map(|component| component.as_ref().to_string_lossy().into_owned())
-        .unwrap_or_default()
-}
-
 /// Returns the final component of `path` including its extension.
 ///
 /// Returns an empty string when `path` has no filename component (e.g. `""`,
 /// `"/"`, `".."`).
 fn filename(path: &str) -> String {
-    component_or_empty(Path::new(path).file_name())
+    Path::new(path)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// Returns the final component of `path` without its extension.
@@ -238,7 +225,11 @@ fn extension(path: &str) -> String {
 /// Returns an empty string when `path` has no parent (e.g. `""`, `"/"`, or a
 /// single bare name).
 fn parent(path: &str) -> String {
-    component_or_empty(Path::new(path).parent())
+    Path::new(path)
+        .parent()
+        .and_then(Path::to_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 #[cfg(test)]
