@@ -326,6 +326,7 @@ mod tests {
     use super::*;
     use crate::schema::{
         RawSchemaFieldSource, RawSchemaFieldType, SchemaNameRef,
+        fields::SchemaNumberField,
     };
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
@@ -645,6 +646,86 @@ mod tests {
 
             assert_eq!(field.kind(), &SchemaFieldType::Input);
             assert_ne!(warnings, Vec::new());
+        }
+
+        #[test]
+        fn rejects_direct_number_with_invalid_range() {
+            let (ancestors, resolved) = field_fixture(&[], &[]);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("book"),
+                crate::field::FieldNameRef::try_from("rating")
+                    .expect("valid field name"),
+            );
+            let mut options = IndexMap::new();
+            options.insert("min".to_owned(), FieldValue::Int(10));
+            options.insert("max".to_owned(), FieldValue::Int(5));
+            let raw = raw_field(
+                RawSchemaFieldSource::Direct(RawSchemaFieldType::Number),
+                None,
+                None,
+                options,
+            );
+
+            let err = b.build(address, &raw).expect_err("rejects bad range");
+
+            assert!(matches!(
+                &err,
+                SchemaError::FieldBuilder(inner)
+                    if matches!(
+                        &**inner,
+                        SchemaFieldBuilderError::Parser(errors)
+                            if errors.iter().any(|error| matches!(
+                                error,
+                                SchemaFieldParserError::NumberRange { .. }
+                            ))
+                    )
+            ));
+        }
+
+        #[test]
+        fn degrades_bare_number_ref_invalid_step_to_warning() {
+            let base = SchemaFieldType::Number(SchemaNumberField::for_test(
+                Some(0.0),
+                Some(10.0),
+                Some(1.0),
+            ));
+            let (ancestors, resolved) =
+                field_fixture(&[("book", base)], &["book"]);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("rating")
+                    .expect("valid field name"),
+            );
+            let mut options = IndexMap::new();
+            options.insert("step".to_owned(), FieldValue::Int(0));
+            let raw = raw_field(
+                RawSchemaFieldSource::Ref {
+                    address: field_address("#book/field"),
+                    override_type: None,
+                },
+                None,
+                None,
+                options,
+            );
+
+            let (field, warnings) = b.build(address, &raw).expect("builds");
+
+            assert_eq!(
+                field.kind(),
+                &SchemaFieldType::Number(SchemaNumberField::for_test(
+                    Some(0.0),
+                    Some(10.0),
+                    Some(1.0),
+                ))
+            );
+            assert!(warnings.iter().any(|warning| matches!(
+                warning,
+                SchemaWarning::InvalidNumberOverride { key, .. } if key == "step"
+            )));
         }
 
         #[test]

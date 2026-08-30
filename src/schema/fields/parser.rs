@@ -103,6 +103,30 @@ impl<'a> SchemaFieldParser<'a> {
         });
     }
 
+    /// Pushes a `number` field invariant violation for one attribute.
+    pub(super) fn push_number_constraint(
+        &mut self,
+        key: &'static str,
+        value: f64,
+        expected: &'static str,
+    ) {
+        self.errors.push(SchemaFieldParserError::NumberConstraint {
+            address: FieldAddress::from(self.address),
+            key: key.to_owned(),
+            value: value.to_string(),
+            expected,
+        });
+    }
+
+    /// Pushes a `number` field range invariant violation.
+    pub(super) fn push_number_range(&mut self, min: f64, max: f64) {
+        self.errors.push(SchemaFieldParserError::NumberRange {
+            address: FieldAddress::from(self.address),
+            min: min.to_string(),
+            max: max.to_string(),
+        });
+    }
+
     /// Extracts a string value associated with a specified key.
     ///
     /// Marks `key` as claimed. Returns `fallback` if `key` is not present in

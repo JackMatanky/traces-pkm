@@ -83,6 +83,27 @@ pub(crate) enum SchemaFieldParserError {
         value: String,
         expected: &'static str,
     },
+    /// A numeric attribute was present but cannot form a valid field invariant.
+    #[error(
+        "field {address} of type number's {key:?} attribute must be \
+         {expected}, got {value}"
+    )]
+    NumberConstraint {
+        address: FieldAddress,
+        key: String,
+        value: String,
+        expected: &'static str,
+    },
+    /// A number field declared `min > max`.
+    #[error(
+        "field {address} of type number's \"min\" attribute must be <= \
+         \"max\", got min {min} and max {max}"
+    )]
+    NumberRange {
+        address: FieldAddress,
+        min: String,
+        max: String,
+    },
     /// `select`/`multi` values configuration is invalid.
     #[error("field {address} {source}")]
     SelectValues {
@@ -231,6 +252,26 @@ impl From<SchemaFieldParserError> for SchemaWarning {
                 key,
                 value,
                 expected,
+            },
+            SchemaFieldParserError::NumberConstraint {
+                address,
+                key,
+                value,
+                expected,
+            } => Self::InvalidNumberOverride {
+                address,
+                key,
+                value,
+                expected,
+            },
+            SchemaFieldParserError::NumberRange {
+                address,
+                min,
+                max,
+            } => Self::InvalidNumberRangeOverride {
+                address,
+                min,
+                max,
             },
             SchemaFieldParserError::SelectValues {
                 address,

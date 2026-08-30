@@ -1,4 +1,4 @@
-# Schema
+# Schema registry
 
 Schema registry and field resolution. Parses `.traces/schemas/*.toml` and linearizes the `extends` DAG into effective field definitions.
 
@@ -16,7 +16,16 @@ The reserved schema `global.toml` — a File Class no note may hold — providin
 
 ### Field Definition
 
-A named entry in a Schema describing one field: a `type` (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options, plus optional `required` and `multi` flags. For `select`/`multi` fields, `values` is polymorphic over inline string lists, inline value objects (`{value, label, order?}`), and external file subtables (`{path = "values/countries.toml", value = "slug", label = "name", order = "rank"}`) confined to the schema directory. For `file` fields the options are an AND-composed filter over the FileIndex (`folders`, `ext`, `class`).
+A named entry in a Schema describing one field: a `type` (`input`, `select`,
+`boolean`, `number`, `date`, `file`) with type-specific options, plus optional
+`required` and `multi` flags. For `select`/`multi` fields, `values` is
+polymorphic over inline string lists, inline value objects
+(`{value, label, order?}`), and external file subtables
+(`{path = "values/countries.toml", value = "slug", label = "name", order = "rank"}`)
+confined to the schema directory. For `number` fields, `min`, `max`, and `step`
+are declarative value-range constraints only; they do not express countdowns,
+direction, or UI value transitions. For `file` fields the options are an
+AND-composed filter over the FileIndex (`folders`, `ext`, `class`).
 *Avoid*: property, field setting, column
 
 ### Extends

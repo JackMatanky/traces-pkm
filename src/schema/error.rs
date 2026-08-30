@@ -18,13 +18,12 @@ use crate::field::FieldName;
 /// Defects that resolution can recover from are emitted as [`SchemaWarning`]
 /// instead.
 ///
-/// Deliberately `pub(crate)`, not `pub`: [`TemplateError::SchemaLoad`]
-/// wraps this transparently for its `Display`/`Error` chain without
-/// exposing the concrete type, via a scoped
-/// `#[expect(private_interfaces)]`; do not "fix" that by making this
-/// `pub`, which would cascade the same requirement onto every field type
-/// below (`SchemaName`, `FieldName`, `SchemaFieldBuilderError`, …), all
-/// otherwise intentionally crate-internal.
+/// Deliberately `pub(crate)`, not `pub`: [`TemplateError::SchemaLoad`] wraps
+/// this transparently for its `Display`/`Error` chain without exposing the
+/// concrete type, via a scoped `#[expect(private_interfaces)]`; do not "fix"
+/// that by making this `pub`, which would cascade the same requirement onto
+/// every field type below (`SchemaName`, `FieldName`,
+/// `SchemaFieldBuilderError`, …), all otherwise intentionally crate-internal.
 ///
 /// [`TemplateError::SchemaLoad`]: crate::template::TemplateError::SchemaLoad
 #[derive(Debug, Error)]
@@ -133,6 +132,24 @@ pub(crate) enum SchemaWarning {
         value: String,
         expected: &'static str,
     },
+    /// A bare `$ref` override declares a numeric attribute value that cannot
+    /// form a valid `number` field.
+    ///
+    /// The invalid key is dropped and the base field's attribute is used as-is.
+    InvalidNumberOverride {
+        address: FieldAddress,
+        key: String,
+        value: String,
+        expected: &'static str,
+    },
+    /// A bare `$ref` override declares `min > max`.
+    ///
+    /// The invalid range is dropped and the base field's range is used as-is.
+    InvalidNumberRangeOverride {
+        address: FieldAddress,
+        min: String,
+        max: String,
+    },
     /// A bare `$ref` override declares invalid `select`/`multi` values
     /// configuration.
     ///
@@ -199,6 +216,25 @@ impl fmt::Display for SchemaWarning {
                 f,
                 "$ref override {address}'s {key:?} attribute on its resolved \
                  type {kind} must be {expected}, got {value}; ignoring the key"
+            ),
+            Self::InvalidNumberOverride {
+                address,
+                key,
+                value,
+                expected,
+            } => write!(
+                f,
+                "$ref override {address}'s {key:?} attribute must be \
+                 {expected}, got {value}; using base value"
+            ),
+            Self::InvalidNumberRangeOverride {
+                address,
+                min,
+                max,
+            } => write!(
+                f,
+                "$ref override {address}'s number range is invalid: min {min} \
+                 exceeds max {max}; using base range"
             ),
             Self::SelectValuesOverrideDegraded {
                 address,

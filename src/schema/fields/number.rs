@@ -71,15 +71,56 @@ impl SchemaNumberField {
         let (base_min, base_max, base_step) = base
             .map_or((None, None, None), |base| (base.min, base.max, base.step));
 
-        let min = parser.f64(options, "min", base_min);
-        let max = parser.f64(options, "max", base_max);
-        let step = parser.f64(options, "step", base_step);
+        let mut min = parser.f64(options, "min", base_min);
+        let mut max = parser.f64(options, "max", base_max);
+        let mut step = parser.f64(options, "step", base_step);
+
+        Self::require_finite(parser, "min", &mut min, base_min);
+        Self::require_finite(parser, "max", &mut max, base_max);
+        Self::require_positive_step(parser, &mut step, base_step);
+        if let (Some(min_value), Some(max_value)) = (min, max)
+            && min_value > max_value
+        {
+            parser.push_number_range(min_value, max_value);
+            min = base_min;
+            max = base_max;
+        }
 
         SchemaFieldType::Number(Self {
             min,
             max,
             step,
         })
+    }
+
+    fn require_finite(
+        parser: &mut SchemaFieldParser<'_>,
+        key: &'static str,
+        value: &mut Option<f64>,
+        fallback: Option<f64>,
+    ) {
+        if value.is_some_and(f64::is_finite) {
+            return;
+        }
+        if let Some(number) = *value {
+            parser.push_number_constraint(key, number, "a finite number");
+            *value = fallback;
+        }
+    }
+
+    fn require_positive_step(
+        parser: &mut SchemaFieldParser<'_>,
+        value: &mut Option<f64>,
+        fallback: Option<f64>,
+    ) {
+        let Some(step) = *value else {
+            return;
+        };
+        if step.is_finite() && step > 0.0 {
+            return;
+        }
+        parser.push_number_constraint("step", step, "a positive finite number");
+        *value = fallback;
     }
 }
 
@@ -183,6 +224,44 @@ mod tests {
                 Some(5.0),
             ))
         );
+    }
+
+    #[test]
+    fn rejects_min_greater_than_max() {
+        let opts = options(&[
+            ("min", FieldValue::Int(10)),
+            ("max", FieldValue::Int(5)),
+        ]);
+
+        let addr = address();
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
+        let _ = SchemaNumberField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors.first().expect("expected error"),
+            SchemaFieldParserError::NumberRange { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_non_positive_step() {
+        let opts = options(&[("step", FieldValue::Int(0))]);
+
+        let addr = address();
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
+        let _ = SchemaNumberField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors.first().expect("expected error"),
+            SchemaFieldParserError::NumberConstraint { key, .. }
+                if key == "step"
+        ));
     }
 
     mod accessors {
