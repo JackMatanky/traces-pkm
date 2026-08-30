@@ -45,7 +45,7 @@ impl<'a> CycleDetector<'a, '_> {
         }
         for start in 0..DenseIndex::saturating_u32(self.adjacency.node_count())
         {
-            let start = DenseIndex::from_u32(start);
+            let start = DenseIndex::from(start);
             if self.is_kahn_visited(start) || self.search.is_discovered(start) {
                 continue;
             }

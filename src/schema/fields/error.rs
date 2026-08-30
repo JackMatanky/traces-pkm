@@ -1,14 +1,13 @@
 //! Field-construction error types:
-//! [`SchemaFieldBuilder`](super::SchemaFieldBuilder)
-//! and [`SchemaFieldParser`](super::parser::SchemaFieldParser)'s own failure
-//! modes.
+//! [`SchemaFieldBuilder`](super::SchemaFieldBuilder) and
+//! [`SchemaFieldParser`](super::parser::SchemaFieldParser)'s own failure modes.
 //!
-//! Both types are only ever constructed and matched within [`super`]; the
-//! only outside touch is [`SchemaFieldBuilderError`] wrapping into
+//! Both types are only ever constructed and matched within [`super`]; the only
+//! outside touch is [`SchemaFieldBuilderError`] wrapping into
 //! [`SchemaError::FieldBuilder`](super::super::error::SchemaError::FieldBuilder)
 //! and [`SchemaFieldParserError`] converting into
-//! [`SchemaWarning`](super::super::error::SchemaWarning) for a degraded
-//! bare `$ref` override.
+//! [`SchemaWarning`](super::super::error::SchemaWarning) for a degraded bare
+//! `$ref` override.
 
 use thiserror::Error;
 
@@ -204,11 +203,11 @@ pub(crate) enum SelectValuesFileError {
 
     /// A TOML values file failed to parse.
     #[error("failed to parse TOML values file: {0}")]
-    ParseToml(#[source] Box<toml::de::Error>),
+    ParseToml(#[from] Box<toml::de::Error>),
 
     /// A JSON values file failed to parse.
     #[error("failed to parse JSON values file: {0}")]
-    ParseJson(#[source] Box<serde_json::Error>),
+    ParseJson(#[from] Box<serde_json::Error>),
 
     /// The values file path has an unsupported extension.
     #[error("unsupported values file extension {0:?} (must be .toml or .json)")]

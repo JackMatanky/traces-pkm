@@ -19,47 +19,6 @@ struct SchemaGraphEdge {
     target: DenseIndex,
 }
 
-/// Dense per-schema array index, assigned once at construction in raw-map
-/// insertion order.
-///
-/// Array indexing replaces string-hashed lookups on every graph operation. Caps
-/// a schema set at `u32::MAX` entries, which is not a real constraint for a
-/// filesystem-enumerated `.traces/schemas/*.toml` registry.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct DenseIndex(u32);
-
-impl DenseIndex {
-    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow.
-    pub(super) fn saturating_u32(n: usize) -> u32 {
-        u32::try_from(n).unwrap_or(u32::MAX)
-    }
-
-    /// Builds a dense index from an array position, saturating per
-    /// [`Self::saturating_u32`].
-    pub(super) fn from_usize(n: usize) -> Self {
-        Self(Self::saturating_u32(n))
-    }
-
-    /// Builds a dense index from an already-valid `u32` position (e.g. a loop
-    /// counter already bounded by [`Self::saturating_u32`]). Unlike
-    /// [`Self::from_usize`], performs no saturation.
-    pub(super) const fn from_u32(n: u32) -> Self {
-        Self(n)
-    }
-
-    /// Widens back to `usize` for slice indexing.
-    pub(super) fn index(self) -> usize {
-        Self::widen_usize(self.0)
-    }
-
-    /// Widens `n` to `usize`. Saturates to `usize::MAX` rather than panicking
-    /// if `usize` is narrower than `u32` (unreachable on all targets this crate
-    /// supports).
-    pub(super) fn widen_usize(n: u32) -> usize {
-        usize::try_from(n).unwrap_or(usize::MAX)
-    }
-}
-
 /// `extends` adjacency between Schemas, stored as a CSR graph over dense
 /// [`DenseIndex`]es.
 ///
@@ -234,7 +193,7 @@ impl<'a> SchemaAdjacency<'a> {
         let mut cursor: Vec<u32> =
             child_offsets.iter().take(count).copied().collect();
         let mut child_targets: Vec<DenseIndex> =
-            vec![DenseIndex::from_u32(0); edge_count];
+            vec![DenseIndex::from(0u32); edge_count];
         for edge in valid_edges {
             let Some(slot) = cursor.get_mut(edge.target.index()) else {
                 continue;
@@ -348,6 +307,49 @@ impl<'a> SchemaAdjacency<'a> {
         &self,
     ) -> impl Iterator<Item = DenseIndex> + '_ {
         self.child_targets.iter().copied()
+    }
+}
+
+/// Dense per-schema array index, assigned once at construction in raw-map
+/// insertion order.
+///
+/// Array indexing replaces string-hashed lookups on every graph operation. Caps
+/// a schema set at `u32::MAX` entries, which is not a real constraint for a
+/// filesystem-enumerated `.traces/schemas/*.toml` registry.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct DenseIndex(u32);
+
+impl DenseIndex {
+    /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow.
+    pub(super) fn saturating_u32(n: usize) -> u32 {
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Builds a dense index from an array position, saturating per
+    /// [`Self::saturating_u32`].
+    pub(super) fn from_usize(n: usize) -> Self {
+        Self(Self::saturating_u32(n))
+    }
+
+    /// Widens back to `usize` for slice indexing.
+    pub(super) fn index(self) -> usize {
+        Self::widen_usize(self.0)
+    }
+
+    /// Widens `n` to `usize`. Saturates to `usize::MAX` rather than panicking
+    /// if `usize` is narrower than `u32` (unreachable on all targets this crate
+    /// supports).
+    pub(super) fn widen_usize(n: u32) -> usize {
+        usize::try_from(n).unwrap_or(usize::MAX)
+    }
+}
+
+/// Builds a dense index from an already-valid `u32` position (e.g. a loop
+/// counter already bounded by [`DenseIndex::saturating_u32`]). Unlike
+/// [`DenseIndex::from_usize`], performs no saturation.
+impl From<u32> for DenseIndex {
+    fn from(n: u32) -> Self {
+        Self(n)
     }
 }
 

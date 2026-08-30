@@ -87,7 +87,7 @@ impl SchemaService {
         let raw = read_raw_schemas(directory)?;
         let field_context = SchemaFieldBuildContext::new(directory);
         let resolved = SchemaBuilder::new(&raw, &field_context).build()?;
-        Ok(SchemaConstruction::from_resolved(resolved))
+        Ok(resolved.into())
     }
 
     /// Return a reference to the named Schema, or `None` if no Schema by that
@@ -318,7 +318,16 @@ pub(crate) struct SchemaConstruction {
 }
 
 impl SchemaConstruction {
-    fn from_resolved(resolved: ResolvedSchemas) -> Self {
+    #[cfg(test)]
+    fn into_parts(
+        self,
+    ) -> (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>) {
+        (self.service, self.warnings, self.failures)
+    }
+}
+
+impl From<ResolvedSchemas> for SchemaConstruction {
+    fn from(resolved: ResolvedSchemas) -> Self {
         let schemas = resolved
             .schemas
             .into_iter()
@@ -331,13 +340,6 @@ impl SchemaConstruction {
             warnings: resolved.warnings,
             failures: resolved.failures,
         }
-    }
-
-    #[cfg(test)]
-    fn into_parts(
-        self,
-    ) -> (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>) {
-        (self.service, self.warnings, self.failures)
     }
 }
 

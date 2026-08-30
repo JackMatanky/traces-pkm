@@ -53,7 +53,7 @@ impl<'a> SchemaGraphBuilder<'a> {
 
         let ready_queue: VecDeque<DenseIndex> = (0
             ..DenseIndex::saturating_u32(node_count))
-            .map(DenseIndex::from_u32)
+            .map(DenseIndex::from)
             .filter(|idx| {
                 unresolved_parent_count.get(idx.index()).copied() == Some(0)
             })
@@ -97,7 +97,7 @@ impl<'a> SchemaGraphBuilder<'a> {
         };
         for i in 0..DenseIndex::saturating_u32(self.adjacency.node_count()) {
             self.adjacency
-                .children_slice_mut(DenseIndex::from_u32(i))
+                .children_slice_mut(DenseIndex::from(i))
                 .sort_by_key(rank_of);
         }
 

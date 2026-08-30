@@ -248,19 +248,16 @@ impl SelectValuesFileCache {
         }
 
         let content = std::fs::read_to_string(&confined_path)?;
-        let val: crate::schema::raw::RawSchemaSelectFieldValues = if ext
-            == "toml"
-        {
-            toml::from_str(&content)
-                .map_err(|e| SelectValuesFileError::ParseToml(Box::new(e)))?
-        } else if ext == "json" {
-            serde_json::from_str(&content)
-                .map_err(|e| SelectValuesFileError::ParseJson(Box::new(e)))?
-        } else {
-            return Err(SelectValuesFileError::BadExtension(
-                relative_path.to_owned(),
-            ));
-        };
+        let val: crate::schema::raw::RawSchemaSelectFieldValues =
+            if ext == "toml" {
+                toml::from_str(&content).map_err(Box::new)?
+            } else if ext == "json" {
+                serde_json::from_str(&content).map_err(Box::new)?
+            } else {
+                return Err(SelectValuesFileError::BadExtension(
+                    relative_path.to_owned(),
+                ));
+            };
 
         let entries =
             val.entries.ok_or(SelectValuesFileError::MissingEntries)?;

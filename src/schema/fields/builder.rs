@@ -92,8 +92,8 @@ impl<'a> SchemaFieldBuilder<'a> {
         }
     }
 
-    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside
-    /// any warnings a bare `$ref` override's degraded validation raised.
+    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside any
+    /// warnings a bare `$ref` override's degraded validation raised.
     ///
     /// - `Direct(kind)` or `Ref` with a `type` override: builds fresh from
     ///   `raw.options` against the resolved kind.

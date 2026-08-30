@@ -1,7 +1,7 @@
 //! Resolved field definitions, type-specific options, and `$ref` building.
 //!
-//! Each raw field's `type` and `options` bag are validated and merged into
-//! a [`SchemaFieldType`] by the per-type `parse` functions in submodules.
+//! Each raw field's `type` and `options` bag are validated and merged into a
+//! [`SchemaFieldType`] by the per-type `parse` functions in submodules.
 //!
 //! Two severities back the same validation:
 //! - **Hard failure** for `Direct` fields and `$ref` with a `type` override.
@@ -148,8 +148,6 @@ impl SchemaFieldDef {
 pub(crate) enum SchemaFieldType {
     /// Free-form text input.
     Input,
-    /// One value from a configured list of [`SchemaSelectFieldEntry`]s.
-    Select(Arc<SchemaSelectField>),
     /// Boolean value.
     Boolean,
     /// Numeric value with optional bounds ([`SchemaNumberField::min`],
@@ -162,6 +160,8 @@ pub(crate) enum SchemaFieldType {
     ///
     /// Class matching happens at query time, not here.
     File(Arc<SchemaFileField>),
+    /// One value from a configured list of [`SchemaSelectFieldEntry`]s.
+    Select(Arc<SchemaSelectField>),
 }
 
 impl std::fmt::Display for SchemaFieldType {
@@ -227,12 +227,15 @@ impl SchemaFieldType {
 /// [`RawSchemaFieldType`][super::RawSchemaFieldType] is, without either's
 /// payload.
 ///
-/// Constructible from a [`RawSchemaFieldType`][super::RawSchemaFieldType]
-/// (via [`From`]) or projected from an already-resolved
-/// [`SchemaFieldType`] (via [`SchemaFieldType::kind`]), never the reverse.
-/// Used by [`super::error::SchemaFieldParserError`],
-/// [`super::error::SchemaWarning`], and [`parser::SchemaFieldParser`] to name
-/// a field's kind in diagnostics without carrying its resolved options.
+/// Constructible from a [`RawSchemaFieldType`][super::RawSchemaFieldType] (via
+/// [`From`]) or projected from an already-resolved [`SchemaFieldType`] (via
+/// [`SchemaFieldType::kind`]), never the reverse. Used by
+/// [`SchemaFieldParserError`], [`SchemaWarning`], and
+/// [`parser::SchemaFieldParser`] to name a field's kind in diagnostics without
+/// carrying its resolved options.
+///
+/// [`SchemaFieldParserError`]: super::error::SchemaFieldParserError
+/// [`SchemaWarning`]: super::error::SchemaWarning
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaFieldTypeTag {
     Input,
