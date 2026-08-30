@@ -994,6 +994,14 @@ mod tests {
             };
             let subscriber = tracing_subscriber::registry().with(capture);
             let guard = tracing::subscriber::set_default(subscriber);
+            // `set_default` installs a thread-local subscriber but does not
+            // rebuild `tracing`'s per-callsite `Interest` cache. Without
+            // this, `warn_unknown_classes`'s `tracing::warn!` callsite can
+            // be cached as "never interested" from an earlier point in the
+            // process (e.g. another test's subscriber, or no subscriber at
+            // all) and skip every subscriber - including this one - making
+            // the assertions below flake under a full parallel test run.
+            tracing::callsite::rebuild_interest_cache();
 
             service.warn_unknown_classes(&[
                 "book".to_owned(),
