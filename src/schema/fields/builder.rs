@@ -173,44 +173,32 @@ impl<'a> SchemaFieldBuilder<'a> {
         address: FieldAddressRef<'_>,
         raw: &RawSchemaFieldDef,
     ) -> SchemaResult<ResolvedBase<'a>> {
-        let (base, degrade_on_error) = match &raw.source {
+        match &raw.source {
+            RawSchemaFieldSource::Direct(kind) => Ok(ResolvedBase {
+                field: None,
+                tag: SchemaFieldTypeTag::from(*kind),
+                degrade_on_error: false,
+            }),
             RawSchemaFieldSource::Ref {
                 address: base_address,
-                override_type,
-            } => (
-                Some(self.resolve_ref(address, base_address)?),
-                override_type.is_none(),
-            ),
-            RawSchemaFieldSource::Direct(_) => (None, false),
-        };
-        let tag = match &raw.source {
-            RawSchemaFieldSource::Direct(kind)
-            | RawSchemaFieldSource::Ref {
                 override_type: Some(kind),
-                ..
-            } => SchemaFieldTypeTag::from(*kind),
+            } => Ok(ResolvedBase {
+                field: Some(self.resolve_ref(address, base_address)?),
+                tag: SchemaFieldTypeTag::from(*kind),
+                degrade_on_error: false,
+            }),
             RawSchemaFieldSource::Ref {
+                address: base_address,
                 override_type: None,
-                ..
             } => {
-                // `base` is always `Some` here: the `Ref` arms above only reach
-                // this point after `self.resolve_ref` succeeded.
-                #[expect(
-                    clippy::expect_used,
-                    reason = "the Ref match arm above already resolved base \
-                              via self.resolve_ref; this expect only covers \
-                              the impossible None case, not a recoverable \
-                              caller error"
-                )]
-                let base = base.expect("bare $ref always resolves a base");
-                base.kind().kind()
+                let base = self.resolve_ref(address, base_address)?;
+                Ok(ResolvedBase {
+                    field: Some(base),
+                    tag: base.kind().kind(),
+                    degrade_on_error: true,
+                })
             }
-        };
-        Ok(ResolvedBase {
-            field: base,
-            tag,
-            degrade_on_error,
-        })
+        }
     }
 
     /// Parse `options` into a [`SchemaFieldType`], returning the resolved type

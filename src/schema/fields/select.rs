@@ -287,36 +287,8 @@ fn push_entry_error(
     });
 }
 
-/// Extracts `subtable[key]` as a file selector, defaulting to `default` when
-/// absent. Only ever called once a values file at `path` has already loaded,
-/// so a wrongly-shaped selector is always reported against that file.
-fn extract_file_selector<'a>(
-    subtable: &'a IndexMap<String, FieldValue>,
-    key: &'static str,
-    default: &'a str,
-    parser: &mut SchemaFieldParser<'_>,
-    path: &str,
-) -> &'a str {
-    match subtable.get(key) {
-        Some(FieldValue::String(s)) => s.as_str(),
-        Some(other) => {
-            push_entry_error(
-                parser,
-                Some(path),
-                SchemaSelectFieldEntryError::ShapeMismatch {
-                    context: format!("selector {key:?}"),
-                    value: format!("{other:?}"),
-                    expected: "a string",
-                },
-            );
-            default
-        }
-        None => default,
-    }
-}
-
-/// Optional counterpart of [`extract_file_selector`] for `label`/`order`,
-/// which fall back to `None` rather than a default string.
+/// Extracts an optional file selector for `value`/`label`/`order`.
+/// Missing selectors fall back at the call site.
 fn extract_optional_file_selector<'a>(
     subtable: &'a IndexMap<String, FieldValue>,
     key: &'static str,
@@ -489,24 +461,13 @@ fn parse_inline_value_objects(
         matches!(item, FieldValue::Object(map) if map.contains_key("order"))
     });
 
-    let label_sel = if has_label_on_any {
-        Some("label")
-    } else {
-        None
-    };
-    let order_sel = if has_order_on_any {
-        Some("order")
-    } else {
-        None
-    };
-
     parse_object_entries(
         parser,
         items,
         EntrySelectors {
             value: "value",
-            label: label_sel,
-            order: order_sel,
+            label: has_label_on_any.then_some("label"),
+            order: has_order_on_any.then_some("order"),
         },
         None,
     )
@@ -547,7 +508,8 @@ fn parse_file_object_entries(
     loaded_entries: &[FieldValue],
 ) -> Vec<SchemaSelectFieldEntry> {
     let value_selector =
-        extract_file_selector(subtable, "value", "value", parser, path);
+        extract_optional_file_selector(subtable, "value", parser, path)
+            .unwrap_or("value");
     let label_selector =
         extract_optional_file_selector(subtable, "label", parser, path);
     let order_selector =
