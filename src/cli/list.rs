@@ -8,7 +8,7 @@
 
 use clap::Args;
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::{
     config::{Config, ConfigService},
     query::SortOrder,
@@ -60,7 +60,7 @@ impl List {
         reason = "list output is primary command output, not diagnostic text; \
                   mirrors the precedent in crate::cli::task"
     )]
-    pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(&self, service: &ConfigService) -> CliResult {
         let config = super::load_config(service)?;
         let root = config.root();
         let (rendered, count) = self.render(&config)?;

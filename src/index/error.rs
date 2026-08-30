@@ -14,6 +14,12 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
+/// Convenience alias for low-level index persistence operations.
+pub type DbResult<T> = std::result::Result<T, DbError>;
+
+/// Convenience alias for high-level index operations.
+pub type IndexResult<T> = std::result::Result<T, IndexError>;
+
 /// Error type for [`super::FileIndex`] operations: build, persist, load, and
 /// refresh.
 ///

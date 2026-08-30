@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::config::ConfigService;
 
 /// Arguments for `traces untrust`.
@@ -35,7 +35,7 @@ impl Untrust {
     /// - [`CliError::TrustTargetResolve`] if resolving trust targets fails.
     /// - [`CliError::Untrust`] if updating the trust store fails.
     #[inline]
-    pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(self, service: &ConfigService) -> CliResult {
         let subjects = super::resolve_trust_subjects(
             service,
             self.path.as_deref(),

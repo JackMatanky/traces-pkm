@@ -8,7 +8,7 @@
 
 use clap::Args;
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::config::{Config, ConfigService};
 
 /// Arguments for `traces task`.
@@ -48,7 +48,7 @@ impl Task {
                   mirrors the dry-run precedent in crate::cli::template and \
                   crate::cli::completions"
     )]
-    pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(&self, service: &ConfigService) -> CliResult {
         let config = super::load_config(service)?;
         let root = config.root();
         let lines = self.lines(&config)?;

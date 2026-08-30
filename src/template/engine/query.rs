@@ -74,6 +74,7 @@ use minijinja::{
     value::{DynObject, Enumerator, Object, ObjectRepr, Value, from_args},
 };
 
+use super::error::TemplateEngineResult;
 use crate::{
     index::{FileIndex, IndexError, IndexerService},
     note::NoteFieldValue,
@@ -189,7 +190,7 @@ impl QueryOps {
         &self,
         state: &State,
         source: SourceSelector,
-    ) -> Result<Value, Error> {
+    ) -> TemplateEngineResult<Value> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
         let request = if self.is_task {
             QueryRequest::tasks(source)
@@ -211,7 +212,7 @@ impl Object for QueryOps {
                 Some(Value::from_function(
                     move |state: &State,
                           expr: Option<Value>|
-                          -> Result<Value, Error> {
+                          -> TemplateEngineResult<Value> {
                         let source = resolve_from_arg(expr.as_ref())?;
                         ops.run(state, source)
                     },
@@ -271,7 +272,9 @@ fn query_error(source: QueryError) -> Error {
 ///   nor a string.
 /// - Propagates [`QueryError::Syntax`] (via [`query_error`]) if `expr` is a
 ///   string that fails to parse as a source expression.
-fn resolve_from_arg(expr: Option<&Value>) -> Result<SourceSelector, Error> {
+fn resolve_from_arg(
+    expr: Option<&Value>,
+) -> TemplateEngineResult<SourceSelector> {
     let Some(value) = expr else {
         return Ok(SourceSelector::All);
     };
@@ -356,7 +359,7 @@ impl Object for QueryRecordSet {
         _state: &State<'_, '_>,
         method: &str,
         args: &[Value],
-    ) -> Result<Value, Error> {
+    ) -> TemplateEngineResult<Value> {
         match method {
             "table" => {
                 let (headers, columns): (Vec<String>, Vec<String>) =
@@ -430,7 +433,7 @@ fn table_filter(
     outcome: &QueryRecordSet,
     headers: Vec<String>,
     columns: Vec<String>,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     let headers = as_str_slice(&headers);
     let columns = as_str_slice(&columns);
     outcome.table(&headers, &columns).map_err(query_error)
@@ -445,12 +448,15 @@ fn as_str_slice(values: &[String]) -> Vec<&str> {
 }
 
 /// `outcome | list(path)` filter body. See [`QueryRecordSet::list`].
-fn list_filter(outcome: &QueryRecordSet, path: &str) -> Result<String, Error> {
+fn list_filter(
+    outcome: &QueryRecordSet,
+    path: &str,
+) -> TemplateEngineResult<String> {
     outcome.list(path).map_err(query_error)
 }
 
 /// `outcome | task_list` filter body. See [`QueryRecordSet::task_list`].
-fn task_list_filter(outcome: &QueryRecordSet) -> Result<String, Error> {
+fn task_list_filter(outcome: &QueryRecordSet) -> TemplateEngineResult<String> {
     outcome.task_list().map_err(query_error)
 }
 
@@ -665,7 +671,7 @@ mod tests {
         env
     }
 
-    fn render(root: &Path, source: &str) -> Result<String, Error> {
+    fn render(root: &Path, source: &str) -> TemplateEngineResult<String> {
         env(root).render_str(source, minijinja::context!())
     }
 
@@ -676,7 +682,7 @@ mod tests {
         root: &Path,
         class_field: &str,
         source: &str,
-    ) -> Result<String, Error> {
+    ) -> TemplateEngineResult<String> {
         let field: Arc<str> = Arc::from(class_field);
         let service = schema_service(root);
         let mut env = Environment::new();

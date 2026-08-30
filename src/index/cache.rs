@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use super::{
     builder::parse_note,
     delta,
-    error::{IndexBuilderError, IndexError},
+    error::{IndexBuilderError, IndexError, IndexResult},
     inlinks::InlinkMap,
 };
 use crate::file::FileBase;
@@ -65,7 +65,7 @@ impl<'a> RefreshCache<'a> {
     pub(super) fn load(
         store: &'a super::store::IndexStore,
         txn: &'a redb::ReadTransaction,
-    ) -> Result<Self, IndexError> {
+    ) -> IndexResult<Self> {
         let (files, inlinks) = store.read_files_and_links_via(txn)?;
         Ok(Self {
             files,

@@ -11,7 +11,7 @@ use std::{
 
 use clap::Args;
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::{
     DialogProvider,
     config::{ConfigService, LOCAL_CONFIG_DIR},
@@ -40,7 +40,7 @@ impl Init {
     /// - [`CliError::InitConfigWrite`] if serializing or writing the local
     ///   config file fails.
     #[inline]
-    pub fn run(self, provider: &dyn DialogProvider) -> Result<(), CliError> {
+    pub fn run(self, provider: &dyn DialogProvider) -> CliResult {
         let root = super::current_dir()?.into_inner();
         let input = Self::collect_config(provider)?;
         Self::scaffold_directory(&root)?;
@@ -80,7 +80,7 @@ impl Init {
     /// - [`CliError::InitAlreadyInitialized`] if `.traces` already exists under
     ///   `root`.
     /// - [`CliError::InitScaffold`] if creating directories fails.
-    fn scaffold_directory(root: &Path) -> Result<(), CliError> {
+    fn scaffold_directory(root: &Path) -> CliResult {
         let traces_dir = root.join(LOCAL_CONFIG_DIR);
         if traces_dir.exists() {
             return Err(CliError::InitAlreadyInitialized {
@@ -112,7 +112,7 @@ impl Init {
         root: &Path,
         directory: &Path,
         output_dir: &Path,
-    ) -> Result<(), CliError> {
+    ) -> CliResult {
         ConfigService::scaffold_local(root, directory, output_dir).map_err(
             |source| CliError::InitConfigWrite {
                 root: root.to_path_buf(),

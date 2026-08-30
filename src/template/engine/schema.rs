@@ -62,6 +62,7 @@ use minijinja::{
     value::{Enumerator, Object, Value},
 };
 
+use super::error::TemplateEngineResult;
 use crate::{
     field::FieldValue,
     query::{ClassExpansionMode, SourceAtom, SourceExpr, SourceSelector},
@@ -118,7 +119,9 @@ impl Object for SchemaOps {
             "get" => {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
-                    move |state: &State, name: &str| -> Result<Value, Error> {
+                    move |state: &State,
+                          name: &str|
+                          -> TemplateEngineResult<Value> {
                         super::cache::set_temp(
                             state,
                             SCHEMA_SERVICE_CACHE_KEY,
@@ -150,7 +153,7 @@ impl Object for SchemaOps {
 /// [`ErrorKind::InvalidOperation`] if no `Schema` value produced this render
 /// ever went through `schema.get`; cannot happen for a `Schema` bound the
 /// documented way, since that is the only route to one.
-fn cached_service(state: &State) -> Result<Arc<SchemaService>, Error> {
+fn cached_service(state: &State) -> TemplateEngineResult<Arc<SchemaService>> {
     super::cache::get_temp(state, SCHEMA_SERVICE_CACHE_KEY).ok_or_else(|| {
         Error::new(
             ErrorKind::InvalidOperation,
@@ -167,7 +170,7 @@ impl Object for Schema {
             "field" => {
                 let schema = Arc::clone(self);
                 Some(Value::from_function(
-                    move |name: &str| -> Result<Value, Error> {
+                    move |name: &str| -> TemplateEngineResult<Value> {
                         let field = schema.field(name).ok_or_else(|| {
                             unknown_field_error(&schema, name)
                         })?;
@@ -193,7 +196,7 @@ impl Object for Schema {
             "children" => {
                 let schema = Arc::clone(self);
                 Some(Value::from_function(
-                    move |state: &State| -> Result<Value, Error> {
+                    move |state: &State| -> TemplateEngineResult<Value> {
                         bind_related(state, &schema, SchemaService::children_of)
                     },
                 ))
@@ -201,7 +204,7 @@ impl Object for Schema {
             "descendants" => {
                 let schema = Arc::clone(self);
                 Some(Value::from_function(
-                    move |state: &State| -> Result<Value, Error> {
+                    move |state: &State| -> TemplateEngineResult<Value> {
                         bind_related(
                             state,
                             &schema,
@@ -231,7 +234,7 @@ fn bind_related(
     state: &State,
     schema: &Arc<Schema>,
     relate: RelateFn,
-) -> Result<Value, Error> {
+) -> TemplateEngineResult<Value> {
     let service = cached_service(state)?;
     let related = relate(&service, schema.name());
     Ok(Value::from(

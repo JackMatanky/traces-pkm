@@ -20,7 +20,7 @@ mod error;
 mod preset;
 mod terminal;
 
-pub use error::DialogError;
+pub use error::{DialogError, DialogResult};
 pub use preset::PresetDialogProvider;
 pub use terminal::TerminalDialogProvider;
 
@@ -66,11 +66,8 @@ pub trait DialogProvider: Send + Sync {
     /// assert!(p.confirm("proceed?", None)?);
     /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
-    fn confirm(
-        &self,
-        label: &str,
-        default: Option<bool>,
-    ) -> Result<bool, DialogError>;
+    fn confirm(&self, label: &str, default: Option<bool>)
+    -> DialogResult<bool>;
 
     /// Display a multi-selection prompt and return the chosen indices.
     ///
@@ -99,7 +96,7 @@ pub trait DialogProvider: Send + Sync {
         &self,
         label: &str,
         items: &[String],
-    ) -> Result<Vec<usize>, DialogError>;
+    ) -> DialogResult<Vec<usize>>;
 
     /// Display a single-selection prompt and return the chosen index.
     ///
@@ -130,11 +127,7 @@ pub trait DialogProvider: Send + Sync {
     /// assert_eq!(p.select("pick", &items)?, 1);
     /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
-    fn select(
-        &self,
-        label: &str,
-        items: &[String],
-    ) -> Result<usize, DialogError>;
+    fn select(&self, label: &str, items: &[String]) -> DialogResult<usize>;
 
     /// Display a freeform text prompt and return the user's input.
     ///
@@ -159,11 +152,7 @@ pub trait DialogProvider: Send + Sync {
     /// assert_eq!(p.text("name", None)?, "claude");
     /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
-    fn text(
-        &self,
-        label: &str,
-        default: Option<&str>,
-    ) -> Result<String, DialogError>;
+    fn text(&self, label: &str, default: Option<&str>) -> DialogResult<String>;
 }
 
 #[cfg(test)]

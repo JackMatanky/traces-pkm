@@ -30,6 +30,9 @@ use crate::{
     },
 };
 
+/// Convenience alias for CLI command results.
+pub type CliResult = std::result::Result<(), CliError>;
+
 /// Unified error type for all `traces` CLI operations.
 ///
 /// Maps domain failures to stable diagnostic codes, help text, and deliberate

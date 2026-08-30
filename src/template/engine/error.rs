@@ -8,6 +8,9 @@ use minijinja::{Error, ErrorKind};
 
 use crate::path::PathError;
 
+/// Convenience alias for template engine helper return types.
+pub(super) type TemplateEngineResult<T> = std::result::Result<T, Error>;
+
 /// Builds the error for a template `path` argument rejected by root
 /// confinement.
 ///

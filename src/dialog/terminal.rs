@@ -1,6 +1,6 @@
 //! Interactive terminal [`DialogProvider`] backed by [`inquire`].
 
-use super::{DialogError, DialogProvider};
+use super::{DialogError, DialogProvider, DialogResult};
 
 /// [`DialogProvider`] that prompts through an interactive terminal.
 ///
@@ -47,11 +47,7 @@ impl DialogProvider for TerminalDialogProvider {
     }
 
     #[inline]
-    fn text(
-        &self,
-        label: &str,
-        default: Option<&str>,
-    ) -> Result<String, DialogError> {
+    fn text(&self, label: &str, default: Option<&str>) -> DialogResult<String> {
         if !stdin_is_tty() {
             return Ok(default.unwrap_or_default().to_owned());
         }
@@ -67,7 +63,7 @@ impl DialogProvider for TerminalDialogProvider {
         &self,
         label: &str,
         default: Option<bool>,
-    ) -> Result<bool, DialogError> {
+    ) -> DialogResult<bool> {
         if !stdin_is_tty() {
             return Ok(default.unwrap_or(false));
         }
@@ -79,11 +75,7 @@ impl DialogProvider for TerminalDialogProvider {
     }
 
     #[inline]
-    fn select(
-        &self,
-        label: &str,
-        items: &[String],
-    ) -> Result<usize, DialogError> {
+    fn select(&self, label: &str, items: &[String]) -> DialogResult<usize> {
         // A select over zero options can never yield a choice, in either mode.
         if items.is_empty() {
             return Err(DialogError::EmptySelectionInput);
@@ -101,7 +93,7 @@ impl DialogProvider for TerminalDialogProvider {
         &self,
         label: &str,
         items: &[String],
-    ) -> Result<Vec<usize>, DialogError> {
+    ) -> DialogResult<Vec<usize>> {
         if items.is_empty() {
             return Ok(Vec::new());
         }

@@ -32,7 +32,7 @@ use super::{
     FileIndex, INDEX_FILE,
     codec::{decode_row, encode_row, path_from_bytes},
     delta::{IncrementalDelta, IndexDelta},
-    error::{DbError, IndexError},
+    error::{DbError, DbResult, IndexResult},
     inlinks::InlinkMap,
 };
 use crate::{file::FileBase, note::Note};
@@ -106,7 +106,7 @@ impl IndexStore {
     ///   file cannot be deleted during recovery.
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if the database file cannot
     ///   be opened, or a post-recovery re-create fails.
-    pub(super) fn open(root: &Path) -> Result<Self, IndexError> {
+    pub(super) fn open(root: &Path) -> IndexResult<Self> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| DbError::Io {
@@ -135,7 +135,7 @@ impl IndexStore {
     ///
     /// Recovers by wipe-and-recreate if `Database::create` itself reports
     /// container-level corruption.
-    fn create_db(path: &Path) -> Result<redb::Database, DbError> {
+    fn create_db(path: &Path) -> DbResult<redb::Database> {
         let wrap = |source: redb::DatabaseError| DbError::Redb {
             path: path.to_path_buf(),
             source: Box::new(source.into()),
@@ -161,10 +161,7 @@ impl IndexStore {
     ///
     /// A fresh, still-tableless database (first-ever open) reports
     /// `TableDoesNotExist` for all three, which is not a rebuild trigger.
-    fn should_rebuild(
-        db: &redb::Database,
-        path: &Path,
-    ) -> Result<bool, DbError> {
+    fn should_rebuild(db: &redb::Database, path: &Path) -> DbResult<bool> {
         let read_txn = db.begin_read().map_err(|source| DbError::Redb {
             path: path.to_path_buf(),
             source: Box::new(source.into()),
@@ -208,7 +205,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the transaction cannot be started.
-    pub(super) fn begin_read(&self) -> Result<ReadTransaction, DbError> {
+    pub(super) fn begin_read(&self) -> DbResult<ReadTransaction> {
         self.db.begin_read().map_err(|source| self.raise_source_error(source))
     }
 
@@ -217,7 +214,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the transaction cannot be started.
-    pub(super) fn begin_write(&self) -> Result<WriteTransaction, DbError> {
+    pub(super) fn begin_write(&self) -> DbResult<WriteTransaction> {
         self.db.begin_write().map_err(|source| self.raise_source_error(source))
     }
 
@@ -232,7 +229,7 @@ impl IndexStore {
         txn: &ReadTransaction,
         table: TableDefinition<&[u8], &[u8]>,
         path_of: impl Fn(&T) -> &Path,
-    ) -> Result<Vec<T>, DbError> {
+    ) -> DbResult<Vec<T>> {
         let mut items: Vec<T> = match txn.open_table(table) {
             Ok(table) => {
                 let mut items = Vec::new();
@@ -266,7 +263,7 @@ impl IndexStore {
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
     /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
     ///   not a valid record.
-    pub(super) fn read_all(&self) -> Result<IndexSnapshot, IndexError> {
+    pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let files = self.read_table(&txn, FILES, FileBase::path)?;
         let notes = self.read_table(&txn, NOTES, Note::path)?;
@@ -306,7 +303,7 @@ impl IndexStore {
     pub(super) fn read_files_and_links_via(
         &self,
         txn: &ReadTransaction,
-    ) -> Result<(Vec<FileBase>, InlinkMap), IndexError> {
+    ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
         let files = self.read_table(txn, FILES, FileBase::path)?;
         let links =
             self.read_links(txn, LINKS, |bytes| Some(path_from_bytes(bytes)))?;
@@ -329,7 +326,7 @@ impl IndexStore {
         &self,
         txn: &ReadTransaction,
         path: &Path,
-    ) -> Result<Option<Note>, IndexError> {
+    ) -> IndexResult<Option<Note>> {
         let table = match txn.open_table(NOTES) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
@@ -362,7 +359,7 @@ impl IndexStore {
         txn: &ReadTransaction,
         table: MultimapTableDefinition<&[u8], &[u8]>,
         resolve: impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> Result<HashMap<PathBuf, Vec<PathBuf>>, DbError> {
+    ) -> DbResult<HashMap<PathBuf, Vec<PathBuf>>> {
         let table = match txn.open_multimap_table(table) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => {
@@ -392,7 +389,7 @@ impl IndexStore {
         &self,
         entry: LinkEntry<'_>,
         resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> Result<ResolvedLink, DbError> {
+    ) -> DbResult<ResolvedLink> {
         let (target, sources) =
             entry.map_err(|source| self.raise_source_error(source))?;
         let Some(target) = resolve(target.value()) else {
@@ -411,7 +408,7 @@ impl IndexStore {
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
         resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> Result<Vec<PathBuf>, DbError> {
+    ) -> DbResult<Vec<PathBuf>> {
         let mut values = Vec::new();
         for source in sources {
             let source =
@@ -435,7 +432,7 @@ impl IndexStore {
         table: TableDefinition<&[u8], &[u8]>,
         items: &[T],
         path_of: impl Fn(&T) -> &Path,
-    ) -> Result<(), DbError> {
+    ) -> DbResult<()> {
         let mut table = txn
             .open_table(table)
             .map_err(|source| self.raise_source_error(source))?;
@@ -461,7 +458,7 @@ impl IndexStore {
         txn: &WriteTransaction,
         table: MultimapTableDefinition<&[u8], &[u8]>,
         links: &HashMap<PathBuf, Vec<PathBuf>>,
-    ) -> Result<(), DbError> {
+    ) -> DbResult<()> {
         let mut table = txn
             .open_multimap_table(table)
             .map_err(|source| self.raise_source_error(source))?;
@@ -493,7 +490,7 @@ impl IndexStore {
         files: &[FileBase],
         notes: &[Note],
         links: &InlinkMap,
-    ) -> Result<(), IndexError> {
+    ) -> IndexResult<()> {
         let write_txn = self.begin_write()?;
         write_txn
             .delete_table(FILES)
@@ -523,10 +520,7 @@ impl IndexStore {
     ///
     /// [`IndexDelta::Full`]: super::delta::IndexDelta::Full
     /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
-    pub(super) fn persist_index(
-        &self,
-        index: &FileIndex,
-    ) -> Result<(), IndexError> {
+    pub(super) fn persist_index(&self, index: &FileIndex) -> IndexResult<()> {
         match index.delta() {
             IndexDelta::Full => {
                 self.write_all(index.bases(), index.notes(), index.inlinks())
@@ -544,7 +538,7 @@ impl IndexStore {
     ///
     /// [`IndexDelta::Full`]: super::delta::IndexDelta::Full
     /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
-    fn persist_incremental(&self, index: &FileIndex) -> Result<(), IndexError> {
+    fn persist_incremental(&self, index: &FileIndex) -> IndexResult<()> {
         let IndexDelta::Incremental(delta) = index.delta() else {
             return self.write_all(
                 index.bases(),
@@ -587,7 +581,7 @@ impl IndexStore {
         index: &FileIndex,
         upserted: &[PathBuf],
         deleted: &[PathBuf],
-    ) -> Result<(), IndexError> {
+    ) -> IndexResult<()> {
         let mut files = write_txn
             .open_table(FILES)
             .map_err(|source| self.raise_source_error(source))?;
@@ -628,7 +622,7 @@ impl IndexStore {
         table: &mut redb::Table<'_, &[u8], &[u8]>,
         path: &Path,
         value: &T,
-    ) -> Result<(), IndexError> {
+    ) -> IndexResult<()> {
         let key = path.as_os_str().as_encoded_bytes();
         let bytes = encode_row(path, value)?;
         table
@@ -645,7 +639,7 @@ impl IndexStore {
         index: &FileIndex,
         links_upserted: &[PathBuf],
         links_deleted: &[PathBuf],
-    ) -> Result<(), IndexError> {
+    ) -> IndexResult<()> {
         let mut links = write_txn
             .open_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
@@ -667,7 +661,7 @@ impl IndexStore {
         links: &mut redb::MultimapTable<'_, &[u8], &[u8]>,
         index: &FileIndex,
         target: &Path,
-    ) -> Result<(), IndexError> {
+    ) -> IndexResult<()> {
         let target_key = target.as_os_str().as_encoded_bytes();
         links
             .remove_all(target_key)
@@ -700,7 +694,7 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use super::*;
+    use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
     use crate::{index::IndexerService, note::parse_markdown};

@@ -7,7 +7,7 @@
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::{config::ConfigService, template::TemplateService};
 
 /// Arguments for `traces completions`.
@@ -42,7 +42,7 @@ impl Completions {
     /// - [`CliError::ConfigLoad`] if loading configuration for
     ///   `--list-templates` fails.
     #[inline]
-    pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(self, service: &ConfigService) -> CliResult {
         self.shell.map_or_else(
             || Self::list_templates(service),
             |shell| {
@@ -109,7 +109,7 @@ impl Completions {
                   completion scripts, not diagnostic text; mirrors the \
                   dry-run precedent in crate::cli::template"
     )]
-    fn list_templates(service: &ConfigService) -> Result<(), CliError> {
+    fn list_templates(service: &ConfigService) -> CliResult {
         for name in Self::template_names(service)? {
             println!("{name}");
         }

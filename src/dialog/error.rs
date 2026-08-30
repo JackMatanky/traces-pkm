@@ -3,6 +3,9 @@
 //! [`DialogError`] groups prompt failures by caller-visible outcome so CLI code
 //! can choose the right diagnostic.
 
+/// Convenience alias for dialog operations that may fail.
+pub type DialogResult<T> = std::result::Result<T, DialogError>;
+
 /// Error returned by [`DialogProvider`] methods.
 ///
 /// Variants distinguish user-controlled exits from configuration mistakes and

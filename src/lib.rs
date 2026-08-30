@@ -79,7 +79,8 @@ pub use config::{
     TrustRequest,
 };
 pub use dialog::{
-    DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
+    DialogError, DialogProvider, DialogResult, PresetDialogProvider,
+    TerminalDialogProvider,
 };
 pub(crate) use dirtree::{DirTree, DirTreeError};
 pub use file::FileBase;
@@ -93,8 +94,8 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileIndex, IndexError, IndexerService, InlinkMap, derive_inlinks,
-    path as path_codec,
+    DbError, DbResult, FileIndex, IndexError, IndexResult, IndexerService,
+    InlinkMap, derive_inlinks, path as path_codec,
 };
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
@@ -106,7 +107,8 @@ pub use note::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
-    QueryRecord, QueryRecordSet, QueryRequest, QueryService, SourceSelector,
+    QueryRecord, QueryRecordSet, QueryRequest, QueryResult, QueryService,
+    SourceSelector,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaService};
@@ -115,8 +117,8 @@ pub use tag::{Tag, TagError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,
-    TemplatePathInput, TemplateService, WriteMode, WriteOutcome,
-    classify_render_error,
+    TemplatePathInput, TemplateResult, TemplateService, WriteMode,
+    WriteOutcome, classify_render_error,
 };
 
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,

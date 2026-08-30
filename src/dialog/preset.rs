@@ -6,7 +6,7 @@ use std::{
     sync::{Mutex, PoisonError},
 };
 
-use super::{DialogError, DialogProvider};
+use super::{DialogError, DialogProvider, DialogResult};
 
 /// Locks a mutex and recovers the guard after poisoning.
 #[inline]
@@ -178,7 +178,7 @@ impl DialogProvider for PresetDialogProvider {
         &self,
         _label: &str,
         default: Option<&str>,
-    ) -> Result<String, DialogError> {
+    ) -> DialogResult<String> {
         Ok(lock(&self.texts)
             .pop_front()
             .unwrap_or_else(|| default.unwrap_or_default().to_owned()))
@@ -189,7 +189,7 @@ impl DialogProvider for PresetDialogProvider {
         &self,
         _label: &str,
         default: Option<bool>,
-    ) -> Result<bool, DialogError> {
+    ) -> DialogResult<bool> {
         Ok(lock(&self.confirms)
             .pop_front()
             .unwrap_or_else(|| default.unwrap_or(false)))
@@ -203,11 +203,7 @@ impl DialogProvider for PresetDialogProvider {
     /// - [`DialogError::InvalidConfiguration`] if the queued index is outside
     ///   the bounds of `items`.
     #[inline]
-    fn select(
-        &self,
-        _label: &str,
-        items: &[String],
-    ) -> Result<usize, DialogError> {
+    fn select(&self, _label: &str, items: &[String]) -> DialogResult<usize> {
         if items.is_empty() {
             return Err(DialogError::EmptySelectionInput);
         }
@@ -231,7 +227,7 @@ impl DialogProvider for PresetDialogProvider {
         &self,
         _label: &str,
         items: &[String],
-    ) -> Result<Vec<usize>, DialogError> {
+    ) -> DialogResult<Vec<usize>> {
         if items.is_empty() {
             return Ok(Vec::new());
         }

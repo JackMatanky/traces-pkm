@@ -27,7 +27,7 @@ use minijinja::{
     value::{Enumerator, Object, Value},
 };
 
-use super::error::confine_error;
+use super::error::{TemplateEngineResult, confine_error};
 use crate::path::RootConfinedPath;
 
 /// The [`State::set_temp`] key used to store `file.write_to()`'s declared path.
@@ -78,7 +78,7 @@ impl Object for FileOps {
             "include" => {
                 let root = Arc::clone(&self.root);
                 Some(Value::from_function(
-                    move |path: &str| -> Result<String, Error> {
+                    move |path: &str| -> TemplateEngineResult<String> {
                         let confined =
                             RootConfinedPath::parse(&root, Path::new(path))
                                 .map_err(|source| {

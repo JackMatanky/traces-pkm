@@ -21,6 +21,8 @@
 
 use minijinja::{Environment, Error, ErrorKind};
 
+use super::error::TemplateEngineResult;
+
 /// Registration namespace for the stateless numeric filters.
 pub(super) struct NumOps;
 
@@ -46,7 +48,7 @@ impl NumOps {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is negative.
-fn sqrt(value: f64) -> Result<f64, Error> {
+fn sqrt(value: f64) -> TemplateEngineResult<f64> {
     if value < 0.0 {
         return Err(Error::new(
             ErrorKind::InvalidOperation,

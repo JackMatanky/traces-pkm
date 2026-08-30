@@ -11,7 +11,7 @@ use std::{
 
 use clap::{ArgGroup, Args};
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::{
     DialogError, DialogProvider, PresetDialogProvider,
     config::{Config, ConfigService},
@@ -122,7 +122,7 @@ impl Template {
         self,
         service: &ConfigService,
         provider: Arc<dyn DialogProvider>,
-    ) -> Result<(), CliError> {
+    ) -> CliResult {
         let config = super::load_config(service)?;
         if self.list {
             Self::list_templates(&config);

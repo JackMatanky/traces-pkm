@@ -35,7 +35,7 @@ use clap::{Parser, Subcommand};
 use cwd::Cwd;
 #[cfg(test)]
 pub(crate) use cwd::CwdGuard;
-pub use error::CliError;
+pub use error::{CliError, CliResult};
 
 use crate::{
     DialogProvider,
@@ -180,7 +180,7 @@ impl Commands {
         self,
         service: &ConfigService,
         provider: Arc<dyn DialogProvider>,
-    ) -> Result<(), CliError> {
+    ) -> CliResult {
         match self {
             Self::Init(args) => args.run(provider.as_ref()),
             Self::Trust(args) => args.run(service),

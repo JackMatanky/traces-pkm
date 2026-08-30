@@ -25,6 +25,8 @@ use convert_case::{Case, Casing as _};
 use minijinja::{Environment, Error, value::Kwargs};
 use regex::Regex;
 
+use super::error::TemplateEngineResult;
+
 /// Registration namespace for the stateless string filters.
 pub(super) struct StrOps;
 
@@ -89,7 +91,7 @@ fn truncate(
     value: &str,
     length: usize,
     kwargs: Kwargs,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     let ellipsis = ellipsis_kwarg(&kwargs)?;
 
     if value.chars().count() <= length {
@@ -132,7 +134,7 @@ fn truncate_words(
     value: &str,
     count: usize,
     kwargs: Kwargs,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     let ellipsis = ellipsis_kwarg(&kwargs)?;
 
     let mut words = value.split_whitespace();
@@ -178,7 +180,7 @@ fn word_count(value: &str) -> usize {
 ///   not a string.
 /// - [`minijinja::ErrorKind::TooManyArguments`] if `kwargs` has any key besides
 ///   `ellipsis`.
-fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
+fn ellipsis_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<&str> {
     let ellipsis = kwargs.get::<Option<&str>>("ellipsis")?.unwrap_or("...");
     kwargs.assert_all_used()?;
     Ok(ellipsis)
@@ -199,7 +201,7 @@ fn regex_replace(
     value: &str,
     pattern: &str,
     replacement: &str,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     let re = Regex::new(pattern)
         .map_err(|source| regex_compile_error(pattern, source))?;
     Ok(re.replace_all(value, replacement).into_owned())
@@ -213,7 +215,7 @@ fn regex_replace(
 ///
 /// - [`minijinja::ErrorKind::InvalidOperation`] if `pattern` is not a valid
 ///   regex; see [`regex_compile_error`].
-fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
+fn regex_match(value: &str, pattern: &str) -> TemplateEngineResult<bool> {
     let re = Regex::new(pattern)
         .map_err(|source| regex_compile_error(pattern, source))?;
     Ok(re.is_match(value))

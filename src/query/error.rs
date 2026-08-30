@@ -34,6 +34,9 @@ use thiserror::Error;
 
 use crate::LexError;
 
+/// Convenience alias for query operations that may fail.
+pub type QueryResult<T> = std::result::Result<T, QueryError>;
+
 /// Identifies the query language that rejected an expression.
 ///
 /// Used by [`QuerySyntaxError`] to produce a human-readable message that names

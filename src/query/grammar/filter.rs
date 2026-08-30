@@ -11,7 +11,7 @@ use crate::{
     LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
     note::NoteFieldValue,
     query::{
-        QueryError, QueryRecord,
+        QueryRecord, QueryResult,
         error::{QueryDialect, QuerySyntaxError},
         value::QueryFieldValueRef,
     },
@@ -30,7 +30,7 @@ impl FilterExpr {
     /// # Errors
     ///
     /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
+    pub(crate) fn parse(input: &str) -> QueryResult<Self> {
         let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
             input,
             |token| {
@@ -237,7 +237,7 @@ impl FilterGrammar {
     fn parse_literal_arg(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
-    ) -> Result<NoteFieldValue, QueryError> {
+    ) -> QueryResult<NoteFieldValue> {
         let spanned = tokens
             .expect_map(input, "a literal value", |token| {
                 let spanned = token;
@@ -256,7 +256,7 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         name: &str,
-    ) -> Result<FilterFunction, QueryError> {
+    ) -> QueryResult<FilterFunction> {
         tokens
             .expect(input, &FilterToken::LParen, "`(` after a function name")
             .map_err(|e| {
@@ -309,7 +309,7 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         field_ident: &str,
-    ) -> Result<ComparisonExpr, QueryError> {
+    ) -> QueryResult<ComparisonExpr> {
         let op_spanned = tokens
             .expect_map(input, "a comparison operator", |token| {
                 let spanned = token;
@@ -350,7 +350,7 @@ impl AtomParser for FilterGrammar {
         &self,
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError> {
+    ) -> QueryResult<Self::Atom> {
         let spanned_ident = tokens
             .expect_map(input, "a filter term", |token| {
                 let spanned = token;
@@ -433,7 +433,10 @@ mod tests {
     use std::{fs, path::Path};
 
     use super::FilterExpr;
-    use crate::{index::IndexerService, query::*};
+    use crate::{
+        index::IndexerService,
+        query::{QueryError, *},
+    };
 
     fn outcome_for_files(
         temp: &Path,

@@ -30,7 +30,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    QueryError, QueryTransform,
+    QueryResult, QueryTransform,
     format::QueryDisplayFormat,
     grammar::{FieldPath, FileField, FilterExpr, TaskField},
     sort::SortKey,
@@ -157,10 +157,7 @@ impl QueryRecord {
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
     #[inline]
-    pub(crate) fn field(
-        &self,
-        path: &str,
-    ) -> Result<NoteFieldValue, QueryError> {
+    pub(crate) fn field(&self, path: &str) -> QueryResult<NoteFieldValue> {
         Ok(self.resolve_owned(&FieldPath::parse(path)?))
     }
 
@@ -338,7 +335,7 @@ impl QueryRecordSet {
     ///
     /// - [`QueryError::Request`] if the expression is invalid.
     #[inline]
-    pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
+    pub(crate) fn filter(self, expr: &str) -> QueryResult<Self> {
         let transform = QueryTransform::filter(expr)?;
         Ok(self.apply_transform(&transform))
     }
@@ -358,7 +355,7 @@ impl QueryRecordSet {
                       direct callers of this crate's Rust API"
         )
     )]
-    pub(super) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
+    pub(super) fn r#where(self, expr: &str) -> QueryResult<Self> {
         self.filter(expr)
     }
 
@@ -373,7 +370,7 @@ impl QueryRecordSet {
         self,
         path: &str,
         descending: bool,
-    ) -> Result<Self, QueryError> {
+    ) -> QueryResult<Self> {
         let transform = QueryTransform::sort(path, descending)?;
         Ok(self.apply_transform(&transform))
     }
@@ -385,7 +382,7 @@ impl QueryRecordSet {
     /// - [`QueryError::Request`] if `n` is negative or exceeds platform
     ///   pointer-width limits.
     #[inline]
-    pub(crate) fn limit(self, n: i64) -> Result<Self, QueryError> {
+    pub(crate) fn limit(self, n: i64) -> QueryResult<Self> {
         let transform = QueryTransform::limit(n)?;
         Ok(self.apply_transform(&transform))
     }
@@ -397,7 +394,7 @@ impl QueryRecordSet {
     /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
     ///   path.
     #[inline]
-    pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
+    pub(crate) fn group_by(self, path: &str) -> QueryResult<Self> {
         let transform = QueryTransform::group_by(path)?;
         Ok(self.apply_transform(&transform))
     }
@@ -409,7 +406,7 @@ impl QueryRecordSet {
     ///
     /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
     ///   path.
-    pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
+    pub(crate) fn flatten(self, path: &str) -> QueryResult<Self> {
         let transform = QueryTransform::flatten(path)?;
         Ok(self.apply_transform(&transform))
     }
@@ -470,7 +467,7 @@ impl QueryRecordSet {
         &self,
         headers: &[&str],
         columns: &[&str],
-    ) -> Result<String, QueryError> {
+    ) -> QueryResult<String> {
         self.format(&QueryDisplayFormat::table(headers, columns))
     }
 
@@ -481,7 +478,7 @@ impl QueryRecordSet {
     ///
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
-    pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
+    pub(crate) fn list(&self, path: &str) -> QueryResult<String> {
         self.format(&QueryDisplayFormat::list(path))
     }
 
@@ -491,7 +488,7 @@ impl QueryRecordSet {
     ///
     /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
     ///   fields.
-    pub(crate) fn task_list(&self) -> Result<String, QueryError> {
+    pub(crate) fn task_list(&self) -> QueryResult<String> {
         self.format(&QueryDisplayFormat::task_list())
     }
 
@@ -504,7 +501,7 @@ impl QueryRecordSet {
     pub(super) fn format(
         &self,
         format: &QueryDisplayFormat,
-    ) -> Result<String, QueryError> {
+    ) -> QueryResult<String> {
         format.render(&self.records)
     }
 

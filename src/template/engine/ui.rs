@@ -27,6 +27,7 @@ use minijinja::{
     value::{Enumerator, Kwargs, Object, Value},
 };
 
+use super::error::TemplateEngineResult;
 use crate::{DialogError, DialogProvider};
 
 /// Method names `ui` exposes, for [`UiOps::enumerate`].
@@ -81,7 +82,7 @@ impl Object for UiOps {
                 Some(Value::from_function(
                     move |label: &str,
                           default: Option<&str>|
-                          -> Result<String, Error> {
+                          -> TemplateEngineResult<String> {
                         provider.text(label, default).map_err(dialog_error)
                     },
                 ))
@@ -89,7 +90,7 @@ impl Object for UiOps {
             "confirm" => {
                 let provider = Arc::clone(&self.provider);
                 Some(Value::from_function(
-                    move |label: &str| -> Result<bool, Error> {
+                    move |label: &str| -> TemplateEngineResult<bool> {
                         provider.confirm(label, None).map_err(dialog_error)
                     },
                 ))
@@ -100,7 +101,7 @@ impl Object for UiOps {
                     move |label: &str,
                           items: Value,
                           kwargs: Kwargs|
-                          -> Result<Value, Error> {
+                          -> TemplateEngineResult<Value> {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
                         let labels = opts.labels();
                         let index = provider
@@ -116,7 +117,7 @@ impl Object for UiOps {
                     move |label: &str,
                           items: Value,
                           kwargs: Kwargs|
-                          -> Result<Vec<Value>, Error> {
+                          -> TemplateEngineResult<Vec<Value>> {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
                         let labels = opts.labels();
                         let indices = provider
@@ -171,7 +172,7 @@ impl SelectOptions {
     ///   `attribute=` path.
     /// - [`minijinja::Error`] if `kwargs` contains an unknown key or a kwarg
     ///   has the wrong type.
-    fn extract(items: &Value, kwargs: &Kwargs) -> Result<Self, Error> {
+    fn extract(items: &Value, kwargs: &Kwargs) -> TemplateEngineResult<Self> {
         let attribute = kwargs.get::<Option<&str>>("attribute")?;
         let default = kwargs.get::<Option<Value>>("default")?;
         kwargs.assert_all_used()?;
@@ -218,7 +219,7 @@ impl SelectOptions {
     /// # Errors
     ///
     /// - [`ErrorKind::InvalidOperation`] if `index` is out of bounds.
-    fn recover(&self, index: usize) -> Result<Value, Error> {
+    fn recover(&self, index: usize) -> TemplateEngineResult<Value> {
         self.values.get(index).cloned().ok_or_else(|| {
             Error::new(
                 ErrorKind::InvalidOperation,
@@ -256,7 +257,7 @@ fn dialog_error(source: DialogError) -> Error {
 ///
 /// - [`minijinja::Error`] if [`Value::get_attr`] or
 ///   [`Value::get_item_by_index`] fails for a defined intermediate value.
-fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
+fn get_path(item: &Value, path: &str) -> TemplateEngineResult<Value> {
     let mut current = item.clone();
     for part in path.split('.') {
         if current.is_undefined() {

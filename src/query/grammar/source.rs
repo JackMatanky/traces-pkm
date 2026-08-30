@@ -13,7 +13,7 @@ use crate::{
     lexical_backslash_unescape,
     note::{Note, NoteFieldValue},
     query::{
-        QueryError,
+        QueryResult,
         error::{QueryDialect, QuerySyntaxError},
     },
 };
@@ -42,7 +42,7 @@ impl SourceSelector {
     ///
     /// Returns [`QueryError::Syntax`] when a nonempty `input` is invalid.
     #[inline]
-    pub fn parse(input: &str) -> Result<Self, QueryError> {
+    pub fn parse(input: &str) -> QueryResult<Self> {
         if input.trim().is_empty() {
             Ok(Self::All)
         } else {
@@ -116,7 +116,7 @@ impl SourceExpr {
     /// # Errors
     ///
     /// Returns [`QueryError::Syntax`] on any tokenization or parse failure.
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
+    pub(crate) fn parse(input: &str) -> QueryResult<Self> {
         let tokens = LexTokenStream::<LexedToken<SourceToken>>::tokenize(input)
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Source, input, e)
@@ -398,7 +398,7 @@ impl SourceGrammar {
         input: &str,
         sigil: &str,
         span: SourceSpan,
-    ) -> Result<SourceAtom, QueryError> {
+    ) -> QueryResult<SourceAtom> {
         let raw = sigil.strip_prefix('@').ok_or_else(|| {
             QuerySyntaxError::new(
                 QueryDialect::Source,
@@ -445,7 +445,7 @@ impl SourceGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<SourceToken>>,
         class_span: SourceSpan,
-    ) -> Result<SourceAtom, QueryError> {
+    ) -> QueryResult<SourceAtom> {
         let lex =
             |e| QuerySyntaxError::from_lex(QueryDialect::Source, input, e);
 
@@ -562,7 +562,7 @@ impl AtomParser for SourceGrammar {
         &self,
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError> {
+    ) -> QueryResult<Self::Atom> {
         let next_span = tokens.next_span(input);
         match tokens.next() {
             Some(spanned) => {

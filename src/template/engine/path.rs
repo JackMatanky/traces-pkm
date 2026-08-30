@@ -32,7 +32,7 @@ use std::{
 
 use minijinja::{Environment, Error};
 
-use super::error::confine_error;
+use super::error::{TemplateEngineResult, confine_error};
 use crate::{
     BaseName, FileName,
     path::{PathError, RootConfinedPath},
@@ -92,7 +92,7 @@ impl PathOps {
         query: PathQuery,
     ) {
         let root = Arc::clone(&self.root);
-        env.add_test(name, move |path: &str| -> Result<bool, Error> {
+        env.add_test(name, move |path: &str| -> TemplateEngineResult<bool> {
             inspect(&root, path, query)
         });
     }
@@ -111,7 +111,11 @@ impl PathOps {
 ///   such as permission denied or a broken symlink loop.
 ///
 /// [`ErrorKind::InvalidOperation`]: minijinja::ErrorKind::InvalidOperation
-fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
+fn inspect(
+    root: &Path,
+    path: &str,
+    query: PathQuery,
+) -> TemplateEngineResult<bool> {
     let target = InspectTarget::resolve(root, path)
         .map_err(|source| confine_error(path, source))?;
     match std::fs::metadata(target.as_ref()) {

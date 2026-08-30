@@ -28,6 +28,9 @@ pub(crate) enum ConfigLoadError {
     Build(#[from] ConfigBuilderError),
 }
 
+/// Convenience alias for config discovery operations.
+pub(crate) type DiscoveryResult<T> = std::result::Result<T, DiscoveryError>;
+
 /// Errors raised while finding candidate config files.
 #[derive(Debug, Error)]
 pub(crate) enum DiscoveryError {

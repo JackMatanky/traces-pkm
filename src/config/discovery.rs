@@ -17,7 +17,7 @@ use std::{
 };
 
 use super::{
-    error::DiscoveryError,
+    error::{DiscoveryError, DiscoveryResult},
     file::{Discovered, GlobalConfigFile, LocalConfigFile},
     trust::{TrustRequest, TrustRequests},
 };
@@ -57,7 +57,7 @@ impl DiscoveryContext {
     pub(crate) fn new(
         kind: DiscoveryScope,
         anchor: DiscoveryAnchor,
-    ) -> Result<Self, DiscoveryError> {
+    ) -> DiscoveryResult<Self> {
         if matches!(kind, DiscoveryScope::Full)
             && let DiscoveryAnchor::File(path) = &anchor
         {
@@ -215,7 +215,7 @@ impl DiscoveryEngine {
     #[inline]
     pub(crate) fn process(
         ctx: DiscoveryContext,
-    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+    ) -> DiscoveryResult<DiscoveryOutcome> {
         let (kind, anchor) = ctx.into_parts();
         match kind {
             DiscoveryScope::Full => Self::full(anchor),
@@ -249,7 +249,7 @@ impl DiscoveryEngine {
     pub(crate) fn trust_requests(
         path: &Path,
         scope: DiscoveryScope,
-    ) -> Result<TrustRequests, DiscoveryError> {
+    ) -> DiscoveryResult<TrustRequests> {
         let start = match path.canonicalize() {
             Ok(canonical) => canonical,
             // The path may legitimately not exist yet (e.g. a trust target that
@@ -293,7 +293,7 @@ impl DiscoveryEngine {
     fn discovered_requests(
         scope: DiscoveryScope,
         anchor: DiscoveryAnchor,
-    ) -> Result<TrustRequests, DiscoveryError> {
+    ) -> DiscoveryResult<TrustRequests> {
         let ctx = DiscoveryContext::new(scope, anchor)?;
         let outcome = Self::process(ctx)?;
         let requests: Vec<TrustRequest> =
@@ -315,9 +315,7 @@ impl DiscoveryEngine {
                 == Some(".traces".as_ref())
     }
 
-    fn full(
-        anchor: DiscoveryAnchor,
-    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+    fn full(anchor: DiscoveryAnchor) -> DiscoveryResult<DiscoveryOutcome> {
         let cwd = match anchor {
             DiscoveryAnchor::Directory(cwd) => cwd,
             DiscoveryAnchor::File(path) => {
@@ -338,7 +336,7 @@ impl DiscoveryEngine {
 
     fn nearest_local(
         anchor: DiscoveryAnchor,
-    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+    ) -> DiscoveryResult<DiscoveryOutcome> {
         let local = Self::local_from_anchor(&anchor)?;
         Ok(DiscoveryOutcome::with_kind(
             DiscoveryScope::NearestLocal,
@@ -350,7 +348,7 @@ impl DiscoveryEngine {
 
     fn local_subtree(
         anchor: DiscoveryAnchor,
-    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+    ) -> DiscoveryResult<DiscoveryOutcome> {
         let nearest = Self::local_from_anchor(&anchor)?;
         let root = nearest.root().to_path_buf();
         let mut local = vec![nearest];
@@ -367,7 +365,7 @@ impl DiscoveryEngine {
 
     fn local_from_anchor(
         anchor: &DiscoveryAnchor,
-    ) -> Result<LocalConfigFile<Discovered>, DiscoveryError> {
+    ) -> DiscoveryResult<LocalConfigFile<Discovered>> {
         match anchor {
             DiscoveryAnchor::File(path) => {
                 LocalConfigFile::<Discovered>::try_new(path.clone())
@@ -381,7 +379,7 @@ impl DiscoveryEngine {
 
     fn nearest_local_from_dir(
         cwd: &Path,
-    ) -> Result<LocalConfigFile<Discovered>, DiscoveryError> {
+    ) -> DiscoveryResult<LocalConfigFile<Discovered>> {
         for ancestor in cwd.ancestors() {
             if crate::env_vars::CEILING_DIRS.iter().any(|c| c == ancestor) {
                 break;
@@ -405,7 +403,7 @@ impl DiscoveryEngine {
     /// - [`DiscoveryError::PathInaccessible`] when config file metadata cannot
     ///   be read
     fn global_from_default_path()
-    -> Result<Vec<GlobalConfigFile<Discovered>>, DiscoveryError> {
+    -> DiscoveryResult<Vec<GlobalConfigFile<Discovered>>> {
         let global_config_path = dirs::CONFIG_HOME.join(GLOBAL_CONFIG_FILE);
         if Self::is_config_file(&global_config_path)? {
             Ok(vec![GlobalConfigFile::<Discovered>::try_new(
@@ -425,7 +423,7 @@ impl DiscoveryEngine {
     /// and Template loaders there is no degrade-to-empty policy here.
     fn collect_descendant_configs(
         dir: &Path,
-    ) -> Result<Vec<LocalConfigFile<Discovered>>, DiscoveryError> {
+    ) -> DiscoveryResult<Vec<LocalConfigFile<Discovered>>> {
         let mut configs = Vec::new();
         for node in DirTree::descendants(dir)
             .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
@@ -449,7 +447,7 @@ impl DiscoveryEngine {
         Ok(configs)
     }
 
-    fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
+    fn is_config_file(path: &Path) -> DiscoveryResult<bool> {
         match path.metadata() {
             Ok(metadata) => Ok(metadata.is_file()),
             Err(source) if source.kind() == io::ErrorKind::NotFound => {

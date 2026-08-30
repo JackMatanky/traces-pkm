@@ -31,6 +31,8 @@ use minijinja::{
     value::{Enumerator, Kwargs, Object, Value},
 };
 
+use super::error::TemplateEngineResult;
+
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///
 /// This is an ISO-8601-style date (`YYYY-MM-DD`) and the default output shape
@@ -96,7 +98,7 @@ impl Object for DateOps {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
             "now" => Some(Value::from_function(
-                |kwargs: Kwargs| -> Result<String, Error> {
+                |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
                     // `write!` into a `String` propagates a formatting failure
                     // as `Err`; `.to_string()` would instead panic on the same
@@ -108,7 +110,7 @@ impl Object for DateOps {
                 },
             )),
             "today" => Some(Value::from_function(
-                |kwargs: Kwargs| -> Result<String, Error> {
+                |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
                     format_with(
                         Local::now().date_naive().format(format),
@@ -117,7 +119,7 @@ impl Object for DateOps {
                 },
             )),
             "tomorrow" => Some(Value::from_function(
-                |kwargs: Kwargs| -> Result<String, Error> {
+                |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
                     let date = Local::now()
                         .date_naive()
@@ -127,7 +129,7 @@ impl Object for DateOps {
                 },
             )),
             "yesterday" => Some(Value::from_function(
-                |kwargs: Kwargs| -> Result<String, Error> {
+                |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
                     let date = Local::now()
                         .date_naive()
@@ -137,7 +139,9 @@ impl Object for DateOps {
                 },
             )),
             "from_timestamp" => Some(Value::from_function(
-                |unix_ts: i64, kwargs: Kwargs| -> Result<String, Error> {
+                |unix_ts: i64,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
                     let datetime = chrono::DateTime::from_timestamp(unix_ts, 0)
                         .ok_or_else(|| invalid_timestamp_error(unix_ts))?
@@ -188,7 +192,7 @@ impl ParsedDate {
     ///
     /// - [`ErrorKind::InvalidOperation`] if `s` matches neither a
     ///   [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
-    fn parse(s: &str) -> Result<Self, Error> {
+    fn parse(s: &str) -> TemplateEngineResult<Self> {
         if let Some(datetime) = try_parse_datetime(s) {
             return Ok(Self {
                 datetime,
@@ -264,7 +268,7 @@ impl DateTimeUnit {
 ///   string.
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `format`.
-fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
+fn format_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<&str> {
     let format =
         kwargs.get::<Option<&str>>("format")?.unwrap_or(DEFAULT_FORMAT);
     kwargs.assert_all_used()?;
@@ -282,7 +286,7 @@ fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 ///   [`DateTimeUnit::parse`]'s six accepted units.
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
-fn unit_kwarg(kwargs: &Kwargs) -> Result<DateTimeUnit, Error> {
+fn unit_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<DateTimeUnit> {
     let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
     kwargs.assert_all_used()?;
     DateTimeUnit::parse(unit_str).ok_or_else(|| unknown_unit_error(unit_str))
@@ -303,7 +307,7 @@ fn unit_kwarg(kwargs: &Kwargs) -> Result<DateTimeUnit, Error> {
 fn format_with(
     formattable: impl std::fmt::Display,
     format: &str,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     let mut rendered = String::new();
     write!(rendered, "{formattable}").map_err(|_fmt_error| {
         Error::new(
@@ -329,7 +333,7 @@ fn format_with(
 fn format_precise(
     dt: NaiveDateTime,
     precision: DatePrecision,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     format_with(dt.format(precision.format()), precision.format())
 }
 
@@ -364,7 +368,7 @@ fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
 ///   string; see [`parse_date`].
 /// - [`ErrorKind::InvalidOperation`] if `format` is not a valid strftime
 ///   specifier; see [`format_with`].
-fn date_format(value: &str, format: &str) -> Result<String, Error> {
+fn date_format(value: &str, format: &str) -> TemplateEngineResult<String> {
     let datetime = parse_date(value)?;
     format_with(datetime.format(format), format)
 }
@@ -376,7 +380,7 @@ fn date_format(value: &str, format: &str) -> Result<String, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`parse_date`].
-fn timestamp(value: &str) -> Result<i64, Error> {
+fn timestamp(value: &str) -> TemplateEngineResult<i64> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
 
@@ -391,7 +395,7 @@ fn timestamp(value: &str) -> Result<i64, Error> {
 fn shift_date(
     value: &str,
     op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     let parsed = ParsedDate::parse(value)?;
     let shifted = op(parsed.datetime).ok_or_else(date_out_of_range_error)?;
     format_precise(shifted, parsed.precision)
@@ -413,7 +417,11 @@ fn shift_date(
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
               argument by value; only `&self` methods on it are needed here"
 )]
-fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
+fn date_add(
+    value: &str,
+    n: i64,
+    kwargs: Kwargs,
+) -> TemplateEngineResult<String> {
     date_shift_unit(value, n, unit_kwarg(&kwargs)?)
 }
 
@@ -430,7 +438,11 @@ fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
               argument by value; only `&self` methods on it are needed here"
 )]
-fn date_sub(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
+fn date_sub(
+    value: &str,
+    n: i64,
+    kwargs: Kwargs,
+) -> TemplateEngineResult<String> {
     date_shift_unit(
         value,
         n.checked_neg().ok_or_else(date_out_of_range_error)?,
@@ -442,7 +454,7 @@ fn date_shift_unit(
     value: &str,
     n: i64,
     unit: DateTimeUnit,
-) -> Result<String, Error> {
+) -> TemplateEngineResult<String> {
     shift_date(value, |dt| match unit {
         DateTimeUnit::Years => {
             let months = n.checked_mul(12)?;
@@ -488,7 +500,7 @@ fn date_shift_unit(
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
-fn add_days(value: &str, n: u64) -> Result<String, Error> {
+fn add_days(value: &str, n: u64) -> TemplateEngineResult<String> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     date_shift_unit(value, n_i64, DateTimeUnit::Days)
 }
@@ -500,7 +512,7 @@ fn add_days(value: &str, n: u64) -> Result<String, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
-fn sub_days(value: &str, n: u64) -> Result<String, Error> {
+fn sub_days(value: &str, n: u64) -> TemplateEngineResult<String> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     let n_i64 = n_i64.checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Days)
@@ -513,7 +525,7 @@ fn sub_days(value: &str, n: u64) -> Result<String, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
-fn add_months(value: &str, n: u32) -> Result<String, Error> {
+fn add_months(value: &str, n: u32) -> TemplateEngineResult<String> {
     date_shift_unit(value, i64::from(n), DateTimeUnit::Months)
 }
 
@@ -524,7 +536,7 @@ fn add_months(value: &str, n: u32) -> Result<String, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
-fn sub_months(value: &str, n: u32) -> Result<String, Error> {
+fn sub_months(value: &str, n: u32) -> TemplateEngineResult<String> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Months)
@@ -537,7 +549,7 @@ fn sub_months(value: &str, n: u32) -> Result<String, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
-fn add_years(value: &str, n: u32) -> Result<String, Error> {
+fn add_years(value: &str, n: u32) -> TemplateEngineResult<String> {
     date_shift_unit(value, i64::from(n), DateTimeUnit::Years)
 }
 
@@ -548,7 +560,7 @@ fn add_years(value: &str, n: u32) -> Result<String, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
-fn sub_years(value: &str, n: u32) -> Result<String, Error> {
+fn sub_years(value: &str, n: u32) -> TemplateEngineResult<String> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Years)
@@ -562,7 +574,7 @@ fn sub_years(value: &str, n: u32) -> Result<String, Error> {
 ///   string; see [`ParsedDate::parse`].
 /// - [`ErrorKind::InvalidOperation`] if the first day of the month is outside
 ///   chrono's representable range; see [`date_out_of_range_error`].
-fn start_of_month(value: &str) -> Result<String, Error> {
+fn start_of_month(value: &str) -> TemplateEngineResult<String> {
     shift_date(value, |dt| dt.with_day(1))
 }
 
@@ -574,7 +586,7 @@ fn start_of_month(value: &str) -> Result<String, Error> {
 ///   string; see [`ParsedDate::parse`].
 /// - [`ErrorKind::InvalidOperation`] if the last day of the month is outside
 ///   chrono's representable range; see [`date_out_of_range_error`].
-fn end_of_month(value: &str) -> Result<String, Error> {
+fn end_of_month(value: &str) -> TemplateEngineResult<String> {
     shift_date(value, |dt| dt.with_day(u32::from(dt.num_days_in_month())))
 }
 
@@ -589,7 +601,7 @@ fn end_of_month(value: &str) -> Result<String, Error> {
 ///   string; see [`parse_date`].
 ///
 /// [`Weekday::number_from_sunday`]: chrono::Weekday::number_from_sunday
-fn weekday(value: &str) -> Result<u32, Error> {
+fn weekday(value: &str) -> TemplateEngineResult<u32> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
 
@@ -672,7 +684,11 @@ fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
               argument by value; only `&self` methods on it are needed here"
 )]
-fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
+fn date_diff(
+    value: &str,
+    other: &str,
+    kwargs: Kwargs,
+) -> TemplateEngineResult<Value> {
     let unit = unit_kwarg(&kwargs)?;
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
@@ -741,7 +757,7 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`parse_date`].
-fn is_past(value: &str) -> Result<bool, Error> {
+fn is_past(value: &str) -> TemplateEngineResult<bool> {
     Ok(parse_date(value)?.and_utc() < Utc::now())
 }
 
@@ -751,7 +767,7 @@ fn is_past(value: &str) -> Result<bool, Error> {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`parse_date`].
-fn is_future(value: &str) -> Result<bool, Error> {
+fn is_future(value: &str) -> TemplateEngineResult<bool> {
     Ok(parse_date(value)?.and_utc() > Utc::now())
 }
 
@@ -765,7 +781,7 @@ fn is_future(value: &str) -> Result<bool, Error> {
 ///   date/time string; see [`parse_date`].
 /// - [`ErrorKind::InvalidOperation`] if the year is outside [`NaiveDate`]'s
 ///   representable range.
-fn is_leap_year(value: &Value) -> Result<bool, Error> {
+fn is_leap_year(value: &Value) -> TemplateEngineResult<bool> {
     let year = if let Some(year) = value.as_i64() {
         i32::try_from(year)
             .map_err(|_out_of_range| leap_year_input_error(value))?

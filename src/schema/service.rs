@@ -11,7 +11,7 @@ use indexmap::{IndexMap, IndexSet};
 use super::{
     RawSchema, SchemaName,
     builder::{ResolvedSchemas, SchemaBuilder, SchemaFailure},
-    error::{SchemaError, SchemaFileError, SchemaWarning},
+    error::{SchemaError, SchemaFileError, SchemaResult, SchemaWarning},
     fields::SchemaFieldBuildContext,
     model::Schema,
 };
@@ -54,7 +54,7 @@ impl SchemaService {
                       simpler seam"
         )
     )]
-    pub(crate) fn new(directory: &Path) -> Result<Self, SchemaError> {
+    pub(crate) fn new(directory: &Path) -> SchemaResult<Self> {
         Ok(Self::load_verbose(directory)?.service)
     }
 
@@ -79,7 +79,7 @@ impl SchemaService {
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
     pub(crate) fn load_verbose(
         directory: &Path,
-    ) -> Result<SchemaConstruction, SchemaError> {
+    ) -> SchemaResult<SchemaConstruction> {
         let raw = read_raw_schemas(directory)?;
         let field_context = SchemaFieldBuildContext::new(directory);
         let resolved = SchemaBuilder::new(&raw, &field_context).build()?;
@@ -264,7 +264,7 @@ impl SchemaService {
 /// [`File`]: SchemaError::File
 fn read_raw_schemas(
     dir: &Path,
-) -> Result<IndexMap<SchemaName, RawSchema>, SchemaError> {
+) -> SchemaResult<IndexMap<SchemaName, RawSchema>> {
     let mut schemas = IndexMap::new();
     for node in DirTree::children(dir) {
         let node = match node {

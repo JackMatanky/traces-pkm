@@ -6,7 +6,7 @@
 
 use clap::Args;
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::{config::ConfigService, index::IndexerService};
 
 /// Arguments for `traces index`.
@@ -37,7 +37,7 @@ impl Index {
                   command handler (all args.run(&self, service)) so the \
                   Commands::run match arms are uniform"
     )]
-    pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(&self, service: &ConfigService) -> CliResult {
         let config = super::load_config(service)?;
         let root = config.root();
         let index_error = |source| CliError::Index {

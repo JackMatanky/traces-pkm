@@ -1,6 +1,6 @@
 //! Display formatting for query results.
 
-use super::{QueryError, grammar::FieldPath, record::QueryRecord};
+use super::{QueryError, QueryResult, grammar::FieldPath, record::QueryRecord};
 
 /// Markdown display formats supported by query results.
 pub(super) enum QueryDisplayFormat {
@@ -56,7 +56,7 @@ impl QueryDisplayFormat {
     pub(super) fn render(
         &self,
         records: &[QueryRecord],
-    ) -> Result<String, QueryError> {
+    ) -> QueryResult<String> {
         match self {
             Self::Table {
                 headers,
@@ -73,7 +73,7 @@ impl QueryDisplayFormat {
         headers: &[String],
         columns: &[String],
         records: &[QueryRecord],
-    ) -> Result<String, QueryError> {
+    ) -> QueryResult<String> {
         if headers.len() != columns.len() {
             return Err(QueryError::TableColumnCountMismatch {
                 headers: headers.len(),
@@ -103,7 +103,7 @@ impl QueryDisplayFormat {
     fn render_list(
         field: &str,
         records: &[QueryRecord],
-    ) -> Result<String, QueryError> {
+    ) -> QueryResult<String> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
         for record in records {
@@ -114,7 +114,7 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    fn render_task_list(records: &[QueryRecord]) -> Result<String, QueryError> {
+    fn render_task_list(records: &[QueryRecord]) -> QueryResult<String> {
         let mut out = String::new();
         for record in records {
             let Some(completed) = record.task_completed() else {

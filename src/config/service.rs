@@ -30,7 +30,7 @@ use super::{
     },
     error::{
         ConfigBuilderError, ConfigLoadError, ConfigScaffoldError,
-        ConfigStateError, DiscoveryError,
+        ConfigStateError, DiscoveryResult,
     },
     file::{
         Discovered as FileDiscovered, GlobalConfigFile, LocalConfigFile,
@@ -144,7 +144,7 @@ impl ConfigService {
     ///   any ancestor directory.
     /// - [`DiscoveryError::PathInaccessible`] when a path cannot be accessed.
     #[inline]
-    fn discover(cwd: &Path) -> Result<DiscoveryOutcome, DiscoveryError> {
+    fn discover(cwd: &Path) -> DiscoveryResult<DiscoveryOutcome> {
         let ctx = DiscoveryContext::new(
             DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
@@ -241,7 +241,7 @@ impl ConfigService {
         &self,
         path: &Path,
         scope: DiscoveryScope,
-    ) -> Result<TrustRequests, DiscoveryError> {
+    ) -> DiscoveryResult<TrustRequests> {
         DiscoveryEngine::trust_requests(path, scope)
     }
 
@@ -511,6 +511,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::config::DiscoveryError;
 
         #[test]
         fn returns_discovery_error_when_no_config_found() {

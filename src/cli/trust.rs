@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::config::{ConfigService, TrustRequest};
 
 /// Arguments for `traces trust`.
@@ -40,7 +40,7 @@ impl Trust {
     ///
     /// - [`CliError`] if the dispatched trust action fails.
     #[inline]
-    pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(self, service: &ConfigService) -> CliResult {
         match self.action {
             Some(TrustAction::List) => Self::list(service),
             Some(TrustAction::Clean) => Self::clean(service),
@@ -59,7 +59,7 @@ impl Trust {
         reason = "trust list's output is data meant to be piped, not \
                   diagnostic text; see the print_stderr precedent this mirrors"
     )]
-    fn list(service: &ConfigService) -> Result<(), CliError> {
+    fn list(service: &ConfigService) -> CliResult {
         let roots: Vec<PathBuf> =
             service.list_trusted().map_err(|source| CliError::TrustList {
                 source,
@@ -75,7 +75,7 @@ impl Trust {
     /// # Errors
     ///
     /// - [`CliError::TrustClean`] if cleaning the trust store fails.
-    fn clean(service: &ConfigService) -> Result<(), CliError> {
+    fn clean(service: &ConfigService) -> CliResult {
         let removed = service.clean_trusted_store().map_err(|source| {
             CliError::TrustClean {
                 source,
@@ -99,7 +99,7 @@ impl Trust {
         reason = "trust --show's output is data meant to be piped, not \
                   diagnostic text; see the print_stderr precedent this mirrors"
     )]
-    fn show(&self, service: &ConfigService) -> Result<(), CliError> {
+    fn show(&self, service: &ConfigService) -> CliResult {
         self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             let path = subject
@@ -123,7 +123,7 @@ impl Trust {
     ///
     /// - [`CliError::TrustTargetResolve`] if resolving trust targets fails.
     /// - [`CliError::Trust`] if updating the trust store fails.
-    fn trust(&self, service: &ConfigService) -> Result<(), CliError> {
+    fn trust(&self, service: &ConfigService) -> CliResult {
         self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             if let Err(source) = service.trust(&subject) {
@@ -148,8 +148,8 @@ impl Trust {
     fn for_each_subject(
         &self,
         service: &ConfigService,
-        mut visit: impl FnMut(TrustRequest) -> Result<(), CliError>,
-    ) -> Result<(), CliError> {
+        mut visit: impl FnMut(TrustRequest) -> CliResult,
+    ) -> CliResult {
         let subjects = super::resolve_trust_subjects(
             service,
             self.path.as_deref(),

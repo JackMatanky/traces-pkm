@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexError, builder, cache, delta::IndexDelta,
+    FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
     error::IndexBuilderError, store::IndexStore,
 };
 use crate::{DirTree, DirTreeError, file::FileBase};
@@ -79,7 +79,7 @@ impl IndexerService {
     /// - [`IndexError::Builder`] if a directory cannot be read, a file's
     ///   metadata cannot be inspected, or a markdown file cannot be parsed.
     #[inline]
-    pub fn build(&self) -> Result<FileIndex, IndexError> {
+    pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
         Ok(builder::IndexBuilder::new(files).build(&self.root)?)
     }
@@ -117,7 +117,7 @@ impl IndexerService {
     /// - [`IndexError::Store`] if the previously persisted index cannot be
     ///   loaded.
     #[inline]
-    pub fn refresh(&self) -> Result<FileIndex, IndexError> {
+    pub fn refresh(&self) -> IndexResult<FileIndex> {
         let store = IndexStore::open(&self.root)?;
         let index = {
             let read_txn = store.begin_read()?;
@@ -146,7 +146,7 @@ impl IndexerService {
     /// - [`IndexError::Store`] if the database's parent directory cannot be
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
-    pub fn persist(&self, index: &FileIndex) -> Result<(), IndexError> {
+    pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist_index(index)
     }
 
@@ -159,7 +159,7 @@ impl IndexerService {
     /// - [`IndexError::Store`] if the database cannot be read or stored bytes
     ///   are not a valid record.
     #[inline]
-    pub fn load(&self) -> Result<FileIndex, IndexError> {
+    pub fn load(&self) -> IndexResult<FileIndex> {
         let (records, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;
         Ok(FileIndex::new(records, notes, inlinks, IndexDelta::Full))
@@ -224,7 +224,7 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use super::*;
+    use super::{super::IndexError, *};
     use crate::{
         file::FileBase,
         note::Note,

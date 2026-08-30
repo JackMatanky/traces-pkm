@@ -2,7 +2,7 @@ use miette::SourceSpan;
 
 use crate::{
     LexTokenStream, LexedToken,
-    query::{QueryError, error::QuerySyntaxError},
+    query::{QueryResult, error::QuerySyntaxError},
 };
 
 /// Binary logical operators shared by source and filter expressions.
@@ -85,7 +85,7 @@ pub(super) trait AtomParser {
         &self,
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError>;
+    ) -> QueryResult<Self::Atom>;
 
     /// Builds a span-aware syntax diagnostic for this domain.
     fn syntax_error(
@@ -105,7 +105,7 @@ struct BooleanExprParser<'input, G: AtomParser> {
 type ParseTerm<'input, G> =
     fn(
         &mut BooleanExprParser<'input, G>,
-    ) -> Result<BooleanExpr<<G as AtomParser>::Atom>, QueryError>;
+    ) -> QueryResult<BooleanExpr<<G as AtomParser>::Atom>>;
 
 impl<A> BooleanExpr<A> {
     /// Evaluates this tree with the supplied atom predicate.
@@ -161,7 +161,7 @@ impl<A> BooleanExpr<A> {
 }
 
 impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
-    fn parse(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
+    fn parse(&mut self) -> QueryResult<BooleanExpr<G::Atom>> {
         let expression = self.parse_or()?;
         let unexpected = self.tokens.peek().map(LexedToken::span);
         if let Some(span) = unexpected {
@@ -175,11 +175,11 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         Ok(expression)
     }
 
-    fn parse_or(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
+    fn parse_or(&mut self) -> QueryResult<BooleanExpr<G::Atom>> {
         self.parse_logical_chain(LogicalOp::Or, Self::parse_and)
     }
 
-    fn parse_and(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
+    fn parse_and(&mut self) -> QueryResult<BooleanExpr<G::Atom>> {
         self.parse_logical_chain(LogicalOp::And, Self::parse_not)
     }
 
@@ -187,7 +187,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         &mut self,
         operator: LogicalOp,
         parse_term: ParseTerm<'input, G>,
-    ) -> Result<BooleanExpr<G::Atom>, QueryError> {
+    ) -> QueryResult<BooleanExpr<G::Atom>> {
         let first = parse_term(self)?;
         if !self.is_control_taken(LogicalControl::Operator(operator)) {
             return Ok(first);
@@ -207,7 +207,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         })
     }
 
-    fn parse_not(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
+    fn parse_not(&mut self) -> QueryResult<BooleanExpr<G::Atom>> {
         let mut count = 0usize;
         while self.is_control_taken(LogicalControl::Not) {
             count = count.saturating_add(1);
@@ -219,7 +219,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         Ok(expression)
     }
 
-    fn parse_primary(&mut self) -> Result<BooleanExpr<G::Atom>, QueryError> {
+    fn parse_primary(&mut self) -> QueryResult<BooleanExpr<G::Atom>> {
         if self.is_control_taken(LogicalControl::LeftParen) {
             let expression = self.parse_or()?;
             if !self.is_control_taken(LogicalControl::RightParen) {
@@ -279,7 +279,7 @@ pub(super) fn parse_boolean_expr<G>(
     input: &str,
     tokens: LexTokenStream<LexedToken<G::Token>>,
     grammar: G,
-) -> Result<BooleanExpr<G::Atom>, QueryError>
+) -> QueryResult<BooleanExpr<G::Atom>>
 where
     G: AtomParser,
 {
@@ -320,7 +320,7 @@ mod tests {
             &self,
             input: &str,
             tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-        ) -> Result<Self::Atom, QueryError> {
+        ) -> QueryResult<Self::Atom> {
             match tokens.next() {
                 Some(spanned) => {
                     let span = spanned.span();

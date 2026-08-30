@@ -10,6 +10,9 @@ use thiserror::Error;
 use super::{SchemaName, fields::SchemaFieldBuilderError};
 use crate::field::FieldName;
 
+/// Convenience alias for schema operations that may fail.
+pub(crate) type SchemaResult<T> = std::result::Result<T, SchemaError>;
+
 /// A hard failure that stops Schema loading or resolution.
 ///
 /// Defects that resolution can recover from are emitted as [`SchemaWarning`]

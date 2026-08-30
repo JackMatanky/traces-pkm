@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
-use super::error::CliError;
+use super::error::{CliError, CliResult};
 use crate::config::ConfigService;
 
 /// Arguments for `traces tracked`.
@@ -30,7 +30,7 @@ impl Tracked {
     ///
     /// - [`CliError`] if the dispatched action fails.
     #[inline]
-    pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
+    pub(super) fn run(self, service: &ConfigService) -> CliResult {
         match self.action {
             TrackedAction::List => Self::list(service),
             TrackedAction::Clean => Self::clean(service),
@@ -47,7 +47,7 @@ impl Tracked {
         reason = "tracked list's output is data meant to be piped, not \
                   diagnostic text; mirrors the precedent in crate::cli::trust"
     )]
-    fn list(service: &ConfigService) -> Result<(), CliError> {
+    fn list(service: &ConfigService) -> CliResult {
         let paths: Vec<PathBuf> =
             service.list_tracked().map_err(|source| CliError::TrackedList {
                 source,
@@ -63,7 +63,7 @@ impl Tracked {
     /// # Errors
     ///
     /// - [`CliError::TrackedClean`] if cleaning the tracked-config store fails.
-    fn clean(service: &ConfigService) -> Result<(), CliError> {
+    fn clean(service: &ConfigService) -> CliResult {
         let removed = service.clean_tracked_store().map_err(|source| {
             CliError::TrackedClean {
                 source,

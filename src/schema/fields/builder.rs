@@ -21,7 +21,7 @@ use crate::{
     field::FieldValue,
     schema::{
         RawSchemaFieldDef, RawSchemaFieldSource, SchemaName,
-        error::{SchemaError, SchemaWarning},
+        error::{SchemaResult, SchemaWarning},
         model::Schema,
     },
 };
@@ -122,7 +122,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         &self,
         address: FieldAddressRef<'_>,
         raw: &RawSchemaFieldDef,
-    ) -> Result<(SchemaFieldDef, Vec<SchemaWarning>), SchemaError> {
+    ) -> SchemaResult<(SchemaFieldDef, Vec<SchemaWarning>)> {
         let mut warnings = Vec::new();
         let ResolvedBase {
             field: base,
@@ -172,7 +172,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         &self,
         address: FieldAddressRef<'_>,
         raw: &RawSchemaFieldDef,
-    ) -> Result<ResolvedBase<'a>, SchemaError> {
+    ) -> SchemaResult<ResolvedBase<'a>> {
         let (base, degrade_on_error) = match &raw.source {
             RawSchemaFieldSource::Ref {
                 address: base_address,
@@ -297,7 +297,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         &self,
         address: FieldAddressRef<'_>,
         base_address: &FieldAddress,
-    ) -> Result<&'a SchemaFieldDef, SchemaError> {
+    ) -> SchemaResult<&'a SchemaFieldDef> {
         if !base_address.schema().is_global()
             && !self.ancestors.contains(base_address.schema().as_str())
         {
@@ -325,7 +325,7 @@ mod tests {
     use super::*;
     use crate::schema::{
         GLOBAL_SCHEMA_NAME, RawSchemaFieldSource, RawSchemaFieldType,
-        SchemaNameRef, fields::SchemaNumberField,
+        SchemaError, SchemaNameRef, fields::SchemaNumberField,
     };
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid

@@ -10,7 +10,7 @@ use std::{
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::error::DbError;
+use super::error::{DbError, DbResult};
 
 /// Postcard-encodes `value` for a row keyed by `path`, wrapping a failure as
 /// [`DbError::Serialize`]. Shared by [`IndexStore::write_table`]'s loop and
@@ -21,7 +21,7 @@ use super::error::DbError;
 pub(super) fn encode_row<T: Serialize>(
     path: &Path,
     value: &T,
-) -> Result<Vec<u8>, DbError> {
+) -> DbResult<Vec<u8>> {
     postcard::to_allocvec(value).map_err(|source| DbError::Serialize {
         path: path.to_path_buf(),
         source,
@@ -38,7 +38,7 @@ pub(super) fn encode_row<T: Serialize>(
 pub(super) fn decode_row<T: DeserializeOwned>(
     path: &Path,
     bytes: &[u8],
-) -> Result<T, DbError> {
+) -> DbResult<T> {
     postcard::from_bytes(bytes).map_err(|source| DbError::Deserialize {
         path: path.to_path_buf(),
         source,

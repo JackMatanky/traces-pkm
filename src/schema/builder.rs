@@ -22,7 +22,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use super::{
     GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
-    error::{SchemaError, SchemaWarning},
+    error::{SchemaError, SchemaResult, SchemaWarning},
     fields::{FieldAddressRef, SchemaFieldBuildContext, SchemaFieldBuilder},
     graph::{SchemaGraph, SchemaGraphBuilder},
     model::Schema,
@@ -121,7 +121,7 @@ impl<'a> SchemaBuilder<'a> {
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`DegradedOverride`]: SchemaWarning::DegradedOverride
-    pub(super) fn build(mut self) -> Result<ResolvedSchemas, SchemaError> {
+    pub(super) fn build(mut self) -> SchemaResult<ResolvedSchemas> {
         self.resolve_global()?;
         let (graph_builder, graph_warnings) = SchemaGraphBuilder::new(
             self.raw,
@@ -140,7 +140,7 @@ impl<'a> SchemaBuilder<'a> {
     /// Merge the Global Schema first, so later `$ref` lookups against it
     /// succeed regardless of raw-map order. Its `extends`, if declared, is
     /// ignored: it is a `$ref` target, never a DAG participant.
-    fn resolve_global(&mut self) -> Result<(), SchemaError> {
+    fn resolve_global(&mut self) -> SchemaResult<()> {
         let Some(global_raw) = self.raw.get(GLOBAL_SCHEMA_NAME) else {
             return Ok(());
         };
@@ -212,7 +212,7 @@ impl<'a> SchemaBuilder<'a> {
         name: SchemaNameRef<'a>,
         raw: &RawSchema,
         parents: &[SchemaName],
-    ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
+    ) -> SchemaResult<(Schema, Vec<SchemaWarning>)> {
         let (mut fields, ancestors, mut warnings) =
             self.inherit_fields(name, parents);
         Self::exclude_fields(&mut fields, &raw.excludes);
@@ -276,7 +276,7 @@ impl<'a> SchemaBuilder<'a> {
         raw: &RawSchema,
         ancestors: &IndexSet<SchemaName>,
         fields: &mut IndexMap<FieldName, super::fields::SchemaFieldDef>,
-    ) -> Result<Vec<SchemaWarning>, SchemaError> {
+    ) -> SchemaResult<Vec<SchemaWarning>> {
         let field_builder = SchemaFieldBuilder::new(
             ancestors,
             &self.resolved,
@@ -305,7 +305,7 @@ impl<'a> SchemaBuilder<'a> {
     fn reject_ambiguous_field_names(
         name: SchemaNameRef<'a>,
         fields: &IndexMap<FieldName, super::fields::SchemaFieldDef>,
-    ) -> Result<(), SchemaError> {
+    ) -> SchemaResult<()> {
         let mut seen: HashMap<String, &FieldName> = HashMap::new();
         for field_name in fields.keys() {
             let canonical = FieldKey::canonicalize(field_name.as_str());
@@ -389,7 +389,7 @@ mod tests {
 
     fn resolve(
         raw: &IndexMap<SchemaName, RawSchema>,
-    ) -> Result<ResolvedSchemas, SchemaError> {
+    ) -> SchemaResult<ResolvedSchemas> {
         let field_context = SchemaFieldBuildContext::for_test();
         SchemaBuilder::new(raw, &field_context).build()
     }

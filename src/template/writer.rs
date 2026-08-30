@@ -25,7 +25,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{error::TemplateError, path::DeclaredOutputPath};
+use super::{
+    error::{TemplateError, TemplateResult},
+    path::DeclaredOutputPath,
+};
 use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
 /// Controls whether rendered output is returned or written.
@@ -321,11 +324,7 @@ impl<'a> TemplateWriteTarget<'a> {
 ///   fails.
 /// - [`TemplateError::OutputFileAlreadyExists`] if [`CommitPolicy::CreateNew`]
 ///   rejects an existing file through [`CommitPolicy::create_file`].
-fn commit(
-    path: &Path,
-    content: &str,
-    policy: CommitPolicy,
-) -> Result<(), TemplateError> {
+fn commit(path: &Path, content: &str, policy: CommitPolicy) -> TemplateResult {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| TemplateError::Write {
             path: path.to_path_buf(),

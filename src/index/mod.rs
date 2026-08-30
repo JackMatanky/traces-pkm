@@ -55,7 +55,9 @@ pub use codec::path;
 pub use entry::FileIndex;
 pub(crate) use entry::FileIndexEntry;
 #[allow(unused_imports, reason = "re-exported for downstream callers")]
-pub use error::{IndexBuilderError, IndexError};
+pub use error::{
+    DbError, DbResult, IndexBuilderError, IndexError, IndexResult,
+};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use inlinks::InlinkMap;
 #[cfg(any(test, feature = "test-utils"))]
