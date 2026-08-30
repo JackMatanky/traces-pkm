@@ -22,8 +22,8 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 4. As a User, I want unknown single-character markers like `[?]` to be preserved, so that unusual task states are not silently lost.
 5. As a User, I want unknown task markers to behave as incomplete todos by default, so that they remain visible in active task queries.
 6. As a User, I want task status to be exposed as a named field, so that I can filter and sort tasks by workflow state.
-7. As a User, I want task completion to remain available as a derived boolean, so that simple done/not-done queries stay easy.
-8. As a User, I want cancelled tasks to count as complete, so that abandoned work does not keep appearing as unfinished.
+7. As a User, I want task completion to remain available as a derived field, so that simple done/not-done queries stay easy.
+8. As a User, I want cancelled tasks excluded from both active and completed views, so that abandoned work does not clutter either side of my workflow.
 9. As a User, I want in-progress and on-hold tasks to count as incomplete, so that active work remains visible.
 10. As a User, I want task priority emojis to be parsed, so that priority can be queried without rewriting my Notes.
 11. As a User, I want missing priority to remain absent, so that Traces does not invent a priority I did not write.
@@ -50,7 +50,7 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 32. As a User, I want task line numbers, so that query results can point back to the source Note.
 33. As a User, I want task parent line numbers, so that subtasks can be related back to their parent item.
 34. As a User, I want task depth, so that nested task structure can be reconstructed.
-35. As a User, I want fully-complete status, so that a parent task only counts as fully complete when its task subtree is complete.
+35. As a User, I want fully-complete status, so that a parent task only counts as fully complete when its task subtree is resolved (all descendant tasks are done or cancelled).
 36. As a User, I want non-task child list items ignored for fully-complete calculation, so that supporting bullets and checkboxes do not block task completion.
 37. As a User, I want task queries to inherit parent Note metadata, so that task rows can be filtered by Note fields and frontmatter.
 38. As a User, I want task item inline fields to override inherited Note metadata, so that local task metadata wins where it is written.
@@ -82,7 +82,7 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 64. As a maintainer, I want the parser to classify list item kind during construction, so that indexing and querying consume already-meaningful data.
 65. As a maintainer, I want the List Item model to avoid booleans like `is_task` and `is_checked`, so that invalid combinations are unrepresentable.
 66. As a maintainer, I want a single enum for plain, checkbox, and task items, so that downstream code can pattern-match safely.
-67. As a maintainer, I want a flattened list persistence record, so that the LISTS table is easy to query without deserializing nested Note structures.
+67. As a maintainer, I want a list persistence record with flat accessor methods, so that the LISTS table is easy to query without deserializing nested Note structures at each call site.
 68. As a maintainer, I want the Note parser config to compose task and frontmatter config, so that parsing receives all needed config without global state.
 69. As a maintainer, I want recurrence, dependencies, and mutation operations deferred, so that the first task-system implementation stays small.
 
@@ -93,13 +93,15 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - Replace the current checked/unchecked-only task model with a List Item kind enum: plain bullet, checkbox, or Task.
 - Plain list items carry no task data.
 - Checkbox list items carry only derived completion state and do not appear in `Note.tasks()`.
+- This is a deliberate simplification. Non-task checkboxes lose their status symbol identity (`[/]`, `[-]`, `[!]`) and retain only completion state. Non-task checkboxes are display-only; their status symbol is not needed for query or classification. If future features need non-task status identity, the `Checkbox` variant can be extended to carry `TaskStatusSymbol` without breaking the enum.
 - Task list items carry status, optional priority, and task dates.
 - `Note.tasks()` is filtered by construction and returns only List Items whose kind is Task.
 - `Note.list_items()` is the unfiltered escape hatch and should expose all parsed List Items.
-- To make `Note.list_items()` return a slice as designed, store a flattened List Item collection on the Note in addition to preserving nested list hierarchy where needed. If this duplicates too much data during implementation, prefer changing the accessor to an iterator over adding a larger cache abstraction.
-- Drop pulldown-cmark task-list parsing for task classification. Do not enable the task-list extension for this feature.
+- `Note.list_items()` returns an iterator over the nested list hierarchy, not a slice. Building a flattened `Vec<ListItem>` on the Note would duplicate data that the LISTS table already persists. An iterator avoids this duplication while providing the same access. The return type is `ListItemIter<'_>` (or equivalent), not `&[ListItem]`.
+- Drop pulldown-cmark task-list parsing for task classification. Do not enable the task-list extension for this feature. This is a refactoring step: the existing `set_task_status` method (which derives task status from `Event::TaskListMarker(bool)`) and the `ItemFrame.task_status` derivation path are both replaced by the custom marker scanner. All existing task classification tests must be rewritten against the scanner.
 - Implement one custom marker scanner over item-leading text. It recognizes `[` followed by any single non-`]` character, followed by `]`, followed by whitespace.
 - The custom scanner is the only source of truth for task marker identity. It handles `[ ]`, `[x]`, `[X]`, configured custom markers, and unknown single-character markers.
+- `[x]` and `[X]` are equivalent; both map to the Done status. The custom scanner accepts any single non-`]` character; `TaskStatusMap` maps both `'x'` and `'X'` to Done.
 - The custom scanner trims the leading marker prefix exactly once and only when it appears at the item-leading marker position.
 - Preserve unknown marker symbols for diagnostics and fallback behavior.
 - Unknown markers are never downgraded to plain bullets.
@@ -107,11 +109,21 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - Introduce a task status model with symbol, display name, and status type.
 - Default statuses are always available and user configuration may add or override statuses.
 - Default status types are todo, in-progress, on-hold, done, cancelled, and non-task.
-- Completion is derived from status type. Done and cancelled are complete. Todo, in-progress, on-hold, non-task, and unknown fallback statuses are incomplete.
-- Keep `task.completed` as a derived boolean field.
+- Completion is a tri-state derived from status type. Cancelled is a terminal state outside the complete/incomplete binary.
+
+| StatusType       | `completed`     |
+| ---------------- | --------------- |
+| Done             | `Some(true)`      |
+| Cancelled        | `None`            |
+| Todo             | `Some(false)`     |
+| InProgress       | `Some(false)`     |
+| OnHold           | `Some(false)`     |
+| NonTask          | `Some(false)`     |
+| Unknown fallback | `Some(false)`     |
+- Keep `task.completed` as a derived `Option<bool>` field. `Some(true)` for done, `Some(false)` for incomplete, `None` for cancelled. Query filters on `completed == false` exclude cancelled tasks; filters on `completed == true` also exclude them.
 - Add `task.status` as the status name/canonical status field used for filtering, sorting, and display.
 - Build status lookup maps once when config is resolved. Lookup maps include by-symbol, by-name, and by-type.
-- Normalize status-name lookup by case-folding and simple whitespace normalization. Display names remain exactly as configured.
+- Normalize status-name lookup by case-folding, leading/trailing whitespace trimming, and internal whitespace collapsing to a single space. Display names remain exactly as configured.
 - Add task priority as a fixed enum: lowest, low, normal, medium, high, highest.
 - Store priority as optional. Missing priority remains absent and does not default to normal.
 - Parse priority emojis into the priority enum. Do not store the raw emoji as model data.
@@ -119,7 +131,16 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - Support both emoji date syntax and existing inline field syntax for task dates.
 - Parse valid `YYYY-MM-DD` task dates as date field values. Missing dates are null in query results.
 - Do not implement recurrence, dependency IDs, on-completion behavior, or urgency scoring in this spec.
-- Add a task config section with `tag_filters` and `statuses`.
+- Add a task config section with `tag_filters` and `statuses`. The resolved config shape:
+
+  ```rust
+  pub struct TaskConfig {
+      pub statuses: TaskStatusMap,
+      pub tag_filters: Vec<Tag>,
+  }
+  ```
+
+  `TaskStatusMap` is built once at config resolution and provides lookup by symbol, by name, and by type. `tag_filters` is empty when no filter is configured.
 - `tag_filters` is an array only. Do not add single-filter sugar.
 - Empty `tag_filters` means every status-marked list item is a Task.
 - Non-empty `tag_filters` means a status-marked item becomes a Task only when any tag on the item exactly matches any configured filter.
@@ -133,12 +154,13 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - Add line, parent line, and depth to list items.
 - Use byte offsets from markdown parsing only for source position tracking, not task marker identity.
 - Add a small byte-to-line tracker that precomputes line starts and converts byte offsets to source lines.
-- Compute `fully_complete` on Task List Items by checking the task itself and recursively checking task children only.
-- Ignore plain and non-task checkbox children for `fully_complete`.
+- Compute `fully_complete` on Task List Items by checking the task itself and recursively checking task children only. A parent task is `fully_complete` when it and every descendant task (at any depth) has a complete or cancelled status — the subtree is resolved.
+- Plain bullet children and non-task checkbox children are ignored for `fully_complete` calculation. Only `ListItemType::Task` descendants participate.
 - Store `fully_complete` as a flattened indexed field for O(1) query access.
-- Add a separate LISTS persistence table for flattened List Records.
-- Flatten List Records for persistence. Do not persist a nested List Item enum inside the LISTS table. Store top-level fields such as item kind, completion, status, priority, dates, text, tags, parent, line, depth, and fully-complete.
-- `ListText.raw` is source-like text after removing only the leading task marker prefix. It keeps task tags, date syntax, priority emojis, and inline fields.
+- Add a separate LISTS persistence table for list records.
+- `ListRecord` wraps a project-relative `path` and the parsed `ListItem`. It exposes accessor methods for query-relevant fields (`status_type`, `priority`, `due_date`, `is_fully_complete`, etc.) that delegate into the `ListItemType` discriminant. This keeps the persistence shape composable — adding a field to `ListItem` or `TaskListItem` does not require updating `ListRecord`'s struct layout — while providing flat query access through methods.
+- `ListRecord` serializes via postcard as `path` + `ListItem` (which contains `ListItemType`). The LISTS table stores the postcard-encoded `ListRecord` keyed by `(path, line)`. Query code deserializes the record once, then calls accessor methods for flat field access.
+- `ListText.raw` is source text minus the leading `[<char>] ` marker prefix only. All other inline syntax (task tags, date syntax, priority emojis, inline fields) is preserved in `raw`. `raw` is not byte-exact source text — it is source-like text after parser-level marker handling.
 - `ListText.clean` is normalized display/query text. It strips the task marker, configured task tag filters, task date syntax, priority emojis, and inline task fields.
 - Query records for tasks retain parent Note metadata plus task fields.
 - Existing task terminal rendering remains markdown task-list oriented by default.
@@ -147,7 +169,7 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - Add sorting and descending order to the task CLI, consistent with existing list and table query commands.
 - Expand CLI `--from` source parsing across list, table, and task commands to accept tag, folder, File Class, and specific markdown file sources.
 - File Class sources use transitive is-a matching consistent with Schema Extends.
-- The template `tasks` namespace continues to mirror the page-level query namespace with all/from-tags/from-folder/from-class sources, non-terminal query operators, and terminal renderers.
+- The existing template pipeline (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`, `table`, `list`, `task_list`, `count`) already works for task rows. This spec adds richer field paths (`task.status`, `task.priority`, `task.due`, `task.tags`, `task.parent`, `task.fully_complete`, `task.line`, `task.depth`) to the task row shape, not new pipeline mechanics.
 - Do not add a ListView abstraction in the first implementation. Add it only if the implementation proves real duplication.
 - Do not split the FileIndex as part of this work.
 
@@ -169,14 +191,14 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - Test invalid `tag_filters` entries fail config loading.
 - Test task date and priority extraction from source markdown into query fields.
 - Test missing priority remains null/absent.
-- Test completion mapping for done, cancelled, todo, in-progress, on-hold, non-task, and unknown fallback statuses.
-- Test `fully_complete` with nested task children and with plain/non-task checkbox children ignored.
-- Test `Note.tasks()` excludes plain bullets and non-task checkboxes.
+- Test completion mapping for done (`Some(true)`), cancelled (`None`), and incomplete statuses (`Some(false)`).
+- Test `fully_complete` with nested task children (all done or cancelled → true, any incomplete → false) and verify that plain bullet children and non-task checkbox children are excluded from the calculation.
+- Test `Note.tasks()` returns an iterator yielding only `ListItemType::Task` items, excluding plain bullets and non-task checkboxes.
 - Test `Note.list_items()` exposes all list item kinds.
 - Test task query rows inherit parent Note metadata and allow item fields to override inherited fields.
 - Test `traces task --sort` and descending order with at least due date or priority.
 - Test `traces task --table` default columns and custom column arrays.
-- Test `--from` accepts specific markdown file and File Class sources for task queries.
+- Test `--from` accepts specific markdown file and File Class sources for task queries. The `--from` flag routes through `SourceSelector::parse`, which already handles tags (`#tag`), folder globs, File Classes (`@Class*`), and file paths (detected by extension). No new source parsing is needed; the CLI task command uses the same `parse_source` path as `list` and `table`.
 - Test template `tasks.from_class()` uses transitive File Class matching.
 - Test index persistence roundtrip includes LISTS-derived task fields without requiring a reparse.
 
@@ -200,4 +222,4 @@ Tasks become queryable through the FileIndex, CLI query commands, and the templa
 - This spec follows the accepted redb/FileIndex and QueryOps architecture from the existing ADRs.
 - The design deliberately keeps one parser classification path instead of combining pulldown-cmark task events with custom parsing.
 - The task system should update the project domain glossary with explicit Task, List Item, Checkbox, Task Status, Task Priority, Task Dates, and Fully Complete terms.
-- If implementation discovers that `Note.list_items() -> &[ListItem]` causes awkward duplication, the smallest acceptable adjustment is to make it an iterator; do not introduce a larger view layer just to preserve the slice signature.
+- `Note.list_items()` returns an iterator, not a slice. Building a flattened `Vec<ListItem>` on the Note would duplicate data already persisted in the LISTS table. The iterator walks the nested list hierarchy on demand.
