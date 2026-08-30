@@ -11,7 +11,7 @@ use indexmap::{IndexMap, IndexSet};
 use super::{
     RawSchema, SchemaName,
     builder::{ResolvedSchemas, SchemaBuilder, SchemaFailure},
-    error::{SchemaError, SchemaWarning},
+    error::{SchemaError, SchemaFileError, SchemaWarning},
     fields::SchemaFieldBuildContext,
     model::Schema,
 };
@@ -39,13 +39,11 @@ impl SchemaService {
     ///
     /// - [`ReadDirectory`] if the registry directory exists but cannot be
     ///   listed.
-    /// - [`ReadFile`] if a `.toml` file cannot be read.
-    /// - [`Parse`] if a Schema file's TOML is malformed.
+    /// - [`File`] if a `.toml` file cannot be read or fails to parse.
     /// - [`Cycle`] if the `extends` DAG contains a cycle.
     ///
     /// [`ReadDirectory`]: SchemaError::ReadDirectory
-    /// [`ReadFile`]: SchemaError::ReadFile
-    /// [`Parse`]: SchemaError::Parse
+    /// [`File`]: SchemaError::File
     /// [`Cycle`]: SchemaError::Cycle
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -72,13 +70,11 @@ impl SchemaService {
     ///
     /// - [`ReadDirectory`] if the registry directory exists but cannot be
     ///   listed.
-    /// - [`ReadFile`] if a `.toml` file cannot be read.
-    /// - [`Parse`] if a Schema file's TOML is malformed.
+    /// - [`File`] if a `.toml` file cannot be read or fails to parse.
     /// - [`Cycle`] if the `extends` DAG contains a cycle.
     ///
     /// [`ReadDirectory`]: SchemaError::ReadDirectory
-    /// [`ReadFile`]: SchemaError::ReadFile
-    /// [`Parse`]: SchemaError::Parse
+    /// [`File`]: SchemaError::File
     /// [`Cycle`]: SchemaError::Cycle
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
     pub(crate) fn load_verbose(
@@ -260,13 +256,12 @@ impl SchemaService {
 /// # Errors
 ///
 /// - [`ReadDirectory`] if `dir` exists but its entries cannot be listed.
-/// - [`ReadFile`] if a `.toml` file cannot be read.
-/// - [`Parse`] if a Schema file's TOML is malformed, contains an unknown key,
-///   has a malformed `$ref`, or omits both `type` and `$ref` for a field.
+/// - [`File`] if a `.toml` file cannot be read, or is malformed, contains an
+///   unknown key, has a malformed `$ref`, or omits both `type` and `$ref` for a
+///   field.
 ///
 /// [`ReadDirectory`]: SchemaError::ReadDirectory
-/// [`ReadFile`]: SchemaError::ReadFile
-/// [`Parse`]: SchemaError::Parse
+/// [`File`]: SchemaError::File
 fn read_raw_schemas(
     dir: &Path,
 ) -> Result<IndexMap<SchemaName, RawSchema>, SchemaError> {
@@ -292,17 +287,16 @@ fn read_raw_schemas(
         let Some(stem) = BaseNameRef::from_path(path) else {
             continue;
         };
-        let stem = SchemaName::from(stem.as_str());
-        let contents = fs::read_to_string(path).map_err(|source| {
-            SchemaError::ReadFile {
+        let stem = SchemaName::from(stem);
+        let contents =
+            fs::read_to_string(path).map_err(|source| SchemaError::File {
                 path: path.to_path_buf(),
-                source,
-            }
-        })?;
+                source: SchemaFileError::Io(source),
+            })?;
         let raw: RawSchema =
-            toml::from_str(&contents).map_err(|source| SchemaError::Parse {
-                schema: stem.clone(),
-                source: Box::new(source),
+            toml::from_str(&contents).map_err(|source| SchemaError::File {
+                path: path.to_path_buf(),
+                source: SchemaFileError::Parse(Box::new(source)),
             })?;
         schemas.insert(stem, raw);
     }
@@ -440,7 +434,7 @@ mod tests {
             let err =
                 resolve_dir(temp.path()).expect_err("unknown key rejected");
 
-            assert!(matches!(err, SchemaError::Parse { .. }));
+            assert!(matches!(err, SchemaError::File { .. }));
         }
 
         #[test]
@@ -460,7 +454,7 @@ mod tests {
             let err = resolve_dir(temp.path())
                 .expect_err("unknown field key rejected");
 
-            assert!(matches!(err, SchemaError::Parse { .. }));
+            assert!(matches!(err, SchemaError::File { .. }));
         }
 
         #[test]
@@ -478,7 +472,7 @@ mod tests {
             let err =
                 resolve_dir(temp.path()).expect_err("malformed $ref rejected");
 
-            assert!(matches!(err, SchemaError::Parse { .. }));
+            assert!(matches!(err, SchemaError::File { .. }));
         }
 
         #[test]
@@ -566,7 +560,7 @@ mod tests {
             let err = resolve_dir(temp.path())
                 .expect_err("missing type/$ref rejected");
 
-            assert!(matches!(err, SchemaError::Parse { .. }));
+            assert!(matches!(err, SchemaError::File { .. }));
         }
 
         #[test]
@@ -640,7 +634,7 @@ mod tests {
             let err =
                 resolve_dir(temp.path()).expect_err("unreadable file fails");
 
-            assert!(matches!(err, SchemaError::ReadFile { .. }));
+            assert!(matches!(err, SchemaError::File { .. }));
         }
     }
 
@@ -688,6 +682,17 @@ mod tests {
                 "a Schema resolved at construction must not need to reread a \
                  now-missing directory"
             );
+        }
+
+        #[test]
+        fn returns_none_for_an_unknown_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            assert!(service.get("ghost").is_none());
         }
     }
 
@@ -790,6 +795,17 @@ mod tests {
                 children.iter().map(|schema| schema.name()).collect();
 
             assert_eq!(names, vec!["book"]);
+        }
+
+        #[test]
+        fn returns_empty_for_an_unknown_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            assert!(service.children_of("ghost").is_empty());
         }
     }
 
@@ -978,6 +994,14 @@ mod tests {
             };
             let subscriber = tracing_subscriber::registry().with(capture);
             let guard = tracing::subscriber::set_default(subscriber);
+            // `set_default` installs a thread-local subscriber but does not
+            // rebuild `tracing`'s per-callsite `Interest` cache. Without
+            // this, `warn_unknown_classes`'s `tracing::warn!` callsite can
+            // be cached as "never interested" from an earlier point in the
+            // process (e.g. another test's subscriber, or no subscriber at
+            // all) and skip every subscriber - including this one - making
+            // the assertions below flake under a full parallel test run.
+            tracing::callsite::rebuild_interest_cache();
 
             service.warn_unknown_classes(&[
                 "book".to_owned(),

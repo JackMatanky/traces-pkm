@@ -20,8 +20,7 @@ use super::{
 use crate::{
     field::FieldValue,
     schema::{
-        GLOBAL_SCHEMA_NAME, RawSchemaFieldDef, RawSchemaFieldSource,
-        SchemaName,
+        RawSchemaFieldDef, RawSchemaFieldSource, SchemaName,
         error::{SchemaError, SchemaWarning},
         model::Schema,
     },
@@ -271,7 +270,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         address: FieldAddressRef<'_>,
         required: bool,
     ) -> (bool, Option<SchemaWarning>) {
-        if address.schema().as_str() == GLOBAL_SCHEMA_NAME && required {
+        if address.schema().is_global() && required {
             (
                 false,
                 Some(SchemaWarning::StrayGlobalRequired {
@@ -299,7 +298,7 @@ impl<'a> SchemaFieldBuilder<'a> {
         address: FieldAddressRef<'_>,
         base_address: &FieldAddress,
     ) -> Result<&'a SchemaFieldDef, SchemaError> {
-        if base_address.schema().as_str() != GLOBAL_SCHEMA_NAME
+        if !base_address.schema().is_global()
             && !self.ancestors.contains(base_address.schema().as_str())
         {
             return Err(SchemaFieldBuilderError::RefOutOfBounds {
@@ -325,8 +324,8 @@ impl<'a> SchemaFieldBuilder<'a> {
 mod tests {
     use super::*;
     use crate::schema::{
-        RawSchemaFieldSource, RawSchemaFieldType, SchemaNameRef,
-        fields::SchemaNumberField,
+        GLOBAL_SCHEMA_NAME, RawSchemaFieldSource, RawSchemaFieldType,
+        SchemaNameRef, fields::SchemaNumberField,
     };
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
@@ -617,6 +616,43 @@ mod tests {
         }
 
         #[test]
+        fn rejects_ref_with_type_override_and_bad_option_as_a_hard_error() {
+            let (ancestors, resolved) =
+                field_fixture(&[("book", SchemaFieldType::Input)], &["book"]);
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("field")
+                    .expect("valid field name"),
+            );
+            let mut options = IndexMap::new();
+            options.insert(
+                "unknown_key".to_owned(),
+                FieldValue::String("value".to_owned()),
+            );
+            let raw = raw_field(
+                RawSchemaFieldSource::Ref {
+                    address: field_address("#book/field"),
+                    override_type: Some(RawSchemaFieldType::Boolean),
+                },
+                None,
+                None,
+                options,
+            );
+
+            let err = b
+                .build(address, &raw)
+                .expect_err("type override disables degrade-to-warning");
+
+            assert!(matches!(
+                &err,
+                SchemaError::FieldBuilder(inner)
+                    if matches!(**inner, SchemaFieldBuilderError::Parser(_))
+            ));
+        }
+
+        #[test]
         fn degrades_bare_ref_bad_option_to_warning() {
             let (ancestors, resolved) =
                 field_fixture(&[("book", SchemaFieldType::Input)], &["book"]);
@@ -724,7 +760,7 @@ mod tests {
             );
             assert!(warnings.iter().any(|warning| matches!(
                 warning,
-                SchemaWarning::InvalidNumberOverride { key, .. } if key == "step"
+                SchemaWarning::DegradedOverride { message } if message.contains("\"step\"")
             )));
         }
 
@@ -816,6 +852,45 @@ mod tests {
                 SchemaWarning::StrayGlobalRequired { field: name }
                     if name == "title"
             )));
+        }
+
+        #[test]
+        fn inherits_required_and_multi_from_base_when_raw_does_not_override() {
+            let mut fields = IndexMap::new();
+            fields.insert(
+                crate::field::FieldName::try_from("field")
+                    .expect("valid test field name"),
+                SchemaFieldDef::new(SchemaFieldType::Input, true, true),
+            );
+            let resolved: IndexMap<SchemaName, Schema> = [(
+                SchemaName::from("book"),
+                Schema::new(SchemaName::from("book"), fields, IndexSet::new()),
+            )]
+            .into_iter()
+            .collect();
+            let ancestors: IndexSet<SchemaName> =
+                [SchemaName::from("book")].into_iter().collect();
+            let context = SchemaFieldBuildContext::for_test();
+            let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("field")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawSchemaFieldSource::Ref {
+                    address: field_address("#book/field"),
+                    override_type: None,
+                },
+                None,
+                None,
+                IndexMap::new(),
+            );
+
+            let (field, _warnings) = b.build(address, &raw).expect("builds");
+
+            assert!(field.is_required());
+            assert!(field.is_multi());
         }
     }
 }

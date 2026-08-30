@@ -6,10 +6,19 @@
 use std::{borrow::Borrow, fmt};
 
 use serde::Deserialize;
+use thiserror::Error;
+
+use super::GLOBAL_SCHEMA_NAME;
+use crate::BaseNameRef;
 
 /// A Schema name from its source file stem.
-#[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
 pub(crate) struct SchemaName(String);
+
+/// Why a [`SchemaName`] could not be constructed.
+#[derive(Debug, Error, Eq, PartialEq)]
+#[error("Schema name must not be empty")]
+pub(crate) struct EmptySchemaName;
 
 impl SchemaName {
     /// Return this name as a string slice.
@@ -25,6 +34,51 @@ impl SchemaName {
     pub(crate) fn as_ref(&self) -> SchemaNameRef<'_> {
         SchemaNameRef(&self.0)
     }
+
+    /// Returns whether this is the reserved Global Schema name.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_global(&self) -> bool {
+        self.0 == GLOBAL_SCHEMA_NAME
+    }
+
+    /// Returns the reserved Global Schema name.
+    ///
+    /// Infallible, unlike [`Self::try_from`]: `GLOBAL_SCHEMA_NAME` is a
+    /// compile-time non-empty `&'static str` literal, so there is no empty
+    /// case to reject.
+    #[inline]
+    #[must_use]
+    pub(crate) fn global() -> Self {
+        Self(GLOBAL_SCHEMA_NAME.to_owned())
+    }
+
+    /// Attempts to construct a [`SchemaName`], rejecting an empty name.
+    ///
+    /// An inherent method rather than a `TryFrom<&str>` trait impl: with the
+    /// `#[cfg(test)]`/`test-utils`-gated `From<&str>` impl below present in
+    /// the same build, a manual `TryFrom<&str>` impl conflicts with std's
+    /// blanket `impl<T, U> TryFrom<U> for T where U: Into<T>` (E0119). An
+    /// inherent method shadows the blanket trait impl for `SchemaName::
+    /// try_from(...)` call syntax without implementing the trait itself.
+    ///
+    /// Most callers should prefer a source-specific infallible constructor
+    /// instead: [`Self::global`] for the reserved name, or the
+    /// `From<`[`BaseNameRef`]`>` impl below for a Schema file's stem, both of
+    /// which are non-empty by construction and never reach this check. This
+    /// method exists for the one remaining case — a `$ref` schema segment
+    /// parsed from user-authored TOML text — where the input is genuinely
+    /// untrusted.
+    ///
+    /// # Errors
+    ///
+    /// - [`EmptySchemaName`] if `name` is empty
+    pub(crate) fn try_from(name: &str) -> Result<Self, EmptySchemaName> {
+        if name.is_empty() {
+            return Err(EmptySchemaName);
+        }
+        Ok(Self(name.to_owned()))
+    }
 }
 
 impl From<SchemaNameRef<'_>> for SchemaName {
@@ -33,9 +87,30 @@ impl From<SchemaNameRef<'_>> for SchemaName {
     }
 }
 
+impl From<BaseNameRef<'_>> for SchemaName {
+    /// Builds a [`SchemaName`] from a Schema TOML file's stem.
+    ///
+    /// Infallible, unlike [`SchemaName::try_from`]: [`BaseNameRef`] is
+    /// always derived from [`Path::file_stem`](std::path::Path::file_stem),
+    /// which never yields an empty string for a real path component, so the
+    /// non-empty invariant already holds before this conversion runs.
+    fn from(stem: BaseNameRef<'_>) -> Self {
+        Self(stem.as_str().to_owned())
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
 impl From<&str> for SchemaName {
+    /// Test-only infallible constructor: every test fixture name is a
+    /// non-empty literal, so forcing `Result` handling through hundreds of
+    /// call sites buys production code nothing.
+    #[expect(
+        clippy::expect_used,
+        reason = "test-only constructor; an invalid literal here is a test \
+                  fixture bug, not a recoverable caller error"
+    )]
     fn from(name: &str) -> Self {
-        Self(name.to_owned())
+        Self::try_from(name).expect("test schema name must not be empty")
     }
 }
 
@@ -67,6 +142,15 @@ impl<'a> SchemaNameRef<'a> {
     #[must_use]
     pub(crate) const fn as_str(self) -> &'a str {
         self.0
+    }
+}
+
+impl SchemaNameRef<'_> {
+    /// Returns whether this is the reserved Global Schema name.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_global(self) -> bool {
+        self.0 == GLOBAL_SCHEMA_NAME
     }
 }
 
@@ -202,6 +286,38 @@ mod tests {
             let round_tripped = SchemaName::from(name_ref);
 
             assert_eq!(name, round_tripped);
+        }
+
+        #[test]
+        fn try_from_rejects_an_empty_name() {
+            assert!(SchemaName::try_from("").is_err());
+        }
+
+        #[test]
+        fn from_base_name_ref_owns_a_copy_of_the_stem() {
+            let stem =
+                BaseNameRef::from_path(std::path::Path::new("book.toml"))
+                    .expect("valid path");
+
+            assert_eq!(SchemaName::from(stem).as_str(), "book");
+        }
+    }
+
+    mod predicates {
+        use super::super::*;
+
+        #[test]
+        fn is_global_matches_only_the_reserved_name() {
+            assert!(SchemaName::from("global").is_global());
+            assert!(!SchemaName::from("book").is_global());
+            assert!(SchemaNameRef::from("global").is_global());
+            assert!(!SchemaNameRef::from("book").is_global());
+        }
+
+        #[test]
+        fn global_returns_the_reserved_name() {
+            assert_eq!(SchemaName::global().as_str(), "global");
+            assert!(SchemaName::global().is_global());
         }
     }
 }

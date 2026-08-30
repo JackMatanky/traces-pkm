@@ -13,7 +13,10 @@ use indexmap::IndexMap;
 
 use super::{
     SchemaFieldType,
-    error::{SelectValuesError, SelectValuesFileError},
+    error::{
+        SchemaSelectFieldEntryError, SchemaSelectFieldFileError,
+        SchemaSelectFieldValueError,
+    },
     parser::SchemaFieldParser,
 };
 use crate::{field::FieldValue, path::RootConfinedPath};
@@ -84,26 +87,30 @@ impl SchemaSelectField {
                 {
                     parse_inline_value_objects(parser, items)
                 } else {
+                    // The `has_errors_since` check below unconditionally
+                    // reverts to `base` whenever this pushes an error, so
+                    // this branch's return value is never read.
                     parser.push_type_mismatch(
                         "values",
                         items,
                         "a list of strings, a list of value objects, or a \
                          file subtable",
                     );
-                    base.map_or_else(Vec::new, |b| b.values.clone())
+                    Vec::new()
                 }
             }
             Some(FieldValue::Object(subtable)) => {
-                parse_file_subtable(values_cache, parser, subtable, base)
+                parse_file_subtable(values_cache, parser, subtable)
             }
             Some(other) => {
+                // See the comment above: reverted unconditionally on error.
                 parser.push_type_mismatch(
                     "values",
                     other,
                     "a list of strings, a list of value objects, or a file \
                      subtable",
                 );
-                base.map_or_else(Vec::new, |b| b.values.clone())
+                Vec::new()
             }
         };
 
@@ -225,12 +232,12 @@ impl SelectValuesFileCache {
     ///
     /// # Errors
     ///
-    /// Returns [`SelectValuesFileError`] if confinement fails, I/O fails,
+    /// Returns [`SchemaSelectFieldFileError`] if confinement fails, I/O fails,
     /// parsing fails, or `entries` is missing.
     pub(crate) fn load(
         &self,
         relative_path: &str,
-    ) -> Result<Arc<Vec<FieldValue>>, SelectValuesFileError> {
+    ) -> Result<Arc<Vec<FieldValue>>, SchemaSelectFieldFileError> {
         let path = Path::new(relative_path);
         let confined = RootConfinedPath::parse(&self.dir, path)?;
         let confined_path = confined.into_path_buf();
@@ -238,7 +245,7 @@ impl SelectValuesFileCache {
         let ext =
             confined_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext != "toml" && ext != "json" {
-            return Err(SelectValuesFileError::BadExtension(
+            return Err(SchemaSelectFieldFileError::BadExtension(
                 relative_path.to_owned(),
             ));
         }
@@ -251,16 +258,12 @@ impl SelectValuesFileCache {
         let val: crate::schema::raw::RawSchemaSelectFieldValues =
             if ext == "toml" {
                 toml::from_str(&content).map_err(Box::new)?
-            } else if ext == "json" {
-                serde_json::from_str(&content).map_err(Box::new)?
             } else {
-                return Err(SelectValuesFileError::BadExtension(
-                    relative_path.to_owned(),
-                ));
+                serde_json::from_str(&content).map_err(Box::new)?
             };
 
         let entries =
-            val.entries.ok_or(SelectValuesFileError::MissingEntries)?;
+            val.entries.ok_or(SchemaSelectFieldFileError::MissingEntries)?;
         let domain_entries =
             entries.into_iter().map(FieldValue::from).collect::<Vec<_>>();
 
@@ -270,22 +273,40 @@ impl SelectValuesFileCache {
     }
 }
 
+/// Pushes `source` as an entry-shape failure, tagging it with `path` when the
+/// entry came from an external values file (`None` for an entry declared
+/// inline in the field's own `values` list).
+fn push_entry_error(
+    parser: &mut SchemaFieldParser<'_>,
+    path: Option<&str>,
+    source: SchemaSelectFieldEntryError,
+) {
+    parser.push_select_value_error(SchemaSelectFieldValueError::Entry {
+        path: path.map(str::to_owned),
+        source,
+    });
+}
+
+/// Extracts `subtable[key]` as a file selector, defaulting to `default` when
+/// absent. Only ever called once a values file at `path` has already loaded,
+/// so a wrongly-shaped selector is always reported against that file.
 fn extract_file_selector<'a>(
     subtable: &'a IndexMap<String, FieldValue>,
     key: &'static str,
     default: &'a str,
     parser: &mut SchemaFieldParser<'_>,
-    scope: EntryErrorScope<'_>,
+    path: &str,
 ) -> &'a str {
     match subtable.get(key) {
         Some(FieldValue::String(s)) => s.as_str(),
         Some(other) => {
             push_entry_error(
                 parser,
-                scope,
-                SelectValuesError::SelectorNotString {
-                    selector: key,
+                Some(path),
+                SchemaSelectFieldEntryError::ShapeMismatch {
+                    context: format!("selector {key:?}"),
                     value: format!("{other:?}"),
+                    expected: "a string",
                 },
             );
             default
@@ -294,21 +315,24 @@ fn extract_file_selector<'a>(
     }
 }
 
+/// Optional counterpart of [`extract_file_selector`] for `label`/`order`,
+/// which fall back to `None` rather than a default string.
 fn extract_optional_file_selector<'a>(
     subtable: &'a IndexMap<String, FieldValue>,
     key: &'static str,
     parser: &mut SchemaFieldParser<'_>,
-    scope: EntryErrorScope<'_>,
+    path: &str,
 ) -> Option<&'a str> {
     match subtable.get(key) {
         Some(FieldValue::String(s)) => Some(s.as_str()),
         Some(other) => {
             push_entry_error(
                 parser,
-                scope,
-                SelectValuesError::SelectorNotString {
-                    selector: key,
+                Some(path),
+                SchemaSelectFieldEntryError::ShapeMismatch {
+                    context: format!("selector {key:?}"),
                     value: format!("{other:?}"),
+                    expected: "a string",
                 },
             );
             None
@@ -318,52 +342,31 @@ fn extract_optional_file_selector<'a>(
 }
 
 #[derive(Copy, Clone)]
-enum EntryErrorScope<'a> {
-    Inline,
-    File {
-        path: &'a str,
-    },
-}
-
-fn push_entry_error(
-    parser: &mut SchemaFieldParser<'_>,
-    scope: EntryErrorScope<'_>,
-    source: SelectValuesError,
-) {
-    match scope {
-        EntryErrorScope::Inline => parser.push_select_values_error(source),
-        EntryErrorScope::File {
-            path,
-        } => parser.push_select_values_error(SelectValuesError::ValuesFile {
-            path: path.to_owned(),
-            source: SelectValuesFileError::Entry(Box::new(source)),
-        }),
-    }
-}
-#[derive(Copy, Clone)]
 struct EntrySelectors<'a> {
     value: &'a str,
     label: Option<&'a str>,
     order: Option<&'a str>,
 }
 
+/// Extracts `map[key]` as a required entry field, reporting a shape or
+/// missing-key failure against `path` (`None` for an inline entry).
 fn entry_string_field(
     map: &IndexMap<String, FieldValue>,
     key: &str,
     selector_name: &'static str,
     parser: &mut SchemaFieldParser<'_>,
-    scope: EntryErrorScope<'_>,
+    path: Option<&str>,
 ) -> Option<String> {
     match map.get(key) {
         Some(FieldValue::String(s)) => Some(s.clone()),
         Some(other) => {
             push_entry_error(
                 parser,
-                scope,
-                SelectValuesError::SelectedValueNotString {
-                    selector: selector_name,
-                    key: key.to_owned(),
+                path,
+                SchemaSelectFieldEntryError::ShapeMismatch {
+                    context: format!("selector {selector_name:?} = {key:?}"),
                     value: format!("{other:?}"),
+                    expected: "a string",
                 },
             );
             None
@@ -371,8 +374,8 @@ fn entry_string_field(
         None => {
             push_entry_error(
                 parser,
-                scope,
-                SelectValuesError::SelectorMissingKey {
+                path,
+                SchemaSelectFieldEntryError::SelectorMissingKey {
                     selector: selector_name,
                     key: key.to_owned(),
                 },
@@ -386,7 +389,7 @@ fn parse_object_entries(
     parser: &mut SchemaFieldParser<'_>,
     items: &[FieldValue],
     selectors: EntrySelectors<'_>,
-    scope: EntryErrorScope<'_>,
+    path: Option<&str>,
 ) -> Vec<SchemaSelectFieldEntry> {
     let mut entries_with_order: Vec<(SchemaSelectFieldEntry, Option<f64>)> =
         Vec::with_capacity(items.len());
@@ -397,12 +400,12 @@ fn parse_object_entries(
         };
 
         let value_str =
-            entry_string_field(map, selectors.value, "value", parser, scope)
+            entry_string_field(map, selectors.value, "value", parser, path)
                 .unwrap_or_default();
         let value = FieldValue::String(value_str);
 
         let label = if let Some(lbl_sel) = selectors.label {
-            entry_string_field(map, lbl_sel, "label", parser, scope)
+            entry_string_field(map, lbl_sel, "label", parser, path)
                 .map_or_else(|| value.clone(), FieldValue::String)
         } else {
             value.clone()
@@ -413,10 +416,13 @@ fn parse_object_entries(
                 val.as_f64().or_else(|| {
                     push_entry_error(
                         parser,
-                        scope,
-                        SelectValuesError::OrderNotNumber {
-                            key: ord_sel.to_owned(),
+                        path,
+                        SchemaSelectFieldEntryError::ShapeMismatch {
+                            context: format!(
+                                "selector \"order\" = {ord_sel:?}"
+                            ),
                             value: format!("{val:?}"),
+                            expected: "a number",
                         },
                     );
                     None
@@ -424,8 +430,8 @@ fn parse_object_entries(
             } else {
                 push_entry_error(
                     parser,
-                    scope,
-                    SelectValuesError::SelectorMissingKey {
+                    path,
+                    SchemaSelectFieldEntryError::SelectorMissingKey {
                         selector: "order",
                         key: ord_sel.to_owned(),
                     },
@@ -444,8 +450,8 @@ fn parse_object_entries(
             if k == "value" || k == "label" {
                 push_entry_error(
                     parser,
-                    scope,
-                    SelectValuesError::ReservedOutputKey {
+                    path,
+                    SchemaSelectFieldEntryError::ReservedOutputKey {
                         key: k.clone(),
                     },
                 );
@@ -502,7 +508,7 @@ fn parse_inline_value_objects(
             label: label_sel,
             order: order_sel,
         },
-        EntryErrorScope::Inline,
+        None,
     )
 }
 
@@ -512,35 +518,16 @@ fn parse_file_bare_entries(
     path: &str,
     loaded_entries: &[FieldValue],
 ) -> Vec<SchemaSelectFieldEntry> {
-    let scope = EntryErrorScope::File {
-        path,
-    };
-    if subtable.contains_key("value") {
-        push_entry_error(
-            parser,
-            scope,
-            SelectValuesError::SelectorOnBareEntries {
-                selector: "value",
-            },
-        );
-    }
-    if subtable.contains_key("label") {
-        push_entry_error(
-            parser,
-            scope,
-            SelectValuesError::SelectorOnBareEntries {
-                selector: "label",
-            },
-        );
-    }
-    if subtable.contains_key("order") {
-        push_entry_error(
-            parser,
-            scope,
-            SelectValuesError::SelectorOnBareEntries {
-                selector: "order",
-            },
-        );
+    for selector in ["value", "label", "order"] {
+        if subtable.contains_key(selector) {
+            push_entry_error(
+                parser,
+                Some(path),
+                SchemaSelectFieldEntryError::SelectorOnBareEntries {
+                    selector,
+                },
+            );
+        }
     }
     loaded_entries
         .iter()
@@ -559,15 +546,12 @@ fn parse_file_object_entries(
     path: &str,
     loaded_entries: &[FieldValue],
 ) -> Vec<SchemaSelectFieldEntry> {
-    let scope = EntryErrorScope::File {
-        path,
-    };
     let value_selector =
-        extract_file_selector(subtable, "value", "value", parser, scope);
+        extract_file_selector(subtable, "value", "value", parser, path);
     let label_selector =
-        extract_optional_file_selector(subtable, "label", parser, scope);
+        extract_optional_file_selector(subtable, "label", parser, path);
     let order_selector =
-        extract_optional_file_selector(subtable, "order", parser, scope);
+        extract_optional_file_selector(subtable, "order", parser, path);
 
     parse_object_entries(
         parser,
@@ -577,9 +561,7 @@ fn parse_file_object_entries(
             label: label_selector,
             order: order_selector,
         },
-        EntryErrorScope::File {
-            path,
-        },
+        Some(path),
     )
 }
 
@@ -587,7 +569,6 @@ fn parse_file_subtable(
     values_cache: &SelectValuesFileCache,
     parser: &mut SchemaFieldParser<'_>,
     subtable: &IndexMap<String, FieldValue>,
-    base: Option<&SchemaSelectField>,
 ) -> Vec<SchemaSelectFieldEntry> {
     for key in subtable.keys() {
         if key != "path" && key != "value" && key != "label" && key != "order" {
@@ -598,25 +579,37 @@ fn parse_file_subtable(
     let path_str = match subtable.get("path") {
         Some(FieldValue::String(p)) => p.as_str(),
         Some(other) => {
-            parser.push_select_values_error(SelectValuesError::PathNotString {
-                value: format!("{other:?}"),
-            });
-            return base.map_or_else(Vec::new, |b| b.values.clone());
+            // Reverted to `base` unconditionally by `parse`'s caller once any
+            // error is recorded; this return value is never read.
+            push_entry_error(
+                parser,
+                None,
+                SchemaSelectFieldEntryError::ShapeMismatch {
+                    context: "the \"path\" attribute".to_owned(),
+                    value: format!("{other:?}"),
+                    expected: "a string",
+                },
+            );
+            return Vec::new();
         }
         None => {
-            parser.push_select_values_error(SelectValuesError::MissingPath);
-            return base.map_or_else(Vec::new, |b| b.values.clone());
+            parser.push_select_value_error(
+                SchemaSelectFieldValueError::MissingPath,
+            );
+            return Vec::new();
         }
     };
 
     let loaded_entries = match values_cache.load(path_str) {
         Ok(entries) => entries,
         Err(err) => {
-            parser.push_select_values_error(SelectValuesError::ValuesFile {
-                path: path_str.to_owned(),
-                source: err,
-            });
-            return base.map_or_else(Vec::new, |b| b.values.clone());
+            parser.push_select_value_error(
+                SchemaSelectFieldValueError::ValuesFile {
+                    path: path_str.to_owned(),
+                    source: err,
+                },
+            );
+            return Vec::new();
         }
     };
     if loaded_entries.is_empty() {
@@ -631,25 +624,31 @@ fn parse_file_subtable(
     {
         parse_file_object_entries(parser, subtable, path_str, &loaded_entries)
     } else {
-        parser.push_select_values_error(SelectValuesError::ValuesFile {
-            path: path_str.to_owned(),
-            source: SelectValuesFileError::MixedEntries(format!(
-                "{:?}",
-                loaded_entries.as_ref()
-            )),
-        });
-        base.map_or_else(Vec::new, |b| b.values.clone())
+        parser.push_select_value_error(
+            SchemaSelectFieldValueError::ValuesFile {
+                path: path_str.to_owned(),
+                source: SchemaSelectFieldFileError::MixedEntries(format!(
+                    "{:?}",
+                    loaded_entries.as_ref()
+                )),
+            },
+        );
+        Vec::new()
     }
 }
-
 #[cfg(test)]
 mod tests {
     use indexmap::IndexMap;
 
     use super::*;
     use crate::schema::fields::{
-        SchemaFieldTypeTag, address::FieldAddress,
-        error::SchemaFieldParserError, parser::SchemaFieldParser,
+        SchemaFieldTypeTag,
+        address::FieldAddress,
+        error::{
+            SchemaFieldParserError, SchemaSelectFieldEntryError,
+            SchemaSelectFieldFileError, SchemaSelectFieldValueError,
+        },
+        parser::SchemaFieldParser,
     };
 
     fn address() -> FieldAddress {
@@ -671,11 +670,11 @@ mod tests {
 
     fn values_file_error(
         error: &SchemaFieldParserError,
-    ) -> Option<(&str, &SelectValuesFileError)> {
+    ) -> Option<(&str, &SchemaSelectFieldFileError)> {
         match error {
-            SchemaFieldParserError::SelectValues {
+            SchemaFieldParserError::SelectValue {
                 source:
-                    SelectValuesError::ValuesFile {
+                    SchemaSelectFieldValueError::ValuesFile {
                         path,
                         source,
                     },
@@ -685,12 +684,20 @@ mod tests {
         }
     }
 
-    fn values_file_entry_error(
+    /// Unwraps an entry-shape failure, whether declared inline (`path` is
+    /// `None`) or loaded from an external values file (`path` names it).
+    fn entry_error(
         error: &SchemaFieldParserError,
-    ) -> Option<(&str, &SelectValuesError)> {
-        let (path, source) = values_file_error(error)?;
-        match source {
-            SelectValuesFileError::Entry(inner) => Some((path, inner)),
+    ) -> Option<(Option<&str>, &SchemaSelectFieldEntryError)> {
+        match error {
+            SchemaFieldParserError::SelectValue {
+                source:
+                    SchemaSelectFieldValueError::Entry {
+                        path,
+                        source,
+                    },
+                ..
+            } => Some((path.as_deref(), source)),
             _ => None,
         }
     }
@@ -927,8 +934,14 @@ mod tests {
             let error = errors.first().expect("expected error");
             assert!(matches!(
                 error,
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::SelectorMissingKey { selector, key },
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        source: SchemaSelectFieldEntryError::SelectorMissingKey {
+                            selector,
+                            key,
+                        },
+                        ..
+                    },
                     ..
                 } if *selector == "label" && key == "label"
             ));
@@ -959,8 +972,14 @@ mod tests {
             assert_eq!(errors.len(), 1);
             assert!(matches!(
                 errors.first().expect("expected error"),
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::SelectorMissingKey { selector, key },
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        source: SchemaSelectFieldEntryError::SelectorMissingKey {
+                            selector,
+                            key,
+                        },
+                        ..
+                    },
                     ..
                 } if *selector == "value" && key == "value"
             ));
@@ -1001,8 +1020,14 @@ mod tests {
             assert_eq!(errors.len(), 1);
             assert!(matches!(
                 errors.first().expect("expected error"),
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::SelectorMissingKey { selector, key },
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        source: SchemaSelectFieldEntryError::SelectorMissingKey {
+                            selector,
+                            key,
+                        },
+                        ..
+                    },
                     ..
                 } if *selector == "order" && key == "order"
             ));
@@ -1034,14 +1059,16 @@ mod tests {
             assert_eq!(errors.len(), 1);
             assert!(matches!(
                 errors.first().expect("expected error"),
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::SelectedValueNotString {
-                        selector,
-                        key,
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        source: SchemaSelectFieldEntryError::ShapeMismatch {
+                            context,
+                            ..
+                        },
                         ..
                     },
                     ..
-                } if *selector == "label" && key == "label"
+                } if context == "selector \"label\" = \"label\""
             ));
         }
 
@@ -1073,21 +1100,29 @@ mod tests {
             let order_error = errors.get(1).expect("order error");
             assert!(matches!(
                 value_error,
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::SelectedValueNotString {
-                        selector,
-                        key,
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        source: SchemaSelectFieldEntryError::ShapeMismatch {
+                            context,
+                            ..
+                        },
                         ..
                     },
                     ..
-                } if *selector == "value" && key == "value"
+                } if context == "selector \"value\" = \"value\""
             ));
             assert!(matches!(
                 order_error,
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::OrderNotNumber { key, .. },
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        source: SchemaSelectFieldEntryError::ShapeMismatch {
+                            context,
+                            ..
+                        },
+                        ..
+                    },
                     ..
-                } if key == "order"
+                } if context == "selector \"order\" = \"order\""
             ));
         }
 
@@ -1349,12 +1384,11 @@ mod tests {
             let errors = parser.finish(&opts);
 
             let error = errors.first().expect("expected error");
-            let (path, source) = values_file_entry_error(error)
-                .expect("values-file entry error");
-            assert_eq!(path, "items.json");
+            let (path, source) = entry_error(error).expect("entry error");
+            assert_eq!(path, Some("items.json"));
             assert!(matches!(
                 source,
-                SelectValuesError::ReservedOutputKey { key } if key == "value"
+                SchemaSelectFieldEntryError::ReservedOutputKey { key } if key == "value"
             ));
         }
 
@@ -1397,14 +1431,13 @@ mod tests {
             assert_eq!(errors.len(), 3);
             let mut selectors = Vec::new();
             for error in &errors {
-                let (path, source) = values_file_entry_error(error)
-                    .expect("values-file entry error");
-                assert_eq!(path, "items.json");
+                let (path, source) = entry_error(error).expect("entry error");
+                assert_eq!(path, Some("items.json"));
                 assert!(matches!(
                     source,
-                    SelectValuesError::SelectorOnBareEntries { .. }
+                    SchemaSelectFieldEntryError::SelectorOnBareEntries { .. }
                 ));
-                if let SelectValuesError::SelectorOnBareEntries {
+                if let SchemaSelectFieldEntryError::SelectorOnBareEntries {
                     selector,
                 } = source
                 {
@@ -1456,22 +1489,23 @@ mod tests {
 
             assert_eq!(errors.len(), 2);
             let (value_path, value_source) =
-                values_file_entry_error(errors.first().expect("value error"))
-                    .expect("values-file value error");
+                entry_error(errors.first().expect("value error"))
+                    .expect("value entry error");
             let (order_path, order_source) =
-                values_file_entry_error(errors.get(1).expect("order error"))
-                    .expect("values-file order error");
+                entry_error(errors.get(1).expect("order error"))
+                    .expect("order entry error");
 
-            assert_eq!(value_path, "items.json");
-            assert_eq!(order_path, "items.json");
+            assert_eq!(value_path, Some("items.json"));
+            assert_eq!(order_path, Some("items.json"));
             assert!(matches!(
                 value_source,
-                SelectValuesError::SelectedValueNotString { selector, key, .. }
-                    if *selector == "value" && key == "slug"
+                SchemaSelectFieldEntryError::ShapeMismatch { context, .. }
+                    if context == "selector \"value\" = \"slug\""
             ));
             assert!(matches!(
                 order_source,
-                SelectValuesError::OrderNotNumber { key, .. } if key == "rank"
+                SchemaSelectFieldEntryError::ShapeMismatch { context, .. }
+                    if context == "selector \"order\" = \"rank\""
             ));
         }
 
@@ -1510,25 +1544,27 @@ mod tests {
             let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 3);
-            let mut selectors = Vec::new();
-            for error in &errors {
-                let (path, source) = values_file_entry_error(error)
-                    .expect("values-file entry error");
-                assert_eq!(path, "items.json");
-                assert!(matches!(
-                    source,
-                    SelectValuesError::SelectorNotString { .. }
-                ));
-                if let SelectValuesError::SelectorNotString {
-                    selector,
-                    ..
-                } = source
-                {
-                    selectors.push(*selector);
-                }
-            }
+            let contexts: Vec<String> = errors
+                .iter()
+                .map(|error| {
+                    let (path, source) =
+                        entry_error(error).expect("entry error");
+                    assert_eq!(path, Some("items.json"));
+                    match source {
+                        SchemaSelectFieldEntryError::ShapeMismatch {
+                            context,
+                            ..
+                        } => context.clone(),
+                        other => format!("unexpected variant: {other:?}"),
+                    }
+                })
+                .collect();
 
-            assert_eq!(selectors, ["value", "label", "order"]);
+            assert_eq!(contexts, [
+                "selector \"value\"".to_owned(),
+                "selector \"label\"".to_owned(),
+                "selector \"order\"".to_owned(),
+            ]);
         }
 
         #[test]
@@ -1568,12 +1604,11 @@ mod tests {
             let errors = parser.finish(&opts);
 
             let error = errors.first().expect("expected error");
-            let (path, source) = values_file_entry_error(error)
-                .expect("values-file entry error");
-            assert_eq!(path, "items.json");
+            let (path, source) = entry_error(error).expect("entry error");
+            assert_eq!(path, Some("items.json"));
             assert!(matches!(
                 source,
-                SelectValuesError::SelectorMissingKey { selector, key }
+                SchemaSelectFieldEntryError::SelectorMissingKey { selector, key }
                     if *selector == "value" && key == "slug"
             ));
         }
@@ -1608,7 +1643,10 @@ mod tests {
             let (path, source) =
                 values_file_error(error).expect("values-file error");
             assert_eq!(path, "items.json");
-            assert!(matches!(source, SelectValuesFileError::MixedEntries(_)));
+            assert!(matches!(
+                source,
+                SchemaSelectFieldFileError::MixedEntries(_)
+            ));
         }
 
         #[test]
@@ -1634,9 +1672,9 @@ mod tests {
             let errors = parser.finish(&opts);
 
             let error = errors.first().expect("expected error");
-            assert!(matches!(error, SchemaFieldParserError::SelectValues {
-                source: SelectValuesError::ValuesFile {
-                    source: SelectValuesFileError::BadExtension(_),
+            assert!(matches!(error, SchemaFieldParserError::SelectValue {
+                source: SchemaSelectFieldValueError::ValuesFile {
+                    source: SchemaSelectFieldFileError::BadExtension(_),
                     ..
                 },
                 ..
@@ -1658,8 +1696,8 @@ mod tests {
             let errors = parser.finish(&opts);
 
             let error = errors.first().expect("expected error");
-            assert!(matches!(error, SchemaFieldParserError::SelectValues {
-                source: SelectValuesError::MissingPath,
+            assert!(matches!(error, SchemaFieldParserError::SelectValue {
+                source: SchemaSelectFieldValueError::MissingPath,
                 ..
             }));
         }
@@ -1682,10 +1720,17 @@ mod tests {
             let error = errors.first().expect("expected error");
             assert!(matches!(
                 error,
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::PathNotString { value },
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::Entry {
+                        path: None,
+                        source: SchemaSelectFieldEntryError::ShapeMismatch {
+                            context,
+                            value,
+                            ..
+                        },
+                    },
                     ..
-                } if value == "Int(1)"
+                } if context == "the \"path\" attribute" && value == "Int(1)"
             ));
         }
 
@@ -1713,7 +1758,7 @@ mod tests {
             let (path, source) =
                 values_file_error(error).expect("values-file error");
             assert_eq!(path, "missing.json");
-            assert!(matches!(source, SelectValuesFileError::Io(_)));
+            assert!(matches!(source, SchemaSelectFieldFileError::Io(_)));
         }
 
         #[test]
@@ -1742,7 +1787,7 @@ mod tests {
             let (path, source) =
                 values_file_error(error).expect("values-file error");
             assert_eq!(path, "bad.toml");
-            assert!(matches!(source, SelectValuesFileError::ParseToml(_)));
+            assert!(matches!(source, SchemaSelectFieldFileError::ParseToml(_)));
         }
 
         #[test]
@@ -1768,9 +1813,9 @@ mod tests {
             let errors = parser.finish(&opts);
 
             let error = errors.first().expect("expected error");
-            assert!(matches!(error, SchemaFieldParserError::SelectValues {
-                source: SelectValuesError::ValuesFile {
-                    source: SelectValuesFileError::MissingEntries,
+            assert!(matches!(error, SchemaFieldParserError::SelectValue {
+                source: SchemaSelectFieldValueError::ValuesFile {
+                    source: SchemaSelectFieldFileError::MissingEntries,
                     ..
                 },
                 ..
@@ -1801,9 +1846,9 @@ mod tests {
             let errors = parser.finish(&opts);
 
             let error = errors.first().expect("expected error");
-            assert!(matches!(error, SchemaFieldParserError::SelectValues {
-                source: SelectValuesError::ValuesFile {
-                    source: SelectValuesFileError::ParseJson(_),
+            assert!(matches!(error, SchemaFieldParserError::SelectValue {
+                source: SchemaSelectFieldValueError::ValuesFile {
+                    source: SchemaSelectFieldFileError::ParseJson(_),
                     ..
                 },
                 ..
@@ -1865,11 +1910,41 @@ mod tests {
             let error = errors.first().expect("expected error");
             assert!(matches!(
                 error,
-                SchemaFieldParserError::SelectValues {
-                    source: SelectValuesError::ValuesFile { path, .. },
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::ValuesFile { path, .. },
                     ..
                 } if path == "../outside.json"
             ));
+        }
+
+        #[test]
+        fn accepts_an_external_file_with_a_truly_empty_entries_list() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json_path = temp.path().join("items.json");
+            std::fs::write(&json_path, "{\"entries\": []}")
+                .expect("write json");
+
+            let cache = SelectValuesFileCache::new(temp.path());
+
+            let mut subtable = IndexMap::new();
+            subtable.insert(
+                "path".to_owned(),
+                FieldValue::String("items.json".to_owned()),
+            );
+            let opts = options(&[("values", FieldValue::Object(subtable))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+
+            let field_type =
+                SchemaSelectField::parse(&cache, &mut parser, &opts, None);
+            let errors = parser.finish(&opts);
+
+            assert!(errors.is_empty());
+            let def = select_field(&field_type).expect("expected select field");
+            assert!(def.values().is_empty());
         }
     }
 
@@ -1942,6 +2017,38 @@ mod tests {
             let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
+            assert_eq!(field_type, SchemaFieldType::Select(Arc::new(base)));
+        }
+
+        #[test]
+        fn reverts_to_base_values_rather_than_dropping_them_on_a_parse_error() {
+            let base = SchemaSelectField::for_test(vec![
+                SchemaSelectFieldEntry::literal("old".to_owned()),
+            ]);
+            let opts = options(&[(
+                "values",
+                FieldValue::List(vec![FieldValue::Int(1), FieldValue::Int(2)]),
+            )]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            let cache = SelectValuesFileCache::for_test();
+
+            let field_type = SchemaSelectField::parse(
+                &cache,
+                &mut parser,
+                &opts,
+                Some(&base),
+            );
+            let errors = parser.finish(&opts);
+
+            assert_eq!(errors.len(), 1);
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::TypeMismatch { .. }
+            ));
             assert_eq!(field_type, SchemaFieldType::Select(Arc::new(base)));
         }
     }

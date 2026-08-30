@@ -2,6 +2,13 @@
 //! [`SchemaFieldBuilder`](super::SchemaFieldBuilder) and
 //! [`SchemaFieldParser`](super::parser::SchemaFieldParser)'s own failure modes.
 //!
+//! [`SchemaFieldParserError`] is the single per-key validation vocabulary
+//! every field type's parser pushes through: `number`'s
+//! [`SchemaFieldParserError::NumberConstraint`]/
+//! [`SchemaFieldParserError::NumberRange`] and `select`'s
+//! [`SchemaFieldParserError::SelectValue`] are field-specific variants on this
+//! one enum, not a parallel error tree.
+//!
 //! Both types are only ever constructed and matched within [`super`]; the only
 //! outside touch is [`SchemaFieldBuilderError`] wrapping into
 //! [`SchemaError::FieldBuilder`](super::super::error::SchemaError::FieldBuilder)
@@ -56,6 +63,11 @@ pub(crate) enum SchemaFieldBuilderError {
 
 /// One per-key validation failure from parsing a field type's `options`.
 ///
+/// Every field type pushes through this one vocabulary — `select`'s
+/// [`Self::SelectValue`] wraps [`SchemaSelectFieldValueError`] the same way
+/// `number`'s [`Self::NumberConstraint`]/[`Self::NumberRange`] are flat
+/// siblings here, not a second parser-error hierarchy.
+///
 /// Converts into:
 /// - [`SchemaFieldBuilderError::Parser`] (hard failure) for `Direct` fields and
 ///   `$ref` with a `type` override.
@@ -105,43 +117,61 @@ pub(crate) enum SchemaFieldParserError {
     },
     /// `select`/`multi` values configuration is invalid.
     #[error("field {address} {source}")]
-    SelectValues {
+    SelectValue {
         address: FieldAddress,
         #[source]
-        source: SelectValuesError,
+        source: SchemaSelectFieldValueError,
     },
 }
 
 /// A validation failure inside a `select`/`multi` values definition.
+///
+/// Reuses [`SchemaSelectFieldEntryError::ShapeMismatch`] for every "this must
+/// be {expected}, got {value}" failure (a file's `path`, a selector name, a
+/// selected entry value, an `order` value) instead of a bespoke variant per
+/// selector — the shape is always the same, only the description of what was
+/// checked varies.
 #[derive(Debug, Error)]
-pub(crate) enum SelectValuesError {
-    /// A values file failed confinement, extension, I/O, parsing, or shape
-    /// validation.
+pub(crate) enum SchemaSelectFieldValueError {
+    /// A file subtable omitted its required `path` attribute.
+    #[error("values file subtable is missing required attribute \"path\"")]
+    MissingPath,
+    /// An entry has a shape or selector problem, whether declared inline in
+    /// the field's own `values` list or loaded from an external file —
+    /// `path` names which (`None` for inline).
+    #[error(
+        "{}",
+        path.as_deref().map_or_else(
+            || source.to_string(),
+            |path| format!("values file {path:?}: {source}"),
+        )
+    )]
+    Entry {
+        path: Option<String>,
+        #[source]
+        source: SchemaSelectFieldEntryError,
+    },
+    /// The referenced values file itself could not be confined, read,
+    /// parsed, or has the wrong top-level shape.
     #[error("values file {path:?} is invalid: {source}")]
     ValuesFile {
         path: String,
         #[source]
-        source: SelectValuesFileError,
+        source: SchemaSelectFieldFileError,
     },
-    /// A file subtable omitted its required `path` attribute.
-    #[error("values file subtable is missing required attribute \"path\"")]
-    MissingPath,
-    /// A file subtable's `path` attribute was not a string.
-    #[error(
-        "values file subtable's \"path\" attribute must be a string, got \
-         {value}"
-    )]
-    PathNotString {
+}
+
+/// One entry's shape or selector failure.
+/// [`SchemaSelectFieldValueError::Entry`] carries whether the entry was inline
+/// or loaded from a file — this type doesn't need to know.
+#[derive(Debug, Error)]
+pub(crate) enum SchemaSelectFieldEntryError {
+    /// A selector's or entry key's value has the wrong shape.
+    #[error("{context} must be {expected}, got {value}")]
+    ShapeMismatch {
+        context: String,
         value: String,
-    },
-    /// A file subtable selector was not a string.
-    #[error(
-        "values file subtable's selector {selector:?} must be a string, got \
-         {value}"
-    )]
-    SelectorNotString {
-        selector: &'static str,
-        value: String,
+        expected: &'static str,
     },
     /// A selector key was specified on bare string entries.
     #[error(
@@ -160,25 +190,6 @@ pub(crate) enum SelectValuesError {
         selector: &'static str,
         key: String,
     },
-    /// A selected entry key was not a string.
-    #[error(
-        "configures selector {selector:?} = {key:?}, but that entry value \
-         must be a string, got {value}"
-    )]
-    SelectedValueNotString {
-        selector: &'static str,
-        key: String,
-        value: String,
-    },
-    /// A selected order key was not numeric.
-    #[error(
-        "configures selector \"order\" = {key:?}, but that entry value must \
-         be a number, got {value}"
-    )]
-    OrderNotNumber {
-        key: String,
-        value: String,
-    },
     /// An entry includes a passthrough key reserved by rendered select output.
     #[error(
         "entry key {key:?} is reserved for rendered select output; choose \
@@ -189,96 +200,44 @@ pub(crate) enum SelectValuesError {
     },
 }
 
-/// Errors encountered while loading or parsing an external values file.
+/// Why the file backing a `select`/`multi` values subtable could not be
+/// loaded.
 #[derive(Debug, Error)]
-pub(crate) enum SelectValuesFileError {
+pub(crate) enum SchemaSelectFieldFileError {
     /// The values file path escaped the schema directory or contained unsafe
     /// components.
     #[error(transparent)]
     Confinement(#[from] PathError),
-
     /// An I/O error occurred while reading the values file.
     #[error("failed to read values file: {0}")]
     Io(#[from] std::io::Error),
-
     /// A TOML values file failed to parse.
     #[error("failed to parse TOML values file: {0}")]
     ParseToml(#[from] Box<toml::de::Error>),
-
     /// A JSON values file failed to parse.
     #[error("failed to parse JSON values file: {0}")]
     ParseJson(#[from] Box<serde_json::Error>),
-
     /// The values file path has an unsupported extension.
     #[error("unsupported values file extension {0:?} (must be .toml or .json)")]
     BadExtension(String),
-
     /// The values file is missing the top-level `entries` list.
     #[error("values file missing top-level 'entries' list")]
     MissingEntries,
-
     /// The values file's `entries` list mixed incompatible entry shapes.
     #[error(
         "entries must be a list of strings or a list of value objects, got {0}"
     )]
     MixedEntries(String),
-
-    #[error(transparent)]
-    Entry(Box<SelectValuesError>),
 }
 
 impl From<SchemaFieldParserError> for SchemaWarning {
+    /// Stringifies the wrapped error rather than re-deriving a parallel
+    /// `SchemaWarning` variant per `SchemaFieldParserError` variant: a
+    /// degraded `$ref` override reports the exact same failure a hard error
+    /// would, plus "using the base value instead".
     fn from(error: SchemaFieldParserError) -> Self {
-        match error {
-            SchemaFieldParserError::UnknownKey {
-                address,
-                kind,
-                key,
-            } => Self::UnknownOverrideKey {
-                address,
-                kind,
-                key,
-            },
-            SchemaFieldParserError::TypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            } => Self::OverrideValueTypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            },
-            SchemaFieldParserError::NumberConstraint {
-                address,
-                key,
-                value,
-                expected,
-            } => Self::InvalidNumberOverride {
-                address,
-                key,
-                value,
-                expected,
-            },
-            SchemaFieldParserError::NumberRange {
-                address,
-                min,
-                max,
-            } => Self::InvalidNumberRangeOverride {
-                address,
-                min,
-                max,
-            },
-            SchemaFieldParserError::SelectValues {
-                address,
-                source,
-            } => Self::SelectValuesOverrideDegraded {
-                address,
-                error: source.to_string(),
-            },
+        Self::DegradedOverride {
+            message: error.to_string(),
         }
     }
 }
@@ -328,13 +287,16 @@ mod tests {
         }
 
         #[test]
-        fn select_values_formats_display_message() {
-            let error = SchemaFieldParserError::SelectValues {
+        fn select_value_formats_display_message_for_an_inline_entry() {
+            let error = SchemaFieldParserError::SelectValue {
                 address: FieldAddress::try_from("#book/status")
                     .expect("valid ref"),
-                source: SelectValuesError::SelectorMissingKey {
-                    selector: "label",
-                    key: "name".to_owned(),
+                source: SchemaSelectFieldValueError::Entry {
+                    path: None,
+                    source: SchemaSelectFieldEntryError::SelectorMissingKey {
+                        selector: "label",
+                        key: "name".to_owned(),
+                    },
                 },
             };
 
@@ -346,25 +308,216 @@ mod tests {
         }
 
         #[test]
-        fn values_file_entry_formats_display_message_with_path() {
-            let error = SchemaFieldParserError::SelectValues {
+        fn select_value_formats_display_message_for_a_file_entry_with_path() {
+            let error = SchemaFieldParserError::SelectValue {
                 address: FieldAddress::try_from("#book/status")
                     .expect("valid ref"),
-                source: SelectValuesError::ValuesFile {
+                source: SchemaSelectFieldValueError::Entry {
+                    path: Some("values/statuses.json".to_owned()),
+                    source: SchemaSelectFieldEntryError::ReservedOutputKey {
+                        key: "value".to_owned(),
+                    },
+                },
+            };
+
+            assert_display(
+                &error,
+                "field #book/status values file \"values/statuses.json\": \
+                 entry key \"value\" is reserved for rendered select output; \
+                 choose another source key or selector",
+            );
+        }
+
+        #[test]
+        fn select_value_reuses_shape_mismatch_for_every_wrong_typed_selector() {
+            // One variant covers what used to be four (`PathNotString`,
+            // `SelectorNotString`, `SelectedValueNotString`, `OrderNotNumber`).
+            let error = SchemaFieldParserError::SelectValue {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                source: SchemaSelectFieldValueError::Entry {
+                    path: None,
+                    source: SchemaSelectFieldEntryError::ShapeMismatch {
+                        context: "selector \"order\" = \"rank\"".to_owned(),
+                        value: "\"first\"".to_owned(),
+                        expected: "a number",
+                    },
+                },
+            };
+
+            assert_display(
+                &error,
+                "field #book/status selector \"order\" = \"rank\" must be a \
+                 number, got \"first\"",
+            );
+        }
+
+        #[test]
+        fn number_constraint_formats_display_message() {
+            let error = SchemaFieldParserError::NumberConstraint {
+                address: FieldAddress::try_from("#book/rating")
+                    .expect("valid ref"),
+                key: "step".to_owned(),
+                value: "0".to_owned(),
+                expected: "positive",
+            };
+
+            assert_display(
+                &error,
+                "field #book/rating of type number's \"step\" attribute must \
+                 be positive, got 0",
+            );
+        }
+
+        #[test]
+        fn number_range_formats_display_message() {
+            let error = SchemaFieldParserError::NumberRange {
+                address: FieldAddress::try_from("#book/rating")
+                    .expect("valid ref"),
+                min: "10".to_owned(),
+                max: "1".to_owned(),
+            };
+
+            assert_display(
+                &error,
+                "field #book/rating of type number's \"min\" attribute must \
+                 be <= \"max\", got min 10 and max 1",
+            );
+        }
+
+        #[test]
+        fn select_value_formats_display_message_for_a_missing_path() {
+            let error = SchemaFieldParserError::SelectValue {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                source: SchemaSelectFieldValueError::MissingPath,
+            };
+
+            assert_display(
+                &error,
+                "field #book/status values file subtable is missing required \
+                 attribute \"path\"",
+            );
+        }
+
+        #[test]
+        fn select_value_formats_display_message_for_a_bad_values_file() {
+            let error = SchemaFieldParserError::SelectValue {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                source: SchemaSelectFieldValueError::ValuesFile {
                     path: "values/statuses.json".to_owned(),
-                    source: SelectValuesFileError::Entry(Box::new(
-                        SelectValuesError::ReservedOutputKey {
-                            key: "value".to_owned(),
-                        },
-                    )),
+                    source: SchemaSelectFieldFileError::MissingEntries,
                 },
             };
 
             assert_display(
                 &error,
                 "field #book/status values file \"values/statuses.json\" is \
-                 invalid: entry key \"value\" is reserved for rendered select \
-                 output; choose another source key or selector",
+                 invalid: values file missing top-level 'entries' list",
+            );
+        }
+    }
+
+    mod schema_select_field_entry_error {
+        use super::{super::*, assert_display};
+
+        #[test]
+        fn selector_on_bare_entries_formats_display_message() {
+            let error = SchemaSelectFieldEntryError::SelectorOnBareEntries {
+                selector: "label",
+            };
+
+            assert_display(
+                &error,
+                "configures selector \"label\" but entries contain bare \
+                 string values",
+            );
+        }
+    }
+
+    mod schema_select_field_file_error {
+        use super::{super::*, assert_display};
+
+        #[test]
+        fn confinement_delegates_display_to_the_path_error() {
+            let error =
+                SchemaSelectFieldFileError::Confinement(PathError::Absolute);
+
+            assert_display(
+                &error,
+                "path is absolute, expected a relative path",
+            );
+        }
+
+        #[test]
+        fn io_formats_display_message() {
+            let error =
+                SchemaSelectFieldFileError::Io(std::io::Error::other("denied"));
+
+            assert_display(&error, "failed to read values file: denied");
+        }
+
+        #[test]
+        fn parse_toml_formats_display_message() {
+            let source = "not valid toml".parse::<toml::Value>().unwrap_err();
+            let error = SchemaSelectFieldFileError::ParseToml(Box::new(source));
+
+            let message = error.to_string();
+            assert!(
+                message.starts_with("failed to parse TOML values file: "),
+                "expected message to open with the TOML context, got: \
+                 {message:?}"
+            );
+        }
+
+        #[test]
+        fn parse_json_formats_display_message() {
+            let source = serde_json::from_str::<serde_json::Value>("not json")
+                .unwrap_err();
+            let error = SchemaSelectFieldFileError::ParseJson(Box::new(source));
+
+            let message = error.to_string();
+            assert!(
+                message.starts_with("failed to parse JSON values file: "),
+                "expected message to open with the JSON context, got: \
+                 {message:?}"
+            );
+        }
+
+        #[test]
+        fn bad_extension_formats_display_message() {
+            let error = SchemaSelectFieldFileError::BadExtension(
+                "values.yaml".to_owned(),
+            );
+
+            assert_display(
+                &error,
+                "unsupported values file extension \"values.yaml\" (must be \
+                 .toml or .json)",
+            );
+        }
+
+        #[test]
+        fn missing_entries_formats_display_message() {
+            let error = SchemaSelectFieldFileError::MissingEntries;
+
+            assert_display(
+                &error,
+                "values file missing top-level 'entries' list",
+            );
+        }
+
+        #[test]
+        fn mixed_entries_formats_display_message() {
+            let error = SchemaSelectFieldFileError::MixedEntries(
+                "a mix of strings and objects".to_owned(),
+            );
+
+            assert_display(
+                &error,
+                "entries must be a list of strings or a list of value \
+                 objects, got a mix of strings and objects",
             );
         }
     }
@@ -373,57 +526,35 @@ mod tests {
         use super::super::*;
 
         #[test]
-        fn parser_unknown_key_converts_to_unknown_override_key_warning() {
+        fn stringifies_the_wrapped_error_instead_of_re_deriving_a_variant() {
             let error = SchemaFieldParserError::UnknownKey {
                 address: FieldAddress::try_from("#sci_fi/cover")
                     .expect("valid ref"),
                 kind: SchemaFieldTypeTag::Date,
                 key: "values".to_owned(),
             };
+            let expected_message = error.to_string();
 
             let warning = SchemaWarning::from(error);
 
             assert!(matches!(
                 warning,
-                SchemaWarning::UnknownOverrideKey {
-                    ref key,
-                    ..
-                } if key == "values"
+                SchemaWarning::DegradedOverride { ref message }
+                    if *message == expected_message
             ));
         }
 
         #[test]
-        fn parser_type_mismatch_converts_to_override_value_type_mismatch_warning()
-         {
-            let error = SchemaFieldParserError::TypeMismatch {
-                address: FieldAddress::try_from("#sci_fi/rating")
-                    .expect("valid ref"),
-                kind: SchemaFieldTypeTag::Number,
-                key: "min".to_owned(),
-                value: "\"abc\"".to_owned(),
-                expected: "a number",
-            };
-
-            let warning = SchemaWarning::from(error);
-
-            assert!(matches!(
-                warning,
-                SchemaWarning::OverrideValueTypeMismatch {
-                    ref key,
-                    expected,
-                    ..
-                } if key == "min" && expected == "a number"
-            ));
-        }
-
-        #[test]
-        fn select_values_error_converts_to_select_values_override_warning() {
-            let error = SchemaFieldParserError::SelectValues {
+        fn select_value_error_converts_through_the_same_path_as_any_other() {
+            let error = SchemaFieldParserError::SelectValue {
                 address: FieldAddress::try_from("#sci_fi/status")
                     .expect("valid ref"),
-                source: SelectValuesError::SelectorMissingKey {
-                    selector: "label",
-                    key: "label".to_owned(),
+                source: SchemaSelectFieldValueError::Entry {
+                    path: None,
+                    source: SchemaSelectFieldEntryError::SelectorMissingKey {
+                        selector: "label",
+                        key: "label".to_owned(),
+                    },
                 },
             };
 
@@ -431,10 +562,8 @@ mod tests {
 
             assert!(matches!(
                 warning,
-                SchemaWarning::SelectValuesOverrideDegraded {
-                    error: ref message,
-                    ..
-                } if message.contains("selector \"label\"")
+                SchemaWarning::DegradedOverride { ref message }
+                    if message.contains("selector \"label\"")
             ));
         }
     }

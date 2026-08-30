@@ -50,7 +50,10 @@ pub(super) struct SchemaGraph<'a> {
     adjacency: SchemaAdjacency<'a>,
     /// Resolved Schemas in topological order (parents before children;
     /// simultaneous roots in raw-map insertion order).
-    topological_order: IndexSet<SchemaNameRef<'a>>,
+    topo_order: IndexSet<SchemaNameRef<'a>>,
+    /// Topological rank per node, computed once by
+    /// `SchemaGraphBuilder::build`.
+    topo_rank: Vec<u32>,
 }
 
 impl<'a> SchemaGraph<'a> {
@@ -58,7 +61,7 @@ impl<'a> SchemaGraph<'a> {
     pub(super) fn topological_order(
         &self,
     ) -> impl Iterator<Item = SchemaNameRef<'a>> + '_ {
-        self.topological_order.iter().copied()
+        self.topo_order.iter().copied()
     }
 
     /// Borrows `name`'s raw `extends` parent list. Returns an empty slice if
@@ -127,13 +130,12 @@ impl<'a> SchemaGraph<'a> {
     /// already sorted `child_targets` into.
     fn descendant_indices(&self) -> Vec<Vec<DenseIndex>> {
         let count = self.adjacency.node_count();
-        let topo_rank =
-            self.adjacency.compute_topo_rank(&self.topological_order);
 
         // Leaves first, roots last: each child's closure is already finalized
         // (later topological position) before its parent runs.
-        let mut accumulator = DescendantAccumulator::new(count, topo_rank);
-        for &name in self.topological_order.iter().rev() {
+        let mut accumulator =
+            DescendantAccumulator::new(count, &self.topo_rank);
+        for &name in self.topo_order.iter().rev() {
             let Some(node) = self.adjacency.index_of(name) else {
                 continue;
             };
@@ -150,18 +152,18 @@ impl<'a> SchemaGraph<'a> {
 /// `seen` is scratch, cleared before each `accumulate` call returns, so
 /// deduplication costs `O(|descendants(node)|)` rather than a full-array clear
 /// per node.
-struct DescendantAccumulator {
+struct DescendantAccumulator<'b> {
     seen: bit_vec::BitVec,
     /// Descendant list per node, finalized once every node has been swept
     /// (leaves first).
     descendants: Vec<Vec<DenseIndex>>,
     /// Topological rank per node, used to keep each finalized descendant list
     /// in globally topological order.
-    rank: Vec<u32>,
+    rank: &'b [u32],
 }
 
-impl DescendantAccumulator {
-    fn new(node_count: usize, rank: Vec<u32>) -> Self {
+impl<'b> DescendantAccumulator<'b> {
+    fn new(node_count: usize, rank: &'b [u32]) -> Self {
         Self {
             seen: bit_vec::BitVec::from_elem(node_count, false),
             descendants: vec![Vec::new(); node_count],
@@ -183,7 +185,7 @@ impl DescendantAccumulator {
         }
         // Required: without this, node_descendants' order is
         // child-processing-interleaved, not globally topological.
-        let rank = &self.rank;
+        let rank = self.rank;
         node_descendants
             .sort_by_key(|d| rank.get(d.index()).copied().unwrap_or(u32::MAX));
         for &descendant in &node_descendants {
@@ -463,24 +465,35 @@ mod tests {
         }
 
         #[test]
-        fn preserves_declaration_order_in_descendant_sets() {
-            // Raw schemas are declared as: thing, book, film, adaptation
-            // adaptation extends book and film.
-            // The descendant set for "thing" must list names in the order
-            // they appear in the raw index, not in BFS traversal order.
+        fn orders_descendants_by_topological_rank_not_raw_declaration_order() {
+            // `sci_fi` is declared before `book` but extends both `thing`
+            // and `book`, so it can only reach topological rank 2 (after
+            // `book`'s rank 1). `descendant_indices`'s accumulator must
+            // sort `thing`'s descendants by that rank, not by the order
+            // `sci_fi`/`book` were pushed while walking the raw map.
+            //
+            // `IndexSet`'s `PartialEq` compares as a set and ignores
+            // order (`self.len() == other.len() && self.is_subset(other)`),
+            // so this asserts against a `Vec` collected in iteration
+            // order — an `assert_eq!` against another `IndexSet` here
+            // would silently pass even if the sort were removed.
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
+            raw.insert(SchemaName::from("sci_fi"), schema(&["thing", "book"]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
-            raw.insert(SchemaName::from("film"), schema(&["thing"]));
-            raw.insert(
-                SchemaName::from("adaptation"),
-                schema(&["book", "film"]),
-            );
             let graph = build_graph(&raw);
 
+            let descendants: Vec<String> = hierarchy_for(&graph, "thing")
+                .1
+                .iter()
+                .map(|name| name.as_str().to_owned())
+                .collect();
+
             assert_eq!(
-                hierarchy_for(&graph, "thing").1,
-                set(&["adaptation", "book", "film"])
+                descendants,
+                vec!["book".to_owned(), "sci_fi".to_owned()],
+                "descendants must be in topological-rank order (book before \
+                 sci_fi), not raw declaration order (sci_fi before book)"
             );
         }
     }

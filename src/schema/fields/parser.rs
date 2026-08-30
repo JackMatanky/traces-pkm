@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use super::{
     SchemaFieldTypeTag,
     address::{FieldAddress, FieldAddressRef},
-    error::{SchemaFieldParserError, SelectValuesError},
+    error::{SchemaFieldParserError, SchemaSelectFieldValueError},
 };
 use crate::field::FieldValue;
 
@@ -93,11 +93,11 @@ impl<'a> SchemaFieldParser<'a> {
     }
 
     /// Pushes a `select`/`multi` values-specific parser error.
-    pub(super) fn push_select_values_error(
+    pub(super) fn push_select_value_error(
         &mut self,
-        source: SelectValuesError,
+        source: SchemaSelectFieldValueError,
     ) {
-        self.errors.push(SchemaFieldParserError::SelectValues {
+        self.errors.push(SchemaFieldParserError::SelectValue {
             address: FieldAddress::from(self.address),
             source,
         });
@@ -733,6 +733,187 @@ mod tests {
             assert!(matches!(
                 errors.first().expect("expected error"),
                 SchemaFieldParserError::UnknownKey { key, .. } if key == "extra"
+            ));
+        }
+    }
+
+    mod raw_value {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_the_raw_unparsed_value_for_a_present_key() {
+            let opts = options(&[("name", FieldValue::Int(5))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+
+            let result = parser.raw_value(&opts, "name");
+
+            assert_eq!(result, Some(&FieldValue::Int(5)));
+        }
+
+        #[test]
+        fn returns_none_for_an_absent_key() {
+            let opts = IndexMap::new();
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+
+            assert_eq!(parser.raw_value(&opts, "missing"), None);
+        }
+
+        #[test]
+        fn claims_the_key_so_finish_does_not_flag_it_as_unknown() {
+            let opts = options(&[("name", FieldValue::Int(5))]);
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+            let _ = parser.raw_value(&opts, "name");
+
+            assert!(parser.finish(&opts).is_empty());
+        }
+    }
+
+    mod error_tracking {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn mark_errors_starts_at_zero() {
+            let addr = address();
+            let parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+
+            assert_eq!(parser.mark_errors(), 0);
+        }
+
+        #[test]
+        fn has_errors_since_is_false_when_nothing_was_pushed_after_the_mark() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+            parser.push_unknown_key("first");
+            let mark = parser.mark_errors();
+
+            assert!(!parser.has_errors_since(mark));
+        }
+
+        #[test]
+        fn has_errors_since_is_true_after_a_push_following_the_mark() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+            let mark = parser.mark_errors();
+            parser.push_unknown_key("late");
+
+            assert!(parser.has_errors_since(mark));
+        }
+    }
+
+    mod error_pushes {
+        use super::*;
+
+        #[test]
+        fn push_unknown_key_records_the_key_and_field_tag() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+            parser.push_unknown_key("bogus");
+
+            let errors = parser.finish(&IndexMap::new());
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::UnknownKey { key, .. }
+                    if key == "bogus"
+            ));
+        }
+
+        #[test]
+        fn push_type_mismatch_records_the_expected_shape() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
+            parser.push_type_mismatch("min", &"abc", "a number");
+
+            let errors = parser.finish(&IndexMap::new());
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::TypeMismatch { expected, .. }
+                    if *expected == "a number"
+            ));
+        }
+
+        #[test]
+        fn push_number_constraint_records_the_key_and_expected_shape() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Number,
+            );
+            parser.push_number_constraint("step", 0.0, "positive");
+
+            let errors = parser.finish(&IndexMap::new());
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::NumberConstraint { key, expected, .. }
+                    if key == "step" && *expected == "positive"
+            ));
+        }
+
+        #[test]
+        fn push_number_range_records_min_and_max() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Number,
+            );
+            parser.push_number_range(10.0, 1.0);
+
+            let errors = parser.finish(&IndexMap::new());
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::NumberRange { min, max, .. }
+                    if min == "10" && max == "1"
+            ));
+        }
+
+        #[test]
+        fn push_select_value_error_wraps_the_source_error() {
+            let addr = address();
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Select,
+            );
+            parser.push_select_value_error(
+                SchemaSelectFieldValueError::MissingPath,
+            );
+
+            let errors = parser.finish(&IndexMap::new());
+            assert!(matches!(
+                errors.first().expect("expected error"),
+                SchemaFieldParserError::SelectValue {
+                    source: SchemaSelectFieldValueError::MissingPath,
+                    ..
+                }
             ));
         }
     }

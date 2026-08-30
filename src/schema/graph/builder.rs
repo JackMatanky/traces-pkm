@@ -103,7 +103,8 @@ impl<'a> SchemaGraphBuilder<'a> {
 
         Ok(SchemaGraph {
             adjacency: self.adjacency,
-            topological_order: self.visited,
+            topo_order: self.visited,
+            topo_rank,
         })
     }
 
@@ -179,5 +180,20 @@ mod tests {
         let order: Vec<SchemaNameRef<'_>> = graph.topological_order().collect();
         assert!(order.contains(&SchemaNameRef::from("book")));
         assert!(!order.contains(&SchemaNameRef::from(GLOBAL_SCHEMA_NAME)));
+    }
+
+    #[test]
+    fn build_returns_cyclic_schema_names_when_the_extends_dag_has_a_cycle() {
+        let mut raw = IndexMap::new();
+        raw.insert(SchemaName::from("a"), schema(&["b"]));
+        raw.insert(SchemaName::from("b"), schema(&["a"]));
+        let (builder, _warnings) = SchemaGraphBuilder::new(
+            &raw,
+            SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+        );
+
+        let err = builder.build().expect_err("cyclic dag rejected");
+
+        assert_eq!(err, vec![SchemaName::from("a"), SchemaName::from("b")]);
     }
 }
