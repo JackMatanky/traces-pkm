@@ -376,9 +376,9 @@ mod tests {
     }
 
     fn schema_ops(directory: &Path) -> SchemaOps {
-        let (service, _, _) =
-            SchemaService::new(directory).expect("valid test schema directory");
-        SchemaOps::new(Arc::new(service))
+        SchemaOps::new(Arc::new(
+            SchemaService::new(directory).expect("valid test schema directory"),
+        ))
     }
 
     fn render(directory: &Path, source: &str) -> Result<String, Error> {
@@ -394,9 +394,9 @@ mod tests {
         let root: Arc<Path> = Arc::from(
             directory.parent().and_then(Path::parent).unwrap_or(directory),
         );
-        let (service, _, _) =
-            SchemaService::new(directory).expect("valid test schema directory");
-        let service = Arc::new(service);
+        let service = Arc::new(
+            SchemaService::new(directory).expect("valid test schema directory"),
+        );
         let class_field: Arc<str> = Arc::from("class");
         let mut env = Environment::new();
         crate::template::engine::QueryOps::page(

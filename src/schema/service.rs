@@ -10,7 +10,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use super::{
     RawSchema, SchemaName,
-    builder::{SchemaBuilder, SchemaFailure},
+    builder::{ResolvedSchemas, SchemaBuilder, SchemaFailure},
     error::{SchemaError, SchemaWarning},
     fields::SchemaFieldBuildContext,
     model::Schema,
@@ -27,20 +27,46 @@ pub struct SchemaService {
     schemas: IndexMap<SchemaName, Arc<Schema>>,
 }
 
-/// The triple [`SchemaService::new`] returns: the constructed service,
-/// accumulated resolution warnings, and per-Schema build failures.
-type SchemaConstruction =
-    (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>);
-
 impl SchemaService {
     /// Load every Schema TOML file under `directory` and resolve their
     /// effective fields, building a single read-only [`SchemaService`].
     ///
-    /// The `extends` DAG is linearized and each Schema's fields are merged
-    /// from its parents. A missing directory resolves to an empty registry.
-    /// Per-Schema [`SchemaError`]s exclude that Schema from the result;
-    /// its dependents still resolve without its fields
-    /// ([`ParentFailedToResolve`]).
+    /// A missing directory resolves to an empty registry. Recoverable warnings
+    /// and per-Schema failures are discarded; use [`Self::load_verbose`] when
+    /// the caller must report them.
+    ///
+    /// # Errors
+    ///
+    /// - [`ReadDirectory`] if the registry directory exists but cannot be
+    ///   listed.
+    /// - [`ReadFile`] if a `.toml` file cannot be read.
+    /// - [`Parse`] if a Schema file's TOML is malformed.
+    /// - [`Cycle`] if the `extends` DAG contains a cycle.
+    ///
+    /// [`ReadDirectory`]: SchemaError::ReadDirectory
+    /// [`ReadFile`]: SchemaError::ReadFile
+    /// [`Parse`]: SchemaError::Parse
+    /// [`Cycle`]: SchemaError::Cycle
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "callers that need diagnostics use load_verbose; \
+                      test-utils and future non-diagnostic callers use this \
+                      simpler seam"
+        )
+    )]
+    pub(crate) fn new(directory: &Path) -> Result<Self, SchemaError> {
+        Ok(Self::load_verbose(directory)?.service)
+    }
+
+    /// Load every Schema TOML file under `directory`, returning recoverable
+    /// construction diagnostics alongside the resolved service.
+    ///
+    /// The `extends` DAG is linearized and each Schema's fields are merged from
+    /// its parents. A missing directory resolves to an empty registry.
+    /// Per-Schema [`SchemaError`]s exclude that Schema from the result; its
+    /// dependents still resolve without its fields ([`ParentFailedToResolve`]).
     ///
     /// # Errors
     ///
@@ -55,24 +81,13 @@ impl SchemaService {
     /// [`Parse`]: SchemaError::Parse
     /// [`Cycle`]: SchemaError::Cycle
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
-    pub(crate) fn new(
+    pub(crate) fn load_verbose(
         directory: &Path,
     ) -> Result<SchemaConstruction, SchemaError> {
         let raw = read_raw_schemas(directory)?;
         let field_context = SchemaFieldBuildContext::new(directory);
         let resolved = SchemaBuilder::new(&raw, &field_context).build()?;
-        let schemas = resolved
-            .schemas
-            .into_iter()
-            .map(|(name, schema)| (name, Arc::new(schema)))
-            .collect();
-        Ok((
-            Self {
-                schemas,
-            },
-            resolved.warnings,
-            resolved.failures,
-        ))
+        Ok(SchemaConstruction::from_resolved(resolved))
     }
 
     /// Return a reference to the named Schema, or `None` if no Schema by that
@@ -188,8 +203,8 @@ impl SchemaService {
     ///
     /// Integration-test and bench entry point; production code should use
     /// [`SchemaService::new`] directly. Warnings and per-Schema build failures
-    /// are discarded — tests that need them should use [`SchemaService::new`]
-    /// from within the crate.
+    /// are discarded — tests that need them should use
+    /// [`SchemaService::load_verbose`] from within the crate.
     ///
     /// # Errors
     ///
@@ -198,9 +213,7 @@ impl SchemaService {
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     pub fn resolve(directory: &Path) -> Result<Self, String> {
-        let (service, _warnings, _failures) =
-            Self::new(directory).map_err(|e| e.to_string())?;
-        Ok(service)
+        Self::new(directory).map_err(|e| e.to_string())
     }
 
     /// Look up a Schema by name.
@@ -296,19 +309,69 @@ fn read_raw_schemas(
     Ok(schemas)
 }
 
+/// Verbose Schema construction result, including recoverable diagnostics.
+#[derive(Debug)]
+pub(crate) struct SchemaConstruction {
+    pub(crate) service: SchemaService,
+    pub(crate) warnings: Vec<SchemaWarning>,
+    pub(crate) failures: Vec<SchemaFailure>,
+}
+
+impl SchemaConstruction {
+    fn from_resolved(resolved: ResolvedSchemas) -> Self {
+        let schemas = resolved
+            .schemas
+            .into_iter()
+            .map(|(name, schema)| (name, Arc::new(schema)))
+            .collect();
+        Self {
+            service: SchemaService {
+                schemas,
+            },
+            warnings: resolved.warnings,
+            failures: resolved.failures,
+        }
+    }
+
+    #[cfg(test)]
+    fn into_parts(
+        self,
+    ) -> (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>) {
+        (self.service, self.warnings, self.failures)
+    }
+}
+
+/// Emit construction diagnostics once, at the caller that chose verbose load.
+pub(crate) fn warn_schema_construction_diagnostics(
+    construction: &SchemaConstruction,
+) {
+    for warning in &construction.warnings {
+        tracing::warn!(%warning, "Schema registry resolved with a warning");
+    }
+    for failure in &construction.failures {
+        tracing::warn!(
+            schema = %failure.schema, error = %failure.error,
+            "Schema failed to resolve; excluded from the registry"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
 
-    type ResolveResult = Result<SchemaConstruction, SchemaError>;
+    type ResolveResult = Result<
+        (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>),
+        SchemaError,
+    >;
 
     /// Resolves every Schema TOML file directly under `dir`, mirroring the
     /// pre-refactor `SchemaRegistry::load(dir)` call shape: `dir` is used
     /// directly as the Schema directory, `root` is unused by resolution itself.
     fn resolve_dir(dir: &Path) -> ResolveResult {
-        SchemaService::new(dir)
+        SchemaService::load_verbose(dir).map(SchemaConstruction::into_parts)
     }
 
     fn write_schema(dir: &Path, name: &str, toml: &str) {
@@ -446,6 +509,47 @@ mod tests {
         }
 
         #[test]
+        fn emits_parent_failed_to_resolve_once_for_a_duplicated_failing_extends_target()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "broken",
+                r#"
+                [fields.status]
+                type = "select"
+                values = { path = "missing.json" }
+                "#,
+            );
+            write_schema(
+                temp.path(),
+                "child",
+                r#"extends = ["broken", "broken"]"#,
+            );
+
+            let (_service, warnings, _failures) =
+                resolve_dir(temp.path()).expect("registry still loads");
+
+            let parent_failed_count = warnings
+                .iter()
+                .filter(|warning| {
+                    matches!(
+                        warning,
+                        SchemaWarning::ParentFailedToResolve { schema, parent }
+                            if schema.as_str() == "child"
+                                && parent.as_str() == "broken"
+                    )
+                })
+                .count();
+            assert_eq!(
+                parent_failed_count, 1,
+                "a duplicated failing extends target must still be one \
+                 logical parent reference, not one warning per repetition: \
+                 {warnings:#?}"
+            );
+        }
+
+        #[test]
         fn rejects_a_field_with_neither_type_nor_ref_at_parse() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
@@ -572,7 +676,7 @@ mod tests {
             let schemas_dir = temp.path().join(".traces/schemas");
             fs::create_dir_all(&schemas_dir).expect("create schemas dir");
             write_schema(&schemas_dir, "book", "");
-            let (service, _, _) =
+            let service =
                 SchemaService::new(&schemas_dir).expect("registry loads");
 
             fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");

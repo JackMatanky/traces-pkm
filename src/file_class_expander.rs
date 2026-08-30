@@ -55,9 +55,7 @@ mod tests {
         write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
         write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
         write_schema(temp.path(), "space_opera", r#"extends = ["sci_fi"]"#);
-        let (service, _, _) =
-            SchemaService::new(temp.path()).expect("registry loads");
-        service
+        SchemaService::new(temp.path()).expect("registry loads")
     }
 
     fn set(names: &[&str]) -> BTreeSet<String> {

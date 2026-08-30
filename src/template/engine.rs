@@ -51,7 +51,11 @@ use self::{
 use super::{
     error::TemplateError, loader::TemplateLoader, path::DeclaredOutputPath,
 };
-use crate::{DialogProvider, config::Config, schema::SchemaService};
+use crate::{
+    DialogProvider,
+    config::Config,
+    schema::{SchemaService, warn_schema_construction_diagnostics},
+};
 
 /// Renders template source through minijinja, backed by [`TemplateLoader`]'s
 /// `{% include %}` and `{% extends %}` resolution.
@@ -119,18 +123,11 @@ impl TemplateEngine {
         // `query`/`tasks` `.from()` and `schema.get()` read the identical,
         // already-resolved `SchemaService` for this engine's whole lifetime —
         // no render-scoped re-resolution or caching.
-        let (service, warnings, failures) =
-            SchemaService::new(&config.resolved_schema_directory())?;
-        for warning in &warnings {
-            tracing::warn!(%warning, "Schema registry resolved with a warning");
-        }
-        for failure in &failures {
-            tracing::warn!(
-                schema = %failure.schema, error = %failure.error,
-                "Schema failed to resolve; excluded from the registry"
-            );
-        }
-        let service = Arc::new(service);
+        let construction =
+            SchemaService::load_verbose(&config.resolved_schema_directory())?;
+        warn_schema_construction_diagnostics(&construction);
+        let service = Arc::new(construction.service);
+
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(
             Arc::clone(&root),

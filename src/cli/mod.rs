@@ -44,7 +44,7 @@ use crate::{
     query::{
         QueryError, QueryRecordSet, QueryRequest, QueryService, SourceSelector,
     },
-    schema::SchemaService,
+    schema::{SchemaService, warn_schema_construction_diagnostics},
 };
 
 /// Top-level result of a successful CLI command.
@@ -325,23 +325,14 @@ fn execute_query_request(
 
 fn load_schema_service(config: &Config) -> Result<SchemaService, CliError> {
     let root = config.root();
-    let (service, warnings, failures) = SchemaService::new(
-        &config.resolved_schema_directory(),
-    )
-    .map_err(|error| CliError::SchemaQuery {
-        root: root.to_path_buf(),
-        source: error,
-    })?;
-    for warning in warnings {
-        tracing::warn!(%warning, "Schema registry resolved with a warning");
-    }
-    for failure in failures {
-        tracing::warn!(
-            schema = %failure.schema, error = %failure.error,
-            "Schema failed to resolve; excluded from the registry"
-        );
-    }
-    Ok(service)
+    let construction =
+        SchemaService::load_verbose(&config.resolved_schema_directory())
+            .map_err(|error| CliError::SchemaQuery {
+                root: root.to_path_buf(),
+                source: error,
+            })?;
+    warn_schema_construction_diagnostics(&construction);
+    Ok(construction.service)
 }
 
 /// Applies an optional `--where` filter expression to `outcome`.

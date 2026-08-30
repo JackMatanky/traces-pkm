@@ -630,9 +630,10 @@ mod tests {
     /// Schema registry directory (`root/.traces/schemas`), mirroring
     /// [`super::super::TemplateEngine::new`]'s wiring.
     fn schema_service(root: &Path) -> Arc<SchemaService> {
-        let (service, _, _) = SchemaService::new(&root.join(".traces/schemas"))
-            .expect("valid test schema directory");
-        Arc::new(service)
+        Arc::new(
+            SchemaService::new(&root.join(".traces/schemas"))
+                .expect("valid test schema directory"),
+        )
     }
 
     /// Builds a `query` [`QueryOps`] for `root` with the default class field
