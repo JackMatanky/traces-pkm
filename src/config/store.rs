@@ -82,8 +82,8 @@ impl ConfigStateStore {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            tracked: FileStateStore::from((*dirs::TRACKED_CONFIGS).clone()),
-            trusted: FileStateStore::from((*dirs::TRUSTED_CONFIGS).clone()),
+            tracked: FileStateStore::from(dirs::TRACKED_CONFIGS.clone()),
+            trusted: FileStateStore::from(dirs::TRUSTED_CONFIGS.clone()),
         }
     }
 

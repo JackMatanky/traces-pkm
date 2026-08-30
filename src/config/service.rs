@@ -25,7 +25,7 @@ use super::error::ConfigFileError;
 use super::{
     ConfigBuilder, LOCAL_CONFIG_FILE,
     discovery::{
-        DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryOutcome,
+        self, DiscoveryAnchor, DiscoveryContext, DiscoveryOutcome,
         DiscoveryScope,
     },
     error::{
@@ -78,7 +78,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
             .ok_or(ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
                 anchor: anchor_path,
             })?;
-        let global = discovered_globals.into_vec().into_iter().next();
+        let global = discovered_globals.into_iter().next();
         Ok(Self {
             local,
             global,
@@ -149,7 +149,7 @@ impl ConfigService {
             DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
         )?;
-        DiscoveryEngine::process(ctx)
+        discovery::process(ctx)
     }
 
     /// Builds a [`Config`] from discovered candidates.
@@ -177,8 +177,6 @@ impl ConfigService {
     ///   path validation, tracking, trust transition, parsing, or contains a
     ///   `[frontmatter]`/`[schemas]` key name that is empty, whitespace-only,
     ///   or canonicalizes to nothing.
-    /// - [`ConfigBuilderError::Merge`] when the merged local/global config
-    ///   cannot be re-extracted for its output directory.
     fn build(
         &self,
         discovered: DiscoveryOutcome,
@@ -241,7 +239,7 @@ impl ConfigService {
         path: &Path,
         scope: DiscoveryScope,
     ) -> DiscoveryResult<TrustRequests> {
-        DiscoveryEngine::trust_requests(path, scope)
+        discovery::trust_requests(path, scope)
     }
 
     /// Grants trust for a workspace root.

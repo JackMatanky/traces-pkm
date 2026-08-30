@@ -111,7 +111,7 @@ impl IntoIterator for TrustRequests {
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        Vec::from(self.0).into_iter()
+        self.0.into_vec().into_iter()
     }
 }
 

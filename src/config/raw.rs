@@ -27,8 +27,8 @@ pub(crate) struct RawConfig {
 
 /// Raw `[templates]` table exactly as written in TOML.
 ///
-/// Fields skip serialization when `None` to avoid overwriting a configured
-/// global value with an explicit `null` during Figment merge.
+/// Fields skip serialization when `None` during config scaffolding
+/// serialization (e.g. `traces init`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawTemplateConfig {
@@ -46,8 +46,8 @@ pub(crate) struct RawTemplateConfig {
 
 /// Raw `[schemas]` table exactly as written in TOML.
 ///
-/// Fields skip serialization when `None` to avoid overwriting a configured
-/// global value with an explicit `null` during Figment merge.
+/// Fields skip serialization when `None` during config scaffolding
+/// serialization (e.g. `traces init`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchemasConfig {
@@ -63,10 +63,8 @@ pub(crate) struct RawSchemasConfig {
 
 /// Raw `[frontmatter]` table exactly as written in TOML.
 ///
-/// Fields skip serialization when `None`: [`super::service`]'s Figment merge
-/// re-serializes each parsed layer to overlay local onto global, and an
-/// explicit `null` for an unconfigured local key would otherwise overwrite a
-/// configured global value for that same key.
+/// Fields skip serialization when `None` during config scaffolding
+/// serialization (e.g. `traces init`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawFrontmatterConfig {
@@ -88,7 +86,7 @@ pub(crate) struct RawFrontmatterConfig {
 ///
 /// Both fields are optional; missing values are resolved to role-aware defaults
 /// by [`super::model::DateFieldConfig`]. Fields skip serialization when `None`
-/// to avoid overwriting a configured global value during Figment merge.
+/// during config scaffolding serialization (e.g. `traces init`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawDateFieldConfig {
