@@ -1,7 +1,7 @@
 //! Query rows and result set types for [`QueryRecordSet`].
 //!
-//! This module implements [`QueryRecord`], which pairs a [`FileBase`] with
-//! its parsed [`Note`] and resolves field paths for template rendering and CLI
+//! This module implements [`QueryRecord`], which pairs a [`FileBase`] with its
+//! parsed [`Note`] and resolves field paths for template rendering and CLI
 //! output. Each record resolves `file.*`, `task.*`, frontmatter, inline fields,
 //! `tags`, and derived inlinks.
 //!
