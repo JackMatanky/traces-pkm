@@ -12,7 +12,9 @@
 name = "traces-pkm"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.92"
 description = "Personal knowledge management traces"
+documentation = "https://docs.rs/traces-pkm"
 readme = "README.md"
 repository = "https://github.com/JackMatanky/traces-pkm"
 license = "MIT"
@@ -98,12 +100,25 @@ test-utils = []
 # ------------------------------------------------------------- #
 #                          Lint Config                          #
 # ------------------------------------------------------------- #
+[lints.rust]
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+unsafe_code = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "warn"
+
 [lints.clippy]
-# ---------------------- Lint Categories ---------------------- #
+# ------------------- Clippy Lint Categories ------------------ #
 cargo = { level = "warn", priority = -1 }
 complexity = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 perf = { level = "deny", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
 
 # --------------- Denials (Strict Enforcements) --------------- #
 allow_attributes_without_reason = "deny"
@@ -142,12 +157,13 @@ impl_trait_in_params = "warn"
 large_stack_frames = "warn"
 literal_string_with_formatting_args = "warn"
 missing_inline_in_public_items = "warn"
-needless_collect = "warn"
+multiple_unsafe_ops_per_block = "warn"
 or_fun_call = "warn"
 path_buf_push_overwrite = "warn"
 redundant_clone = "warn"
-search_is_some = "warn"
+redundant_else = "warn"
 significant_drop_in_scrutinee = "warn"
+significant_drop_tightening = "warn"
 trait_duplication_in_bounds = "warn"
 type_repetition_in_bounds = "warn"
 use_self = "warn"
