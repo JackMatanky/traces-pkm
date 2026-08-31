@@ -30,11 +30,12 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
+use std::hint::black_box;
+
 use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
-
 /// Measures file-content hashing cost for small (1KB) and large (1MB) files.
 ///
 /// Every trust check and tracked-config lookup hashes a file through this path
@@ -65,7 +66,10 @@ fn bench_file_hash(c: &mut Criterion) {
             &path,
             |b, path| {
                 b.iter(|| {
-                    Blake3FileHash::try_from(path.as_path()).expect("hash file")
+                    let hash =
+                        Blake3FileHash::try_from(black_box(path.as_path()))
+                            .expect("hash file");
+                    black_box(hash);
                 });
             },
         );
@@ -73,22 +77,74 @@ fn bench_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures path-bytes hashing cost for a fixed config-file path.
+/// Measures pure in-memory BLAKE3 CPU hashing throughput over byte buffers.
 ///
-/// Same hot-path reasoning as `bench_file_hash`, for the path-hashing half
-/// every tracked-config lookup also pays.
-///
-/// Expected outcomes:
-/// - Constant-time operation independent of filesystem state.
-///
-/// Unexpected outcomes:
-/// - Allocation or system calls in what should be pure in-memory hashing.
-fn bench_path_hash(c: &mut Criterion) {
-    let path = std::path::Path::new("/project/.traces/config.toml");
-    c.bench_function("Blake3PathHash::from", |b| {
-        b.iter(|| Blake3PathHash::from(path));
-    });
+/// Isolates the CPU SIMD hashing pipeline from filesystem read syscalls and
+/// OS page-cache lookups.
+fn bench_memory_hash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("blake3::memory_buffer");
+    for (label, size) in
+        [("1kb", 1024_usize), ("64kb", 64 * 1024), ("1mb", 1024 * 1024)]
+    {
+        #[allow(
+            clippy::as_conversions,
+            reason = "usize→u64 is a lossless widening cast"
+        )]
+        group.throughput(Throughput::Bytes(size as u64));
+        let data = vec![0xAB_u8; size];
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &data,
+            |b, data| {
+                b.iter(|| {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(black_box(data));
+                    let hash = hasher.finalize();
+                    black_box(hash);
+                });
+            },
+        );
+    }
+    group.finish();
 }
 
-criterion_group!(benches, bench_file_hash, bench_path_hash);
+/// Measures path-bytes hashing cost across varied path depths.
+///
+/// Evaluates path hash latency for short relative paths, standard project
+/// configs, and deeply-nested file paths.
+fn bench_path_hash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Blake3PathHash::from");
+
+    let fixtures = [
+        ("short", std::path::Path::new("config.toml")),
+        ("medium", std::path::Path::new("/project/.traces/config.toml")),
+        (
+            "deep",
+            std::path::Path::new(
+                "/workspace/notes/archive/2026/categories/topic/deep_note.md",
+            ),
+        ),
+    ];
+
+    for (label, path) in fixtures {
+        #[allow(
+            clippy::as_conversions,
+            reason = "usize→u64 is a lossless widening cast"
+        )]
+        group.throughput(Throughput::Bytes(path.as_os_str().len() as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &path,
+            |b, path| {
+                b.iter(|| {
+                    let hash = Blake3PathHash::from(black_box(*path));
+                    black_box(hash);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_file_hash, bench_memory_hash, bench_path_hash);
 criterion_main!(benches);

@@ -31,42 +31,66 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use std::sync::Arc;
+use std::{hint::black_box, sync::Arc};
 
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use criterion::{
+    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
+use tempfile::TempDir;
 use traces_pkm::{
     Config, IndexerService, PresetDialogProvider, TemplatePathInput,
     TemplateService, WriteMode, create_trusted_project, fixture_service,
     write_note, write_template,
 };
 
-fn prepared_root() -> std::path::PathBuf {
+/// Builds a temporary project fixture populated with `n` synthetic notes,
+/// an indexed database, and test templates.
+///
+/// Returns `(TempDir, PathBuf, Config, PresetDialogProvider)` where `TempDir`
+/// owns the lifetime of the project on disk.
+fn prepare_fixture(n: usize) -> (TempDir, std::path::PathBuf, Config) {
     let temp = tempfile::tempdir().expect("create temp dir");
     let root = temp.path().join("project");
     let service = fixture_service(temp.path());
     let _ = create_trusted_project(&service, &root);
-    for i in 0..1000 {
+    for i in 0..n {
         write_note(
             &root,
             &format!("notes/note-{i}.md"),
-            &format!("# Note {i}\n"),
+            &format!(
+                "---\nrating: {}\nstatus: {}\n---\n# Note {i}\nBody content \
+                 for note {i}.\n",
+                i % 10,
+                if i % 2 == 0 {
+                    "active"
+                } else {
+                    "archived"
+                }
+            ),
         );
     }
     write_template(
         &root,
-        "report.md",
+        "list_report.md",
         "{{ query.from() | list(\"file.path\") }}",
+    );
+    write_template(
+        &root,
+        "table_report.md",
+        "{{ query.from() | where(\"rating\", \">=\", 5) | sort(\"file.name\") \
+         | table(\"file.path\", \"rating\", \"status\") }}",
     );
     let indexer = IndexerService::new(&root);
     indexer
         .persist(&indexer.build().expect("build index"))
         .expect("persist index");
-    // `keep()` intentionally leaks the directory: the setup closure's directory
-    // must outlive the measured `render_to_file` call below, so an ordinary
-    // `TempDir` drop inside `routine` would count toward the *measured* time
-    // and pollute this benchmark with filesystem cleanup cost.
-    let _ = temp.keep();
-    root
+    let config = Config::for_test(
+        root.clone(),
+        Some(root.join("templates")),
+        None,
+        root.clone(),
+    );
+    (temp, root, config)
 }
 
 /// Measures template rendering cost over a pre-built 1000-note project, in
@@ -84,31 +108,48 @@ fn prepared_root() -> std::path::PathBuf {
 /// - Render cost scales super-linearly with note count, indicating unbounded
 ///   template expansion or redundant index scans per row.
 fn bench_render(c: &mut Criterion) {
-    c.bench_function("TemplateService::render_to_file", |b| {
-        b.iter_batched(
-            prepared_root,
-            |root| {
-                let config = Config::for_test(
-                    root.clone(),
-                    Some(root.join("templates")),
-                    None,
-                    root.clone(),
-                );
-                let service = TemplateService::new(
-                    &config,
-                    Arc::new(PresetDialogProvider::new()),
-                )
-                .expect("valid schema directory");
-                let input =
-                    TemplatePathInput::parse(std::path::Path::new("report"))
-                        .expect("valid template input");
-                service
-                    .render_to_file(&input, None, WriteMode::DryRun)
-                    .expect("render report")
+    let mut group = c.benchmark_group("TemplateService::render_to_file");
+
+    for n in [100_usize, 1_000] {
+        group.throughput(Throughput::Elements(n as u64));
+        let (_temp, _root, config) = prepare_fixture(n);
+        let dialog = Arc::new(PresetDialogProvider::new());
+        let service = TemplateService::new(&config, dialog)
+            .expect("valid schema directory");
+
+        let list_input =
+            TemplatePathInput::parse(std::path::Path::new("list_report"))
+                .expect("valid template input");
+        group.bench_with_input(
+            BenchmarkId::new("list", n),
+            &list_input,
+            |b, input| {
+                b.iter(|| {
+                    let outcome = service
+                        .render_to_file(input, None, WriteMode::DryRun)
+                        .expect("render list report");
+                    black_box(outcome);
+                });
             },
-            BatchSize::LargeInput,
         );
-    });
+
+        let table_input =
+            TemplatePathInput::parse(std::path::Path::new("table_report"))
+                .expect("valid template input");
+        group.bench_with_input(
+            BenchmarkId::new("table_filtered", n),
+            &table_input,
+            |b, input| {
+                b.iter(|| {
+                    let outcome = service
+                        .render_to_file(input, None, WriteMode::DryRun)
+                        .expect("render table report");
+                    black_box(outcome);
+                });
+            },
+        );
+    }
+    group.finish();
 }
 
 criterion_group!(benches, bench_render);

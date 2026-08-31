@@ -32,8 +32,9 @@
 )]
 use std::{hint::black_box, path::PathBuf};
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-
+use criterion::{
+    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PathWrapper {
     #[serde(with = "traces_pkm::path_codec")]
@@ -76,7 +77,7 @@ fn non_unicode_path() -> PathBuf {
 /// - Excessive memory allocations or high latency, indicating performance
 ///   regressions in OS-native conversions or serialization boundaries.
 fn bench_codec_serialize(c: &mut Criterion) {
-    let mut group = c.benchmark_group("path_codec::serialize");
+    let mut group = c.benchmark_group("path_codec::serialize_alloc");
 
     let short = PathWrapper {
         path: PathBuf::from("notes/note.md"),
@@ -91,6 +92,9 @@ fn bench_codec_serialize(c: &mut Criterion) {
     for (label, wrapper) in
         [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
     {
+        let serialized_len =
+            postcard::to_allocvec(wrapper).expect("serialize path").len();
+        group.throughput(Throughput::Bytes(serialized_len as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             wrapper,
@@ -99,6 +103,46 @@ fn bench_codec_serialize(c: &mut Criterion) {
                     let bytes = postcard::to_allocvec(black_box(w))
                         .expect("serialize path");
                     black_box(bytes);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures zero-allocation buffer serialization cost for paths.
+///
+/// Isolates the CPU encoding throughput from system memory allocator latency
+/// (`malloc`/`free`).
+fn bench_codec_serialize_slice(c: &mut Criterion) {
+    let mut group = c.benchmark_group("path_codec::serialize_slice");
+
+    let short = PathWrapper {
+        path: PathBuf::from("notes/note.md"),
+    };
+    let long = PathWrapper {
+        path: PathBuf::from("archive/2026/08/26/category/subcategory/note.md"),
+    };
+    let non_uni = PathWrapper {
+        path: non_unicode_path(),
+    };
+
+    let mut buffer = [0_u8; 1024];
+
+    for (label, wrapper) in
+        [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
+    {
+        let serialized =
+            postcard::to_slice(wrapper, &mut buffer).expect("serialize path");
+        group.throughput(Throughput::Bytes(serialized.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            wrapper,
+            |b, w| {
+                b.iter(|| {
+                    let out = postcard::to_slice(black_box(w), &mut buffer)
+                        .expect("serialize path");
+                    black_box(out);
                 });
             },
         );
@@ -136,6 +180,7 @@ fn bench_codec_deserialize(c: &mut Criterion) {
         [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
     {
         let bytes = postcard::to_allocvec(wrapper).expect("serialize path");
+        group.throughput(Throughput::Bytes(bytes.len() as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &bytes,
@@ -152,5 +197,62 @@ fn bench_codec_deserialize(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_codec_serialize, bench_codec_deserialize);
+/// Measures batch serialization and deserialization over 100 paths,
+/// representative of bulk database transactions during workspace indexing.
+fn bench_codec_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("path_codec::batch_100");
+
+    let paths: Vec<PathWrapper> = (0..100)
+        .map(|i| PathWrapper {
+            path: PathBuf::from(format!(
+                "notes/subfolder/topic_{i}/note_{i}.md"
+            )),
+        })
+        .collect();
+
+    let serialized: Vec<Vec<u8>> = paths
+        .iter()
+        .map(|p| postcard::to_allocvec(p).expect("serialize"))
+        .collect();
+    let total_bytes: usize = serialized.iter().map(Vec::len).sum();
+    #[allow(
+        clippy::as_conversions,
+        reason = "usize→u64 is a lossless widening cast"
+    )]
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
+    group.bench_function("serialize_100", |b| {
+        b.iter(|| {
+            let mut batch = Vec::with_capacity(100);
+            for p in &paths {
+                batch.push(
+                    postcard::to_allocvec(black_box(p)).expect("serialize"),
+                );
+            }
+            black_box(batch);
+        });
+    });
+    group.bench_function("deserialize_100", |b| {
+        b.iter(|| {
+            let mut batch = Vec::with_capacity(100);
+            for bytes in &serialized {
+                let decoded: PathWrapper =
+                    postcard::from_bytes(black_box(bytes))
+                        .expect("deserialize");
+                batch.push(decoded);
+            }
+            black_box(batch);
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_codec_serialize,
+    bench_codec_serialize_slice,
+    bench_codec_deserialize,
+    bench_codec_batch
+);
 criterion_main!(benches);
