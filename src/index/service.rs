@@ -252,6 +252,15 @@ mod tests {
             .execute(index, QueryRequest::pages(source.clone()))
     }
 
+    /// Finds a [`Note`] by project-relative path in `index`.
+    fn find_note<'a>(index: &'a FileIndex, path: &str) -> Option<&'a Note> {
+        index
+            .entries()
+            .iter()
+            .find(|entry| entry.base().path() == Path::new(path))
+            .and_then(FileEntry::note)
+    }
+
     mod build {
         use pretty_assertions::assert_eq;
 
@@ -299,8 +308,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(
-                index
-                    .note(Path::new("todo.md"))
+                find_note(&index, "todo.md")
                     .and_then(Note::frontmatter)
                     .map(|fm| fm.fields().len()),
                 Some(1)
@@ -317,8 +325,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(
-                index
-                    .note(Path::new("todo.md"))
+                find_note(&index, "todo.md")
                     .map(Note::tasks)
                     .map(Iterator::count),
                 Some(1)
@@ -548,8 +555,8 @@ mod tests {
             let indexer = IndexerService::new(root);
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
-            let a = built.note(Path::new("a.md")).expect("note a").clone();
-            let c = built.note(Path::new("c.md")).expect("note c").clone();
+            let a = find_note(&built, "a.md").expect("note a").clone();
+            let c = find_note(&built, "c.md").expect("note c").clone();
             (indexer, a, c)
         }
 
@@ -585,7 +592,7 @@ mod tests {
             assert_eq!(loaded.entries(), built.entries());
 
             let loaded_note =
-                loaded.note(Path::new("note.md")).expect("loaded note");
+                find_note(&loaded, "note.md").expect("loaded note");
             assert_eq!(loaded_note.outlinks().len(), 1);
             assert_eq!(
                 loaded_note.outlinks().first().map(Link::target),
@@ -607,7 +614,7 @@ mod tests {
             let loaded = indexer.load().expect("load index");
 
             let loaded_note =
-                loaded.note(Path::new("note.md")).expect("loaded note");
+                find_note(&loaded, "note.md").expect("loaded note");
             assert_eq!(loaded_note.tasks().count(), 1);
         }
 
@@ -624,8 +631,7 @@ mod tests {
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
 
-            let field = loaded
-                .note(Path::new("note.md"))
+            let field = find_note(&loaded, "note.md")
                 .and_then(Note::frontmatter)
                 .into_iter()
                 .flat_map(Frontmatter::fields)
@@ -658,9 +664,8 @@ mod tests {
             let loaded = indexer.load().expect("load index");
 
             let loaded_note =
-                loaded.note(Path::new("note.md")).expect("loaded note");
-            let built_note =
-                built.note(Path::new("note.md")).expect("built note");
+                find_note(&loaded, "note.md").expect("loaded note");
+            let built_note = find_note(&built, "note.md").expect("built note");
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
             let (key, values) = loaded_note
                 .inline_fields()
@@ -688,9 +693,8 @@ mod tests {
             let loaded = indexer.load().expect("load index");
 
             let loaded_note =
-                loaded.note(Path::new("note.md")).expect("loaded note");
-            let built_note =
-                built.note(Path::new("note.md")).expect("built note");
+                find_note(&loaded, "note.md").expect("loaded note");
+            let built_note = find_note(&built, "note.md").expect("built note");
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
             let values: Vec<&NoteFieldValue> = loaded_note
                 .inline_fields()
@@ -717,9 +721,8 @@ mod tests {
             let loaded = indexer.load().expect("load index");
 
             let loaded_note =
-                loaded.note(Path::new("note.md")).expect("loaded note");
-            let built_note =
-                built.note(Path::new("note.md")).expect("built note");
+                find_note(&loaded, "note.md").expect("loaded note");
+            let built_note = find_note(&built, "note.md").expect("built note");
             assert_eq!(loaded_note.tags(), built_note.tags());
             assert_eq!(loaded_note.tags(), [Tag::parse("#book").unwrap()]);
         }
@@ -814,7 +817,7 @@ mod tests {
                     .count(),
                 1
             );
-            assert!(loaded.note(Path::new("gone.md")).is_none());
+            assert!(find_note(&loaded, "gone.md").is_none());
             assert_eq!(
                 loaded
                     .entries()
@@ -868,11 +871,11 @@ mod tests {
             // Assert: the two untouched notes persisted byte-identical to
             // their original write — the incremental write path never
             // touched their rows.
-            assert_eq!(loaded.note(Path::new("a.md")), Some(&original_a));
-            assert_eq!(loaded.note(Path::new("c.md")), Some(&original_c));
+            assert_eq!(find_note(&loaded, "a.md"), Some(&original_a));
+            assert_eq!(find_note(&loaded, "c.md"), Some(&original_c));
 
             // The changed note reflects the rewrite.
-            let loaded_b = loaded.note(Path::new("b.md")).expect("note b");
+            let loaded_b = find_note(&loaded, "b.md").expect("note b");
             assert_eq!(
                 loaded_b.frontmatter().and_then(|fm| fm.get("title").cloned()),
                 Some(crate::note::NoteFieldValue::String("B".to_owned()))
@@ -1069,8 +1072,7 @@ mod tests {
 
             let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(
-                refreshed
-                    .note(Path::new("note.md"))
+                find_note(&refreshed, "note.md")
                     .map(|note| note.tasks().count()),
                 Some(2)
             );
@@ -1099,8 +1101,7 @@ mod tests {
                 .expect("rewrite note with same byte length");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            let value = refreshed
-                .note(Path::new("note.md"))
+            let value = find_note(&refreshed, "note.md")
                 .and_then(|n| n.inline_fields().iter().next())
                 .and_then(|(_, vals)| vals.first())
                 .and_then(|v| v.as_str());
@@ -1299,8 +1300,7 @@ mod tests {
 
             // The refreshed index reflects the new content...
             assert_eq!(
-                refreshed
-                    .note(Path::new("note.md"))
+                find_note(&refreshed, "note.md")
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),
@@ -1311,8 +1311,7 @@ mod tests {
             // `persist()` call.
             let loaded = indexer.load().expect("load index");
             assert_eq!(
-                loaded
-                    .note(Path::new("note.md"))
+                find_note(&loaded, "note.md")
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),

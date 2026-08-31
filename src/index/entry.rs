@@ -116,22 +116,6 @@ impl FileIndex {
         &self.entries
     }
 
-    /// Returns the [`Note`] for the note at `path`, if indexed.
-    ///
-    /// Test-only: production code resolves a row's Note through
-    /// [`Self::entry_at`], which is O(1); this path-based lookup remains for
-    /// tests and fixtures that only have a `&Path` to hand, not a `RowIndex`.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self, path: &std::path::Path) -> Option<&Note> {
-        self.entries
-            .binary_search_by(|entry| entry.base().path().cmp(path))
-            .ok()
-            .and_then(|i| self.entries.get(i))
-            .and_then(FileEntry::note)
-    }
-
     /// Returns the entry at `position`. O(1).
     #[expect(
         clippy::expect_used,
@@ -229,39 +213,8 @@ pub(super) fn assemble_entries(
 }
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
     use crate::index::service::IndexerService;
-    mod lookup {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_none_when_note_path_is_not_indexed() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
-
-            assert_eq!(index.note(Path::new("nonexistent.md")), None);
-        }
-
-        #[test]
-        fn returns_the_matching_note_when_path_is_indexed() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            std::fs::write(temp.path().join("a.md"), "# A").expect("write a");
-            std::fs::write(temp.path().join("b.md"), "# B").expect("write b");
-            std::fs::write(temp.path().join("c.md"), "# C").expect("write c");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
-
-            assert_eq!(
-                index.note(Path::new("b.md")).map(Note::path),
-                Some(Path::new("b.md"))
-            );
-        }
-    }
 
     mod position_lookup {
         use pretty_assertions::assert_eq;
@@ -269,7 +222,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn entry_at_agrees_with_entries_and_note_by_path() {
+        fn entry_at_agrees_with_entries_index() {
             let temp = tempfile::tempdir().expect("create temp dir");
             std::fs::write(temp.path().join("a.md"), "# A").expect("write a");
             std::fs::write(temp.path().join("b.txt"), "plain text")
@@ -281,15 +234,11 @@ mod tests {
             for (i, entry) in index.entries().iter().enumerate() {
                 let position = RowIndex::new(i);
                 assert_eq!(index.entry_at(position), entry);
-                assert_eq!(
-                    index.entry_at(position).note(),
-                    index.note(entry.base().path())
-                );
             }
         }
 
         #[test]
-        fn note_at_returns_none_for_a_non_markdown_file() {
+        fn note_returns_none_for_a_non_markdown_file() {
             let temp = tempfile::tempdir().expect("create temp dir");
             std::fs::write(temp.path().join("plain.txt"), "no frontmatter")
                 .expect("write plain.txt");

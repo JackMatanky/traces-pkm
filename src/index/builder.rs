@@ -303,7 +303,12 @@ mod tests {
                 1
             );
             assert_eq!(
-                index.note(Path::new("note.md")).map(Note::path),
+                index
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.base().path() == Path::new("note.md"))
+                    .and_then(FileEntry::note)
+                    .map(Note::path),
                 Some(Path::new("note.md"))
             );
         }
@@ -619,7 +624,10 @@ mod tests {
 
             assert_eq!(
                 index
-                    .note(Path::new("note.md"))
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.base().path() == Path::new("note.md"))
+                    .and_then(FileEntry::note)
                     .map(Note::tasks)
                     .map(Iterator::count),
                 Some(1)
@@ -650,7 +658,10 @@ mod tests {
 
             assert_eq!(
                 index
-                    .note(Path::new("note.md"))
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.base().path() == Path::new("note.md"))
+                    .and_then(FileEntry::note)
                     .map(Note::tasks)
                     .map(Iterator::count),
                 Some(2)
