@@ -222,6 +222,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::Arc,
     };
 
     use super::{super::IndexError, *};
@@ -233,7 +234,7 @@ mod tests {
 
     /// Runs a page-level query via [`QueryService`].
     fn query_pages(
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> QueryRecordSet {
         QueryService::new("class")
@@ -1096,7 +1097,7 @@ mod tests {
             fs::remove_file(temp.path().join("linker.md"))
                 .expect("delete linker");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome.iter().next().expect("target record");
 
@@ -1121,7 +1122,7 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[new-target]]")
                 .expect("repoint linker");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let old_target = outcome
                 .iter()
@@ -1184,7 +1185,7 @@ mod tests {
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()
@@ -1260,7 +1261,7 @@ mod tests {
             fs::remove_file(temp.path().join("archive/foo.md"))
                 .expect("delete archive/foo.md");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()

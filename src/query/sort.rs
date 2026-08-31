@@ -129,7 +129,7 @@ pub(super) fn sort_key_cmp(
 /// [`NoteFieldValue`] does not implement [`Ord`] directly because comparison
 /// requires a `descending` flag and null-as-minimum fallback rules that depend
 /// on sort options. `SortKey` provides an [`Ord`] implementation scoped to a
-/// single sorting operation for [`super::QueryRecordSet::sort_by_field`].
+/// single sorting operation for [`super::QueryTransform::apply`].
 pub(super) struct SortKey {
     pub(super) value: NoteFieldValue,
     pub(super) descending: bool,
@@ -161,7 +161,7 @@ impl Ord for SortKey {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{fs, path::Path, sync::Arc};
 
     use super::super::*;
     use crate::index::IndexerService;
@@ -173,7 +173,8 @@ mod tests {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
-        let index = IndexerService::new(temp).build().expect("build index");
+        let index =
+            Arc::new(IndexerService::new(temp).build().expect("build index"));
         QueryService::new("class")
             .execute(&index, QueryRequest::pages(SourceSelector::All))
     }

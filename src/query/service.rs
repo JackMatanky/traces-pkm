@@ -1,10 +1,12 @@
 //! Query execution service.
 
+use std::sync::Arc;
+
 use super::{
     QueryMode, QueryRecord, QueryRecordSet, QueryRequest,
     grammar::{FileClassExpander, SourceSelector},
 };
-use crate::index::FileIndex;
+use crate::index::{FileIndex, RowIndex};
 
 /// Executes queries over a borrowed [`FileIndex`].
 #[derive(Clone)]
@@ -51,14 +53,10 @@ impl<'a> QueryService<'a> {
     #[inline]
     pub fn execute(
         &self,
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         request: QueryRequest,
     ) -> QueryRecordSet {
-        let QueryRequest {
-            mode,
-            mut source,
-            transforms,
-        } = request;
+        let (mode, mut source, plan) = request.into_parts();
         if source.has_classes()
             && let Some(expander) = self.class_expander
         {
@@ -68,16 +66,12 @@ impl<'a> QueryService<'a> {
             QueryMode::Pages => self.page_records(index, &source),
             QueryMode::Tasks => self.task_records(index, &source),
         };
-        let mut outcome = QueryRecordSet::new(records);
-        for transform in &transforms {
-            outcome = outcome.apply_transform(transform);
-        }
-        outcome
+        QueryRecordSet::new(plan.optimize().apply(records))
     }
 
     fn page_records(
         &self,
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRecord> {
         self.matched_base_records(index, source).collect()
@@ -85,7 +79,7 @@ impl<'a> QueryService<'a> {
 
     fn task_records(
         &self,
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRecord> {
         let mut out = Vec::new();
@@ -102,19 +96,25 @@ impl<'a> QueryService<'a> {
 
     fn matched_base_records<'b>(
         &'b self,
-        index: &'b FileIndex,
+        index: &'b Arc<FileIndex>,
         source: &'b SourceSelector,
     ) -> impl Iterator<Item = QueryRecord> + 'b {
         index
             .entries()
-            .filter(move |entry| {
+            .enumerate()
+            .filter(move |(_, entry)| {
                 source.is_match(
                     entry.base(),
                     entry.note(),
                     &self.class_field_canonical,
                 )
             })
-            .map(QueryRecord::from_entry)
+            .map(|(position, _)| {
+                QueryRecord::from_row(
+                    Arc::clone(index),
+                    RowIndex::new(position),
+                )
+            })
     }
 }
 
@@ -130,7 +130,7 @@ impl std::fmt::Debug for QueryService<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{fs, path::Path, sync::Arc};
 
     use super::*;
     use crate::{
@@ -141,7 +141,7 @@ mod tests {
 
     /// Runs a page-level query via [`QueryService`].
     fn query_pages(
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> QueryRecordSet {
         QueryService::new("class")
@@ -150,7 +150,7 @@ mod tests {
 
     /// Task-level counterpart to [`query_pages`].
     fn query_tasks(
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> QueryRecordSet {
         QueryService::new("class")
@@ -172,14 +172,16 @@ mod tests {
                 .collect()
         }
 
-        fn build_book_index() -> FileIndex {
+        fn build_book_index() -> Arc<FileIndex> {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("book.md"),
                 "---\ntitle: Dune\n---\nGenre:: Sci-fi\n\nShelved as #book.",
             )
             .expect("write note");
-            IndexerService::new(temp.path()).build().expect("build index")
+            Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            )
         }
 
         #[test]
@@ -189,8 +191,9 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(&index, &SourceSelector::All);
 
             assert_eq!(outcome.len(), 3);
@@ -215,8 +218,9 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(&index, &SourceSelector::All);
 
             assert_eq!(note_paths(&outcome), [Path::new("a.md")]);
@@ -228,8 +232,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(
                 &index,
                 &SourceSelector::parse("#missing").expect("valid source"),
@@ -245,8 +250,9 @@ mod tests {
                 .expect("write book");
             fs::write(temp.path().join("other.md"), "No tags here.")
                 .expect("write other");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(
                 &index,
                 &SourceSelector::parse("#book").expect("valid source"),
@@ -265,8 +271,9 @@ mod tests {
             .expect("write project");
             fs::write(temp.path().join("other.md"), "No tags here.")
                 .expect("write other");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let exact = query_pages(
                 &index,
                 &SourceSelector::parse("#projects/active")
@@ -286,8 +293,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("project.md"), "Tracked in #projects.")
                 .expect("write project");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(
                 &index,
                 &SourceSelector::parse("#projects/active")
@@ -308,8 +316,9 @@ mod tests {
                 .expect("write hobbit");
             fs::write(temp.path().join("other.md"), "# Other")
                 .expect("write other");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(
                 &index,
                 &SourceSelector::parse("books/").expect("valid source"),
@@ -389,8 +398,9 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("a.md"), "[[target]]").expect("write a");
             fs::write(temp.path().join("b.md"), "[[target]]").expect("write b");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
@@ -410,8 +420,9 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(
                 &index,
                 &SourceSelector::parse("#book").expect("valid source"),
@@ -432,8 +443,9 @@ mod tests {
                 "[[target]] and [[target]] again",
             )
             .expect("write a");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
@@ -447,8 +459,9 @@ mod tests {
         fn preserves_a_self_linking_notes_own_inlink() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(&index, &SourceSelector::All);
             let source = outcome
                 .iter()
@@ -466,8 +479,9 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
 
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
@@ -505,8 +519,9 @@ mod tests {
                 .expect("write note");
             fs::write(temp.path().join("todo.md"), "- [ ] buy milk\n")
                 .expect("write note");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All);
 
             assert_eq!(outcome.len(), 1);
@@ -521,8 +536,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All);
 
             assert!(outcome.is_empty());
@@ -537,8 +553,9 @@ mod tests {
                  ship it\n",
             )
             .expect("write note");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
@@ -554,8 +571,9 @@ mod tests {
                  ship it\n",
             )
             .expect("write note");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
@@ -574,8 +592,9 @@ mod tests {
                  ship it\n",
             )
             .expect("write note");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
@@ -594,8 +613,9 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All);
             let task = outcome.iter().next().expect("one task row");
 
@@ -613,8 +633,9 @@ mod tests {
             .expect("write a");
             fs::write(temp.path().join("b.md"), "#books\n- [ ] book task\n")
                 .expect("write b");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(
                 &index,
                 &SourceSelector::parse("#projects").expect("valid source"),
@@ -634,8 +655,9 @@ mod tests {
             .expect("write a");
             fs::write(temp.path().join("b.md"), "- [ ] other task\n")
                 .expect("write b");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(
                 &index,
                 &SourceSelector::parse("projects/").expect("valid source"),
@@ -652,8 +674,9 @@ mod tests {
                 "- [ ] buy milk\n- [x] pay rent\n",
             )
             .expect("write note");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = query_tasks(&index, &SourceSelector::All)
                 .filter("task.completed == true")
                 .expect("valid filter");

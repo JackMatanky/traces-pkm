@@ -25,8 +25,9 @@ pub(super) struct Table {
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"file.folder == \"books\""`.
+    /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
-    filter: Option<String>,
+    filter: Vec<String>,
     /// Field path to sort by. Omit to leave results in `FileIndex` order.
     #[arg(long)]
     sort: Option<String>,
@@ -87,12 +88,10 @@ impl Table {
     /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
-        let outcome = super::refresh_page_query(config, self.from.as_deref())?;
-        let outcome =
-            super::apply_filter(outcome, root, self.filter.as_deref())?;
-        let outcome = super::apply_sort(
-            outcome,
-            root,
+        let outcome = super::refresh_page_query(
+            config,
+            self.from.as_deref(),
+            &self.filter,
             self.sort.as_deref(),
             self.order.is_descending(),
         )?;
@@ -136,7 +135,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B\n").expect("write b.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -161,7 +160,7 @@ mod tests {
                 .expect("write b.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: Some("rating".to_owned()),
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -186,7 +185,7 @@ mod tests {
                 .expect("write b.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: Some("rating".to_owned()),
                 order: SortOrder::Descending,
                 columns: vec!["file.path".to_owned()],
@@ -208,7 +207,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: Some("file..bad".to_owned()),
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -231,7 +230,7 @@ mod tests {
                 .expect("write a.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned(), "rating".to_owned()],
@@ -255,7 +254,7 @@ mod tests {
                 .expect("write a.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["a|b".to_owned()],
@@ -277,7 +276,7 @@ mod tests {
                 .expect("write b.md");
             let table = Table {
                 from: Some("#projects".to_owned()),
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -302,7 +301,7 @@ mod tests {
                 .expect("write b.md");
             let table = Table {
                 from: None,
-                filter: Some("rating > 5".to_owned()),
+                filter: vec!["rating > 5".to_owned()],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -324,7 +323,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
             let table = Table {
                 from: None,
-                filter: Some("not a valid expression".to_owned()),
+                filter: vec!["not a valid expression".to_owned()],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -346,7 +345,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file..bad".to_owned()],
@@ -386,7 +385,7 @@ mod tests {
             let _restore = RestorePermissions(&locked);
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -448,10 +447,32 @@ mod tests {
             let table = table_args(&cli);
 
             assert_eq!(table.from.as_deref(), Some("#tag"));
-            assert_eq!(table.filter.as_deref(), Some("rating > 5"));
+            assert_eq!(table.filter, vec!["rating > 5".to_owned()]);
             assert_eq!(table.sort.as_deref(), Some("rating"));
             assert_eq!(table.order, SortOrder::Descending);
             assert_eq!(table.columns, ["file.path", "rating"]);
+        }
+
+        #[test]
+        fn repeated_where_flags_collect_into_one_vec_per_occurrence() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--where",
+                "rating > 2",
+                "--where",
+                "rating < 9",
+                "--column",
+                "file.path",
+            ])
+            .expect("parse table argv");
+
+            let table = table_args(&cli);
+
+            assert_eq!(table.filter, vec![
+                "rating > 2".to_owned(),
+                "rating < 9".to_owned()
+            ]);
         }
 
         #[test]
@@ -467,7 +488,7 @@ mod tests {
             let table = table_args(&cli);
 
             assert_eq!(table.from, None);
-            assert_eq!(table.filter, None);
+            assert_eq!(table.filter, Vec::<String>::new());
             assert_eq!(table.sort, None);
             assert_eq!(table.order, SortOrder::Ascending);
         }
@@ -523,7 +544,7 @@ mod tests {
             let _guard = CwdGuard::enter(&root);
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],
@@ -546,7 +567,7 @@ mod tests {
             let _guard = CwdGuard::enter(&root);
             let table = Table {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
                 columns: vec!["file.path".to_owned()],

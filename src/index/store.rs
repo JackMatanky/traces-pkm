@@ -1066,12 +1066,7 @@ mod tests {
             let loaded =
                 IndexerService::new(temp.path()).load().expect("load index");
             let inlinks_of = |target: &Path| {
-                loaded
-                    .entries()
-                    .find(|e| e.base().path() == target)
-                    .expect("entry present")
-                    .inlinks()
-                    .to_vec()
+                loaded.inlinks().get(target).cloned().unwrap_or_default()
             };
             assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);
             assert_eq!(inlinks_of(normal.as_path()), vec![weird]);

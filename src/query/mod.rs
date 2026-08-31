@@ -79,6 +79,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::Arc,
     };
 
     use super::{format::QueryDisplayFormat, *};
@@ -98,7 +99,9 @@ mod tests {
             for (name, content) in files {
                 fs::write(temp.join(name), content).expect("write note");
             }
-            let index = IndexerService::new(temp).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp).build().expect("build index"),
+            );
             QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All))
         }
@@ -132,8 +135,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let file = find_base(index.bases(), Path::new("a.md"));
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
@@ -146,8 +150,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let note = index.note(Path::new("a.md")).expect("note");
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
@@ -160,8 +165,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "- [x] Buy milk")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -173,8 +179,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "- [ ] Buy milk")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -370,8 +377,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "- [x] Buy milk")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -875,8 +883,9 @@ mod tests {
                 "- [ ] Buy milk\n- [x] Walk dog\n",
             )
             .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let rendered = outcome.task_list().expect("valid task_list");

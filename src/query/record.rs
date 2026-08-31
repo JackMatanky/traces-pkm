@@ -17,9 +17,11 @@
 //! # Examples
 //!
 //! ```ignore
+//! use std::sync::Arc;
+//!
 //! use traces_pkm::{IndexerService, QueryRequest, QueryService, SourceSelector};
 //!
-//! let index = IndexerService::new(".").build().unwrap();
+//! let index = Arc::new(IndexerService::new(".").build().unwrap());
 //! let records = QueryService::new("class")
 //!     .execute(&index, QueryRequest::pages(SourceSelector::All));
 //! ```
@@ -32,13 +34,12 @@ use std::{path::PathBuf, sync::Arc};
 use super::{
     QueryResult, QueryTransform,
     format::QueryDisplayFormat,
-    grammar::{FieldPath, FileField, FilterExpr, TaskField},
-    sort::SortKey,
+    grammar::{FieldPath, FileField, TaskField},
     value::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::{
     file::FileBase,
-    index::FileIndexEntry,
+    index::{FileIndex, RowIndex},
     note::{ListItem, Note, NoteFieldValue, TaskStatus},
 };
 
@@ -48,18 +49,68 @@ use crate::{
 /// and derived inlinks for template rendering and CLI output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryRecord {
-    base: Arc<RecordBase>,
+    row: IndexRow,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryRecordSet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
     kind: RowKind,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct RecordBase {
-    base: FileBase,
-    note: Option<Arc<Note>>,
-    inlinks: Box<[PathBuf]>,
+/// Index-backed handle to one row of a [`FileIndex`]: resolves `FileBase`,
+/// `Note`, and inlinks on demand instead of cloning them at construction.
+/// Cloning an `IndexRow` bumps the shared `FileIndex`'s `Arc` strong count
+/// and copies a `usize` — it never clones indexed file or Note data.
+#[derive(Clone)]
+struct IndexRow {
+    index: Arc<FileIndex>,
+    position: RowIndex,
+}
+
+impl IndexRow {
+    #[expect(
+        clippy::expect_used,
+        reason = "FileIndexEntryIter/RowIndex::new only ever construct \
+                  positions from .enumerate() over FileIndex::bases, so this \
+                  index is always in range; failure here means that invariant \
+                  broke, not a recoverable caller error"
+    )]
+    fn base(&self) -> &FileBase {
+        self.index.bases().get(self.position.get()).expect(
+            "RowIndex always addresses a valid position in its FileIndex",
+        )
+    }
+
+    fn note(&self) -> Option<&Note> {
+        self.index.note(self.base().path())
+    }
+
+    fn inlinks(&self) -> &[PathBuf] {
+        self.index
+            .inlinks()
+            .get(self.base().path())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+}
+
+impl PartialEq for IndexRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.base() == other.base()
+            && self.note() == other.note()
+            && self.inlinks() == other.inlinks()
+    }
+}
+
+impl std::fmt::Debug for IndexRow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IndexRow")
+            .field("position", &self.position)
+            .field("base", self.base())
+            .field("note", &self.note())
+            .field("inlinks", &self.inlinks())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,14 +126,13 @@ struct TaskRow {
 }
 
 impl QueryRecord {
-    /// Constructs a new [`QueryRecord`] from an index entry.
-    pub(super) fn from_entry(entry: FileIndexEntry<'_>) -> Self {
+    /// Constructs a new [`QueryRecord`] at `position` in `index`.
+    pub(super) fn from_row(index: Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
-            base: Arc::new(RecordBase {
-                base: entry.base().clone(),
-                note: entry.note().cloned().map(Arc::new),
-                inlinks: Box::<[PathBuf]>::from(entry.inlinks()),
-            }),
+            row: IndexRow {
+                index,
+                position,
+            },
             flattened: Vec::new(),
             kind: RowKind::Page,
         }
@@ -100,8 +150,8 @@ impl QueryRecord {
         self
     }
 
-    /// Returns task completion state if this is a task-level record, or
-    /// `None` for page-level records.
+    /// Returns task completion state if this is a task-level record, or `None`
+    /// for page-level records.
     ///
     /// Returns `true` for `- [x]` and `false` for `- [ ]`.
     #[inline]
@@ -115,8 +165,8 @@ impl QueryRecord {
         }
     }
 
-    /// Returns the task item's text if this is a task-level record, or
-    /// `None` for page-level records.
+    /// Returns the task item's text if this is a task-level record, or `None`
+    /// for page-level records.
     #[inline]
     #[must_use]
     pub(crate) fn task_text(&self) -> Option<&str> {
@@ -130,7 +180,7 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub fn base(&self) -> &FileBase {
-        &self.base.base
+        self.row.base()
     }
 
     /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
@@ -139,15 +189,15 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> Option<&Note> {
-        self.base.note.as_deref()
+        self.row.note()
     }
 
-    /// Returns project-relative paths of Notes whose wikilinks resolve to
-    /// this record's Note, or an empty slice if no Notes link to it.
+    /// Returns project-relative paths of Notes whose wikilinks resolve to this
+    /// record's Note, or an empty slice if no Notes link to it.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
-        &self.base.inlinks
+        self.row.inlinks()
     }
 
     /// Resolves a field path string against this record's metadata.
@@ -411,47 +461,13 @@ impl QueryRecordSet {
         Ok(self.apply_transform(&transform))
     }
 
+    /// Applies one already-parsed transform. Used by [`Self::filter`]/
+    /// [`Self::sort`]/[`Self::limit`]/[`Self::group_by`]/[`Self::flatten`]
+    /// (Minijinja's eager per-call chaining) and, via a whole
+    /// [`super::QueryPlan`], by [`super::QueryService::execute`]. All
+    /// per-step logic lives on [`QueryTransform::apply`].
     pub(super) fn apply_transform(self, transform: &QueryTransform) -> Self {
-        match transform {
-            QueryTransform::Filter(expr) => self.apply_filter(expr),
-            QueryTransform::Sort {
-                field,
-                descending,
-            } => self.sort_by_field(field, *descending),
-            QueryTransform::Limit(n) => self.limit_to(*n),
-            QueryTransform::GroupBy(field) => self.sort_by_field(field, false),
-            QueryTransform::Flatten(field) => self.flatten_field(field),
-        }
-    }
-
-    fn apply_filter(mut self, expr: &FilterExpr) -> Self {
-        self.records.retain(|record| expr.is_matching(record));
-        self
-    }
-
-    fn limit_to(mut self, n: usize) -> Self {
-        self.records.truncate(n);
-        self
-    }
-
-    fn flatten_field(self, field_path: &FieldPath) -> Self {
-        let mut records = Vec::with_capacity(self.records.len());
-        for record in self.records {
-            let NoteFieldValue::List(mut items) =
-                record.resolve_owned(field_path)
-            else {
-                records.push(record);
-                continue;
-            };
-            let Some(last) = items.pop() else {
-                continue;
-            };
-            records.extend(items.into_iter().map(|item| {
-                record.clone().with_flattened(field_path.clone(), item)
-            }));
-            records.push(record.with_flattened(field_path.clone(), last));
-        }
-        Self::new(records)
+        Self::new(transform.apply(self.records))
     }
 
     /// Renders records as a Markdown table matching headers to corresponding
@@ -503,16 +519,6 @@ impl QueryRecordSet {
         format: &QueryDisplayFormat,
     ) -> QueryResult<String> {
         format.render(&self.records)
-    }
-
-    /// Sorts records stably by the resolved value of `path`.
-    fn sort_by_field(self, field_path: &FieldPath, descending: bool) -> Self {
-        let mut records = self.records;
-        records.sort_by_cached_key(|record| SortKey {
-            value: record.resolve_owned(field_path),
-            descending,
-        });
-        Self::new(records)
     }
 }
 

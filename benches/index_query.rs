@@ -30,12 +30,14 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
+use std::sync::Arc;
+
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use traces_pkm::{
     FileIndex, IndexerService, QueryRequest, QueryService, SourceSelector,
 };
 
-fn built_index() -> FileIndex {
+fn built_index() -> Arc<FileIndex> {
     let temp = tempfile::tempdir().expect("create temp dir");
     for i in 0..1000 {
         std::fs::write(
@@ -44,10 +46,10 @@ fn built_index() -> FileIndex {
         )
         .expect("write fixture note");
     }
-    IndexerService::new(temp.path()).build().expect("build index")
+    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
 }
 
-fn built_task_index() -> FileIndex {
+fn built_task_index() -> Arc<FileIndex> {
     let temp = tempfile::tempdir().expect("create temp dir");
     for i in 0..1000 {
         std::fs::write(
@@ -56,7 +58,7 @@ fn built_task_index() -> FileIndex {
         )
         .expect("write fixture note");
     }
-    IndexerService::new(temp.path()).build().expect("build index")
+    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
 }
 
 /// Measures page-row construction and filtering from a 1000-record index.

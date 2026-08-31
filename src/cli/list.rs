@@ -28,8 +28,9 @@ pub(super) struct List {
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"file.folder == \"books\""`.
+    /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
-    filter: Option<String>,
+    filter: Vec<String>,
     /// Field path to sort by. Omit to leave results in `FileIndex` order.
     #[arg(long)]
     sort: Option<String>,
@@ -84,12 +85,10 @@ impl List {
     /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
-        let outcome = super::refresh_page_query(config, self.from.as_deref())?;
-        let outcome =
-            super::apply_filter(outcome, root, self.filter.as_deref())?;
-        let outcome = super::apply_sort(
-            outcome,
-            root,
+        let outcome = super::refresh_page_query(
+            config,
+            self.from.as_deref(),
+            &self.filter,
             self.sort.as_deref(),
             self.order.is_descending(),
         )?;
@@ -128,7 +127,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B\n").expect("write b.md");
             let list = List {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -149,7 +148,7 @@ mod tests {
                 .expect("write b.md");
             let list = List {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: Some("rating".to_owned()),
                 order: SortOrder::Ascending,
             };
@@ -170,7 +169,7 @@ mod tests {
                 .expect("write b.md");
             let list = List {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: Some("rating".to_owned()),
                 order: SortOrder::Descending,
             };
@@ -188,7 +187,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
             let list = List {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: Some("file..bad".to_owned()),
                 order: SortOrder::Ascending,
             };
@@ -212,7 +211,7 @@ mod tests {
                 .expect("write b.md");
             let list = List {
                 from: Some("#projects".to_owned()),
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -233,7 +232,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B\n").expect("write b.md");
             let list = List {
                 from: Some("projects/".to_owned()),
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -271,7 +270,7 @@ mod tests {
                     "class(book).with_children() and \"books/dune.md\""
                         .to_owned(),
                 ),
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -289,7 +288,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "#book\n").expect("write a.md");
             let list = List {
                 from: Some("#book and".to_owned()),
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -312,7 +311,7 @@ mod tests {
                 .expect("write b.md");
             let list = List {
                 from: None,
-                filter: Some("rating > 5".to_owned()),
+                filter: vec!["rating > 5".to_owned()],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -325,12 +324,35 @@ mod tests {
         }
 
         #[test]
+        fn where_stacking_composes_as_and() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "---\nrating: 1\n---\n")
+                .expect("write a.md");
+            fs::write(temp.path().join("b.md"), "---\nrating: 5\n---\n")
+                .expect("write b.md");
+            fs::write(temp.path().join("c.md"), "---\nrating: 9\n---\n")
+                .expect("write c.md");
+            let list = List {
+                from: None,
+                filter: vec!["rating > 2".to_owned(), "rating < 9".to_owned()],
+                sort: None,
+                order: SortOrder::Ascending,
+            };
+
+            let (rendered, count) =
+                list.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- b.md\n");
+            assert_eq!(count, 1);
+        }
+
+        #[test]
         fn rejects_unparsable_filter_expression() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
             let list = List {
                 from: None,
-                filter: Some("not a valid expression".to_owned()),
+                filter: vec!["not a valid expression".to_owned()],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -369,7 +391,7 @@ mod tests {
             let _restore = RestorePermissions(&locked);
             let list = List {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };
@@ -426,9 +448,29 @@ mod tests {
             let list = list_args(&cli);
 
             assert_eq!(list.from.as_deref(), Some("#tag"));
-            assert_eq!(list.filter.as_deref(), Some("rating > 5"));
+            assert_eq!(list.filter, vec!["rating > 5".to_owned()]);
             assert_eq!(list.sort.as_deref(), Some("rating"));
             assert_eq!(list.order, SortOrder::Descending);
+        }
+
+        #[test]
+        fn repeated_where_flags_collect_into_one_vec_per_occurrence() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "list",
+                "--where",
+                "rating > 2",
+                "--where",
+                "rating < 9",
+            ])
+            .expect("parse list argv");
+
+            let list = list_args(&cli);
+
+            assert_eq!(list.filter, vec![
+                "rating > 2".to_owned(),
+                "rating < 9".to_owned()
+            ]);
         }
 
         #[test]
@@ -439,7 +481,7 @@ mod tests {
             let list = list_args(&cli);
 
             assert_eq!(list.from, None);
-            assert_eq!(list.filter, None);
+            assert_eq!(list.filter, Vec::<String>::new());
             assert_eq!(list.sort, None);
             assert_eq!(list.order, SortOrder::Ascending);
         }
@@ -485,7 +527,7 @@ mod tests {
             let _guard = CwdGuard::enter(&root);
             let list = List {
                 from: None,
-                filter: None,
+                filter: vec![],
                 sort: None,
                 order: SortOrder::Ascending,
             };

@@ -241,62 +241,78 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
     })
 }
 
-/// Refreshes `root`'s [`FileIndex`] and returns page-level records selected
-/// by `from`.
+/// Refreshes `root`'s [`FileIndex`] and returns page-level records selected by
+/// `from`, filtered by `filters` (composed as AND) and optionally sorted.
 ///
 /// Shared by [`list::List`] and [`table::Table`].
 ///
 /// # Errors
 ///
-/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails, or
+/// [`CliError::Query`] if any filter expression or the sort field path is
+/// malformed.
 fn refresh_page_query(
     config: &Config,
     from: Option<&str>,
+    filters: &[String],
+    sort: Option<&str>,
+    descending: bool,
 ) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index = IndexerService::new(root).refresh().map_err(|source| {
-        CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        }
-    })?;
+    let index =
+        Arc::new(IndexerService::new(root).refresh().map_err(|source| {
+            CliError::Index {
+                root: root.to_path_buf(),
+                source,
+            }
+        })?);
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
-    execute_query_request(
-        config,
-        &index,
-        QueryRequest::pages(source),
-        has_classes,
-    )
+    let mut request = QueryRequest::pages(source);
+    for expr in filters {
+        request = request
+            .filter(expr)
+            .map_err(|error| query_error(root, error.into()))?;
+    }
+    if let Some(path) = sort {
+        request = request
+            .sort(path, descending)
+            .map_err(|error| query_error(root, error.into()))?;
+    }
+    execute_query_request(config, &index, request, has_classes)
 }
 
-/// Refreshes `root`'s [`FileIndex`] and returns task-level records selected
-/// by `from`.
+/// Refreshes `root`'s [`FileIndex`] and returns task-level records selected by
+/// `from`, filtered by `filters` (composed as AND).
 ///
 /// Shared by [`task::Task`].
 ///
 /// # Errors
 ///
-/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails, or
+/// [`CliError::Query`] if any filter expression is malformed.
 fn refresh_task_query(
     config: &Config,
     from: Option<&str>,
+    filters: &[String],
 ) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index = IndexerService::new(root).refresh().map_err(|source| {
-        CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        }
-    })?;
+    let index =
+        Arc::new(IndexerService::new(root).refresh().map_err(|source| {
+            CliError::Index {
+                root: root.to_path_buf(),
+                source,
+            }
+        })?);
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
-    execute_query_request(
-        config,
-        &index,
-        QueryRequest::tasks(source),
-        has_classes,
-    )
+    let mut request = QueryRequest::tasks(source);
+    for expr in filters {
+        request = request
+            .filter(expr)
+            .map_err(|error| query_error(root, error.into()))?;
+    }
+    execute_query_request(config, &index, request, has_classes)
 }
 
 fn parse_source(
@@ -310,7 +326,7 @@ fn parse_source(
 
 fn execute_query_request(
     config: &Config,
-    index: &FileIndex,
+    index: &Arc<FileIndex>,
     request: QueryRequest,
     has_classes: bool,
 ) -> Result<QueryRecordSet, CliError> {
@@ -335,46 +351,6 @@ fn load_schema_service(config: &Config) -> Result<SchemaService, CliError> {
     Ok(construction.service)
 }
 
-/// Applies an optional `--where` filter expression to `outcome`.
-///
-/// Shared by [`list::List`], [`table::Table`], and [`task::Task`].
-///
-/// # Errors
-///
-/// Returns [`CliError::Query`] if `filter` is an unparsable expression.
-fn apply_filter(
-    outcome: QueryRecordSet,
-    root: &Path,
-    filter: Option<&str>,
-) -> Result<QueryRecordSet, CliError> {
-    match filter {
-        Some(expr) => {
-            outcome.filter(expr).map_err(|source| query_error(root, source))
-        }
-        None => Ok(outcome),
-    }
-}
-
-/// Applies an optional `--sort` field path to `outcome`.
-///
-/// Shared by [`list::List`] and [`table::Table`].
-///
-/// # Errors
-///
-/// Returns [`CliError::Query`] if `sort` names a malformed field path.
-fn apply_sort(
-    outcome: QueryRecordSet,
-    root: &Path,
-    sort: Option<&str>,
-    descending: bool,
-) -> Result<QueryRecordSet, CliError> {
-    match sort {
-        Some(path) => outcome
-            .sort(path, descending)
-            .map_err(|source| query_error(root, source)),
-        None => Ok(outcome),
-    }
-}
 /// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
 fn query_error(root: &Path, source: QueryError) -> CliError {
     CliError::Query {
@@ -986,8 +962,9 @@ mod tests {
             .run(&service, Arc::new(PresetDialogProvider::new()))
             .expect("list succeeds");
             assert_eq!(list_outcome, CommandOutcome::Completed);
-            let list_index =
-                IndexerService::new(&project).refresh().expect("refresh index");
+            let list_index = Arc::new(
+                IndexerService::new(&project).refresh().expect("refresh index"),
+            );
             let _list = QueryService::new("class")
                 .execute(
                     &list_index,
@@ -1012,8 +989,9 @@ mod tests {
             .run(&service, Arc::new(PresetDialogProvider::new()))
             .expect("table succeeds");
             assert_eq!(table_outcome, CommandOutcome::Completed);
-            let table_index =
-                IndexerService::new(&project).refresh().expect("refresh index");
+            let table_index = Arc::new(
+                IndexerService::new(&project).refresh().expect("refresh index"),
+            );
             let _table = QueryService::new("class")
                 .execute(&table_index, QueryRequest::pages(SourceSelector::All))
                 .table(&["Name", "Rating"], &["file.name", "rating"])
@@ -1024,8 +1002,9 @@ mod tests {
                 .run(&service, Arc::new(PresetDialogProvider::new()))
                 .expect("task succeeds");
             assert_eq!(task_outcome, CommandOutcome::Completed);
-            let task_index =
-                IndexerService::new(&project).refresh().expect("refresh index");
+            let task_index = Arc::new(
+                IndexerService::new(&project).refresh().expect("refresh index"),
+            );
             let _tasks = QueryService::new("class")
                 .execute(&task_index, QueryRequest::tasks(SourceSelector::All))
                 .task_list()
@@ -1049,8 +1028,9 @@ mod tests {
                  \"rating\"]) }}",
             );
 
-            let index =
-                IndexerService::new(&project).refresh().expect("refresh index");
+            let index = Arc::new(
+                IndexerService::new(&project).refresh().expect("refresh index"),
+            );
             let expected = QueryService::new("class")
                 .execute(
                     &index,
@@ -1075,8 +1055,9 @@ mod tests {
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
-            let index =
-                IndexerService::new(&project).refresh().expect("refresh index");
+            let index = Arc::new(
+                IndexerService::new(&project).refresh().expect("refresh index"),
+            );
             let inlinks = QueryService::new("class")
                 .execute(
                     &index,

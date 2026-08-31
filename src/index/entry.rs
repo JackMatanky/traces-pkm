@@ -1,6 +1,6 @@
 //! [`FileIndex`] data structure and its borrowed entry view.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::InlinkMap;
 use crate::{file::FileBase, note::Note};
@@ -68,7 +68,6 @@ impl FileIndex {
     /// Returns the [`Note`] for the note at `path`, if indexed.
     #[inline]
     #[must_use]
-    #[cfg(test)]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
         find_by_path(&self.notes, path)
     }
@@ -89,12 +88,37 @@ impl FileIndex {
     }
 }
 
-/// Borrowed file row paired with optional parsed Note data and inbound links.
+/// Borrowed file row paired with optional parsed Note data.
 #[derive(Copy, Clone)]
 pub(crate) struct FileIndexEntry<'a> {
     base: &'a FileBase,
     note: Option<&'a Note>,
-    inlinks: &'a [PathBuf],
+}
+
+/// Position of a [`FileBase`] within [`FileIndex::bases`].
+///
+/// Newtype instead of a bare `usize` so a row position can't be confused
+/// with an unrelated count (a `--limit` value, a list length) at a call
+/// site. [`FileIndexEntryIter`] visits `bases` in order — the Nth entry it
+/// yields is always `bases()[N]` — so `RowIndex` values built from
+/// `.enumerate()` over [`FileIndex::entries`] are always valid positions.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RowIndex(usize);
+
+impl RowIndex {
+    /// Wraps `position`, a row's index into [`FileIndex::bases`].
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(position: usize) -> Self {
+        Self(position)
+    }
+
+    /// Returns the wrapped position.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn get(self) -> usize {
+        self.0
+    }
 }
 
 impl<'a> FileIndexEntry<'a> {
@@ -109,20 +133,13 @@ impl<'a> FileIndexEntry<'a> {
     pub(crate) const fn note(&self) -> Option<&'a Note> {
         self.note
     }
-
-    /// Returns project-relative paths for Notes linking to this entry.
-    #[inline]
-    pub(crate) const fn inlinks(&self) -> &'a [PathBuf] {
-        self.inlinks
-    }
 }
 
-/// Iterator that pairs each [`FileBase`] with its optional [`Note`] and
-/// inlinks via a merge-join over path-sorted slices.
+/// Iterator that pairs each [`FileBase`] with its optional [`Note`] via a
+/// merge-join over path-sorted slices.
 struct FileIndexEntryIter<'a> {
     bases: std::slice::Iter<'a, FileBase>,
     notes: std::iter::Peekable<std::slice::Iter<'a, Note>>,
-    inlinks: &'a InlinkMap,
 }
 
 impl<'a> FileIndexEntryIter<'a> {
@@ -130,7 +147,6 @@ impl<'a> FileIndexEntryIter<'a> {
         Self {
             bases: index.bases.iter(),
             notes: index.notes.iter().peekable(),
-            inlinks: &index.inlinks,
         }
     }
 }
@@ -144,15 +160,9 @@ impl<'a> Iterator for FileIndexEntryIter<'a> {
             self.notes.next();
         }
         let note = self.notes.next_if(|note| note.path() == file.path());
-        let inlinks = self
-            .inlinks
-            .get(file.path())
-            .map(Vec::as_slice)
-            .unwrap_or_default();
         Some(FileIndexEntry {
             base: file,
             note,
-            inlinks,
         })
     }
 }

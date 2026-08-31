@@ -430,7 +430,7 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{fs, path::Path, sync::Arc};
 
     use super::FilterExpr;
     use crate::{
@@ -445,7 +445,8 @@ mod tests {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
-        let index = IndexerService::new(temp).build().expect("build index");
+        let index =
+            Arc::new(IndexerService::new(temp).build().expect("build index"));
         QueryService::new("class")
             .execute(&index, QueryRequest::pages(SourceSelector::All))
     }

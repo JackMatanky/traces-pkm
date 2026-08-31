@@ -199,7 +199,7 @@ impl QueryOps {
         };
         let outcome = QueryService::new(&*self.class_field)
             .with_class_expander(self.service.as_ref())
-            .execute(index.as_ref(), request);
+            .execute(&index, request);
         Ok(Value::from_object(outcome))
     }
 }
