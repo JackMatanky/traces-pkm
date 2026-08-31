@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 # ------------------------------------------------------------- #
-#                           Package                             #
+#                            Package                            #
 # ------------------------------------------------------------- #
 [package]
 name = "traces-pkm"
@@ -20,7 +20,7 @@ keywords = ["notes", "pkm", "templates"]
 categories = ["command-line-utilities", "development-tools"]
 
 # ------------------------------------------------------------- #
-#                            Benchmarks                         #
+#                          Benchmarks                           #
 # ------------------------------------------------------------- #
 [[bench]]
 harness = false
@@ -62,7 +62,13 @@ inquire = "0.9"
 logos = "0.16"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
 minijinja = "2.21.0"
-postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
+postcard = {
+  version = "1.1.3",
+  default-features = false,
+  features = [
+    "use-std",
+  ]
+}
 pulldown-cmark = "0.13"
 redb = "4.1"
 regex = "1.13.1"
@@ -75,6 +81,7 @@ uuid = { version = "1.24.0", features = ["v4"] }
 walkdir = "2.5"
 yaml_serde = { package = "yaml_serde", version = "0.10" }
 
+# --------------------- Dev Dependencies ---------------------- #
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 pretty_assertions = "1.4.1"
@@ -83,7 +90,7 @@ tempfile = "3.27.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # ------------------------------------------------------------- #
-#                          Features                             #
+#                           Features                            #
 # ------------------------------------------------------------- #
 [features]
 test-utils = []
@@ -92,17 +99,13 @@ test-utils = []
 #                          Lint Config                          #
 # ------------------------------------------------------------- #
 [lints.clippy]
-# ------------------------------------------------------------- #
-#                        Lint Categories                        #
-# ------------------------------------------------------------- #
+# ---------------------- Lint Categories ---------------------- #
 cargo = { level = "warn", priority = -1 }
 complexity = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 perf = { level = "deny", priority = -1 }
 
-# ------------------------------------------------------------- #
-#                 Denials (Strict Enforcements)                 #
-# ------------------------------------------------------------- #
+# --------------- Denials (Strict Enforcements) --------------- #
 allow_attributes_without_reason = "deny"
 arithmetic_side_effects = "deny"
 as_pointer_underscore = "deny"
@@ -130,9 +133,7 @@ unreachable = "deny"
 unused_self = "deny"
 unwrap_used = "deny"
 
-# ------------------------------------------------------------- #
-#            Warnings (Best Practices & Suggestions)            #
-# ------------------------------------------------------------- #
+# ---------- Warnings (Best Practices & Suggestions) ---------- #
 as_conversions = "warn"
 cognitive_complexity = "warn"
 else_if_without_else = "warn"
@@ -151,9 +152,7 @@ trait_duplication_in_bounds = "warn"
 type_repetition_in_bounds = "warn"
 use_self = "warn"
 
-# ------------------------------------------------------------- #
-#              Allowed (Exceptions & Relaxations)               #
-# ------------------------------------------------------------- #
+# ------------ Allowed (Exceptions & Relaxations) ------------- #
 absolute_paths = "allow"
 min_ident_chars = "allow"
 missing_docs_in_private_items = "allow"
