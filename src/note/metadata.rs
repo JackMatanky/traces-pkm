@@ -1,6 +1,6 @@
 //! Frontmatter and inline-field metadata values.
 //!
-//! [`RawFrontmatter`] preserves source YAML. [`Frontmatter`] stores parsed YAML
+//! `RawFrontmatter` preserves source YAML. [`Frontmatter`] stores parsed YAML
 //! key-value pairs.
 
 use indexmap::IndexMap;
@@ -15,7 +15,7 @@ use crate::field::FieldKey;
 ///
 /// Preserves the unparsed YAML between frontmatter delimiters (`---`).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RawFrontmatter(String);
+pub(crate) struct RawFrontmatter(String);
 
 impl RawFrontmatter {
     /// Stores unparsed frontmatter text.
@@ -40,7 +40,7 @@ impl RawFrontmatter {
     }
 }
 
-/// Structured frontmatter fields parsed from [`RawFrontmatter`].
+/// Structured frontmatter fields parsed from `RawFrontmatter`.
 ///
 /// Converts raw YAML into an [`IndexMap`] of field key-value pairs. Malformed
 /// or non-mapping YAML produces an empty frontmatter after logging the parse
@@ -63,6 +63,14 @@ impl Frontmatter {
     /// Returns the parsed frontmatter fields.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "called by Note::fields in test builds; retained for \
+                      accessor symmetry"
+        )
+    )]
     pub(crate) fn fields(&self) -> &IndexMap<FieldKey, NoteFieldValue> {
         &self.fields
     }

@@ -263,6 +263,10 @@ impl IndexStore {
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
     /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
     ///   not a valid record.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(dead_code, reason = "called by IndexerService::load")
+    )]
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let files = self.read_table(&txn, FILES, FileBase::path)?;
@@ -523,7 +527,7 @@ impl IndexStore {
     pub(super) fn persist_index(&self, index: &FileIndex) -> IndexResult<()> {
         match index.delta() {
             IndexDelta::Full => {
-                self.write_all(index.bases(), index.notes(), index.inlinks())
+                self.write_all(index.files(), index.notes(), index.inlinks())
             }
             IndexDelta::Incremental(_) => self.persist_incremental(index),
         }
@@ -541,7 +545,7 @@ impl IndexStore {
     fn persist_incremental(&self, index: &FileIndex) -> IndexResult<()> {
         let IndexDelta::Incremental(delta) = index.delta() else {
             return self.write_all(
-                index.bases(),
+                index.files(),
                 index.notes(),
                 index.inlinks(),
             );
@@ -599,8 +603,8 @@ impl IndexStore {
         }
         for path in upserted {
             if let Ok(idx) =
-                index.bases().binary_search_by(|f| f.path().cmp(path))
-                && let Some(file) = index.bases().get(idx)
+                index.files().binary_search_by(|f| f.path().cmp(path))
+                && let Some(file) = index.files().get(idx)
             {
                 self.upsert_row(&mut files, path, file)?;
             }
@@ -1066,12 +1070,7 @@ mod tests {
             let loaded =
                 IndexerService::new(temp.path()).load().expect("load index");
             let inlinks_of = |target: &Path| {
-                loaded
-                    .entries()
-                    .find(|e| e.base().path() == target)
-                    .expect("entry present")
-                    .inlinks()
-                    .to_vec()
+                loaded.inlinks().get(target).cloned().unwrap_or_default()
             };
             assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);
             assert_eq!(inlinks_of(normal.as_path()), vec![weird]);

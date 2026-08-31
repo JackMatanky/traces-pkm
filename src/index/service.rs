@@ -41,7 +41,7 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 ///
 /// # Errors
 ///
-/// All methods return [`IndexError`]. [`Self::refresh`] also logs a
+/// All methods return `IndexError`. [`Self::refresh`] also logs a
 /// `tracing::warn!` on persist failure without propagating it.
 ///
 /// # Examples
@@ -52,8 +52,7 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 /// let index = indexer.build().expect("build index");
 /// indexer.persist(&index).expect("persist index");
 /// ```
-///
-/// [`IndexError`]: super::IndexError
+
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -76,8 +75,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Builder`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, or a markdown file cannot be parsed.
+    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
+    ///   cannot be inspected, or a markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
@@ -102,19 +101,19 @@ impl IndexerService {
     /// Derived inlinks are recomputed in full when a Note is added or removed,
     /// or when a changed Note's outlink targets actually differ from its
     /// previously-persisted value (backdating skips the recompute otherwise;
-    /// see [`super::cache::RefreshCache::reconcile_note`]). A full recompute
-    /// (not a per-note patch) is required because link target resolution
-    /// considers every indexed Note: an unedited Note's *resolved* target can
-    /// change when an unrelated Note is added or removed. For example, a
-    /// wikilink that was ambiguous becomes resolvable once one of the ambiguous
-    /// candidates is deleted.
+    /// see `RefreshCache::reconcile_note`). A full recompute (not a per-note
+    /// patch) is required because link target resolution considers every
+    /// indexed Note: an unedited Note's *resolved* target can change when an
+    /// unrelated Note is added or removed. For example, a wikilink that was
+    /// ambiguous becomes resolvable once one of the ambiguous candidates is
+    /// deleted.
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Builder`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, a markdown file cannot be parsed, or an
-    ///   unchanged Note's previous value cannot be recalled.
-    /// - [`IndexError::Store`] if the previously persisted index cannot be
+    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
+    ///   cannot be inspected, a markdown file cannot be parsed, or an unchanged
+    ///   Note's previous value cannot be recalled.
+    /// - `IndexError::Store` if the previously persisted index cannot be
     ///   loaded.
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
@@ -143,7 +142,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the database's parent directory cannot be
+    /// - `IndexError::Store` if the database's parent directory cannot be
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
@@ -156,9 +155,17 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the database cannot be read or stored bytes
-    ///   are not a valid record.
+    /// - `IndexError::Store` if the database cannot be read or stored bytes are
+    ///   not a valid record.
     #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller in cli; kept for IndexerService \
+                      lifecycle symmetry and tests"
+        )
+    )]
     pub fn load(&self) -> IndexResult<FileIndex> {
         let (records, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;
@@ -171,8 +178,8 @@ impl IndexerService {
     /// Skips `.git` directories (and their descendants), the index database
     /// itself, and symlinks.
     ///
-    /// The sorted output is a precondition for the merge-join reconciliation
-    /// in [`builder::IndexBuilder`].
+    /// The sorted output is a precondition for the merge-join reconciliation in
+    /// [`builder::IndexBuilder`].
     ///
     /// # Errors
     ///
@@ -222,6 +229,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::Arc,
     };
 
     use super::{super::IndexError, *};
@@ -233,7 +241,7 @@ mod tests {
 
     /// Runs a page-level query via [`QueryService`].
     fn query_pages(
-        index: &FileIndex,
+        index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> QueryRecordSet {
         QueryService::new("class")
@@ -258,7 +266,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
 
-            assert_eq!(index.bases().len(), 2);
+            assert_eq!(index.files().len(), 2);
             assert_eq!(index.notes().len(), 1);
             assert_eq!(
                 index.notes().first().map(Note::path),
@@ -539,7 +547,7 @@ mod tests {
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.bases(), built.bases());
+            assert_eq!(loaded.files(), built.files());
         }
 
         #[test]
@@ -704,7 +712,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).load().expect("load index");
 
-            assert_eq!(index.bases().len(), 0);
+            assert_eq!(index.files().len(), 0);
             assert_eq!(index.notes().len(), 0);
         }
 
@@ -727,10 +735,10 @@ mod tests {
                 .expect("persist second index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.bases().len(), 1);
+            assert_eq!(loaded.files().len(), 1);
             assert_eq!(loaded.notes().len(), 1);
             assert_eq!(
-                loaded.bases().first().map(FileBase::path),
+                loaded.files().first().map(FileBase::path),
                 Some(Path::new("second.md"))
             );
             assert_eq!(
@@ -756,11 +764,11 @@ mod tests {
             indexer.refresh().expect("refresh persists internally");
 
             let loaded = indexer.load().expect("load index");
-            assert_eq!(loaded.bases().len(), 1);
+            assert_eq!(loaded.files().len(), 1);
             assert_eq!(loaded.notes().len(), 1);
             assert!(loaded.note(Path::new("gone.md")).is_none());
             assert_eq!(
-                loaded.bases().first().map(FileBase::path),
+                loaded.files().first().map(FileBase::path),
                 Some(Path::new("keep.md"))
             );
         }
@@ -1078,7 +1086,7 @@ mod tests {
 
             let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(refreshed.notes().len(), 0);
-            assert_eq!(refreshed.bases().len(), 0);
+            assert_eq!(refreshed.files().len(), 0);
         }
 
         #[test]
@@ -1096,7 +1104,7 @@ mod tests {
             fs::remove_file(temp.path().join("linker.md"))
                 .expect("delete linker");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome.iter().next().expect("target record");
 
@@ -1121,7 +1129,7 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[new-target]]")
                 .expect("repoint linker");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let old_target = outcome
                 .iter()
@@ -1184,7 +1192,7 @@ mod tests {
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()
@@ -1260,7 +1268,7 @@ mod tests {
             fs::remove_file(temp.path().join("archive/foo.md"))
                 .expect("delete archive/foo.md");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()

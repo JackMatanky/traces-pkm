@@ -23,7 +23,7 @@ use crate::{
 /// The CLI and template system pass a `--from` / `.from(...)` string to
 /// [`SourceSelector::parse`]. An empty or whitespace-only input yields
 /// [`Self::All`] (match everything); any nonempty input is parsed into a
-/// [`SourceExpr`].
+/// `SourceExpr`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceSelector {
     /// Every indexed Note satisfies this source.
@@ -36,11 +36,11 @@ impl SourceSelector {
     /// Parses `input` as a source expression.
     ///
     /// Empty or whitespace-only input yields [`Self::All`]; any nonempty input
-    /// is parsed into a [`SourceExpr`].
+    /// is parsed into a `SourceExpr`.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::Syntax`] when a nonempty `input` is invalid.
+    /// Returns `QueryError::Syntax` when a nonempty `input` is invalid.
     #[inline]
     pub fn parse(input: &str) -> QueryResult<Self> {
         if input.trim().is_empty() {
@@ -340,7 +340,7 @@ impl PartialEq for GlobPattern {
 /// [`set_classes`](Self::set_classes) before matching; the set is empty after
 /// parsing and resolved at query execution time.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ClassExpansionMode {
+pub(crate) enum ClassExpansionMode {
     /// Match only the named class.
     Exact(BTreeSet<String>),
     /// Match the named class and its direct children.
@@ -873,10 +873,10 @@ mod tests {
         use crate::{FileIndex, index::IndexerService};
 
         fn find_base<'a>(
-            bases: &'a [crate::file::FileBase],
+            files: &'a [crate::file::FileBase],
             path: &Path,
         ) -> &'a crate::file::FileBase {
-            bases.iter().find(|r| r.path() == path).expect("base not found")
+            files.iter().find(|r| r.path() == path).expect("base not found")
         }
 
         fn indexed_note(
@@ -897,7 +897,7 @@ mod tests {
         #[test]
         fn matches_boolean_combinations_of_tags_and_paths() {
             let (_temp, index) = indexed_note("#book", "books/dune.md");
-            let file = find_base(index.bases(), Path::new("books/dune.md"));
+            let file = find_base(index.files(), Path::new("books/dune.md"));
             let note = index.note(Path::new("books/dune.md")).expect("Note");
             let expression =
                 SourceExpr::parse("(#book and books/) and not archive/")
@@ -909,7 +909,7 @@ mod tests {
         #[test]
         fn matches_exact_file_path_without_matching_sibling() {
             let (_temp, index) = indexed_note("#book", "books/dune.md");
-            let file = find_base(index.bases(), Path::new("books/dune.md"));
+            let file = find_base(index.files(), Path::new("books/dune.md"));
             let note = index.note(Path::new("books/dune.md")).expect("Note");
 
             assert!(
@@ -928,7 +928,7 @@ mod tests {
         fn reads_classes_from_the_execution_field() {
             let (_temp, index) =
                 indexed_note("---\nkind: Book\n---\n", "book.md");
-            let file = find_base(index.bases(), Path::new("book.md"));
+            let file = find_base(index.files(), Path::new("book.md"));
             let note = index.note(Path::new("book.md")).expect("Note");
             let expression = SourceExpr::atom(SourceAtom::Class {
                 names: vec!["Book".to_owned()],
@@ -954,9 +954,9 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let expression =
                 SourceExpr::parse("covers/*.md").expect("valid source");
-            let direct = find_base(index.bases(), Path::new("covers/dune.md"));
+            let direct = find_base(index.files(), Path::new("covers/dune.md"));
             let nested =
-                find_base(index.bases(), Path::new("covers/sub/hidden.md"));
+                find_base(index.files(), Path::new("covers/sub/hidden.md"));
 
             assert!(expression.is_match(direct, None, "class"));
             assert!(!expression.is_match(nested, None, "class"));
@@ -979,9 +979,9 @@ mod tests {
             // behaves like the `covers/` folder shorthand.
             let expression =
                 SourceExpr::parse("covers/**/*.md").expect("valid source");
-            let direct = find_base(index.bases(), Path::new("covers/dune.md"));
+            let direct = find_base(index.files(), Path::new("covers/dune.md"));
             let nested =
-                find_base(index.bases(), Path::new("covers/sub/hidden.md"));
+                find_base(index.files(), Path::new("covers/sub/hidden.md"));
 
             assert!(!expression.is_match(direct, None, "class"));
             assert!(expression.is_match(nested, None, "class"));

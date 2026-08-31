@@ -23,7 +23,7 @@
 //!   including task items and nested child lists.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
-//! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
+//! - [`Frontmatter`], `RawFrontmatter`: YAML frontmatter as structured fields
 //!   or raw text.
 //! - [`NoteFieldValue`]: body metadata values parsed from `Key:: Value` syntax.
 //! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
@@ -38,6 +38,7 @@ mod parser;
 
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{List, ListItem, TaskStatus};
-pub use metadata::{Frontmatter, NoteFieldValue, RawFrontmatter};
+pub(crate) use metadata::RawFrontmatter;
+pub use metadata::{Frontmatter, NoteFieldValue};
 pub use model::Note;
 pub use parser::parse_markdown;

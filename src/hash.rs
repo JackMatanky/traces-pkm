@@ -43,7 +43,7 @@ impl TryFrom<&Path> for Blake3FileHash {
     ///
     /// # Errors
     ///
-    /// - [`HashError`] if `path` cannot be read
+    /// - `HashError` if `path` cannot be read
     #[inline]
     fn try_from(path: &Path) -> Result<Self, HashError> {
         let contents = fs::read(path).map_err(|source| HashError {

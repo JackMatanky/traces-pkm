@@ -47,15 +47,15 @@ impl TemplatePathInput {
     ///
     /// # Errors
     ///
-    /// - [`TemplatePathError::Absolute`] if `path` is absolute.
-    /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
+    /// - `TemplatePathError::Absolute` if `path` is absolute.
+    /// - `TemplatePathError::UnsafeComponent` for `..`, any component that is
     ///   not a plain name or `.`, or a path with no [`Component::Normal`].
     ///
     /// # Examples
     ///
     /// ```rust
     /// # #[cfg(feature = "test-utils")]
-    /// fn main() -> Result<(), traces_pkm::TemplatePathError> {
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::path::Path;
     ///
     /// use traces_pkm::TemplatePathInput;

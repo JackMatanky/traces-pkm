@@ -74,10 +74,7 @@ mod template;
 pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use config::{
-    Config, ConfigService, DateFieldConfig, FrontmatterConfig, SchemasConfig,
-    TrustRequest,
-};
+pub use config::{Config, ConfigService, TrustRequest};
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,
     TerminalDialogProvider,
@@ -94,30 +91,24 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    DbError, DbResult, FileIndex, IndexError, IndexResult, IndexerService,
-    InlinkMap, derive_inlinks, path as path_codec,
+    FileIndex, IndexerService, derive_inlinks, path as path_codec,
 };
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use note::{
-    Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,
-    NoteFieldValue, RawFrontmatter, TaskStatus, parse_markdown,
-};
+pub use note::{Note, parse_markdown};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
     QueryRecord, QueryRecordSet, QueryRequest, QueryResult, QueryService,
     SourceSelector,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use schema::{Schema, SchemaService};
-#[cfg(any(test, feature = "test-utils"))]
-pub use tag::{Tag, TagError};
+pub use schema::SchemaService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
-    CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,
-    TemplatePathInput, TemplateService, WriteMode, WriteOutcome,
+    CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,
+    WriteMode, WriteOutcome,
 };
 
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,

@@ -30,7 +30,7 @@ use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
 /// Controls whether rendered output is returned or written.
 ///
-/// Produced once from CLI flags via [`Self::from_flags`]. Rendering still runs
+/// Produced once from CLI flags via `from_flags`. Rendering still runs
 /// in both modes, including `ui.*` template helpers.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum WriteMode {

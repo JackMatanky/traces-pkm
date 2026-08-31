@@ -36,11 +36,10 @@
 //! [`QueryRecordSet::task_list`], and `count` (an alias for
 //! [`QueryRecordSet::len`]) are terminal instead: they render final
 //! markdown/scalar output and end a chain rather than continue it. Each is
-//! reachable both as a `call_method`
-//! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter,
-//! registered once by [`QueryOps::register_terminal_filters`] (`outcome |
-//! table(["Name"], ["file.name"])`). Both forms call the same
-//! [`QueryRecordSet`] method.
+//! reachable both as a `call_method` (`outcome.table(["Name"], ["file.name"])`)
+//! and as a pipeline filter, registered once by
+//! [`QueryOps::register_terminal_filters`] (`outcome | table(["Name"],
+//! ["file.name"])`). Both forms call the same [`QueryRecordSet`] method.
 //!
 //! # Object Wiring
 //!
@@ -199,7 +198,7 @@ impl QueryOps {
         };
         let outcome = QueryService::new(&*self.class_field)
             .with_class_expander(self.service.as_ref())
-            .execute(index.as_ref(), request);
+            .execute(&index, request);
         Ok(Value::from_object(outcome))
     }
 }
@@ -331,8 +330,8 @@ impl Object for QueryRecordSet {
     /// calls consumes a clone of the current outcome and wraps the transformed
     /// result in a [`Value`] for further chaining:
     ///
-    /// - `where` and `filter` both call [`QueryRecordSet::filter`]. The
-    ///   Rust-side `r#where` alias exists only for Rust callers.
+    /// - `where` and `filter` both call `QueryRecordSet::filter`. The Rust-side
+    ///   `r#where` alias exists only for Rust callers.
     /// - `sort` defaults to ascending order when the optional `descending`
     ///   argument is omitted.
     ///

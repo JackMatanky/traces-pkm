@@ -2,7 +2,7 @@
 //! through the test-utils surface alone. Unit coverage inside `src/query/`
 //! exercises crate-internal transforms.
 
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{IndexerService, QueryRequest, QueryService, SourceSelector};
@@ -18,7 +18,9 @@ fn page_query_returns_real_indexed_notes() {
         .expect("write b.md");
     fs::write(temp.path().join("c.md"), "---\nrating: 5\n---\n")
         .expect("write c.md");
-    let index = IndexerService::new(temp.path()).build().expect("build index");
+    let index = Arc::new(
+        IndexerService::new(temp.path()).build().expect("build index"),
+    );
     let outcome = QueryService::new("class")
         .execute(&index, QueryRequest::pages(SourceSelector::All));
 
@@ -43,7 +45,9 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
     let temp = tempfile::tempdir().expect("create temp dir");
     fs::write(temp.path().join("todo.md"), "- [ ] one\n- [x] two\n")
         .expect("write todo.md");
-    let index = IndexerService::new(temp.path()).build().expect("build index");
+    let index = Arc::new(
+        IndexerService::new(temp.path()).build().expect("build index"),
+    );
     let tasks = QueryService::new("class")
         .execute(&index, QueryRequest::tasks(SourceSelector::All));
     assert_eq!(tasks.len(), 2);
@@ -71,7 +75,9 @@ fn query_request_reuses_one_index_for_page_and_task_queries() {
     .expect("write book.md");
     fs::write(temp.path().join("todo.md"), "---\nrating: 1\n---\n")
         .expect("write todo.md");
-    let index = IndexerService::new(temp.path()).build().expect("build index");
+    let index = Arc::new(
+        IndexerService::new(temp.path()).build().expect("build index"),
+    );
     let service = QueryService::new("class");
 
     let pages =

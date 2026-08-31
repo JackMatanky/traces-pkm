@@ -51,10 +51,10 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// - [`TemplateError::SchemaDirectory`] if the configured Schema directory
-    ///   is invalid, escapes the project root, or cannot be verified.
-    /// - [`TemplateError::SchemaLoad`] if constructing the underlying
-    ///   [`TemplateEngine`] fails to load the Schema registry: the registry
+    /// - `TemplateError::SchemaDirectory` if the configured Schema directory is
+    ///   invalid, escapes the project root, or cannot be verified.
+    /// - `TemplateError::SchemaLoad` if constructing the underlying
+    ///   `TemplateEngine` fails to load the Schema registry: the registry
     ///   directory could not be read or listed, a Schema file failed to parse,
     ///   or the `extends` DAG contains a cycle.
     #[inline]
@@ -88,7 +88,7 @@ impl<'a> TemplateService<'a> {
 
     /// Resolves, renders, and writes or previews a template.
     ///
-    /// The output target is chosen by [`Self::write`]: explicit `output`, then
+    /// The output target is chosen by `write`: explicit `output`, then
     /// `file.write_to()`, then the configured default output path. Dry-run mode
     /// returns rendered content without resolving or validating the output
     /// path.
@@ -102,29 +102,19 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// - [`Resolve`] if `name` is invalid, ambiguous, unreadable during
-    ///   directory lookup, or not found.
-    /// - [`Read`] if the resolved template source cannot be read.
-    /// - [`Render`] if parsing, rendering, includes, helper calls, queries,
-    ///   schema access, file includes, or `ui.*` calls fail.
-    /// - [`OutputPathEscapesRoot`] if committed output from `output` or
-    ///   `file.write_to()` escapes the project root.
-    /// - [`OutputPathUnverifiable`] if committed output confinement cannot be
-    ///   verified.
-    /// - [`Prompt`] if an interactive collision prompt fails or is cancelled.
-    /// - [`OutputFileAlreadyExists`] if commit mode uses
+    /// - `Resolve` if resolving the template name fails.
+    /// - `Read` if reading the resolved template source fails.
+    /// - `Render` if minijinja evaluation fails.
+    /// - `OutputPathEscapesRoot` if the output path attempts to escape the
+    ///   root.
+    /// - `OutputPathUnverifiable` if the root cannot be canonicalized.
+    /// - `Prompt` if an interactive UI prompt inside the template fails or is
+    ///   cancelled.
+    /// - `OutputFileAlreadyExists` if the output file already exists under
     ///   [`CommitPolicy::CreateNew`] and the target exists.
-    /// - [`Write`] if creating parent directories, creating the output file, or
+    /// - `Write` if creating parent directories, creating the output file, or
     ///   writing rendered content fails.
     ///
-    /// [`Resolve`]: TemplateError::Resolve
-    /// [`Read`]: TemplateError::Read
-    /// [`Render`]: TemplateError::Render
-    /// [`OutputPathEscapesRoot`]: TemplateError::OutputPathEscapesRoot
-    /// [`OutputPathUnverifiable`]: TemplateError::OutputPathUnverifiable
-    /// [`Prompt`]: TemplateError::Prompt
-    /// [`OutputFileAlreadyExists`]: TemplateError::OutputFileAlreadyExists
-    /// [`Write`]: TemplateError::Write
     /// [`CommitPolicy::CreateNew`]: super::writer::CommitPolicy::CreateNew
     #[inline]
     pub fn render_to_file(

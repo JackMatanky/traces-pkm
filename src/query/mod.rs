@@ -60,13 +60,13 @@ mod service;
 mod sort;
 mod value;
 
-pub(crate) use error::QueryRequestError;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
-pub use error::{QueryDialect, QueryError, QueryResult};
-pub use grammar::{ClassExpansionMode, SourceSelector};
+pub use error::{QueryDialect, QueryError, QueryRequestError, QueryResult};
+pub use grammar::SourceSelector;
 pub(crate) use grammar::{
-    FieldPath, FileClassExpander, FileField, SourceAtom, SourceExpr,
+    ClassExpansionMode, FieldPath, FileClassExpander, FileField, SourceAtom,
+    SourceExpr,
 };
 pub use record::{QueryRecord, QueryRecordSet};
 pub use request::QueryRequest;
@@ -79,6 +79,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::Arc,
     };
 
     use super::{format::QueryDisplayFormat, *};
@@ -98,7 +99,9 @@ mod tests {
             for (name, content) in files {
                 fs::write(temp.join(name), content).expect("write note");
             }
-            let index = IndexerService::new(temp).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp).build().expect("build index"),
+            );
             QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All))
         }
@@ -114,10 +117,10 @@ mod tests {
 
         /// Finds a [`FileBase`] by path in a sorted records slice.
         pub(super) fn find_base<'a>(
-            bases: &'a [crate::file::FileBase],
+            files: &'a [crate::file::FileBase],
             path: &Path,
         ) -> &'a crate::file::FileBase {
-            bases.iter().find(|r| r.path() == path).expect("base not found")
+            files.iter().find(|r| r.path() == path).expect("base not found")
         }
     }
     use fixtures::*;
@@ -132,9 +135,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_base(index.bases(), Path::new("a.md"));
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let file = find_base(index.files(), Path::new("a.md"));
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -146,8 +150,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let note = index.note(Path::new("a.md")).expect("note");
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
@@ -160,8 +165,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "- [x] Buy milk")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -173,8 +179,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "- [ ] Buy milk")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -370,8 +377,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "- [x] Buy milk")
                 .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
@@ -875,8 +883,9 @@ mod tests {
                 "- [ ] Buy milk\n- [x] Walk dog\n",
             )
             .expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let rendered = outcome.task_list().expect("valid task_list");

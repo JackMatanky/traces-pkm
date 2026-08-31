@@ -21,5 +21,7 @@ mod source;
 
 pub(crate) use field::{FieldPath, FileField, TaskField};
 pub(crate) use filter::FilterExpr;
-pub use source::{ClassExpansionMode, SourceSelector};
-pub(crate) use source::{FileClassExpander, SourceAtom, SourceExpr};
+pub use source::SourceSelector;
+pub(crate) use source::{
+    ClassExpansionMode, FileClassExpander, SourceAtom, SourceExpr,
+};

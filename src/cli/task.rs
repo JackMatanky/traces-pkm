@@ -22,8 +22,9 @@ pub(super) struct Task {
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"task.completed == false"`.
+    /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
-    filter: Option<String>,
+    filter: Vec<String>,
 }
 
 impl Task {
@@ -77,10 +78,11 @@ impl Task {
     ///
     /// [`FileIndex`]: crate::index::FileIndex
     fn lines(&self, config: &Config) -> Result<Vec<String>, CliError> {
-        let root = config.root();
-        let outcome = super::refresh_task_query(config, self.from.as_deref())?;
-        let outcome =
-            super::apply_filter(outcome, root, self.filter.as_deref())?;
+        let outcome = super::refresh_task_query(
+            config,
+            self.from.as_deref(),
+            &self.filter,
+        )?;
         Ok(outcome
             .iter()
             .map(|record| {
@@ -126,7 +128,7 @@ mod tests {
             .expect("write note");
             let task = Task {
                 from: None,
-                filter: None,
+                filter: vec![],
             };
 
             let lines = task.lines(&config(temp.path())).expect("valid query");
@@ -146,7 +148,7 @@ mod tests {
                 .expect("write b.md");
             let task = Task {
                 from: Some("#projects".to_owned()),
-                filter: None,
+                filter: vec![],
             };
 
             let lines = task.lines(&config(temp.path())).expect("valid query");
@@ -167,7 +169,7 @@ mod tests {
                 .expect("write b.md");
             let task = Task {
                 from: Some("projects/".to_owned()),
-                filter: None,
+                filter: vec![],
             };
 
             let lines = task.lines(&config(temp.path())).expect("valid query");
@@ -185,7 +187,7 @@ mod tests {
             .expect("write note");
             let task = Task {
                 from: None,
-                filter: Some("task.completed == false".to_owned()),
+                filter: vec!["task.completed == false".to_owned()],
             };
 
             let lines = task.lines(&config(temp.path())).expect("valid query");
@@ -202,7 +204,7 @@ mod tests {
                 .expect("write note");
             let task = Task {
                 from: None,
-                filter: Some("not a valid expression".to_owned()),
+                filter: vec!["not a valid expression".to_owned()],
             };
 
             let error = task
@@ -213,6 +215,72 @@ mod tests {
                 source: QueryError::Request(QueryRequestError::Syntax(_)),
                 ..
             }));
+        }
+    }
+
+    mod argv {
+        use clap::Parser as _;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::cli::{Cli, Commands};
+
+        /// Extracts the parsed `Task` args from `cli`.
+        fn task_args(cli: &Cli) -> &Task {
+            match &cli.command {
+                Some(Commands::Task(task)) => Some(task),
+                _ => None,
+            }
+            .expect("expected the Task subcommand")
+        }
+
+        #[test]
+        fn parses_from_and_where_flags() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "task",
+                "--from",
+                "#tag",
+                "--where",
+                "task.completed == false",
+            ])
+            .expect("parse task argv");
+
+            let task = task_args(&cli);
+
+            assert_eq!(task.from.as_deref(), Some("#tag"));
+            assert_eq!(task.filter, vec!["task.completed == false".to_owned()]);
+        }
+
+        #[test]
+        fn defaults_from_and_where_to_empty() {
+            let cli = Cli::try_parse_from(["traces", "task"])
+                .expect("parse task argv");
+
+            let task = task_args(&cli);
+
+            assert_eq!(task.from, None);
+            assert_eq!(task.filter, Vec::<String>::new());
+        }
+
+        #[test]
+        fn repeated_where_flags_collect_into_one_vec_per_occurrence() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "task",
+                "--where",
+                "task.completed == false",
+                "--where",
+                "rating > 2",
+            ])
+            .expect("parse task argv");
+
+            let task = task_args(&cli);
+
+            assert_eq!(task.filter, vec![
+                "task.completed == false".to_owned(),
+                "rating > 2".to_owned()
+            ]);
         }
     }
 
@@ -233,7 +301,7 @@ mod tests {
             let _guard = CwdGuard::enter(&root);
             let task = Task {
                 from: None,
-                filter: None,
+                filter: vec![],
             };
 
             task.run(&service).expect("run task command");
@@ -253,7 +321,7 @@ mod tests {
             let _guard = CwdGuard::enter(&root);
             let task = Task {
                 from: None,
-                filter: None,
+                filter: vec![],
             };
 
             let error = task.run(&service).expect_err("untrusted root fails");

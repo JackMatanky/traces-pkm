@@ -110,6 +110,14 @@ impl Tag {
 
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Tag accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub fn segments(&self) -> &[String] {
         &self.segments
     }

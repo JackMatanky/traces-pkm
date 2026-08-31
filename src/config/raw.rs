@@ -89,7 +89,7 @@ pub(crate) struct RawFrontmatterConfig {
 /// during config scaffolding serialization (e.g. `traces init`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct RawDateFieldConfig {
+pub(crate) struct RawDateFieldConfig {
     /// Frontmatter key name, if configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,

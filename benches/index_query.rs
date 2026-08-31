@@ -30,12 +30,14 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
+use std::sync::Arc;
+
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use traces_pkm::{
     FileIndex, IndexerService, QueryRequest, QueryService, SourceSelector,
 };
 
-fn built_index() -> FileIndex {
+fn built_index() -> Arc<FileIndex> {
     let temp = tempfile::tempdir().expect("create temp dir");
     for i in 0..1000 {
         std::fs::write(
@@ -44,10 +46,10 @@ fn built_index() -> FileIndex {
         )
         .expect("write fixture note");
     }
-    IndexerService::new(temp.path()).build().expect("build index")
+    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
 }
 
-fn built_task_index() -> FileIndex {
+fn built_task_index() -> Arc<FileIndex> {
     let temp = tempfile::tempdir().expect("create temp dir");
     for i in 0..1000 {
         std::fs::write(
@@ -56,7 +58,7 @@ fn built_task_index() -> FileIndex {
         )
         .expect("write fixture note");
     }
-    IndexerService::new(temp.path()).build().expect("build index")
+    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
 }
 
 /// Measures page-row construction and filtering from a 1000-record index.
@@ -111,6 +113,42 @@ fn bench_execute_tasks(c: &mut Criterion) {
         );
     });
 }
+/// Measures page-row filtering and sorting by frontmatter metadata — the path
+/// `FileIndexRow::note()` resolution sits on.
+///
+/// Distinct from [`bench_execute_pages`], which never touches a
+/// `FieldPath::Metadata`/`Tags` field and would not catch regressions in
+/// per-record Note metadata resolution.
+///
+/// Expected outcomes:
+/// - Fast O(1) field lookup per record without repeated binary searches.
+fn bench_execute_pages_by_metadata(c: &mut Criterion) {
+    let index = built_index();
+    c.bench_function(
+        "QueryService::execute pages filter+sort by metadata",
+        |b| {
+            b.iter_batched(
+                || index.clone(),
+                |index| {
+                    QueryService::new("class").execute(
+                        &index,
+                        QueryRequest::pages(SourceSelector::All)
+                            .filter("rating > 2")
+                            .expect("valid filter")
+                            .sort("rating", false)
+                            .expect("valid sort"),
+                    )
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+}
 
-criterion_group!(benches, bench_execute_pages, bench_execute_tasks);
+criterion_group!(
+    benches,
+    bench_execute_pages,
+    bench_execute_tasks,
+    bench_execute_pages_by_metadata
+);
 criterion_main!(benches);
