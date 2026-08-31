@@ -25,9 +25,12 @@ fn persist_then_load_recovers_the_same_file_count_and_paths() {
 
     let loaded = indexer.load().expect("load persisted index");
 
-    assert_eq!(loaded.files().len(), built.files().len());
-    let mut loaded_paths: Vec<_> =
-        loaded.files().iter().map(|r| r.path().to_path_buf()).collect();
+    assert_eq!(loaded.entries().len(), built.entries().len());
+    let mut loaded_paths: Vec<_> = loaded
+        .entries()
+        .iter()
+        .map(|entry| entry.base().path().to_path_buf())
+        .collect();
     loaded_paths.sort();
     assert_eq!(loaded_paths, vec![
         std::path::PathBuf::from("a.md"),

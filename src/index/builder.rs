@@ -11,6 +11,7 @@ use super::{
     FileFormat,
     cache::{NoteCacheState, RefreshCache},
     delta::{IncrementalDelta, IndexDelta},
+    entry,
     error::IndexBuilderError,
     inlinks::derive_inlinks,
 };
@@ -105,25 +106,37 @@ impl<'a> IndexBuilder<'a> {
         files: Vec<FileBase>,
         root: &Path,
     ) -> Result<super::FileIndex, IndexBuilderError> {
-        let mut notes = Vec::new();
-        for file in &files {
-            if file.format() == FileFormat::Note {
-                notes.push(parse_note(root, file)?);
-            }
+        let mut entries = Vec::with_capacity(files.len());
+        for file in files {
+            let note = if file.format() == FileFormat::Note {
+                Some(Box::new(entry::NoteEntry {
+                    note: parse_note(root, &file)?,
+                    inlinks: Box::default(),
+                }))
+            } else {
+                None
+            };
+            entries.push(entry::FileEntry {
+                base: file,
+                note,
+            });
         }
         debug_assert!(
-            notes.windows(2).all(|pair| {
+            entries.windows(2).all(|pair| {
                 let [a, b] = pair else {
                     return true;
                 };
-                a.path() <= b.path()
+                a.base().path() <= b.base().path()
             }),
-            "notes must already be sorted by path: IndexerService::scan sorts \
-             records, and this loop preserves that order while filtering to \
-             Note-format entries"
+            "entries must already be sorted by path: IndexerService::scan \
+             sorts records, and this loop preserves that order while building \
+             FileEntry values"
         );
-        let inlinks = derive_inlinks(&notes);
-        Ok(super::FileIndex::new(files, notes, inlinks, IndexDelta::Full))
+        let notes_view: Vec<&crate::note::Note> =
+            entries.iter().filter_map(entry::FileEntry::note).collect();
+        let inlinks = derive_inlinks(&notes_view);
+        entry::redistribute_inlinks(&mut entries, inlinks);
+        Ok(super::FileIndex::new(entries.into_boxed_slice(), IndexDelta::Full))
     }
 
     fn build_with_cache(
@@ -133,9 +146,9 @@ impl<'a> IndexBuilder<'a> {
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let (upserted, deleted, mut stale) = cache.diff_files(&files);
         let mut upserted_iter = upserted.iter().peekable();
-        let mut notes = Vec::with_capacity(files.len());
+        let mut entries = Vec::with_capacity(files.len());
 
-        for file in &files {
+        for file in files {
             let cache_state = if upserted_iter
                 .next_if(|p| p.as_path() == file.path())
                 .is_some()
@@ -144,28 +157,40 @@ impl<'a> IndexBuilder<'a> {
             } else {
                 NoteCacheState::Fresh
             };
-            if file.format() != FileFormat::Note {
-                continue;
-            }
-            let (note, outlinks_changed) =
-                cache.reconcile_note(file, cache_state, root)?;
-            stale |= outlinks_changed;
-            notes.push(note);
+            let note = if file.format() == FileFormat::Note {
+                let (note, outlinks_changed) =
+                    cache.reconcile_note(&file, cache_state, root)?;
+                stale |= outlinks_changed;
+                Some(Box::new(entry::NoteEntry {
+                    note,
+                    inlinks: Box::default(),
+                }))
+            } else {
+                None
+            };
+            entries.push(entry::FileEntry {
+                base: file,
+                note,
+            });
         }
 
         debug_assert!(
-            notes.windows(2).all(|pair| {
+            entries.windows(2).all(|pair| {
                 let [a, b] = pair else {
                     return true;
                 };
-                a.path() <= b.path()
+                a.base().path() <= b.base().path()
             }),
-            "notes must already be sorted by path: IndexerService::scan sorts \
-             records, and this loop preserves that order while filtering to \
-             Note-format entries"
+            "entries must already be sorted by path: IndexerService::scan \
+             sorts records, and this loop preserves that order while building \
+             FileEntry values"
         );
 
-        let new_inlinks_if_stale = stale.then(|| derive_inlinks(&notes));
+        let new_inlinks_if_stale = stale.then(|| {
+            let notes_view: Vec<&crate::note::Note> =
+                entries.iter().filter_map(entry::FileEntry::note).collect();
+            derive_inlinks(&notes_view)
+        });
         let (links_upserted, links_deleted) = match &new_inlinks_if_stale {
             Some(new_map) => {
                 let (u, d) = cache.diff_links(new_map);
@@ -173,8 +198,9 @@ impl<'a> IndexBuilder<'a> {
             }
             None => (None, Vec::new()),
         };
-        let inlinks =
+        let inlink_map =
             new_inlinks_if_stale.unwrap_or_else(|| cache.into_inlinks());
+        entry::redistribute_inlinks(&mut entries, inlink_map);
 
         let delta = IndexDelta::Incremental(Box::new(IncrementalDelta {
             upserted,
@@ -182,7 +208,7 @@ impl<'a> IndexBuilder<'a> {
             links_upserted,
             links_deleted,
         }));
-        Ok(super::FileIndex::new(files, notes, inlinks, delta))
+        Ok(super::FileIndex::new(entries.into_boxed_slice(), delta))
     }
 }
 
@@ -213,7 +239,7 @@ mod tests {
     use super::*;
     use crate::{
         file::FileBase,
-        index::{FileIndex, IndexerService, store::IndexStore},
+        index::{FileEntry, FileIndex, IndexerService, store::IndexStore},
         note::Note,
     };
 
@@ -221,9 +247,7 @@ mod tests {
     /// `IndexerService::refresh` does in production before reconciliation.
     fn persist_previous(previous: &FileIndex, root: &Path) -> IndexStore {
         let store = IndexStore::open(root).expect("open store");
-        store
-            .write_all(previous.files(), previous.notes(), previous.inlinks())
-            .expect("persist previous index");
+        store.write_all(previous.entries()).expect("persist previous index");
         store
     }
 
@@ -245,7 +269,12 @@ mod tests {
             .expect("build");
 
             assert_eq!(
-                index.files().iter().map(FileBase::path).collect::<Vec<_>>(),
+                index
+                    .entries()
+                    .iter()
+                    .map(FileEntry::base)
+                    .map(FileBase::path)
+                    .collect::<Vec<_>>(),
                 [Path::new("a.md"), Path::new("b.md")]
             );
         }
@@ -264,8 +293,15 @@ mod tests {
             .build(temp.path())
             .expect("build");
 
-            assert_eq!(index.files().len(), 2);
-            assert_eq!(index.notes().len(), 1);
+            assert_eq!(index.entries().len(), 2);
+            assert_eq!(
+                index
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
             assert_eq!(
                 index.note(Path::new("note.md")).map(Note::path),
                 Some(Path::new("note.md"))
@@ -294,7 +330,11 @@ mod tests {
             )
             .build(temp.path())
             .expect("build");
-            let first_inlinks = first.inlinks().len();
+            let first_inlinks = first
+                .entries()
+                .iter()
+                .filter(|entry| !entry.inlinks().is_empty())
+                .count();
 
             let store = persist_previous(&first, temp.path());
             let read_txn = store.begin_read().expect("begin read");
@@ -308,7 +348,11 @@ mod tests {
             .expect("build");
 
             assert_eq!(
-                second.inlinks().len(),
+                second
+                    .entries()
+                    .iter()
+                    .filter(|entry| !entry.inlinks().is_empty())
+                    .count(),
                 first_inlinks,
                 "inlinks must be reused when nothing changed"
             );
@@ -330,7 +374,11 @@ mod tests {
             )
             .build(temp.path())
             .expect("build");
-            let first_inlinks = first.inlinks().len();
+            let first_inlinks = first
+                .entries()
+                .iter()
+                .filter(|entry| !entry.inlinks().is_empty())
+                .count();
 
             fs::remove_file(temp.path().join("image.png"))
                 .expect("delete image");
@@ -347,7 +395,11 @@ mod tests {
             .expect("build");
 
             assert_eq!(
-                second.inlinks().len(),
+                second
+                    .entries()
+                    .iter()
+                    .filter(|entry| !entry.inlinks().is_empty())
+                    .count(),
                 first_inlinks,
                 "deleting non-note file must not recompute inlinks"
             );
@@ -374,7 +426,11 @@ mod tests {
             )
             .build(temp.path())
             .expect("build");
-            let first_len = first.notes().len();
+            let first_len = first
+                .entries()
+                .iter()
+                .filter(|entry| entry.note().is_some())
+                .count();
 
             // Act
             let store = persist_previous(&first, temp.path());
@@ -389,7 +445,14 @@ mod tests {
             .expect("build");
 
             // Assert
-            assert_eq!(first_len, second.notes().len());
+            assert_eq!(
+                first_len,
+                second
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count()
+            );
         }
 
         #[test]
@@ -428,8 +491,9 @@ mod tests {
 
             // Assert
             let title = second
-                .notes()
-                .first()
+                .entries()
+                .iter()
+                .find_map(FileEntry::note)
                 .expect("note must exist")
                 .frontmatter()
                 .and_then(|fm| fm.get("title").cloned());
@@ -454,7 +518,14 @@ mod tests {
             )
             .build(temp.path())
             .expect("build");
-            assert_eq!(first.notes().len(), 1);
+            assert_eq!(
+                first
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
 
             fs::remove_file(temp.path().join("note.md")).expect("delete note");
 
@@ -471,7 +542,15 @@ mod tests {
             .expect("build");
 
             // Assert
-            assert_eq!(second.notes().len(), 0, "deleted note must be removed");
+            assert_eq!(
+                second
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                0,
+                "deleted note must be removed"
+            );
         }
 
         #[test]
@@ -485,7 +564,14 @@ mod tests {
             )
             .build(temp.path())
             .expect("build");
-            assert_eq!(first.notes().len(), 1);
+            assert_eq!(
+                first
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
 
             fs::write(temp.path().join("b.md"), "---\ntitle: B\n---\nBody.")
                 .expect("write b");
@@ -501,7 +587,15 @@ mod tests {
             .build(temp.path())
             .expect("build");
 
-            assert_eq!(second.notes().len(), 2, "new note must be included");
+            assert_eq!(
+                second
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                2,
+                "new note must be included"
+            );
         }
 
         #[test]
@@ -593,7 +687,14 @@ mod tests {
             // Both notes must still be present and unchanged — proves the
             // upserted pointer was consumed for m.png (a non-Note) and did
             // not misalign against a.md/z.md.
-            assert_eq!(second.notes().len(), 2);
+            assert_eq!(
+                second
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                2
+            );
         }
     }
 }

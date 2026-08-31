@@ -104,7 +104,6 @@ impl List {
 mod tests {
     use super::*;
     use crate::cli::tests::fixtures::{create_trusted_project, service};
-
     mod render {
         use std::{fs, path::Path};
 
@@ -297,7 +296,7 @@ mod tests {
                 list.render(&config(temp.path())).expect_err("invalid source");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Syntax(_),
+                source: QueryError::Request(QueryRequestError::Syntax(_)),
                 ..
             }));
         }

@@ -39,69 +39,22 @@ use super::{
 };
 use crate::{
     file::FileBase,
-    index::{FileIndex, RowIndex},
+    index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, Note, NoteFieldValue, TaskStatus},
 };
 
-/// A query row pairing a [`FileBase`] with parsed [`Note`] metadata.
+/// A query row over one indexed [`FileEntry`].
 ///
 /// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
 /// and derived inlinks for template rendering and CLI output.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct QueryRecord {
-    row: FileIndexRow,
+    index: Arc<FileIndex>,
+    position: RowIndex,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryRecordSet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
     kind: RowKind,
-}
-
-/// Index-backed handle to one row of a [`FileIndex`]: resolves `FileBase`,
-/// `Note`, and inlinks on demand instead of cloning them at construction.
-/// Cloning a `FileIndexRow` bumps the shared `FileIndex`'s `Arc` strong count
-/// and copies a `usize` — it never clones indexed file or Note data.
-#[derive(Clone)]
-struct FileIndexRow {
-    index: Arc<FileIndex>,
-    position: RowIndex,
-}
-
-impl FileIndexRow {
-    fn base(&self) -> &FileBase {
-        self.index.file_at(self.position)
-    }
-
-    fn note(&self) -> Option<&Note> {
-        self.index.note_at(self.position)
-    }
-
-    fn inlinks(&self) -> &[PathBuf] {
-        self.index
-            .inlinks()
-            .get(self.base().path())
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
-}
-
-impl PartialEq for FileIndexRow {
-    fn eq(&self, other: &Self) -> bool {
-        self.base() == other.base()
-            && self.note() == other.note()
-            && self.inlinks() == other.inlinks()
-    }
-}
-
-impl std::fmt::Debug for FileIndexRow {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("FileIndexRow")
-            .field("position", &self.position)
-            .field("base", self.base())
-            .field("note", &self.note())
-            .field("inlinks", &self.inlinks())
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,13 +73,16 @@ impl QueryRecord {
     /// Constructs a new [`QueryRecord`] at `position` in `index`.
     pub(super) fn from_row(index: Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
-            row: FileIndexRow {
-                index,
-                position,
-            },
+            index,
+            position,
             flattened: Vec::new(),
             kind: RowKind::Page,
         }
+    }
+
+    /// Resolves this record's indexed [`FileEntry`].
+    fn entry(&self) -> &FileEntry {
+        self.index.entry_at(self.position)
     }
 
     /// Converts this record into a task-level row.
@@ -171,7 +127,7 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub fn base(&self) -> &FileBase {
-        self.row.base()
+        self.entry().base()
     }
 
     /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
@@ -180,7 +136,7 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> Option<&Note> {
-        self.row.note()
+        self.entry().note()
     }
 
     /// Returns project-relative paths of Notes whose wikilinks resolve to this
@@ -188,7 +144,7 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
-        self.row.inlinks()
+        self.entry().inlinks()
     }
 
     /// Resolves a field path string against this record's metadata.
@@ -310,6 +266,28 @@ impl QueryRecord {
             }
             TaskField::Text => QueryFieldValueRef::Text(&task.text),
         }
+    }
+}
+
+impl PartialEq for QueryRecord {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.entry() == other.entry()
+            && self.flattened == other.flattened
+            && self.kind == other.kind
+    }
+}
+
+impl std::fmt::Debug for QueryRecord {
+    #[inline]
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QueryRecord")
+            .field("position", &self.position)
+            .field("entry", self.entry())
+            .field("flattened", &self.flattened)
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
     }
 }
 

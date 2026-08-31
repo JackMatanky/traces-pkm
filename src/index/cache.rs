@@ -258,9 +258,12 @@ mod tests {
             let files = IndexerService::new(temp.path()).scan().expect("scan");
             let note = crate::note::parse_markdown("a.md", "content");
             let store = IndexStore::open(temp.path()).expect("open store");
-            store
-                .write_all(&files, &[note], &InlinkMap::new())
-                .expect("persist");
+            let entries = crate::index::entry::assemble_entries(
+                files.clone(),
+                vec![note],
+                InlinkMap::new(),
+            );
+            store.write_all(&entries).expect("persist");
             let txn = store.begin_read().expect("begin read");
             let cache = load_cache(&store, &txn);
             let file = files.first().expect("one record");

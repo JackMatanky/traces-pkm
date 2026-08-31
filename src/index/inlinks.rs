@@ -16,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::entry::find_by_path;
 use crate::{
     BaseNameRef,
     note::{LinkTarget, Note},
@@ -54,7 +53,7 @@ pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// [`load`]: super::IndexerService::load
 #[must_use]
 #[inline]
-pub fn derive_inlinks(notes: &[Note]) -> InlinkMap {
+pub fn derive_inlinks(notes: &[&Note]) -> InlinkMap {
     let resolver = LinkResolver::new(notes);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {
@@ -80,15 +79,15 @@ pub fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 /// Snapshot of indexed Notes plus a precomputed file-stem index, built once per
 /// [`derive_inlinks`] call and reused across every outlink resolution in that
 /// call.
-struct LinkResolver<'a> {
-    notes: &'a [Note],
+struct LinkResolver<'a, 'b> {
+    notes: &'b [&'a Note],
     stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
 }
 
-impl<'a> LinkResolver<'a> {
+impl<'a, 'b> LinkResolver<'a, 'b> {
     /// Builds the resolver, indexing every Note's file stem in one O(n)
     /// pass.
-    fn new(notes: &'a [Note]) -> Self {
+    fn new(notes: &'b [&'a Note]) -> Self {
         let mut stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>> =
             HashMap::with_capacity(notes.len());
         for note in notes {
@@ -212,6 +211,19 @@ impl Source<'_> {
     }
 }
 
+/// Binary-searches path-sorted `notes` for an exact path match.
+///
+/// Private to this module: [`LinkResolver::resolve`] needs the same search
+/// over a `&[&Note]` slice while resolving link targets during
+/// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
+fn find_by_path<'a>(notes: &[&'a Note], path: &Path) -> Option<&'a Note> {
+    notes
+        .binary_search_by(|note| note.path().cmp(path))
+        .ok()
+        .and_then(|i| notes.get(i))
+        .copied()
+}
+
 /// Computes the path-segment distance between `a`'s and `b`'s containing
 /// folders.
 ///
@@ -268,7 +280,8 @@ mod tests {
             from: &str,
             target: LinkTarget<'_>,
         ) -> Option<Target<'a>> {
-            LinkResolver::new(notes).resolve(Path::new(from), target)
+            let refs: Vec<&Note> = notes.iter().collect();
+            LinkResolver::new(&refs).resolve(Path::new(from), target)
         }
 
         #[test]
@@ -468,6 +481,13 @@ mod tests {
 
         use super::*;
 
+        /// Runs [`derive_inlinks`] over `notes`, building the `&[&Note]`
+        /// view the production signature takes.
+        fn run(notes: &[Note]) -> InlinkMap {
+            let refs: Vec<&Note> = notes.iter().collect();
+            derive_inlinks(&refs)
+        }
+
         #[test]
         fn maps_a_target_to_the_single_note_linking_to_it() {
             let notes = [
@@ -475,7 +495,7 @@ mod tests {
                 parse_markdown("b.md", "# B"),
             ];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert_eq!(
                 inlinks.get(Path::new("b.md")),
@@ -491,7 +511,7 @@ mod tests {
                 parse_markdown("target.md", "# Target"),
             ];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert_eq!(
                 inlinks.get(Path::new("target.md")),
@@ -504,7 +524,7 @@ mod tests {
             let note = parse_markdown("a.md", "[[b]] and [[b]] again");
             let notes = [note, parse_markdown("b.md", "# B")];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert_eq!(
                 inlinks.get(Path::new("b.md")),
@@ -519,7 +539,7 @@ mod tests {
                 note_with_outlink("b.md", "a", LinkType::Wikilink),
             ];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert_eq!(
                 inlinks.get(Path::new("a.md")),
@@ -531,7 +551,7 @@ mod tests {
         fn omits_notes_with_no_inbound_links() {
             let notes = [parse_markdown("lonely.md", "# Lonely")];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert_eq!(inlinks.get(Path::new("lonely.md")), None);
         }
@@ -544,7 +564,7 @@ mod tests {
                 LinkType::Markdown,
             )];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert!(inlinks.is_empty());
         }
@@ -561,7 +581,7 @@ mod tests {
                 parse_markdown("notes/b/note.md", "# Far"),
             ];
 
-            let inlinks = derive_inlinks(&notes);
+            let inlinks = run(&notes);
 
             assert_eq!(
                 inlinks.get(Path::new("notes/a/note.md")),

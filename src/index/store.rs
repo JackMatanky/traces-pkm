@@ -32,6 +32,7 @@ use super::{
     FileIndex, INDEX_FILE,
     codec::{decode_row, encode_row, path_from_bytes},
     delta::{IncrementalDelta, IndexDelta},
+    entry::FileEntry,
     error::{DbError, DbResult, IndexResult},
     inlinks::InlinkMap,
 };
@@ -430,11 +431,11 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the table cannot be opened or written.
     /// - [`DbError::Serialize`] if an item cannot be postcard-encoded.
-    pub(super) fn write_table<T: Serialize>(
+    pub(super) fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
         table: TableDefinition<&[u8], &[u8]>,
-        items: &[T],
+        items: impl IntoIterator<Item = &'a T>,
         path_of: impl Fn(&T) -> &Path,
     ) -> DbResult<()> {
         let mut table = txn
@@ -451,8 +452,9 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Serializes every `target -> sources` edge into the `links` multimap
-    /// table.
+    /// Serializes every entry's inbound-link edges into the `links`
+    /// multimap table, iterating `entries` directly instead of a separately
+    /// materialized map.
     ///
     /// # Errors
     ///
@@ -461,14 +463,18 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         table: MultimapTableDefinition<&[u8], &[u8]>,
-        links: &HashMap<PathBuf, Vec<PathBuf>>,
+        entries: &[FileEntry],
     ) -> DbResult<()> {
         let mut table = txn
             .open_multimap_table(table)
             .map_err(|source| self.raise_source_error(source))?;
-        for (target, sources) in links {
-            let target_key = target.as_os_str().as_encoded_bytes();
-            for source in sources {
+        for entry in entries {
+            let inlinks = entry.inlinks();
+            if inlinks.is_empty() {
+                continue;
+            }
+            let target_key = entry.base().path().as_os_str().as_encoded_bytes();
+            for source in inlinks {
                 table
                     .insert(target_key, source.as_os_str().as_encoded_bytes())
                     .map_err(|source| self.raise_source_error(source))?;
@@ -489,12 +495,7 @@ impl IndexStore {
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if the transaction fails.
     /// - [`IndexError::Store`] ([`DbError::Serialize`]) if a record cannot be
     ///   encoded.
-    pub(super) fn write_all(
-        &self,
-        files: &[FileBase],
-        notes: &[Note],
-        links: &InlinkMap,
-    ) -> IndexResult<()> {
+    pub(super) fn write_all(&self, entries: &[FileEntry]) -> IndexResult<()> {
         let write_txn = self.begin_write()?;
         write_txn
             .delete_table(FILES)
@@ -505,9 +506,19 @@ impl IndexStore {
         write_txn
             .delete_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
-        self.write_table(&write_txn, FILES, files, FileBase::path)?;
-        self.write_table(&write_txn, NOTES, notes, Note::path)?;
-        self.write_links(&write_txn, LINKS, links)?;
+        self.write_table(
+            &write_txn,
+            FILES,
+            entries.iter().map(FileEntry::base),
+            FileBase::path,
+        )?;
+        self.write_table(
+            &write_txn,
+            NOTES,
+            entries.iter().filter_map(FileEntry::note),
+            Note::path,
+        )?;
+        self.write_links(&write_txn, LINKS, entries)?;
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
@@ -526,9 +537,7 @@ impl IndexStore {
     /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
     pub(super) fn persist_index(&self, index: &FileIndex) -> IndexResult<()> {
         match index.delta() {
-            IndexDelta::Full => {
-                self.write_all(index.files(), index.notes(), index.inlinks())
-            }
+            IndexDelta::Full => self.write_all(index.entries()),
             IndexDelta::Incremental(_) => self.persist_incremental(index),
         }
     }
@@ -544,11 +553,7 @@ impl IndexStore {
     /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
     fn persist_incremental(&self, index: &FileIndex) -> IndexResult<()> {
         let IndexDelta::Incremental(delta) = index.delta() else {
-            return self.write_all(
-                index.files(),
-                index.notes(),
-                index.inlinks(),
-            );
+            return self.write_all(index.entries());
         };
         if delta.is_empty() {
             return Ok(());
@@ -578,7 +583,7 @@ impl IndexStore {
 
     /// Deletes `deleted` paths from `FILES`/`NOTES`, then upserts each
     /// `upserted` path's current [`FileBase`] (and [`Note`], if present) by
-    /// binary-searching `index`'s path-sorted slices.
+    /// binary-searching `index`'s path-sorted entries.
     fn upsert_files_and_notes(
         &self,
         write_txn: &WriteTransaction,
@@ -602,17 +607,16 @@ impl IndexStore {
                 .map_err(|source| self.raise_source_error(source))?;
         }
         for path in upserted {
-            if let Ok(idx) =
-                index.files().binary_search_by(|f| f.path().cmp(path))
-                && let Some(file) = index.files().get(idx)
+            if let Some(entry) = index
+                .entries()
+                .binary_search_by(|e| e.base().path().cmp(path))
+                .ok()
+                .and_then(|idx| index.entries().get(idx))
             {
-                self.upsert_row(&mut files, path, file)?;
-            }
-            if let Ok(idx) =
-                index.notes().binary_search_by(|n| n.path().cmp(path))
-                && let Some(note) = index.notes().get(idx)
-            {
-                self.upsert_row(&mut notes_table, path, note)?;
+                self.upsert_row(&mut files, path, entry.base())?;
+                if let Some(note) = entry.note() {
+                    self.upsert_row(&mut notes_table, path, note)?;
+                }
             }
         }
         Ok(())
@@ -658,8 +662,8 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Rewrites one target's full source set in `links` from `index`'s inlink
-    /// map, replacing whatever was previously stored for it.
+    /// Rewrites one target's full source set in `links` from `index`'s
+    /// entries, replacing whatever was previously stored for it.
     fn upsert_link_target(
         &self,
         links: &mut redb::MultimapTable<'_, &[u8], &[u8]>,
@@ -670,9 +674,15 @@ impl IndexStore {
         links
             .remove_all(target_key)
             .map_err(|source| self.raise_source_error(source))?;
-        let Some(sources) = index.inlinks().get(target) else {
+        let sources = index
+            .entries()
+            .binary_search_by(|e| e.base().path().cmp(target))
+            .ok()
+            .and_then(|idx| index.entries().get(idx))
+            .map_or(&[][..], FileEntry::inlinks);
+        if sources.is_empty() {
             return Ok(());
-        };
+        }
         for source in sources {
             links
                 .insert(target_key, source.as_os_str().as_encoded_bytes())
@@ -722,6 +732,57 @@ mod tests {
             table.insert(key.as_bytes(), value).expect("insert raw bytes");
         }
         write_txn.commit().expect("commit raw insert");
+    }
+
+    /// Persists the three-table tuple the way production does, by assembling
+    /// `FileEntry` rows first. Test-side mirror of the old three-argument
+    /// `write_all`; `files` and `notes` must both be path-sorted and every
+    /// `links` target must name a Note in `notes`.
+    fn write_all_parts(
+        store: &IndexStore,
+        files: &[FileBase],
+        notes: &[Note],
+        links: &HashMap<PathBuf, Vec<PathBuf>>,
+    ) -> IndexResult<()> {
+        let entries = crate::index::entry::assemble_entries(
+            files.to_vec(),
+            notes.to_vec(),
+            links.clone(),
+        );
+        store.write_all(&entries)
+    }
+
+    /// Writes one raw `LINKS` row directly, bypassing entry assembly, used
+    /// to persist orphan edges the entry-shaped `write_all` structurally
+    /// cannot express.
+    fn write_raw_link(store: &IndexStore, target: &Path, source: &Path) {
+        let write_txn = store.db.begin_write().expect("begin write txn");
+        {
+            let mut table =
+                write_txn.open_multimap_table(LINKS).expect("open links table");
+            table
+                .insert(
+                    target.as_os_str().as_encoded_bytes(),
+                    source.as_os_str().as_encoded_bytes(),
+                )
+                .expect("insert raw link");
+        }
+        write_txn.commit().expect("commit raw link");
+    }
+
+    /// Builds one [`FileBase`] per path, in the given (path-sorted) order,
+    /// pairing with `parse_markdown` notes for entry assembly in tests.
+    fn note_files(paths: &[&str]) -> Vec<FileBase> {
+        paths
+            .iter()
+            .map(|p| {
+                FileBase::new_test(
+                    PathBuf::from(*p),
+                    PathBuf::new(),
+                    crate::file::FileFormat::Note,
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -822,8 +883,7 @@ mod tests {
             let notes = vec![note];
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store
-                .write_all(&files, &notes, &HashMap::new())
+            write_all_parts(&store, &files, &notes, &HashMap::new())
                 .expect("persist records");
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -848,7 +908,18 @@ mod tests {
                 .iter()
                 .map(|p| parse_markdown(*p, ""))
                 .collect();
-            store.write_all(&[], &notes, &links).expect("persist links");
+            let files: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
+                .iter()
+                .map(|p| {
+                    FileBase::new_test(
+                        PathBuf::from(*p),
+                        PathBuf::new(),
+                        crate::file::FileFormat::Note,
+                    )
+                })
+                .collect();
+            write_all_parts(&store, &files, &notes, &links)
+                .expect("persist links");
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
             assert_eq!(loaded_links, links);
@@ -862,15 +933,28 @@ mod tests {
                 .iter()
                 .map(|p| parse_markdown(*p, ""))
                 .collect();
-            let links = HashMap::from([
-                (PathBuf::from("target.md"), vec![
+            // The valid edge rides through entry assembly; the orphan
+            // edges must reach disk raw, since `write_all` structurally
+            // cannot express a link to an unindexed target or source.
+            write_all_parts(
+                &store,
+                &note_files(&["a.md", "target.md"]),
+                &notes,
+                &HashMap::from([(PathBuf::from("target.md"), vec![
                     PathBuf::from("a.md"),
-                    PathBuf::from("ghost.md"),
-                ]),
-                (PathBuf::from("ghost-target.md"), vec![PathBuf::from("a.md")]),
-            ]);
-
-            store.write_all(&[], &notes, &links).expect("persist links");
+                ])]),
+            )
+            .expect("persist valid links");
+            write_raw_link(
+                &store,
+                Path::new("target.md"),
+                Path::new("ghost.md"),
+            );
+            write_raw_link(
+                &store,
+                Path::new("ghost-target.md"),
+                Path::new("a.md"),
+            );
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
             assert_eq!(
@@ -889,12 +973,18 @@ mod tests {
                 .iter()
                 .map(|p| parse_markdown(*p, ""))
                 .collect();
-            let links = HashMap::from([
-                (PathBuf::from("a.md"), vec![PathBuf::from("ghost.md")]),
-                (PathBuf::from("b.md"), vec![PathBuf::from("a.md")]),
-            ]);
-
-            store.write_all(&[], &notes, &links).expect("persist links");
+            // The valid edge rides through entry assembly; the orphan
+            // source must reach disk raw.
+            write_all_parts(
+                &store,
+                &note_files(&["a.md", "b.md"]),
+                &notes,
+                &HashMap::from([(PathBuf::from("b.md"), vec![PathBuf::from(
+                    "a.md",
+                )])]),
+            )
+            .expect("persist valid links");
+            write_raw_link(&store, Path::new("a.md"), Path::new("ghost.md"));
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
             assert_eq!(
@@ -920,7 +1010,25 @@ mod tests {
                 ]),
                 (PathBuf::from("ghost-target.md"), vec![PathBuf::from("a.md")]),
             ]);
-            store.write_all(&[], &notes, &links).expect("persist links");
+            write_all_parts(
+                &store,
+                &note_files(&["a.md", "target.md"]),
+                &notes,
+                &HashMap::from([(PathBuf::from("target.md"), vec![
+                    PathBuf::from("a.md"),
+                ])]),
+            )
+            .expect("persist valid links");
+            write_raw_link(
+                &store,
+                Path::new("target.md"),
+                Path::new("ghost.md"),
+            );
+            write_raw_link(
+                &store,
+                Path::new("ghost-target.md"),
+                Path::new("a.md"),
+            );
 
             // The refresh path reconstructs without correlating, so every
             // persisted edge survives — proving the orphans are on disk and
@@ -936,16 +1044,9 @@ mod tests {
         fn write_all_drops_links_absent_from_the_new_set() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let stale_links =
-                HashMap::from([(PathBuf::from("target.md"), vec![
-                    PathBuf::from("a.md"),
-                ])]);
-            store
-                .write_all(&[], &[], &stale_links)
-                .expect("persist stale links");
+            write_raw_link(&store, Path::new("target.md"), Path::new("a.md"));
 
-            store
-                .write_all(&[], &[], &HashMap::new())
+            write_all_parts(&store, &[], &[], &HashMap::new())
                 .expect("persist empty links");
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
@@ -960,8 +1061,7 @@ mod tests {
             let stale =
                 IndexerService::new(temp.path()).scan().expect("scan stale");
             let store = IndexStore::open(temp.path()).expect("open store");
-            store
-                .write_all(&stale, &[], &HashMap::new())
+            write_all_parts(&store, &stale, &[], &HashMap::new())
                 .expect("persist stale");
             fs::remove_file(temp.path().join("stale.md"))
                 .expect("remove stale");
@@ -970,8 +1070,7 @@ mod tests {
             let fresh =
                 IndexerService::new(temp.path()).scan().expect("scan fresh");
 
-            store
-                .write_all(&fresh, &[], &HashMap::new())
+            write_all_parts(&store, &fresh, &[], &HashMap::new())
                 .expect("persist fresh");
             let (loaded_records, _loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -984,8 +1083,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store
-                .write_all(&[], &[], &HashMap::new())
+            write_all_parts(&store, &[], &[], &HashMap::new())
                 .expect("persist an empty record set");
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -1003,8 +1101,7 @@ mod tests {
                 IndexerService::new(temp.path()).scan().expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store
-                .write_all(&files, &[], &HashMap::new())
+            write_all_parts(&store, &files, &[], &HashMap::new())
                 .expect("persist records");
             let (loaded_records, ..) = store.read_all().expect("load records");
 
@@ -1028,8 +1125,7 @@ mod tests {
             let files = vec![file];
             let notes = vec![note];
 
-            store
-                .write_all(&files, &notes, &HashMap::new())
+            write_all_parts(&store, &files, &notes, &HashMap::new())
                 .expect("persist records");
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -1044,7 +1140,7 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
             let weird = non_unicode_path();
             let normal = PathBuf::from("normal.md");
-            let files = vec![
+            let mut files = vec![
                 FileBase::new_test(
                     weird.clone(),
                     PathBuf::new(),
@@ -1056,21 +1152,27 @@ mod tests {
                     crate::file::FileFormat::Note,
                 ),
             ];
-            let notes = vec![
+            files.sort_by(|a, b| a.path().cmp(b.path()));
+            let mut notes = vec![
                 parse_markdown(&weird, "link to [[normal]]"),
                 parse_markdown(&normal, "link to [[weird]]"),
             ];
+            notes.sort_by(|a, b| a.path().cmp(b.path()));
             let links = HashMap::from([
                 (weird.clone(), vec![normal.clone()]),
                 (normal.clone(), vec![weird.clone()]),
             ]);
-            store.write_all(&files, &notes, &links).expect("persist");
+            write_all_parts(&store, &files, &notes, &links).expect("persist");
             drop(store);
 
             let loaded =
                 IndexerService::new(temp.path()).load().expect("load index");
             let inlinks_of = |target: &Path| {
-                loaded.inlinks().get(target).cloned().unwrap_or_default()
+                loaded
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.base().path() == target)
+                    .map_or_else(Vec::new, |entry| entry.inlinks().to_vec())
             };
             assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);
             assert_eq!(inlinks_of(normal.as_path()), vec![weird]);
@@ -1101,8 +1203,7 @@ mod tests {
             let files =
                 IndexerService::new(temp.path()).scan().expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
-            store
-                .write_all(&files, &[], &HashMap::new())
+            write_all_parts(&store, &files, &[], &HashMap::new())
                 .expect("persist records");
 
             let (loaded_records, ..) = store.read_all().expect("load records");
@@ -1277,8 +1378,7 @@ mod tests {
             let files =
                 IndexerService::new(temp.path()).scan().expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
-            store
-                .write_all(&files, &[], &HashMap::new())
+            write_all_parts(&store, &files, &[], &HashMap::new())
                 .expect("persist records");
 
             let read_txn = store.db.begin_read().expect("begin read txn");
@@ -1323,7 +1423,14 @@ mod tests {
                 "refresh must fail open on a corrupted previous note during \
                  backdating, not error",
             );
-            assert_eq!(refreshed.notes().len(), 1);
+            assert_eq!(
+                refreshed
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
         }
     }
 }

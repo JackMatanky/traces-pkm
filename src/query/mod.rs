@@ -115,12 +115,16 @@ mod tests {
             outcome_for_files(temp, &[("note.md", content)])
         }
 
-        /// Finds a [`FileBase`] by path in a sorted records slice.
+        /// Finds a [`FileBase`] by path in a sorted entries slice.
         pub(super) fn find_base<'a>(
-            files: &'a [crate::file::FileBase],
+            entries: &'a [crate::index::FileEntry],
             path: &Path,
         ) -> &'a crate::file::FileBase {
-            files.iter().find(|r| r.path() == path).expect("base not found")
+            entries
+                .iter()
+                .find(|e| e.base().path() == path)
+                .expect("base not found")
+                .base()
         }
     }
     use fixtures::*;
@@ -138,7 +142,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let file = find_base(index.files(), Path::new("a.md"));
+            let file = find_base(index.entries(), Path::new("a.md"));
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");

@@ -29,10 +29,9 @@
 //! - Load from disk: [`IndexerService::load`]
 //! - Refresh against the filesystem: [`IndexerService::refresh`]
 //!
-//! - [`FileIndex::files`] and [`FileIndex::notes`] expose sorted indexed data
-//!   for direct inspection.
-//! - `FileIndex`'s crate-internal `file_at`/`note_at` accessors resolve a
-//!   [`RowIndex`]-keyed position to its file/Note in O(1) for query execution,
+//! - [`FileIndex::entries`] exposes sorted indexed data for direct inspection.
+//! - `FileIndex`'s crate-internal `entry_at` accessor resolves a
+//!   [`RowIndex`]-keyed position to its entry in O(1) for query execution,
 //!   without exposing that position type outside the crate.
 //!
 //! [`store`]: mod@store
@@ -53,12 +52,11 @@ mod store;
 pub(crate) use codec::path;
 #[cfg(any(test, feature = "test-utils"))]
 pub use codec::path;
-pub use entry::FileIndex;
 pub(crate) use entry::RowIndex;
+pub use entry::{FileEntry, FileIndex};
 #[cfg(test)]
 pub(crate) use error::IndexBuilderError;
 pub(crate) use error::{IndexError, IndexResult};
-pub(crate) use inlinks::InlinkMap;
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::derive_inlinks;
 pub use service::IndexerService;

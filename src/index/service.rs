@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use super::{
     FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
-    error::IndexBuilderError, store::IndexStore,
+    entry, error::IndexBuilderError, store::IndexStore,
 };
 use crate::{DirTree, DirTreeError, file::FileBase};
 
@@ -167,9 +167,12 @@ impl IndexerService {
         )
     )]
     pub fn load(&self) -> IndexResult<FileIndex> {
-        let (records, notes, inlinks) =
+        let (files, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;
-        Ok(FileIndex::new(records, notes, inlinks, IndexDelta::Full))
+        Ok(FileIndex::new(
+            entry::assemble_entries(files, notes, inlinks),
+            IndexDelta::Full,
+        ))
     }
 
     /// Recursively scans this service's root for regular files and returns
@@ -235,6 +238,7 @@ mod tests {
     use super::{super::IndexError, *};
     use crate::{
         file::FileBase,
+        index::FileEntry,
         note::Note,
         query::{QueryRecordSet, QueryRequest, QueryService, SourceSelector},
     };
@@ -266,10 +270,21 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
 
-            assert_eq!(index.files().len(), 2);
-            assert_eq!(index.notes().len(), 1);
+            assert_eq!(index.entries().len(), 2);
             assert_eq!(
-                index.notes().first().map(Note::path),
+                index
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
+            assert_eq!(
+                index
+                    .entries()
+                    .iter()
+                    .find_map(FileEntry::note)
+                    .map(Note::path),
                 Some(Path::new("notes/todo.md"))
             );
         }
@@ -347,8 +362,12 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
 
-            let paths: Vec<&Path> =
-                index.notes().iter().map(Note::path).collect();
+            let paths: Vec<&Path> = index
+                .entries()
+                .iter()
+                .filter_map(FileEntry::note)
+                .map(Note::path)
+                .collect();
             assert_eq!(paths, [Path::new("a.md"), Path::new("b.md")]);
         }
     }
@@ -547,7 +566,7 @@ mod tests {
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.files(), built.files());
+            assert_eq!(loaded.entries(), built.entries());
         }
 
         #[test]
@@ -563,7 +582,7 @@ mod tests {
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.notes(), built.notes());
+            assert_eq!(loaded.entries(), built.entries());
 
             let loaded_note =
                 loaded.note(Path::new("note.md")).expect("loaded note");
@@ -712,8 +731,15 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).load().expect("load index");
 
-            assert_eq!(index.files().len(), 0);
-            assert_eq!(index.notes().len(), 0);
+            assert_eq!(index.entries().len(), 0);
+            assert_eq!(
+                index
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                0
+            );
         }
 
         #[test]
@@ -735,14 +761,29 @@ mod tests {
                 .expect("persist second index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.files().len(), 1);
-            assert_eq!(loaded.notes().len(), 1);
+            assert_eq!(loaded.entries().len(), 1);
             assert_eq!(
-                loaded.files().first().map(FileBase::path),
+                loaded
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
+            assert_eq!(
+                loaded
+                    .entries()
+                    .first()
+                    .map(FileEntry::base)
+                    .map(FileBase::path),
                 Some(Path::new("second.md"))
             );
             assert_eq!(
-                loaded.notes().first().map(Note::path),
+                loaded
+                    .entries()
+                    .iter()
+                    .find_map(FileEntry::note)
+                    .map(Note::path),
                 Some(Path::new("second.md"))
             );
         }
@@ -764,11 +805,22 @@ mod tests {
             indexer.refresh().expect("refresh persists internally");
 
             let loaded = indexer.load().expect("load index");
-            assert_eq!(loaded.files().len(), 1);
-            assert_eq!(loaded.notes().len(), 1);
+            assert_eq!(loaded.entries().len(), 1);
+            assert_eq!(
+                loaded
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
             assert!(loaded.note(Path::new("gone.md")).is_none());
             assert_eq!(
-                loaded.files().first().map(FileBase::path),
+                loaded
+                    .entries()
+                    .first()
+                    .map(FileEntry::base)
+                    .map(FileBase::path),
                 Some(Path::new("keep.md"))
             );
         }
@@ -1069,7 +1121,14 @@ mod tests {
                 .expect("write second");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            assert_eq!(refreshed.notes().len(), 2);
+            assert_eq!(
+                refreshed
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                2
+            );
         }
 
         #[test]
@@ -1085,8 +1144,15 @@ mod tests {
             fs::remove_file(temp.path().join("gone.md")).expect("delete note");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            assert_eq!(refreshed.notes().len(), 0);
-            assert_eq!(refreshed.files().len(), 0);
+            assert_eq!(
+                refreshed
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                0
+            );
+            assert_eq!(refreshed.entries().len(), 0);
         }
 
         #[test]
@@ -1165,7 +1231,14 @@ mod tests {
                 .expect("persist index");
 
             let loaded = indexer.load().expect("load index");
-            assert_eq!(loaded.notes().len(), 2);
+            assert_eq!(
+                loaded
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                2
+            );
         }
 
         #[test]
@@ -1177,7 +1250,14 @@ mod tests {
             let refreshed = IndexerService::new(temp.path())
                 .refresh()
                 .expect("refresh index");
-            assert_eq!(refreshed.notes().len(), 1);
+            assert_eq!(
+                refreshed
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.note().is_some())
+                    .count(),
+                1
+            );
         }
 
         #[test]

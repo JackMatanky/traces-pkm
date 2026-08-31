@@ -369,17 +369,19 @@ fn bench_derive_inlinks(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("sparse", n), &n, |b, &n| {
             let notes = generate_notes_sparse(n);
+            let refs: Vec<&Note> = notes.iter().collect();
             b.iter(|| {
-                let res = derive_inlinks(black_box(&notes));
-                black_box(res);
+                let inlinks = derive_inlinks(black_box(&refs));
+                black_box(inlinks);
             });
         });
 
         group.bench_with_input(BenchmarkId::new("dense", n), &n, |b, &n| {
             let notes = generate_notes_dense(n);
+            let refs: Vec<&Note> = notes.iter().collect();
             b.iter(|| {
-                let res = derive_inlinks(black_box(&notes));
-                black_box(res);
+                let inlinks = derive_inlinks(black_box(&refs));
+                black_box(inlinks);
             });
         });
 
@@ -388,9 +390,10 @@ fn bench_derive_inlinks(c: &mut Criterion) {
             &n,
             |b, &n| {
                 let notes = generate_notes_ambiguous(n);
+                let refs: Vec<&Note> = notes.iter().collect();
                 b.iter(|| {
-                    let res = derive_inlinks(black_box(&notes));
-                    black_box(res);
+                    let inlinks = derive_inlinks(black_box(&refs));
+                    black_box(inlinks);
                 });
             },
         );
@@ -420,6 +423,20 @@ fn bench_derive_inlinks(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Scaling bottlenecks, indicating shared OS-level resource contention (disk
 ///   I/O, page cache) rather than an application-level lock.
+fn load_concurrently(projects: &[(TempDir, IndexerService)]) {
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = projects
+            .iter()
+            .map(|(_temp, indexer)| {
+                scope.spawn(|| indexer.load().expect("load index"))
+            })
+            .collect();
+        for handle in handles {
+            black_box(handle.join().expect("thread joined"));
+        }
+    });
+}
+
 fn bench_concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::concurrent");
     let n = 250_usize;
@@ -440,19 +457,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                 projects
             },
             |projects: &mut Vec<(TempDir, IndexerService)>| {
-                std::thread::scope(|scope| {
-                    let handles: Vec<_> = projects
-                        .iter()
-                        .map(|(_temp, indexer)| {
-                            scope.spawn(move || {
-                                indexer.load().expect("load index")
-                            })
-                        })
-                        .collect();
-                    for handle in handles {
-                        black_box(handle.join().expect("thread joined"));
-                    }
-                });
+                load_concurrently(projects);
             },
             BatchSize::LargeInput,
         );

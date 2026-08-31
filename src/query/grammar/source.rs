@@ -9,7 +9,7 @@ use super::expr::{
 };
 use crate::{
     LexTokenStream, LexedToken,
-    file::FileBase,
+    index::FileEntry,
     lexical_backslash_unescape,
     note::{Note, NoteFieldValue},
     query::{
@@ -50,19 +50,16 @@ impl SourceSelector {
         }
     }
 
-    /// Returns whether `file` and `note` satisfy this source.
+    /// Returns whether `entry` satisfies this source.
     #[must_use]
     pub(crate) fn is_match(
         &self,
-        base: &FileBase,
-        note: Option<&Note>,
+        entry: &FileEntry,
         canonical_class_field: &str,
     ) -> bool {
         match self {
             Self::All => true,
-            Self::Expr(expr) => {
-                expr.is_match(base, note, canonical_class_field)
-            }
+            Self::Expr(expr) => expr.is_match(entry, canonical_class_field),
         }
     }
 
@@ -124,17 +121,15 @@ impl SourceExpr {
         parse_boolean_expr(input, tokens, SourceGrammar).map(Self)
     }
 
-    /// Returns whether `file` and `note` satisfy this expression.
+    /// Returns whether `entry` satisfies this expression.
     #[must_use]
     pub(crate) fn is_match(
         &self,
-        base: &FileBase,
-        note: Option<&Note>,
+        entry: &FileEntry,
         canonical_class_field: &str,
     ) -> bool {
-        self.0.is_satisfied_by(|atom| {
-            atom.is_match(base, note, canonical_class_field)
-        })
+        self.0
+            .is_satisfied_by(|atom| atom.is_match(entry, canonical_class_field))
     }
 
     /// Returns whether this expression contains any
@@ -225,26 +220,20 @@ impl SourceAtom {
         GlobPattern::compile(pattern).map(Self::Path)
     }
 
-    /// Returns whether `file` and `note` match this atom.
+    /// Returns whether `entry` matches this atom.
     ///
-    /// `note` is `None` for files with no parsed [`Note`] (non-Markdown files);
-    /// [`Self::Tag`] and [`Self::Class`] never match a note-less file, while
-    /// [`Self::Path`] never reads `note`.
-    fn is_match(
-        &self,
-        base: &FileBase,
-        note: Option<&Note>,
-        canonical_class_field: &str,
-    ) -> bool {
+    /// Non-Markdown files carry no [`Note`]; [`Self::Tag`] and [`Self::Class`]
+    /// never match a note-less entry, while [`Self::Path`] never reads it.
+    fn is_match(&self, entry: &FileEntry, canonical_class_field: &str) -> bool {
         match self {
-            Self::Tag(tag) => note.is_some_and(|note| {
+            Self::Tag(tag) => entry.note().is_some_and(|note| {
                 note.tags().iter().any(|value| value.is_contained_in(tag))
             }),
-            Self::Path(pattern) => pattern.is_match(base.path()),
+            Self::Path(pattern) => pattern.is_match(entry.base().path()),
             Self::Class {
                 mode,
                 ..
-            } => note.is_some_and(|note| {
+            } => entry.note().is_some_and(|note| {
                 class_values(note, canonical_class_field)
                     .any(|value| mode.classes().contains(value))
             }),
@@ -872,13 +861,15 @@ mod tests {
         use super::*;
         use crate::{FileIndex, index::IndexerService};
 
-        fn find_base<'a>(
-            files: &'a [crate::file::FileBase],
+        fn find_entry<'a>(
+            entries: &'a [crate::index::FileEntry],
             path: &Path,
-        ) -> &'a crate::file::FileBase {
-            files.iter().find(|r| r.path() == path).expect("base not found")
+        ) -> &'a crate::index::FileEntry {
+            entries
+                .iter()
+                .find(|entry| entry.base().path() == path)
+                .expect("entry not found")
         }
-
         fn indexed_note(
             content: &str,
             path: &str,
@@ -897,30 +888,28 @@ mod tests {
         #[test]
         fn matches_boolean_combinations_of_tags_and_paths() {
             let (_temp, index) = indexed_note("#book", "books/dune.md");
-            let file = find_base(index.files(), Path::new("books/dune.md"));
-            let note = index.note(Path::new("books/dune.md")).expect("Note");
+            let entry = find_entry(index.entries(), Path::new("books/dune.md"));
             let expression =
                 SourceExpr::parse("(#book and books/) and not archive/")
                     .expect("valid source");
 
-            assert!(expression.is_match(file, Some(note), "class"));
+            assert!(expression.is_match(entry, "class"));
         }
 
         #[test]
         fn matches_exact_file_path_without_matching_sibling() {
             let (_temp, index) = indexed_note("#book", "books/dune.md");
-            let file = find_base(index.files(), Path::new("books/dune.md"));
-            let note = index.note(Path::new("books/dune.md")).expect("Note");
+            let entry = find_entry(index.entries(), Path::new("books/dune.md"));
 
             assert!(
                 SourceExpr::parse("books/dune.md")
                     .expect("valid source")
-                    .is_match(file, Some(note), "class")
+                    .is_match(entry, "class")
             );
             assert!(
                 !SourceExpr::parse("books/hyperion.md")
                     .expect("valid source")
-                    .is_match(file, Some(note), "class")
+                    .is_match(entry, "class")
             );
         }
 
@@ -928,8 +917,7 @@ mod tests {
         fn reads_classes_from_the_execution_field() {
             let (_temp, index) =
                 indexed_note("---\nkind: Book\n---\n", "book.md");
-            let file = find_base(index.files(), Path::new("book.md"));
-            let note = index.note(Path::new("book.md")).expect("Note");
+            let entry = find_entry(index.entries(), Path::new("book.md"));
             let expression = SourceExpr::atom(SourceAtom::Class {
                 names: vec!["Book".to_owned()],
                 mode: ClassExpansionMode::Exact(BTreeSet::from([
@@ -937,8 +925,8 @@ mod tests {
                 ])),
             });
 
-            assert!(expression.is_match(file, Some(note), "kind"));
-            assert!(!expression.is_match(file, Some(note), "class"));
+            assert!(expression.is_match(entry, "kind"));
+            assert!(!expression.is_match(entry, "class"));
         }
 
         #[test]
@@ -954,12 +942,13 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let expression =
                 SourceExpr::parse("covers/*.md").expect("valid source");
-            let direct = find_base(index.files(), Path::new("covers/dune.md"));
+            let direct =
+                find_entry(index.entries(), Path::new("covers/dune.md"));
             let nested =
-                find_base(index.files(), Path::new("covers/sub/hidden.md"));
+                find_entry(index.entries(), Path::new("covers/sub/hidden.md"));
 
-            assert!(expression.is_match(direct, None, "class"));
-            assert!(!expression.is_match(nested, None, "class"));
+            assert!(expression.is_match(direct, "class"));
+            assert!(!expression.is_match(nested, "class"));
         }
 
         #[test]
@@ -979,12 +968,13 @@ mod tests {
             // behaves like the `covers/` folder shorthand.
             let expression =
                 SourceExpr::parse("covers/**/*.md").expect("valid source");
-            let direct = find_base(index.files(), Path::new("covers/dune.md"));
+            let direct =
+                find_entry(index.entries(), Path::new("covers/dune.md"));
             let nested =
-                find_base(index.files(), Path::new("covers/sub/hidden.md"));
+                find_entry(index.entries(), Path::new("covers/sub/hidden.md"));
 
-            assert!(!expression.is_match(direct, None, "class"));
-            assert!(expression.is_match(nested, None, "class"));
+            assert!(!expression.is_match(direct, "class"));
+            assert!(expression.is_match(nested, "class"));
         }
     }
 

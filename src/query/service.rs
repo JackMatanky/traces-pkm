@@ -99,12 +99,11 @@ impl<'a> QueryService<'a> {
         index: &'b Arc<FileIndex>,
         source: &'b SourceSelector,
     ) -> impl Iterator<Item = QueryRecord> + 'b {
-        (0..index.files().len())
+        (0..index.entries().len())
             .map(RowIndex::new)
             .filter(move |&position| {
                 source.is_match(
-                    index.file_at(position),
-                    index.note_at(position),
+                    index.entry_at(position),
                     &self.class_field_canonical,
                 )
             })
