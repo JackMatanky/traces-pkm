@@ -48,7 +48,7 @@ pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
 /// Carries the effective type, whether the field is required, and whether it
 /// accepts multiple values.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SchemaFieldDef {
+pub struct SchemaFieldDef {
     kind: SchemaFieldType,
     required: bool,
     multi: bool,

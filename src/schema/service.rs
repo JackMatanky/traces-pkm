@@ -7,6 +7,7 @@
 use std::{ffi::OsStr, fs, path::Path, sync::Arc};
 
 use indexmap::{IndexMap, IndexSet};
+use thiserror::Error;
 
 use super::{
     RawSchema, SchemaName,
@@ -22,6 +23,20 @@ use crate::{BaseNameRef, DirTree, DirTreeError};
 /// Resolves every Schema once at construction (`SchemaService::new`); every
 /// query method reads the already-resolved Schemas directly, with no separate
 /// registry type or re-resolution.
+/// An error encountered while loading or resolving schemas.
+#[derive(Debug, Error)]
+#[error(transparent)]
+pub struct SchemaServiceError(#[from] pub(crate) SchemaError);
+
+impl SchemaServiceError {
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn as_error(&self) -> &SchemaError {
+        &self.0
+    }
+}
+
+/// Schema loading, resolution, and hierarchy/class query facade.
 #[derive(Debug)]
 pub struct SchemaService {
     schemas: IndexMap<SchemaName, Arc<Schema>>,
@@ -32,19 +47,13 @@ impl SchemaService {
     /// effective fields, building a single read-only [`SchemaService`].
     ///
     /// A missing directory resolves to an empty registry. Recoverable warnings
-    /// and per-Schema failures are discarded; use [`Self::load_verbose`] when
-    /// the caller must report them.
+    /// and per-Schema failures are discarded during load.
     ///
     /// # Errors
     ///
-    /// - [`ReadDirectory`] if the registry directory exists but cannot be
-    ///   listed.
-    /// - [`File`] if a `.toml` file cannot be read or fails to parse.
-    /// - [`Cycle`] if the `extends` DAG contains a cycle.
-    ///
-    /// [`ReadDirectory`]: SchemaError::ReadDirectory
-    /// [`File`]: SchemaError::File
-    /// [`Cycle`]: SchemaError::Cycle
+    /// Returns [`SchemaServiceError`] if the registry directory exists but
+    /// cannot be listed, a `.toml` file cannot be read or fails to parse, or
+    /// the `extends` DAG contains a cycle.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -54,7 +63,8 @@ impl SchemaService {
                       simpler seam"
         )
     )]
-    pub(crate) fn new(directory: &Path) -> SchemaResult<Self> {
+    #[inline]
+    pub fn new(directory: &Path) -> Result<Self, SchemaServiceError> {
         Ok(Self::load_verbose(directory)?.service)
     }
 
@@ -90,7 +100,7 @@ impl SchemaService {
     /// name resolved.
     #[inline]
     #[must_use]
-    pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
+    pub fn get(&self, name: &str) -> Option<&Arc<Schema>> {
         self.schemas.get(name)
     }
 
@@ -98,8 +108,9 @@ impl SchemaService {
     ///
     /// Excludes `name` itself and every transitive descendant. Empty, not an
     /// error, if `name` has no Schema or nothing extends it.
+    #[inline]
     #[must_use]
-    pub(crate) fn children_of(&self, name: &str) -> Vec<Arc<Schema>> {
+    pub fn children_of(&self, name: &str) -> Vec<Arc<Schema>> {
         let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
@@ -129,8 +140,9 @@ impl SchemaService {
     ///
     /// Excludes `name` itself. Empty, not an error, if `name` has no Schema or
     /// nothing extends it.
+    #[inline]
     #[must_use]
-    pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
+    pub fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
         let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
@@ -155,8 +167,9 @@ impl SchemaService {
     /// - `matches(&["book"])` → `{"book", "sci_fi"}`
     /// - `matches(&["movie"])` → `{"movie"}`
     /// - `matches(&["ghost"])` → `{"ghost"}`
+    #[inline]
     #[must_use]
-    pub(crate) fn matches(&self, classes: &[String]) -> IndexSet<String> {
+    pub fn matches(&self, classes: &[String]) -> IndexSet<String> {
         self.warn_unknown_classes(classes);
         let mut matches: IndexSet<String> = classes.iter().cloned().collect();
         for class in classes {
@@ -187,65 +200,7 @@ impl SchemaService {
             }
         }
     }
-
-    // ------------- `test-utils` Public Surface ------------- //
-
-    // Integration tests (`tests/integration/`) and benchmarks (`benches/`) can
-    // only call `pub` methods. These thin wrappers expose the `pub(crate)`
-    // internals under the same feature gate that re-exports `SchemaService`
-    // from `lib.rs`.
-
-    /// Load and resolve every Schema under `directory`.
-    ///
-    /// Integration-test and bench entry point; production code should use
-    /// `SchemaService::new` directly. Warnings and per-Schema build failures
-    /// are discarded — tests that need them should use
-    /// `SchemaService::load_verbose` from within the crate.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(String)` if the schema directory cannot be read, a schema
-    /// file cannot be parsed, or the `extends` DAG contains a cycle.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    pub fn resolve(directory: &Path) -> Result<Self, String> {
-        Self::new(directory).map_err(|e| e.to_string())
-    }
-
-    /// Look up a Schema by name.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    #[must_use]
-    pub fn schema_get(&self, name: &str) -> Option<&Arc<Schema>> {
-        self.get(name)
-    }
-
-    /// Every Schema that directly extends `name`.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    #[must_use]
-    pub fn schema_children_of(&self, name: &str) -> Vec<Arc<Schema>> {
-        self.children_of(name)
-    }
-
-    /// Every Schema that transitively extends `name`.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    #[must_use]
-    pub fn schema_descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
-        self.descendants_of(name)
-    }
-
-    /// Set of Schema names matching `classes`, including transitive
-    /// descendants.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    #[must_use]
-    pub fn schema_matches(&self, classes: &[String]) -> IndexSet<String> {
-        self.matches(classes)
-    }
 }
-
 /// Read and parse every `*.toml` file directly under `dir` into a [`RawSchema`]
 /// keyed by filename stem.
 ///

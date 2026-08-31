@@ -1111,7 +1111,7 @@ mod tests {
                         "malformed Schema TOML fails construction, not a panic",
                     );
 
-            assert!(matches!(error, SchemaError::File {
+            assert!(matches!(error.as_error(), SchemaError::File {
                 source: SchemaFileError::Parse(_),
                 ..
             }));
@@ -1142,7 +1142,7 @@ mod tests {
                         "a broken sibling Schema fails the whole registry load",
                     );
 
-            assert!(matches!(error, SchemaError::File {
+            assert!(matches!(error.as_error(), SchemaError::File {
                 source: SchemaFileError::Parse(_),
                 ..
             }));
@@ -1257,7 +1257,7 @@ mod tests {
                          unconditionally",
                     );
 
-            assert!(matches!(error, SchemaError::File {
+            assert!(matches!(error.as_error(), SchemaError::File {
                 source: SchemaFileError::Parse(_),
                 ..
             }));

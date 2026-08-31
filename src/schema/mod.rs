@@ -32,6 +32,8 @@ pub(crate) use error::SchemaError;
 /// without reaching into the private `error` submodule.
 #[cfg(test)]
 pub(crate) use error::SchemaFileError;
+#[cfg(any(test, feature = "test-utils"))]
+pub use fields::SchemaFieldDef;
 pub(crate) use fields::{SchemaFileFieldRef, SchemaSelectFieldEntry};
 pub use model::Schema;
 pub(crate) use name::{SchemaName, SchemaNameRef};
@@ -39,6 +41,8 @@ pub(crate) use raw::{
     RawSchema, RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
 };
 pub use service::SchemaService;
+#[cfg(any(test, feature = "test-utils"))]
+pub use service::SchemaServiceError;
 pub(crate) use service::warn_schema_construction_diagnostics;
 
 /// The reserved Global Schema file stem: a flat `$ref`-able reference pool.

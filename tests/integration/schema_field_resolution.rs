@@ -3,7 +3,7 @@
 //!
 //! `src/schema/service.rs` unit-tests resolution internals. This is the only
 //! test proving that field inheritance works when called only through
-//! `SchemaService::resolve` + `schema_get` + `schema_field`.
+//! `SchemaService::new` + `get` + `field`.
 
 use traces_pkm::SchemaService;
 
@@ -30,11 +30,11 @@ fn child_schema_inherits_parent_fields()
     )?;
     write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path())?;
+    let service = SchemaService::new(temp.path())?;
     let sci_fi = service
-        .schema_get("sci_fi")
+        .get("sci_fi")
         .ok_or_else(|| std::io::Error::other("sci_fi resolved"))?;
-    if !sci_fi.schema_field("status") {
+    if sci_fi.field("status").is_none() {
         return Err(std::io::Error::other(
             "sci_fi must inherit status from book",
         )
@@ -67,17 +67,17 @@ fn parent_fields_override_is_not_lost_when_child_adds_own_fields()
         "#,
     )?;
 
-    let service = SchemaService::resolve(temp.path())?;
+    let service = SchemaService::new(temp.path())?;
     let sci_fi = service
-        .schema_get("sci_fi")
+        .get("sci_fi")
         .ok_or_else(|| std::io::Error::other("sci_fi resolved"))?;
-    if !sci_fi.schema_field("status") {
+    if sci_fi.field("status").is_none() {
         return Err(std::io::Error::other(
             "sci_fi must still inherit status after adding own field",
         )
         .into());
     }
-    if !sci_fi.schema_field("setting") {
+    if sci_fi.field("setting").is_none() {
         return Err(std::io::Error::other(
             "sci_fi must have its own setting field",
         )
@@ -94,10 +94,10 @@ fn children_of_returns_direct_extenders()
     write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
     write_schema(temp.path(), "memoir", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path())?;
+    let service = SchemaService::new(temp.path())?;
 
-    let children = service.schema_children_of("book");
-    let names: Vec<&str> = children.iter().map(|s| s.schema_name()).collect();
+    let children = service.children_of("book");
+    let names: Vec<&str> = children.iter().map(|s| s.name()).collect();
     if names != ["sci_fi", "memoir"] {
         return Err(std::io::Error::other(format!(
             "direct children mismatch: {names:?}"
@@ -115,11 +115,10 @@ fn descendants_of_returns_transitive_extenders()
     write_schema(temp.path(), "book", r#"extends = ["thing"]"#)?;
     write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path())?;
+    let service = SchemaService::new(temp.path())?;
 
-    let descendants = service.schema_descendants_of("thing");
-    let names: Vec<&str> =
-        descendants.iter().map(|s| s.schema_name()).collect();
+    let descendants = service.descendants_of("thing");
+    let names: Vec<&str> = descendants.iter().map(|s| s.name()).collect();
     if names != ["book", "sci_fi"] {
         return Err(std::io::Error::other(format!(
             "descendants mismatch: {names:?}"
@@ -136,9 +135,9 @@ fn matches_includes_transitive_subclasses()
     write_schema(temp.path(), "book", "")?;
     write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#)?;
 
-    let service = SchemaService::resolve(temp.path())?;
+    let service = SchemaService::new(temp.path())?;
 
-    let matches = service.schema_matches(&["book".to_owned()]);
+    let matches = service.matches(&["book".to_owned()]);
     if !matches.contains("book") || !matches.contains("sci_fi") {
         return Err(std::io::Error::other(format!(
             "transitive matches missing: {matches:?}"

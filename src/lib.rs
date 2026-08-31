@@ -104,7 +104,7 @@ pub use query::{
     SourceSelector,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use schema::SchemaService;
+pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,

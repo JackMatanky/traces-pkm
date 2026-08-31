@@ -279,7 +279,7 @@ impl FieldKey {
     /// Returns the original key text.
     #[inline]
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
+    #[cfg(test)]
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -317,7 +317,7 @@ impl FieldKey {
     /// Does not canonicalize. A case or punctuation difference fails even when
     /// [`Self::is_match`] would accept it.
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
+    #[cfg(test)]
     pub(crate) fn is_name_match(&self, candidate: &FieldName) -> bool {
         self.name.as_ref() == candidate.as_str()
     }

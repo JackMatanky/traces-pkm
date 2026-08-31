@@ -61,7 +61,7 @@ impl Schema {
     /// Return the Schema name from the source file stem.
     #[inline]
     #[must_use]
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         self.name.as_str()
     }
 
@@ -76,7 +76,7 @@ impl Schema {
     /// this Schema.
     #[inline]
     #[must_use]
-    pub(crate) fn field(&self, name: &str) -> Option<&SchemaFieldDef> {
+    pub fn field(&self, name: &str) -> Option<&SchemaFieldDef> {
         self.fields.get(name)
     }
 
@@ -99,25 +99,6 @@ impl Schema {
     #[must_use]
     pub(super) const fn descendants(&self) -> &IndexSet<SchemaName> {
         &self.descendants
-    }
-
-    // ------------- `test-utils` Public Surface ------------- //
-
-    /// Return the Schema name. Integration-test entry point.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    #[must_use]
-    pub fn schema_name(&self) -> &str {
-        self.name()
-    }
-
-    /// Return whether the named Field Definition exists. Integration-test
-    /// entry point.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[inline]
-    #[must_use]
-    pub fn schema_field(&self, name: &str) -> bool {
-        self.field(name).is_some()
     }
 
     /// Test whether this Schema is a `class` name.

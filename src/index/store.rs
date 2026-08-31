@@ -264,10 +264,6 @@ impl IndexStore {
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
     /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
     ///   not a valid record.
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(dead_code, reason = "called by IndexerService::load")
-    )]
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let files = self.read_table(&txn, FILES, FileBase::path)?;
