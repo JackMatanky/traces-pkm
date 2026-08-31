@@ -12,7 +12,7 @@
 name = "traces-pkm"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.96"
 description = "Personal knowledge management traces"
 documentation = "https://docs.rs/traces-pkm"
 readme = "README.md"

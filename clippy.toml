@@ -34,7 +34,7 @@ enum-variant-size-threshold = 128
 large-error-threshold = 128
 
 # Project Metadata
-msrv = "1.92"
+msrv = "1.96"
 doc-valid-idents = ["Traces", "Obsidian", "Redb", "rkyv", "CLI", "JSON", "TOML", "YAML"]
 disallowed-names = ["foo", "bar", "baz", "quux", "tmp"]
 
