@@ -100,16 +100,6 @@ test-utils = []
 # ------------------------------------------------------------- #
 #                          Lint Config                          #
 # ------------------------------------------------------------- #
-[lints.rust]
-missing_debug_implementations = "warn"
-missing_docs = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
-unsafe_code = "warn"
-
-[lints.rustdoc]
-broken_intra_doc_links = "deny"
-private_intra_doc_links = "warn"
-
 [lints.clippy]
 # ------------------- Clippy Lint Categories ------------------ #
 cargo = { level = "warn", priority = -1 }
@@ -184,6 +174,16 @@ single_call_fn = "allow"
 std_instead_of_alloc = "allow"
 std_instead_of_core = "allow"
 unseparated_literal_suffix = "allow"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+unsafe_code = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "warn"
 
 # ------------------------------------------------------------- #
 #                        Build Profiles                         #

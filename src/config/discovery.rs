@@ -366,8 +366,19 @@ fn local_from_anchor(
 fn nearest_local_from_dir(
     cwd: &Path,
 ) -> DiscoveryResult<LocalConfigFile<Discovered>> {
+    nearest_local_from_dir_with_ceilings(
+        cwd,
+        crate::env_vars::CEILING_DIRS.iter().map(PathBuf::as_path),
+    )
+}
+
+fn nearest_local_from_dir_with_ceilings<'a>(
+    cwd: &Path,
+    ceilings: impl IntoIterator<Item = &'a Path>,
+) -> DiscoveryResult<LocalConfigFile<Discovered>> {
+    let ceiling_set: Vec<&Path> = ceilings.into_iter().collect();
     for ancestor in cwd.ancestors() {
-        if crate::env_vars::CEILING_DIRS.iter().any(|c| c == ancestor) {
+        if ceiling_set.contains(&ancestor) {
             break;
         }
         let path = ancestor.join(LOCAL_CONFIG_FILE);
@@ -789,24 +800,11 @@ mod tests {
         let nested_dir = ceiling_dir.join("a/b/c");
         std::fs::create_dir_all(&nested_dir).unwrap();
 
-        // Set ceiling directory
-        // SAFETY: single-threaded test environment variable set
-        unsafe {
-            std::env::set_var(
-                "TRACES_CEILING_DIRS",
-                ceiling_dir.to_str().unwrap(),
-            );
-        }
-
-        let result = nearest_local_from_dir(&nested_dir);
+        let result =
+            nearest_local_from_dir_with_ceilings(&nested_dir, [&*ceiling_dir]);
         assert!(matches!(
             result,
             Err(DiscoveryError::LocalConfigAbsent { .. })
         ));
-
-        // SAFETY: single-threaded test environment variable cleanup
-        unsafe {
-            std::env::remove_var("TRACES_CEILING_DIRS");
-        }
     }
 }

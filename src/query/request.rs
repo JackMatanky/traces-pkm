@@ -14,6 +14,7 @@ pub(super) enum QueryMode {
 }
 
 /// Query execution request.
+#[derive(Clone, Debug, PartialEq)]
 pub struct QueryRequest {
     mode: QueryMode,
     source: SourceSelector,
@@ -98,6 +99,7 @@ impl QueryRequest {
 }
 
 /// Ordered, optimizable sequence of [`QueryTransform`] steps.
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct QueryPlan {
     steps: Vec<QueryTransform>,
 }
@@ -167,7 +169,7 @@ impl QueryPlan {
         records
     }
 }
-
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
     Sort {

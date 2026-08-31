@@ -67,6 +67,7 @@ use crate::{
 /// [`TemplateService`]: super::service::TemplateService
 /// [`TemplateLoader`]: super::loader::TemplateLoader
 /// [`Config`]: crate::config::Config
+#[derive(Debug)]
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
 }

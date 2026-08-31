@@ -194,6 +194,7 @@ impl Note {
 }
 
 /// Depth-first iterator over task list items in a [`Note`].
+#[derive(Clone, Debug)]
 pub struct TaskIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
 }

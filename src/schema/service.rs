@@ -1010,7 +1010,7 @@ mod tests {
             ]);
 
             drop(guard);
-            let events = events.lock().unwrap();
+            let events = events.lock().unwrap().clone();
             assert!(
                 events.iter().any(|e| e.contains("ghost")),
                 "expected warning for unknown class 'ghost', got: {events:?}"

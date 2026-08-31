@@ -288,6 +288,17 @@ impl<'a> TemplateService<'a> {
     }
 }
 
+impl std::fmt::Debug for TemplateService<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TemplateService")
+            .field("config", &self.config)
+            .field("loader", &self.loader)
+            .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Represents the result of [`TemplateService::render`].
 ///
 /// Carries rendered content, resolved [`TemplatePath`] metadata, and any output
