@@ -74,7 +74,7 @@ impl<'a> QueryService<'a> {
         index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRecord> {
-        self.matched_base_records(index, source).collect()
+        self.matched_file_records(index, source).collect()
     }
 
     fn task_records(
@@ -83,7 +83,7 @@ impl<'a> QueryService<'a> {
         source: &SourceSelector,
     ) -> Vec<QueryRecord> {
         let mut out = Vec::new();
-        for base in self.matched_base_records(index, source) {
+        for base in self.matched_file_records(index, source) {
             let Some(note) = base.note() else {
                 continue;
             };
@@ -94,26 +94,22 @@ impl<'a> QueryService<'a> {
         out
     }
 
-    fn matched_base_records<'b>(
+    fn matched_file_records<'b>(
         &'b self,
         index: &'b Arc<FileIndex>,
         source: &'b SourceSelector,
     ) -> impl Iterator<Item = QueryRecord> + 'b {
-        index
-            .entries()
-            .enumerate()
-            .filter(move |(_, entry)| {
+        (0..index.files().len())
+            .map(RowIndex::new)
+            .filter(move |&position| {
                 source.is_match(
-                    entry.base(),
-                    entry.note(),
+                    index.file_at(position),
+                    index.note_at(position),
                     &self.class_field_canonical,
                 )
             })
-            .map(|(position, _)| {
-                QueryRecord::from_row(
-                    Arc::clone(index),
-                    RowIndex::new(position),
-                )
+            .map(move |position| {
+                QueryRecord::from_row(Arc::clone(index), position)
             })
     }
 }

@@ -64,6 +64,23 @@ impl FilterExpr {
         parse_boolean_expr(input, tokens, FilterGrammar).map(Self)
     }
 
+    /// Combines two filter expressions with logical AND, flattening nested
+    /// `And` nodes instead of nesting them nose-to-tail. Used by
+    /// [`super::super::request::QueryPlan::optimize`] to fuse consecutive
+    /// `--where` filters into one predicate pass instead of one
+    /// `Vec::retain` per flag.
+    pub(crate) fn and(self, other: Self) -> Self {
+        let mut children = match self.0 {
+            BooleanExpr::And(children) => children,
+            atom => vec![atom],
+        };
+        match other.0 {
+            BooleanExpr::And(more) => children.extend(more),
+            atom => children.push(atom),
+        }
+        Self(BooleanExpr::And(children))
+    }
+
     /// Whether `record` satisfies this expression.
     pub(crate) fn is_matching(&self, record: &QueryRecord) -> bool {
         self.0.is_satisfied_by(|atom| atom.is_matching(record))

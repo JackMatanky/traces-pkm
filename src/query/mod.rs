@@ -60,10 +60,9 @@ mod service;
 mod sort;
 mod value;
 
-pub(crate) use error::QueryRequestError;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
-pub use error::{QueryDialect, QueryError, QueryResult};
+pub use error::{QueryDialect, QueryError, QueryRequestError, QueryResult};
 pub use grammar::{ClassExpansionMode, SourceSelector};
 pub(crate) use grammar::{
     FieldPath, FileClassExpander, FileField, SourceAtom, SourceExpr,
@@ -117,10 +116,10 @@ mod tests {
 
         /// Finds a [`FileBase`] by path in a sorted records slice.
         pub(super) fn find_base<'a>(
-            bases: &'a [crate::file::FileBase],
+            files: &'a [crate::file::FileBase],
             path: &Path,
         ) -> &'a crate::file::FileBase {
-            bases.iter().find(|r| r.path() == path).expect("base not found")
+            files.iter().find(|r| r.path() == path).expect("base not found")
         }
     }
     use fixtures::*;
@@ -138,7 +137,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let file = find_base(index.bases(), Path::new("a.md"));
+            let file = find_base(index.files(), Path::new("a.md"));
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");

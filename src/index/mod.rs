@@ -29,10 +29,11 @@
 //! - Load from disk: [`IndexerService::load`]
 //! - Refresh against the filesystem: [`IndexerService::refresh`]
 //!
-//! - [`FileIndex::bases`] and [`FileIndex::notes`] expose sorted indexed data
+//! - [`FileIndex::files`] and [`FileIndex::notes`] expose sorted indexed data
 //!   for direct inspection.
-//! - [`FileIndex::entries`] exposes a borrowed, allocation-free view pairing
-//!   records with optional Notes for query execution.
+//! - `FileIndex`'s crate-internal `file_at`/`note_at` accessors resolve a
+//!   [`RowIndex`]-keyed position to its file/Note in O(1) for query execution,
+//!   without exposing that position type outside the crate.
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks

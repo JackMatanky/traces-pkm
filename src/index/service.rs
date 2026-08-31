@@ -259,7 +259,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
 
-            assert_eq!(index.bases().len(), 2);
+            assert_eq!(index.files().len(), 2);
             assert_eq!(index.notes().len(), 1);
             assert_eq!(
                 index.notes().first().map(Note::path),
@@ -540,7 +540,7 @@ mod tests {
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.bases(), built.bases());
+            assert_eq!(loaded.files(), built.files());
         }
 
         #[test]
@@ -705,7 +705,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).load().expect("load index");
 
-            assert_eq!(index.bases().len(), 0);
+            assert_eq!(index.files().len(), 0);
             assert_eq!(index.notes().len(), 0);
         }
 
@@ -728,10 +728,10 @@ mod tests {
                 .expect("persist second index");
             let loaded = indexer.load().expect("load index");
 
-            assert_eq!(loaded.bases().len(), 1);
+            assert_eq!(loaded.files().len(), 1);
             assert_eq!(loaded.notes().len(), 1);
             assert_eq!(
-                loaded.bases().first().map(FileBase::path),
+                loaded.files().first().map(FileBase::path),
                 Some(Path::new("second.md"))
             );
             assert_eq!(
@@ -757,11 +757,11 @@ mod tests {
             indexer.refresh().expect("refresh persists internally");
 
             let loaded = indexer.load().expect("load index");
-            assert_eq!(loaded.bases().len(), 1);
+            assert_eq!(loaded.files().len(), 1);
             assert_eq!(loaded.notes().len(), 1);
             assert!(loaded.note(Path::new("gone.md")).is_none());
             assert_eq!(
-                loaded.bases().first().map(FileBase::path),
+                loaded.files().first().map(FileBase::path),
                 Some(Path::new("keep.md"))
             );
         }
@@ -1079,7 +1079,7 @@ mod tests {
 
             let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(refreshed.notes().len(), 0);
-            assert_eq!(refreshed.bases().len(), 0);
+            assert_eq!(refreshed.files().len(), 0);
         }
 
         #[test]

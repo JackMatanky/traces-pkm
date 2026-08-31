@@ -42,10 +42,8 @@ impl QueryRequest {
     /// # Errors
     ///
     /// Returns [`QueryRequestError`] when `expr` is not a valid filter.
-    pub(crate) fn filter(
-        mut self,
-        expr: &str,
-    ) -> Result<Self, QueryRequestError> {
+    #[inline]
+    pub fn filter(mut self, expr: &str) -> Result<Self, QueryRequestError> {
         self.plan.push(QueryTransform::filter(expr)?);
         Ok(self)
     }
@@ -55,7 +53,8 @@ impl QueryRequest {
     /// # Errors
     ///
     /// Returns [`QueryRequestError`] when `field` is not a valid field path.
-    pub(crate) fn sort(
+    #[inline]
+    pub fn sort(
         mut self,
         field: &str,
         descending: bool,
@@ -70,16 +69,8 @@ impl QueryRequest {
     ///
     /// Returns [`QueryRequestError`] when `n` is negative or too large for this
     /// platform.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no caller outside this module's own unit tests; kept \
-                      for builder symmetry with filter/sort, not part of a \
-                      CLI flag"
-        )
-    )]
-    pub(super) fn limit(mut self, n: i64) -> Result<Self, QueryRequestError> {
+    #[inline]
+    pub fn limit(mut self, n: i64) -> Result<Self, QueryRequestError> {
         self.plan.push(QueryTransform::limit(n)?);
         Ok(self)
     }
@@ -114,19 +105,29 @@ impl QueryPlan {
         self.steps.push(transform);
     }
 
-    /// Rewrites an adjacent `Sort` immediately followed by `Limit(n)` into a
-    /// single `TopK` step: partition-select the `n` smallest/largest records
-    /// in O(records), then sort only the `n` survivors — cheaper than a full
-    /// O(records · log records) sort when `n` is small relative to the record
-    /// count. A `Filter`/`Flatten`/`GroupBy` between `Sort` and `Limit` blocks
-    /// the fusion: an intervening step can change which records are still in
+    /// Fuses consecutive `Filter` steps into one (AND is commutative and
+    /// associative, so any run of adjacent filters can always fuse
+    /// regardless of what surrounds it), then rewrites an adjacent `Sort`
+    /// immediately followed by `Limit(n)` into a single `TopK` step:
+    /// partition-select the `n` smallest/largest records in O(records), then
+    /// sort only the `n` survivors — cheaper than a full O(records · log
+    /// records) sort when `n` is small relative to the record count. A
+    /// `Filter`/`Flatten`/`GroupBy` between `Sort` and `Limit` blocks that
+    /// fusion: an intervening step can change which records are still in
     /// play, so fusing across it would be incorrect.
     #[must_use]
     pub(super) fn optimize(mut self) -> Self {
         let mut optimized = Vec::with_capacity(self.steps.len());
         let mut steps = self.steps.into_iter().peekable();
         while let Some(step) = steps.next() {
-            if let QueryTransform::Sort {
+            if let QueryTransform::Filter(mut expr) = step {
+                while let Some(QueryTransform::Filter(next)) =
+                    steps.next_if(|s| matches!(s, QueryTransform::Filter(_)))
+                {
+                    expr = expr.and(next);
+                }
+                optimized.push(QueryTransform::Filter(expr));
+            } else if let QueryTransform::Sort {
                 field,
                 descending,
             } = &step
@@ -415,6 +416,64 @@ mod tests {
                 outcome.get(1).expect("row").base().path(),
                 Path::new("e.md")
             );
+        }
+
+        #[test]
+        fn filter_fusion_matches_sequential_filters() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            for (name, rating) in [
+                ("a.md", 1),
+                ("b.md", 3),
+                ("c.md", 5),
+                ("d.md", 7),
+                ("e.md", 9),
+            ] {
+                fs::write(
+                    temp.path().join(name),
+                    format!("---\nrating: {rating}\n---\n"),
+                )
+                .expect("write note");
+            }
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+
+            // Build sequential filters (simulating multiple --where flags)
+            let fused_request = QueryRequest::pages(SourceSelector::All)
+                .filter("rating > 2")
+                .expect("valid filter")
+                .filter("rating < 8")
+                .expect("valid filter");
+
+            // Verify that optimize() fuses adjacent filters into a single
+            // Filter step
+            let (_, _, plan) = QueryRequest::pages(SourceSelector::All)
+                .filter("rating > 2")
+                .expect("valid filter")
+                .filter("rating < 8")
+                .expect("valid filter")
+                .into_parts();
+            assert_eq!(plan.optimize().steps.len(), 1);
+
+            let fused_outcome =
+                QueryService::new("class").execute(&index, fused_request);
+
+            // Single combined filter for comparison
+            let combined_request = QueryRequest::pages(SourceSelector::All)
+                .filter("rating > 2 and rating < 8")
+                .expect("valid filter");
+            let combined_outcome =
+                QueryService::new("class").execute(&index, combined_request);
+
+            assert_eq!(fused_outcome, combined_outcome);
+            assert_eq!(fused_outcome.len(), 3);
+            let paths: Vec<&Path> =
+                fused_outcome.iter().map(|r| r.base().path()).collect();
+            assert_eq!(paths, [
+                Path::new("b.md"),
+                Path::new("c.md"),
+                Path::new("d.md")
+            ]);
         }
 
         #[test]

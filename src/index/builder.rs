@@ -222,7 +222,7 @@ mod tests {
     fn persist_previous(previous: &FileIndex, root: &Path) -> IndexStore {
         let store = IndexStore::open(root).expect("open store");
         store
-            .write_all(previous.bases(), previous.notes(), previous.inlinks())
+            .write_all(previous.files(), previous.notes(), previous.inlinks())
             .expect("persist previous index");
         store
     }
@@ -245,7 +245,7 @@ mod tests {
             .expect("build");
 
             assert_eq!(
-                index.bases().iter().map(FileBase::path).collect::<Vec<_>>(),
+                index.files().iter().map(FileBase::path).collect::<Vec<_>>(),
                 [Path::new("a.md"), Path::new("b.md")]
             );
         }
@@ -264,7 +264,7 @@ mod tests {
             .build(temp.path())
             .expect("build");
 
-            assert_eq!(index.bases().len(), 2);
+            assert_eq!(index.files().len(), 2);
             assert_eq!(index.notes().len(), 1);
             assert_eq!(
                 index.note(Path::new("note.md")).map(Note::path),

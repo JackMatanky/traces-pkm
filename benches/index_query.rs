@@ -113,6 +113,42 @@ fn bench_execute_tasks(c: &mut Criterion) {
         );
     });
 }
+/// Measures page-row filtering and sorting by frontmatter metadata — the path
+/// `FileIndexRow::note()` resolution sits on.
+///
+/// Distinct from [`bench_execute_pages`], which never touches a
+/// `FieldPath::Metadata`/`Tags` field and would not catch regressions in
+/// per-record Note metadata resolution.
+///
+/// Expected outcomes:
+/// - Fast O(1) field lookup per record without repeated binary searches.
+fn bench_execute_pages_by_metadata(c: &mut Criterion) {
+    let index = built_index();
+    c.bench_function(
+        "QueryService::execute pages filter+sort by metadata",
+        |b| {
+            b.iter_batched(
+                || index.clone(),
+                |index| {
+                    QueryService::new("class").execute(
+                        &index,
+                        QueryRequest::pages(SourceSelector::All)
+                            .filter("rating > 2")
+                            .expect("valid filter")
+                            .sort("rating", false)
+                            .expect("valid sort"),
+                    )
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+}
 
-criterion_group!(benches, bench_execute_pages, bench_execute_tasks);
+criterion_group!(
+    benches,
+    bench_execute_pages,
+    bench_execute_tasks,
+    bench_execute_pages_by_metadata
+);
 criterion_main!(benches);

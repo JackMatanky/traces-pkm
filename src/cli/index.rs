@@ -49,7 +49,7 @@ impl Index {
         indexer.persist(&index).map_err(index_error)?;
         eprintln!(
             "indexed {} file(s) under {}",
-            index.bases().len(),
+            index.files().len(),
             root.display()
         );
         Ok(())
@@ -65,7 +65,7 @@ mod tests {
 
         pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
             index
-                .bases()
+                .files()
                 .iter()
                 .map(|record| record.path().to_string_lossy().into_owned())
                 .collect()
@@ -123,7 +123,7 @@ mod tests {
                 .load()
                 .expect("reload persisted index");
 
-            assert_eq!(reloaded.bases().len(), 2);
+            assert_eq!(reloaded.files().len(), 2);
         }
 
         #[test]

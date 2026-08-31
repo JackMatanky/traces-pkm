@@ -523,7 +523,7 @@ impl IndexStore {
     pub(super) fn persist_index(&self, index: &FileIndex) -> IndexResult<()> {
         match index.delta() {
             IndexDelta::Full => {
-                self.write_all(index.bases(), index.notes(), index.inlinks())
+                self.write_all(index.files(), index.notes(), index.inlinks())
             }
             IndexDelta::Incremental(_) => self.persist_incremental(index),
         }
@@ -541,7 +541,7 @@ impl IndexStore {
     fn persist_incremental(&self, index: &FileIndex) -> IndexResult<()> {
         let IndexDelta::Incremental(delta) = index.delta() else {
             return self.write_all(
-                index.bases(),
+                index.files(),
                 index.notes(),
                 index.inlinks(),
             );
@@ -599,8 +599,8 @@ impl IndexStore {
         }
         for path in upserted {
             if let Ok(idx) =
-                index.bases().binary_search_by(|f| f.path().cmp(path))
-                && let Some(file) = index.bases().get(idx)
+                index.files().binary_search_by(|f| f.path().cmp(path))
+                && let Some(file) = index.files().get(idx)
             {
                 self.upsert_row(&mut files, path, file)?;
             }

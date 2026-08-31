@@ -49,7 +49,7 @@ use crate::{
 /// and derived inlinks for template rendering and CLI output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryRecord {
-    row: IndexRow,
+    row: FileIndexRow,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryRecordSet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
@@ -58,30 +58,21 @@ pub struct QueryRecord {
 
 /// Index-backed handle to one row of a [`FileIndex`]: resolves `FileBase`,
 /// `Note`, and inlinks on demand instead of cloning them at construction.
-/// Cloning an `IndexRow` bumps the shared `FileIndex`'s `Arc` strong count
+/// Cloning a `FileIndexRow` bumps the shared `FileIndex`'s `Arc` strong count
 /// and copies a `usize` — it never clones indexed file or Note data.
 #[derive(Clone)]
-struct IndexRow {
+struct FileIndexRow {
     index: Arc<FileIndex>,
     position: RowIndex,
 }
 
-impl IndexRow {
-    #[expect(
-        clippy::expect_used,
-        reason = "FileIndexEntryIter/RowIndex::new only ever construct \
-                  positions from .enumerate() over FileIndex::bases, so this \
-                  index is always in range; failure here means that invariant \
-                  broke, not a recoverable caller error"
-    )]
+impl FileIndexRow {
     fn base(&self) -> &FileBase {
-        self.index.bases().get(self.position.get()).expect(
-            "RowIndex always addresses a valid position in its FileIndex",
-        )
+        self.index.file_at(self.position)
     }
 
     fn note(&self) -> Option<&Note> {
-        self.index.note(self.base().path())
+        self.index.note_at(self.position)
     }
 
     fn inlinks(&self) -> &[PathBuf] {
@@ -93,7 +84,7 @@ impl IndexRow {
     }
 }
 
-impl PartialEq for IndexRow {
+impl PartialEq for FileIndexRow {
     fn eq(&self, other: &Self) -> bool {
         self.base() == other.base()
             && self.note() == other.note()
@@ -101,10 +92,10 @@ impl PartialEq for IndexRow {
     }
 }
 
-impl std::fmt::Debug for IndexRow {
+impl std::fmt::Debug for FileIndexRow {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("IndexRow")
+            .debug_struct("FileIndexRow")
             .field("position", &self.position)
             .field("base", self.base())
             .field("note", &self.note())
@@ -129,7 +120,7 @@ impl QueryRecord {
     /// Constructs a new [`QueryRecord`] at `position` in `index`.
     pub(super) fn from_row(index: Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
-            row: IndexRow {
+            row: FileIndexRow {
                 index,
                 position,
             },
