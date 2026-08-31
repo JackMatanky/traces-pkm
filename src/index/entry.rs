@@ -1,7 +1,5 @@
 //! [`FileIndex`] data structure and its [`FileEntry`] rows.
 
-#[cfg(test)]
-use std::path::Path;
 use std::path::PathBuf;
 
 use crate::{file::FileBase, note::Note};
@@ -126,7 +124,7 @@ impl FileIndex {
     #[cfg(test)]
     #[inline]
     #[must_use]
-    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
+    pub(crate) fn note(&self, path: &std::path::Path) -> Option<&Note> {
         self.entries
             .binary_search_by(|entry| entry.base().path().cmp(path))
             .ok()
@@ -231,9 +229,10 @@ pub(super) fn assemble_entries(
 }
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::index::service::IndexerService;
-
     mod lookup {
         use pretty_assertions::assert_eq;
 
