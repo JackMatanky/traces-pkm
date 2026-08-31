@@ -74,6 +74,36 @@ fn setup_refresh(n: usize) -> (TempDir, IndexerService) {
     (temp, indexer)
 }
 
+/// Creates a temporary project containing `n` synthetic notes, each linking to
+/// the next, mirroring `generate_notes_sparse`'s link shape but written to disk
+/// so `IndexerService::build`/`refresh` parse and persist real outlinks — none
+/// of this file's other fixtures produce any `LINKS` rows.
+fn populate_linked(n: usize) -> TempDir {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    for i in 0..n {
+        std::fs::write(
+            temp.path().join(format!("note-{i}.md")),
+            format!(
+                "---\nrating: {}\n---\n\nLink to [[note-{}]]\n",
+                i % 10,
+                (i + 1) % n
+            ),
+        )
+        .expect("write fixture note");
+    }
+    temp
+}
+
+/// Prepares a project directory with a populated and persisted index of `n`
+/// linked notes.
+fn setup_refresh_linked(n: usize) -> (TempDir, IndexerService) {
+    let temp = populate_linked(n);
+    let indexer = IndexerService::new(temp.path());
+    let index = indexer.build().expect("build index");
+    indexer.persist(&index).expect("persist index");
+    (temp, indexer)
+}
+
 /// Prepares a project directory with a populated but unpersisted index of `n`
 /// notes.
 fn setup_persist_full(n: usize) -> (TempDir, IndexerService, FileIndex) {
@@ -150,18 +180,24 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
 ///   sorting.
 fn bench_file_index_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build");
-    for n in [10_usize, 100, 1000] {
+    for n in [10_usize, 100, 1_000, 20_000] {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
+        if n >= 20_000 {
+            // 20,000-file builds do real per-iteration disk I/O; bound total
+            // suite runtime with criterion's minimum valid sample size (10)
+            // instead of the default 100.
+            group.sample_size(10);
+        }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || populate(n),
-                |temp| {
+                |temp: &mut TempDir| {
                     let index = IndexerService::new(temp.path())
                         .build()
                         .expect("build index");
-                    (temp, index)
+                    black_box(index);
                 },
                 BatchSize::LargeInput,
             );
@@ -186,17 +222,23 @@ fn bench_file_index_build(c: &mut Criterion) {
 ///   invalidation leaks or broken comparison logic.
 fn bench_file_index_refresh(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::refresh");
-    for n in [100_usize, 1000] {
+    for n in [100_usize, 1_000, 20_000] {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
+        if n >= 20_000 {
+            // 20,000-file builds do real per-iteration disk I/O; bound total
+            // suite runtime with criterion's minimum valid sample size (10)
+            // instead of the default 100.
+            group.sample_size(10);
+        }
 
         group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || setup_refresh(n),
-                |(temp, indexer)| {
+                |(_temp, indexer): &mut (TempDir, IndexerService)| {
                     let index = indexer.refresh().expect("refresh index");
-                    (temp, indexer, index)
+                    black_box(index);
                 },
                 BatchSize::LargeInput,
             );
@@ -206,7 +248,7 @@ fn bench_file_index_refresh(c: &mut Criterion) {
             BenchmarkId::new("single-upsert", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let (temp, indexer) = setup_refresh(n);
                         std::fs::write(
@@ -216,9 +258,9 @@ fn bench_file_index_refresh(c: &mut Criterion) {
                         .expect("write update");
                         (temp, indexer)
                     },
-                    |(temp, indexer)| {
+                    |(_temp, indexer): &mut (TempDir, IndexerService)| {
                         let index = indexer.refresh().expect("refresh index");
-                        (temp, indexer, index)
+                        black_box(index);
                     },
                     BatchSize::LargeInput,
                 );
@@ -229,16 +271,40 @@ fn bench_file_index_refresh(c: &mut Criterion) {
             BenchmarkId::new("single-delete", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let (temp, indexer) = setup_refresh(n);
                         std::fs::remove_file(temp.path().join("note-0.md"))
                             .expect("delete note");
                         (temp, indexer)
                     },
-                    |(temp, indexer)| {
+                    |(_temp, indexer): &mut (TempDir, IndexerService)| {
                         let index = indexer.refresh().expect("refresh index");
-                        (temp, indexer, index)
+                        black_box(index);
+                    },
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("linked-single-upsert", n),
+            &n,
+            |b, &n| {
+                b.iter_batched_ref(
+                    || {
+                        let (temp, indexer) = setup_refresh_linked(n);
+                        std::fs::write(
+                            temp.path().join("note-0.md"),
+                            "---\nrating: 99\n---\n\nLink to [[note-1]]\nLink \
+                             to [[note-2]]\n",
+                        )
+                        .expect("write update");
+                        (temp, indexer)
+                    },
+                    |(_temp, indexer): &mut (TempDir, IndexerService)| {
+                        let index = indexer.refresh().expect("refresh index");
+                        black_box(index);
                     },
                     BatchSize::LargeInput,
                 );
@@ -253,16 +319,25 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 /// Isolates the serialization and disk-write cost of a full index rewrite.
 fn bench_index_persist(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::persist");
-    for n in [10_usize, 100, 1000] {
+    for n in [10_usize, 100, 1_000, 20_000] {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
+        if n >= 20_000 {
+            // 20,000-file builds do real per-iteration disk I/O; bound total
+            // suite runtime with criterion's minimum valid sample size (10)
+            // instead of the default 100.
+            group.sample_size(10);
+        }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || setup_persist_full(n),
-                |(temp, indexer, index)| {
-                    indexer.persist(&index).expect("persist index");
-                    (temp, indexer, index)
+                |(_temp, indexer, index): &mut (
+                    TempDir,
+                    IndexerService,
+                    FileIndex,
+                )| {
+                    indexer.persist(index).expect("persist index");
                 },
                 BatchSize::LargeInput,
             );
@@ -287,7 +362,7 @@ fn bench_index_persist(c: &mut Criterion) {
 ///   calculation is too hot or allocating redundant paths.
 fn bench_derive_inlinks(c: &mut Criterion) {
     let mut group = c.benchmark_group("derive_inlinks");
-    for n in [100_usize, 1000] {
+    for n in [100_usize, 1_000, 20_000] {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -353,9 +428,10 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     // size and longer measurement window smooth out scheduler jitter.
     group.sample_size(50);
     group.measurement_time(std::time::Duration::from_secs(10));
+    group.sampling_mode(criterion::SamplingMode::Flat);
 
     group.bench_function("concurrent-load-4-independent-projects", |b| {
-        b.iter_batched(
+        b.iter_batched_ref(
             || {
                 let mut projects = Vec::with_capacity(4);
                 for _ in 0..4 {
@@ -363,20 +439,20 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                 }
                 projects
             },
-            |projects| {
-                let mut temps = Vec::with_capacity(4);
-                let mut handles = Vec::with_capacity(4);
-                for (temp, indexer) in projects {
-                    temps.push(temp);
-                    handles.push(std::thread::spawn(move || {
-                        indexer.load().expect("load index")
-                    }));
-                }
-                let mut indexes = Vec::with_capacity(4);
-                for handle in handles {
-                    indexes.push(handle.join().expect("thread joined"));
-                }
-                (temps, indexes)
+            |projects: &mut Vec<(TempDir, IndexerService)>| {
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = projects
+                        .iter()
+                        .map(|(_temp, indexer)| {
+                            scope.spawn(move || {
+                                indexer.load().expect("load index")
+                            })
+                        })
+                        .collect();
+                    for handle in handles {
+                        black_box(handle.join().expect("thread joined"));
+                    }
+                });
             },
             BatchSize::LargeInput,
         );

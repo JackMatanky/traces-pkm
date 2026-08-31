@@ -206,25 +206,6 @@ pub enum QueryRequestError {
     },
 }
 
-impl QueryRequestError {
-    pub(crate) fn from_query_error(error: QueryError) -> Self {
-        match error {
-            QueryError::Syntax(error) => Self::Syntax(error),
-            QueryError::FieldPath(error) => Self::FieldPath(error),
-            QueryError::Request(error) => error,
-            QueryError::TaskListRequiresTaskRows
-            | QueryError::TableColumnCountMismatch {
-                ..
-            } => Self::Syntax(QuerySyntaxError::new(
-                QueryDialect::Filter,
-                "",
-                (0, 0).into(),
-                "a valid filter expression",
-            )),
-        }
-    }
-}
-
 /// Top-level error enum for query parsing and transformation.
 ///
 /// Covers all failure modes from expression parsing through field resolution to

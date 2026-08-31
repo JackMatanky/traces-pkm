@@ -11,8 +11,8 @@ use crate::{
     LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
     note::NoteFieldValue,
     query::{
-        QueryRecord, QueryResult,
-        error::{QueryDialect, QuerySyntaxError},
+        QueryRecord,
+        error::{QueryDialect, QueryRequestError, QuerySyntaxError},
         value::QueryFieldValueRef,
     },
 };
@@ -30,7 +30,7 @@ impl FilterExpr {
     /// # Errors
     ///
     /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
-    pub(crate) fn parse(input: &str) -> QueryResult<Self> {
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryRequestError> {
         let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
             input,
             |token| {
@@ -254,7 +254,7 @@ impl FilterGrammar {
     fn parse_literal_arg(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
-    ) -> QueryResult<NoteFieldValue> {
+    ) -> Result<NoteFieldValue, QueryRequestError> {
         let spanned = tokens
             .expect_map(input, "a literal value", |token| {
                 let spanned = token;
@@ -273,7 +273,7 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         name: &str,
-    ) -> QueryResult<FilterFunction> {
+    ) -> Result<FilterFunction, QueryRequestError> {
         tokens
             .expect(input, &FilterToken::LParen, "`(` after a function name")
             .map_err(|e| {
@@ -326,7 +326,7 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         field_ident: &str,
-    ) -> QueryResult<ComparisonExpr> {
+    ) -> Result<ComparisonExpr, QueryRequestError> {
         let op_spanned = tokens
             .expect_map(input, "a comparison operator", |token| {
                 let spanned = token;
@@ -367,7 +367,7 @@ impl AtomParser for FilterGrammar {
         &self,
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-    ) -> QueryResult<Self::Atom> {
+    ) -> Result<Self::Atom, QueryRequestError> {
         let spanned_ident = tokens
             .expect_map(input, "a filter term", |token| {
                 let spanned = token;
@@ -521,7 +521,7 @@ mod tests {
         fn rejects_incomplete_boolean_logic(#[case] expr: &str) {
             assert!(matches!(
                 FilterExpr::parse(expr),
-                Err(QueryError::Syntax(_))
+                Err(QueryRequestError::Syntax(_))
             ));
         }
 
@@ -536,10 +536,10 @@ mod tests {
         ) {
             let result = FilterExpr::parse(expr);
             assert!(
-                matches!(result, Err(QueryError::Syntax(_))),
+                matches!(result, Err(QueryRequestError::Syntax(_))),
                 "expected syntax error"
             );
-            if let Err(QueryError::Syntax(error)) = result {
+            if let Err(QueryRequestError::Syntax(error)) = result {
                 assert_eq!(*error.lex_error, LexError::UnexpectedToken {
                     span: SourceSpan::from((offset, length)),
                     found: "NaN or infinity".to_owned(),
@@ -566,7 +566,7 @@ mod tests {
         fn rejects_malformed_field_path_in_function() {
             assert_eq!(
                 FilterExpr::parse("contains(file.bogus, \"x\")"),
-                Err(QueryError::FieldPath(FieldPathError::new(
+                Err(QueryRequestError::FieldPath(FieldPathError::new(
                     "file.bogus",
                     None
                 )))

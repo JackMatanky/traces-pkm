@@ -190,10 +190,7 @@ pub(super) enum QueryTransform {
 
 impl QueryTransform {
     pub(super) fn filter(expr: &str) -> Result<Self, QueryRequestError> {
-        Ok(Self::Filter(
-            FilterExpr::parse(expr)
-                .map_err(QueryRequestError::from_query_error)?,
-        ))
+        Ok(Self::Filter(FilterExpr::parse(expr)?))
     }
 
     pub(super) fn sort(

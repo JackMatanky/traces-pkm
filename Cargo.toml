@@ -38,7 +38,7 @@ name = "index_lifecycle"
 
 [[bench]]
 harness = false
-name = "index_query"
+name = "query_execution"
 
 [[bench]]
 harness = false
