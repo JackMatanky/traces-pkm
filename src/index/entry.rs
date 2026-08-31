@@ -101,7 +101,7 @@ impl FileIndex {
     /// Used exclusively by [`super::builder::IndexBuilder`] and
     /// [`super::service::IndexerService::load`] after scanning, parsing, and
     /// inlink derivation are complete.
-    pub(crate) fn new(
+    pub(super) fn new(
         entries: Box<[FileEntry]>,
         delta: super::delta::IndexDelta,
     ) -> Self {
@@ -172,7 +172,7 @@ impl RowIndex {
     /// Returns the wrapped position.
     #[inline]
     #[must_use]
-    pub(crate) const fn get(self) -> usize {
+    const fn get(self) -> usize {
         self.0
     }
 }
@@ -211,18 +211,16 @@ pub(super) fn assemble_entries(
     let mut notes_iter = notes.into_iter().peekable();
     let mut entries = Vec::with_capacity(files.len());
     for base in files {
+        while notes_iter.peek().is_some_and(|note| note.path() < base.path()) {
+            notes_iter.next();
+        }
         let note =
-            if notes_iter.peek().is_some_and(|note| note.path() == base.path())
-            {
-                notes_iter.next().map(|note| {
-                    Box::new(NoteEntry {
-                        note,
-                        inlinks: Box::default(),
-                    })
+            notes_iter.next_if(|note| note.path() == base.path()).map(|note| {
+                Box::new(NoteEntry {
+                    note,
+                    inlinks: Box::default(),
                 })
-            } else {
-                None
-            };
+            });
         entries.push(FileEntry {
             base,
             note,

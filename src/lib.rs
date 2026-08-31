@@ -91,7 +91,7 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileIndex, IndexerService, derive_inlinks, path as path_codec,
+    FileEntry, FileIndex, IndexerService, derive_inlinks, path as path_codec,
 };
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
