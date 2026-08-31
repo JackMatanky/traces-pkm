@@ -141,7 +141,7 @@ pub enum TemplateError {
     SchemaLoad(#[from] crate::schema::SchemaError),
 }
 
-/// Classifies a [`TemplateError::Render`] failure for diagnostics.
+/// Classifies a `TemplateError::Render` failure for diagnostics.
 ///
 /// Provides just enough detail for `crate::cli::error` to choose a stable
 /// diagnostic code and help text. Classification inspects

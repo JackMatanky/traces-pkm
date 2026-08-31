@@ -41,7 +41,7 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 ///
 /// # Errors
 ///
-/// All methods return [`IndexError`]. [`Self::refresh`] also logs a
+/// All methods return `IndexError`. [`Self::refresh`] also logs a
 /// `tracing::warn!` on persist failure without propagating it.
 ///
 /// # Examples
@@ -52,8 +52,7 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 /// let index = indexer.build().expect("build index");
 /// indexer.persist(&index).expect("persist index");
 /// ```
-///
-/// [`IndexError`]: super::IndexError
+
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -76,8 +75,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Builder`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, or a markdown file cannot be parsed.
+    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
+    ///   cannot be inspected, or a markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
@@ -102,19 +101,19 @@ impl IndexerService {
     /// Derived inlinks are recomputed in full when a Note is added or removed,
     /// or when a changed Note's outlink targets actually differ from its
     /// previously-persisted value (backdating skips the recompute otherwise;
-    /// see [`super::cache::RefreshCache::reconcile_note`]). A full recompute
-    /// (not a per-note patch) is required because link target resolution
-    /// considers every indexed Note: an unedited Note's *resolved* target can
-    /// change when an unrelated Note is added or removed. For example, a
-    /// wikilink that was ambiguous becomes resolvable once one of the ambiguous
-    /// candidates is deleted.
+    /// see `RefreshCache::reconcile_note`). A full recompute (not a per-note
+    /// patch) is required because link target resolution considers every
+    /// indexed Note: an unedited Note's *resolved* target can change when an
+    /// unrelated Note is added or removed. For example, a wikilink that was
+    /// ambiguous becomes resolvable once one of the ambiguous candidates is
+    /// deleted.
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Builder`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, a markdown file cannot be parsed, or an
-    ///   unchanged Note's previous value cannot be recalled.
-    /// - [`IndexError::Store`] if the previously persisted index cannot be
+    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
+    ///   cannot be inspected, a markdown file cannot be parsed, or an unchanged
+    ///   Note's previous value cannot be recalled.
+    /// - `IndexError::Store` if the previously persisted index cannot be
     ///   loaded.
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
@@ -143,7 +142,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the database's parent directory cannot be
+    /// - `IndexError::Store` if the database's parent directory cannot be
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
@@ -156,8 +155,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the database cannot be read or stored bytes
-    ///   are not a valid record.
+    /// - `IndexError::Store` if the database cannot be read or stored bytes are
+    ///   not a valid record.
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -179,8 +178,8 @@ impl IndexerService {
     /// Skips `.git` directories (and their descendants), the index database
     /// itself, and symlinks.
     ///
-    /// The sorted output is a precondition for the merge-join reconciliation
-    /// in [`builder::IndexBuilder`].
+    /// The sorted output is a precondition for the merge-join reconciliation in
+    /// [`builder::IndexBuilder`].
     ///
     /// # Errors
     ///

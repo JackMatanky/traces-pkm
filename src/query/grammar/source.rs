@@ -23,7 +23,7 @@ use crate::{
 /// The CLI and template system pass a `--from` / `.from(...)` string to
 /// [`SourceSelector::parse`]. An empty or whitespace-only input yields
 /// [`Self::All`] (match everything); any nonempty input is parsed into a
-/// [`SourceExpr`].
+/// `SourceExpr`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceSelector {
     /// Every indexed Note satisfies this source.
@@ -36,11 +36,11 @@ impl SourceSelector {
     /// Parses `input` as a source expression.
     ///
     /// Empty or whitespace-only input yields [`Self::All`]; any nonempty input
-    /// is parsed into a [`SourceExpr`].
+    /// is parsed into a `SourceExpr`.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::Syntax`] when a nonempty `input` is invalid.
+    /// Returns `QueryError::Syntax` when a nonempty `input` is invalid.
     #[inline]
     pub fn parse(input: &str) -> QueryResult<Self> {
         if input.trim().is_empty() {

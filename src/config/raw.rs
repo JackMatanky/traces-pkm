@@ -91,7 +91,7 @@ pub(crate) struct RawFrontmatterConfig {
 /// to avoid overwriting a configured global value during Figment merge.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct RawDateFieldConfig {
+pub(crate) struct RawDateFieldConfig {
     /// Frontmatter key name, if configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,

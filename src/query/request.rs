@@ -7,6 +7,12 @@ use super::{
 };
 use crate::note::NoteFieldValue;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum QueryMode {
+    Pages,
+    Tasks,
+}
+
 /// Query execution request.
 pub struct QueryRequest {
     mode: QueryMode,
@@ -41,7 +47,7 @@ impl QueryRequest {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryRequestError`] when `expr` is not a valid filter.
+    /// Returns `QueryRequestError` when `expr` is not a valid filter.
     #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryRequestError> {
         self.plan.push(QueryTransform::filter(expr)?);
@@ -52,7 +58,7 @@ impl QueryRequest {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryRequestError`] when `field` is not a valid field path.
+    /// Returns `QueryRequestError` when `field` is not a valid field path.
     #[inline]
     pub fn sort(
         mut self,
@@ -67,7 +73,7 @@ impl QueryRequest {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryRequestError`] when `n` is negative or too large for this
+    /// Returns `QueryRequestError` when `n` is negative or too large for this
     /// platform.
     #[inline]
     #[cfg_attr(
@@ -89,12 +95,6 @@ impl QueryRequest {
     pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
         (self.mode, self.source, self.plan)
     }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum QueryMode {
-    Pages,
-    Tasks,
 }
 
 /// Ordered, optimizable sequence of [`QueryTransform`] steps.

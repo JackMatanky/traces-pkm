@@ -32,8 +32,8 @@ impl Note {
     /// Creates a note from parser-owned page components.
     ///
     /// The new note starts without inline fields or tags because those are
-    /// extracted after block parsing. Attach them with
-    /// [`Self::with_inline_fields`] and [`Self::with_tags`].
+    /// extracted after block parsing. Attach them with `with_inline_fields` and
+    /// [`Self::with_tags`].
     #[inline]
     #[must_use]
     pub fn new<P: Into<PathBuf>>(
@@ -87,8 +87,8 @@ impl Note {
 
     /// Returns the top-level body lists.
     ///
-    /// Nested [`ListItem`] values hold child lists. Use [`Self::tasks`] for
-    /// a flattened view of task items from every list depth.
+    /// Nested `ListItem` values hold child lists. Use [`Self::tasks`] for a
+    /// flattened view of task items from every list depth.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -146,25 +146,19 @@ impl Note {
     pub(crate) fn fields(
         &self,
     ) -> impl Iterator<Item = (&FieldKey, &NoteFieldValue)> {
-        use std::collections::HashSet;
-
-        let fm_keys: Option<HashSet<&FieldKey>> =
-            self.frontmatter.as_ref().map(|fm| fm.fields().keys().collect());
-
-        let fm = self.frontmatter.iter().flat_map(|fm| fm.fields().iter());
-
-        let inline = self.inline_fields.iter().flat_map(move |(k, values)| {
-            let fm_keys = fm_keys.clone();
-            values.iter().filter_map(move |v| {
-                if fm_keys.as_ref().is_some_and(|keys| keys.contains(k)) {
-                    None
-                } else {
-                    Some((k, v))
-                }
+        let fm_fields =
+            self.frontmatter.iter().flat_map(|fm| fm.fields().iter());
+        let inline = self
+            .inline_fields
+            .iter()
+            .filter(|(k, _)| {
+                !self.frontmatter.as_ref().is_some_and(|frontmatter| {
+                    frontmatter.fields().contains_key(*k)
+                })
             })
-        });
+            .flat_map(|(k, values)| values.iter().map(move |v| (k, v)));
 
-        fm.chain(inline)
+        fm_fields.chain(inline)
     }
 
     /// Returns the first value of a metadata field (frontmatter or inline)

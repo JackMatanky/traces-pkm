@@ -19,7 +19,7 @@ use crate::{BaseNameRef, DirTree, DirTreeError};
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///
-/// Resolves every Schema once at construction ([`SchemaService::new`]); every
+/// Resolves every Schema once at construction (`SchemaService::new`); every
 /// query method reads the already-resolved Schemas directly, with no separate
 /// registry type or re-resolution.
 #[derive(Debug)]
@@ -198,9 +198,9 @@ impl SchemaService {
     /// Load and resolve every Schema under `directory`.
     ///
     /// Integration-test and bench entry point; production code should use
-    /// [`SchemaService::new`] directly. Warnings and per-Schema build failures
+    /// `SchemaService::new` directly. Warnings and per-Schema build failures
     /// are discarded — tests that need them should use
-    /// [`SchemaService::load_verbose`] from within the crate.
+    /// `SchemaService::load_verbose` from within the crate.
     ///
     /// # Errors
     ///

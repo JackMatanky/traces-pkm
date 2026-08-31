@@ -291,7 +291,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Store`] when the trust entry cannot be
+    /// Returns `ConfigStateError::Store` when the trust entry cannot be
     /// removed.
     #[inline]
     pub fn untrust(
@@ -305,7 +305,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Store`] when the tracking store exists but
+    /// Returns `ConfigStateError::Store` when the tracking store exists but
     /// cannot be read.
     #[inline]
     pub(crate) fn list_tracked(
