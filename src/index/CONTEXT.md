@@ -1,35 +1,46 @@
 # Index
 
-Persistent file index, note parsing, and link graph construction.
+Persistent file indexing, metadata caching, storage, and inbound link graph
+construction.
 
 ## Language
 
-### FileIndex
+### Index Model
 
-A persisted cache of metadata extracted from every file in the project root. Built by `traces index` and transparently kept fresh on every query. Two tiers: every file gets a **File Base**; markdown files additionally get **Note Metadata** (frontmatter, inline fields, tags, tasks, lists, links). Stored in a redb database.
-*Avoid*: NoteIndex, database, cache, vault
+#### File Index
 
-### File Base
+An immutable in-memory snapshot of indexed files, parsed notes, and derived
+inbound links across a project root.
+*Avoid*: NoteIndex, database handle, cache, vault
 
-The indexed metadata for every file regardless of type: `file.path`, `file.name`, `file.folder`, `file.created_at`, `file.modified_at`, `file.size`, and `kind` (whether the file is a markdown Note or a plain file — per ADR-0005's `file_records` schema). Exposes `ctime`/`cdate`/`mtime`/`mdate` accessors for Dataview-style queries.
-*Avoid*: file metadata, fs entry
+#### Indexer Service
 
-### Note Metadata
+The service driving the index lifecycle: building fresh indexes, persisting to
+disk, loading cached data, and performing differential refreshes.
+*Avoid*: index manager, scanner, indexer facade
 
-The rich indexed data for markdown files only, layered on top of the File Base: frontmatter fields, inline fields (`Key:: Value`), tags, tasks, lists, and links.
-*Avoid*: page data, document info
+### Indexed Data
 
-### Inlink
+#### File Base
 
-A Note's inbound links, derived by resolving every indexed Note's outgoing Markdown links and wikilinks against every other indexed Note's path, in a post-processing pass over Note Metadata. Persisted alongside FileBase/Note data and recomputed in full only when the index changes on refresh (never patched per-Note, since one Note's resolved target can depend on every other indexed Note); reused unchanged from the last persisted computation otherwise, so it never goes stale relative to the FileIndex. Exposed to Templates and CLI as the `inlinks` field, alongside `tags`.
-*Avoid*: backlink, incoming link
+The base indexed metadata captured for every regular file: relative path, size,
+timestamps, and format classification.
+*Avoid*: file metadata, fs entry, raw record
 
-### Inline Field
+#### Note Metadata
 
-A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax: `Key:: Value` (start of line), `[Key:: Value]` (inline with visible key), or `(Key:: Value)` (inline with hidden key). Parsed from body text and list items, not from code blocks or inline code.
-*Avoid*: metadata tag, embedded field
+The rich structured data extracted from Markdown files: frontmatter, inline
+fields, tags, lists, tasks, and outgoing links.
+*Avoid*: page data, document info, note payload
 
-### IndexRecord
+#### Inlink
 
-A single item inside a `QueryOutcome`: a Note with its implicit `file.*` fields and all indexed frontmatter/inline field metadata. A task-level row (from `tasks.*`) is the same type with `task.completed`/`task.text` also set, retaining its parent Note's metadata.
-*Avoid*: QueryRow, page, record
+A derived inbound reference mapping a note's path to all other notes linking to
+it via Markdown links or wikilinks.
+*Avoid*: backlink, incoming link, reverse ref
+
+#### Incremental Delta
+
+The differential change set computed during refresh that compares timestamps and
+patches only modified files, notes, and affected link targets.
+*Avoid*: index patch, sync delta

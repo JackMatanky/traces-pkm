@@ -1,69 +1,58 @@
 # CLI
 
-Command-line interface definitions, argument parsing, and command dispatch.
+Command-line interface definitions, argument parsing, command dispatch, and
+diagnostic formatting.
 
 ## Language
 
-### Commands
+### Operations
 
-#### template / tmpl
+#### Template Instantiation
 
-The primary command for instantiating a template. `traces template -i <name>` renders a template to a note. `traces template` without `-i` opens the interactive Template Browser. `tmpl` is a shorthand. When `traces -i` (with or without a name) is passed without a subcommand, it defaults to the template command.
-*Avoid*: run, apply, new
+The primary operation rendering a template into a note on disk or stdout,
+invoked via `template` (or `tmpl`).
+*Avoid*: run template, apply template, new note
 
-#### completions
+#### Config Scaffolding
 
-Generates shell completion scripts. `traces completions --shell bash|zsh|fish` outputs a static completion script covering all commands and flags. `traces completions --list-templates` outputs available template names for dynamic completion.
-*Avoid*: completion, autocomplete, tab-complete
+The interactive setup process initializing a `.traces/` directory and default
+configuration, invoked via `init`.
+*Avoid*: project setup, bootstrap
 
-#### init
+#### Trust Management
 
-Scaffolds a `.traces/` directory with a default `config.toml` and an empty `templates/` directory. Uses inquire to interactively configure options.
-*Avoid*: setup, create, bootstrap
+The administrative operations granting (`trust`), inspecting, or revoking
+(`untrust`) execution permissions for project roots.
+*Avoid*: authorization, permissions
 
-#### trust
+#### Project Reindexing
 
-Marks a directory as safe for template execution. Templates can invoke custom functions and include files, so untrusted directories are rejected by default (or prompt for confirmation). Trust state is stored by directory path hash in the user's data directory, following the same tracked/trusted/ignore pattern as mise.
-*Avoid*: allow, approve, authorize
-
-#### index
-
-Builds or rebuilds the persisted FileIndex for the trusted project root. `traces index` scans every file under the root and persists a File Record for each, replacing any previously persisted contents.
+The operation scanning all files under a project root and updating the
+persisted metadata index, invoked via `index`.
 *Avoid*: scan, reindex, refresh
 
-### CLI Flags
+#### Query Commands
 
-#### --input / -i
+Commands executing read queries against indexed notes: bullet lists (`list`),
+tabular views (`table`), and task checklists (`task`).
+*Avoid*: search commands, DQL commands
 
-Specifies the template name or path to instantiate. When given without a value (just `-i`), opens the interactive Template Browser.
+### Interaction & Outcomes
 
-#### --output / -o
+#### Template Browser
 
-Specifies the output path for the resulting note. Overrides any `file.write_to()` call the template makes. Confined to the project root — an absolute path or a `..` segment is rejected, matching `file.write_to()`.
+An interactive selector listing all available templates when no template name
+is provided.
+*Avoid*: template picker, template selector, fuzzy finder
 
-#### --dry-run / -n
+#### Command Outcome
 
-Renders the template to stdout without writing to disk.
+The final result of command execution, distinguishing normal completion from a
+deliberate user abort.
+*Avoid*: exit status, success, return code
 
-#### --force / -f
+#### User Abort
 
-Overwrites the output file if it already exists.
-
-### Command Outcome
-
-The result of a Command that completed or ended in a User Abort. `Completed` means normal completion; `Aborted(UserAbort)` means the user cancelled or interrupted. The process exit code is `0` for both variants.
-*Avoid*: Success, error, exit status
-
-### User Abort
-
-The User intentionally stops an interactive sequence. `Cancelled` (Escape) exits the current command without a diagnostic; `Interrupted` (Ctrl-C) exits using the terminal's conventional interruption outcome.
-*Avoid*: Error, failure, cancelled prompt
-
-### Template Browser
-
-An interactive fuzzy-filtered selector shown when `traces template` or `traces -i` is invoked without a name. Lists all available template names (stems) from local then global template directories, deduplicated. Uses `inquire::Select` with the default fuzzy scorer.
-*Avoid*: Template picker, template selector, fuzzy finder
-
-### Available Templates
-
-The set of template stems discoverable by scanning the local and global template directories. No persisted registry — the filesystem is the source of truth.
+An intentional user cancellation (Escape) or interruption (Ctrl-C) ending an
+interactive prompt cleanly.
+*Avoid*: prompt error, failure, prompt cancellation

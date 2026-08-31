@@ -1,24 +1,58 @@
 # Core
 
-Shared types and entry points for Traces. Covers `lib.rs` (module declarations,
-public re-exports) and `main.rs` (process exit code mapping), plus the loose
-root-level files.
+Shared domain primitives, security boundaries, and cross-cutting types for
+Traces.
 
 ## Language
 
-### User
+### Workspace & Boundaries
 
-The human operating the CLI tool. In MCP mode, the AI agent acts on the user's behalf.
-*Avoid*: Client, operator
+#### Project Root
 
-### Directory Tree
+The workspace directory containing notes and `.traces/` configuration, against
+which all file operations, template outputs, and queries are strictly confined.
+*Avoid*: working directory, vault root, base folder
 
-The shared traversal vocabulary behind the FileIndex scan, Schema registry load,
-config subtree discovery, and Template Directory listing:
-`DirTree::children(dir)` reads a directory's immediate entries;
-`DirTree::descendants(root)` walks a whole tree (`filter` removes matching subtrees,
-`sorted_by` orders entries within each directory).
-Both yield **DirNodes** and classified **Dir Tree Errors** — `MissingRoot`,
-`RootInaccessible`, `NodeInaccessible` — whose degrade-or-fail policy each
-caller states explicitly in its match arms. *Avoid*: walker, walk adapter,
-DirEntry
+#### Root-Confined Path
+
+A filesystem path guaranteed to reside within the Project Root, rejecting
+absolute paths, root escapes, and parent directory (`..`) traversal.
+*Avoid*: relative path, sanitized path, normalized path
+
+### Metadata Primitives
+
+#### Field Key
+
+The canonical, case-insensitive identifier for note and schema metadata fields,
+preserving author casing for display.
+*Avoid*: property name, attribute key, column
+
+#### Tag
+
+A `#`-prefixed identifier supporting hierarchical sub-tag prefix matching.
+*Avoid*: label, category, keyword
+
+#### File Base
+
+The universal filesystem metadata captured for every regular file in a project:
+relative path, size, timestamps, and format classification.
+*Avoid*: fs entry, file metadata, file record
+
+### Traversal & State
+
+#### Directory Tree
+
+The shared filesystem traversal model for scanning directories, discovering
+templates, and loading schemas with classified error handling.
+*Avoid*: walker, walk adapter, walkdir
+
+#### File State Store
+
+The user-level persistent store managing tracked configuration paths and
+trusted project roots.
+*Avoid*: state cache, local database, cache dir
+
+#### User
+
+The human operating Traces, or an automated agent acting on their behalf.
+*Avoid*: Client, operator, caller

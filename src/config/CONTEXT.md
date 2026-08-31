@@ -1,42 +1,57 @@
 # Config
 
-Project configuration loading, discovery, TOML parsing, and trust verification.
+Project configuration discovery, TOML parsing, workspace trust verification,
+and configuration tracking.
 
 ## Language
 
-### Config File
+### Configuration Files
 
-TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/traces/config.toml`). The `[templates]`, `[schemas]`, and `[frontmatter]` tables are defined:
+#### Config File
 
-```toml
-[templates]
-# Either level: replaces the default templates directory for that level
-# directory = ""
+A TOML configuration file at the local (`.traces/config.toml`) or global
+(`~/.config/traces/config.toml`) level defining template, schema, and metadata
+settings.
+*Avoid*: settings file, preferences
 
-# Local only: overrides default output directory (defaults to cwd)
-# output_dir = ""
+#### Configuration Scope
 
-[schemas]
-# Frontmatter key naming a note's File Class (default: class)
-# class_field = "class"
+The two-tier hierarchy where global defaults are overridden by local project
+configuration.
+*Avoid*: layered config, cascaded settings
 
-# Directory containing Schema files (default: .traces/schemas/)
-# directory = ""
+### Trust & Security
 
-[frontmatter]
-# Frontmatter keys for canonical metadata roles
-# title        = "title"
-# aliases      = "aliases"   # read for file-field display labels
-# date_created = { name = "date_created", format = "%Y-%m-%dT%H:%M:%S" }
-# date_modified = { name = "date_modified", format = "%Y-%m-%dT%H:%M:%S" }
-```
+#### Trust Verification
 
-### Template Directory
+The security check performed before loading local configuration or executing
+templates, rejecting untrusted or altered project roots.
+*Avoid*: authorization check, security scan
 
-A user-configurable directory containing template files. Local (project-level, `.traces/templates/`) is checked first, then global (user-level, OS-appropriate default). Configured via the `[templates]` table in `.traces/config.toml` or `~/.config/traces/config.toml`.
-*Avoid*: Templates folder, template location
+#### Trust Status
 
-### Template Resolution
+The trust state of a workspace root: `Trusted` (known root with matching
+digest), `Untrusted` (unknown root), or `Stale` (configuration modified since
+trust was granted).
+*Avoid*: trust level, security state
 
-A template name resolves first as an exact path, then as a filename in the local template directory, then in the global template directory. Multiple matches produce an error listing the candidates.
-*Avoid*: Template lookup, search
+#### Companion Hash
+
+The stored cryptographic digest of a `.traces/config.toml` file used to detect
+out-of-band configuration changes.
+*Avoid*: baseline hash, signature, checksum
+
+#### Tracked Config Store
+
+The user-level record of all local `.traces/config.toml` paths discovered during
+execution, kept independent of trust decisions.
+*Avoid*: config history, audit store
+
+### Canonical Metadata
+
+#### Metadata Roles
+
+Canonical frontmatter keys configured under `[frontmatter]` mapping
+project-specific names for title, aliases, creation date, and modification
+date.
+*Avoid*: field mapping, canonical attributes

@@ -1,69 +1,73 @@
-# Schema registry
+# Schema
 
-Schema registry and field resolution. Parses `.traces/schemas/*.toml` and linearizes the `extends` DAG into effective field definitions.
+Schema registry, field resolution, inheritance DAG, and class hierarchy
+queries.
 
 ## Language
 
-### Schema
+### Schema Model
 
-A TOML file in `.traces/schemas/<name>.toml` defining the Field Definitions that govern notes of a File Class. The filesystem is the registry — the filename stem is the schema name.
+#### Schema Definition
+
+A declarative specification in `.traces/schemas/<name>.toml` defining the field
+definitions and constraints that govern notes of a File Class.
 *Avoid*: field preset, schema definition file, template schema
 
-### Global Schema
+#### Global Schema
 
-The reserved schema `global.toml` — a File Class no note may hold — providing a shared pool of Field Definitions referenceable from any Schema via `$ref`. Its fields can never be required: a `required = true` there is ignored with a warn log, though a referencing Schema may mark the referenced field required locally. Mirrors Metadata Menu's global fileClass.
-*Avoid*: preset fields, shared fields
+The reserved schema `global.toml` providing a shared pool of field definitions
+referenceable via `$ref`, which cannot itself be assigned to notes.
+*Avoid*: preset fields, shared fields, base schema
 
-### Field Definition
+#### File Class
 
-A named entry in a Schema describing one field: a `type` (`input`, `select`,
-`boolean`, `number`, `date`, `file`) with type-specific options, plus optional
-`required` and `multi` flags. For `select`/`multi` fields, `values` is
-polymorphic over inline string lists, inline value objects
-(`{value, label, order?}`), and external file subtables
-(`{path = "values/countries.toml", value = "slug", label = "name", order = "rank"}`)
-confined to the schema directory. For `number` fields, `min`, `max`, and `step`
-are declarative value-range constraints only; they do not express countdowns,
-direction, or UI value transitions. For `file` fields the options are an
-AND-composed filter over the FileIndex (`folders`, `ext`, `class`).
-*Avoid*: property, field setting, column
+The classification string in a note's frontmatter that binds the note to one or
+more Schemas.
+*Avoid*: note type, document kind, tag
 
-### Extends
+### Inheritance & Resolution
 
-A Schema-level array of parent Schema names. A class that extends another is that class: it inherits the parent's Field Definitions and matches class queries for the parent transitively. A cycle is a hard validation error; a missing target degrades to exact match with a warning (the class's own fields still resolve).
-*Avoid*: inherits, parents
+#### Extends
 
-### Excludes
+The mechanism by which a Schema inherits field definitions from parent Schemas,
+forming an acyclic inheritance DAG.
+*Avoid*: inherits, subclasses, parents
 
-A Schema-level array of field names dropped from inherited Field Definitions during resolution.
-*Avoid*: skip, ignore
+#### Excludes
 
-### Field Resolution
+A Schema-level list of inherited field names dropped during inheritance
+resolution.
+*Avoid*: skip, ignore, omit
 
-Merging a Schema's own Field Definitions with those of its Extends parents. Kahn's topological sort linearizes the class DAG (cycles are errors); own fields override all parents; among parents the first-listed wins; per-class Excludes drop fields by name; `$ref` supplies a base definition for partial override.
+#### Field Resolution
+
+The process of merging own fields, inherited parent fields, exclusions, and
+`$ref` overrides into an effective field definition list.
 *Avoid*: inheritance, field merging
 
-### $ref
+#### $ref
 
-A key in a Field Definition pointing at another definition used as its base: `#global/<field>` or `#<ancestor-schema>/<field>`. Local keys in the same definition override the base's. Acyclic by construction — refs point up the Extends DAG or to the Global Schema.
-*Avoid*: reference, field alias
+A reference in a field definition pointing to a base definition in the Global
+Schema or an ancestor Schema for local override.
+*Avoid*: reference, field alias, preset ref
 
-### schema namespace
+### Field Definitions
 
-The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`. For `select` fields this returns plain strings or resolved `{value, label, ...extra}` objects; for `file` fields it returns a Query Source filter, composable with `query.from(...)` and `| with_children`/`| with_descendants`; for every other type, `None`. Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
-*Avoid*: schema api, metadata menu function
+#### Field Definition
 
-#### children
+A named metadata specification describing field type (`input`, `select`,
+`boolean`, `number`, `date`, `file`), requirements, and type-specific
+constraints.
+*Avoid*: property, field setting, column
 
-`schema.get("book").children()` returns every Schema that directly `extends` `book`, each itself a bound Schema. Excludes `book` itself and any transitive (non-direct) descendant — that's [`descendants`](#descendants). An empty list, not an error, when nothing directly extends it.
-*Avoid*: descendants (implies the transitive closure; this is direct extenders only), subclasses
+#### Select Option
 
-#### descendants
+An allowed discrete choice for a select field, optionally defining display
+labels and sorting order.
+*Avoid*: choice, enum value, dropdown item
 
-`schema.get("book").descendants()` returns every Schema that is-a `book` transitively (extends it directly or via an ancestor), each itself a bound Schema so `.field(...)`/`.children()`/`.descendants()` chain further. Excludes `book` itself; an empty list, not an error, when nothing extends it.
-*Avoid*: children (implies direct extends only; this is transitive), subclasses
+#### File Field Filter
 
-### File Class
-
-The classification of a note, read from the frontmatter key named by `[schemas] class_field` (default `class`). A note may carry several File Classes; each value names a Schema. Analogous to Metadata Menu's fileClass.
-*Avoid*: note type, kind, tag
+Declarative constraints restricting valid targets for a file-valued field by
+folder, file extension, or File Class.
+*Avoid*: file constraint, target rule

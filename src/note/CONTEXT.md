@@ -1,23 +1,60 @@
 # Note
 
-Markdown note parsing, YAML frontmatter extraction, and task processing.
+Markdown note parsing, YAML frontmatter extraction, inline fields, links, tags,
+and task list processing.
 
 ## Language
 
-### Note
+### Document Model
 
-A markdown file on disk. Distinct from a Template — the majority of Notes are authored directly, not produced by template instantiation.
-*Avoid*: Output file, document, page
+#### Note Document
 
-### Template Output Path
+A parsed Markdown document capturing page-level frontmatter, lists, outgoing
+links, inline fields, and tags in document order.
+*Avoid*: Output file, document, page, markdown file
 
-The final path on disk where an instantiated note is written. Resolved by precedence: explicit CLI `--output` / `-o` flag > template `file.write_to(path)` declaration > config-derived default output directory (`output_dir` + template name stem). All non-default candidates are confined to the project root. If the resolved path already exists and `--force` is not set, an interactive prompt asks the user for a root-relative alternative path.
+### Metadata & Fields
 
-#### file.write_to(path)
+#### Frontmatter
 
-A method on the `file` namespace object, callable from within a template to
-declare the note's output path. Takes effect when the CLI's `-o` flag is
-not passed; an explicit `-o` overrides it. Mirrors Obsidian Templater's
-`tp.file.move()` pattern. `path` is confined to the project root — an
-absolute path or a `..` segment is rejected, never written.
-*Avoid*: set_output, move_to, set_destination
+Structured key-value pairs parsed from YAML frontmatter between `---`
+delimiters at the start of a note.
+*Avoid*: YAML header, metadata block, document properties
+
+#### Inline Field
+
+A `Key:: Value` pair embedded directly in note text or list items using Dataview
+syntax (`Key:: Value`, `[Key:: Value]`, or `(Key:: Value)`).
+*Avoid*: metadata tag, embedded field, body attribute
+
+#### Note Field Value
+
+A typed metadata value parsed from frontmatter or inline fields: scalar, ISO
+date, link, list, or nested object.
+*Avoid*: dynamic value, field payload
+
+### Content Elements
+
+#### Wikilink
+
+An Obsidian-style internal link (`[[target|alias]]`) referencing another note
+by name or relative path.
+*Avoid*: internal link, page link, wiki ref
+
+#### Link
+
+An outgoing reference extracted from standard Markdown `[text](target)` or
+wikilink syntax.
+*Avoid*: outlink, reference, hyper-link
+
+#### Task
+
+A checklist item carrying completion status (`- [ ]` or `- [x]`), description
+text, and optional date-shorthand emoji markers.
+*Avoid*: todo item, checkbox line, action item
+
+#### Tag
+
+A `#`-prefixed identifier extracted from body text and frontmatter supporting
+hierarchical sub-tags (e.g. `#projects/active`).
+*Avoid*: hashtag, category, label

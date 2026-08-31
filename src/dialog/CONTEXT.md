@@ -1,15 +1,33 @@
 # Dialog
 
-I/O seam separating template rendering from user interaction. Defines the object-safe contract for prompting users and collecting responses.
+I/O seam separating interactive prompting from template rendering and CLI
+scaffolding.
 
 ## Language
 
-### DialogProvider
+### Prompts & Providers
 
-An object-safe trait for prompting users and collecting responses. Two implementations cover the supported runtime modes: `PresetDialogProvider` replays queued responses for tests and non-interactive MCP execution; `TerminalDialogProvider` delegates to `inquire` for real terminal interaction and returns fallback values in non-TTY contexts. Both are `Send + Sync` so shared providers can be captured by thread-safe template-rendering closures.
-*Avoid*: prompt backend, input provider
+#### Dialog Provider
 
-### Selection by Position
+The object-safe contract for presenting prompts and collecting responses
+interactively (TTY) or deterministically (preset replay).
+*Avoid*: prompt backend, input provider, interactive interface
 
-`DialogProvider::select` and `DialogProvider::multi_select` return indices into the `items` slice, not copied labels. Index-based selection lets callers recover non-string values from a parallel list and keeps duplicate labels distinguishable.
+#### Prompt
+
+An individual user interaction request: boolean confirmation (`Confirm`),
+freeform input (`Text`), single choice (`Select`), or multiple choices
+(`Multi-Select`).
+*Avoid*: input request, inquiry
+
+#### Selection by Position
+
+The convention where selection prompts return zero-based item indices rather
+than cloned label strings, keeping duplicate labels distinguishable.
 *Avoid*: index-based selection, positional select
+
+#### User Abort
+
+The intentional cancellation (Escape) or interruption (Ctrl-C) of an
+interactive prompt.
+*Avoid*: prompt error, failure, cancelled prompt

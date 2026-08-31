@@ -1,35 +1,74 @@
 # Template
 
-Template loading, path expansion, custom engine bindings, and note rendering.
+Template loading, engine helper namespaces, custom functions, output path
+resolution, and note rendering.
 
 ## Language
 
-### Template
+### Template Model & Resolution
 
-A markdown file with minijinja syntax (`{{ }}`, `{% %}`) and calls to registered custom functions that produces a rendered output when instantiated.
-*Avoid*: Template file, template script
+#### Template Document
 
-### Instantiate
+A Markdown document containing template syntax and custom helper calls that
+produces a rendered note when instantiated.
+*Avoid*: template file, template script
 
-The process of rendering a template with dynamic values to produce a note.
-*Avoid*: Apply, insert, compile
+#### Instantiate
 
-### Custom Function
+The process of resolving, evaluating, and writing a template to produce a note
+on disk.
+*Avoid*: apply, insert, compile, process
 
-A Rust function registered on the minijinja Environment, callable from templates. Covers pure computations (date formatting, string transforms) and interactive operations (text prompts, selectors, confirmations).
-*Avoid*: tp function, internal function, helper
+#### Template Directory
 
-### Template Variable
+A configured directory containing templates, checked locally
+(`.traces/templates/`) before falling back to user-global locations.
+*Avoid*: templates folder, template location
 
-A value passed into the template by the CLI before rendering (e.g., `{{ date }}`, `{{ title }}`). Distinct from a function call, which is evaluated lazily during rendering.
-*Avoid*: Context, parameter, argument
+#### Template Resolution
 
-### Dry-run
+The lookup precedence resolving template names first as exact paths, then in
+local template directories, then in global directories.
+*Avoid*: template lookup, search
 
-Rendering a template to stdout without writing to disk.
-*Avoid*: Preview, test mode
+#### Template Variable
 
-### No-Declaration Template Format
+A static value provided in the render environment before execution (e.g.
+`date`, `title`), distinct from dynamic helper functions.
+*Avoid*: context parameter, render argument
 
-Templates declare nothing about what they need. They call interactive functions (`ui.text_input`, `ui.select`) at the point of need during rendering. No frontmatter declaration, no sidecar config.
-*Avoid*: Declared template, template schema, manifest
+#### No-Declaration Format
+
+The design invariant that templates declare no upfront parameter manifests,
+invoking interactive helpers at point of need during evaluation.
+*Avoid*: declared template, template schema, manifest
+
+### Helpers & Namespaces
+
+#### Template Helper
+
+A function, filter, or generator available in templates, grouped under domain
+namespaces (`ui`, `file`, `date`, `query`, `tasks`, `schema`).
+*Avoid*: custom function, internal function, tp helper
+
+### Output Resolution & Writing
+
+#### Template Output Path
+
+The final destination path for an instantiated note, resolved by precedence:
+CLI `--output` > template `file.write_to()` > configured default output
+directory, confined to the Project Root.
+*Avoid*: target path, destination file
+
+#### Write Mode
+
+The execution mode choosing whether rendered content is previewed on stdout
+(`Preview` / dry-run) or committed to disk (`Commit`).
+*Avoid*: dry-run mode, execution mode
+
+#### Commit Policy
+
+The rule governing how committed writes handle existing files: fail on
+collision (`CreateNew`), overwrite (`Overwrite`), or prompt for an alternative
+path.
+*Avoid*: collision policy, overwrite flag
