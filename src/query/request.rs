@@ -70,6 +70,14 @@ impl QueryRequest {
     /// Returns [`QueryRequestError`] when `n` is negative or too large for this
     /// platform.
     #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "public builder method on QueryRequest; exercised in \
+                      tests and test-utils"
+        )
+    )]
     pub fn limit(mut self, n: i64) -> Result<Self, QueryRequestError> {
         self.plan.push(QueryTransform::limit(n)?);
         Ok(self)

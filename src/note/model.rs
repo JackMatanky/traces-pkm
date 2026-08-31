@@ -55,7 +55,7 @@ impl Note {
     /// Attaches `inline_fields` and returns the updated [`Note`].
     #[inline]
     #[must_use]
-    pub fn with_inline_fields(
+    pub(crate) fn with_inline_fields(
         mut self,
         inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     ) -> Self {
@@ -115,7 +115,7 @@ impl Note {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
@@ -123,7 +123,9 @@ impl Note {
                       from the fields() iterator that is used"
         )
     )]
-    pub fn inline_fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
+    pub(crate) fn inline_fields(
+        &self,
+    ) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
         &self.inline_fields
     }
 
@@ -133,7 +135,17 @@ impl Note {
     /// matches a frontmatter key are skipped. Returns borrowed keys to avoid
     /// cloning every [`FieldKey`] on each call.
     #[inline]
-    pub fn fields(&self) -> impl Iterator<Item = (&FieldKey, &NoteFieldValue)> {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; retained for \
+                      crate-internal accessor symmetry"
+        )
+    )]
+    pub(crate) fn fields(
+        &self,
+    ) -> impl Iterator<Item = (&FieldKey, &NoteFieldValue)> {
         use std::collections::HashSet;
 
         let fm_keys: Option<HashSet<&FieldKey>> =

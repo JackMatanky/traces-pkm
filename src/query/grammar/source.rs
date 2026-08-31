@@ -340,7 +340,7 @@ impl PartialEq for GlobPattern {
 /// [`set_classes`](Self::set_classes) before matching; the set is empty after
 /// parsing and resolved at query execution time.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ClassExpansionMode {
+pub(crate) enum ClassExpansionMode {
     /// Match only the named class.
     Exact(BTreeSet<String>),
     /// Match the named class and its direct children.

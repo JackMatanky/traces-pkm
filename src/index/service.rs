@@ -159,6 +159,14 @@ impl IndexerService {
     /// - [`IndexError::Store`] if the database cannot be read or stored bytes
     ///   are not a valid record.
     #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller in cli; kept for IndexerService \
+                      lifecycle symmetry and tests"
+        )
+    )]
     pub fn load(&self) -> IndexResult<FileIndex> {
         let (records, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;

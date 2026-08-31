@@ -55,7 +55,7 @@ impl TemplatePathInput {
     ///
     /// ```rust
     /// # #[cfg(feature = "test-utils")]
-    /// fn main() -> Result<(), traces_pkm::TemplatePathError> {
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::path::Path;
     ///
     /// use traces_pkm::TemplatePathInput;

@@ -63,9 +63,10 @@ mod value;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryDialect, QueryError, QueryRequestError, QueryResult};
-pub use grammar::{ClassExpansionMode, SourceSelector};
+pub use grammar::SourceSelector;
 pub(crate) use grammar::{
-    FieldPath, FileClassExpander, FileField, SourceAtom, SourceExpr,
+    ClassExpansionMode, FieldPath, FileClassExpander, FileField, SourceAtom,
+    SourceExpr,
 };
 pub use record::{QueryRecord, QueryRecordSet};
 pub use request::QueryRequest;

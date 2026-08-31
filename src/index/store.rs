@@ -53,6 +53,14 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 
 /// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
 /// (sorted by path) plus derived inlink edges (target-keyed, unordered).
+#[cfg_attr(
+    not(any(test, feature = "test-utils")),
+    expect(
+        dead_code,
+        reason = "backing tuple for IndexStore::read_all and \
+                  IndexerService::load"
+    )
+)]
 type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
 
 /// One raw `LINKS` multimap-table iterator entry: a target key's `AccessGuard`
@@ -263,6 +271,10 @@ impl IndexStore {
     /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
     /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
     ///   not a valid record.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(dead_code, reason = "called by IndexerService::load")
+    )]
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let files = self.read_table(&txn, FILES, FileBase::path)?;

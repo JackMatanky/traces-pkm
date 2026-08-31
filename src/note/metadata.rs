@@ -63,6 +63,14 @@ impl Frontmatter {
     /// Returns the parsed frontmatter fields.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "called by Note::fields in test builds; retained for \
+                      accessor symmetry"
+        )
+    )]
     pub(crate) fn fields(&self) -> &IndexMap<FieldKey, NoteFieldValue> {
         &self.fields
     }
