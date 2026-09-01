@@ -296,7 +296,10 @@ description = "Run Criterion benchmarks"
 usage = '''
 flag "-f --filter <filter>" help="Run only benchmarks matching this substring"
 flag "-b --baseline <name>" help="Save results under this baseline name for later comparison"
-flag "--baseline-compare <name>" help="Compare against a previously saved baseline"
+flag "--baseline-compare <name>" help="Compare against a previously saved baseline via critcmp"
+flag "-q --quick" help="Fast iteration: reduced sample size and measurement time"
+flag "--sample-size <n>" env="BENCH_SAMPLE_SIZE" help="Minimum number of iterations (default: 100)"
+flag "--measurement-time <secs>" env="BENCH_MEASUREMENT_TIME" help="Target measurement time in seconds (default: 5)"
 arg "[args]" var=#true {
   help "Extra arguments forwarded to cargo bench"
   long_help """
@@ -313,24 +316,53 @@ run = '''
 set -euo pipefail
 
 bench_args=(--features test-utils)
-
-if [[ -n "${usage_filter:-}" ]]; then
-  bench_args+=("${usage_filter}")
-fi
+declare -a criterion_args=()
+has_criterion_args=false
 
 if [[ -n "${usage_baseline:-}" ]]; then
-  bench_args+=(--save-baseline "${usage_baseline}")
+  criterion_args+=(--save-baseline "${usage_baseline}")
+  has_criterion_args=true
 fi
 
-if [[ -n "${usage_baseline_compare:-}" ]]; then
-  bench_args+=(--baseline "${usage_baseline_compare}")
+if [[ "${usage_quick:-false}" == "true" ]]; then
+  criterion_args+=(--sample-size 10 --measurement-time 1 --warm-up-time 1)
+  has_criterion_args=true
+else
+  if [[ -n "${usage_sample_size:-}" ]]; then
+    criterion_args+=(--sample-size "${usage_sample_size}")
+    has_criterion_args=true
+  fi
+  if [[ -n "${usage_measurement_time:-}" ]]; then
+    criterion_args+=(--measurement-time "${usage_measurement_time}")
+    has_criterion_args=true
+  fi
 fi
 
 eval "extra_args=(${usage_args:-})"
-bench_args+=("${extra_args[@]+"${extra_args[@]}"}")
+criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
+[[ -n "${usage_args:-}" ]] && has_criterion_args=true
+
+if [[ "${has_criterion_args}" == "true" ]]; then
+  bench_args+=(--bench)
+  for bench_file in benches/*.rs; do
+    bench_name="${bench_file##*/}"
+    bench_name="${bench_name%.rs}"
+    if [[ -z "${usage_filter:-}" || "${bench_name}" == *"${usage_filter}"* ]]; then
+      bench_args+=("${bench_name}")
+    fi
+  done
+  bench_args+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
+elif [[ -n "${usage_filter:-}" ]]; then
+  bench_args+=("${usage_filter}")
+fi
 
 cargo bench "${bench_args[@]}"
+
+if [[ -n "${usage_baseline_compare:-}" ]]; then
+  critcmp "${usage_baseline_compare}"
+fi
 '''
+sources = ["benches/**/*.rs", "Cargo.toml", "Cargo.lock"]
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #
