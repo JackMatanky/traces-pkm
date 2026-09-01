@@ -1,7 +1,7 @@
 Status: implemented
 
 **Date**: 2026-09-01
-**Implemented in**: `251a215`..`f789fdf`, branch `task-system/04-position-and-depth-tracker`
+**Implemented in**: `251a215`..`c525563`, branch `task-system/04-position-and-depth-tracker`
 (worktree `.worktrees/04-position-and-depth-tracker/`, not yet merged to `main`)
 
 # 04 — ByteTracker
@@ -146,19 +146,34 @@ without depending on `note::`.
    this list-item nesting position are all distinct "position" concepts
    already documented elsewhere in the crate); `ListItemPosition` names
    exactly what it positions.
+9. **`logos::skip` stack overflow fix in `src/note/lexer.rs`.** Removed
+   `logos::skip` from `FieldToken::Ignored` and `TagToken::Ignored` fallback
+   rules. In `logos 0.16`, `skip` callbacks cause `Lexer::next` to call itself
+   recursively when scanning non-matching prose blocks, causing stack overflow
+   on 10KB+ documents. Emitting `Ignored` tokens explicitly allows the iterator
+   loop to consume non-token bytes iteratively without stack recursion.
+10. **Granular benchmark suite added to `benches/note_parsing.rs`.**
+    Added 7 targeted benchmarks: `prose_floor` (1k/10k/100k prose baseline),
+    isolated `dense_wikilinks` vs `dense_tasks` workloads, `list_item_scaling`
+    (10–5000 items, `Throughput::Elements`), `nesting_depth` (200 items at depths
+    1–50), `line_density` (50KB doc at line lengths 10–1000 bytes), and
+    `frontmatter_field_scaling` (5–200 YAML fields). Baseline saved as
+    `position-refactor` via `mise run bench -b position-refactor` and comparable
+    via `critcmp position-refactor` or `mise run bench --baseline-compare position-refactor`.
 
 ### Verification
 
 ```sh
-cargo test --lib --all-features note::      # 219 passed
+cargo test --lib --all-features note::      # 218 passed
 cargo test --lib --all-features parser::tests::byte_tracker  # 5 passed
-cargo test --lib --all-features position::  # 1 passed
+cargo test --lib --all-features position::  # 3 passed
 cargo clippy --workspace --all-targets --all-features  # clean (pre-existing
   large_stack_frames warnings in config/builder.rs, index/store.rs,
   cli/template.rs are untouched by this change)
 cargo fmt --all -- --check  # clean
 cargo test --workspace --all-features  # 2010 + 4 + 20 + 12 passed, 14 doctests
-```
+cargo test --bench note_parsing --features test-utils # 24 benchmark sub-cases passed in 0.66s
+mise run bench -f note_parsing -q -b position-refactor  # saved baseline report
 
 ## Out of scope
 
