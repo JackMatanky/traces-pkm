@@ -9,7 +9,7 @@ use tracing::warn;
 use yaml_serde as serde_yaml;
 
 use super::Link;
-use crate::field::FieldKey;
+use crate::field::{FieldKey, FieldKeyRef};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -80,7 +80,7 @@ impl Frontmatter {
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, key: &str) -> Option<&NoteFieldValue> {
-        self.fields.iter().find(|(k, _)| k.is_match(key)).map(|(_, v)| v)
+        self.fields.get(&FieldKeyRef::new(key))
     }
 
     /// Returns the value of the field matching `key`, if present.

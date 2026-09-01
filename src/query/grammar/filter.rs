@@ -65,10 +65,7 @@ impl FilterExpr {
     }
 
     /// Combines two filter expressions with logical AND, flattening nested
-    /// `And` nodes instead of nesting them nose-to-tail. Used by
-    /// [`super::super::request::QueryPlan::optimize`] to fuse consecutive
-    /// `--where` filters into one predicate pass instead of one
-    /// `Vec::retain` per flag.
+    /// `And` nodes.
     pub(crate) fn and(self, other: Self) -> Self {
         let mut children = match self.0 {
             BooleanExpr::And(children) => children,
@@ -109,9 +106,6 @@ impl FilterAtom {
 }
 
 /// A recognized filter function call.
-///
-/// Adding a function requires adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::is_matching`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FilterFunction {
     /// `contains(field, target)`.
@@ -202,7 +196,7 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Returns whether a field value satisfies this operator against a literal.
+    /// Evaluates this operator against a field value and literal.
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
@@ -421,27 +415,27 @@ enum FilterToken {
     #[regex("==|!=|>=|<=|>|<", |lex| CompareOp::try_from(lex.slice()))]
     Op(CompareOp),
     #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
+    #[regex(r"'([^'\\]|\\.)*'", string_callback)]
     #[token("true", |_| NoteFieldValue::Bool(true), priority = 3)]
     #[token("false", |_| NoteFieldValue::Bool(false), priority = 3)]
     #[token("null", |_| NoteFieldValue::Null, priority = 3)]
     #[token("Null", |_| NoteFieldValue::Null, priority = 3)]
     Literal(NoteFieldValue),
-    #[regex(r#"[^\s()",=!<>&|]+"#, |lex| lex.slice().to_owned())]
+    #[regex(r#"[^\s()'",=!<>&|]+"#, |lex| lex.slice().to_owned())]
     Ident(String),
 }
 
-/// Unescapes a lexed double-quoted string literal into a
-/// [`NoteFieldValue::String`].
+/// Unescapes a lexed single- or double-quoted string literal into a
+/// [`NoteFieldValue::String`]. Quote-agnostic (like `source.rs`'s
+/// `quoted_callback`): strips exactly one leading and trailing character,
+/// whichever quote matched, rather than assuming `"`.
 #[expect(
     clippy::needless_pass_by_ref_mut,
     reason = "logos Callback trait requires &mut Lexer"
 )]
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
-    let inner = lex
-        .slice()
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .unwrap_or_default();
+    let raw = lex.slice();
+    let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
     NoteFieldValue::String(lexical_backslash_unescape(inner))
 }
 
@@ -587,6 +581,7 @@ mod tests {
         #[case::less_or_equal("rating <= 3", &["low"])]
         #[case::numeric_equal("rating == 7", &["high"])]
         #[case::string_equal("status == \"done\"", &["high", "unrated"])]
+        #[case::single_quoted_string_equal("status == 'done'", &["high", "unrated"])]
         #[case::string_not_equal("status != \"done\"", &["low"])]
         fn keeps_only_matching_records(
             #[case] expr: &str,

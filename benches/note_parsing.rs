@@ -21,6 +21,12 @@
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`parse_markdown` included) is only
 //! reachable with `--features test-utils`, which the mise task supplies.
+
+#![expect(
+    clippy::expect_used,
+    reason = "bench fixture/harness code; a failed .expect() here means the \
+              fixture itself is broken and should panic immediately"
+)]
 use std::hint::black_box;
 
 use criterion::{
@@ -28,9 +34,13 @@ use criterion::{
 };
 use traces_pkm::parse_markdown;
 
+// ----------------------------------------------------------- //
+//                     Fixtures & Helpers                      //
+// ----------------------------------------------------------- //
+
 const SMALL: &str = "# Title\n\nA short note with one paragraph.\n";
 
-fn medium() -> String {
+fn medium_source() -> String {
     use std::fmt::Write as _;
 
     let mut source = String::from(
@@ -43,7 +53,7 @@ fn medium() -> String {
     source
 }
 
-fn large() -> String {
+fn large_source() -> String {
     use std::fmt::Write as _;
 
     let mut source =
@@ -105,23 +115,34 @@ fn dense_wikilinks_and_tasks() -> String {
     source
 }
 
+// ----------------------------------------------------------- //
+//                         Benchmarks                          //
+// ----------------------------------------------------------- //
+
 /// Parses small, medium, and large synthetic notes through `parse_markdown`.
 ///
 /// Every indexed note passes through this lexer (see module docs); scaling by
 /// field/task density, not just byte count, catches a cost regression that a
 /// correctness test — which only checks the parsed result — would miss.
+///
+/// Expected outcomes:
+/// - Cost scales with note complexity, not just byte count.
+///
+/// Unexpected outcomes:
+/// - Small notes costing disproportionately more than large, indicating fixed
+///   per-call overhead dominating.
 fn bench_parse_markdown(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::size_scaling");
     let path = std::path::Path::new("note.md");
 
-    for (label, source) in
-        [("small", SMALL.to_owned()), ("medium", medium()), ("large", large())]
-    {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(source.len() as u64));
+    for (label, source) in [
+        ("small", SMALL.to_owned()),
+        ("medium", medium_source()),
+        ("large", large_source()),
+    ] {
+        group.throughput(Throughput::Bytes(
+            u64::try_from(source.len()).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &source,
@@ -139,6 +160,14 @@ fn bench_parse_markdown(c: &mut Criterion) {
 
 /// Measures parsing cost across varied real-world PKM document topologies:
 /// code blocks, heavy frontmatter, and dense wikilink/task checklists.
+///
+/// Expected outcomes:
+/// - Code-block-heavy notes parse faster than wikilink-heavy notes, since
+///   wikilinks require per-link resolution.
+///
+/// Unexpected outcomes:
+/// - Dense frontmatter parsing exceeding wikilink parsing, indicating
+///   frontmatter lexer regression.
 fn bench_parse_markdown_workloads(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::workloads");
     let path = std::path::Path::new("note.md");
@@ -150,11 +179,9 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     ];
 
     for (label, source) in workloads {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(source.len() as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(source.len()).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &source,

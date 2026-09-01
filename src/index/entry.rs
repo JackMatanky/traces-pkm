@@ -1,4 +1,4 @@
-//! [`FileIndex`] data structure and its [`FileEntry`] rows.
+//! [`FileIndex`] and its constituent [`FileEntry`] rows.
 
 use std::path::PathBuf;
 
@@ -7,11 +7,10 @@ use crate::{file::FileBase, note::Note};
 /// Persisted cache of file records, parsed Note metadata, and derived inbound
 /// links.
 ///
-/// Every regular file under the project root contributes one [`FileEntry`]:
-/// its [`FileBase`] metadata and — for Markdown files — its parsed [`Note`]
-/// plus derived inbound links. A pure value type:
-/// [`super::IndexerService`] produces, persists, and loads it; `FileIndex`
-/// itself carries no `&Path`.
+/// Every regular file under the project root contributes one [`FileEntry`]: its
+/// [`FileBase`] metadata, and for Markdown files, its parsed [`Note`] plus
+/// derived inbound links. [`super::IndexerService`] produces, persists, and
+/// loads it; `FileIndex` itself carries no `&Path`.
 ///
 /// Construction always flows through [`super::IndexerService`]'s
 /// [`build`](super::IndexerService::build),
@@ -23,7 +22,49 @@ pub struct FileIndex {
     delta: super::delta::IndexDelta,
 }
 
-/// A file's metadata, and — if it is a Note — its parsed content and inbound
+impl FileIndex {
+    /// Creates an index from its constituent parts.
+    ///
+    /// Used exclusively by [`super::builder::IndexBuilder`] and
+    /// [`super::service::IndexerService::load`] after scanning, parsing, and
+    /// inlink derivation are complete.
+    pub(super) fn new(
+        entries: Box<[FileEntry]>,
+        delta: super::delta::IndexDelta,
+    ) -> Self {
+        Self {
+            entries,
+            delta,
+        }
+    }
+
+    /// Returns [`FileEntry`]s, sorted by path.
+    #[inline]
+    #[must_use]
+    pub fn entries(&self) -> &[FileEntry] {
+        &self.entries
+    }
+
+    /// Returns the [`FileEntry`] at `position`.
+    #[expect(
+        clippy::expect_used,
+        reason = "RowIndex is always in bounds: values are only constructed \
+                  from a valid range over entries"
+    )]
+    #[inline]
+    pub(crate) fn entry_at(&self, position: RowIndex) -> &FileEntry {
+        self.entries.get(position.get()).expect("RowIndex is always in bounds")
+    }
+
+    /// Returns the [`super::delta::IndexDelta`] that
+    /// [`super::store::IndexStore::persist_index`] uses to choose between a
+    /// full rewrite and a row-level incremental write.
+    pub(super) fn delta(&self) -> &super::delta::IndexDelta {
+        &self.delta
+    }
+}
+
+/// A file's metadata, and (if it is a Note) its parsed content and inbound
 /// links. A non-Note file structurally cannot carry inlinks (link resolution
 /// only ever targets a Note's own path), so inlinks live inside the boxed
 /// `NoteEntry`, not as a sibling field every entry carries regardless.
@@ -33,41 +74,30 @@ pub struct FileEntry {
     pub(super) note: Option<Box<NoteEntry>>,
 }
 
-/// Boxed together with its inlinks so a non-Note `FileEntry` costs one
-/// pointer instead of a full `Note`-shaped shell. `Note` itself stays a pure
-/// single-file parse result — inlinks are index-level and cross-file, so
-/// they sit beside `Note`, not inside it.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct NoteEntry {
-    pub(super) note: Note,
-    pub(super) inlinks: Box<[PathBuf]>,
-}
-
 impl FileEntry {
-    /// Returns this entry's general file metadata.
+    /// Returns this entry's [`FileBase`] metadata.
     #[inline]
     #[must_use]
     pub fn base(&self) -> &FileBase {
         &self.base
     }
 
-    /// Returns parsed Note metadata, or `None` for a non-Markdown file.
+    /// Returns the parsed [`Note`], or `None` for a non-Markdown file.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> Option<&Note> {
         self.note.as_deref().map(|entry| &entry.note)
     }
 
-    /// Returns project-relative paths of Notes whose wikilinks resolve to
-    /// this entry, or an empty slice for a non-Note entry or one with no
-    /// inbound links.
+    /// Returns inbound link paths for this entry, or an empty slice if
+    /// absent.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         self.note.as_deref().map_or(&[], |entry| &entry.inlinks)
     }
 
-    /// Builds a [`FileEntry`] with custom fields for test fixtures.
+    /// Builds a [`FileEntry`] with the given fields.
     #[cfg(any(test, feature = "test-utils"))]
     #[allow(
         dead_code,
@@ -93,65 +123,29 @@ const _: () = assert!(
      raising this bound"
 );
 
-impl FileIndex {
-    /// Creates an index from its constituent parts.
-    ///
-    /// Used exclusively by [`super::builder::IndexBuilder`] and
-    /// [`super::service::IndexerService::load`] after scanning, parsing, and
-    /// inlink derivation are complete.
-    pub(super) fn new(
-        entries: Box<[FileEntry]>,
-        delta: super::delta::IndexDelta,
-    ) -> Self {
-        Self {
-            entries,
-            delta,
-        }
-    }
-
-    /// Returns indexed entries, sorted by path.
-    #[inline]
-    #[must_use]
-    pub fn entries(&self) -> &[FileEntry] {
-        &self.entries
-    }
-
-    /// Returns the entry at `position`. O(1).
-    #[expect(
-        clippy::expect_used,
-        reason = "RowIndex is always in bounds: values are only constructed \
-                  from a valid range over entries"
-    )]
-    #[inline]
-    pub(crate) fn entry_at(&self, position: RowIndex) -> &FileEntry {
-        self.entries.get(position.get()).expect("RowIndex is always in bounds")
-    }
-
-    /// Returns the persistence plan [`super::store::IndexStore::persist_index`]
-    /// uses to choose a full rewrite vs. a row-level incremental write.
-    pub(super) fn delta(&self) -> &super::delta::IndexDelta {
-        &self.delta
-    }
+/// A [`Note`] paired with its inbound links, boxed to keep non-Note `FileEntry`
+/// small. Inlinks are index-level and cross-file, so they sit beside `Note`,
+/// not inside it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct NoteEntry {
+    pub(super) note: Note,
+    pub(super) inlinks: Box<[PathBuf]>,
 }
 
 /// Position of a [`FileEntry`] within [`FileIndex::entries`].
-///
-/// Newtype instead of a bare `usize` so a row position can't be confused with
-/// an unrelated count (a `--limit` value, a list length) at a call site.
-/// `RowIndex` values are only ever constructed from a valid range over
-/// [`FileIndex::entries`], so they always address a valid position.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RowIndex(usize);
 
 impl RowIndex {
-    /// Wraps `position`, a row's index into [`FileIndex::entries`].
+    /// Creates a [`RowIndex`] for the given position into
+    /// [`FileIndex::entries`].
     #[inline]
     #[must_use]
     pub(crate) const fn new(position: usize) -> Self {
         Self(position)
     }
 
-    /// Returns the wrapped position.
+    /// Returns the row index as a `usize`.
     #[inline]
     #[must_use]
     const fn get(self) -> usize {
@@ -159,11 +153,8 @@ impl RowIndex {
     }
 }
 
-/// Pairs each `entries[i]` with the sources listed for its own path in
-/// `inlink_map`, mutating in place. Every target `derive_inlinks` (or a
-/// previously-persisted `InlinkMap`, when refresh reuses one unchanged) can
-/// produce is guaranteed to be a Note's own path already present in
-/// `entries`, so the binary search is expected to always succeed.
+/// Distributes inlink sources from `inlink_map` into each matching
+/// [`FileEntry`].
 pub(super) fn redistribute_inlinks(
     entries: &mut [FileEntry],
     inlink_map: super::inlinks::InlinkMap,
@@ -178,13 +169,10 @@ pub(super) fn redistribute_inlinks(
         }
     }
 }
-/// Pairs sorted `files` with sorted `notes` (a merge-join over both
-/// path-sorted slices — the same two-pointer algorithm `compute_note_positions`
-/// used, producing owned `FileEntry` values instead of a position table),
-/// then redistributes `inlinks` into each note-bearing entry. Used by
-/// [`super::IndexerService::load`], which already has a persisted, already-
-/// derived inlink map and does not need [`super::inlinks::derive_inlinks`]'s
-/// recomputation.
+
+/// Merges sorted `files` with sorted `notes`, redistributes `inlinks` into
+/// each entry, and returns boxed [`FileEntry`]s. Used by
+/// [`super::IndexerService::load`].
 pub(super) fn assemble_entries(
     files: Vec<FileBase>,
     notes: Vec<Note>,

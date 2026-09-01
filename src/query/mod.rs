@@ -1,10 +1,9 @@
 //! Query source selection, field resolution, and result transformation.
 //!
-//! [`QueryService`] powers page-level and task-level results by borrowing a
-//! [`FileIndex`] and executing a [`QueryRequest`]. The pipeline selects Notes
-//! via [`SourceSelector`], pairs each matching Note with its [`FileBase`] as
-//! a [`QueryRecord`], and applies chained transformations through
-//! [`QueryRecordSet`].
+//! [`QueryService`] borrows a [`FileIndex`] and executes a [`QueryRequest`].
+//! The pipeline selects Notes via [`SourceSelector`], pairs each matching Note
+//! with its [`FileBase`] as a [`QueryRecord`], and applies chained
+//! transformations through [`QueryRecordSet`].
 //!
 //! # Source Expression Language
 //!
@@ -37,7 +36,6 @@
 //!   transformations.
 //! - [`SourceSelector`] is the top-level entry point: either all Notes or a
 //!   parsed expression.
-//! - [`SourceExpr`] wraps the expression AST.
 //! - [`QueryRecord`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
 //!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QueryRecordSet`] stores result rows and provides chained transformation
@@ -46,7 +44,6 @@
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
 //!   transformation constraint violations.
 //!
-//! [`NoteFieldValue`]: crate::note::NoteFieldValue
 //! [`FileBase`]: crate::file::FileBase
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`Note`]: crate::note::Note

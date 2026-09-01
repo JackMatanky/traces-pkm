@@ -3,9 +3,9 @@
 //!
 //! # Main Types
 //!
-//! - [`FieldName`] - Exact schema field identity
-//! - [`FieldNameRef`] - Borrowed field-name identity
 //! - [`FieldKey`] - Forgiving note field identity with a canonical form
+//! - [`FieldKeyRef`] - Borrowed candidate for a zero-allocation, O(1) forgiving
+//!   [`FieldKey`] lookup
 //! - [`FieldValue`] - Owned, format-agnostic field value
 //! - [`FieldValueRef`] - Zero-copy borrowed field value
 //! - [`FieldNameError`] - Field-name parse failure
@@ -28,7 +28,7 @@ use std::{
     str::FromStr,
 };
 
-use indexmap::IndexMap;
+use indexmap::{Equivalent, IndexMap};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Error as _, MapAccess, SeqAccess, Visitor},
@@ -366,6 +366,18 @@ impl FieldKey {
     fn is_canonical_empty(raw: &str) -> bool {
         raw.chars().all(|ch| !ch.is_ascii_whitespace() && !Self::is_kept(ch))
     }
+
+    /// Returns `true` if `raw` already equals its own [`Self::canonicalize`]d
+    /// form, without allocating the canonical form to check.
+    ///
+    /// Lets [`FieldKeyRef`] borrow `raw` directly for hashing instead of
+    /// building an owned canonical [`String`] on every lookup.
+    fn is_already_canonical(raw: &str) -> bool {
+        raw.chars().all(|ch| {
+            !ch.is_ascii_whitespace()
+                && (!Self::is_kept(ch) || ch.to_lowercase().eq([ch]))
+        })
+    }
 }
 
 impl From<FieldName> for FieldKey {
@@ -475,6 +487,54 @@ impl<'de> Deserialize<'de> for FieldKey {
     {
         let raw = String::deserialize(deserializer)?;
         Self::try_new(raw).map_err(D::Error::custom)
+    }
+}
+
+/// Borrows a candidate string for a zero-allocation, O(1) forgiving lookup
+/// against a [`FieldKey`]-keyed [`IndexMap`].
+///
+/// Implements [`indexmap::Equivalent<FieldKey>`] so `IndexMap<FieldKey,
+/// V>::get` accepts this directly, without constructing an owned [`FieldKey`]
+/// first. [`Hash`] and [`Equivalent::equivalent`] together preserve
+/// [`FieldKey::is_match`]'s exact semantics: hashing borrows the candidate
+/// as-is when it is already in canonical form, and allocates only when
+/// [`FieldKey::canonicalize`] would actually change it.
+///
+/// [`Hash`]: std::hash::Hash
+/// [`Equivalent::equivalent`]: indexmap::Equivalent::equivalent
+pub(crate) struct FieldKeyRef<'a>(&'a str);
+
+impl<'a> FieldKeyRef<'a> {
+    /// Wraps `candidate` for a forgiving lookup.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(candidate: &'a str) -> Self {
+        Self(candidate)
+    }
+}
+
+impl std::hash::Hash for FieldKeyRef<'_> {
+    /// Hashes the canonical form, consistent with [`FieldKey`]'s own
+    /// [`Hash`](std::hash::Hash) impl: [`Cow::Borrowed`] when `self.0` is
+    /// already canonical, otherwise [`Cow::Owned`] via
+    /// [`FieldKey::canonicalize`].
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let canonical = if FieldKey::is_already_canonical(self.0) {
+            Cow::Borrowed(self.0)
+        } else {
+            Cow::Owned(FieldKey::canonicalize(self.0))
+        };
+        canonical.as_ref().hash(state);
+    }
+}
+
+impl Equivalent<FieldKey> for FieldKeyRef<'_> {
+    /// Reuses [`FieldKey::is_match`] directly: exact raw-text match or
+    /// canonical match, with no duplicated matching logic.
+    #[inline]
+    fn equivalent(&self, key: &FieldKey) -> bool {
+        key.is_match(self.0)
     }
 }
 
@@ -1197,6 +1257,70 @@ mod tests {
                     FieldName::try_from("status").expect("valid name");
                 assert!(key.is_name_match(&exact));
                 assert!(!key.is_name_match(&different_case));
+            }
+        }
+
+        mod field_key_ref {
+            use super::super::super::*;
+
+            #[test]
+            fn indexmap_get_finds_an_exact_raw_text_match() {
+                let key = FieldKey::try_new("Status").expect("valid key");
+                let map = IndexMap::from([(key, 1)]);
+                assert_eq!(map.get(&FieldKeyRef::new("Status")), Some(&1));
+            }
+
+            #[test]
+            fn indexmap_get_finds_a_case_different_canonical_match() {
+                let key = FieldKey::try_new("Status").expect("valid key");
+                let map = IndexMap::from([(key, 1)]);
+                assert_eq!(map.get(&FieldKeyRef::new("status")), Some(&1));
+            }
+
+            #[test]
+            fn indexmap_get_finds_a_whitespace_and_punctuation_different_match()
+            {
+                let key = FieldKey::try_new("Time Played").expect("valid key");
+                let map = IndexMap::from([(key, 1)]);
+                assert_eq!(
+                    map.get(&FieldKeyRef::new("time-played!")),
+                    Some(&1)
+                );
+            }
+
+            #[test]
+            fn indexmap_get_finds_a_non_ascii_case_different_match() {
+                let key = FieldKey::try_new("CAFÉ").expect("valid key");
+                let map = IndexMap::from([(key, 1)]);
+                assert_eq!(map.get(&FieldKeyRef::new("café")), Some(&1));
+            }
+
+            #[test]
+            fn indexmap_get_returns_none_for_a_non_matching_candidate() {
+                let key = FieldKey::try_new("Status").expect("valid key");
+                let map = IndexMap::from([(key, 1)]);
+                assert_eq!(map.get(&FieldKeyRef::new("other")), None);
+            }
+
+            #[test]
+            fn indexmap_get_agrees_with_is_match_for_every_candidate() {
+                let key = FieldKey::try_new("Time Played").expect("valid key");
+                for candidate in [
+                    "Time Played",
+                    "time-played",
+                    "TIME PLAYED",
+                    "time_played",
+                    "other",
+                    "",
+                ] {
+                    let map = IndexMap::from([(key.clone(), 1)]);
+                    assert_eq!(
+                        map.get(&FieldKeyRef::new(candidate)).is_some(),
+                        key.is_match(candidate),
+                        "IndexMap::get via FieldKeyRef must agree with \
+                         FieldKey::is_match for candidate {candidate:?}"
+                    );
+                }
             }
         }
 

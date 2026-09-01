@@ -1,31 +1,12 @@
 //! Error types for query parsing, field resolution, and result transformation.
 //!
-//! This module defines the error hierarchy returned by
-//! [`super::SourceSelector`] parsing, [`super::QueryRecordSet`] transformation
-//! methods, and [`super::QueryRecord`] field resolution.
+//! The error hierarchy:
 //!
-//! # Error Hierarchy and Integration
-//!
-//! - [`QueryError`] is the top-level error type.
-//! - [`QueryRequestError`] isolates failures while building a query request.
-//! - [`QuerySyntaxError`] handles syntax errors and integrates with [`miette`]
-//!   using the [`Diagnostic`][`miette::Diagnostic`] trait to render rich
-//!   diagnostics.
-//! - [`FieldPathError`] represents invalid field paths or query namespace
-//!   errors.
-//! # Examples
-//!
-//! ```ignore
-//! use traces_pkm::query::{QueryError, QueryRequestError};
-//!
-//! let error = QueryError::from(QueryRequestError::LimitOutOfRange {
-//!     value: -5,
-//! });
-//! assert_eq!(
-//!     error.to_string(),
-//!     "invalid limit -5; expected a non-negative row count"
-//! );
-//! ```
+//! - [`QueryError`]: top-level error type covering all query failures.
+//! - [`QueryRequestError`]: isolates failures during request construction.
+//! - [`QuerySyntaxError`]: syntax errors with [`miette::Diagnostic`]
+//!   integration for rich source-location-aware rendering.
+//! - [`FieldPathError`]: invalid field paths with "did you mean" suggestions.
 
 use std::fmt;
 

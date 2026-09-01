@@ -1,4 +1,4 @@
-//! Query execution service.
+//! Query execution over a borrowed [`FileIndex`].
 
 use std::sync::Arc;
 

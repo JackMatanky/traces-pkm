@@ -1,4 +1,4 @@
-//! Query rows and result set types for [`QueryRecordSet`].
+//! Query rows and result set types for query execution.
 //!
 //! This module implements [`QueryRecord`], which pairs a [`FileBase`] with its
 //! parsed [`Note`] and resolves field paths for template rendering and CLI
@@ -477,7 +477,7 @@ impl QueryRecordSet {
         self.format(&QueryDisplayFormat::task_list())
     }
 
-    /// Formats this record set for display.
+    /// Renders records using the given display format.
     ///
     /// # Errors
     ///

@@ -19,11 +19,6 @@ use crate::{
 };
 
 /// Top-level source selector: every Note or a parsed expression.
-///
-/// The CLI and template system pass a `--from` / `.from(...)` string to
-/// [`SourceSelector::parse`]. An empty or whitespace-only input yields
-/// [`Self::All`] (match everything); any nonempty input is parsed into a
-/// `SourceExpr`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceSelector {
     /// Every indexed Note satisfies this source.
@@ -94,16 +89,7 @@ impl SourceSelector {
 
 /// Parsed source expression wrapping a boolean tree of [`SourceAtom`] leaves.
 ///
-/// Created by [`SourceExpr::parse`] from a source expression string. The AST
-/// is opaque to callers; the only way to inspect it is through the provided
-/// methods: [`is_match`](Self::is_match) for evaluation,
-/// [`has_classes`](Self::has_classes) to check whether class expansion is
-/// needed, and [`visit_atoms_mut`](Self::visit_atoms_mut) to load class
-/// names before matching.
-///
 /// Operator precedence is `NOT` > `AND` > `OR`; parentheses override.
-/// See the [source expression language](super::super) documentation for the
-/// full grammar.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceExpr(BooleanExpr<SourceAtom>);
 
@@ -258,8 +244,7 @@ where
 ///
 /// Dialect: `*` matches any run of characters except `/`; `**` matches any run
 /// of characters including `/`; every other character matches literally. The
-/// compiled regex is anchored to match the whole path and is built once at
-/// construction, not per-match.
+/// compiled regex is anchored to match the whole path.
 #[derive(Clone)]
 pub(crate) struct GlobPattern {
     regex: Regex,
@@ -364,10 +349,6 @@ impl ClassExpansionMode {
 }
 
 /// Resolves File Class names against the Schema domain.
-///
-/// Implemented by `schema::SchemaService` in a dedicated composition module
-/// (`crate::file_class_expander`) so neither `query` nor `schema` depends on
-/// the other's types.
 pub(crate) trait FileClassExpander {
     /// Populates `mode`'s match set from `classes` at its requested depth.
     fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);

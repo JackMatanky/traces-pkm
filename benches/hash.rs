@@ -36,6 +36,11 @@ use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
+
+// ----------------------------------------------------------- //
+//                         Benchmarks                          //
+// ----------------------------------------------------------- //
+
 /// Measures file-content hashing cost for small (1KB) and large (1MB) files.
 ///
 /// Every trust check and tracked-config lookup hashes a file through this path
@@ -53,11 +58,9 @@ use traces_pkm::{Blake3FileHash, Blake3PathHash};
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(size as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(size).expect("byte length fits u64"),
+        ));
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("content");
         std::fs::write(&path, vec![0_u8; size]).expect("write fixture file");
@@ -81,16 +84,21 @@ fn bench_file_hash(c: &mut Criterion) {
 ///
 /// Isolates the CPU SIMD hashing pipeline from filesystem read syscalls and
 /// OS page-cache lookups.
+///
+/// Expected outcomes:
+/// - Cost scales proportionally with buffer size.
+///
+/// Unexpected outcomes:
+/// - Cost exceeding linear scaling, indicating hasher overhead beyond raw SIMD
+///   throughput.
 fn bench_memory_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("blake3::memory_buffer");
     for (label, size) in
         [("1kb", 1024_usize), ("64kb", 64 * 1024), ("1mb", 1024 * 1024)]
     {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(size as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(size).expect("byte length fits u64"),
+        ));
         let data = vec![0xAB_u8; size];
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
@@ -112,6 +120,13 @@ fn bench_memory_hash(c: &mut Criterion) {
 ///
 /// Evaluates path hash latency for short relative paths, standard project
 /// configs, and deeply-nested file paths.
+///
+/// Expected outcomes:
+/// - Cost scales with path byte length, not depth.
+///
+/// Unexpected outcomes:
+/// - Cost growing faster than byte length, indicating per-segment allocation or
+///   iteration overhead.
 fn bench_path_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3PathHash::from");
 
@@ -127,11 +142,10 @@ fn bench_path_hash(c: &mut Criterion) {
     ];
 
     for (label, path) in fixtures {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(path.as_os_str().len() as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(path.as_os_str().len())
+                .expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &path,

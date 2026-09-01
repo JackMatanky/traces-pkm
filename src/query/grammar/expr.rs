@@ -47,12 +47,7 @@ pub(super) enum LogicalControl {
     RightParen,
 }
 
-/// A parsed logical expression tree over domain-local atom type `A`.
-///
-/// The tree preserves the original precedence and grouping of the parsed
-/// expression. Domain-specific evaluation is delegated to atom predicates via
-/// [`Self::is_satisfied_by`], [`Self::has_any_atom`], and
-/// [`Self::visit_atoms_mut`].
+/// A parsed boolean expression tree over domain-local atom type `A`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BooleanExpr<A> {
     /// A domain-local atom.

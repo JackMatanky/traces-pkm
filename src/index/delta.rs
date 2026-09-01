@@ -1,12 +1,10 @@
-//! Diffing plans for the incremental refresh path: two-pointer merges over
-//! path-sorted `FileBase`/[`InlinkMap`] state
-//! ([`diff_files`]/[`diff_inlinks`]), and the
-//! [`IndexDelta`]/[`IncrementalDelta`] types describing what changed since the
-//! last persist. [`super::cache::RefreshCache`]'s methods are thin wrappers
-//! over this module's free functions, binding them against its own held
-//! previous-state; kept separate so the diffing algorithms stay unit-testable
-//! against plain `(current, previous)` values with no
-//! `IndexStore`/`ReadTransaction` fixture required.
+//! Diffing algorithms for incremental refresh: two-pointer merges over
+//! path-sorted [`FileBase`] and [`InlinkMap`] state.
+//!
+//! [`super::cache::RefreshCache`] wraps these free functions against its held
+//! previous state. Keeping them separate enables unit testing against plain
+//! `(current, previous)` values without an
+//! [`IndexStore`][super::store::IndexStore] fixture.
 //!
 //! [`IncrementalDelta`]: struct@IncrementalDelta
 
@@ -19,27 +17,13 @@ use crate::file::FileBase;
 /// [`super::builder::IndexBuilder::build`].
 ///
 /// [`super::store::IndexStore::persist_index`] reads this to choose between
-/// a full [`super::store::IndexStore::write_all`] rewrite (fresh build,
-/// no previous persisted state to diff against) and a row-level incremental
-/// write (refresh, only paths that actually changed since the last persist).
+/// a full rewrite ([`Full`]) or row-level incremental write ([`Incremental`]).
 ///
-/// `Incremental`'s payload is boxed: `IndexDelta` is a field of
-/// [`super::FileIndex`], and every [`Full`] build (the common case for a
-/// first-time index) would otherwise pay for the largest variant's four
-/// inline `Vec`s regardless of which variant is active. Boxing shrinks
-/// `IndexDelta` from 96 bytes to 8.
-///
-/// `Full` and `Incremental` are not interchangeable, even when an
-/// `Incremental` diff would come out empty: `Full`
-/// (`write_all`) unconditionally wipes all three tables before
-/// rewriting, so it never needs to know what was deleted. `Incremental`
-/// (`persist_incremental`) only deletes paths its diff explicitly names,
-/// which is only correct because that diff is always computed against a
-/// `RefreshCache` loaded from the real, currently-persisted store (via
-/// `RefreshCache::load`, the only constructor, private fields make this a
-/// type-level guarantee). A `Full`-built `FileIndex` retagged `Incremental`
-/// against a fabricated empty previous state would silently orphan any row
-/// for a file deleted since the last persist.
+/// `Full` and `Incremental` are not interchangeable even when an incremental
+/// diff is empty. `Full` unconditionally wipes all tables before rewriting;
+/// `Incremental` only deletes paths its diff names. A `Full`-built index
+/// retagged `Incremental` against fabricated empty state would silently orphan
+/// deleted rows.
 ///
 /// [`Full`]: IndexDelta::Full
 /// [`Incremental`]: IndexDelta::Incremental
@@ -53,8 +37,7 @@ pub(crate) enum IndexDelta {
 
 /// The changed-path plan behind [`IndexDelta::Incremental`].
 ///
-/// Produced by [`RefreshCache`]'s diffing pass. Each field names the paths that
-/// changed since the last persist:
+/// Each field names the paths that changed since the last persist:
 ///
 /// - `upserted` and `deleted` cover [`crate::file::FileBase`] and
 ///   [`crate::note::Note`] rows.
@@ -86,10 +69,8 @@ pub(crate) struct IncrementalDelta {
 }
 
 impl IncrementalDelta {
-    /// True if this delta names no changes at all.
-    ///
-    /// Persisting an empty delta would open a write transaction only to commit
-    /// nothing, so callers short-circuit.
+    /// True if this delta names no changes. Callers short-circuit to avoid
+    /// opening an empty write transaction.
     pub(crate) fn is_empty(&self) -> bool {
         self.upserted.is_empty()
             && self.deleted.is_empty()
@@ -98,14 +79,10 @@ impl IncrementalDelta {
     }
 }
 
-/// Diffs two path-sorted `FileBase` slices via a two-pointer merge, returning
-/// current-side paths that are new or changed (`upserted`), previous-side paths
-/// absent from `current` (`deleted`), and whether any deleted entry was a Note
-/// (the trailing `bool`). A deleted Note always forces an inlink recompute; an
-/// upserted Note's contribution to staleness depends on its outlinks, which
-/// needs Note content this function structurally doesn't have, so it is
-/// deliberately not folded in here (see
-/// [`super::cache::RefreshCache::reconcile_note`]'s backdating).
+/// Diffs two path-sorted `FileBase` slices, returning new or changed paths
+/// (`upserted`), removed paths (`deleted`), and whether any deleted entry was a
+/// Note. See [`super::cache::RefreshCache::reconcile_note`] for upserted-Note
+/// staleness handling.
 pub(super) fn diff_files(
     current: &[FileBase],
     previous: &[FileBase],

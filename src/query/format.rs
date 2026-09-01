@@ -1,4 +1,4 @@
-//! Display formatting for query results.
+//! Markdown display formats for query result rows.
 
 use super::{QueryError, QueryResult, grammar::FieldPath, record::QueryRecord};
 
