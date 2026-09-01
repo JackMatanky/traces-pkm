@@ -786,7 +786,10 @@ fn normalize_tag_filter(entry: &str) -> String {
     if trimmed.starts_with('#') {
         trimmed.to_owned()
     } else {
-        format!("#{trimmed}")
+        let mut s = String::with_capacity(trimmed.len().saturating_add(1));
+        s.push('#');
+        s.push_str(trimmed);
+        s
     }
 }
 

@@ -156,9 +156,9 @@ impl TaskStatusMap {
     /// consistent.
     #[inline]
     pub(crate) fn insert(&mut self, status: TaskStatus) {
-        if let Some(previous) =
-            self.symbols.insert(status.symbol, status.clone())
-        {
+        // Clean up stale entries from a previous status sharing this symbol
+        // before indexing the new one, so all three lookups stay consistent.
+        if let Some(previous) = self.symbols.get(&status.symbol) {
             if let Some(bucket) = self.kinds.get_mut(&previous.kind) {
                 bucket.retain(|existing| existing.symbol != previous.symbol);
             }
@@ -171,7 +171,9 @@ impl TaskStatusMap {
                 self.names.remove(&previous_key);
             }
         }
+        // `status` is moved into `names` last; `kinds` gets one clone.
         self.kinds.entry(status.kind).or_default().push(status.clone());
+        self.symbols.insert(status.symbol, status.clone());
         self.names.insert(normalize_name(&status.name), status);
     }
 }
