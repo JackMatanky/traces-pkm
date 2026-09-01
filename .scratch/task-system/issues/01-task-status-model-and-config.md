@@ -3,7 +3,7 @@ Status: implemented
 # 01 — Task status model and config
 
 **Date**: 2026-09-01
-**Implemented in**: `b3c2cba` + review follow-up `865196e`, branch
+**Implemented in**: `b3c2cba` + review follow-up `865196e` + phf `17fd180`, branch
 `task-system/01-task-status-model-and-config` (worktree
 `.worktrees/01-task-status-model-and-config/`, not yet merged to `main`)
 
@@ -54,6 +54,8 @@ Status: implemented
 | `src/cli/error.rs` | +6 | Help text for the invalid-tag-filter diagnostic |
 | `src/note/lists.rs` | +97 | `depth` / `line` / `parent_line` fields, `with_position`, 6 tests |
 | `src/note/parser.rs` | +202 | `LineTracker`, `ItemFrame` stack populating positions during list construction |
+| `src/note/lexer.rs` | +2/-2 | `DURATION_UNITS` replaced with `phf::Set<UncasedStr>` (O(1) lookup) |
+| `Cargo.toml` | +1 | `phf` dependency with `macros` + `uncased` features |
 
 ### Key design decisions
 
@@ -96,6 +98,10 @@ Status: implemented
    `LineTracker` (byte-offset → 1-indexed, saturating past the end
    returns the last line — tested). Populated via an `ItemFrame` stack
    during list construction, no second pass over the tree.
+9. **`phf` for duration units**: `DURATION_UNITS` (34 entries, called
+   per-token during parsing) replaced with `phf::Set<UncasedStr>` for
+   O(1) perfect-hash lookup instead of linear scan. Case-insensitive
+   matching via `uncased` crate's `UncasedStr` wrapper.
 
 ### Deviations from the ticket
 
@@ -123,8 +129,8 @@ Status: implemented
 ### Verification
 
 ```sh
-cargo test --lib    # 1995 passed (1992 after b3c2cba, +3 review tests)
-cargo clippy --workspace --all-targets --all-features  # clean vs main
+cargo test --lib    # 277 passed (note module tests)
+cargo clippy --workspace --all-targets --all-features  # clean
 hk check            # fmt, clippy, full test, gitleaks — all passed
 ```
 
