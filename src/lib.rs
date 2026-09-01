@@ -69,6 +69,7 @@ mod path;
 mod query;
 mod schema;
 mod tag;
+mod task;
 mod template;
 
 pub mod cli;

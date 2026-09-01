@@ -507,6 +507,12 @@ fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
             "check that [frontmatter] and [schemas] key names in the config \
              file are non-empty",
         ),
+        ConfigBuilderError::ConfigFile(ConfigFileError::InvalidTagFilter {
+            ..
+        }) => Box::new(
+            "check that every [tasks] tag_filters entry is a valid tag, e.g. \
+             \"task\" or \"#task\"",
+        ),
         ConfigBuilderError::ConfigFile(_) => Box::new(
             "check that the config file contains valid TOML and its structure \
              matches the expected schema",

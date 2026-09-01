@@ -16,11 +16,16 @@ use std::{
 
 use super::{
     error::ConfigFileError,
-    raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig},
+    raw::{
+        RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
+        RawTaskConfig,
+    },
 };
 use crate::{
     field::{FieldName, FieldNameError},
     path::{PathError, RootConfinedPath, SafeRelativePath},
+    tag::Tag,
+    task::TaskStatusMap,
 };
 
 /// Default `[schemas] class_field` when unconfigured.
@@ -52,6 +57,7 @@ pub struct Config {
     templates: TemplateConfig,
     schemas: SchemasConfig,
     frontmatter: FrontmatterConfig,
+    tasks: TaskConfig,
 }
 
 impl Config {
@@ -63,12 +69,14 @@ impl Config {
         templates: TemplateConfig,
         schemas: SchemasConfig,
         frontmatter: FrontmatterConfig,
+        tasks: TaskConfig,
     ) -> Self {
         Self {
             root,
             templates,
             schemas,
             frontmatter,
+            tasks,
         }
     }
 
@@ -136,6 +144,22 @@ impl Config {
         &self.frontmatter
     }
 
+    /// Returns the resolved `[tasks]` settings.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "public accessor surface kept for API stability; no \
+                      production consumer until the task-system parser and \
+                      classification issues land"
+        )
+    )]
+    pub const fn tasks(&self) -> &TaskConfig {
+        &self.tasks
+    }
+
     /// Returns the project root as a cheaply shareable `'static` path, for
     /// consumers (minijinja namespace objects) that cannot borrow `&Config`.
     #[inline]
@@ -183,6 +207,7 @@ impl Config {
             templates: TemplateConfig::new(local, global, output),
             schemas: SchemasConfig::default(),
             frontmatter: FrontmatterConfig::default(),
+            tasks: TaskConfig::default(),
             root,
         }
     }
@@ -665,6 +690,102 @@ impl DateFieldConfig {
     }
 }
 
+/// Resolved `[tasks]` settings: the task status lookup map and the tag
+/// filters that classify status-marked list items as Tasks.
+#[derive(Clone, Debug)]
+pub struct TaskConfig {
+    statuses: TaskStatusMap,
+    tag_filters: Vec<Tag>,
+}
+
+impl TaskConfig {
+    /// Returns the resolved task status lookup map.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no production consumer until the custom marker scanner \
+                      added in a later task-system issue"
+        )
+    )]
+    pub const fn statuses(&self) -> &TaskStatusMap {
+        &self.statuses
+    }
+
+    /// Returns the configured task tag filters.
+    ///
+    /// Empty means no filter is configured: every status-marked list item
+    /// becomes a Task.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no production consumer until task classification added \
+                      in a later task-system issue"
+        )
+    )]
+    pub fn tag_filters(&self) -> &[Tag] {
+        &self.tag_filters
+    }
+}
+
+impl Default for TaskConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            statuses: TaskStatusMap::default(),
+            tag_filters: Vec::new(),
+        }
+    }
+}
+
+impl TryFrom<RawTaskConfig> for TaskConfig {
+    type Error = ConfigFileError;
+
+    /// # Errors
+    ///
+    /// Returns [`ConfigFileError::InvalidTagFilter`] when a `tag_filters`
+    /// entry does not normalize into a valid [`Tag`].
+    #[inline]
+    fn try_from(raw: RawTaskConfig) -> Result<Self, Self::Error> {
+        let tag_filters = raw
+            .tag_filters
+            .into_iter()
+            .map(|entry| {
+                let normalized = normalize_tag_filter(&entry);
+                Tag::parse(&normalized).map_err(|source| {
+                    ConfigFileError::InvalidTagFilter {
+                        entry,
+                        source,
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            statuses: TaskStatusMap::default(),
+            tag_filters,
+        })
+    }
+}
+
+/// Normalizes a `[tasks] tag_filters` entry by trimming whitespace and
+/// prefixing a leading `#` if absent, before constructing a [`Tag`].
+///
+/// Users may write `"task"` or `"#task"` interchangeably; both normalize to
+/// the same internal `Tag`.
+fn normalize_tag_filter(entry: &str) -> String {
+    let trimmed = entry.trim();
+    if trimmed.starts_with('#') {
+        trimmed.to_owned()
+    } else {
+        format!("#{trimmed}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -745,6 +866,70 @@ mod tests {
             assert!(ConfigSubDir::try_from("/absolute/path").is_err());
             assert!(ConfigSubDir::try_from("../parent").is_err());
             assert!(ConfigSubDir::try_from("dir/../../escaped").is_err());
+        }
+    }
+
+    mod task_config {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn defaults_to_empty_tag_filters_and_default_statuses() {
+            let config = TaskConfig::default();
+
+            assert!(config.tag_filters().is_empty());
+            assert!(config.statuses().by_symbol(' '.into()).is_some());
+        }
+
+        #[test]
+        fn normalizes_entries_with_and_without_a_leading_hash() {
+            let raw = RawTaskConfig {
+                tag_filters: vec!["task".to_owned(), "#todo".to_owned()],
+            };
+
+            let config = TaskConfig::try_from(raw).expect("valid tag filters");
+
+            assert_eq!(config.tag_filters(), [
+                Tag::parse("#task").unwrap(),
+                Tag::parse("#todo").unwrap(),
+            ]);
+        }
+
+        #[test]
+        fn allows_an_empty_tag_filters_list() {
+            let raw = RawTaskConfig {
+                tag_filters: Vec::new(),
+            };
+
+            let config = TaskConfig::try_from(raw).expect("empty is valid");
+
+            assert!(config.tag_filters().is_empty());
+        }
+
+        #[test]
+        fn rejects_an_invalid_tag_filter_entry() {
+            let raw = RawTaskConfig {
+                tag_filters: vec!["1invalid".to_owned()],
+            };
+
+            let error = TaskConfig::try_from(raw).expect_err("invalid entry");
+
+            assert!(matches!(error, ConfigFileError::InvalidTagFilter {
+                entry,
+                ..
+            } if entry == "1invalid"));
+        }
+
+        #[test]
+        fn rejects_a_whitespace_only_tag_filter_entry() {
+            let raw = RawTaskConfig {
+                tag_filters: vec!["   ".to_owned()],
+            };
+
+            let error = TaskConfig::try_from(raw).expect_err("blank entry");
+
+            assert!(matches!(error, ConfigFileError::InvalidTagFilter { .. }));
         }
     }
 }

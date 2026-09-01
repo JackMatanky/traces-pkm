@@ -3,8 +3,13 @@ use std::path::PathBuf;
 use super::{
     error::ConfigBuilderError,
     file::{GlobalConfigFile, LocalConfigFile, Parsed},
-    model::{Config, FrontmatterConfig, SchemasConfig, TemplateConfig},
-    raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig},
+    model::{
+        Config, FrontmatterConfig, SchemasConfig, TaskConfig, TemplateConfig,
+    },
+    raw::{
+        RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
+        RawTaskConfig,
+    },
 };
 
 /// Merges local and optional global config files into a resolved [`Config`].
@@ -105,7 +110,20 @@ impl ConfigBuilder {
 
         let frontmatter = FrontmatterConfig::try_from(raw_frontmatter)?;
 
-        Ok(Config::new(self.root, templates, schemas, frontmatter))
+        // 4. Merged TaskConfig
+        let raw_tasks = RawTaskConfig {
+            tag_filters: if local_raw.tasks.tag_filters.is_empty() {
+                global_raw
+                    .map(|g| g.tasks.tag_filters.clone())
+                    .unwrap_or_default()
+            } else {
+                local_raw.tasks.tag_filters.clone()
+            },
+        };
+
+        let tasks = TaskConfig::try_from(raw_tasks)?;
+
+        Ok(Config::new(self.root, templates, schemas, frontmatter, tasks))
     }
 }
 
@@ -222,6 +240,90 @@ directory = "global_schemas"
                 config.schemas().directory(),
                 std::path::Path::new("global_schemas")
             );
+        }
+
+        #[test]
+        fn uses_local_tag_filters_over_global_when_local_is_non_empty() {
+            let root = PathBuf::from("/project");
+            let local_path = root.join(".traces/config.toml");
+            let local_toml = "[tasks]\ntag_filters = [\"task\"]\n";
+            let local = LocalConfigFile::<Parsed>::from_content_for_test(
+                root.clone(),
+                local_path,
+                local_toml,
+            )
+            .unwrap();
+
+            let global_root = PathBuf::from("/global");
+            let global_path = global_root.join("config.toml");
+            let global_toml = "[tasks]\ntag_filters = [\"todo\"]\n";
+            let global = GlobalConfigFile::<Parsed>::from_content_for_test(
+                global_root,
+                global_path,
+                global_toml,
+            )
+            .unwrap();
+
+            let builder = ConfigBuilder::new(root, local, Some(global));
+            let config = builder.build().expect("build merged config");
+
+            assert_eq!(config.tasks().tag_filters(), [crate::tag::Tag::parse(
+                "#task"
+            )
+            .unwrap()]);
+        }
+
+        #[test]
+        fn falls_back_to_global_tag_filters_when_local_is_empty() {
+            let root = PathBuf::from("/project");
+            let local_path = root.join(".traces/config.toml");
+            let local = LocalConfigFile::<Parsed>::from_content_for_test(
+                root.clone(),
+                local_path,
+                "",
+            )
+            .unwrap();
+
+            let global_root = PathBuf::from("/global");
+            let global_path = global_root.join("config.toml");
+            let global_toml = "[tasks]\ntag_filters = [\"todo\"]\n";
+            let global = GlobalConfigFile::<Parsed>::from_content_for_test(
+                global_root,
+                global_path,
+                global_toml,
+            )
+            .unwrap();
+
+            let builder = ConfigBuilder::new(root, local, Some(global));
+            let config = builder.build().expect("build merged config");
+
+            assert_eq!(config.tasks().tag_filters(), [crate::tag::Tag::parse(
+                "#todo"
+            )
+            .unwrap()]);
+        }
+
+        #[test]
+        fn fails_to_build_when_a_tag_filter_entry_is_invalid() {
+            let root = PathBuf::from("/project");
+            let local_path = root.join(".traces/config.toml");
+            let local_toml = "[tasks]\ntag_filters = [\"1invalid\"]\n";
+            let local = LocalConfigFile::<Parsed>::from_content_for_test(
+                root.clone(),
+                local_path,
+                local_toml,
+            )
+            .unwrap();
+
+            let builder = ConfigBuilder::new(root, local, None);
+            let error = builder.build().expect_err("invalid tag filter entry");
+
+            assert!(matches!(
+                error,
+                ConfigBuilderError::ConfigFile(
+                    crate::config::error::ConfigFileError::InvalidTagFilter { .. }
+                )
+            ));
         }
     }
 }

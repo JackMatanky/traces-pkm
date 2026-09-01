@@ -15,7 +15,9 @@ use super::{
     file::{LocalConfigFile, Tracked},
     trust::ConfigTrustStatus,
 };
-use crate::{FileStateStoreError, field::FieldNameError, hash::HashError};
+use crate::{
+    FileStateStoreError, field::FieldNameError, hash::HashError, tag::TagError,
+};
 
 /// Errors from the full config-loading pipeline.
 #[derive(Debug, Error)]
@@ -170,6 +172,15 @@ pub(crate) enum ConfigFileError {
         /// The underlying validation failure.
         #[source]
         source: FieldNameError,
+    },
+    /// A `[tasks] tag_filters` entry failed [`crate::tag::Tag`] validation.
+    #[error("invalid `tasks.tag_filters` entry {entry:?}")]
+    InvalidTagFilter {
+        /// The offending entry, before `#`-normalization.
+        entry: String,
+        /// The underlying tag validation failure.
+        #[source]
+        source: TagError,
     },
 }
 

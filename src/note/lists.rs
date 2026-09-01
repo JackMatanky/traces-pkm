@@ -69,6 +69,9 @@ pub struct ListItem {
     task_status: Option<TaskStatus>,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    depth: usize,
+    line: usize,
+    parent_line: Option<usize>,
 }
 
 impl ListItem {
@@ -92,6 +95,9 @@ impl ListItem {
             task_status,
             children: Vec::new(),
             fields: IndexMap::new(),
+            depth: 0,
+            line: 0,
+            parent_line: None,
         }
     }
 
@@ -111,6 +117,9 @@ impl ListItem {
             task_status,
             children,
             fields: IndexMap::new(),
+            depth: 0,
+            line: 0,
+            parent_line: None,
         }
     }
 
@@ -190,6 +199,76 @@ impl ListItem {
     )]
     pub(crate) fn fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
         &self.fields
+    }
+
+    /// Attaches source position (depth, line, parent line) computed by the
+    /// parser from Markdown byte offsets.
+    ///
+    /// `line` and `parent_line` are 1-indexed source lines; `depth` is the
+    /// item's 0-indexed nesting level. Items built via [`Self::new`] or
+    /// [`Self::with_children`] default to `depth: 0`, `line: 0`,
+    /// `parent_line: None` until this is called.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn with_position(
+        mut self,
+        line: usize,
+        depth: usize,
+        parent_line: Option<usize>,
+    ) -> Self {
+        self.line = line;
+        self.depth = depth;
+        self.parent_line = parent_line;
+        self
+    }
+
+    /// Returns the item's 0-indexed nesting level.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence and task queries added in a later \
+                      task-system issue"
+        )
+    )]
+    pub(crate) const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the item's 1-indexed source line.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence and task queries added in a later \
+                      task-system issue"
+        )
+    )]
+    pub(crate) const fn line(&self) -> usize {
+        self.line
+    }
+
+    /// Returns the immediate parent list item's 1-indexed source line, if
+    /// this item is nested inside another list item.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence and task queries added in a later \
+                      task-system issue"
+        )
+    )]
+    pub(crate) const fn parent_line(&self) -> Option<usize> {
+        self.parent_line
     }
 }
 

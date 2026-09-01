@@ -129,6 +129,24 @@ impl Tag {
     pub fn is_contained_in(&self, prefix: &str) -> bool {
         self.segments.iter().any(|seg| seg == prefix)
     }
+
+    /// Returns `true` if `self` and `other` are the exact same tag.
+    ///
+    /// Unlike [`Self::is_contained_in`], this performs no hierarchical
+    /// containment check: `#task` does not exactly match `#task/project`.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by task tag \
+                      filter classification added in a later task-system issue"
+        )
+    )]
+    pub fn is_exact_match(&self, other: &Self) -> bool {
+        self == other
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +255,32 @@ mod tests {
         fn tag_rejects_child_as_prefix() {
             let tag = Tag::parse("#projects").unwrap();
             assert!(!tag.is_contained_in("#projects/active"));
+        }
+    }
+
+    mod is_exact_match {
+        use super::*;
+
+        #[test]
+        fn matches_the_identical_tag() {
+            let a = Tag::parse("#task").unwrap();
+            let b = Tag::parse("#task").unwrap();
+            assert!(a.is_exact_match(&b));
+        }
+
+        #[test]
+        fn rejects_a_nested_child_tag() {
+            let parent = Tag::parse("#task").unwrap();
+            let child = Tag::parse("#task/project").unwrap();
+            assert!(!parent.is_exact_match(&child));
+            assert!(!child.is_exact_match(&parent));
+        }
+
+        #[test]
+        fn rejects_an_unrelated_tag() {
+            let a = Tag::parse("#task").unwrap();
+            let b = Tag::parse("#todo").unwrap();
+            assert!(!a.is_exact_match(&b));
         }
     }
 

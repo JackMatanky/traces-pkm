@@ -23,6 +23,9 @@ pub(crate) struct RawConfig {
     /// The `[frontmatter]` table.
     #[serde(default)]
     pub(crate) frontmatter: RawFrontmatterConfig,
+    /// The `[tasks]` table.
+    #[serde(default)]
+    pub(crate) tasks: RawTaskConfig,
 }
 
 /// Raw `[templates]` table exactly as written in TOML.
@@ -96,4 +99,20 @@ pub(crate) struct RawDateFieldConfig {
     /// Date format string applied to the key's value, if configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) format: Option<String>,
+}
+
+/// Raw `[tasks]` table exactly as written in TOML.
+///
+/// Fields skip serialization when empty during config scaffolding
+/// serialization (e.g. `traces init`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawTaskConfig {
+    /// Tags that classify a status-marked list item as a Task.
+    ///
+    /// Entries may omit the leading `#`; config resolution normalizes each
+    /// entry before constructing a [`crate::tag::Tag`]. Empty means no
+    /// filter is configured: every status-marked list item becomes a Task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) tag_filters: Vec<String>,
 }
