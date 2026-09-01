@@ -14,6 +14,8 @@
 //!   `#projects/active`.
 
 use logos::{Filter, Lexer, Logos};
+use phf::phf_set;
+use uncased::UncasedStr;
 
 use super::{Link, NoteFieldValue, cursor::SourceText, metadata::is_iso_date};
 use crate::{field::FieldKey, tag::Tag};
@@ -287,42 +289,42 @@ fn task_field_callback(
     Filter::Emit((key, NoteFieldValue::Date(candidate.to_owned())))
 }
 
-const DURATION_UNITS: &[&str] = &[
-    "year",
-    "years",
-    "yr",
-    "yrs",
-    "month",
-    "months",
-    "mo",
-    "mos",
-    "week",
-    "weeks",
-    "wk",
-    "wks",
-    "w",
-    "day",
-    "days",
-    "d",
-    "hour",
-    "hours",
-    "hr",
-    "hrs",
-    "h",
-    "minute",
-    "minutes",
-    "min",
-    "mins",
-    "m",
-    "second",
-    "seconds",
-    "sec",
-    "secs",
-    "s",
-    "millisecond",
-    "milliseconds",
-    "ms",
-];
+static DURATION_UNITS: phf::Set<UncasedStr> = phf_set! {
+    UncasedStr::new("year"),
+    UncasedStr::new("years"),
+    UncasedStr::new("yr"),
+    UncasedStr::new("yrs"),
+    UncasedStr::new("month"),
+    UncasedStr::new("months"),
+    UncasedStr::new("mo"),
+    UncasedStr::new("mos"),
+    UncasedStr::new("week"),
+    UncasedStr::new("weeks"),
+    UncasedStr::new("wk"),
+    UncasedStr::new("wks"),
+    UncasedStr::new("w"),
+    UncasedStr::new("day"),
+    UncasedStr::new("days"),
+    UncasedStr::new("d"),
+    UncasedStr::new("hour"),
+    UncasedStr::new("hours"),
+    UncasedStr::new("hr"),
+    UncasedStr::new("hrs"),
+    UncasedStr::new("h"),
+    UncasedStr::new("minute"),
+    UncasedStr::new("minutes"),
+    UncasedStr::new("min"),
+    UncasedStr::new("mins"),
+    UncasedStr::new("m"),
+    UncasedStr::new("second"),
+    UncasedStr::new("seconds"),
+    UncasedStr::new("sec"),
+    UncasedStr::new("secs"),
+    UncasedStr::new("s"),
+    UncasedStr::new("millisecond"),
+    UncasedStr::new("milliseconds"),
+    UncasedStr::new("ms"),
+};
 
 /// An atom parsed at some position: its value and the exclusive byte offset
 /// immediately following it.
@@ -618,7 +620,7 @@ impl<'a> ValueParser<'a> {
 /// Whether `unit` is a recognized duration unit, matched case-insensitively
 /// against [`DURATION_UNITS`].
 fn is_duration_unit(unit: &str) -> bool {
-    DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
+    DURATION_UNITS.contains(UncasedStr::new(unit))
 }
 
 /// Token stream for Markdown tags in free-form text.
