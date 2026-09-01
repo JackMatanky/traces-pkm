@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+# Filename:    traces-pkm/deny.toml
+# Docs:        https://embarkstudios.github.io/cargo-deny/
+# Description: cargo-deny configuration for license, ban, advisory, and source
+#              checks on the dependency graph.
+# -----------------------------------------------------------------------------
+
 [licenses]
 allow = [
   "MIT",
