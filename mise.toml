@@ -63,7 +63,7 @@ flag "--doc" help="Clean generated docs only"
 flag "--profile <profile>" help="Clean one Cargo profile"
 flag "--target-dir <dir>" help="Cargo target directory" default="target"
 flag "--reports" help="Remove generated coverage/mutation report files"
-flag "--all" help="Clean Cargo target and generated reports"
+flag "--all" help="Clean entire Cargo target directory"
 flag "--if-over-gib <gib>" help="Only clean Cargo target if it exceeds this size in GiB"
 flag "--sweep-days <days>" help="Use cargo-sweep to remove target artifacts older than DAYS"
 flag "--sweep-max-size <size>" help="Use cargo-sweep to shrink target below SIZE, e.g. 10GiB"
@@ -83,7 +83,6 @@ fi
 
 if [[ "${usage_all:-false}" == "true" ]]; then
   clean_target=true
-  clean_reports=true
 fi
 
 if [[ -n "${usage_if_over_gib:-}" && -d "${target_dir}" ]]; then
