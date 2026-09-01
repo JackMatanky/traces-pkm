@@ -16,7 +16,7 @@ use super::{
     trust::ConfigTrustStatus,
 };
 use crate::{
-    FileStateStoreError, field::FieldNameError, hash::HashError, tag::TagError,
+    FieldNameError, FileStateStoreError, hash::HashError, tag::TagError,
 };
 
 /// Errors from the full config-loading pipeline.

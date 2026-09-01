@@ -26,13 +26,9 @@ use pulldown_cmark::{
 
 use super::{
     Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter,
-    TaskStatus, lexer,
+    TaskStatus, lexer, lists::Position,
 };
-use crate::{
-    field::FieldKey,
-    position::{ByteOffset, SourceLine},
-    tag::Tag,
-};
+use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag};
 
 /// Parses Markdown source into a [`Note`].
 ///
@@ -528,17 +524,17 @@ impl ListTracker {
     /// is the innermost active item's line, if this item is nested inside
     /// another item's child list.
     fn start_item(&mut self, line: SourceLine) {
-        let depth = self.list_stack.len().saturating_sub(1);
-        let parent_line = self.item_stack.last().map(|item| item.line);
+        let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
+            .unwrap_or(u8::MAX);
+        let parent_line =
+            self.item_stack.last().map(|item| item.position.line());
         self.item_stack.push(ItemFrame {
             task_status: None,
             text_buffer: String::new(),
             scan_buffer: String::new(),
             fields: IndexMap::new(),
             children: Vec::new(),
-            line,
-            depth,
-            parent_line,
+            position: Position::new(line, depth, parent_line),
         });
     }
 
@@ -554,11 +550,7 @@ impl ListTracker {
                 item_frame.children,
             )
             .with_fields(item_frame.fields)
-            .with_position(
-                item_frame.line,
-                item_frame.depth,
-                item_frame.parent_line,
-            );
+            .with_position(item_frame.position);
             if let Some(list_frame) = self.list_stack.last_mut() {
                 list_frame.items.push(item);
             }
@@ -631,13 +623,8 @@ struct ItemFrame {
     /// per-item, not per-list.
     fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     children: Vec<List>,
-    /// This item's 1-indexed source line.
-    line: SourceLine,
-    /// This item's 0-indexed nesting level.
-    depth: usize,
-    /// The immediate parent item's source line, if nested inside another
-    /// item's child list.
-    parent_line: Option<SourceLine>,
+    /// This item's source position: line, nesting depth, and parent line.
+    position: Position,
 }
 
 impl ItemFrame {
@@ -1349,7 +1336,7 @@ mod tests {
             let keys: Vec<&str> = note
                 .inline_fields()
                 .keys()
-                .map(crate::field::FieldKey::name)
+                .map(crate::FieldKey::name)
                 .collect();
             assert_eq!(keys, ["Status", "Author"]);
         }

@@ -18,7 +18,7 @@ use super::{
     select::SelectValuesFileCache,
 };
 use crate::{
-    field::FieldValue,
+    FieldValue,
     schema::{
         RawSchemaFieldDef, RawSchemaFieldSource, SchemaName,
         error::{SchemaResult, SchemaWarning},
@@ -331,8 +331,7 @@ mod tests {
     ) -> (SchemaName, Schema) {
         let mut fields = IndexMap::new();
         fields.insert(
-            crate::field::FieldName::try_from(field)
-                .expect("valid test field name"),
+            crate::FieldName::try_from(field).expect("valid test field name"),
             SchemaFieldDef::new(kind, false, false),
         );
         (
@@ -406,7 +405,7 @@ mod tests {
                 SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("status")
+                crate::FieldNameRef::try_from("status")
                     .expect("valid field name"),
             );
 
@@ -428,7 +427,7 @@ mod tests {
                 SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("task"),
-                crate::field::FieldNameRef::try_from("priority")
+                crate::FieldNameRef::try_from("priority")
                     .expect("valid field name"),
             );
 
@@ -448,7 +447,7 @@ mod tests {
                 SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("book"),
-                crate::field::FieldNameRef::try_from("status")
+                crate::FieldNameRef::try_from("status")
                     .expect("valid field name"),
             );
 
@@ -474,7 +473,7 @@ mod tests {
                 SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("missing")
+                crate::FieldNameRef::try_from("missing")
                     .expect("valid field name"),
             );
 
@@ -502,7 +501,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("title")
+                crate::FieldNameRef::try_from("title")
                     .expect("valid field name"),
             );
             let raw = raw_field(
@@ -528,7 +527,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("field")
+                crate::FieldNameRef::try_from("field")
                     .expect("valid field name"),
             );
             let raw = raw_field(
@@ -554,7 +553,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("field")
+                crate::FieldNameRef::try_from("field")
                     .expect("valid field name"),
             );
             let raw = raw_field(
@@ -579,7 +578,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("title")
+                crate::FieldNameRef::try_from("title")
                     .expect("valid field name"),
             );
             let mut options = IndexMap::new();
@@ -611,7 +610,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("field")
+                crate::FieldNameRef::try_from("field")
                     .expect("valid field name"),
             );
             let mut options = IndexMap::new();
@@ -648,7 +647,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("field")
+                crate::FieldNameRef::try_from("field")
                     .expect("valid field name"),
             );
             let mut options = IndexMap::new();
@@ -679,7 +678,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("book"),
-                crate::field::FieldNameRef::try_from("rating")
+                crate::FieldNameRef::try_from("rating")
                     .expect("valid field name"),
             );
             let mut options = IndexMap::new();
@@ -721,7 +720,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("rating")
+                crate::FieldNameRef::try_from("rating")
                     .expect("valid field name"),
             );
             let mut options = IndexMap::new();
@@ -760,7 +759,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("book"),
-                crate::field::FieldNameRef::try_from("status")
+                crate::FieldNameRef::try_from("status")
                     .expect("valid field name"),
             );
             let raw = raw_field(
@@ -790,7 +789,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("missing")
+                crate::FieldNameRef::try_from("missing")
                     .expect("valid field name"),
             );
             let raw = raw_field(
@@ -822,7 +821,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
-                crate::field::FieldNameRef::try_from("title")
+                crate::FieldNameRef::try_from("title")
                     .expect("valid field name"),
             );
             let raw = raw_field(
@@ -846,7 +845,7 @@ mod tests {
         fn inherits_required_and_multi_from_base_when_raw_does_not_override() {
             let mut fields = IndexMap::new();
             fields.insert(
-                crate::field::FieldName::try_from("field")
+                crate::FieldName::try_from("field")
                     .expect("valid test field name"),
                 SchemaFieldDef::new(SchemaFieldType::Input, true, true),
             );
@@ -862,7 +861,7 @@ mod tests {
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("field")
+                crate::FieldNameRef::try_from("field")
                     .expect("valid field name"),
             );
             let raw = raw_field(

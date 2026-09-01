@@ -17,7 +17,7 @@ use logos::{Filter, Lexer, Logos};
 use phf::phf_set;
 
 use super::{Link, NoteFieldValue, cursor::SourceText, metadata::is_iso_date};
-use crate::{field::FieldKey, tag::Tag};
+use crate::{FieldKey, tag::Tag};
 
 /// Extracts inline fields from `text` in encounter order.
 ///

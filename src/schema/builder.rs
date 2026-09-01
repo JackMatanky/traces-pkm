@@ -27,7 +27,7 @@ use super::{
     graph::{SchemaGraph, SchemaGraphBuilder},
     model::Schema,
 };
-use crate::field::{FieldKey, FieldName};
+use crate::{FieldKey, FieldName};
 
 /// A Schema that failed to resolve, with its [`SchemaError`].
 #[derive(Debug)]
@@ -206,7 +206,7 @@ impl<'a> SchemaBuilder<'a> {
     ///
     /// [`FieldBuilder`]: SchemaError::FieldBuilder
     /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
-    /// [`FieldKey`]: crate::field::FieldKey
+    /// [`FieldKey`]: crate::FieldKey
     fn merge(
         &self,
         name: SchemaNameRef<'a>,
@@ -294,7 +294,7 @@ impl<'a> SchemaBuilder<'a> {
     }
 
     /// Rejects a field map where two entries canonicalize to the same
-    /// [`FieldKey`](crate::field::FieldKey) (case-folded,
+    /// [`FieldKey`](crate::FieldKey) (case-folded,
     /// hyphen/underscore-normalized form); ambiguous field identities would
     /// make note-vs-schema field matching unreliable.
     ///
@@ -375,7 +375,7 @@ mod tests {
 
     use super::{super::GLOBAL_SCHEMA_NAME, *};
     use crate::{
-        field::FieldValue,
+        FieldValue,
         schema::{
             RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
             fields::{
@@ -1126,7 +1126,7 @@ mod tests {
                 schema(&["book"], &[("rating", RawSchemaFieldDef {
                     options: options(&[(
                         "min",
-                        crate::field::FieldValue::String("abc".to_owned()),
+                        crate::FieldValue::String("abc".to_owned()),
                     )]),
                     ..RawSchemaFieldDef::reference(field_address(
                         "#book/rating",
@@ -1420,7 +1420,7 @@ mod tests {
                 schema(&[], &[("rating", RawSchemaFieldDef {
                     options: options(&[(
                         "min",
-                        crate::field::FieldValue::String("abc".to_owned()),
+                        crate::FieldValue::String("abc".to_owned()),
                     )]),
                     ..RawSchemaFieldDef::direct(RawSchemaFieldType::Number)
                 })]),

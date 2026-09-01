@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 use super::{SchemaName, fields::FieldAddress};
-use crate::field::{FieldName, FieldValue};
+use crate::{FieldName, FieldValue};
 
 const ALLOWED_OPTION_KEYS: &[&str] = &[
     "type", "$ref", "required", "multi", "values", "folders", "ext", "class",

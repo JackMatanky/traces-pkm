@@ -14,7 +14,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
-use crate::field::FieldValue;
+use crate::FieldValue;
 
 /// Resolved `file` field options.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

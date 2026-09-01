@@ -64,7 +64,7 @@ use minijinja::{
 
 use super::error::TemplateEngineResult;
 use crate::{
-    field::FieldValue,
+    FieldValue,
     query::{ClassExpansionMode, SourceAtom, SourceExpr, SourceSelector},
     schema::{
         Schema, SchemaFileFieldRef, SchemaSelectFieldEntry, SchemaService,

@@ -5,7 +5,7 @@
 use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
-use crate::field::FieldValue;
+use crate::FieldValue;
 
 /// Resolved `number` field options.
 #[derive(Clone, Debug, Default, PartialEq)]
