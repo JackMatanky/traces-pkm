@@ -39,6 +39,10 @@ impl SourceLine {
     /// Returns the raw 1-indexed line number.
     #[inline]
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "crate-internal accessor method for newtype inner value"
+    )]
     pub(crate) const fn get(self) -> u32 {
         self.0
     }
@@ -94,6 +98,10 @@ impl ByteOffset {
     /// Returns the raw byte offset.
     #[inline]
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "crate-internal accessor method for newtype inner value"
+    )]
     pub(crate) const fn get(self) -> usize {
         self.0
     }

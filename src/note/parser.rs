@@ -373,6 +373,10 @@ impl ByteTracker {
     /// Precomputes line-start offsets for `source`.
     #[inline]
     #[must_use]
+    #[expect(
+        clippy::naive_bytecount,
+        reason = "avoid extra bytecount dependency for simple newline counting"
+    )]
     fn new(source: &str) -> Self {
         let count = source.as_bytes().iter().filter(|&&b| b == b'\n').count();
         let mut line_starts = Vec::with_capacity(count.saturating_add(1));
