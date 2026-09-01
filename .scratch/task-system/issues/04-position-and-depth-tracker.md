@@ -1,4 +1,8 @@
-Status: ready-for-agent
+Status: implemented
+
+**Date**: 2026-09-01
+**Implemented in**: `251a215`, branch `task-system/04-position-and-depth-tracker`
+(worktree `.worktrees/04-position-and-depth-tracker/`, not yet merged to `main`)
 
 # 04 — ByteTracker
 
@@ -33,24 +37,72 @@ The parser uses `ByteOffset` when reading byte offsets from pulldown-cmark and `
 
 ## Acceptance criteria
 
-- [ ] `SourceLine(u32)` newtype with `From`, `Into`, `Display`, `PartialOrd`, `Ord`, `Eq`, `Hash`, `Copy`, `Clone`
-- [ ] `ByteOffset(usize)` newtype with `From<usize>`, `From<ByteOffset> for usize`, `Copy`, `Clone`
-- [ ] `ByteTracker` struct with `line_starts: Vec<usize>` field
-- [ ] `ByteTracker::new(source: &str) -> Self` precomputes line starts
-- [ ] `ByteTracker::byte_to_line(offset: ByteOffset) -> SourceLine` uses `partition_point`
-- [ ] Edge case: `ByteOffset(0)` → `SourceLine(1)`
-- [ ] Edge case: offset at line boundary returns that line (not next)
-- [ ] Edge case: empty source → `SourceLine(1)`
-- [ ] Edge case: offset beyond source length → last line
-- [ ] Unit test: single-line source, any offset returns `SourceLine(1)`
-- [ ] Unit test: multi-line source, offsets at line starts return correct `SourceLine` values
-- [ ] Unit test: empty lines counted as separate lines
-- [ ] Unit test: offset at exact line boundary returns that line
-- [ ] Unit test: offset beyond source length returns last line
-- [ ] Unit test: empty source returns `SourceLine(1)`
-- [ ] Parser updated to use `ByteOffset` and `SourceLine` instead of raw `usize`
-- [ ] `ListItem.line` and `ListItem.parent_line` use `SourceLine` instead of `usize`
-- [ ] `cargo test` passes, `cargo clippy` clean
+- [x] `SourceLine(u32)` newtype with `From`, `Into`, `Display`, `PartialOrd`, `Ord`, `Eq`, `Hash`, `Copy`, `Clone`
+- [x] `ByteOffset(usize)` newtype with `From<usize>`, `From<ByteOffset> for usize`, `Copy`, `Clone`
+- [x] `ByteTracker` struct with `line_starts: Vec<usize>` field
+- [x] `ByteTracker::new(source: &str) -> Self` precomputes line starts
+- [x] `ByteTracker::byte_to_line(offset: ByteOffset) -> SourceLine` uses `partition_point`
+- [x] Edge case: `ByteOffset(0)` → `SourceLine(1)`
+- [x] Edge case: offset at line boundary returns that line (not next)
+- [x] Edge case: empty source → `SourceLine(1)`
+- [x] Edge case: offset beyond source length → last line
+- [x] Unit test: single-line source, any offset returns `SourceLine(1)`
+- [x] Unit test: multi-line source, offsets at line starts return correct `SourceLine` values
+- [x] Unit test: empty lines counted as separate lines
+- [x] Unit test: offset at exact line boundary returns that line
+- [x] Unit test: offset beyond source length returns last line
+- [x] Unit test: empty source returns `SourceLine(1)`
+- [x] Parser updated to use `ByteOffset` and `SourceLine` instead of raw `usize`
+- [x] `ListItem.line` and `ListItem.parent_line` use `SourceLine` instead of `usize`
+- [x] `cargo test` passes, `cargo clippy` clean
+
+## Implementation notes
+
+### Where it landed
+
+| File | Purpose |
+|------|---------|
+| `src/note/byte_tracker.rs` | New. `ByteOffset`, `SourceLine`, `ByteTracker`, 6 tests (moved verbatim from the old `parser.rs::tests::line_tracker` module) |
+| `src/note/lists.rs` | `ListItem.line`/`parent_line` retyped to `SourceLine`/`Option<SourceLine>`; `with_position`/`line()`/`parent_line()` signatures updated |
+| `src/note/parser.rs` | `LineTracker` struct/impl deleted; `ParserContext.line_tracker` is `ByteTracker`; `handle_event`/`start_item` take `ByteOffset` end to end from `range.start` |
+| `src/note/mod.rs` | `mod byte_tracker;` declaration |
+
+### Key design decisions
+
+1. **`ByteOffset` flows end to end from pulldown-cmark.** `parse_markdown` wraps
+   `range.start` as `ByteOffset::from(range.start)` immediately, and
+   `ParserContext::handle_event`/`start_item` carry `ByteOffset` (not raw
+   `usize`) through to `ByteTracker::byte_to_line`, matching the issue's "the
+   parser uses `ByteOffset` when reading byte offsets from pulldown-cmark".
+2. **`SourceLine` default sentinel stays `SourceLine::new(0)`.** `ListItem::new`/
+   `with_children` default to `depth: 0`, `line: SourceLine::new(0)`,
+   `parent_line: None` until `with_position` is called — unchanged sentinel
+   semantics from the prior `line: usize = 0`, just typed. `0` is never
+   produced by `byte_to_line` itself (`partition_point` over a non-empty
+   `line_starts` always yields `>= 1`); it is only the pre-parse "unset" marker.
+3. **`u32::try_from(line).unwrap_or(u32::MAX)`** narrows the `partition_point`
+   `usize` result to `SourceLine`'s `u32`, matching the existing
+   `DenseIndex::saturating_u32` idiom in `src/schema/graph/adjacency.rs`
+   instead of `as` (denied by `clippy::as_conversions` intent, though only a
+   warn) or `unwrap()` (denied by `clippy::unwrap_used`).
+4. **`ByteOffset` derives only `Copy, Clone`** per the issue's key-interfaces
+   list; `SourceLine` additionally derives `Debug, Eq, Hash, Ord, PartialEq,
+   PartialOrd, Deserialize, Serialize` — `Debug`/`PartialEq` because
+   `assert_eq!` needs them in tests, `Deserialize`/`Serialize` because
+   `ListItem` (which now holds a `SourceLine` field) derives both for postcard
+   persistence.
+
+### Verification
+
+```sh
+cargo test --lib --all-features note::   # 219 passed
+cargo test --lib --all-features byte_tracker  # 6 passed
+cargo clippy --workspace --all-targets --all-features  # clean (pre-existing
+  large_stack_frames warnings in config/builder.rs, index/store.rs,
+  cli/template.rs are untouched by this change)
+cargo fmt --all -- --check  # clean
+cargo test --workspace --all-features  # 2010 + 4 + 20 + 12 passed, 14 doctests
+```
 
 ## Out of scope
 
