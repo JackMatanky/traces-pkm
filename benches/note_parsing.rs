@@ -21,6 +21,12 @@
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`parse_markdown` included) is only
 //! reachable with `--features test-utils`, which the mise task supplies.
+
+#![expect(
+    clippy::expect_used,
+    reason = "bench fixture/harness code; a failed .expect() here means the \
+              fixture itself is broken and should panic immediately"
+)]
 use std::hint::black_box;
 
 use criterion::{
@@ -117,11 +123,9 @@ fn bench_parse_markdown(c: &mut Criterion) {
     for (label, source) in
         [("small", SMALL.to_owned()), ("medium", medium()), ("large", large())]
     {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(source.len() as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(source.len()).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &source,
@@ -150,11 +154,9 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     ];
 
     for (label, source) in workloads {
-        #[allow(
-            clippy::as_conversions,
-            reason = "usize→u64 is a lossless widening cast"
-        )]
-        group.throughput(Throughput::Bytes(source.len() as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(source.len()).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &source,

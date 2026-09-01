@@ -94,7 +94,9 @@ fn bench_codec_serialize(c: &mut Criterion) {
     {
         let serialized_len =
             postcard::to_allocvec(wrapper).expect("serialize path").len();
-        group.throughput(Throughput::Bytes(serialized_len as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(serialized_len).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             wrapper,
@@ -134,7 +136,9 @@ fn bench_codec_serialize_slice(c: &mut Criterion) {
     {
         let serialized =
             postcard::to_slice(wrapper, &mut buffer).expect("serialize path");
-        group.throughput(Throughput::Bytes(serialized.len() as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(serialized.len()).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             wrapper,
@@ -180,7 +184,9 @@ fn bench_codec_deserialize(c: &mut Criterion) {
         [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
     {
         let bytes = postcard::to_allocvec(wrapper).expect("serialize path");
-        group.throughput(Throughput::Bytes(bytes.len() as u64));
+        group.throughput(Throughput::Bytes(
+            u64::try_from(bytes.len()).expect("byte length fits u64"),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
             &bytes,
@@ -215,11 +221,9 @@ fn bench_codec_batch(c: &mut Criterion) {
         .map(|p| postcard::to_allocvec(p).expect("serialize"))
         .collect();
     let total_bytes: usize = serialized.iter().map(Vec::len).sum();
-    #[allow(
-        clippy::as_conversions,
-        reason = "usize→u64 is a lossless widening cast"
-    )]
-    group.throughput(Throughput::Bytes(total_bytes as u64));
+    group.throughput(Throughput::Bytes(
+        u64::try_from(total_bytes).expect("byte length fits u64"),
+    ));
 
     group.bench_function("serialize_100", |b| {
         b.iter(|| {

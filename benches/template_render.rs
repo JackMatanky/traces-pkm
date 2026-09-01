@@ -111,7 +111,9 @@ fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
 
     for n in [100_usize, 1_000] {
-        group.throughput(Throughput::Elements(n as u64));
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
         let (_temp, _root, config) = prepare_fixture(n);
         let dialog = Arc::new(PresetDialogProvider::new());
         let service = TemplateService::new(&config, dialog)
