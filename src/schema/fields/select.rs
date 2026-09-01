@@ -19,7 +19,7 @@ use super::{
     },
     parser::SchemaFieldParser,
 };
-use crate::{field::FieldValue, path::RootConfinedPath};
+use crate::{FieldValue, path::RootConfinedPath};
 
 type CachedSelectValues = Arc<Vec<FieldValue>>;
 type ValuesFileCacheMap = IndexMap<PathBuf, CachedSelectValues>;

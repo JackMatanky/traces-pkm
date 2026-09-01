@@ -66,6 +66,7 @@ mod index;
 mod lexer;
 mod note;
 mod path;
+mod position;
 mod query;
 mod schema;
 mod tag;
@@ -81,6 +82,9 @@ pub use dialog::{
     TerminalDialogProvider,
 };
 pub(crate) use dirtree::{DirTree, DirTreeError};
+pub(crate) use field::{
+    FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
+};
 pub use file::FileBase;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{
@@ -99,6 +103,7 @@ pub(crate) use lexer::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{Note, NoteFieldValue, parse_markdown};
+pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
     QueryRecord, QueryRecordSet, QueryRequest, QueryResult, QueryService,

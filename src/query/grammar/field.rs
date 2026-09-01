@@ -18,7 +18,7 @@
 //! [`NoteFieldValue`]: crate::note::NoteFieldValue
 //! [`FileBase`]: crate::file::FileBase
 
-use crate::{field, field::FieldKey, query::error::FieldPathError};
+use crate::{FieldKey, field, query::error::FieldPathError};
 
 /// A `file.<field>` accessor backed by [`FileBase`] metadata.
 ///

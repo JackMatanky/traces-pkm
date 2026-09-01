@@ -430,7 +430,7 @@ mod tests {
         use rstest::rstest;
 
         use super::super::{error::SchemaFieldParserError, *};
-        use crate::field::FieldValue;
+        use crate::FieldValue;
 
         fn address() -> FieldAddress {
             FieldAddress::try_from("#book/field").expect("valid ref")

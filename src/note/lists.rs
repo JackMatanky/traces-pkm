@@ -4,12 +4,14 @@
 //! - [`ListItem`]: a list item with optional task state, inline fields, and
 //!   child lists.
 //! - [`TaskStatus`]: the completion state of a task list item.
+//! - [`ListItemPosition`]: a list item's nesting depth, source line, and parent
+//!   line.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::metadata::NoteFieldValue;
-use crate::field::FieldKey;
+use crate::{FieldKey, SourceLine};
 
 /// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -61,6 +63,61 @@ pub enum TaskStatus {
     Complete,
 }
 
+/// A list item's position: its 0-indexed nesting depth, 1-indexed source
+/// line, and its immediate parent's 1-indexed line, if nested.
+///
+/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
+/// degenerate input, not a real document, so a `usize` counter would spend
+/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
+)]
+pub(super) struct ListItemPosition {
+    depth: u8,
+    line: SourceLine,
+    parent: Option<SourceLine>,
+}
+
+impl ListItemPosition {
+    /// Creates a position from its source line, 0-indexed nesting depth, and
+    /// optional parent line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        line: SourceLine,
+        depth: u8,
+        parent: Option<SourceLine>,
+    ) -> Self {
+        Self {
+            depth,
+            line,
+            parent,
+        }
+    }
+
+    /// Returns the 0-indexed nesting level.
+    #[inline]
+    #[must_use]
+    pub(super) const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Returns the 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn line(&self) -> SourceLine {
+        self.line
+    }
+
+    /// Returns the immediate parent item's 1-indexed source line, if this
+    /// item is nested inside another item's child list.
+    #[inline]
+    #[must_use]
+    pub(super) const fn parent(&self) -> Option<SourceLine> {
+        self.parent
+    }
+}
+
 /// A Markdown list item with optional task state, child lists, and inline
 /// fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -69,9 +126,7 @@ pub struct ListItem {
     task_status: Option<TaskStatus>,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    depth: usize,
-    line: usize,
-    parent_line: Option<usize>,
+    position: ListItemPosition,
 }
 
 impl ListItem {
@@ -95,9 +150,7 @@ impl ListItem {
             task_status,
             children: Vec::new(),
             fields: IndexMap::new(),
-            depth: 0,
-            line: 0,
-            parent_line: None,
+            position: ListItemPosition::default(),
         }
     }
 
@@ -117,9 +170,7 @@ impl ListItem {
             task_status,
             children,
             fields: IndexMap::new(),
-            depth: 0,
-            line: 0,
-            parent_line: None,
+            position: ListItemPosition::default(),
         }
     }
 
@@ -201,24 +252,18 @@ impl ListItem {
         &self.fields
     }
 
-    /// Attaches source position (depth, line, parent line) computed by the
-    /// parser from Markdown byte offsets.
+    /// Attaches the source position (depth, line, parent line) computed by
+    /// the parser from Markdown byte offsets.
     ///
-    /// `line` and `parent_line` are 1-indexed source lines; `depth` is the
-    /// item's 0-indexed nesting level. Items built via [`Self::new`] or
-    /// [`Self::with_children`] default to `depth: 0`, `line: 0`,
-    /// `parent_line: None` until this is called.
+    /// Items built via [`Self::new`] or [`Self::with_children`] default to
+    /// [`ListItemPosition::default`] until this is called.
     #[inline]
     #[must_use]
-    pub(crate) const fn with_position(
+    pub(super) const fn with_position(
         mut self,
-        line: usize,
-        depth: usize,
-        parent_line: Option<usize>,
+        position: ListItemPosition,
     ) -> Self {
-        self.line = line;
-        self.depth = depth;
-        self.parent_line = parent_line;
+        self.position = position;
         self
     }
 
@@ -234,8 +279,8 @@ impl ListItem {
                       task-system issue"
         )
     )]
-    pub(crate) const fn depth(&self) -> usize {
-        self.depth
+    pub(crate) const fn depth(&self) -> u8 {
+        self.position.depth()
     }
 
     /// Returns the item's 1-indexed source line.
@@ -250,8 +295,8 @@ impl ListItem {
                       task-system issue"
         )
     )]
-    pub(crate) const fn line(&self) -> usize {
-        self.line
+    pub(crate) const fn line(&self) -> SourceLine {
+        self.position.line()
     }
 
     /// Returns the immediate parent list item's 1-indexed source line, if
@@ -267,8 +312,8 @@ impl ListItem {
                       task-system issue"
         )
     )]
-    pub(crate) const fn parent_line(&self) -> Option<usize> {
-        self.parent_line
+    pub(crate) const fn parent(&self) -> Option<SourceLine> {
+        self.position.parent()
     }
 }
 
@@ -336,17 +381,22 @@ mod tests {
     fn defaults_position_to_zero_and_no_parent() {
         let item = ListItem::new("item", None);
 
-        assert_eq!(item.line(), 0);
+        assert_eq!(item.line(), SourceLine::new(0));
         assert_eq!(item.depth(), 0);
-        assert_eq!(item.parent_line(), None);
+        assert_eq!(item.parent(), None);
     }
 
     #[test]
-    fn with_position_sets_line_depth_and_parent_line() {
-        let item = ListItem::new("item", None).with_position(3, 2, Some(1));
+    fn with_position_sets_line_depth_and_parent() {
+        let position = ListItemPosition::new(
+            SourceLine::new(3),
+            2,
+            Some(SourceLine::new(1)),
+        );
+        let item = ListItem::new("item", None).with_position(position);
 
-        assert_eq!(item.line(), 3);
+        assert_eq!(item.line(), SourceLine::new(3));
         assert_eq!(item.depth(), 2);
-        assert_eq!(item.parent_line(), Some(1));
+        assert_eq!(item.parent(), Some(SourceLine::new(1)));
     }
 }

@@ -14,7 +14,7 @@ use super::{
     address::{FieldAddress, FieldAddressRef},
     error::{SchemaFieldParserError, SchemaSelectFieldValueError},
 };
-use crate::field::FieldValue;
+use crate::FieldValue;
 
 /// Key extractor and error collector for schema field option tables.
 ///
@@ -143,7 +143,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// - [`TypeMismatch`] if `key` is present but the corresponding
     ///   [`FieldValue`] is not a [`FieldValue::String`].
     ///
-    /// [`FieldValue`]: crate::field::FieldValue
+    /// [`FieldValue`]: crate::FieldValue
     /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn string(
         &mut self,
@@ -183,7 +183,7 @@ impl<'a> SchemaFieldParser<'a> {
     ///   [`FieldValue`] is not a [`FieldValue::List`] containing exclusively
     ///   string values.
     ///
-    /// [`FieldValue`]: crate::field::FieldValue
+    /// [`FieldValue`]: crate::FieldValue
     /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn string_list(
         &mut self,
@@ -232,7 +232,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// - [`TypeMismatch`] if `key` is present but the corresponding
     ///   [`FieldValue`] cannot be converted to an `f64`.
     ///
-    /// [`FieldValue`]: crate::field::FieldValue
+    /// [`FieldValue`]: crate::FieldValue
     /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn f64(
         &mut self,

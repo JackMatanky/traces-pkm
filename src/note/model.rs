@@ -10,10 +10,7 @@ use super::{
     lists::{List, ListItem},
     metadata::{Frontmatter, NoteFieldValue},
 };
-use crate::{
-    field::{FieldKey, FieldKeyRef},
-    tag::Tag,
-};
+use crate::{FieldKey, FieldKeyRef, tag::Tag};
 
 /// A parsed Markdown note.
 ///

@@ -22,7 +22,7 @@ use super::{
     },
 };
 use crate::{
-    field::{FieldName, FieldNameError},
+    FieldName, FieldNameError,
     path::{PathError, RootConfinedPath, SafeRelativePath},
     tag::Tag,
     task::TaskStatusMap,

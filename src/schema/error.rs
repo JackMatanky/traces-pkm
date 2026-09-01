@@ -8,7 +8,7 @@ use std::{fmt, path::PathBuf};
 use thiserror::Error;
 
 use super::{SchemaName, fields::SchemaFieldBuilderError};
-use crate::field::FieldName;
+use crate::FieldName;
 
 /// Convenience alias for schema operations that may fail.
 pub(crate) type SchemaResult<T> = std::result::Result<T, SchemaError>;
@@ -47,7 +47,7 @@ pub(crate) enum SchemaError {
     Cycle {
         schemas: Vec<SchemaName>,
     },
-    /// Two effective fields share a [`FieldKey`](crate::field::FieldKey)
+    /// Two effective fields share a [`FieldKey`](crate::FieldKey)
     /// canonical form.
     #[error(
         "Schema {schema:?} has ambiguous fields {first:?} and {second:?}: \

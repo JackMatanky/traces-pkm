@@ -3,7 +3,7 @@
 use indexmap::{IndexMap, IndexSet};
 
 use super::{SchemaName, fields::SchemaFieldDef};
-use crate::field::{FieldName, closest_match};
+use crate::{FieldName, field::closest_match};
 
 /// A resolved Schema with its effective field definitions and position in the
 /// `extends` DAG.
@@ -124,10 +124,10 @@ impl Schema {
     /// `None` when no candidate matches or more than one field canonically
     /// matches.
     ///
-    /// [`FieldKey`]: crate::field::FieldKey
+    /// [`FieldKey`]: crate::FieldKey
     #[must_use]
     pub(crate) fn suggest_field(&self, field: &str) -> Option<&str> {
-        let input_key = crate::field::FieldKey::try_from(field).ok()?;
+        let input_key = crate::FieldKey::try_from(field).ok()?;
         let mut canonical_matches =
             self.fields.keys().filter(|name| input_key.is_match(name.as_str()));
         match (canonical_matches.next(), canonical_matches.next()) {

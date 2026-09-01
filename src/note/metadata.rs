@@ -9,7 +9,7 @@ use tracing::warn;
 use yaml_serde as serde_yaml;
 
 use super::Link;
-use crate::field::{FieldKey, FieldKeyRef};
+use crate::{FieldKey, FieldKeyRef};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///

@@ -26,8 +26,8 @@ impl<'a> QueryService<'a> {
     #[must_use]
     pub fn new<S: Into<String>>(class_field: S) -> Self {
         let class_field = class_field.into();
-        let class_field_canonical =
-            crate::field::FieldKey::try_new(&class_field).map_or_else(
+        let class_field_canonical = crate::FieldKey::try_new(&class_field)
+            .map_or_else(
                 |_| class_field.to_lowercase(),
                 |key| key.canonical().to_owned(),
             );
