@@ -65,10 +65,7 @@ impl FilterExpr {
     }
 
     /// Combines two filter expressions with logical AND, flattening nested
-    /// `And` nodes instead of nesting them nose-to-tail. Used by
-    /// [`super::super::request::QueryPlan::optimize`] to fuse consecutive
-    /// `--where` filters into one predicate pass instead of one
-    /// `Vec::retain` per flag.
+    /// `And` nodes.
     pub(crate) fn and(self, other: Self) -> Self {
         let mut children = match self.0 {
             BooleanExpr::And(children) => children,
@@ -109,9 +106,6 @@ impl FilterAtom {
 }
 
 /// A recognized filter function call.
-///
-/// Adding a function requires adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::is_matching`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FilterFunction {
     /// `contains(field, target)`.
@@ -202,7 +196,7 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Returns whether a field value satisfies this operator against a literal.
+    /// Evaluates this operator against a field value and literal.
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,

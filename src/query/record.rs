@@ -477,7 +477,7 @@ impl QueryRecordSet {
         self.format(&QueryDisplayFormat::task_list())
     }
 
-    /// Formats this record set for display.
+    /// Renders records using the given display format.
     ///
     /// # Errors
     ///

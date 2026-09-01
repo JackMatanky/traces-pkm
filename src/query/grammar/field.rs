@@ -108,11 +108,8 @@ impl TaskField {
     pub(super) const ACCESSOR_NAMES: &'static [&'static str] =
         &["completed", "text"];
 
-    /// Parses the field portion of a `task.<field>` accessor string.
-    ///
-    /// Returns `None` if `name` is not a recognized accessor name, allowing
-    /// the caller to retain the full `task.<field>` path for a
-    /// [`FieldPathError`].
+    /// Parses the field portion of a `task.<field>` accessor string, returning
+    /// `None` for unknown names.
     ///
     /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(super) fn parse(name: &str) -> Option<Self> {
@@ -158,7 +155,6 @@ pub(crate) enum FieldPath {
 impl FieldPath {
     /// Parses a query field path string into a [`FieldPath`].
     ///
-    /// Resolves `path` to one of the supported accessors or a metadata key.
     /// Leading and trailing whitespace is trimmed.
     ///
     /// # Errors
@@ -237,12 +233,8 @@ fn accessor_typo_error(
     )
 }
 
-/// Finds the accessor name with the smallest edit distance to `input`.
-///
-/// Delegates to [`crate::field::closest_match`] for the matching threshold
-/// calculation. Returns `Some(&'static str)` when the closest candidate falls
-/// within the threshold, or `None` when no candidate is close enough or
-/// `candidates` is empty.
+/// Finds the accessor name closest to `input` within the edit-distance
+/// threshold.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,

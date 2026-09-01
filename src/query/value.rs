@@ -23,8 +23,6 @@ pub(super) enum QueryFieldValueRef<'a> {
 }
 
 impl QueryFieldValueRef<'_> {
-    // -- resolution --
-
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -41,8 +39,6 @@ impl QueryFieldValueRef<'_> {
             Self::Owned(value) => value.clone(),
         }
     }
-
-    // -- display --
 
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
@@ -94,8 +90,6 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
-    // -- comparison --
-
     /// Compares this resolved field against an owned literal to establish
     /// ordering for `<`, `<=`, `>`, `>=` filter comparisons.
     pub(super) fn compare_to_literal(
@@ -120,8 +114,8 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
-    /// Returns whether this resolved field equals an owned literal under
-    /// filter comparison rules (`==`, `!=`).
+    /// Returns whether this resolved field equals an owned literal under filter
+    /// comparison rules (`==`, `!=`).
     #[expect(
         clippy::float_cmp,
         reason = "query numeric equality intentionally uses exact parsed \
@@ -151,8 +145,6 @@ impl QueryFieldValueRef<'_> {
             }
         }
     }
-
-    // -- contains --
 
     /// Evaluates a `contains(field_val, target)` call.
     ///
@@ -199,8 +191,6 @@ pub(super) enum QueryListValueRef<'a> {
 }
 
 impl QueryListValueRef<'_> {
-    // -- display --
-
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
             Self::Values(values) => {
@@ -216,8 +206,6 @@ impl QueryListValueRef<'_> {
             }
         }
     }
-
-    // -- resolution --
 
     fn to_owned_value(&self) -> NoteFieldValue {
         match self {
@@ -342,10 +330,6 @@ fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use std::cmp::Ordering;
@@ -353,8 +337,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    // -- compare_to_literal --
 
     #[test]
     fn compare_number_greater() {
@@ -391,8 +373,6 @@ mod tests {
             Some(Ordering::Equal)
         );
     }
-
-    // -- is_equal_to_literal --
 
     #[test]
     fn equal_null_null() {
@@ -466,8 +446,6 @@ mod tests {
         assert!(list.is_containing(&NoteFieldValue::String("a".into())));
     }
 
-    // -- append_text --
-
     #[test]
     fn append_text_null() {
         let mut out = String::new();
@@ -495,8 +473,6 @@ mod tests {
         QueryFieldValueRef::Text("hello").append_text(&mut out);
         assert_eq!(out, "hello");
     }
-
-    // -- fields_equal --
 
     #[test]
     fn fields_equal_same_values() {

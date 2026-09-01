@@ -26,10 +26,6 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
 ///
-/// Mirrors `ConfigService`/`SchemaService`: a fixed-configuration service
-/// (here, the project root) with methods that read or write against it, rather
-/// than a bare `root: &Path` parameter repeated at every call site.
-///
 /// # Lifecycle
 ///
 /// 1. Build a fresh in-memory index: [`Self::build`]
@@ -42,15 +38,6 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 ///
 /// All methods return `IndexError`. [`Self::refresh`] also logs a
 /// `tracing::warn!` on persist failure without propagating it.
-///
-/// # Examples
-///
-/// ```ignore
-/// # use traces_pkm::index::IndexerService;
-/// let indexer = IndexerService::new("/path/to/project");
-/// let index = indexer.build().expect("build index");
-/// indexer.persist(&index).expect("persist index");
-/// ```
 
 #[derive(Clone, Debug)]
 pub struct IndexerService {
@@ -69,9 +56,6 @@ impl IndexerService {
 
     /// Scans this service's root and builds a [`FileIndex`] in memory.
     ///
-    /// Markdown files are parsed into [`crate::note::Note`] records. The index
-    /// is not persisted until [`Self::persist`] is called.
-    ///
     /// # Errors
     ///
     /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
@@ -85,13 +69,9 @@ impl IndexerService {
     /// Refreshes the persisted index for this service's root against current
     /// filesystem state, persisting the fresh result before returning
     /// (best-effort: a persist failure is logged via `tracing::warn!` and does
-    /// not fail this call). Callers do not need to call [`Self::persist`]
-    /// separately after `refresh`; it remains available for persisting a
-    /// [`FileIndex`] built via [`Self::build`] instead.
+    /// not fail this call).
     ///
-    /// Re-scans the root and compares each current file's `(created_at,
-    /// modified_at, size)` tuple against the previously persisted
-    /// [`crate::file::FileBase`]:
+    /// Re-scans the root and diffs against the previously persisted index:
     ///
     /// - Unchanged markdown Notes reuse their parsed [`crate::note::Note`].
     /// - Added or changed markdown Notes are parsed from disk.
@@ -133,11 +113,7 @@ impl IndexerService {
         Ok(index)
     }
 
-    /// Persists `index` to this service's root, replacing any existing index
-    /// contents.
-    ///
-    /// [`crate::file::FileBase`], [`crate::note::Note`], and derived inlink
-    /// records are all written atomically.
+    /// Persists `index` to this service's root, replacing any existing index.
     ///
     /// # Errors
     ///
@@ -148,9 +124,8 @@ impl IndexerService {
         IndexStore::open(&self.root)?.persist_index(index)
     }
 
-    /// Loads the index previously persisted for this service's root.
-    ///
-    /// Returns an empty [`FileIndex`] if no index has been persisted yet.
+    /// Loads the index previously persisted for this service's root, or an
+    /// empty [`FileIndex`] if none exists.
     ///
     /// # Errors
     ///
@@ -174,14 +149,8 @@ impl IndexerService {
         ))
     }
 
-    /// Recursively scans this service's root for regular files and returns
-    /// records sorted by project-relative path.
-    ///
-    /// Skips `.git` directories (and their descendants), the index database
-    /// itself, and symlinks.
-    ///
-    /// The sorted output is a precondition for the merge-join reconciliation in
-    /// [`builder::IndexBuilder`].
+    /// Recursively scans this service's root for regular files, skipping `.git`
+    /// directories, the index database, and symlinks.
     ///
     /// # Errors
     ///

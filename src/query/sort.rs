@@ -6,8 +6,7 @@ use crate::note::NoteFieldValue;
 
 /// Sort direction for sorting operations and CLI configuration.
 ///
-/// The CLI commands use this type directly as a [`clap::ValueEnum`], enabling
-/// `--order` to accept `asc` or `desc` directly.
+/// Parsed by CLI as `--order {asc,desc}`.
 ///
 /// # Examples
 ///

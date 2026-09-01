@@ -62,7 +62,7 @@ pub use service::IndexerService;
 
 pub(crate) use crate::file::FileFormat;
 
-/// Database filename relative to the project root.
+/// Project-relative path to the index database.
 ///
 /// Stored at `.traces/index.redb`. Callers should use [`IndexerService`]
 /// methods instead of opening this path directly.

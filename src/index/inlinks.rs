@@ -1,9 +1,6 @@
 //! Derived inbound links computed from indexed outlinks.
 //!
-//! [`derive_inlinks`] runs as a full recompute over every indexed [`Note`],
-//! never a per-note patch, because resolving one Note's outlink can depend on
-//! every *other* indexed Note (see [`LinkResolver::resolve`]'s stem-matching
-//! tier).
+//! [`derive_inlinks`] runs as a full recompute over every indexed [`Note`].
 //!
 //! - [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
 //!   (when something changed) call this once and persist the result.
@@ -20,9 +17,8 @@ use crate::{
     note::{LinkTarget, Note},
 };
 
-/// Target-keyed inbound link edges: maps every [`Note`] path to the paths of
-/// every [`Note`] whose outlinks resolve to it. Returned by [`derive_inlinks`];
-/// persisted and reloaded by [`super::store`].
+/// Target-keyed inbound link edges: maps each [`Note`] path to the paths of
+/// every [`Note`] linking to it.
 pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
 /// Derives inbound links for every indexed [`Note`] from its peers' outlinks.
@@ -33,18 +29,16 @@ pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// to non-Notes, or links with no matching [`Note`]) contribute no edge.
 ///
 /// Duplicate outlinks to the same target within one Note, and self-links,
-/// collapse to a single edge rather than duplicating or otherwise corrupting
-/// the result: edges are deduplicated `(target, source)` pairs.
+/// collapse to a single edge.
 ///
 /// # Performance
 ///
 /// - O(n) to build the stem index once (see `LinkResolver::new`).
 /// - O(l log n) total for l outlinks: exact-path resolution binary-searches the
-///   path-sorted slice `notes` (already sorted by [`IndexerService`]'s
-///   [`build`]/[`refresh`]/[`load`]).
-/// - The wikilink-by-name fallback tier looks its stem up in the index in O(1)
-///   average time, then scans only that stem's candidates (not all of `notes`)
-///   to break ties by proximity.
+///   path-sorted slice `notes`.
+/// - The wikilink-by-name fallback tier looks its stem up in the index in O(1),
+///   then scans only that stem's candidates (not all of `notes`) to break ties
+///   by proximity.
 ///
 /// [`IndexerService`]: super::IndexerService
 /// [`build`]: super::IndexerService::build
@@ -75,17 +69,14 @@ pub fn derive_inlinks(notes: &[&Note]) -> InlinkMap {
         .collect()
 }
 
-/// Snapshot of indexed Notes plus a precomputed file-stem index, built once per
-/// [`derive_inlinks`] call and reused across every outlink resolution in that
-/// call.
+/// Index of [`Note`]s and their file stems, used during link resolution.
 struct LinkResolver<'a, 'b> {
     notes: &'b [&'a Note],
     stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
 }
 
 impl<'a, 'b> LinkResolver<'a, 'b> {
-    /// Builds the resolver, indexing every Note's file stem in one O(n)
-    /// pass.
+    /// Builds the resolver, indexing every Note's file stem in one O(n) pass.
     fn new(notes: &'b [&'a Note]) -> Self {
         let mut stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>> =
             HashMap::with_capacity(notes.len());
@@ -179,12 +170,7 @@ impl<'a, 'b> LinkResolver<'a, 'b> {
     }
 }
 
-/// A resolved link target: the path of the Note an outlink points to.
-///
-/// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
-/// accidentally record an edge in the wrong direction: both wrap the same
-/// `&Path` representation, so nothing but the type system would catch a swapped
-/// `edges.entry(source).or_default().insert(target)`.
+/// A resolved link target: the path of the [`Note`] an outlink points to.
 ///
 /// [`derive_inlinks`]: fn@derive_inlinks
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -196,9 +182,7 @@ impl Target<'_> {
     }
 }
 
-/// A Note that links *to* a [`Target`]: the path recorded as an inbound edge.
-///
-/// See [`Target`] for why this is a separate type.
+/// A [`Note`] that links to a [`Target`]: the path recorded as an inbound edge.
 ///
 /// [`Target`]: struct@Target
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -211,10 +195,6 @@ impl Source<'_> {
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.
-///
-/// Private to this module: [`LinkResolver::resolve`] needs the same search
-/// over a `&[&Note]` slice while resolving link targets during
-/// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
 fn find_by_path<'a>(notes: &[&'a Note], path: &Path) -> Option<&'a Note> {
     notes
         .binary_search_by(|note| note.path().cmp(path))
@@ -230,12 +210,6 @@ fn find_by_path<'a>(notes: &[&'a Note], path: &Path) -> Option<&'a Note> {
 /// then back down to `b`'s folder; files in the same folder are distance `0`.
 /// This is [`LinkResolver::nearest_by_stem`]'s proximity tie-break for
 /// ambiguous wikilink stem matches.
-///
-/// Reads folder placement from each Note's own `path()` rather than
-/// [`crate::file::FileBase`]'s precomputed `folder`/`name` fields, because this
-/// resolution pass only needs `&[Note]` and pulling in a second sorted
-/// collection for folder data that `Note::path()` already provides would be
-/// redundant.
 ///
 /// [`LinkResolver::nearest_by_stem`]: LinkResolver::nearest_by_stem
 fn folder_distance(a: &Path, b: &Path) -> usize {

@@ -115,16 +115,8 @@ impl QueryPlan {
         self.steps.push(transform);
     }
 
-    /// Fuses consecutive `Filter` steps into one (AND is commutative and
-    /// associative, so any run of adjacent filters can always fuse
-    /// regardless of what surrounds it), then rewrites an adjacent `Sort`
-    /// immediately followed by `Limit(n)` into a single `TopK` step:
-    /// partition-select the `n` smallest/largest records in O(records), then
-    /// sort only the `n` survivors — cheaper than a full O(records · log
-    /// records) sort when `n` is small relative to the record count. A
-    /// `Filter`/`Flatten`/`GroupBy` between `Sort` and `Limit` blocks that
-    /// fusion: an intervening step can change which records are still in
-    /// play, so fusing across it would be incorrect.
+    /// Fuses consecutive `Filter` steps into one and rewrites adjacent
+    /// `Sort`+`Limit(n)` into a `TopK` step.
     #[must_use]
     pub(super) fn optimize(mut self) -> Self {
         let mut optimized = Vec::with_capacity(self.steps.len());

@@ -1,9 +1,7 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`IndexError`] is the unified type every fallible `index` operation returns.
-//! It wraps persistence failures ([`DbError`]) and build-pipeline failures
-//! ([`IndexBuilderError`]) via `#[error(transparent)]`, delegating `Display`
-//! and `source()` entirely to whichever inner error occurred.
+//! [`IndexError`] wraps persistence failures ([`DbError`]) and build-pipeline
+//! failures ([`IndexBuilderError`]).
 
 use std::{io, path::PathBuf};
 
@@ -15,12 +13,7 @@ pub type DbResult<T> = std::result::Result<T, DbError>;
 /// Convenience alias for high-level index operations.
 pub type IndexResult<T> = std::result::Result<T, IndexError>;
 
-/// Error type for [`super::FileIndex`] operations: build, persist, load, and
-/// refresh.
-///
-/// Every fallible `index` operation converts into this type via `?`. A thin
-/// `#[error(transparent)]` wrapper that delegates `Display` and `source()`
-/// entirely to whichever inner error actually occurred.
+/// Error type for [`super::FileIndex`] operations.
 #[derive(Debug, Error)]
 pub enum IndexError {
     /// Database access or record (de)serialization failed.
@@ -33,10 +26,7 @@ pub enum IndexError {
 
 /// Generic error type for low-level redb persistence operations.
 ///
-/// Wraps filesystem I/O, redb database access, and postcard
-/// (de)serialization failures. [`super::IndexerService`] never exposes
-/// these directly; callers see [`IndexError`], which delegates to
-/// [`DbError`] or [`IndexBuilderError`].
+/// Wraps filesystem I/O, redb database access, and serialization failures.
 #[derive(Debug, Error)]
 pub enum DbError {
     /// A filesystem operation failed.
@@ -49,8 +39,6 @@ pub enum DbError {
         source: io::Error,
     },
     /// Opening, reading, or writing the redb-backed database failed.
-    ///
-    /// `redb::Error` is boxed to keep this enum small.
     #[error("failed to access the database at {path}")]
     Redb {
         /// The database file path.
@@ -79,12 +67,7 @@ pub enum DbError {
     },
 }
 
-/// Error type for the [`super::builder::IndexBuilder`] build pipeline:
-/// filesystem scan, markdown parse, and refresh reconciliation.
-///
-/// [`super::IndexerService::refresh`] converts these into [`IndexError`]
-/// via `?`; callers see [`IndexError::Builder`], not the raw
-/// `IndexBuilderError`.
+/// Error type for the [`super::builder::IndexBuilder`] build pipeline.
 #[derive(Debug, Error)]
 pub enum IndexBuilderError {
     /// Filesystem error during directory scan or file metadata read.
@@ -107,11 +90,6 @@ pub enum IndexBuilderError {
     },
     /// Record metadata matched the previous index, but the corresponding note
     /// was absent from the persisted index during point-lookup recall.
-    ///
-    /// Indicates a logic bug in the reconciliation pipeline: the record's
-    /// metadata said "unchanged", so the builder tried to reuse its note via
-    /// [`super::store::IndexStore::read_note`], but no note was persisted at
-    /// that path.
     #[error("note missing for record at {path}")]
     MissingNote {
         /// The record path whose expected note was absent.
@@ -119,12 +97,6 @@ pub enum IndexBuilderError {
     },
     /// A previously-persisted [`crate::note::Note`] could not be read via a
     /// point lookup during refresh reconciliation.
-    ///
-    /// `source` is boxed: it breaks the size cycle this variant otherwise
-    /// creates ([`IndexError::Builder`] holds a plain, unboxed
-    /// `IndexBuilderError`), and it matches
-    /// [`super::store::IndexStore::read_note`]'s own return type, so callers
-    /// forward its error unchanged instead of re-wrapping it.
     #[error("failed to read persisted note for {path}")]
     NoteLookup {
         /// The path whose previous Note lookup failed.

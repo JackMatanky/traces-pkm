@@ -4,13 +4,6 @@
 //! schema (`FILES`, `NOTES`, `LINKS` tables). Callers use
 //! [`super::IndexerService`] methods instead of interacting with tables
 //! directly.
-//!
-//! Values are stored as raw `&[u8]` rather than through a `redb::Value`
-//! wrapper: `redb::Value::from_bytes` is infallible, so a corrupted row's
-//! decode failure would surface as a panic. This crate denies
-//! `clippy::panic`/`unwrap_used`/`expect_used`, so
-//! [`encode_row`]/[`decode_row`] do the explicit [`DbError`] wrap at each
-//! read/write site instead.
 
 use std::{
     collections::HashMap,
@@ -40,38 +33,34 @@ use crate::{file::FileBase, note::Note};
 /// Stores [`FileBase`] records for every regular file under the project root.
 ///
 /// Key: project-relative path as UTF-8 bytes
-/// Value: postcard-encoded [`FileBase`]
+/// Value: serialized [`FileBase`]
 const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("files");
 
 /// Parsed note metadata table.
 ///
 /// Stores [`Note`] records for every Markdown file under the project root.
-/// Non-Markdown files have no entry here.
 ///
 /// Key: project-relative path as UTF-8 bytes
-/// Value: postcard-encoded [`Note`]
+/// Value: serialized [`Note`]
 const NOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("notes");
 
 /// Inbound link multimap table.
 ///
 /// Maps each note to every other note whose outlinks resolve to it. See
-/// [`super::inlinks`]. Written via [`IndexStore::write_all`] (full rewrite)
-/// or [`IndexStore::persist_index`]'s incremental path, which patches only
-/// [`super::delta::IndexDelta::Incremental`]'s changed targets.
+/// [`super::inlinks`].
 ///
 /// Key: target note path as UTF-8 bytes
 /// Value: one source note path per entry
 const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("links");
 
-/// Atomically read snapshot of persisted [`FileBase`] and [`Note`] records
-/// (sorted by path) plus derived inlink edges (target-keyed, unordered).
+/// Persisted snapshot of [`FileBase`]s, [`Note`]s (sorted by path), and
+/// inbound link edges (target-keyed, unordered).
 pub(super) type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
 
 /// One raw `LINKS` multimap-table iterator entry: a target key's `AccessGuard`
 /// paired with its source-set `MultimapValue`, or the `redb::StorageError`
-/// reading it failed with. Named to satisfy `clippy::type_complexity`; used
-/// only by [`IndexStore::process_link_entry`].
+/// reading it failed with.
 type LinkEntry<'a> = Result<
     (
         redb::AccessGuard<'a, &'static [u8]>,
@@ -82,18 +71,10 @@ type LinkEntry<'a> = Result<
 
 /// One resolved `LINKS` row: a target path and its surviving source paths, or
 /// `None` when the target resolved to no loaded note or all its sources
-/// dropped. Named to satisfy `clippy::type_complexity`; the return of
-/// [`IndexStore::process_link_entry`].
+/// dropped.
 type ResolvedLink = Option<(PathBuf, Vec<PathBuf>)>;
 
 /// Redb-backed handle to one project root's index database.
-///
-/// Owns one redb connection under a project root and the generic table
-/// store/load mechanics every domain module builds its own table-specific
-/// persistence on top of. Table definitions and their read/write semantics stay
-/// with the domain that owns them (this module owns File/Note/Inlink tables);
-/// this struct owns only open-the-file, run-a-transaction,
-/// serialize/deserialize-a-value mechanics with no domain knowledge.
 ///
 /// Created by [`Self::open`]. Callers interact through [`IndexerService`]
 /// methods, not directly.
@@ -199,10 +180,8 @@ impl IndexStore {
         Ok(false)
     }
 
-    /// Schema drift or structural corruption this store recovers from by wiping
-    /// and rebuilding, deliberately narrower than "any unexpected
-    /// `TableError`": an unrelated I/O failure should propagate, not trigger a
-    /// destructive wipe that won't fix it.
+    /// Returns `true` for schema drift or structural corruption that warrants
+    /// a wipe-and-rebuild.
     fn is_rebuild_trigger(error: &redb::TableError) -> bool {
         matches!(
             error,
@@ -264,11 +243,7 @@ impl IndexStore {
     }
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
-    /// derived inlink edge (target-keyed, unordered). LINKS are correlated
-    /// against the loaded notes: each stored edge's raw target/source bytes
-    /// are matched to the loaded [`Note::path`] with the same bytes and
-    /// cloned from it, never rebuilt from the stored bytes; edges whose
-    /// endpoints are not among the loaded notes (stale/orphaned) are dropped.
+    /// derived inlink edge. Stale or orphaned edges are dropped.
     ///
     /// # Errors
     ///
@@ -293,18 +268,10 @@ impl IndexStore {
     }
 
     /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge,
-    /// without touching `NOTES`, the comparatively heavy per-note table.
-    /// [`super::IndexerService::refresh`] uses this instead of
-    /// [`Self::read_all`] so unchanged Notes are recalled lazily via
-    /// [`Self::read_note`] instead of every persisted Note being deserialized
-    /// upfront regardless of whether it changed. Takes the caller's own
-    /// read transaction rather than opening one via [`Self::begin_read`] so
-    /// [`super::cache::RefreshCache::load`] can share one transaction
-    /// with the point lookups it backs. Keeps byte-reconstruction of link
-    /// paths deliberately: correlating against loaded notes (as
-    /// [`Self::read_all`] does) would require loading the `NOTES` table this
-    /// exists to avoid, and its links only feed the refresh diff, never
-    /// query output.
+    /// without loading the `NOTES` table.
+    ///
+    /// Used by [`super::IndexerService::refresh`] for lazy per-note recall via
+    /// [`Self::read_note`].
     ///
     /// # Errors
     ///
@@ -320,12 +287,9 @@ impl IndexStore {
         Ok((files, links))
     }
 
-    /// Reads and deserializes exactly one [`Note`] from the `NOTES` table by
-    /// path, without loading any other row; the point-lookup redb's zero-copy
-    /// `AccessGuard` is designed for, used by
-    /// [`super::cache::RefreshCache::reconcile_note`] to recall an
-    /// unchanged Note's previous value without deserializing every persisted
-    /// Note upfront.
+    /// Reads exactly one [`Note`] by path, used by
+    /// [`super::cache::RefreshCache::reconcile_note`] to recall an unchanged
+    /// Note.
     ///
     /// # Errors
     ///
@@ -357,8 +321,7 @@ impl IndexStore {
     /// `resolve` maps a stored key/value's raw bytes to the authoritative path
     /// to use, or `None` to drop it. A target that resolves to `None` drops its
     /// whole edge set; a source that resolves to `None` is skipped; an entry
-    /// left with no surviving sources is omitted entirely ([`super::inlinks`]
-    /// never emits an empty source set, so one must not round-trip either).
+    /// left with no surviving sources is omitted entirely.
     ///
     /// # Errors
     ///
@@ -391,9 +354,7 @@ impl IndexStore {
 
     /// Extracts one `target -> sources` row from a `LINKS` multimap iterator
     /// entry, resolving raw bytes through `resolve`. Returns `None` when the
-    /// target resolves to no path or when every source dropped. Split from
-    /// [`Self::read_links`]'s loop body to reduce that function's stack frame
-    /// (`clippy::large_stack_frames`).
+    /// target resolves to no path or when every source dropped.
     fn process_link_entry(
         &self,
         entry: LinkEntry<'_>,
@@ -411,8 +372,8 @@ impl IndexStore {
         Ok(Some((target, sources)))
     }
 
-    /// Drains one target's `MultimapValue` iterator of source paths, skipping
-    /// any whose bytes `resolve` maps to `None`.
+    /// Collects source paths from a `MultimapValue` iterator, skipping
+    /// unresolvable entries.
     fn collect_sources(
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
@@ -456,9 +417,8 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Serializes every entry's inbound-link edges into the `links`
-    /// multimap table, iterating `entries` directly instead of a separately
-    /// materialized map.
+    /// Writes every [`FileEntry`]'s inbound-link edges into the `links`
+    /// multimap table.
     ///
     /// # Errors
     ///
@@ -489,10 +449,6 @@ impl IndexStore {
 
     /// Atomically replaces every stored [`FileBase`], [`Note`], and derived
     /// inlink edge.
-    ///
-    /// All three redb tables are cleared and rewritten in one write
-    /// transaction, so readers never observe one table refreshed while another
-    /// remains stale.
     ///
     /// # Errors
     ///
@@ -527,9 +483,8 @@ impl IndexStore {
     }
 
     /// Persists `index`, choosing a full [`Self::write_all`] rewrite when its
-    /// delta is [`IndexDelta::Full`] (no previous state to diff against), or a
-    /// row-level incremental write for [`IndexDelta::Incremental`]'s changed
-    /// paths only.
+    /// delta is [`IndexDelta::Full`], or a row-level incremental write for
+    /// [`IndexDelta::Incremental`]'s changed paths only.
     ///
     /// # Errors
     ///
@@ -548,9 +503,7 @@ impl IndexStore {
     /// Row-level incremental write for [`IndexDelta::Incremental`].
     ///
     /// Falls back to [`Self::write_all`] if `index`'s delta turns out to be
-    /// [`IndexDelta::Full`], defensive only; every caller routes through
-    /// [`Self::persist_index`], which never reaches this branch for a full
-    /// delta.
+    /// [`IndexDelta::Full`].
     ///
     /// [`IndexDelta::Full`]: super::delta::IndexDelta::Full
     /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
@@ -585,8 +538,7 @@ impl IndexStore {
     }
 
     /// Deletes `deleted` paths from `FILES`/`NOTES`, then upserts each
-    /// `upserted` path's current [`FileBase`] (and [`Note`], if present) by
-    /// binary-searching `index`'s path-sorted entries.
+    /// `upserted` path's current [`FileBase`] and [`Note`] (if present).
     fn upsert_files_and_notes(
         &self,
         write_txn: &WriteTransaction,
@@ -626,8 +578,6 @@ impl IndexStore {
     }
 
     /// Serializes `value` and upserts it into `table` at `path`.
-    /// Shared by [`Self::upsert_files_and_notes`] for both the `FILES` and
-    /// `NOTES` tables, which share the same key/value shape.
     fn upsert_row<T: Serialize>(
         &self,
         table: &mut redb::Table<'_, &[u8], &[u8]>,
@@ -665,8 +615,7 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Rewrites one target's full source set in `links` from `index`'s
-    /// entries, replacing whatever was previously stored for it.
+    /// Rewrites one target's source set in `links` from `index`'s entries.
     fn upsert_link_target(
         &self,
         links: &mut redb::MultimapTable<'_, &[u8], &[u8]>,

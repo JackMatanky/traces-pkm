@@ -20,9 +20,9 @@ use crate::{file::FileBase, note::parse_markdown};
 /// Build plan for a [`super::FileIndex`].
 ///
 /// Holds an already-scanned set of records and an optional [`RefreshCache`].
-/// All heavy work happens in [`Self::build`]: note parsing, sorting, and inlink
-/// derivation. Scanning itself lives in [`super::IndexerService::scan`];
-/// `IndexBuilder` performs data assembly without I/O.
+/// Note parsing, sorting, and inlink derivation run in [`Self::build`].
+/// Scanning lives in [`super::IndexerService::scan`]; `IndexBuilder` performs
+/// data assembly without I/O.
 ///
 /// # Invariants
 ///
@@ -39,9 +39,9 @@ use crate::{file::FileBase, note::parse_markdown};
 /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
 pub(crate) struct IndexBuilder<'a> {
     files: Vec<FileBase>,
-    /// `None` = fresh build (parse all notes at build time).
+    /// `None` = fresh build (parse all notes).
     /// `Some(cache)` = refresh (reuse `cache`'s previously-persisted state
-    /// for unchanged records, parse only changed ones at build time).
+    /// for unchanged records, parse only changed ones).
     cache: Option<Box<RefreshCache<'a>>>,
 }
 
