@@ -26,7 +26,9 @@ use pulldown_cmark::{
 
 use super::{
     Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter,
-    TaskStatus, lexer,
+    TaskStatus,
+    byte_tracker::{ByteOffset, ByteTracker, SourceLine},
+    lexer,
 };
 use crate::{field::FieldKey, tag::Tag};
 
@@ -61,7 +63,7 @@ pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
 
     let mut ctx = ParserContext::new(src);
     for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
-        ctx.handle_event(event, range.start);
+        ctx.handle_event(event, ByteOffset::from(range.start));
     }
     ctx.into_note(path)
 }
@@ -96,7 +98,7 @@ struct ParserContext {
     tags: Vec<Tag>,
     /// Precomputed line-start offsets for the source being parsed, used to
     /// populate [`ListItem`]'s `line`/`parent_line` position fields.
-    line_tracker: LineTracker,
+    line_tracker: ByteTracker,
 }
 
 impl ParserContext {
@@ -115,7 +117,7 @@ impl ParserContext {
             body_buffer: String::new(),
             inline_fields: IndexMap::new(),
             tags: Vec::new(),
-            line_tracker: LineTracker::new(source),
+            line_tracker: ByteTracker::new(source),
         }
     }
 
@@ -123,7 +125,7 @@ impl ParserContext {
     ///
     /// `offset` is the event's starting byte offset, used only by
     /// [`Self::start_item`] to resolve the item's source line.
-    fn handle_event(&mut self, event: Event<'_>, offset: usize) {
+    fn handle_event(&mut self, event: Event<'_>, offset: ByteOffset) {
         match event {
             Event::Start(CmarkTag::MetadataBlock(_)) => {
                 self.start_metadata_block();
@@ -293,8 +295,8 @@ impl ParserContext {
     }
 
     /// Computes the item's source line from `offset` and starts tracking it.
-    fn start_item(&mut self, offset: usize) {
-        let line = self.line_tracker.line_for(offset);
+    fn start_item(&mut self, offset: ByteOffset) {
+        let line = self.line_tracker.byte_to_line(offset);
         self.list_nesting.start_item(line);
     }
 
@@ -356,40 +358,6 @@ impl ParserContext {
         if self.block == BlockContext::Text {
             self.body_buffer.push(ch);
         }
-    }
-}
-
-/// Converts UTF-8 byte offsets into 1-indexed source line numbers.
-///
-/// Precomputes line-start byte offsets once per document; each conversion is
-/// an O(log n) binary search over them via [`slice::partition_point`].
-struct LineTracker {
-    /// Byte offset of the first character of each line, ascending; always
-    /// starts with `0` for line 1.
-    line_starts: Vec<usize>,
-}
-
-impl LineTracker {
-    /// Precomputes line-start offsets for `source`.
-    #[inline]
-    #[must_use]
-    fn new(source: &str) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(
-            source
-                .match_indices('\n')
-                .map(|(offset, _)| offset.saturating_add(1)),
-        );
-        Self {
-            line_starts,
-        }
-    }
-
-    /// Converts a byte offset into its 1-indexed source line.
-    #[inline]
-    #[must_use]
-    fn line_for(&self, offset: usize) -> usize {
-        self.line_starts.partition_point(|&start| start <= offset)
     }
 }
 
@@ -519,7 +487,7 @@ impl ListTracker {
     /// `depth` is the number of currently open lists (0-indexed); `parent`
     /// is the innermost active item's line, if this item is nested inside
     /// another item's child list.
-    fn start_item(&mut self, line: usize) {
+    fn start_item(&mut self, line: SourceLine) {
         let depth = self.list_stack.len().saturating_sub(1);
         let parent_line = self.item_stack.last().map(|item| item.line);
         self.item_stack.push(ItemFrame {
@@ -624,12 +592,12 @@ struct ItemFrame {
     fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     children: Vec<List>,
     /// This item's 1-indexed source line.
-    line: usize,
+    line: SourceLine,
     /// This item's 0-indexed nesting level.
     depth: usize,
     /// The immediate parent item's source line, if nested inside another
     /// item's child list.
-    parent_line: Option<usize>,
+    parent_line: Option<SourceLine>,
 }
 
 impl ItemFrame {
@@ -887,7 +855,7 @@ mod tests {
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("parent item");
-            assert_eq!(parent.line(), 1);
+            assert_eq!(parent.line(), SourceLine::new(1));
             assert_eq!(parent.depth(), 0);
             assert_eq!(parent.parent_line(), None);
 
@@ -896,18 +864,18 @@ mod tests {
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("child item");
-            assert_eq!(child.line(), 2);
+            assert_eq!(child.line(), SourceLine::new(2));
             assert_eq!(child.depth(), 1);
-            assert_eq!(child.parent_line(), Some(1));
+            assert_eq!(child.parent_line(), Some(SourceLine::new(1)));
 
             let grandchild = child
                 .children()
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("grandchild item");
-            assert_eq!(grandchild.line(), 3);
+            assert_eq!(grandchild.line(), SourceLine::new(3));
             assert_eq!(grandchild.depth(), 2);
-            assert_eq!(grandchild.parent_line(), Some(2));
+            assert_eq!(grandchild.parent_line(), Some(SourceLine::new(2)));
         }
 
         #[test]
@@ -917,7 +885,7 @@ mod tests {
 
             let list = note.lists().first().expect("list present");
             let sibling = list.items().get(1).expect("sibling item");
-            assert_eq!(sibling.line(), 3);
+            assert_eq!(sibling.line(), SourceLine::new(3));
             assert_eq!(sibling.depth(), 0);
             assert_eq!(sibling.parent_line(), None);
         }
@@ -1071,7 +1039,7 @@ mod tests {
             assert!(!tracker.is_item_active());
 
             tracker.start_list(false);
-            tracker.start_item(1);
+            tracker.start_item(SourceLine::new(1));
 
             assert!(
                 tracker.is_item_active(),
@@ -1083,9 +1051,9 @@ mod tests {
         fn inline_code_pushes_to_last_item_not_first() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(1);
+            tracker.start_item(SourceLine::new(1));
             tracker.push_text("before ", false);
-            tracker.start_item(2);
+            tracker.start_item(SourceLine::new(2));
 
             tracker.inline_code("code");
 
@@ -1131,7 +1099,7 @@ mod tests {
         fn start_nested_text_block_returns_true_with_active_item() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(1);
+            tracker.start_item(SourceLine::new(1));
             assert!(
                 tracker.start_nested_text_block(),
                 "start_nested_text_block must return true with active item"
@@ -1142,7 +1110,7 @@ mod tests {
         fn start_list_flushes_active_item_scan_buffer() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(1);
+            tracker.start_item(SourceLine::new(1));
             tracker.push_text("Status:: Draft", false);
 
             let flushed = tracker.start_list(false);
@@ -1161,7 +1129,7 @@ mod tests {
         fn end_item_flushes_scan_buffer() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(1);
+            tracker.start_item(SourceLine::new(1));
             tracker.push_text("Author:: Jane", false);
 
             let flushed = tracker.end_item();
@@ -1184,49 +1152,6 @@ mod tests {
                 !tracker.push_break(),
                 "push_break must return false when no item active"
             );
-        }
-    }
-
-    mod line_tracker {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn resolves_any_offset_in_single_line_source_to_line_one() {
-            let tracker = LineTracker::new("no newlines here");
-            assert_eq!(tracker.line_for(0), 1);
-            assert_eq!(tracker.line_for(10), 1);
-        }
-
-        #[test]
-        fn resolves_offsets_within_each_line_of_multi_line_source() {
-            let source = "one\ntwo\nthree";
-            let tracker = LineTracker::new(source);
-            assert_eq!(tracker.line_for(0), 1, "start of line 1");
-            assert_eq!(tracker.line_for(2), 1, "mid line 1");
-            assert_eq!(tracker.line_for(4), 2, "start of line 2");
-            assert_eq!(tracker.line_for(8), 3, "start of line 3");
-            assert_eq!(tracker.line_for(12), 3, "last byte of line 3");
-        }
-
-        #[test]
-        fn counts_empty_lines_as_separate_lines() {
-            let tracker = LineTracker::new("one\n\nthree");
-            assert_eq!(tracker.line_for(4), 2, "the empty line");
-            assert_eq!(tracker.line_for(5), 3);
-        }
-
-        #[test]
-        fn resolves_empty_source_to_line_one() {
-            let tracker = LineTracker::new("");
-            assert_eq!(tracker.line_for(0), 1);
-        }
-
-        #[test]
-        fn resolves_an_offset_beyond_source_length_to_the_last_line() {
-            let tracker = LineTracker::new("one\ntwo\nthree");
-            assert_eq!(tracker.line_for(1000), 3);
         }
     }
 

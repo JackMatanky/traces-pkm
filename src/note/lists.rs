@@ -8,7 +8,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::metadata::NoteFieldValue;
+use super::{byte_tracker::SourceLine, metadata::NoteFieldValue};
 use crate::field::FieldKey;
 
 /// An ordered or unordered Markdown list.
@@ -70,8 +70,8 @@ pub struct ListItem {
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     depth: usize,
-    line: usize,
-    parent_line: Option<usize>,
+    line: SourceLine,
+    parent_line: Option<SourceLine>,
 }
 
 impl ListItem {
@@ -96,7 +96,7 @@ impl ListItem {
             children: Vec::new(),
             fields: IndexMap::new(),
             depth: 0,
-            line: 0,
+            line: SourceLine::new(0),
             parent_line: None,
         }
     }
@@ -118,7 +118,7 @@ impl ListItem {
             children,
             fields: IndexMap::new(),
             depth: 0,
-            line: 0,
+            line: SourceLine::new(0),
             parent_line: None,
         }
     }
@@ -206,15 +206,16 @@ impl ListItem {
     ///
     /// `line` and `parent_line` are 1-indexed source lines; `depth` is the
     /// item's 0-indexed nesting level. Items built via [`Self::new`] or
-    /// [`Self::with_children`] default to `depth: 0`, `line: 0`,
+    /// [`Self::with_children`] default to `depth: 0`,
+    /// `line: SourceLine::new(0)`,
     /// `parent_line: None` until this is called.
     #[inline]
     #[must_use]
     pub(crate) const fn with_position(
         mut self,
-        line: usize,
+        line: SourceLine,
         depth: usize,
-        parent_line: Option<usize>,
+        parent_line: Option<SourceLine>,
     ) -> Self {
         self.line = line;
         self.depth = depth;
@@ -250,7 +251,7 @@ impl ListItem {
                       task-system issue"
         )
     )]
-    pub(crate) const fn line(&self) -> usize {
+    pub(crate) const fn line(&self) -> SourceLine {
         self.line
     }
 
@@ -267,7 +268,7 @@ impl ListItem {
                       task-system issue"
         )
     )]
-    pub(crate) const fn parent_line(&self) -> Option<usize> {
+    pub(crate) const fn parent_line(&self) -> Option<SourceLine> {
         self.parent_line
     }
 }
@@ -336,17 +337,21 @@ mod tests {
     fn defaults_position_to_zero_and_no_parent() {
         let item = ListItem::new("item", None);
 
-        assert_eq!(item.line(), 0);
+        assert_eq!(item.line(), SourceLine::new(0));
         assert_eq!(item.depth(), 0);
         assert_eq!(item.parent_line(), None);
     }
 
     #[test]
     fn with_position_sets_line_depth_and_parent_line() {
-        let item = ListItem::new("item", None).with_position(3, 2, Some(1));
+        let item = ListItem::new("item", None).with_position(
+            SourceLine::new(3),
+            2,
+            Some(SourceLine::new(1)),
+        );
 
-        assert_eq!(item.line(), 3);
+        assert_eq!(item.line(), SourceLine::new(3));
         assert_eq!(item.depth(), 2);
-        assert_eq!(item.parent_line(), Some(1));
+        assert_eq!(item.parent_line(), Some(SourceLine::new(1)));
     }
 }
