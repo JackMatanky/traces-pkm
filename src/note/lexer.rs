@@ -150,7 +150,7 @@ enum FieldToken {
     #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
     #[token("\u{2705}", |lex| task_field_callback(lex, "completion"))]
     Field((FieldKey, NoteFieldValue)),
-    #[regex(r"[\s\S]", logos::skip, priority = 0)]
+    #[regex(r"[\s\S]", priority = 0)]
     Ignored,
 }
 
@@ -633,7 +633,7 @@ fn is_duration_unit(unit: &str) -> bool {
 enum TagToken {
     #[token("#", tag_callback)]
     Tag(Tag),
-    #[regex(r"[\s\S]", logos::skip, priority = 0)]
+    #[regex(r"[\s\S]", priority = 0)]
     Ignored,
 }
 

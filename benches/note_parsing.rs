@@ -24,6 +24,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::arithmetic_side_effects,
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
@@ -67,6 +68,22 @@ fn large_source() -> String {
     source
 }
 
+fn prose_source_of_bytes(target_bytes: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("# Pure Prose Title\n\n");
+    let mut i = 0;
+    while source.len() < target_bytes {
+        let _ = writeln!(
+            source,
+            "Paragraph {i} contains standard prose without frontmatter, \
+             wikilinks, or list items."
+        );
+        i += 1;
+    }
+    source
+}
+
 fn prose_with_code_blocks() -> String {
     use std::fmt::Write as _;
 
@@ -101,23 +118,108 @@ fn dense_frontmatter() -> String {
     source
 }
 
-fn dense_wikilinks_and_tasks() -> String {
+fn dense_wikilinks_only() -> String {
     use std::fmt::Write as _;
 
-    let mut source = String::from("# Daily Log\n\n");
+    let mut source = String::from("# Document Outlinks\n\n");
     for i in 0..50 {
         let _ = writeln!(
             source,
-            "- [ ] Review [[topic-{i}|Topic {i}]] and verify \
-             [[subtopic-{i}#section]]"
+            "Review [[topic-{i}|Topic {i}]] and verify \
+             [[subtopic-{i}#section]]."
         );
     }
+    source
+}
+
+fn dense_tasks_only() -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("# Task List\n\n");
+    for i in 0..50 {
+        let _ = writeln!(source, "- [ ] Task item {i} to be processed");
+    }
+    source
+}
+
+fn list_items_source(n: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("# List Items\n\n");
+    for i in 0..n {
+        let _ = writeln!(source, "- [ ] Item {i} for processing");
+    }
+    source
+}
+
+fn nested_items_source(total_items: usize, max_depth: u8) -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("# Nested List\n\n");
+    let max_depth_usize = usize::from(max_depth);
+    for i in 0..total_items {
+        let depth = if max_depth_usize == 0 {
+            0
+        } else {
+            i % max_depth_usize
+        };
+        let indent = "  ".repeat(depth);
+        let _ = writeln!(source, "{indent}- [ ] Nested task item {i}");
+    }
+    source
+}
+
+fn line_density_source(target_bytes: usize, line_length: usize) -> String {
+    let mut source = String::with_capacity(target_bytes);
+    let chunk = "a".repeat(line_length.saturating_sub(1));
+    while source.len() < target_bytes {
+        source.push_str(&chunk);
+        source.push('\n');
+    }
+    source
+}
+
+fn frontmatter_fields_source(field_count: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("---\n");
+    for i in 0..field_count {
+        let _ = writeln!(source, "field_{i}: \"value_{i}\"");
+    }
+    source.push_str("---\n\n# Body\nSimple note.\n");
     source
 }
 
 // ----------------------------------------------------------- //
 //                         Benchmarks                          //
 // ----------------------------------------------------------- //
+
+/// Measures pure prose parsing cost across byte sizes, serving as a baseline
+/// subtracted from composite note parsing costs.
+fn bench_parse_markdown_prose_floor(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse_markdown::prose_floor");
+    let path = std::path::Path::new("note.md");
+
+    for (label, bytes) in [("1kb", 1_024), ("10kb", 10_240), ("100kb", 102_400)]
+    {
+        let source = prose_source_of_bytes(bytes);
+        group.throughput(Throughput::Bytes(
+            u64::try_from(source.len()).expect("byte length fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
 
 /// Parses small, medium, and large synthetic notes through `parse_markdown`.
 ///
@@ -159,7 +261,8 @@ fn bench_parse_markdown(c: &mut Criterion) {
 }
 
 /// Measures parsing cost across varied real-world PKM document topologies:
-/// code blocks, heavy frontmatter, and dense wikilink/task checklists.
+/// code blocks, heavy frontmatter, dense wikilinks, and isolated task
+/// checklists.
 ///
 /// Expected outcomes:
 /// - Code-block-heavy notes parse faster than wikilink-heavy notes, since
@@ -175,7 +278,8 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     let workloads = [
         ("prose_code", prose_with_code_blocks()),
         ("dense_frontmatter", dense_frontmatter()),
-        ("dense_wikilinks_tasks", dense_wikilinks_and_tasks()),
+        ("dense_wikilinks", dense_wikilinks_only()),
+        ("dense_tasks", dense_tasks_only()),
     ];
 
     for (label, source) in workloads {
@@ -197,5 +301,127 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse_markdown, bench_parse_markdown_workloads);
+/// Measures parsing cost scaled by list item count `[10, 100, 1_000, 5_000]`.
+///
+/// Isolates per-item position-tracking overhead (`ByteTracker::byte_to_line`,
+/// `ListItemPosition` construction) from prose/frontmatter bulk.
+fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse_markdown::list_item_scaling");
+    let path = std::path::Path::new("note.md");
+
+    for count in [10_usize, 100, 1_000, 5_000] {
+        let source = list_items_source(count);
+        group.throughput(Throughput::Elements(
+            u64::try_from(count).expect("count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(count),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures parsing cost across nesting depths for a fixed 200-item list.
+///
+/// Confirms that `ListItemPosition.parent` remains O(1) stack-top access
+/// regardless of list nesting depth.
+fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse_markdown::nesting_depth");
+    let path = std::path::Path::new("note.md");
+    let total_items = 200_usize;
+
+    for max_depth in [1_u8, 5, 20, 50] {
+        let source = nested_items_source(total_items, max_depth);
+        group.throughput(Throughput::Elements(
+            u64::try_from(total_items).expect("item count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(max_depth),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures `ByteTracker`'s `match_indices('\n')` scan and line-start table
+/// construction by varying line length at a fixed 50KB total document size.
+fn bench_parse_markdown_line_density(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse_markdown::line_density");
+    let path = std::path::Path::new("note.md");
+    let target_bytes = 51_200_usize;
+
+    for line_length in [10_usize, 50, 200, 1_000] {
+        let source = line_density_source(target_bytes, line_length);
+        group.throughput(Throughput::Bytes(
+            u64::try_from(source.len()).expect("byte length fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(line_length),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures YAML frontmatter parsing cost scaled by field count `[5, 20, 50,
+/// 200]`.
+///
+/// Isolates YAML field parsing from body text processing.
+fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("parse_markdown::frontmatter_field_scaling");
+    let path = std::path::Path::new("note.md");
+
+    for count in [5_usize, 20, 50, 200] {
+        let source = frontmatter_fields_source(count);
+        group.throughput(Throughput::Elements(
+            u64::try_from(count).expect("count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(count),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_parse_markdown_prose_floor,
+    bench_parse_markdown,
+    bench_parse_markdown_workloads,
+    bench_parse_markdown_list_item_scaling,
+    bench_parse_markdown_nesting_depth,
+    bench_parse_markdown_line_density,
+    bench_parse_markdown_frontmatter_field_scaling
+);
 criterion_main!(benches);
