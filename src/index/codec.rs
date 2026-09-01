@@ -1,7 +1,10 @@
-//! Serialization codecs and path byte-conversion helpers for the index store.
+//! Postcard encoding/decoding and path reconstruction for the index store.
 //!
-//! Exposes helper functions for postcard encoding/decoding and path
-//! reconstruction from database raw bytes.
+//! [`encode_row`] and [`decode_row`] wrap postcard (de)serialization with
+//! [`DbError`] mapping. [`path_from_bytes`] recovers a [`PathBuf`] from raw
+//! bytes, trying UTF-8 first and falling back to lossy decoding. The [`path`]
+//! module provides serde support for [`std::path::Path`] and
+//! [`std::path::PathBuf`] using platform-specific raw byte representations.
 
 use std::{
     path::{Path, PathBuf},
@@ -45,20 +48,16 @@ pub(super) fn decode_row<T: DeserializeOwned>(
     })
 }
 
-/// Recovers a `PathBuf` from raw key/value bytes: an exact UTF-8 decode,
-/// falling back to a lossy decode only for non-Unicode paths. No `unsafe`:
-/// `OsStr::from_encoded_bytes_unchecked` would be exact for every input but
-/// requires an `unsafe` block this crate avoids; the lossy fallback degrades
-/// only reconstructed refresh-diff links. [`read_all`] instead resolves stored
-/// link bytes against loaded notes for byte-exact query output. Used by
-/// [`read_table`]'s per-row deserialize-error path and by
-/// [`read_files_and_links_via`]'s link reconstruction.
+/// Recovers a [`PathBuf`] from raw bytes, trying UTF-8 first and falling back
+/// to lossy decoding for non-Unicode paths.
 ///
-/// [`read_table`]: super::store::IndexStore::read_table
-/// [`read_all`]: super::store::IndexStore::read_all
-/// [`read_files_and_links_via`]: super::store::IndexStore::read_files_and_links_via
-/// [`FileBase`]: crate::file::FileBase
-/// [`Note`]: crate::note::Note
+/// The lossy fallback degrades only reconstructed refresh-diff links;
+/// [`super::store::IndexStore::read_all`] resolves stored link bytes against
+/// loaded notes for byte-exact query output.
+///
+/// Used by [`super::store::IndexStore::read_table`]'s deserialization-error
+/// path and [`super::store::IndexStore::read_files_and_links_via`]'s link
+/// reconstruction.
 pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
         |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),

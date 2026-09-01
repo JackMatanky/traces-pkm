@@ -1,4 +1,4 @@
-//! Query execution request and transform plan.
+//! Query execution request, transform plan, and optimization.
 
 use super::{
     QueryRecord, QueryRequestError,

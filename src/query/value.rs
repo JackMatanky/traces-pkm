@@ -1,18 +1,4 @@
-//! Borrowed and owned field value types for query resolution.
-//!
-//! This module defines [`QueryFieldValueRef`], the zero-copy resolved field
-//! value returned by [`super::QueryRecord::resolve_ref`], and
-//! [`QueryListValueRef`], the borrowed list variant.
-//!
-//! # Main Types
-//!
-//! - [`QueryFieldValueRef`] borrows string and collection data from the
-//!   underlying [`super::QueryRecord`] where possible, falling back to
-//!   [`QueryFieldValueRef::Owned`] for values that require allocation.
-//! - [`QueryListValueRef`] is the list-specific borrowed variant, handling
-//!   tags, inlinks, and generic value slices.
-//!
-//! [`NoteFieldValue`]: crate::note::NoteFieldValue
+//! Zero-copy resolved field value types for query resolution.
 
 use std::{cmp::Ordering, fmt::Write as _, path::PathBuf};
 

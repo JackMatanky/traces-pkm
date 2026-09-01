@@ -3,18 +3,17 @@
 //! [`IndexerService`] owns a project root and drives the [`super::FileIndex`]
 //! lifecycle through four operations:
 //!
-//! - [`build`](IndexerService::build) scans and parses all files into a fresh
+//! - [`build`](IndexerService::build): scan and parse all files into a fresh
 //!   in-memory index.
-//! - [`persist`](IndexerService::persist) writes the index to a redb database
+//! - [`persist`](IndexerService::persist): write the index to a redb database
 //!   at `.traces/index.redb`.
-//! - [`load`](IndexerService::load) reads a previously-persisted index from
+//! - [`load`](IndexerService::load): read a previously-persisted index from
 //!   disk.
-//! - [`refresh`](IndexerService::refresh) re-scans the root, diffs against the
-//!   persisted state, and atomically writes only changed rows.
+//! - [`refresh`](IndexerService::refresh): re-scan, diff against persisted
+//!   state, and atomically write only changed rows.
 //!
 //! All disk interaction flows through [`super::store::IndexStore`]; this module
-//! owns the service-level orchestration (scan, diff, persist, load) but not the
-//! table-level read/write mechanics.
+//! owns service-level orchestration, not table-level read/write mechanics.
 
 use std::path::PathBuf;
 

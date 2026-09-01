@@ -1,25 +1,4 @@
-//! Equality, ordering, and sort-key utilities for resolved [`NoteFieldValue`]
-//! instances.
-//!
-//! This module provides comparison and ordering primitives used by
-//! [`super::QueryRecordSet::filter`], [`super::QueryRecordSet::sort`], and
-//! [`super::QueryRecordSet::group_by`].
-//!
-//! # Sorting Ordering and Null Precedence
-//!
-//! Values are ordered according to their comparable kind (numbers by magnitude,
-//! strings/dates/durations lexicographically, booleans with `false < true`).
-//!
-//! [`NoteFieldValue::Null`] acts as the minimum value in sort operations. Under
-//! a total order, null values lead ascending sorts and trail descending sorts.
-//!
-//! # Examples
-//!
-//! ```ignore
-//! # use traces_pkm::query::SortOrder;
-//! let order = SortOrder::Ascending;
-//! assert!(!order.is_descending());
-//! ```
+//! Sort-key utilities and total-order comparison for resolved field values.
 
 use std::cmp::Ordering;
 

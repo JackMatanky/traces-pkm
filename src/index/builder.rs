@@ -1,9 +1,9 @@
 //! Internal build pipeline for [`super::FileIndex`].
 //!
-//! [`IndexBuilder`] is a **plan**: it holds the scan result and a reuse
-//! directive, deferring all note parsing, sorting, and inlink derivation to
-//! [`IndexBuilder::build`]. Callers use [`super::IndexerService::build`] and
-//! [`super::IndexerService::refresh`] instead of this type directly.
+//! [`IndexBuilder`] holds a scan result and optional cache, deferring note
+//! parsing, sorting, and inlink derivation to [`IndexBuilder::build`]. Callers
+//! use [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
+//! directly; this module is not part of the public API.
 
 use std::path::Path;
 
@@ -19,34 +19,29 @@ use crate::{file::FileBase, note::parse_markdown};
 
 /// Build plan for a [`super::FileIndex`].
 ///
-/// Stores an already-scanned set of records and (optionally) a [`RefreshCache`]
-/// to reuse. All heavy work (note parsing, sorting, inlink derivation) happens
-/// once in [`Self::build`], not across intermediate steps. Scanning itself
-/// lives in [`super::IndexerService::scan`], not here: `IndexBuilder` is pure
-/// data assembly, no I/O.
+/// Holds an already-scanned set of records and an optional [`RefreshCache`].
+/// All heavy work happens in [`Self::build`]: note parsing, sorting, and inlink
+/// derivation. Scanning itself lives in [`super::IndexerService::scan`];
+/// `IndexBuilder` performs data assembly without I/O.
 ///
 /// # Invariants
 ///
-/// - `files` must already be sorted by path, guaranteed by
-///   [`super::IndexerService::scan`], the only production caller.
-/// - [`Self::with_cache`] consumes the previous index's cache, reusing its
-///   notes and inlinks where unchanged.
+/// - `files` must be sorted by path, guaranteed by
+///   [`super::IndexerService::scan`].
+/// - [`Self::with_cache`] consumes the previous index's cache for reuse.
 /// - [`Self::build`] produces a [`super::FileIndex`] with sorted records and
-///   notes, and correctly derived inlinks (reused when nothing changed,
-///   recomputed otherwise).
-/// - The delta on the returned [`super::FileIndex`] is
-///   [`super::delta::IndexDelta::Full`] for a fresh build and
-///   [`super::delta::IndexDelta::Incremental`] for a refresh, enabling
-///   [`super::store::IndexStore::persist_index`] to choose the appropriate
-///   write strategy.
+///   correctly derived inlinks.
+/// - The returned delta is [`IndexDelta::Full`] for fresh builds and
+///   [`IndexDelta::Incremental`] for refreshes.
 ///
 /// [`RefreshCache`]: super::cache::RefreshCache
-/// [`RefreshCache::load`]: super::cache::RefreshCache::load
+/// [`IndexDelta::Full`]: super::delta::IndexDelta::Full
+/// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
 pub(crate) struct IndexBuilder<'a> {
     files: Vec<FileBase>,
-    /// `None` = fresh build (parse all notes at build time). `Some(cache)`
-    /// = refresh (reuse `cache`'s previously-persisted state for
-    /// unchanged records, parse only changed ones at build time).
+    /// `None` = fresh build (parse all notes at build time).
+    /// `Some(cache)` = refresh (reuse `cache`'s previously-persisted state
+    /// for unchanged records, parse only changed ones at build time).
     cache: Option<Box<RefreshCache<'a>>>,
 }
 
@@ -71,23 +66,17 @@ impl<'a> IndexBuilder<'a> {
 
     /// Consumes the plan and produces a [`super::FileIndex`].
     ///
-    /// - **Fresh build** (`cache: None`): parses every markdown record from
-    ///   disk, sorts notes, derives inlinks. Never opens `IndexStore`; forcing
-    ///   this through `RefreshCache` would both cost a needless store-open on
-    ///   every first-time build and, more importantly, risk conflating "no
-    ///   previous state to check" with "verified nothing was deleted," which
-    ///   only `RefreshCache::load`'s real query can honestly claim (see
-    ///   [`IndexDelta`]'s doc comment).
-    /// - **Refresh** (`cache: Some`): for each record, reuses the previous Note
-    ///   via point lookup when unchanged, otherwise reparses and backdates.
-    ///   Recomputes inlinks only if a Note was added, removed, or its outlinks
-    ///   actually changed.
+    /// - **Fresh build** (`cache: None`): parses every note from disk, sorts,
+    ///   and derives inlinks.
+    /// - **Refresh** (`cache: Some`): reuses unchanged notes via point lookup,
+    ///   reparsing only modified files. Recomputes inlinks only when notes or
+    ///   outlinks change.
     ///
     /// # Errors
     ///
     /// - [`IndexBuilderError::NoteParse`] if a markdown file cannot be read.
     /// - [`IndexBuilderError::MissingNote`] if a matched record's note is
-    ///   absent from the persisted index (indicates a logic bug).
+    ///   absent from the persisted index.
     pub(super) fn build(
         self,
         root: &Path,

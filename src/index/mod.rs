@@ -1,21 +1,23 @@
-//! Scan, persist, load, and refresh a file index over a project root.
+//! Persistent file indexing, metadata caching, and incremental refresh for a
+//! project root.
 //!
-//! [`IndexerService`] owns a project root and drives the index lifecycle:
-//! build, persist, load, and refresh. [`FileIndex`] is the value it produces, a
-//! snapshot of every indexed [`crate::file::FileBase`] (from [`crate::file`]),
-//! each Markdown file's parsed [`crate::note::Note`], and derived inbound
-//! links. `FileIndex` carries no `&Path` of its own; construction and
-//! persistence flow entirely through [`IndexerService`].
+//! The index is an in-memory snapshot of every file, its parsed metadata, and
+//! derived inbound links. [`IndexerService`] owns the full lifecycle: scan,
+//! parse, persist, load, and refresh. [`FileIndex`] is the value it produces.
 //!
-//! Query execution lives in [`crate::query`]: `QueryService` borrows a
-//! [`FileIndex`] through its entry view, keeping `index` focused on indexed
-//! data and `query` focused on query semantics.
+//! [`FileIndex`] carries no `&Path` of its own. Construction and persistence
+//! flow through [`IndexerService`], while [`FileIndex::entries`] exposes sorted
+//! data for direct inspection.
+//!
+//! Query execution lives in [`crate::query`]. [`crate::query::QueryService`]
+//! borrows a [`FileIndex`] through its entry view, keeping `index` focused on
+//! data and `query` focused on evaluation.
 //!
 //! Persistence uses a redb-backed database managed by the [`store`] submodule;
 //! callers use [`IndexerService`]'s methods instead of touching redb tables
 //! directly.
 //!
-//! Inbound links between Notes are derived from outlinks during build and
+//! Inbound links between notes are derived from outlinks during build and
 //! refresh, then persisted alongside them; see [`inlinks`].
 //!
 //! The build pipeline is composed internally by [`builder::IndexBuilder`],
@@ -24,15 +26,12 @@
 //!
 //! # Lifecycle
 //!
-//! - Build a fresh index: [`IndexerService::build`]
-//! - Persist to disk: [`IndexerService::persist`]
-//! - Load from disk: [`IndexerService::load`]
-//! - Refresh against the filesystem: [`IndexerService::refresh`]
-//!
-//! - [`FileIndex::entries`] exposes sorted indexed data for direct inspection.
-//! - `FileIndex`'s crate-internal `entry_at` accessor resolves a
-//!   [`RowIndex`]-keyed position to its entry in O(1) for query execution,
-//!   without exposing that position type outside the crate.
+//! | Step | Entry point |
+//! |------|-------------|
+//! | Build a fresh index | [`IndexerService::build`] |
+//! | Persist to disk | [`IndexerService::persist`] |
+//! | Load from disk | [`IndexerService::load`] |
+//! | Refresh against filesystem | [`IndexerService::refresh`] |
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
@@ -63,8 +62,10 @@ pub use service::IndexerService;
 
 pub(crate) use crate::file::FileFormat;
 
-/// Project-relative path of the persisted [`FileIndex`] database,
-/// `.traces/index.redb`, relative to the project root.
+/// Database filename relative to the project root.
+///
+/// Stored at `.traces/index.redb`. Callers should use [`IndexerService`]
+/// methods instead of opening this path directly.
 const INDEX_FILE: &str = ".traces/index.redb";
 
 #[cfg(test)]

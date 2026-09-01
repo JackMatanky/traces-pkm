@@ -1,4 +1,4 @@
-//! Query rows and result set types for [`QueryRecordSet`].
+//! Query rows and result set types for query execution.
 //!
 //! This module implements [`QueryRecord`], which pairs a [`FileBase`] with its
 //! parsed [`Note`] and resolves field paths for template rendering and CLI

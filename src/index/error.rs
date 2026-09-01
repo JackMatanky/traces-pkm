@@ -1,14 +1,9 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`IndexError`] is the unified index-error type every fallible `index`
-//! operation converts into via `?`: a thin `#[error(transparent)]` wrapper
-//! distinguishing persistence failures ([`DbError`], database access and
-//! serialization) from build-pipeline failures ([`IndexBuilderError`], scan,
-//! parse, and refresh reconciliation). Neither `Display` nor `source()` adds
-//! anything at this level; both fully delegate to whichever inner error
-//! actually occurred, matching this codebase's established convention for
-//! error-enum composition (see e.g. `ConfigLoadError`, `QueryError`,
-//! `TemplateError`).
+//! [`IndexError`] is the unified type every fallible `index` operation returns.
+//! It wraps persistence failures ([`DbError`]) and build-pipeline failures
+//! ([`IndexBuilderError`]) via `#[error(transparent)]`, delegating `Display`
+//! and `source()` entirely to whichever inner error occurred.
 
 use std::{io, path::PathBuf};
 

@@ -1,19 +1,16 @@
 //! Redb persistence for [`FileBase`], [`Note`], and derived inlink records.
 //!
-//! [`IndexStore`] owns one redb connection under a project root and adapts it
-//! to the file-index schema (`FILES`, `NOTES`, `LINKS` tables). Callers use
-//! [`super::IndexerService`] methods instead of interacting with redb tables
+//! [`IndexStore`] owns one redb connection and adapts it to the file-index
+//! schema (`FILES`, `NOTES`, `LINKS` tables). Callers use
+//! [`super::IndexerService`] methods instead of interacting with tables
 //! directly.
 //!
-//! `FILES`/`NOTES` values stay plain `&[u8]` in their `TableDefinition`s rather
-//! than a `Postcard<T>` wrapper implementing `redb::Value`:
-//! `redb::Value::from_bytes` is infallible (cannot return a `Result`), so a
-//! corrupted row's postcard-decode failure could only surface as a panic,
-//! incompatible with this crate's `Cargo.toml` denying
-//! `clippy::panic`/`unwrap_used`/`expect_used` and with
-//! [`DbError::Deserialize`]'s existing per-row `Result` error path.
-//! [`encode_row`]/[`decode_row`] do the postcard call plus [`DbError`] wrap
-//! explicitly at each read/write site instead.
+//! `FILES`/`NOTES` values stay plain `&[u8]` rather than a `redb::Value`
+//! wrapper: `redb::Value::from_bytes` is infallible, so a corrupted row's
+//! postcard-decode failure would surface as a panic. This crate denies
+//! `clippy::panic`/`unwrap_used`/`expect_used`, so
+//! [`encode_row`]/[`decode_row`] do the explicit [`DbError`] wrap at each
+//! read/write site instead.
 
 use std::{
     collections::HashMap,

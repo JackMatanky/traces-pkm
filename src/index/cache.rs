@@ -3,8 +3,8 @@
 //! [`RefreshCache`] loads the previous scan and inbound-link map through a
 //! caller-supplied read transaction, then diffs a fresh scan against them
 //! (delegating the two-pointer merge algorithms to [`super::delta`]) and
-//! resolves each record's [`crate::note::Note`] via point lookup or
-//! backdated reparse. Used exclusively by
+//! resolves each record's [`crate::note::Note`] via point lookup or backdated
+//! reparse. Used exclusively by
 //! [`super::builder::IndexBuilder::build_with_cache`].
 
 use std::path::{Path, PathBuf};
@@ -34,19 +34,14 @@ pub(super) enum NoteCacheState {
 }
 
 /// State carried across [`super::builder::IndexBuilder::build_with_cache`],
-/// borrowed from the caller's own
-/// [`super::store::IndexStore`]/`ReadTransaction` rather than owned. Owning
-/// them here would force [`super::IndexerService::refresh`] to reopen the store
-/// a second time to persist afterward.
+/// borrowed from the caller's [`super::store::IndexStore`] and read transaction
+/// to avoid reopening the store for persistence afterward.
 ///
-/// `txn` stays open for the entire call, every `parse_note` disk read and the
-/// full merge-join, not just the [`super::store::IndexStore::read_note`] point
-/// lookups it backs. Per redb's own docs, "read-only transactions may exist
-/// concurrently with writes", so this never blocks a concurrent writer; it does
-/// pin the transaction's MVCC snapshot for the duration.
-/// [`super::IndexerService::refresh`] scopes this transaction's lifetime to end
-/// before it opens its own write transaction to persist, so the two never
-/// overlap.
+/// The transaction stays open for the entire refresh: disk reads, merge-join,
+/// and point lookups. Per redb's docs, read-only transactions may exist
+/// concurrently with writes, so this never blocks a writer; it does pin the
+/// MVCC snapshot for the duration. [`super::IndexerService::refresh`] scopes
+/// the transaction to end before persisting, so the two never overlap.
 pub(super) struct RefreshCache<'a> {
     files: Vec<FileBase>,
     inlinks: InlinkMap,

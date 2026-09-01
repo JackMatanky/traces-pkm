@@ -1,4 +1,4 @@
-//! [`FileIndex`] data structure and its [`FileEntry`] rows.
+//! [`FileIndex`] and its constituent [`FileEntry`] rows.
 
 use std::path::PathBuf;
 
@@ -8,7 +8,7 @@ use crate::{file::FileBase, note::Note};
 /// links.
 ///
 /// Every regular file under the project root contributes one [`FileEntry`]:
-/// its [`FileBase`] metadata and — for Markdown files — its parsed [`Note`]
+/// its [`FileBase`] metadata, and for Markdown files, its parsed [`Note`]
 /// plus derived inbound links. A pure value type:
 /// [`super::IndexerService`] produces, persists, and loads it; `FileIndex`
 /// itself carries no `&Path`.
@@ -178,6 +178,7 @@ pub(super) fn redistribute_inlinks(
         }
     }
 }
+
 /// Pairs sorted `files` with sorted `notes` (a merge-join over both
 /// path-sorted slices — the same two-pointer algorithm `compute_note_positions`
 /// used, producing owned `FileEntry` values instead of a position table),

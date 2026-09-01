@@ -1,15 +1,14 @@
-//! Derived inbound links, computed from indexed outlinks.
+//! Derived inbound links computed from indexed outlinks.
 //!
-//! [`derive_inlinks`] runs as a post-processing pass over already-parsed
-//! [`Note`] outlinks. It is a full recompute over every indexed Note, never a
-//! per-note patch, because resolving one Note's outlink can depend on every
-//! *other* indexed Note (see [`LinkResolver::resolve`]'s stem-matching tier).
+//! [`derive_inlinks`] runs as a full recompute over every indexed [`Note`],
+//! never a per-note patch, because resolving one Note's outlink can depend on
+//! every *other* indexed Note (see [`LinkResolver::resolve`]'s stem-matching
+//! tier).
 //!
 //! - [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
-//!   (the latter only when something changed) call this once and persist the
-//!   result.
-//! - query execution reads the already-computed map from
-//!   [`super::FileIndex::entries`] instead of recomputing it.
+//!   (when something changed) call this once and persist the result.
+//! - Query execution reads the already-computed map from
+//!   [`super::FileIndex::entries`].
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -40,8 +39,8 @@ pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// # Performance
 ///
 /// - O(n) to build the stem index once (see `LinkResolver::new`).
-/// - O(l log n) total for `l` outlinks: exact-path resolution binary-searches
-///   the path-sorted slice `notes` (already sorted by [`IndexerService`]'s
+/// - O(l log n) total for l outlinks: exact-path resolution binary-searches the
+///   path-sorted slice `notes` (already sorted by [`IndexerService`]'s
 ///   [`build`]/[`refresh`]/[`load`]).
 /// - The wikilink-by-name fallback tier looks its stem up in the index in O(1)
 ///   average time, then scans only that stem's candidates (not all of `notes`)
