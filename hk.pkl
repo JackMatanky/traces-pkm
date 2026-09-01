@@ -79,9 +79,7 @@ local rust = new Mapping<String, Step> {
     ["cargo-sweep"] = new Step {
         step_condition = "exec('test -d target')"
         check = new CommandSpec {
-            command = new Command {
-                argv = List("cargo", "sweep", "--maxsize", "8000")
-            }
+            command = "find target/debug/incremental -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null; find target/debug/build -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null; echo 'sweep done'"
             effect = "destructive"
         }
     }
