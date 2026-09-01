@@ -79,7 +79,16 @@ local rust = new Mapping<String, Step> {
     ["cargo-sweep"] = new Step {
         step_condition = "exec('test -d target')"
         check = new CommandSpec {
-            command = "find target/debug/incremental -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null; find target/debug/build -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null; echo 'sweep done'"
+            command = """
+                size_kib=$(du -sk target 2>/dev/null | cut -f1)
+                if [ "$size_kib" -gt 12000000 ]; then
+                  latest=$(ls -dt target/debug/incremental/*/ 2>/dev/null | head -1)
+                  find target/debug/incremental -maxdepth 1 -mindepth 1 -type d ! -name "$(basename "$latest")" -exec rm -rf {} + 2>/dev/null
+                  echo "sweep: removed stale incremental sessions"
+                else
+                  echo "sweep: target under threshold, skipping"
+                fi
+                """
             effect = "destructive"
         }
     }
