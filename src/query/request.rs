@@ -271,23 +271,37 @@ impl QueryTransform {
                 n,
             } => {
                 let n = *n;
-                let mut keyed: Vec<(SortKey, QueryRecord)> = records
+                // `(SortKey, original index)` breaks ties by input position,
+                // matching `sort_by_cached_key`'s stability guarantee (used
+                // by the unfused `Sort` arm above). Without the index,
+                // `select_nth_unstable_by`/`sort_unstable_by` are free to
+                // reorder or reselect among tied keys arbitrarily — a real
+                // behavior difference from the unfused path whenever the
+                // sort field has duplicate values near the selection
+                // boundary (e.g. a low-cardinality field like `status`).
+                let mut keyed: Vec<(SortKey, usize, QueryRecord)> = records
                     .into_iter()
-                    .map(|record| {
+                    .enumerate()
+                    .map(|(index, record)| {
                         let key = SortKey {
                             value: record.resolve_owned(field),
                             descending: *descending,
                         };
-                        (key, record)
+                        (key, index, record)
                     })
                     .collect();
+                let cmp =
+                    |a: &(SortKey, usize, QueryRecord),
+                     b: &(SortKey, usize, QueryRecord)| {
+                        a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1))
+                    };
                 if n < keyed.len() {
                     let k = n.saturating_sub(1);
-                    keyed.select_nth_unstable_by(k, |a, b| a.0.cmp(&b.0));
+                    keyed.select_nth_unstable_by(k, cmp);
                     keyed.truncate(n);
                 }
-                keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-                keyed.into_iter().map(|(_, record)| record).collect()
+                keyed.sort_unstable_by(cmp);
+                keyed.into_iter().map(|(.., record)| record).collect()
             }
         }
     }
@@ -373,6 +387,68 @@ mod tests {
             );
         }
 
+        #[test]
+        fn top_k_matches_full_sort_order_for_tied_keys() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            // 200 notes across only 4 distinct rating values — a
+            // low-cardinality field like `status` at PKM scale, large enough
+            // to exercise `select_nth_unstable_by`'s real partitioning logic
+            // (not a small-slice fast path that could coincidentally
+            // preserve order without a stability guarantee).
+            for i in 0..200 {
+                fs::write(
+                    temp.path().join(format!("note-{i:03}.md")),
+                    format!("---\nrating: {}\n---\n", i % 4),
+                )
+                .expect("write note");
+            }
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+
+            for n in [5_usize, 50, 100] {
+                let topk_request = QueryRequest::pages(SourceSelector::All)
+                    .sort("rating", false)
+                    .expect("valid sort")
+                    .limit(i64::try_from(n).expect("limit fits i64"))
+                    .expect("valid limit");
+                let topk_outcome =
+                    QueryService::new("class").execute(&index, topk_request);
+                let topk_paths: Vec<_> = (0..topk_outcome.len())
+                    .map(|i| {
+                        topk_outcome
+                            .get(i)
+                            .expect("row")
+                            .base()
+                            .path()
+                            .to_path_buf()
+                    })
+                    .collect();
+
+                let full_sort_request =
+                    QueryRequest::pages(SourceSelector::All)
+                        .sort("rating", false)
+                        .expect("valid sort");
+                let full_outcome = QueryService::new("class")
+                    .execute(&index, full_sort_request);
+                let full_first_n: Vec<_> = (0..n)
+                    .map(|i| {
+                        full_outcome
+                            .get(i)
+                            .expect("row")
+                            .base()
+                            .path()
+                            .to_path_buf()
+                    })
+                    .collect();
+
+                assert_eq!(
+                    topk_paths, full_first_n,
+                    "TopK(n={n}) must match a full stable sort's first {n} \
+                     rows, including tie order"
+                );
+            }
+        }
         #[test]
         fn filter_between_sort_and_limit_blocks_top_k_fusion() {
             let temp = tempfile::tempdir().expect("create temp dir");
