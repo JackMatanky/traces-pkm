@@ -97,7 +97,7 @@ pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use note::{Note, parse_markdown};
+pub use note::{Note, NoteFieldValue, parse_markdown};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
     QueryRecord, QueryRecordSet, QueryRequest, QueryResult, QueryService,
