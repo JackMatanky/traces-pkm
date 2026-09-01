@@ -87,8 +87,8 @@ impl TaskStatus {
 ///
 /// Indexes the same statuses three ways: by marker symbol, by normalized
 /// display name, and by workflow type. Default statuses are always present;
-/// [`Self::insert`] lets configuration add new statuses or override a
-/// default one that shares its symbol.
+/// [`Self::insert`] lets configuration add new statuses or override a default
+/// one that shares its symbol.
 #[derive(Clone, Debug)]
 pub(crate) struct TaskStatusMap {
     symbols: HashMap<TaskStatusSymbol, TaskStatus>,
@@ -115,8 +115,8 @@ impl TaskStatusMap {
         self.symbols.get(&symbol)
     }
 
-    /// Looks up a status by display name, normalized by case-folding,
-    /// trimming, and collapsing internal whitespace to a single space.
+    /// Looks up a status by display name, normalized by case-folding, trimming,
+    /// and collapsing internal whitespace to a single space.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -250,9 +250,9 @@ impl TaskStatusType {
 /// The marker character inside `[<char>]`, e.g. `' '`, `'x'`, `'/'`, `'-'`.
 ///
 /// Wraps the single character used as the configured lookup key for both
-/// standard and custom-scanned task markers. Unknown single-character
-/// markers are still valid symbols; this type carries no validation beyond
-/// being a `char`.
+/// standard and custom-scanned task markers. Unknown single-character markers
+/// are still valid symbols; this type carries no validation beyond being a
+/// `char`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TaskStatusSymbol(char);
 
@@ -274,8 +274,8 @@ impl From<char> for TaskStatusSymbol {
 
 /// The default statuses always available, before any configured overrides.
 ///
-/// `'x'` and `'X'` both resolve to `Done`, matching the custom marker
-/// scanner's case-insensitive acceptance of the done marker.
+/// `'x'` and `'X'` both resolve to `Done`, matching the custom marker scanner's
+/// case-insensitive acceptance of the done marker.
 fn default_statuses() -> [TaskStatus; 6] {
     [
         TaskStatus::new(
@@ -314,34 +314,38 @@ fn default_statuses() -> [TaskStatus; 6] {
 /// Normalizes a status name for lookup: case-folds, trims, and collapses
 /// internal whitespace to a single space.
 ///
-/// Display names ([`TaskStatus::name`]) remain exactly as configured; only
-/// the lookup key is normalized.
+/// Display names ([`TaskStatus::name`]) remain exactly as configured; only the
+/// lookup key is normalized.
 fn normalize_name(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use rstest::rstest;
-
     use super::*;
 
-    #[rstest]
-    #[case::done(TaskStatusType::Done, Some(true))]
-    #[case::cancelled(TaskStatusType::Cancelled, None)]
-    #[case::todo(TaskStatusType::Todo, Some(false))]
-    #[case::in_progress(TaskStatusType::InProgress, Some(false))]
-    #[case::on_hold(TaskStatusType::OnHold, Some(false))]
-    #[case::non_task(TaskStatusType::NonTask, Some(false))]
-    fn derives_tri_state_completion_from_status_type(
-        #[case] kind: TaskStatusType,
-        #[case] expected: Option<bool>,
-    ) {
-        assert_eq!(kind.completed(), expected);
+    mod status_type {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::done(TaskStatusType::Done, Some(true))]
+        #[case::cancelled(TaskStatusType::Cancelled, None)]
+        #[case::todo(TaskStatusType::Todo, Some(false))]
+        #[case::in_progress(TaskStatusType::InProgress, Some(false))]
+        #[case::on_hold(TaskStatusType::OnHold, Some(false))]
+        #[case::non_task(TaskStatusType::NonTask, Some(false))]
+        fn derives_tri_state_completion_from_status_type(
+            #[case] kind: TaskStatusType,
+            #[case] expected: Option<bool>,
+        ) {
+            assert_eq!(kind.completed(), expected);
+        }
     }
 
-    mod task_status_map {
+    mod status_map {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -451,6 +455,81 @@ mod tests {
                 map.by_name("doing").map(TaskStatus::symbol),
                 Some(TaskStatusSymbol::new('/'))
             );
+        }
+
+        #[test]
+        fn insert_overrides_a_custom_entry_sharing_its_symbol() {
+            let mut map = TaskStatusMap::default();
+
+            map.insert(TaskStatus::new(
+                TaskStatusSymbol::new('?'),
+                "Question",
+                TaskStatusType::Todo,
+            ));
+            map.insert(TaskStatus::new(
+                TaskStatusSymbol::new('?'),
+                "Blocked",
+                TaskStatusType::OnHold,
+            ));
+
+            assert_eq!(
+                map.by_symbol(TaskStatusSymbol::new('?')).map(TaskStatus::name),
+                Some("Blocked")
+            );
+            assert_eq!(
+                map.by_symbol(TaskStatusSymbol::new('?')).map(TaskStatus::kind),
+                Some(TaskStatusType::OnHold)
+            );
+            assert!(
+                map.by_name("question").is_none(),
+                "stale custom name must not resolve to the overridden symbol"
+            );
+            assert_eq!(
+                map.by_name("blocked").map(TaskStatus::symbol),
+                Some(TaskStatusSymbol::new('?'))
+            );
+            assert!(
+                map.by_type(TaskStatusType::Todo)
+                    .iter()
+                    .all(|s| s.symbol() != TaskStatusSymbol::new('?')),
+                "stale kind bucket must not contain the overridden symbol"
+            );
+            assert!(
+                map.by_type(TaskStatusType::OnHold)
+                    .iter()
+                    .any(|s| s.symbol() == TaskStatusSymbol::new('?'))
+            );
+        }
+    }
+
+    mod normalize_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn collapses_multiple_whitespace_to_single_space() {
+            assert_eq!(normalize_name("  a   b  "), "a b");
+        }
+
+        #[test]
+        fn folds_case_to_lowercase() {
+            assert_eq!(normalize_name("IN PROGRESS"), "in progress");
+        }
+
+        #[test]
+        fn trims_leading_and_trailing_whitespace() {
+            assert_eq!(normalize_name("  todo  "), "todo");
+        }
+
+        #[test]
+        fn returns_empty_string_for_empty_input() {
+            assert_eq!(normalize_name(""), "");
+        }
+
+        #[test]
+        fn returns_empty_string_for_whitespace_only_input() {
+            assert_eq!(normalize_name("   "), "");
         }
     }
 }
