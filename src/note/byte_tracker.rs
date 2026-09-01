@@ -14,17 +14,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// Precomputes line-start byte offsets once per document; each conversion is
 /// an O(log n) binary search over them via [`slice::partition_point`].
-pub(crate) struct ByteTracker {
+pub(super) struct ByteTracker {
     /// Byte offset of the first character of each line, ascending; always
     /// starts with `0` for line 1.
-    line_starts: Vec<usize>,
+    line_starts: Box<[usize]>,
 }
 
 impl ByteTracker {
     /// Precomputes line-start offsets for `source`.
     #[inline]
     #[must_use]
-    pub(crate) fn new(source: &str) -> Self {
+    pub(super) fn new(source: &str) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(
             source
@@ -32,7 +32,7 @@ impl ByteTracker {
                 .map(|(offset, _)| offset.saturating_add(1)),
         );
         Self {
-            line_starts,
+            line_starts: line_starts.into_boxed_slice(),
         }
     }
 
@@ -41,7 +41,7 @@ impl ByteTracker {
     /// An offset beyond the source length resolves to the last line.
     #[inline]
     #[must_use]
-    pub(crate) fn byte_to_line(&self, offset: ByteOffset) -> SourceLine {
+    pub(super) fn byte_to_line(&self, offset: ByteOffset) -> SourceLine {
         let offset = usize::from(offset);
         let line = self.line_starts.partition_point(|&start| start <= offset);
         SourceLine::new(u32::try_from(line).unwrap_or(u32::MAX))
@@ -70,7 +70,7 @@ impl SourceLine {
     /// Wraps `line` as a 1-indexed source line number.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(line: u32) -> Self {
+    pub(super) const fn new(line: u32) -> Self {
         Self(line)
     }
 }
@@ -93,13 +93,13 @@ impl From<SourceLine> for u32 {
 /// Distinct from [`SourceLine`] so a line number can never be passed where a
 /// byte offset is expected, or vice versa.
 #[derive(Copy, Clone)]
-pub(crate) struct ByteOffset(usize);
+pub(super) struct ByteOffset(usize);
 
 impl ByteOffset {
     /// Wraps `offset` as a byte offset.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(offset: usize) -> Self {
+    pub(super) const fn new(offset: usize) -> Self {
         Self(offset)
     }
 }
