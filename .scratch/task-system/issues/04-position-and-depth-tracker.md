@@ -1,7 +1,7 @@
 Status: implemented
 
 **Date**: 2026-09-01
-**Implemented in**: `251a215`, branch `task-system/04-position-and-depth-tracker`
+**Implemented in**: `251a215`..`f789fdf`, branch `task-system/04-position-and-depth-tracker`
 (worktree `.worktrees/04-position-and-depth-tracker/`, not yet merged to `main`)
 
 # 04 — ByteTracker
@@ -62,10 +62,26 @@ The parser uses `ByteOffset` when reading byte offsets from pulldown-cmark and `
 
 | File | Purpose |
 |------|---------|
-| `src/note/byte_tracker.rs` | New. `ByteOffset`, `SourceLine`, `ByteTracker`, 6 tests (moved verbatim from the old `parser.rs::tests::line_tracker` module) |
-| `src/note/lists.rs` | `ListItem.line`/`parent_line` retyped to `SourceLine`/`Option<SourceLine>`; `with_position`/`line()`/`parent_line()` signatures updated |
-| `src/note/parser.rs` | `LineTracker` struct/impl deleted; `ParserContext.line_tracker` is `ByteTracker`; `handle_event`/`start_item` take `ByteOffset` end to end from `range.start` |
-| `src/note/mod.rs` | `mod byte_tracker;` declaration |
+| `src/position.rs` | New. `SourceLine`, `ByteOffset` (`pub(crate)`), 1 test |
+| `src/note/parser.rs` | `LineTracker` renamed `ByteTracker` (stays private, same file); 5 tests moved verbatim into `parser::tests::byte_tracker`; `ParserContext.line_tracker` is `ByteTracker`; `handle_event`/`start_item` take `ByteOffset` end to end from `range.start` |
+| `src/note/lists.rs` | `ListItem.line`/`parent_line` retyped to `SourceLine`/`Option<SourceLine>`; `with_position`/`line()`/`parent_line()` signatures updated; imports `SourceLine` from `crate::position` |
+| `src/lib.rs` | `mod position;` declaration |
+
+### Where it did *not* land
+
+`ByteTracker` was drafted as its own `src/note/byte_tracker.rs` module first
+(matching the issue text's "extracts that into a public `ByteTracker`
+module" literally), then moved back into `note::parser` as a private struct
+after review: `ByteTracker` is a precomputing index tuned for the parser's
+repeated-lookup pattern (one `byte_to_line` call per list item, amortized via
+a `Box<[usize]>` built once), which is a different shape of problem from
+`cli/error.rs`'s independent one-shot `line_column` (byte offset → column,
+for a single minijinja render error). No second caller needs `ByteTracker`
+itself, so it stays local per `spec.md` line 63 ("line tracking stays local
+and simple"). `SourceLine`/`ByteOffset` moved to `src/position.rs` instead —
+they are general position vocabulary (not a note-parsing concept), so they
+live where any future caller (e.g. a `cli/error.rs` rewrite) can reach them
+without depending on `note::`.
 
 ### Key design decisions
 
@@ -91,12 +107,19 @@ The parser uses `ByteOffset` when reading byte offsets from pulldown-cmark and `
    `assert_eq!` needs them in tests, `Deserialize`/`Serialize` because
    `ListItem` (which now holds a `SourceLine` field) derives both for postcard
    persistence.
+5. **Visibility, narrowest first.** `ByteTracker` (struct + `new`/`byte_to_line`)
+   has no `pub` modifier at all — module-private to `note::parser`, same as the
+   original `LineTracker`. `SourceLine`/`ByteOffset` in `src/position.rs` are
+   `pub(crate)`: the minimum that lets `note::lists`/`note::parser` (a sibling
+   subtree) reach them, and the correct scope given they're deliberately
+   general-purpose, not note-only.
 
 ### Verification
 
 ```sh
-cargo test --lib --all-features note::   # 219 passed
-cargo test --lib --all-features byte_tracker  # 6 passed
+cargo test --lib --all-features note::      # 219 passed
+cargo test --lib --all-features parser::tests::byte_tracker  # 5 passed
+cargo test --lib --all-features position::  # 1 passed
 cargo clippy --workspace --all-targets --all-features  # clean (pre-existing
   large_stack_frames warnings in config/builder.rs, index/store.rs,
   cli/template.rs are untouched by this change)
