@@ -374,7 +374,9 @@ impl ByteTracker {
     #[inline]
     #[must_use]
     fn new(source: &str) -> Self {
-        let mut line_starts = vec![0];
+        let count = source.as_bytes().iter().filter(|&&b| b == b'\n').count();
+        let mut line_starts = Vec::with_capacity(count.saturating_add(1));
+        line_starts.push(0);
         line_starts.extend(
             source
                 .match_indices('\n')

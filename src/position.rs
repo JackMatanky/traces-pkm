@@ -35,6 +35,13 @@ impl SourceLine {
     pub(crate) const fn new(line: u32) -> Self {
         Self(line)
     }
+
+    /// Returns the raw 1-indexed line number.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
 }
 
 impl fmt::Display for SourceLine {
@@ -50,11 +57,30 @@ impl From<SourceLine> for u32 {
     }
 }
 
+impl From<u32> for SourceLine {
+    #[inline]
+    fn from(line: u32) -> Self {
+        Self::new(line)
+    }
+}
+
 /// A UTF-8 byte offset into source text.
 ///
 /// Distinct from [`SourceLine`] so a line number can never be passed where a
 /// byte offset is expected, or vice versa.
-#[derive(Copy, Clone)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
+)]
 pub(crate) struct ByteOffset(usize);
 
 impl ByteOffset {
@@ -63,6 +89,13 @@ impl ByteOffset {
     #[must_use]
     pub(crate) const fn new(offset: usize) -> Self {
         Self(offset)
+    }
+
+    /// Returns the raw byte offset.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn get(self) -> usize {
+        self.0
     }
 }
 
@@ -89,5 +122,20 @@ mod tests {
     #[test]
     fn source_line_displays_as_its_numeric_value() {
         assert_eq!(SourceLine::new(7).to_string(), "7");
+    }
+
+    #[test]
+    fn source_line_conversions_and_accessors() {
+        let line = SourceLine::from(42u32);
+        assert_eq!(line.get(), 42);
+        assert_eq!(u32::from(line), 42);
+    }
+
+    #[test]
+    fn byte_offset_conversions_and_accessors() {
+        let offset = ByteOffset::from(128usize);
+        assert_eq!(offset.get(), 128);
+        assert_eq!(usize::from(offset), 128);
+        assert_eq!(offset, ByteOffset::new(128));
     }
 }
