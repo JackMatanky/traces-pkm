@@ -28,7 +28,6 @@
 //! - [`NoteFieldValue`]: body metadata values parsed from `Key:: Value` syntax.
 //! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
 
-mod byte_tracker;
 mod cursor;
 mod lexer;
 mod links;

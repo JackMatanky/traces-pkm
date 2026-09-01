@@ -66,6 +66,7 @@ mod index;
 mod lexer;
 mod note;
 mod path;
+mod position;
 mod query;
 mod schema;
 mod tag;

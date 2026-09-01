@@ -1,0 +1,92 @@
+//! Source-position primitives shared across text-parsing domains.
+//!
+//! [`SourceLine`] and [`ByteOffset`] are distinct newtypes so a byte offset
+//! can never be mistaken for a line number at compile time. Domain-specific
+//! parsers (Markdown notes, config files, templates) convert between the two
+//! with their own local tracking strategy; only the vocabulary lives here.
+
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+/// A 1-indexed source line number.
+///
+/// Distinct from [`ByteOffset`] so a byte offset can never be passed where a
+/// line number is expected, or vice versa.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
+)]
+pub(crate) struct SourceLine(u32);
+
+impl SourceLine {
+    /// Wraps `line` as a 1-indexed source line number.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(line: u32) -> Self {
+        Self(line)
+    }
+}
+
+impl fmt::Display for SourceLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl From<SourceLine> for u32 {
+    #[inline]
+    fn from(line: SourceLine) -> Self {
+        line.0
+    }
+}
+
+/// A UTF-8 byte offset into source text.
+///
+/// Distinct from [`SourceLine`] so a line number can never be passed where a
+/// byte offset is expected, or vice versa.
+#[derive(Copy, Clone)]
+pub(crate) struct ByteOffset(usize);
+
+impl ByteOffset {
+    /// Wraps `offset` as a byte offset.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(offset: usize) -> Self {
+        Self(offset)
+    }
+}
+
+impl From<usize> for ByteOffset {
+    #[inline]
+    fn from(offset: usize) -> Self {
+        Self::new(offset)
+    }
+}
+
+impl From<ByteOffset> for usize {
+    #[inline]
+    fn from(offset: ByteOffset) -> Self {
+        offset.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn source_line_displays_as_its_numeric_value() {
+        assert_eq!(SourceLine::new(7).to_string(), "7");
+    }
+}

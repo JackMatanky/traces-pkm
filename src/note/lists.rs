@@ -8,8 +8,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::{byte_tracker::SourceLine, metadata::NoteFieldValue};
-use crate::field::FieldKey;
+use super::metadata::NoteFieldValue;
+use crate::{field::FieldKey, position::SourceLine};
 
 /// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
