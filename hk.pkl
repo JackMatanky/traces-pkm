@@ -76,6 +76,15 @@ local rust = new Mapping<String, Step> {
         }
     }
     ["cargo-deny"] = Builtins.cargo_deny
+    ["cargo-sweep"] = new Step {
+        step_condition = "exec('test -d target')"
+        check = new CommandSpec {
+            command = new Command {
+                argv = List("cargo", "sweep", "--maxsize", "8000")
+            }
+            effect = "destructive"
+        }
+    }
 }
 
 local formatting =
@@ -134,6 +143,7 @@ hooks {
             ["validate"] = new Group { steps = validation }
             ["security"] = new Group { steps = security }
             ["quality"] = new Group { steps = quality }
+            ["cargo-sweep"] = rust["cargo-sweep"]
         }
     }
 
