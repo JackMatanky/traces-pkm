@@ -5,9 +5,9 @@
 //! [`super::IndexerService`] methods instead of interacting with tables
 //! directly.
 //!
-//! `FILES`/`NOTES` values stay plain `&[u8]` rather than a `redb::Value`
+//! Values are stored as raw `&[u8]` rather than through a `redb::Value`
 //! wrapper: `redb::Value::from_bytes` is infallible, so a corrupted row's
-//! postcard-decode failure would surface as a panic. This crate denies
+//! decode failure would surface as a panic. This crate denies
 //! `clippy::panic`/`unwrap_used`/`expect_used`, so
 //! [`encode_row`]/[`decode_row`] do the explicit [`DbError`] wrap at each
 //! read/write site instead.
@@ -35,17 +35,32 @@ use super::{
 };
 use crate::{file::FileBase, note::Note};
 
-/// Postcard-encoded [`FileBase`] bytes keyed by project-relative path.
+/// File metadata table.
+///
+/// Stores [`FileBase`] records for every regular file under the project root.
+///
+/// Key: project-relative path as UTF-8 bytes
+/// Value: postcard-encoded [`FileBase`]
 const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("files");
 
-/// Postcard-encoded [`Note`] bytes keyed by project-relative path.
+/// Parsed note metadata table.
+///
+/// Stores [`Note`] records for every Markdown file under the project root.
+/// Non-Markdown files have no entry here.
+///
+/// Key: project-relative path as UTF-8 bytes
+/// Value: postcard-encoded [`Note`]
 const NOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("notes");
 
-/// Derived inbound-link edges: target path to every linking source path. See
+/// Inbound link multimap table.
+///
+/// Maps each note to every other note whose outlinks resolve to it. See
 /// [`super::inlinks`]. Written via [`IndexStore::write_all`] (full rewrite)
 /// or [`IndexStore::persist_index`]'s incremental path, which patches only
-/// [`super::delta::IndexDelta::Incremental`]'s changed targets instead of
-/// rewriting the whole table.
+/// [`super::delta::IndexDelta::Incremental`]'s changed targets.
+///
+/// Key: target note path as UTF-8 bytes
+/// Value: one source note path per entry
 const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("links");
 
@@ -77,9 +92,8 @@ type ResolvedLink = Option<(PathBuf, Vec<PathBuf>)>;
 /// store/load mechanics every domain module builds its own table-specific
 /// persistence on top of. Table definitions and their read/write semantics stay
 /// with the domain that owns them (this module owns File/Note/Inlink tables);
-/// this struct owns only "open the file, run a transaction,
-/// serialize/deserialize a value or multimap table", mechanics with no domain
-/// knowledge.
+/// this struct owns only open-the-file, run-a-transaction,
+/// serialize/deserialize-a-value mechanics with no domain knowledge.
 ///
 /// Created by [`Self::open`]. Callers interact through [`IndexerService`]
 /// methods, not directly.
@@ -99,11 +113,11 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] ([`DbError::Io`]) if the database's parent
-    ///   directory cannot be created, or if a corrupted or schema-mismatched
-    ///   file cannot be deleted during recovery.
-    /// - [`IndexError::Store`] ([`DbError::Redb`]) if the database file cannot
-    ///   be opened, or a post-recovery re-create fails.
+    /// - [`DbError::Io`] if the database's parent directory cannot be created,
+    ///   or if a corrupted or schema-mismatched file cannot be deleted during
+    ///   recovery.
+    /// - [`DbError::Redb`] if the database file cannot be opened, or a
+    ///   post-recovery re-create fails.
     pub(super) fn open(root: &Path) -> IndexResult<Self> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
@@ -216,7 +230,7 @@ impl IndexStore {
         self.db.begin_write().map_err(|source| self.raise_source_error(source))
     }
 
-    /// Deserializes every postcard value in `table` and sorts by `path_of`.
+    /// Deserializes every value in `table` and sorts by `path_of`.
     ///
     /// # Errors
     ///
@@ -251,16 +265,15 @@ impl IndexStore {
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
     /// derived inlink edge (target-keyed, unordered). LINKS are correlated
-    /// against the loaded notes — each stored edge's raw target/source bytes
+    /// against the loaded notes: each stored edge's raw target/source bytes
     /// are matched to the loaded [`Note::path`] with the same bytes and
     /// cloned from it, never rebuilt from the stored bytes; edges whose
     /// endpoints are not among the loaded notes (stale/orphaned) are dropped.
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
-    /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
-    ///   not a valid record.
+    /// - [`DbError::Redb`] if a table cannot be read.
+    /// - [`DbError::Deserialize`] if stored bytes are not a valid record.
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let files = self.read_table(&txn, FILES, FileBase::path)?;
@@ -295,9 +308,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] ([`DbError::Redb`]) if a table cannot be read.
-    /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if stored bytes are
-    ///   not a valid record.
+    /// - [`DbError::Redb`] if a table cannot be read.
+    /// - [`DbError::Deserialize`] if stored bytes are not a valid record.
     pub(super) fn read_files_and_links_via(
         &self,
         txn: &ReadTransaction,
@@ -317,9 +329,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] ([`DbError::Redb`]) if the table cannot be read.
-    /// - [`IndexError::Store`] ([`DbError::Deserialize`]) if the stored bytes
-    ///   are corrupt.
+    /// - [`DbError::Redb`] if the table cannot be read.
+    /// - [`DbError::Deserialize`] if the stored bytes are corrupt.
     pub(super) fn read_note(
         &self,
         txn: &ReadTransaction,
@@ -418,12 +429,12 @@ impl IndexStore {
         Ok(values)
     }
 
-    /// Serializes `items` with postcard into `table`, keyed by `path_of`.
+    /// Serializes `items` into `table`, keyed by `path_of`.
     ///
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the table cannot be opened or written.
-    /// - [`DbError::Serialize`] if an item cannot be postcard-encoded.
+    /// - [`DbError::Serialize`] if an item cannot be encoded.
     pub(super) fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
@@ -485,9 +496,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] ([`DbError::Redb`]) if the transaction fails.
-    /// - [`IndexError::Store`] ([`DbError::Serialize`]) if a record cannot be
-    ///   encoded.
+    /// - [`DbError::Redb`] if the transaction fails.
+    /// - [`DbError::Serialize`] if a record cannot be encoded.
     pub(super) fn write_all(&self, entries: &[FileEntry]) -> IndexResult<()> {
         let write_txn = self.begin_write()?;
         write_txn
@@ -523,8 +533,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Same as [`Self::write_all`]/the incremental write path: transaction
-    /// failure or serialization failure.
+    /// Transaction failure or serialization failure, same as
+    /// [`Self::write_all`]/the incremental write path.
     ///
     /// [`IndexDelta::Full`]: super::delta::IndexDelta::Full
     /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
@@ -615,7 +625,7 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Serializes `value` with postcard and upserts it into `table` at `path`.
+    /// Serializes `value` and upserts it into `table` at `path`.
     /// Shared by [`Self::upsert_files_and_notes`] for both the `FILES` and
     /// `NOTES` tables, which share the same key/value shape.
     fn upsert_row<T: Serialize>(
