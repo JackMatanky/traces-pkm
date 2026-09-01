@@ -42,6 +42,14 @@ name = "query_execution"
 
 [[bench]]
 harness = false
+name = "query_sort"
+
+[[bench]]
+harness = false
+name = "query_parsing"
+
+[[bench]]
+harness = false
 name = "note_parsing"
 
 [[bench]]

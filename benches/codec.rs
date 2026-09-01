@@ -37,7 +37,7 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use std::{hint::black_box, path::PathBuf};
+use std::{hint::black_box, mem, path::PathBuf};
 
 use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
@@ -51,6 +51,11 @@ struct PathWrapper {
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
+
+/// Note counts spanning a realistic personal vault (100) up to `IndexStore`'s
+/// established stress ceiling (20,000), matching the sweep convention used by
+/// `benches/index_lifecycle.rs`.
+const ROW_COUNTS: &[usize] = &[100, 1_000, 20_000];
 
 /// Generates a test path that contains invalid UTF-8 bytes for the current
 /// target OS, ensuring the non-Unicode fallback/exact code paths are fully
@@ -72,6 +77,24 @@ fn non_unicode_path() -> PathBuf {
     {
         PathBuf::from("fallback_non_unicode.md")
     }
+}
+
+/// Generates `n` synthetic notes with realistic frontmatter and an outlink,
+/// matching the payload shape `IndexStore`'s private `encode_row` actually
+/// serializes for the `NOTES` table — `PathWrapper` above only exercises a
+/// bare path, which understates a real row's size.
+fn generate_notes(n: usize) -> Vec<traces_pkm::Note> {
+    (0..n)
+        .map(|i| {
+            let path = format!("note-{i}.md");
+            let content = format!(
+                "---\nrating: {}\n---\n\n# Note {i}\n\nLink to [[note-{}]]\n",
+                i % 10,
+                (i + 1) % n
+            );
+            traces_pkm::parse_markdown(&path, &content)
+        })
+        .collect()
 }
 
 // ----------------------------------------------------------- //
@@ -170,6 +193,64 @@ fn bench_codec_serialize_slice(c: &mut Criterion) {
                     let out = postcard::to_slice(black_box(w), &mut buffer)
                         .expect("serialize path");
                     black_box(out);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures reused-buffer serialization cost for paths via
+/// [`postcard::to_extend`] — the middle ground between a fresh heap
+/// allocation per call ([`bench_codec_serialize`]) and a fixed-size
+/// caller-owned slice ([`bench_codec_serialize_slice`]).
+///
+/// Isolates the specific buffer-reuse pattern `IndexStore`'s private
+/// `encode_row` would need to adopt to avoid a fresh allocation per row:
+/// clear a `Vec<u8>` and extend into it, rather than allocate fresh or
+/// require a fixed-capacity slice.
+///
+/// Expected outcomes:
+/// - Faster than `bench_codec_serialize` once the buffer's capacity has grown
+///   to fit (no further allocation needed).
+/// - Slower than `bench_codec_serialize_slice` (still writes through a `Vec`'s
+///   `Extend` impl rather than a raw pointer into a fixed buffer).
+///
+/// Unexpected outcomes:
+/// - No measurable gap versus fresh allocation, indicating the allocator
+///   already recycles same-size blocks fast enough that reuse isn't worth it.
+fn bench_codec_serialize_reused_buffer(c: &mut Criterion) {
+    let mut group = c.benchmark_group("path_codec::serialize_reused_buffer");
+
+    let short = PathWrapper {
+        path: PathBuf::from("notes/note.md"),
+    };
+    let long = PathWrapper {
+        path: PathBuf::from("archive/2026/08/26/category/subcategory/note.md"),
+    };
+    let non_uni = PathWrapper {
+        path: non_unicode_path(),
+    };
+
+    for (label, wrapper) in
+        [("short", &short), ("long", &long), ("non-unicode", &non_uni)]
+    {
+        let serialized_len =
+            postcard::to_allocvec(wrapper).expect("serialize path").len();
+        group.throughput(Throughput::Bytes(
+            u64::try_from(serialized_len).expect("byte length fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            wrapper,
+            |b, w| {
+                let mut buf = Vec::new();
+                b.iter(|| {
+                    buf.clear();
+                    buf =
+                        postcard::to_extend(black_box(w), mem::take(&mut buf))
+                            .expect("serialize path");
+                    black_box(&buf);
                 });
             },
         );
@@ -291,11 +372,77 @@ fn bench_codec_batch(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//              Benchmarks: Row Value Encoding                 //
+// ----------------------------------------------------------- //
+
+/// Measures whether reusing one scratch buffer across row serializations
+/// (`postcard::to_extend` into a cleared `Vec<u8>`) beats a fresh heap
+/// allocation per row (`postcard::to_allocvec`, what `IndexStore`'s private
+/// `encode_row` currently does for every `FILES`/`NOTES` row).
+///
+/// `encode_row` itself is `pub(super)` and unreachable from this external
+/// bench crate; this measures the same two postcard entry points directly
+/// against realistic `Note` payloads, sized like an actual `NOTES` table row
+/// rather than `PathWrapper`'s bare path.
+///
+/// Expected outcomes:
+/// - Reused-buffer serialization is faster per row, with the gap in
+///   nanoseconds-per-row terms staying roughly flat across `n` (allocator
+///   overhead is per-call, not per-byte).
+///
+/// Unexpected outcomes:
+/// - No measurable gap at any `n`, indicating the allocator already recycles
+///   same-size blocks fast enough that buffer reuse isn't worth pursuing.
+fn bench_row_value_encode(c: &mut Criterion) {
+    let mut group = c.benchmark_group("IndexStore::encode_row (Note)");
+    for &n in ROW_COUNTS {
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+
+        group.bench_with_input(
+            BenchmarkId::new("fresh_allocvec", n),
+            &n,
+            |b, &n| {
+                let notes = generate_notes(n);
+                b.iter(|| {
+                    for note in &notes {
+                        let bytes = postcard::to_allocvec(black_box(note))
+                            .expect("serialize note");
+                        black_box(bytes);
+                    }
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("reused_buffer", n),
+            &n,
+            |b, &n| {
+                let notes = generate_notes(n);
+                b.iter(|| {
+                    let mut buf = Vec::new();
+                    for note in &notes {
+                        buf.clear();
+                        buf = postcard::to_extend(black_box(note), buf)
+                            .expect("serialize note");
+                        black_box(&buf);
+                    }
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_codec_serialize,
     bench_codec_serialize_slice,
+    bench_codec_serialize_reused_buffer,
     bench_codec_deserialize,
-    bench_codec_batch
+    bench_codec_batch,
+    bench_row_value_encode
 );
 criterion_main!(benches);
