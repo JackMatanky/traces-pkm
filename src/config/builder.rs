@@ -44,9 +44,9 @@ impl ConfigBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigBuilderError`] if `SchemasConfig` or `FrontmatterConfig`
-    /// field validation fails (e.g. invalid field key or escaping
-    /// subdirectory).
+    /// Returns [`ConfigBuilderError`] if `SchemasConfig`, `FrontmatterConfig`,
+    /// or `TaskConfig` field validation fails (e.g. invalid field key,
+    /// escaping subdirectory, or invalid `tag_filters` entry).
     pub(crate) fn build(self) -> Result<Config, ConfigBuilderError> {
         let local_raw = self.local.raw();
         let global_raw = self.global.as_ref().map(GlobalConfigFile::raw);

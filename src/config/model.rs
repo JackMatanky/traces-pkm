@@ -700,17 +700,21 @@ pub struct TaskConfig {
 
 impl TaskConfig {
     /// Returns the resolved task status lookup map.
+    ///
+    /// `pub(crate)`, not part of `Config`'s public accessor surface: the
+    /// lookup table is parser-internal plumbing, unlike [`Self::tag_filters`]
+    /// which is a genuine resolved-setting read.
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
-            reason = "no production consumer until the custom marker scanner \
-                      added in a later task-system issue"
+            reason = "no current caller outside tests; consumed by the custom \
+                      marker scanner added in a later task-system issue"
         )
     )]
-    pub const fn statuses(&self) -> &TaskStatusMap {
+    pub(crate) const fn statuses(&self) -> &TaskStatusMap {
         &self.statuses
     }
 

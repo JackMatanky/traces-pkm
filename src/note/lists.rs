@@ -331,4 +331,22 @@ mod tests {
 
         assert!(item.fields().is_empty());
     }
+
+    #[test]
+    fn defaults_position_to_zero_and_no_parent() {
+        let item = ListItem::new("item", None);
+
+        assert_eq!(item.line(), 0);
+        assert_eq!(item.depth(), 0);
+        assert_eq!(item.parent_line(), None);
+    }
+
+    #[test]
+    fn with_position_sets_line_depth_and_parent_line() {
+        let item = ListItem::new("item", None).with_position(3, 2, Some(1));
+
+        assert_eq!(item.line(), 3);
+        assert_eq!(item.depth(), 2);
+        assert_eq!(item.parent_line(), Some(1));
+    }
 }

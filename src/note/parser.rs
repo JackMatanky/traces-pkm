@@ -1222,6 +1222,12 @@ mod tests {
             let tracker = LineTracker::new("");
             assert_eq!(tracker.line_for(0), 1);
         }
+
+        #[test]
+        fn resolves_an_offset_beyond_source_length_to_the_last_line() {
+            let tracker = LineTracker::new("one\ntwo\nthree");
+            assert_eq!(tracker.line_for(1000), 3);
+        }
     }
 
     mod tasks {

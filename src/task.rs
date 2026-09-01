@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 /// The workflow classification of a [`TaskStatus`].
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub enum TaskStatusType {
+pub(crate) enum TaskStatusType {
     /// Not yet started.
     Todo,
     /// Actively being worked on.
@@ -26,7 +26,7 @@ pub enum TaskStatusType {
     /// A checkbox status that never becomes a Task (reserved for future
     /// configured statuses; no default status uses it).
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no default status uses this variant; reserved for \
@@ -45,7 +45,7 @@ impl TaskStatusType {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; consumed by the custom \
@@ -53,7 +53,7 @@ impl TaskStatusType {
                       a later task-system issue"
         )
     )]
-    pub const fn completed(self) -> Option<bool> {
+    pub(crate) const fn completed(self) -> Option<bool> {
         match self {
             Self::Done => Some(true),
             Self::Cancelled => None,
@@ -71,29 +71,14 @@ impl TaskStatusType {
 /// markers are still valid symbols; this type carries no validation beyond
 /// being a `char`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub struct TaskStatusSymbol(char);
+pub(crate) struct TaskStatusSymbol(char);
 
 impl TaskStatusSymbol {
     /// Wraps `symbol` as a task status marker character.
     #[inline]
     #[must_use]
-    pub const fn new(symbol: char) -> Self {
+    pub(crate) const fn new(symbol: char) -> Self {
         Self(symbol)
-    }
-
-    /// Returns the wrapped marker character.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for symmetry with \
-                      TaskStatusMap's by-symbol lookup key"
-        )
-    )]
-    pub const fn as_char(self) -> char {
-        self.0
     }
 }
 
@@ -106,7 +91,7 @@ impl From<char> for TaskStatusSymbol {
 
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TaskStatus {
+pub(crate) struct TaskStatus {
     symbol: TaskStatusSymbol,
     name: String,
     kind: TaskStatusType,
@@ -117,7 +102,7 @@ impl TaskStatus {
     /// workflow type.
     #[inline]
     #[must_use]
-    pub fn new<S: Into<String>>(
+    pub(crate) fn new<S: Into<String>>(
         symbol: TaskStatusSymbol,
         name: S,
         kind: TaskStatusType,
@@ -133,14 +118,14 @@ impl TaskStatus {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; kept for API symmetry \
                       with name()/kind() until the marker scanner consumes it"
         )
     )]
-    pub const fn symbol(&self) -> TaskStatusSymbol {
+    pub(crate) const fn symbol(&self) -> TaskStatusSymbol {
         self.symbol
     }
 
@@ -148,7 +133,7 @@ impl TaskStatus {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; kept for API symmetry \
@@ -156,7 +141,7 @@ impl TaskStatus {
                       consumes it"
         )
     )]
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
@@ -164,7 +149,7 @@ impl TaskStatus {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; kept for API symmetry \
@@ -172,7 +157,7 @@ impl TaskStatus {
                       it"
         )
     )]
-    pub const fn kind(&self) -> TaskStatusType {
+    pub(crate) const fn kind(&self) -> TaskStatusType {
         self.kind
     }
 }
@@ -184,7 +169,7 @@ impl TaskStatus {
 /// [`Self::insert`] lets configuration add new statuses or override a
 /// default one that shares its symbol.
 #[derive(Clone, Debug)]
-pub struct TaskStatusMap {
+pub(crate) struct TaskStatusMap {
     symbols: HashMap<TaskStatusSymbol, TaskStatus>,
     names: HashMap<String, TaskStatus>,
     kinds: HashMap<TaskStatusType, Vec<TaskStatus>>,
@@ -195,14 +180,17 @@ impl TaskStatusMap {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; consumed by the custom \
                       marker scanner added in a later task-system issue"
         )
     )]
-    pub fn by_symbol(&self, symbol: TaskStatusSymbol) -> Option<&TaskStatus> {
+    pub(crate) fn by_symbol(
+        &self,
+        symbol: TaskStatusSymbol,
+    ) -> Option<&TaskStatus> {
         self.symbols.get(&symbol)
     }
 
@@ -211,7 +199,7 @@ impl TaskStatusMap {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; consumed by \
@@ -219,7 +207,7 @@ impl TaskStatusMap {
                       task-system issue"
         )
     )]
-    pub fn by_name(&self, name: &str) -> Option<&TaskStatus> {
+    pub(crate) fn by_name(&self, name: &str) -> Option<&TaskStatus> {
         self.names.get(&normalize_name(name))
     }
 
@@ -228,7 +216,7 @@ impl TaskStatusMap {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(any(test, feature = "test-utils")),
+        not(test),
         expect(
             dead_code,
             reason = "no current caller outside tests; consumed by \
@@ -236,7 +224,7 @@ impl TaskStatusMap {
                       task-system issue"
         )
     )]
-    pub fn by_type(&self, kind: TaskStatusType) -> &[TaskStatus] {
+    pub(crate) fn by_type(&self, kind: TaskStatusType) -> &[TaskStatus] {
         self.kinds.get(&kind).map_or(&[], Vec::as_slice)
     }
 
@@ -246,7 +234,7 @@ impl TaskStatusMap {
     /// entries before indexing the new one, so all three lookups stay
     /// consistent.
     #[inline]
-    pub fn insert(&mut self, status: TaskStatus) {
+    pub(crate) fn insert(&mut self, status: TaskStatus) {
         if let Some(previous) =
             self.symbols.insert(status.symbol, status.clone())
         {
@@ -271,12 +259,13 @@ impl Default for TaskStatusMap {
     /// Builds the map from the always-available default statuses.
     #[inline]
     fn default() -> Self {
+        let statuses = default_statuses();
         let mut map = Self {
-            symbols: HashMap::new(),
-            names: HashMap::new(),
-            kinds: HashMap::new(),
+            symbols: HashMap::with_capacity(statuses.len()),
+            names: HashMap::with_capacity(statuses.len()),
+            kinds: HashMap::with_capacity(statuses.len()),
         };
-        for status in default_statuses() {
+        for status in statuses {
             map.insert(status);
         }
         map
