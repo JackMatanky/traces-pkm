@@ -30,6 +30,7 @@ use minijinja::{
     Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
 };
+use phf::phf_map;
 
 use super::error::TemplateEngineResult;
 
@@ -233,20 +234,45 @@ enum DateTimeUnit {
     Seconds,
 }
 
+/// Compile-time perfect hash map for unit string → [`DateTimeUnit`] lookup.
+///
+/// Accepts plural, singular, and conventional single-letter / short
+/// abbreviations (consistent with `DURATION_UNITS` in the note lexer).
+static UNITS: phf::Map<&'static str, DateTimeUnit> = phf_map! {
+    "years" => DateTimeUnit::Years,
+    "year" => DateTimeUnit::Years,
+    "yrs" => DateTimeUnit::Years,
+    "yr" => DateTimeUnit::Years,
+    "y" => DateTimeUnit::Years,
+    "months" => DateTimeUnit::Months,
+    "month" => DateTimeUnit::Months,
+    "mos" => DateTimeUnit::Months,
+    "mo" => DateTimeUnit::Months,
+    "days" => DateTimeUnit::Days,
+    "day" => DateTimeUnit::Days,
+    "d" => DateTimeUnit::Days,
+    "hours" => DateTimeUnit::Hours,
+    "hour" => DateTimeUnit::Hours,
+    "hrs" => DateTimeUnit::Hours,
+    "hr" => DateTimeUnit::Hours,
+    "h" => DateTimeUnit::Hours,
+    "minutes" => DateTimeUnit::Minutes,
+    "minute" => DateTimeUnit::Minutes,
+    "mins" => DateTimeUnit::Minutes,
+    "min" => DateTimeUnit::Minutes,
+    "m" => DateTimeUnit::Minutes,
+    "seconds" => DateTimeUnit::Seconds,
+    "second" => DateTimeUnit::Seconds,
+    "secs" => DateTimeUnit::Seconds,
+    "sec" => DateTimeUnit::Seconds,
+    "s" => DateTimeUnit::Seconds,
+};
+
 impl DateTimeUnit {
-    /// Parses `unit`'s `unit="..."` kwarg value, accepting both plural
-    /// (`"days"`) and singular (`"day"`) forms. `None` for unrecognized unit
-    /// names.
+    /// Parses `unit`'s `unit="..."` kwarg value via the [`UNITS`] perfect hash
+    /// map. Returns `None` for unrecognized unit names.
     fn parse(unit: &str) -> Option<Self> {
-        match unit {
-            "years" | "year" => Some(Self::Years),
-            "months" | "month" => Some(Self::Months),
-            "days" | "day" => Some(Self::Days),
-            "hours" | "hour" => Some(Self::Hours),
-            "minutes" | "minute" => Some(Self::Minutes),
-            "seconds" | "second" => Some(Self::Seconds),
-            _ => None,
-        }
+        UNITS.get(unit).copied()
     }
 
     /// This unit's length in whole seconds for [`date_diff`].
@@ -293,7 +319,7 @@ fn format_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<&str> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `unit` is not one of
-///   [`DateTimeUnit::parse`]'s six accepted units.
+///   [`DateTimeUnit::parse`]'s accepted unit names or abbreviations.
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
 fn unit_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<DateTimeUnit> {
@@ -686,7 +712,7 @@ fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` or `other` is not a parseable
 ///   date/time string (see [`ParsedDate::parse`]) or `unit` is not one of
-///   [`DateTimeUnit::parse`]'s six accepted names (see [`unit_kwarg`]).
+///   [`DateTimeUnit::parse`]'s accepted names (see [`unit_kwarg`]).
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
 #[expect(
@@ -831,15 +857,16 @@ fn date_out_of_range_error() -> Error {
 }
 
 /// Builds the error for a `unit="..."` kwarg naming anything outside
-/// [`DateTimeUnit::parse`]'s six accepted unit names.
+/// [`DateTimeUnit::parse`]'s accepted unit names.
 ///
 /// Shared by [`date_add`], [`date_sub`], and [`date_diff`] via [`unit_kwarg`].
 fn unknown_unit_error(unit: &str) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
         format!(
-            "unknown unit {unit:?} (expected \"years\", \"months\", \"days\", \
-             \"hours\", \"minutes\", or \"seconds\")"
+            "unknown unit {unit:?} (expected \"years\"/\"y\", \
+             \"months\"/\"mo\", \"days\"/\"d\", \"hours\"/\"h\", \
+             \"minutes\"/\"m\", or \"seconds\"/\"s\")"
         ),
     )
 }
