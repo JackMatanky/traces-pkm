@@ -10,7 +10,10 @@ use super::{
     lists::{List, ListItem},
     metadata::{Frontmatter, NoteFieldValue},
 };
-use crate::{field::FieldKey, tag::Tag};
+use crate::{
+    field::{FieldKey, FieldKeyRef},
+    tag::Tag,
+};
 
 /// A parsed Markdown note.
 ///
@@ -172,9 +175,8 @@ impl Note {
             return Some(value);
         }
         self.inline_fields
-            .iter()
-            .find(|(k, _)| k.is_match(key))
-            .and_then(|(_, values)| values.first())
+            .get(&FieldKeyRef::new(key))
+            .and_then(|values| values.first())
     }
 
     /// Returns Markdown tags from paragraphs, headings, and list items, in
