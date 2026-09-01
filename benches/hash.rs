@@ -36,6 +36,11 @@ use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
+
+// ----------------------------------------------------------- //
+//                         Benchmarks                          //
+// ----------------------------------------------------------- //
+
 /// Measures file-content hashing cost for small (1KB) and large (1MB) files.
 ///
 /// Every trust check and tracked-config lookup hashes a file through this path
@@ -79,6 +84,13 @@ fn bench_file_hash(c: &mut Criterion) {
 ///
 /// Isolates the CPU SIMD hashing pipeline from filesystem read syscalls and
 /// OS page-cache lookups.
+///
+/// Expected outcomes:
+/// - Cost scales proportionally with buffer size.
+///
+/// Unexpected outcomes:
+/// - Cost exceeding linear scaling, indicating hasher overhead beyond raw SIMD
+///   throughput.
 fn bench_memory_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("blake3::memory_buffer");
     for (label, size) in
@@ -108,6 +120,13 @@ fn bench_memory_hash(c: &mut Criterion) {
 ///
 /// Evaluates path hash latency for short relative paths, standard project
 /// configs, and deeply-nested file paths.
+///
+/// Expected outcomes:
+/// - Cost scales with path byte length, not depth.
+///
+/// Unexpected outcomes:
+/// - Cost growing faster than byte length, indicating per-segment allocation or
+///   iteration overhead.
 fn bench_path_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3PathHash::from");
 

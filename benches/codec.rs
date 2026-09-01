@@ -11,7 +11,14 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [PathBuf] ──(Serialize)──► [postcard target bytes (Raw/Wide)] ──(Deserialize)──► [PathBuf]
+//! [PathBuf] ──(Serialize)──► [postcard bytes] ──(Deserialize)──► [PathBuf]
+//!
+//! Serialize variants:
+//!   allocating ── postcard::to_allocvec   (heap per call)
+//!   slice      ── postcard::to_slice      (zero-alloc, fixed buffer)
+//!
+//! Variant selection (Raw/Wide) is automatic based on path content;
+//! benchmarks do not isolate it.
 //! ```
 //!
 //! ### Profiling Integration
@@ -41,6 +48,10 @@ struct PathWrapper {
     path: PathBuf,
 }
 
+// ----------------------------------------------------------- //
+//                     Fixtures & Helpers                      //
+// ----------------------------------------------------------- //
+
 /// Generates a test path that contains invalid UTF-8 bytes for the current
 /// target OS, ensuring the non-Unicode fallback/exact code paths are fully
 /// exercised.
@@ -62,6 +73,10 @@ fn non_unicode_path() -> PathBuf {
         PathBuf::from("fallback_non_unicode.md")
     }
 }
+
+// ----------------------------------------------------------- //
+//                  Benchmarks: Serialization                  //
+// ----------------------------------------------------------- //
 
 /// Measures serialization cost for paths using the target-specific binary
 /// representation.
@@ -116,6 +131,14 @@ fn bench_codec_serialize(c: &mut Criterion) {
 ///
 /// Isolates the CPU encoding throughput from system memory allocator latency
 /// (`malloc`/`free`).
+///
+/// Expected outcomes:
+/// - Slice serialization is faster than allocating serialization, confirming
+///   the allocator is a measurable cost component.
+///
+/// Unexpected outcomes:
+/// - Slice and allocating serialization cost comparable, indicating the codec
+///   itself dominates and the allocator is not the bottleneck.
 fn bench_codec_serialize_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::serialize_slice");
 
@@ -153,6 +176,10 @@ fn bench_codec_serialize_slice(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//                 Benchmarks: Deserialization                 //
+// ----------------------------------------------------------- //
 
 /// Measures deserialization cost for paths from the target-specific binary
 /// representation.
@@ -203,8 +230,20 @@ fn bench_codec_deserialize(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//                Benchmarks: Batch Round-Trip                 //
+// ----------------------------------------------------------- //
+
 /// Measures batch serialization and deserialization over 100 paths,
 /// representative of bulk database transactions during workspace indexing.
+///
+/// Expected outcomes:
+/// - Batch cost is roughly 100× single-path cost, with no per-iteration
+///   overhead scaling.
+///
+/// Unexpected outcomes:
+/// - Batch cost exceeding 100× single-path cost, indicating per-path allocation
+///   or validation overhead in the batch path.
 fn bench_codec_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::batch_100");
 

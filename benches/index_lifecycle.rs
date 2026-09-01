@@ -15,6 +15,7 @@
 //! [Files on Disk] ──(Scan)──► [FileBase / Notes] ──(derive_inlinks)──► [InlinkMap]
 //!                                                                          │
 //! [redb database] ◄──(Persist)─────────────────────────────────────────────┘
+//! ```
 //!
 //! ### Profiling Integration
 //!
@@ -23,7 +24,7 @@
 //! cargo flamegraph --bench index_lifecycle -- --bench
 //! "FileIndex::refresh/no-op/1000"
 //! ```
-//! 
+//!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface is only reachable with `--features
 //! test-utils`.
@@ -45,11 +46,18 @@ use traces_pkm::{
     FileIndex, IndexerService, Note, derive_inlinks, parse_markdown,
 };
 
+// ----------------------------------------------------------- //
+//                     Fixtures & Helpers                      //
+// ----------------------------------------------------------- //
+
+const BUILD_SIZES: &[usize] = &[10, 100, 1_000, 20_000];
+const WORKSPACE_SIZES: &[usize] = &[100, 1_000, 20_000];
+
 /// Creates a temporary project containing `n` synthetic notes.
 ///
 /// The returned [`TempDir`] owns cleanup. Benchmark routines return the fixture
 /// with their result, so Criterion drops it after timing.
-fn populate(n: usize) -> TempDir {
+fn create_temp_notes(n: usize) -> TempDir {
     let temp = tempfile::tempdir().expect("create temp dir");
     for i in 0..n {
         std::fs::write(
@@ -67,7 +75,7 @@ fn populate(n: usize) -> TempDir {
 /// Prepares a project directory with a populated and persisted index of `n`
 /// notes.
 fn setup_refresh(n: usize) -> (TempDir, IndexerService) {
-    let temp = populate(n);
+    let temp = create_temp_notes(n);
     let indexer = IndexerService::new(temp.path());
     let index = indexer.build().expect("build index");
     indexer.persist(&index).expect("persist index");
@@ -78,7 +86,7 @@ fn setup_refresh(n: usize) -> (TempDir, IndexerService) {
 /// the next, mirroring `generate_notes_sparse`'s link shape but written to disk
 /// so `IndexerService::build`/`refresh` parse and persist real outlinks — none
 /// of this file's other fixtures produce any `LINKS` rows.
-fn populate_linked(n: usize) -> TempDir {
+fn create_linked_notes(n: usize) -> TempDir {
     let temp = tempfile::tempdir().expect("create temp dir");
     for i in 0..n {
         std::fs::write(
@@ -97,7 +105,7 @@ fn populate_linked(n: usize) -> TempDir {
 /// Prepares a project directory with a populated and persisted index of `n`
 /// linked notes.
 fn setup_refresh_linked(n: usize) -> (TempDir, IndexerService) {
-    let temp = populate_linked(n);
+    let temp = create_linked_notes(n);
     let indexer = IndexerService::new(temp.path());
     let index = indexer.build().expect("build index");
     indexer.persist(&index).expect("persist index");
@@ -106,8 +114,8 @@ fn setup_refresh_linked(n: usize) -> (TempDir, IndexerService) {
 
 /// Prepares a project directory with a populated but unpersisted index of `n`
 /// notes.
-fn setup_persist_full(n: usize) -> (TempDir, IndexerService, FileIndex) {
-    let temp = populate(n);
+fn setup_unpersisted_project(n: usize) -> (TempDir, IndexerService, FileIndex) {
+    let temp = create_temp_notes(n);
     let indexer = IndexerService::new(temp.path());
     let index = indexer.build().expect("build index");
     (temp, indexer, index)
@@ -166,6 +174,30 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
     notes
 }
 
+/// Loads multiple project indexes concurrently, one thread per project.
+///
+/// Used by [`bench_concurrent_operations`] to simulate multi-vault tooling
+/// (batch importers, multi-project LSP workspaces). redb enforces at most one
+/// open [`redb::Database`] handle per file *per process*, so this benchmark
+/// spawns one thread per project rather than sharing across threads.
+fn load_concurrently(projects: &[(TempDir, IndexerService)]) {
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = projects
+            .iter()
+            .map(|(_temp, indexer)| {
+                scope.spawn(|| indexer.load().expect("load index"))
+            })
+            .collect();
+        for handle in handles {
+            black_box(handle.join().expect("thread joined"));
+        }
+    });
+}
+
+// ----------------------------------------------------------- //
+//                   Benchmarks: Index Build                   //
+// ----------------------------------------------------------- //
+
 /// Measures compile time for building the index.
 ///
 /// Runs the raw build operation on a temporary directory.
@@ -180,7 +212,7 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
 ///   sorting.
 fn bench_file_index_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build");
-    for n in [10_usize, 100, 1_000, 20_000] {
+    for &n in BUILD_SIZES {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -192,7 +224,7 @@ fn bench_file_index_build(c: &mut Criterion) {
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched_ref(
-                || populate(n),
+                || create_temp_notes(n),
                 |temp: &mut TempDir| {
                     let index = IndexerService::new(temp.path())
                         .build()
@@ -205,6 +237,10 @@ fn bench_file_index_build(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//                  Benchmarks: Index Refresh                  //
+// ----------------------------------------------------------- //
 
 /// Measures the refresh lifecycle path across different filesystem states.
 ///
@@ -222,7 +258,7 @@ fn bench_file_index_build(c: &mut Criterion) {
 ///   invalidation leaks or broken comparison logic.
 fn bench_file_index_refresh(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::refresh");
-    for n in [100_usize, 1_000, 20_000] {
+    for &n in WORKSPACE_SIZES {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -314,12 +350,23 @@ fn bench_file_index_refresh(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//                  Benchmarks: Index Persist                  //
+// ----------------------------------------------------------- //
+
 /// Measures full database persistence transaction overhead.
 ///
 /// Isolates the serialization and disk-write cost of a full index rewrite.
+///
+/// Expected outcomes:
+/// - Cost scales linearly with note count.
+///
+/// Unexpected outcomes:
+/// - Cost scaling super-linearly, indicating redundant serialization or
+///   unbounded transaction size.
 fn bench_index_persist(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::persist");
-    for n in [10_usize, 100, 1_000, 20_000] {
+    for &n in BUILD_SIZES {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -331,7 +378,7 @@ fn bench_index_persist(c: &mut Criterion) {
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched_ref(
-                || setup_persist_full(n),
+                || setup_unpersisted_project(n),
                 |(_temp, indexer, index): &mut (
                     TempDir,
                     IndexerService,
@@ -345,6 +392,10 @@ fn bench_index_persist(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//                   Benchmarks: Link Graph                    //
+// ----------------------------------------------------------- //
 
 /// Measures isolated link graph resolution and compilation in-memory.
 ///
@@ -362,7 +413,7 @@ fn bench_index_persist(c: &mut Criterion) {
 ///   calculation is too hot or allocating redundant paths.
 fn bench_derive_inlinks(c: &mut Criterion) {
     let mut group = c.benchmark_group("derive_inlinks");
-    for n in [100_usize, 1_000, 20_000] {
+    for &n in WORKSPACE_SIZES {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -401,42 +452,19 @@ fn bench_derive_inlinks(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures concurrent reading performance across multiple independently
-/// indexed projects.
-///
-/// Multi-vault tooling (batch importers, multi-project LSP workspaces) loads
-/// several project indexes concurrently. This benchmark spawns one thread per
-/// project rather than sharing one project across threads: redb enforces at
-/// most one open [`redb::Database`] handle per file *per process*, so two
-/// [`IndexerService::load`] calls against the *same* database file from
-/// concurrent threads panic with `DatabaseAlreadyOpen` (discovered while
-/// writing this benchmark) rather than contending on a read lock. Genuine
-/// same-file concurrent reads require sharing one `Database` handle across
-/// threads, which `IndexerService`'s per-call `open`/`close` design does not
-/// expose.
+// ----------------------------------------------------------- //
+//              Benchmarks: Concurrent Operations              //
+// ----------------------------------------------------------- //
+
+/// Benchmarks concurrent loading of independent project indexes.
 ///
 /// Expected outcomes:
-/// - Smooth scaling under parallel loads, dominated by thread-spawn and
-///   per-project I/O cost rather than lock contention (each project has its own
-///   database file).
+/// - Parallel loads complete faster than serial loads, dominated by
+///   thread-spawn and per-project I/O cost.
 ///
 /// Unexpected outcomes:
-/// - Scaling bottlenecks, indicating shared OS-level resource contention (disk
-///   I/O, page cache) rather than an application-level lock.
-fn load_concurrently(projects: &[(TempDir, IndexerService)]) {
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = projects
-            .iter()
-            .map(|(_temp, indexer)| {
-                scope.spawn(|| indexer.load().expect("load index"))
-            })
-            .collect();
-        for handle in handles {
-            black_box(handle.join().expect("thread joined"));
-        }
-    });
-}
-
+/// - Parallel loads slower than serial, indicating OS-level resource contention
+///   (disk I/O, page cache) rather than application-level lock.
 fn bench_concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::concurrent");
     let n = 250_usize;

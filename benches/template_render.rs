@@ -43,12 +43,18 @@ use traces_pkm::{
     write_note, write_template,
 };
 
+// ----------------------------------------------------------- //
+//                     Fixtures & Helpers                      //
+// ----------------------------------------------------------- //
+
+const WORKSPACE_SIZES: &[usize] = &[100, 1_000];
+
 /// Builds a temporary project fixture populated with `n` synthetic notes,
 /// an indexed database, and test templates.
 ///
-/// Returns `(TempDir, PathBuf, Config, PresetDialogProvider)` where `TempDir`
-/// owns the lifetime of the project on disk.
-fn prepare_fixture(n: usize) -> (TempDir, std::path::PathBuf, Config) {
+/// Returns `(TempDir, PathBuf, Config)` where `TempDir` owns the lifetime of
+/// the project on disk.
+fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
     let temp = tempfile::tempdir().expect("create temp dir");
     let root = temp.path().join("project");
     let service = fixture_service(temp.path());
@@ -93,6 +99,10 @@ fn prepare_fixture(n: usize) -> (TempDir, std::path::PathBuf, Config) {
     (temp, root, config)
 }
 
+// ----------------------------------------------------------- //
+//                         Benchmarks                          //
+// ----------------------------------------------------------- //
+
 /// Measures template rendering cost over a pre-built 1000-note project, in
 /// `WriteMode::DryRun`.
 ///
@@ -110,11 +120,11 @@ fn prepare_fixture(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
 
-    for n in [100_usize, 1_000] {
+    for &n in WORKSPACE_SIZES {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        let (_temp, _root, config) = prepare_fixture(n);
+        let (_temp, _root, config) = prepare_project(n);
         let dialog = Arc::new(PresetDialogProvider::new());
         let service = TemplateService::new(&config, dialog)
             .expect("valid schema directory");
