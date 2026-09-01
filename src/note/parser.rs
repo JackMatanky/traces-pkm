@@ -26,7 +26,7 @@ use pulldown_cmark::{
 
 use super::{
     Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter,
-    TaskStatus, lexer, lists::Position,
+    TaskStatus, lexer, lists::ListItemPosition,
 };
 use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag};
 
@@ -95,7 +95,7 @@ struct ParserContext {
     inline_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     tags: Vec<Tag>,
     /// Precomputed line-start offsets for the source being parsed, used to
-    /// populate [`ListItem`]'s `line`/`parent_line` position fields.
+    /// populate [`ListItem`]'s `line`/`parent` position fields.
     line_tracker: ByteTracker,
 }
 
@@ -526,15 +526,14 @@ impl ListTracker {
     fn start_item(&mut self, line: SourceLine) {
         let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
             .unwrap_or(u8::MAX);
-        let parent_line =
-            self.item_stack.last().map(|item| item.position.line());
+        let parent = self.item_stack.last().map(|item| item.position.line());
         self.item_stack.push(ItemFrame {
             task_status: None,
             text_buffer: String::new(),
             scan_buffer: String::new(),
             fields: IndexMap::new(),
             children: Vec::new(),
-            position: Position::new(line, depth, parent_line),
+            position: ListItemPosition::new(line, depth, parent),
         });
     }
 
@@ -624,7 +623,7 @@ struct ItemFrame {
     fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     children: Vec<List>,
     /// This item's source position: line, nesting depth, and parent line.
-    position: Position,
+    position: ListItemPosition,
 }
 
 impl ItemFrame {
@@ -873,7 +872,7 @@ mod tests {
         }
 
         #[test]
-        fn populates_depth_line_and_parent_line_down_the_nesting_chain() {
+        fn populates_depth_line_and_parent_down_the_nesting_chain() {
             let input = "- Parent\n  - Child\n    - Grandchild";
             let note = parse_markdown("note.md", input);
 
@@ -884,7 +883,7 @@ mod tests {
                 .expect("parent item");
             assert_eq!(parent.line(), SourceLine::new(1));
             assert_eq!(parent.depth(), 0);
-            assert_eq!(parent.parent_line(), None);
+            assert_eq!(parent.parent(), None);
 
             let child = parent
                 .children()
@@ -893,7 +892,7 @@ mod tests {
                 .expect("child item");
             assert_eq!(child.line(), SourceLine::new(2));
             assert_eq!(child.depth(), 1);
-            assert_eq!(child.parent_line(), Some(SourceLine::new(1)));
+            assert_eq!(child.parent(), Some(SourceLine::new(1)));
 
             let grandchild = child
                 .children()
@@ -902,7 +901,7 @@ mod tests {
                 .expect("grandchild item");
             assert_eq!(grandchild.line(), SourceLine::new(3));
             assert_eq!(grandchild.depth(), 2);
-            assert_eq!(grandchild.parent_line(), Some(SourceLine::new(2)));
+            assert_eq!(grandchild.parent(), Some(SourceLine::new(2)));
         }
 
         #[test]
@@ -914,7 +913,7 @@ mod tests {
             let sibling = list.items().get(1).expect("sibling item");
             assert_eq!(sibling.line(), SourceLine::new(3));
             assert_eq!(sibling.depth(), 0);
-            assert_eq!(sibling.parent_line(), None);
+            assert_eq!(sibling.parent(), None);
         }
 
         #[rstest]

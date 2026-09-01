@@ -4,7 +4,8 @@
 //! - [`ListItem`]: a list item with optional task state, inline fields, and
 //!   child lists.
 //! - [`TaskStatus`]: the completion state of a task list item.
-//! - [`Position`]: a list item's nesting depth, source line, and parent line.
+//! - [`ListItemPosition`]: a list item's nesting depth, source line, and parent
+//!   line.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -71,13 +72,13 @@ pub enum TaskStatus {
 #[derive(
     Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
 )]
-pub(super) struct Position {
+pub(super) struct ListItemPosition {
     depth: u8,
     line: SourceLine,
-    parent_line: Option<SourceLine>,
+    parent: Option<SourceLine>,
 }
 
-impl Position {
+impl ListItemPosition {
     /// Creates a position from its source line, 0-indexed nesting depth, and
     /// optional parent line.
     #[inline]
@@ -85,12 +86,12 @@ impl Position {
     pub(super) const fn new(
         line: SourceLine,
         depth: u8,
-        parent_line: Option<SourceLine>,
+        parent: Option<SourceLine>,
     ) -> Self {
         Self {
             depth,
             line,
-            parent_line,
+            parent,
         }
     }
 
@@ -112,8 +113,8 @@ impl Position {
     /// item is nested inside another item's child list.
     #[inline]
     #[must_use]
-    pub(super) const fn parent_line(&self) -> Option<SourceLine> {
-        self.parent_line
+    pub(super) const fn parent(&self) -> Option<SourceLine> {
+        self.parent
     }
 }
 
@@ -125,7 +126,7 @@ pub struct ListItem {
     task_status: Option<TaskStatus>,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    position: Position,
+    position: ListItemPosition,
 }
 
 impl ListItem {
@@ -149,7 +150,7 @@ impl ListItem {
             task_status,
             children: Vec::new(),
             fields: IndexMap::new(),
-            position: Position::default(),
+            position: ListItemPosition::default(),
         }
     }
 
@@ -169,7 +170,7 @@ impl ListItem {
             task_status,
             children,
             fields: IndexMap::new(),
-            position: Position::default(),
+            position: ListItemPosition::default(),
         }
     }
 
@@ -255,10 +256,13 @@ impl ListItem {
     /// the parser from Markdown byte offsets.
     ///
     /// Items built via [`Self::new`] or [`Self::with_children`] default to
-    /// [`Position::default`] until this is called.
+    /// [`ListItemPosition::default`] until this is called.
     #[inline]
     #[must_use]
-    pub(super) const fn with_position(mut self, position: Position) -> Self {
+    pub(super) const fn with_position(
+        mut self,
+        position: ListItemPosition,
+    ) -> Self {
         self.position = position;
         self
     }
@@ -308,8 +312,8 @@ impl ListItem {
                       task-system issue"
         )
     )]
-    pub(crate) const fn parent_line(&self) -> Option<SourceLine> {
-        self.position.parent_line()
+    pub(crate) const fn parent(&self) -> Option<SourceLine> {
+        self.position.parent()
     }
 }
 
@@ -379,17 +383,20 @@ mod tests {
 
         assert_eq!(item.line(), SourceLine::new(0));
         assert_eq!(item.depth(), 0);
-        assert_eq!(item.parent_line(), None);
+        assert_eq!(item.parent(), None);
     }
 
     #[test]
-    fn with_position_sets_line_depth_and_parent_line() {
-        let position =
-            Position::new(SourceLine::new(3), 2, Some(SourceLine::new(1)));
+    fn with_position_sets_line_depth_and_parent() {
+        let position = ListItemPosition::new(
+            SourceLine::new(3),
+            2,
+            Some(SourceLine::new(1)),
+        );
         let item = ListItem::new("item", None).with_position(position);
 
         assert_eq!(item.line(), SourceLine::new(3));
         assert_eq!(item.depth(), 2);
-        assert_eq!(item.parent_line(), Some(SourceLine::new(1)));
+        assert_eq!(item.parent(), Some(SourceLine::new(1)));
     }
 }
