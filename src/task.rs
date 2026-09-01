@@ -1,93 +1,14 @@
 //! Task status domain model: symbols, statuses, and the resolved lookup map
 //! shared by note parsing, display, and querying.
 //!
-//! - [`TaskStatusType`]: the workflow classification of a status (todo,
-//!   in-progress, on-hold, done, cancelled, non-task).
-//! - [`TaskStatusSymbol`]: the marker character inside `[<char>]`.
 //! - [`TaskStatus`]: a named, typed status keyed by its marker symbol.
 //! - [`TaskStatusMap`]: a lookup table built once at config resolution, indexed
 //!   by symbol, name, and type.
+//! - [`TaskStatusType`]: the workflow classification of a status (todo,
+//!   in-progress, on-hold, done, cancelled, non-task).
+//! - [`TaskStatusSymbol`]: the marker character inside `[<char>]`.
 
 use std::collections::HashMap;
-
-/// The workflow classification of a [`TaskStatus`].
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum TaskStatusType {
-    /// Not yet started.
-    Todo,
-    /// Actively being worked on.
-    InProgress,
-    /// Paused, waiting on something external.
-    OnHold,
-    /// Finished.
-    Done,
-    /// Abandoned; excluded from both active and completed views.
-    Cancelled,
-    /// A checkbox status that never becomes a Task (reserved for future
-    /// configured statuses; no default status uses it).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no default status uses this variant; reserved for \
-                      configured statuses added in a later task-system issue"
-        )
-    )]
-    NonTask,
-}
-
-impl TaskStatusType {
-    /// Derives the tri-state completion value for this status type.
-    ///
-    /// `Some(true)` for [`Self::Done`], `None` for [`Self::Cancelled`]
-    /// (a terminal state outside the complete/incomplete binary), and
-    /// `Some(false)` for every other status type.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by the custom \
-                      marker scanner and task.completed query field added in \
-                      a later task-system issue"
-        )
-    )]
-    pub(crate) const fn completed(self) -> Option<bool> {
-        match self {
-            Self::Done => Some(true),
-            Self::Cancelled => None,
-            Self::Todo | Self::InProgress | Self::OnHold | Self::NonTask => {
-                Some(false)
-            }
-        }
-    }
-}
-
-/// The marker character inside `[<char>]`, e.g. `' '`, `'x'`, `'/'`, `'-'`.
-///
-/// Wraps the single character used as the configured lookup key for both
-/// standard and custom-scanned task markers. Unknown single-character
-/// markers are still valid symbols; this type carries no validation beyond
-/// being a `char`.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TaskStatusSymbol(char);
-
-impl TaskStatusSymbol {
-    /// Wraps `symbol` as a task status marker character.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(symbol: char) -> Self {
-        Self(symbol)
-    }
-}
-
-impl From<char> for TaskStatusSymbol {
-    #[inline]
-    fn from(symbol: char) -> Self {
-        Self::new(symbol)
-    }
-}
 
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -269,6 +190,85 @@ impl Default for TaskStatusMap {
             map.insert(status);
         }
         map
+    }
+}
+
+/// The workflow classification of a [`TaskStatus`].
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum TaskStatusType {
+    /// Not yet started.
+    Todo,
+    /// Actively being worked on.
+    InProgress,
+    /// Paused, waiting on something external.
+    OnHold,
+    /// Finished.
+    Done,
+    /// Abandoned; excluded from both active and completed views.
+    Cancelled,
+    /// A checkbox status that never becomes a Task (reserved for future
+    /// configured statuses; no default status uses it).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no default status uses this variant; reserved for \
+                      configured statuses added in a later task-system issue"
+        )
+    )]
+    NonTask,
+}
+
+impl TaskStatusType {
+    /// Derives the tri-state completion value for this status type.
+    ///
+    /// `Some(true)` for [`Self::Done`], `None` for [`Self::Cancelled`]
+    /// (a terminal state outside the complete/incomplete binary), and
+    /// `Some(false)` for every other status type.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by the custom \
+                      marker scanner and task.completed query field added in \
+                      a later task-system issue"
+        )
+    )]
+    pub(crate) const fn completed(self) -> Option<bool> {
+        match self {
+            Self::Done => Some(true),
+            Self::Cancelled => None,
+            Self::Todo | Self::InProgress | Self::OnHold | Self::NonTask => {
+                Some(false)
+            }
+        }
+    }
+}
+
+/// The marker character inside `[<char>]`, e.g. `' '`, `'x'`, `'/'`, `'-'`.
+///
+/// Wraps the single character used as the configured lookup key for both
+/// standard and custom-scanned task markers. Unknown single-character
+/// markers are still valid symbols; this type carries no validation beyond
+/// being a `char`.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TaskStatusSymbol(char);
+
+impl TaskStatusSymbol {
+    /// Wraps `symbol` as a task status marker character.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(symbol: char) -> Self {
+        Self(symbol)
+    }
+}
+
+impl From<char> for TaskStatusSymbol {
+    #[inline]
+    fn from(symbol: char) -> Self {
+        Self::new(symbol)
     }
 }
 
