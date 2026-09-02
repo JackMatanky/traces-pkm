@@ -8,7 +8,7 @@ use super::{
     },
 };
 use crate::{
-    LexError, LexTokenStream, LexedToken, lexical_unquote,
+    ExpectedToken, LexError, LexTokenStream, LexedToken, lexical_unquote,
     note::NoteFieldValue,
     query::{
         QueryRecord,
@@ -269,7 +269,13 @@ impl FilterGrammar {
         name: &str,
     ) -> Result<FilterFunction, QueryRequestError> {
         tokens
-            .expect(input, &FilterToken::LParen, "`(` after a function name")
+            .expect(
+                input,
+                ExpectedToken::new(
+                    &FilterToken::LParen,
+                    "`(` after a function name",
+                ),
+            )
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
             })?;
@@ -288,18 +294,26 @@ impl FilterGrammar {
         let field = FieldPath::parse(field_ident.value())?;
 
         tokens
-            .expect(input, &FilterToken::Comma, "`,` after the field path")
+            .expect(
+                input,
+                ExpectedToken::new(
+                    &FilterToken::Comma,
+                    "`,` after the field path",
+                ),
+            )
             .map_err(|e| {
-            QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
-        })?;
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
 
         let target = Self::parse_literal_arg(input, tokens)?;
 
         tokens
             .expect(
                 input,
-                &FilterToken::RParen,
-                "`)` after the function arguments",
+                ExpectedToken::new(
+                    &FilterToken::RParen,
+                    "`)` after the function arguments",
+                ),
             )
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)

@@ -8,7 +8,7 @@ use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
-    LexTokenStream, LexedToken,
+    ExpectedToken, LexTokenStream, LexedToken,
     index::FileEntry,
     lexical_unquote,
     note::{Note, NoteFieldValue},
@@ -420,7 +420,10 @@ impl SourceGrammar {
             |e| QuerySyntaxError::from_lex(QueryDialect::Source, input, e);
 
         tokens
-            .expect(input, &SourceToken::LParen, "`(` after `class`")
+            .expect(
+                input,
+                ExpectedToken::new(&SourceToken::LParen, "`(` after `class`"),
+            )
             .map_err(&lex)?;
 
         let name_spanned = tokens
@@ -470,7 +473,13 @@ impl SourceGrammar {
         }
 
         tokens
-            .expect(input, &SourceToken::RParen, "`)` after `class(...)`")
+            .expect(
+                input,
+                ExpectedToken::new(
+                    &SourceToken::RParen,
+                    "`)` after `class(...)`",
+                ),
+            )
             .map_err(&lex)?;
 
         let modifier = if tokens.peek_is_value(&SourceToken::WithChildren) {
