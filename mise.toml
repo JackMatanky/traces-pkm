@@ -315,7 +315,7 @@ usage = '''
 flag "-f --files <pattern>" help="Select bench targets (benches/*.rs) whose file name contains this substring; not the same as criterion's own benchmark-name filter forwarded via [args]"
 flag "-m --mod <module>" {
   help "Run benchmarks for a specific module"
-  choices "codec" "hash" "index" "note" "query" "template"
+  choices "hash" "index" "note" "query" "template"
 }
 flag "-r --report [name]" value_optional=#true {
   help "Save a named baseline (default: auto-named from git branch+sha)"
@@ -357,9 +357,8 @@ has_criterion_args=false
 declare -a bench_files=()
 if [[ -n "${usage_mod:-}" ]]; then
   case "${usage_mod}" in
-    codec)    bench_files=(codec) ;;
     hash)     bench_files=(hash) ;;
-    index)    bench_files=(index_lifecycle) ;;
+    index)    bench_files=(index_codec index_lifecycle) ;;
     note)     bench_files=(note_parsing) ;;
     query)    bench_files=(query_execution query_parsing query_sort) ;;
     template) bench_files=(template_render) ;;

@@ -25,7 +25,7 @@
 //!
 //! To profile serialization/deserialization CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench codec -- --bench "path_codec::serialize/long"
+//! cargo flamegraph --bench index_codec -- --bench "path_codec::serialize/long"
 //! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
