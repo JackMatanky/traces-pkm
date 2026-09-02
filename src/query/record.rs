@@ -126,8 +126,8 @@ impl QueryRecord {
     /// Returns general metadata for the indexed file.
     #[inline]
     #[must_use]
-    pub fn base(&self) -> &FileBase {
-        self.entry().base()
+    pub fn file(&self) -> &FileBase {
+        self.entry().file()
     }
 
     /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
@@ -211,7 +211,7 @@ impl QueryRecord {
     }
 
     fn resolve_file_ref(&self, field: FileField) -> QueryFieldValueRef<'_> {
-        let file = self.base();
+        let file = self.file();
         match field {
             FileField::Path => file.path().to_str().map_or_else(
                 || {

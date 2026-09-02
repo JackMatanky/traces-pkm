@@ -119,7 +119,7 @@ mod tests {
         ) -> &'a crate::index::FileEntry {
             entries
                 .iter()
-                .find(|e| e.base().path() == path)
+                .find(|e| e.file().path() == path)
                 .expect("entry not found")
         }
 
@@ -128,7 +128,7 @@ mod tests {
             entries: &'a [crate::index::FileEntry],
             path: &Path,
         ) -> &'a crate::file::FileBase {
-            find_entry(entries, path).base()
+            find_entry(entries, path).file()
         }
     }
     use fixtures::*;
@@ -150,7 +150,7 @@ mod tests {
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-            assert_eq!(record.base(), file);
+            assert_eq!(record.file(), file);
         }
 
         #[test]
@@ -218,7 +218,7 @@ mod tests {
             ]);
             let record = outcome
                 .iter()
-                .find(|record| record.base().path() == Path::new("target.md"))
+                .find(|record| record.file().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(record.inlinks(), [PathBuf::from("b.md")]);
@@ -261,7 +261,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "body");
             let record = outcome.get(0).expect("record");
-            let file = record.base();
+            let file = record.file();
 
             assert_eq!(
                 record.field("file.mtime"),
@@ -349,7 +349,7 @@ mod tests {
             ]);
             let record = outcome
                 .iter()
-                .find(|record| record.base().path() == Path::new("target.md"))
+                .find(|record| record.file().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(

@@ -215,7 +215,7 @@ impl SourceAtom {
             Self::Tag(tag) => entry.note().is_some_and(|note| {
                 note.tags().iter().any(|value| value.is_contained_in(tag))
             }),
-            Self::Path(pattern) => pattern.is_match(entry.base().path()),
+            Self::Path(pattern) => pattern.is_match(entry.file().path()),
             Self::Class {
                 mode,
                 ..
@@ -848,7 +848,7 @@ mod tests {
         ) -> &'a crate::index::FileEntry {
             entries
                 .iter()
-                .find(|entry| entry.base().path() == path)
+                .find(|entry| entry.file().path() == path)
                 .expect("entry not found")
         }
         fn indexed_note(

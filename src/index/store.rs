@@ -437,7 +437,7 @@ impl IndexStore {
             if inlinks.is_empty() {
                 continue;
             }
-            let target_key = entry.base().path().as_os_str().as_encoded_bytes();
+            let target_key = entry.file().path().as_os_str().as_encoded_bytes();
             for source in inlinks {
                 table
                     .insert(target_key, source.as_os_str().as_encoded_bytes())
@@ -468,7 +468,7 @@ impl IndexStore {
         self.write_table(
             &write_txn,
             FILES,
-            entries.iter().map(FileEntry::base),
+            entries.iter().map(FileEntry::file),
             FileBase::path,
         )?;
         self.write_table(
@@ -564,11 +564,11 @@ impl IndexStore {
         for path in upserted {
             if let Some(entry) = index
                 .entries()
-                .binary_search_by(|e| e.base().path().cmp(path))
+                .binary_search_by(|e| e.file().path().cmp(path))
                 .ok()
                 .and_then(|idx| index.entries().get(idx))
             {
-                self.upsert_row(&mut files, path, entry.base())?;
+                self.upsert_row(&mut files, path, entry.file())?;
                 if let Some(note) = entry.note() {
                     self.upsert_row(&mut notes_table, path, note)?;
                 }
@@ -628,7 +628,7 @@ impl IndexStore {
             .map_err(|source| self.raise_source_error(source))?;
         let sources = index
             .entries()
-            .binary_search_by(|e| e.base().path().cmp(target))
+            .binary_search_by(|e| e.file().path().cmp(target))
             .ok()
             .and_then(|idx| index.entries().get(idx))
             .map_or(&[][..], FileEntry::inlinks);
@@ -1123,7 +1123,7 @@ mod tests {
                 loaded
                     .entries()
                     .iter()
-                    .find(|entry| entry.base().path() == target)
+                    .find(|entry| entry.file().path() == target)
                     .map_or_else(Vec::new, |entry| entry.inlinks().to_vec())
             };
             assert_eq!(inlinks_of(weird.as_path()), vec![normal.clone()]);

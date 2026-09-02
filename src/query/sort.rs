@@ -164,7 +164,7 @@ mod tests {
     fn names(outcome: &QueryRecordSet) -> Vec<String> {
         outcome
             .iter()
-            .map(|record| record.base().name().as_str().to_owned())
+            .map(|record| record.file().name().as_str().to_owned())
             .collect()
     }
 

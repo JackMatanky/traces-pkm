@@ -94,7 +94,7 @@ impl Task {
                 let text = record.task_text().unwrap_or_default();
                 format!(
                     "- [{checkbox}] {text} ({})",
-                    record.base().path().display()
+                    record.file().path().display()
                 )
             })
             .collect())

@@ -67,7 +67,7 @@ mod tests {
             index
                 .entries()
                 .iter()
-                .map(|entry| entry.base().path().to_string_lossy().into_owned())
+                .map(|entry| entry.file().path().to_string_lossy().into_owned())
                 .collect()
         }
     }

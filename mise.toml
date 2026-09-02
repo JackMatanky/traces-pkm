@@ -13,7 +13,6 @@ rust = { version = "nightly", profile = "default", components = [
 hk = "latest"
 taplo = "latest"
 gitleaks = "latest"
-"mr-boxington" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
@@ -26,14 +25,9 @@ gitleaks = "latest"
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 "cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 
-[wrappers.cargo]
-command = "mbx"
-env = { MBX_CARGO_SHIM_MODE = "1" }
-
 [settings]
-# Pin resolved "latest" tool versions (hk, taplo, gitleaks, mr-boxington,
-# cargo:* subcommands) into mise.lock so installs are reproducible across
-# machines and CI.
+# Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
+# into mise.lock so installs are reproducible across machines and CI.
 lockfile = true
 task.disable_spec_from_run_scripts = true
 experimental = true
@@ -395,7 +389,7 @@ else
   done
 fi
 
-if (( ${#bench_files[@]} == 0 )); then
+if [[ -z "${bench_files[*]:-}" ]]; then
   printf 'no benchmark files match\n' >&2
   exit 1
 fi

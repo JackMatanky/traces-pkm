@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use super::{delta::IndexDelta, inlinks::InlinkMap};
 use crate::{file::FileBase, note::Note};
 
 /// Persisted cache of file records, parsed Note metadata, and derived inbound
@@ -9,29 +10,31 @@ use crate::{file::FileBase, note::Note};
 ///
 /// Every regular file under the project root contributes one [`FileEntry`]: its
 /// [`FileBase`] metadata, and for Markdown files, its parsed [`Note`] plus
-/// derived inbound links. [`super::IndexerService`] produces, persists, and
-/// loads it; `FileIndex` itself carries no `&Path`.
+/// derived inbound links. [`IndexerService`] produces, persists, and loads it;
+/// `FileIndex` itself carries no `&Path`.
 ///
-/// Construction always flows through [`super::IndexerService`]'s
-/// [`build`](super::IndexerService::build),
-/// [`load`](super::IndexerService::load), or
-/// [`refresh`](super::IndexerService::refresh) methods, never directly.
+/// Construction always flows through [`IndexerService`]'s [`build`], [`load`],
+/// or [`refresh`] methods, never directly.
+///
+/// [`IndexerService`]: super::service::IndexerService
+/// [`build`]: super::service::IndexerService::build
+/// [`load`]: super::service::IndexerService::load
+/// [`refresh`]: super::service::IndexerService::refresh
 #[derive(Clone, Debug)]
 pub struct FileIndex {
     entries: Box<[FileEntry]>,
-    delta: super::delta::IndexDelta,
+    delta: IndexDelta,
 }
 
 impl FileIndex {
     /// Creates an index from its constituent parts.
     ///
-    /// Used exclusively by [`super::builder::IndexBuilder`] and
-    /// [`super::service::IndexerService::load`] after scanning, parsing, and
-    /// inlink derivation are complete.
-    pub(super) fn new(
-        entries: Box<[FileEntry]>,
-        delta: super::delta::IndexDelta,
-    ) -> Self {
+    /// Used exclusively by [`IndexBuilder`] and [`IndexerService::load`] after
+    /// scanning, parsing, and inlink derivation are complete.
+    ///
+    /// [`IndexerService::load`]: super::service::IndexerService::load
+    /// [`IndexBuilder`]: super::builder::IndexBuilder
+    pub(super) fn new(entries: Box<[FileEntry]>, delta: IndexDelta) -> Self {
         Self {
             entries,
             delta,
@@ -70,16 +73,24 @@ impl FileIndex {
 /// `NoteEntry`, not as a sibling field every entry carries regardless.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileEntry {
-    pub(super) base: FileBase,
-    pub(super) note: Option<Box<NoteEntry>>,
+    file: FileBase,
+    note: Option<Box<NoteEntry>>,
 }
 
 impl FileEntry {
+    /// Creates a new [`FileEntry`].
+    pub(super) fn new(file: FileBase, note: Option<Note>) -> Self {
+        Self {
+            file,
+            note: note.map(|note| Box::new(NoteEntry::new(note))),
+        }
+    }
+
     /// Returns this entry's [`FileBase`] metadata.
     #[inline]
     #[must_use]
-    pub fn base(&self) -> &FileBase {
-        &self.base
+    pub fn file(&self) -> &FileBase {
+        &self.file
     }
 
     /// Returns the parsed [`Note`], or `None` for a non-Markdown file.
@@ -103,16 +114,8 @@ impl FileEntry {
         dead_code,
         reason = "fixture helper used by tests outside entry.rs"
     )]
-    pub(crate) fn new_test(base: FileBase, note: Option<Note>) -> Self {
-        Self {
-            base,
-            note: note.map(|note| {
-                Box::new(NoteEntry {
-                    note,
-                    inlinks: Box::default(),
-                })
-            }),
-        }
+    pub(crate) fn new_test(file: FileBase, note: Option<Note>) -> Self {
+        Self::new(file, note)
     }
 }
 
@@ -128,8 +131,17 @@ const _: () = assert!(
 /// not inside it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct NoteEntry {
-    pub(super) note: Note,
-    pub(super) inlinks: Box<[PathBuf]>,
+    note: Note,
+    inlinks: Box<[PathBuf]>,
+}
+
+impl NoteEntry {
+    pub(super) fn new(note: Note) -> Self {
+        Self {
+            note,
+            inlinks: Box::default(),
+        }
+    }
 }
 
 /// Position of a [`FileEntry`] within [`FileIndex::entries`].
@@ -157,11 +169,11 @@ impl RowIndex {
 /// [`FileEntry`].
 pub(super) fn redistribute_inlinks(
     entries: &mut [FileEntry],
-    inlink_map: super::inlinks::InlinkMap,
+    inlink_map: InlinkMap,
 ) {
     for (target, sources) in inlink_map {
         if let Ok(index) =
-            entries.binary_search_by(|entry| entry.base().path().cmp(&target))
+            entries.binary_search_by(|entry| entry.file().path().cmp(&target))
             && let Some(note_entry) =
                 entries.get_mut(index).and_then(|entry| entry.note.as_mut())
         {
@@ -176,7 +188,7 @@ pub(super) fn redistribute_inlinks(
 pub(super) fn assemble_entries(
     files: Vec<FileBase>,
     notes: Vec<Note>,
-    inlinks: super::inlinks::InlinkMap,
+    inlinks: InlinkMap,
 ) -> Box<[FileEntry]> {
     let mut notes_iter = notes.into_iter().peekable();
     let mut entries = Vec::with_capacity(files.len());
@@ -184,17 +196,8 @@ pub(super) fn assemble_entries(
         while notes_iter.peek().is_some_and(|note| note.path() < base.path()) {
             notes_iter.next();
         }
-        let note =
-            notes_iter.next_if(|note| note.path() == base.path()).map(|note| {
-                Box::new(NoteEntry {
-                    note,
-                    inlinks: Box::default(),
-                })
-            });
-        entries.push(FileEntry {
-            base,
-            note,
-        });
+        let note = notes_iter.next_if(|note| note.path() == base.path());
+        entries.push(FileEntry::new(base, note));
     }
     redistribute_inlinks(&mut entries, inlinks);
     entries.into_boxed_slice()

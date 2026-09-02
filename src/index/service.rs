@@ -225,7 +225,7 @@ mod tests {
         index
             .entries()
             .iter()
-            .find(|entry| entry.base().path() == Path::new(path))
+            .find(|entry| entry.file().path() == Path::new(path))
             .and_then(FileEntry::note)
     }
 
@@ -745,7 +745,7 @@ mod tests {
                 loaded
                     .entries()
                     .first()
-                    .map(FileEntry::base)
+                    .map(FileEntry::file)
                     .map(FileBase::path),
                 Some(Path::new("second.md"))
             );
@@ -790,7 +790,7 @@ mod tests {
                 loaded
                     .entries()
                     .first()
-                    .map(FileEntry::base)
+                    .map(FileEntry::file)
                     .map(FileBase::path),
                 Some(Path::new("keep.md"))
             );
@@ -1143,7 +1143,7 @@ mod tests {
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome.iter().next().expect("target record");
 
-            assert_eq!(target.base().path(), Path::new("target.md"));
+            assert_eq!(target.file().path(), Path::new("target.md"));
             assert!(target.inlinks().is_empty());
         }
 
@@ -1169,13 +1169,13 @@ mod tests {
             let old_target = outcome
                 .iter()
                 .find(|record| {
-                    record.base().path() == Path::new("old-target.md")
+                    record.file().path() == Path::new("old-target.md")
                 })
                 .expect("old target record");
             let new_target = outcome
                 .iter()
                 .find(|record| {
-                    record.base().path() == Path::new("new-target.md")
+                    record.file().path() == Path::new("new-target.md")
                 })
                 .expect("new target record");
 
@@ -1245,7 +1245,7 @@ mod tests {
             let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|record| record.base().path() == Path::new("target.md"))
+                .find(|record| record.file().path() == Path::new("target.md"))
                 .expect("target record");
 
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
@@ -1320,7 +1320,7 @@ mod tests {
             let target = outcome
                 .iter()
                 .find(|record| {
-                    record.base().path() == Path::new("notes/foo.md")
+                    record.file().path() == Path::new("notes/foo.md")
                 })
                 .expect("notes/foo.md record");
 

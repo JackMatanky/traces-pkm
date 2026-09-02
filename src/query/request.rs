@@ -344,7 +344,7 @@ mod tests {
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
-                outcome.get(0).expect("row").base().path(),
+                outcome.get(0).expect("row").file().path(),
                 Path::new("b.md")
             );
         }
@@ -378,11 +378,11 @@ mod tests {
 
             assert_eq!(outcome.len(), 2);
             assert_eq!(
-                outcome.get(0).expect("row").base().path(),
+                outcome.get(0).expect("row").file().path(),
                 Path::new("b.md")
             );
             assert_eq!(
-                outcome.get(1).expect("row").base().path(),
+                outcome.get(1).expect("row").file().path(),
                 Path::new("d.md")
             );
         }
@@ -419,7 +419,7 @@ mod tests {
                         topk_outcome
                             .get(i)
                             .expect("row")
-                            .base()
+                            .file()
                             .path()
                             .to_path_buf()
                     })
@@ -436,7 +436,7 @@ mod tests {
                         full_outcome
                             .get(i)
                             .expect("row")
-                            .base()
+                            .file()
                             .path()
                             .to_path_buf()
                     })
@@ -484,11 +484,11 @@ mod tests {
 
             assert_eq!(outcome.len(), 2);
             assert_eq!(
-                outcome.get(0).expect("row").base().path(),
+                outcome.get(0).expect("row").file().path(),
                 Path::new("b.md")
             );
             assert_eq!(
-                outcome.get(1).expect("row").base().path(),
+                outcome.get(1).expect("row").file().path(),
                 Path::new("e.md")
             );
         }
@@ -543,7 +543,7 @@ mod tests {
             assert_eq!(fused_outcome, combined_outcome);
             assert_eq!(fused_outcome.len(), 3);
             let paths: Vec<&Path> =
-                fused_outcome.iter().map(|r| r.base().path()).collect();
+                fused_outcome.iter().map(|r| r.file().path()).collect();
             assert_eq!(paths, [
                 Path::new("b.md"),
                 Path::new("c.md"),

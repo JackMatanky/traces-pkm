@@ -98,24 +98,18 @@ impl<'a> IndexBuilder<'a> {
         let mut entries = Vec::with_capacity(files.len());
         for file in files {
             let note = if file.format() == FileFormat::Note {
-                Some(Box::new(entry::NoteEntry {
-                    note: parse_note(root, &file)?,
-                    inlinks: Box::default(),
-                }))
+                Some(parse_note(root, &file)?)
             } else {
                 None
             };
-            entries.push(entry::FileEntry {
-                base: file,
-                note,
-            });
+            entries.push(entry::FileEntry::new(file, note));
         }
         debug_assert!(
             entries.windows(2).all(|pair| {
                 let [a, b] = pair else {
                     return true;
                 };
-                a.base().path() <= b.base().path()
+                a.file().path() <= b.file().path()
             }),
             "entries must already be sorted by path: IndexerService::scan \
              sorts records, and this loop preserves that order while building \
@@ -150,17 +144,11 @@ impl<'a> IndexBuilder<'a> {
                 let (note, outlinks_changed) =
                     cache.reconcile_note(&file, cache_state, root)?;
                 stale |= outlinks_changed;
-                Some(Box::new(entry::NoteEntry {
-                    note,
-                    inlinks: Box::default(),
-                }))
+                Some(note)
             } else {
                 None
             };
-            entries.push(entry::FileEntry {
-                base: file,
-                note,
-            });
+            entries.push(entry::FileEntry::new(file, note));
         }
 
         debug_assert!(
@@ -168,7 +156,7 @@ impl<'a> IndexBuilder<'a> {
                 let [a, b] = pair else {
                     return true;
                 };
-                a.base().path() <= b.base().path()
+                a.file().path() <= b.file().path()
             }),
             "entries must already be sorted by path: IndexerService::scan \
              sorts records, and this loop preserves that order while building \
@@ -261,7 +249,7 @@ mod tests {
                 index
                     .entries()
                     .iter()
-                    .map(FileEntry::base)
+                    .map(FileEntry::file)
                     .map(FileBase::path)
                     .collect::<Vec<_>>(),
                 [Path::new("a.md"), Path::new("b.md")]
@@ -295,7 +283,7 @@ mod tests {
                 index
                     .entries()
                     .iter()
-                    .find(|entry| entry.base().path() == Path::new("note.md"))
+                    .find(|entry| entry.file().path() == Path::new("note.md"))
                     .and_then(FileEntry::note)
                     .map(Note::path),
                 Some(Path::new("note.md"))
@@ -615,7 +603,7 @@ mod tests {
                 index
                     .entries()
                     .iter()
-                    .find(|entry| entry.base().path() == Path::new("note.md"))
+                    .find(|entry| entry.file().path() == Path::new("note.md"))
                     .and_then(FileEntry::note)
                     .map(Note::tasks)
                     .map(Iterator::count),
@@ -649,7 +637,7 @@ mod tests {
                 index
                     .entries()
                     .iter()
-                    .find(|entry| entry.base().path() == Path::new("note.md"))
+                    .find(|entry| entry.file().path() == Path::new("note.md"))
                     .and_then(FileEntry::note)
                     .map(Note::tasks)
                     .map(Iterator::count),
