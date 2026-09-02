@@ -7,6 +7,121 @@
 
 const MAX_DELIMITER_DEPTH: usize = 16;
 
+/// A stack-allocated delimiter validator supporting nested pairs and quote
+/// states.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DelimiterStack {
+    entries: [DelimiterType; MAX_DELIMITER_DEPTH],
+    len: usize,
+    active_quote: Option<QuoteType>,
+}
+
+impl DelimiterStack {
+    /// Creates a stack initialized with an outer root expected delimiter.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_root(kind: DelimiterType) -> Self {
+        let mut stack = Self {
+            entries: [DelimiterType::Parenthesis; MAX_DELIMITER_DEPTH],
+            len: 0,
+            active_quote: None,
+        };
+        stack.push(kind);
+        stack
+    }
+
+    /// Pushes a nested delimiter kind onto the stack.
+    #[inline]
+    pub(crate) fn push(&mut self, kind: DelimiterType) {
+        if let Some(entry) = self.entries.get_mut(self.len) {
+            *entry = kind;
+            self.len = self.len.saturating_add(1);
+        }
+    }
+
+    /// Returns the active quote kind if scanning inside a string literal.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept for DelimiterStack inspection; tested in unit suite"
+        )
+    )]
+    pub(crate) const fn active_quote(&self) -> Option<QuoteType> {
+        self.active_quote
+    }
+
+    /// Returns the current delimiter kind at the top of the stack.
+    #[inline]
+    #[must_use]
+    pub(crate) fn current_kind(&self) -> Option<DelimiterType> {
+        let index = self.len.checked_sub(1)?;
+        self.entries.get(index).copied()
+    }
+
+    /// Updates active quote state on encountering `ch`.
+    ///
+    /// Returns `true` if `ch` was consumed as part of quote tracking.
+    #[inline]
+    pub(crate) fn advance_quote_state(&mut self, ch: char) -> bool {
+        if let Some(active_quote) = self.active_quote {
+            if ch == active_quote.quote_char() {
+                self.active_quote = None;
+            }
+            true
+        } else if let Some(quote) = QuoteType::from_char(ch) {
+            self.active_quote = Some(quote);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Checks for a double-bracket closer `]]`.
+    ///
+    /// Returns `Some(true)` if the root double bracket was cleanly closed,
+    /// `Some(false)` if an inner double bracket was closed, or `None` if
+    /// `rest` does not start with `]]` matching an active double bracket.
+    #[inline]
+    pub(crate) fn check_double_bracket_close(
+        &mut self,
+        rest: &str,
+    ) -> Option<bool> {
+        if self.current_kind() == Some(DelimiterType::DoubleBracket)
+            && rest.starts_with("]]")
+        {
+            self.len = self.len.saturating_sub(1);
+            Some(self.len == 0)
+        } else {
+            None
+        }
+    }
+
+    /// Handles a single closing character.
+    ///
+    /// - Returns `Ok(true)` if the root delimiter was cleanly closed.
+    /// - Returns `Ok(false)` if an inner nested delimiter was closed or if `ch`
+    ///   is allowed content (e.g. lone `]` inside double brackets).
+    ///
+    /// # Errors
+    ///
+    /// - `Err(())` if `ch` mismatched the expected closing delimiter.
+    #[inline]
+    pub(crate) fn handle_char_close(&mut self, ch: char) -> Result<bool, ()> {
+        let Some(current) = self.current_kind() else {
+            return Err(());
+        };
+        if current.matches_char_close(ch) {
+            self.len = self.len.saturating_sub(1);
+            Ok(self.len == 0)
+        } else if current == DelimiterType::DoubleBracket && ch == ']' {
+            Ok(false)
+        } else {
+            Err(())
+        }
+    }
+}
+
 /// Paired delimiter kinds recognized across lexers and grammar parsers.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -217,120 +332,6 @@ impl QuoteType {
     }
 }
 
-/// A stack-allocated delimiter validator supporting nested pairs and quote
-/// states.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DelimiterStack {
-    entries: [DelimiterType; MAX_DELIMITER_DEPTH],
-    len: usize,
-    active_quote: Option<QuoteType>,
-}
-
-impl DelimiterStack {
-    /// Creates a stack initialized with an outer root expected delimiter.
-    #[inline]
-    #[must_use]
-    pub(crate) fn with_root(kind: DelimiterType) -> Self {
-        let mut stack = Self {
-            entries: [DelimiterType::Parenthesis; MAX_DELIMITER_DEPTH],
-            len: 0,
-            active_quote: None,
-        };
-        stack.push(kind);
-        stack
-    }
-
-    /// Pushes a nested delimiter kind onto the stack.
-    #[inline]
-    pub(crate) fn push(&mut self, kind: DelimiterType) {
-        if let Some(entry) = self.entries.get_mut(self.len) {
-            *entry = kind;
-            self.len = self.len.saturating_add(1);
-        }
-    }
-
-    /// Returns the active quote kind if scanning inside a string literal.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kept for DelimiterStack inspection; tested in unit suite"
-        )
-    )]
-    pub(crate) const fn active_quote(&self) -> Option<QuoteType> {
-        self.active_quote
-    }
-
-    /// Returns the current delimiter kind at the top of the stack.
-    #[inline]
-    #[must_use]
-    pub(crate) fn current_kind(&self) -> Option<DelimiterType> {
-        let index = self.len.checked_sub(1)?;
-        self.entries.get(index).copied()
-    }
-
-    /// Updates active quote state on encountering `ch`.
-    ///
-    /// Returns `true` if `ch` was consumed as part of quote tracking.
-    #[inline]
-    pub(crate) fn advance_quote_state(&mut self, ch: char) -> bool {
-        if let Some(active_quote) = self.active_quote {
-            if ch == active_quote.quote_char() {
-                self.active_quote = None;
-            }
-            true
-        } else if let Some(quote) = QuoteType::from_char(ch) {
-            self.active_quote = Some(quote);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Checks for a double-bracket closer `]]`.
-    ///
-    /// Returns `Some(true)` if the root double bracket was cleanly closed,
-    /// `Some(false)` if an inner double bracket was closed, or `None` if
-    /// `rest` does not start with `]]` matching an active double bracket.
-    #[inline]
-    pub(crate) fn check_double_bracket_close(
-        &mut self,
-        rest: &str,
-    ) -> Option<bool> {
-        if self.current_kind() == Some(DelimiterType::DoubleBracket)
-            && rest.starts_with("]]")
-        {
-            self.len = self.len.saturating_sub(1);
-            Some(self.len == 0)
-        } else {
-            None
-        }
-    }
-
-    /// Handles a single closing character.
-    ///
-    /// - Returns `Ok(true)` if the root delimiter was cleanly closed.
-    /// - Returns `Ok(false)` if an inner nested delimiter was closed or if `ch`
-    ///   is allowed content (e.g. lone `]` inside double brackets).
-    ///
-    /// # Errors
-    ///
-    /// - `Err(())` if `ch` mismatched the expected closing delimiter.
-    #[inline]
-    pub(crate) fn handle_char_close(&mut self, ch: char) -> Result<bool, ()> {
-        let Some(current) = self.current_kind() else {
-            return Err(());
-        };
-        if current.matches_char_close(ch) {
-            self.len = self.len.saturating_sub(1);
-            Ok(self.len == 0)
-        } else if current == DelimiterType::DoubleBracket && ch == ']' {
-            Ok(false)
-        } else {
-            Err(())
-        }
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;

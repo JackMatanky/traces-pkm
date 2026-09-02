@@ -11,73 +11,6 @@ use logos::Logos;
 use miette::SourceSpan;
 use thiserror::Error;
 
-/// A token paired with its source span in the original input.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LexedToken<T> {
-    value: T,
-    span: SourceSpan,
-}
-
-impl<T> LexedToken<T> {
-    /// Wraps `value` with its `span`.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
-        Self {
-            value,
-            span,
-        }
-    }
-
-    /// Returns a reference to the inner token value.
-    #[inline]
-    #[must_use]
-    pub(crate) fn value(&self) -> &T {
-        &self.value
-    }
-
-    /// Returns the source span of this token.
-    #[inline]
-    #[must_use]
-    pub(crate) fn span(&self) -> SourceSpan {
-        self.span
-    }
-
-    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
-    #[inline]
-    #[must_use]
-    pub(crate) fn into_value(self) -> T {
-        self.value
-    }
-}
-
-impl<T> AsRef<T> for LexedToken<T> {
-    #[inline]
-    fn as_ref(&self) -> &T {
-        &self.value
-    }
-}
-
-/// An expected token specification pairing an expected token value with its
-/// diagnostic description.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TokenSpec<'a, T: ?Sized> {
-    pub(crate) value: &'a T,
-    pub(crate) desc: &'static str,
-}
-
-impl<'a, T: ?Sized> TokenSpec<'a, T> {
-    /// Creates a new token specification.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(value: &'a T, desc: &'static str) -> Self {
-        Self {
-            value,
-            desc,
-        }
-    }
-}
-
 /// An owning one-token-lookahead cursor over a materialized token stream.
 pub(crate) struct LexTokenStream<T> {
     tokens: Peekable<vec::IntoIter<T>>,
@@ -270,6 +203,73 @@ impl<T> LexTokenStream<LexedToken<T>> {
         let result = parse_inner(self)?;
         self.expect(input, close)?;
         Ok(result)
+    }
+}
+
+/// A token paired with its source span in the original input.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LexedToken<T> {
+    value: T,
+    span: SourceSpan,
+}
+
+impl<T> LexedToken<T> {
+    /// Wraps `value` with its `span`.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
+        Self {
+            value,
+            span,
+        }
+    }
+
+    /// Returns a reference to the inner token value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Returns the source span of this token.
+    #[inline]
+    #[must_use]
+    pub(crate) fn span(&self) -> SourceSpan {
+        self.span
+    }
+
+    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn into_value(self) -> T {
+        self.value
+    }
+}
+
+impl<T> AsRef<T> for LexedToken<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.value
+    }
+}
+
+/// An expected token specification pairing an expected token value with its
+/// diagnostic description.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TokenSpec<'a, T: ?Sized> {
+    pub(crate) value: &'a T,
+    pub(crate) desc: &'static str,
+}
+
+impl<'a, T: ?Sized> TokenSpec<'a, T> {
+    /// Creates a new token specification.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(value: &'a T, desc: &'static str) -> Self {
+        Self {
+            value,
+            desc,
+        }
     }
 }
 
