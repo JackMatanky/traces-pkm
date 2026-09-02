@@ -239,35 +239,6 @@ impl ListTracker {
     }
 }
 
-/// An active list frame on the parser stack.
-struct ListFrame {
-    is_ordered: bool,
-    items: Vec<ListItem>,
-}
-
-/// An active list item frame on the parser stack.
-struct ItemFrame {
-    /// Classification decision state for the list item. Mirrors
-    /// pulldown-cmark's first-pass gating: the marker is only valid at the
-    /// item's content start, so the decision is finalized before any inline
-    /// content event or block boundary.
-    classification: ItemClassificationState,
-    text_buffer: String,
-    /// Mirrors `text_buffer` but excludes code text.
-    ///
-    /// [`ListTracker::flush_active_item_scan_buffer`] lexes this buffer for
-    /// inline fields and tags.
-    scan_buffer: String,
-    /// Inline fields lexed from this item's own text.
-    ///
-    /// Kept separate from child items' fields so [`ListItem::fields`] resolves
-    /// per-item, not per-list.
-    fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    children: Vec<List>,
-    /// This item's source position: line, nesting depth, and parent line.
-    position: ListItemPosition,
-}
-
 /// The incremental classification state of an active list item during parsing.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum ItemClassificationState {
@@ -306,6 +277,30 @@ impl ItemClassificationState {
         }
     }
 }
+
+/// An active list item frame on the parser stack.
+struct ItemFrame {
+    /// Classification decision state for the list item. Mirrors
+    /// pulldown-cmark's first-pass gating: the marker is only valid at the
+    /// item's content start, so the decision is finalized before any inline
+    /// content event or block boundary.
+    classification: ItemClassificationState,
+    text_buffer: String,
+    /// Mirrors `text_buffer` but excludes code text.
+    ///
+    /// [`ListTracker::flush_active_item_scan_buffer`] lexes this buffer for
+    /// inline fields and tags.
+    scan_buffer: String,
+    /// Inline fields lexed from this item's own text.
+    ///
+    /// Kept separate from child items' fields so [`ListItem::fields`] resolves
+    /// per-item, not per-list.
+    fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    children: Vec<List>,
+    /// This item's source position: line, nesting depth, and parent line.
+    position: ListItemPosition,
+}
+
 impl ItemFrame {
     /// Appends text to display text and, outside code blocks, the scan buffer.
     /// While classification is [`ItemClassificationState::Pending`], the chunk
@@ -410,6 +405,12 @@ impl ItemFrame {
     fn push_code(&mut self, text: &str) {
         self.text_buffer.push_str(text);
     }
+}
+
+/// An active list frame on the parser stack.
+struct ListFrame {
+    is_ordered: bool,
+    items: Vec<ListItem>,
 }
 
 #[cfg(test)]

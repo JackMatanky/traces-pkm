@@ -54,83 +54,6 @@ impl List {
         &self.items
     }
 }
-
-/// How the custom marker scanner classified a Markdown list item.
-///
-/// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
-/// status-marked but did not match a configured task tag filter — they carry
-/// only derived completion state and are excluded from [`super::Note::tasks`].
-/// [`Self::Task`] items carry a resolved [`TaskStatus`] (symbol, name, and
-/// workflow type).
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) enum ListItemType {
-    /// A plain bullet with no marker.
-    Plain,
-    /// A status-marked item that did not match a configured task tag filter.
-    ///
-    /// Reserved for tag-filter reclassification, added in a later
-    /// task-system issue; no production code constructs this variant yet.
-    Checkbox,
-    /// A status-marked item classified as a Task, carrying its resolved
-    /// status.
-    Task(TaskStatus),
-}
-
-/// A list item's position: its 0-indexed nesting depth, 1-indexed source
-/// line, and its immediate parent's 1-indexed line, if nested.
-///
-/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
-/// degenerate input, not a real document, so a `usize` counter would spend
-/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
-)]
-pub(super) struct ListItemPosition {
-    depth: u8,
-    line: SourceLine,
-    parent: Option<SourceLine>,
-}
-
-impl ListItemPosition {
-    /// Creates a position from its source line, 0-indexed nesting depth, and
-    /// optional parent line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(
-        line: SourceLine,
-        depth: u8,
-        parent: Option<SourceLine>,
-    ) -> Self {
-        Self {
-            depth,
-            line,
-            parent,
-        }
-    }
-
-    /// Returns the 0-indexed nesting level.
-    #[inline]
-    #[must_use]
-    pub(super) const fn depth(&self) -> u8 {
-        self.depth
-    }
-
-    /// Returns the 1-indexed source line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn line(&self) -> SourceLine {
-        self.line
-    }
-
-    /// Returns the immediate parent item's 1-indexed source line, if this
-    /// item is nested inside another item's child list.
-    #[inline]
-    #[must_use]
-    pub(super) const fn parent(&self) -> Option<SourceLine> {
-        self.parent
-    }
-}
-
 /// A Markdown list item with a classified [`ListItemType`], child lists, and
 /// inline fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -308,6 +231,81 @@ impl ListItem {
     }
 }
 
+/// How the custom marker scanner classified a Markdown list item.
+///
+/// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
+/// status-marked but did not match a configured task tag filter — they carry
+/// only derived completion state and are excluded from [`super::Note::tasks`].
+/// [`Self::Task`] items carry a resolved [`TaskStatus`] (symbol, name, and
+/// workflow type).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) enum ListItemType {
+    /// A plain bullet with no marker.
+    Plain,
+    /// A status-marked item that did not match a configured task tag filter.
+    ///
+    /// Reserved for tag-filter reclassification, added in a later
+    /// task-system issue; no production code constructs this variant yet.
+    Checkbox,
+    /// A status-marked item classified as a Task, carrying its resolved
+    /// status.
+    Task(TaskStatus),
+}
+
+/// A list item's position: its 0-indexed nesting depth, 1-indexed source
+/// line, and its immediate parent's 1-indexed line, if nested.
+///
+/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
+/// degenerate input, not a real document, so a `usize` counter would spend
+/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
+)]
+pub(super) struct ListItemPosition {
+    depth: u8,
+    line: SourceLine,
+    parent: Option<SourceLine>,
+}
+
+impl ListItemPosition {
+    /// Creates a position from its source line, 0-indexed nesting depth, and
+    /// optional parent line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        line: SourceLine,
+        depth: u8,
+        parent: Option<SourceLine>,
+    ) -> Self {
+        Self {
+            depth,
+            line,
+            parent,
+        }
+    }
+
+    /// Returns the 0-indexed nesting level.
+    #[inline]
+    #[must_use]
+    pub(super) const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Returns the 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn line(&self) -> SourceLine {
+        self.line
+    }
+
+    /// Returns the immediate parent item's 1-indexed source line, if this
+    /// item is nested inside another item's child list.
+    #[inline]
+    #[must_use]
+    pub(super) const fn parent(&self) -> Option<SourceLine> {
+        self.parent
+    }
+}
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;

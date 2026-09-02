@@ -11,42 +11,69 @@ use logos::Logos;
 use miette::SourceSpan;
 use thiserror::Error;
 
-/// Diagnostic errors emitted during lexical tokenization and parsing.
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub(crate) enum LexError {
-    /// An unexpected token was encountered where another token was expected.
-    #[error("found `{found}`, expected {expected}")]
-    UnexpectedToken {
-        /// The byte span of the unexpected token.
-        span: SourceSpan,
-        /// Description of the token found in the input.
-        found: String,
-        /// Description of the expected token.
-        expected: &'static str,
-    },
-    /// The input stream ended unexpectedly.
-    #[error("unexpected end of input, expected {expected}")]
-    UnexpectedEndOfInput {
-        /// The byte span at the end of input.
-        span: SourceSpan,
-        /// Description of the expected token.
-        expected: &'static str,
-    },
+/// A token paired with its source span in the original input.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LexedToken<T> {
+    value: T,
+    span: SourceSpan,
 }
 
-impl LexError {
-    /// Returns the byte span of this error.
+impl<T> LexedToken<T> {
+    /// Wraps `value` with its `span`.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
+        Self {
+            value,
+            span,
+        }
+    }
+
+    /// Returns a reference to the inner token value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Returns the source span of this token.
+    #[inline]
     #[must_use]
     pub(crate) fn span(&self) -> SourceSpan {
-        match self {
-            Self::UnexpectedToken {
-                span,
-                ..
-            }
-            | Self::UnexpectedEndOfInput {
-                span,
-                ..
-            } => *span,
+        self.span
+    }
+
+    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn into_value(self) -> T {
+        self.value
+    }
+}
+
+impl<T> AsRef<T> for LexedToken<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.value
+    }
+}
+
+/// An expected token specification pairing an expected token value with its
+/// diagnostic description.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TokenSpec<'a, T: ?Sized> {
+    pub(crate) value: &'a T,
+    pub(crate) desc: &'static str,
+}
+
+impl<'a, T: ?Sized> TokenSpec<'a, T> {
+    /// Creates a new token specification.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(value: &'a T, desc: &'static str) -> Self {
+        Self {
+            value,
+            desc,
         }
     }
 }
@@ -246,73 +273,45 @@ impl<T> LexTokenStream<LexedToken<T>> {
     }
 }
 
-/// A token paired with its source span in the original input.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LexedToken<T> {
-    value: T,
-    span: SourceSpan,
+/// Diagnostic errors emitted during lexical tokenization and parsing.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub(crate) enum LexError {
+    /// An unexpected token was encountered where another token was expected.
+    #[error("found `{found}`, expected {expected}")]
+    UnexpectedToken {
+        /// The byte span of the unexpected token.
+        span: SourceSpan,
+        /// Description of the token found in the input.
+        found: String,
+        /// Description of the expected token.
+        expected: &'static str,
+    },
+    /// The input stream ended unexpectedly.
+    #[error("unexpected end of input, expected {expected}")]
+    UnexpectedEndOfInput {
+        /// The byte span at the end of input.
+        span: SourceSpan,
+        /// Description of the expected token.
+        expected: &'static str,
+    },
 }
 
-impl<T> LexedToken<T> {
-    /// Wraps `value` with its `span`.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
-        Self {
-            value,
-            span,
-        }
-    }
-
-    /// Returns a reference to the inner token value.
-    #[inline]
-    #[must_use]
-    pub(crate) fn value(&self) -> &T {
-        &self.value
-    }
-
-    /// Returns the source span of this token.
-    #[inline]
+impl LexError {
+    /// Returns the byte span of this error.
     #[must_use]
     pub(crate) fn span(&self) -> SourceSpan {
-        self.span
-    }
-
-    /// Consumes the [`LexedToken`] wrapper, returning the inner value.
-    #[inline]
-    #[must_use]
-    pub(crate) fn into_value(self) -> T {
-        self.value
-    }
-}
-
-impl<T> AsRef<T> for LexedToken<T> {
-    #[inline]
-    fn as_ref(&self) -> &T {
-        &self.value
-    }
-}
-
-/// An expected token specification pairing an expected token value with its
-/// diagnostic description.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TokenSpec<'a, T: ?Sized> {
-    pub(crate) value: &'a T,
-    pub(crate) desc: &'static str,
-}
-
-impl<'a, T: ?Sized> TokenSpec<'a, T> {
-    /// Creates a new token specification.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(value: &'a T, desc: &'static str) -> Self {
-        Self {
-            value,
-            desc,
+        match self {
+            Self::UnexpectedToken {
+                span,
+                ..
+            }
+            | Self::UnexpectedEndOfInput {
+                span,
+                ..
+            } => *span,
         }
     }
 }
-
 /// Strips matching single (`'...'`) or double (`"..."`) quotes from `raw` and
 /// unescapes backslash sequences via [`lexical_backslash_unescape`].
 ///
