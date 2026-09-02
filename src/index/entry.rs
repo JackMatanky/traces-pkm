@@ -119,13 +119,6 @@ impl FileEntry {
     }
 }
 
-const _: () = assert!(
-    std::mem::size_of::<FileEntry>() <= 128,
-    "FileEntry grew past its ~120-byte target — Note must stay boxed (its own \
-     shell is 240 bytes); check for an accidentally un-boxed field before \
-     raising this bound"
-);
-
 /// A [`Note`] paired with its inbound links, boxed to keep non-Note `FileEntry`
 /// small. Inlinks are index-level and cross-file, so they sit beside `Note`,
 /// not inside it.
@@ -216,6 +209,16 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
+        #[test]
+        fn entry_size_stays_under_target() {
+            assert!(
+                std::mem::size_of::<FileEntry>() <= 128,
+                "FileEntry grew past its ~120-byte target — Note must stay \
+                 boxed (its own shell is 240 bytes); check for an \
+                 accidentally un-boxed field before raising this bound"
+            );
+        }
 
         #[test]
         fn entry_at_agrees_with_entries_index() {
