@@ -16,8 +16,9 @@ Status: ready-for-agent
 - [ ] `QueryRecord` exposes `task.line` (source line number)
 - [ ] `QueryRecord` exposes `task.depth` (nesting depth)
 - [ ] Old `task.completed` and `task.text` fields remain available
-- [ ] Task item fields override inherited Note metadata where written
+- [ ] Task item fields override inherited Note metadata when the item has a non-null value for that field
 - [ ] `TaskField` enum extended with new variants for all task fields
+- [ ] `TaskField` enum variants: `Status`, `Completed`, `Priority`, `Due`, `Tags`, `Parent`, `FullyComplete`, `Line`, `Depth`
 - [ ] Query filters on `completed == false` exclude cancelled tasks
 - [ ] Query filters on `completed == true` also exclude cancelled tasks
 - [ ] Unit tests for all new task field paths on task rows

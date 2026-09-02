@@ -2,7 +2,7 @@ Status: ready-for-agent
 
 # 05 — Fully-complete computation
 
-**What to build:** Compute `fully_complete` on Task list items. A parent task is fully_complete when it and every descendant task (at any depth) has a complete or cancelled status — the subtree is resolved. Plain bullet children and non-task checkbox children are ignored. Stored as a flattened indexed field for O(1) query access.
+**What to build:** Compute `fully_complete` on Task list items. A parent task is fully_complete when it and every descendant task (at any depth) has a complete or cancelled status — the subtree is resolved. Plain bullet children and non-task checkbox children are ignored. Stored as a `fully_complete: bool` field on `ListItem`, serialized via postcard.
 
 **Blocked by:** 02 (needs `ListItemType` to identify task children).
 
@@ -13,7 +13,8 @@ Status: ready-for-agent
 - [ ] Only `ListItemType::Task` descendants participate in the calculation
 - [ ] Cancelled status counts as resolved (subtree is resolved when all tasks are done or cancelled)
 - [ ] Computation runs during list item construction (after children are built)
-- [ ] `fully_complete` stored as flattened indexed field for O(1) query access
+- [ ] `fully_complete: bool` field on `ListItem`, serialized via postcard
+- [ ] A task with no task children is vacuously `fully_complete = true`
 - [ ] Unit tests: single task with no children
 - [ ] Unit tests: parent with all done children → fully_complete = true
 - [ ] Unit tests: parent with cancelled child → fully_complete = true

@@ -8,13 +8,15 @@ Status: ready-for-agent
 
 - [ ] `ListText` struct with `raw: String` and `clean: String` fields
 - [ ] `raw` is source text minus leading `[<char>] ` marker prefix only
-- [ ] `clean` additionally strips configured task tag filters, date syntax, priority emojis, and inline task fields
+- [ ] `clean` strips in order: marker prefix → configured tag filters → date syntax → priority emojis → inline task fields
 - [ ] `clean` is config-aware: only strips tags that match configured `tag_filters`
+- [ ] When `tag_filters` is empty, `clean` strips no tags (tag stripping is config-aware, not classification-aware)
 - [ ] Task priority enum: lowest, low, normal, medium, high, highest
 - [ ] Priority stored as `Option<TaskPriority>` — missing priority remains absent, does not default to normal
 - [ ] Priority emojis parsed into priority enum (do not store raw emoji as model data)
 - [ ] Task dates: created, scheduled, start, due, done, cancelled
 - [ ] Emoji date syntax parsed (🗓️, ➕, 🛫, ⏳, ✅)
+- [ ] Emoji-to-date mapping: 🗓️→created, ➕→scheduled, 🛫→start, ⏳→due, ✅→done
 - [ ] Existing inline field syntax for task dates continues to work
 - [ ] Valid `YYYY-MM-DD` dates parsed as date field values
 - [ ] Missing dates resolve to null in query results
