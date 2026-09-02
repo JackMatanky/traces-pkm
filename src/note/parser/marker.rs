@@ -69,7 +69,7 @@ pub(super) enum MarkerPrefix<'a> {
 #[must_use]
 pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
     let mut chars = text.char_indices();
-    if chars.next().map(|(_, ch)| ch) != Some(OPEN_BRACKET) {
+    if !matches!(chars.next(), Some((_, OPEN_BRACKET))) {
         return MarkerPrefix::Rejected;
     }
     let symbol = match chars.next() {
@@ -88,7 +88,7 @@ pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
             let remainder_start = ws_offset.saturating_add(ws.len_utf8());
             MarkerPrefix::Complete(MarkerScan {
                 symbol,
-                remainder: &text[remainder_start..],
+                remainder: text.get(remainder_start..).unwrap_or_default(),
             })
         }
         Some(_) => MarkerPrefix::Rejected,
@@ -126,7 +126,7 @@ pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
                 _ => None,
             }
         }
-        _ => None,
+        MarkerPrefix::Rejected => None,
     }
 }
 

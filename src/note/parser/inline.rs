@@ -344,7 +344,16 @@ impl<'a> InlineValueParser<'a> {
 /// Whether `unit` is a recognized duration unit, matched case-insensitively
 /// against [`DURATION_UNITS`].
 fn is_duration_unit(unit: &str) -> bool {
-    DURATION_UNITS.contains(unit.to_ascii_lowercase().as_str())
+    let mut buf = [0u8; 16];
+    let Some(slice) = buf.get_mut(..unit.len()) else {
+        return false;
+    };
+    slice.copy_from_slice(unit.as_bytes());
+    slice.make_ascii_lowercase();
+    let Ok(lower) = std::str::from_utf8(slice) else {
+        return false;
+    };
+    DURATION_UNITS.contains(lower)
 }
 
 #[cfg(test)]

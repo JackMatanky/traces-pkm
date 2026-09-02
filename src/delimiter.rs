@@ -10,7 +10,7 @@ const MAX_DELIMITER_DEPTH: usize = 16;
 /// A stack-allocated delimiter validator supporting nested pairs and quote
 /// states.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DelimiterStack {
+struct DelimiterStack {
     entries: [DelimiterType; MAX_DELIMITER_DEPTH],
     len: usize,
     active_quote: Option<QuoteType>,
@@ -20,7 +20,7 @@ impl DelimiterStack {
     /// Creates a stack initialized with an outer root expected delimiter.
     #[inline]
     #[must_use]
-    pub(crate) fn with_root(kind: DelimiterType) -> Self {
+    fn with_root(kind: DelimiterType) -> Self {
         let mut stack = Self {
             entries: [DelimiterType::Parenthesis; MAX_DELIMITER_DEPTH],
             len: 0,
@@ -32,7 +32,7 @@ impl DelimiterStack {
 
     /// Pushes a nested delimiter kind onto the stack.
     #[inline]
-    pub(crate) fn push(&mut self, kind: DelimiterType) {
+    fn push(&mut self, kind: DelimiterType) {
         if let Some(entry) = self.entries.get_mut(self.len) {
             *entry = kind;
             self.len = self.len.saturating_add(1);
@@ -40,21 +40,15 @@ impl DelimiterStack {
     }
 
     /// Returns the active quote kind if scanning inside a string literal.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kept for DelimiterStack inspection; tested in unit suite"
-        )
-    )]
-    pub(crate) const fn active_quote(&self) -> Option<QuoteType> {
+    #[must_use]
+    const fn active_quote(&self) -> Option<QuoteType> {
         self.active_quote
     }
 
     /// Returns the current delimiter kind at the top of the stack.
     #[inline]
     #[must_use]
-    pub(crate) fn current_kind(&self) -> Option<DelimiterType> {
+    fn current_kind(&self) -> Option<DelimiterType> {
         let index = self.len.checked_sub(1)?;
         self.entries.get(index).copied()
     }
@@ -63,7 +57,7 @@ impl DelimiterStack {
     ///
     /// Returns `true` if `ch` was consumed as part of quote tracking.
     #[inline]
-    pub(crate) fn advance_quote_state(&mut self, ch: char) -> bool {
+    fn advance_quote_state(&mut self, ch: char) -> bool {
         if let Some(active_quote) = self.active_quote {
             if ch == active_quote.quote_char() {
                 self.active_quote = None;
@@ -83,10 +77,7 @@ impl DelimiterStack {
     /// `Some(false)` if an inner double bracket was closed, or `None` if
     /// `rest` does not start with `]]` matching an active double bracket.
     #[inline]
-    pub(crate) fn check_double_bracket_close(
-        &mut self,
-        rest: &str,
-    ) -> Option<bool> {
+    fn check_double_bracket_close(&mut self, rest: &str) -> Option<bool> {
         if self.current_kind() == Some(DelimiterType::DoubleBracket)
             && rest.starts_with("]]")
         {
@@ -107,7 +98,7 @@ impl DelimiterStack {
     ///
     /// - `Err(())` if `ch` mismatched the expected closing delimiter.
     #[inline]
-    pub(crate) fn handle_char_close(&mut self, ch: char) -> Result<bool, ()> {
+    fn handle_char_close(&mut self, ch: char) -> Result<bool, ()> {
         let Some(current) = self.current_kind() else {
             return Err(());
         };
@@ -139,14 +130,7 @@ pub(crate) enum DelimiterType {
 impl DelimiterType {
     /// Returns the expected closing string representation.
     #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kept for DelimiterType API completeness; tested in unit \
-                      suite"
-        )
-    )]
+    #[must_use]
     pub(crate) const fn close_str(self) -> &'static str {
         match self {
             Self::Parenthesis => ")",
@@ -171,12 +155,12 @@ impl DelimiterType {
     #[inline]
     #[must_use]
     pub(crate) const fn matches_char_close(self, ch: char) -> bool {
-        match (self, ch) {
+        matches!(
+            (self, ch),
             (Self::Parenthesis, ')')
-            | (Self::Bracket, ']')
-            | (Self::Brace, '}') => true,
-            _ => false,
-        }
+                | (Self::Bracket, ']')
+                | (Self::Brace, '}')
+        )
     }
 
     /// Returns the single opening character for single-character delimiters,
@@ -302,7 +286,7 @@ impl DelimiterType {
 /// String quote kinds recognized by lexical scanners.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub(crate) enum QuoteType {
+enum QuoteType {
     /// Double quote `"`.
     Double,
     /// Single quote `'`.
@@ -313,7 +297,7 @@ impl QuoteType {
     /// Returns the [`QuoteType`] if `ch` is a single or double quote character.
     #[inline]
     #[must_use]
-    pub(crate) const fn from_char(ch: char) -> Option<Self> {
+    const fn from_char(ch: char) -> Option<Self> {
         match ch {
             '"' => Some(Self::Double),
             '\'' => Some(Self::Single),
@@ -324,7 +308,7 @@ impl QuoteType {
     /// Returns the character representing this quote kind.
     #[inline]
     #[must_use]
-    pub(crate) const fn quote_char(self) -> char {
+    const fn quote_char(self) -> char {
         match self {
             Self::Double => '"',
             Self::Single => '\'',
@@ -429,6 +413,32 @@ mod tests {
                 DelimiterType::DoubleBracket.find_closing("lone ] bracket]]"),
                 Some(14)
             );
+        }
+    }
+
+    mod delimiter_stack {
+        use super::*;
+
+        #[test]
+        fn tracks_active_quote_state() {
+            let mut stack = DelimiterStack::with_root(DelimiterType::Bracket);
+            assert_eq!(stack.active_quote(), None);
+            assert!(stack.advance_quote_state('"'));
+            assert_eq!(stack.active_quote(), Some(QuoteType::Double));
+            assert!(stack.advance_quote_state('"'));
+            assert_eq!(stack.active_quote(), None);
+        }
+    }
+
+    mod delimiter_type {
+        use super::*;
+
+        #[test]
+        fn returns_expected_close_str() {
+            assert_eq!(DelimiterType::Parenthesis.close_str(), ")");
+            assert_eq!(DelimiterType::Bracket.close_str(), "]");
+            assert_eq!(DelimiterType::Brace.close_str(), "}");
+            assert_eq!(DelimiterType::DoubleBracket.close_str(), "]]");
         }
     }
 }

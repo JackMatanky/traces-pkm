@@ -255,11 +255,20 @@ impl<T> AsRef<T> for LexedToken<T> {
 
 /// An expected token specification pairing an expected token value with its
 /// diagnostic description.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct TokenSpec<'a, T: ?Sized> {
     pub(crate) value: &'a T,
     pub(crate) desc: &'static str,
 }
+
+impl<T: ?Sized> Clone for TokenSpec<'_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: ?Sized> Copy for TokenSpec<'_, T> {}
 
 impl<'a, T: ?Sized> TokenSpec<'a, T> {
     /// Creates a new token specification.
@@ -350,7 +359,7 @@ pub(crate) fn lexical_unquote(raw: &str) -> String {
 /// assert_eq!(lexical_backslash_unescape("trailing\\"), "trailing\\");
 /// ```
 #[must_use]
-pub(crate) fn lexical_backslash_unescape(input: &str) -> String {
+fn lexical_backslash_unescape(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars();
     while let Some(ch) = chars.next() {

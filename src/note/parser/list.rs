@@ -255,24 +255,16 @@ impl ItemClassificationState {
     /// Returns `true` if a task marker was detected on this item.
     #[inline]
     #[must_use]
-    const fn is_marked(&self) -> bool {
+    const fn is_marked(self) -> bool {
         matches!(self, Self::Marked(_))
     }
 
     /// Returns the detected marker symbol, if any.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kept for ItemClassificationState accessor symmetry; \
-                      consumed in tests"
-        )
-    )]
-    const fn symbol(&self) -> Option<char> {
+    const fn symbol(self) -> Option<char> {
         match self {
-            Self::Marked(symbol) => Some(*symbol),
+            Self::Marked(symbol) => Some(symbol),
             Self::Pending | Self::Plain => None,
         }
     }
@@ -421,6 +413,17 @@ mod tests {
     use super::*;
     use crate::{note::parser::parse_markdown, task::TaskStatusType};
 
+    #[test]
+    fn item_classification_state_accessors() {
+        assert!(!ItemClassificationState::Pending.is_marked());
+        assert_eq!(ItemClassificationState::Pending.symbol(), None);
+
+        assert!(!ItemClassificationState::Plain.is_marked());
+        assert_eq!(ItemClassificationState::Plain.symbol(), None);
+
+        assert!(ItemClassificationState::Marked('x').is_marked());
+        assert_eq!(ItemClassificationState::Marked('x').symbol(), Some('x'));
+    }
     #[test]
     fn is_item_active_returns_true_when_stack_nonempty() {
         let mut tracker = ListTracker::default();

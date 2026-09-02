@@ -78,14 +78,7 @@ pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use config::{Config, ConfigService, TrustRequest};
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_imports,
-        reason = "re-exported for crate-wide delimiter engine availability"
-    )
-)]
-pub(crate) use delimiter::{DelimiterStack, DelimiterType, QuoteType};
+pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,
     TerminalDialogProvider,
