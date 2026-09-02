@@ -32,6 +32,7 @@ every marker hit as `Task` without consulting tag filters.
 - `MarkdownParserInput<'a>` struct in `src/note/parser/input.rs` — carries `path`, `src`, `tasks: TaskConfig`, `frontmatter: FrontmatterConfig`. Private fields, `new` constructor, accessor methods. `parse_markdown` signature changes to `parse_markdown(&MarkdownParserInput<'_>) -> Note`
 - `IndexBuilder::parse_note` constructs `MarkdownParserInput` from `Config` — the single threading point
 - `ListTracker::end_item` signature changes from `end_item(&TaskStatusMap)` to `end_item(&[Tag], &TaskStatusMap)` — decomposed for clarity
+- `ListItemType::Task(TaskListItem)` — `TaskListItem` is introduced in issue 05; this issue constructs it during classification
 - `ListItemType::Checkbox` — constructed when a status-marked item has tags but none match any configured filter
 
 ## Parser flow
@@ -59,11 +60,11 @@ Event::End(Item)
         Some(sym) => {
           let status = statuses.resolve(sym);
           if tag_filters.is_empty() {
-            Task(status)
+            Task(TaskListItem::new(status, fully_complete))
           } else {
             let item_tags = /* tags from flushed fields */;
             if item_tags.iter().any(|t| tag_filters.contains(t)) {
-              Task(status)
+              Task(TaskListItem::new(status, fully_complete))
             } else {
               Checkbox
             }
@@ -73,11 +74,18 @@ Event::End(Item)
       }
 ```
 
+Note: `TaskListItem` is introduced in issue 05. `fully_complete` is computed
+recursively over task children in the same `end_item` call (issue 05). This
+issue's classification logic determines whether the item becomes `Task` or
+`Checkbox`; issue 05's `TaskListItem` wraps the status and `fully_complete`
+value inside the `Task` variant.
+
 Key changes:
 - Tag extraction happens during `flush_active_item_scan_buffer` (before `end_item` classifies)
 - Empty tag_filters → all status-marked items become Task (current behavior preserved)
 - Non-empty tag_filters → matching items become Task, non-matching become Checkbox
 - `ListItemType::Checkbox` is constructed here for the first time
+- `ListItemType::Task(TaskListItem)` replaces `ListItemType::Task(TaskStatus)` (issue 05)
 
 ## Acceptance criteria
 
@@ -85,6 +93,7 @@ Key changes:
 - [ ] `parse_markdown` signature changes to accept `&MarkdownParserInput<'_>`
 - [ ] `IndexBuilder::parse_note` constructs `MarkdownParserInput` from `Config`
 - [ ] `ListTracker::end_item` takes `(&[Tag], &TaskStatusMap)` instead of `&TaskStatusMap`
+- [ ] `ListItemType::Task` constructs `TaskListItem` (from issue 05) instead of bare `TaskStatus`
 - [ ] `ListItemType::Checkbox` is constructed for non-matching status-marked items when tag_filters is non-empty
 - [ ] Empty tag_filters preserves current behavior: all status-marked items become Task
 - [ ] Tag extraction (during scan buffer flush) happens before classification (in end_item)
