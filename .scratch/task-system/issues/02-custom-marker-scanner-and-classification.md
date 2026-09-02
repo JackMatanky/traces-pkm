@@ -174,6 +174,7 @@ Key changes:
 sibling-file-plus-directory convention (`schema/fields.rs` +
 `schema/fields/`, `template/engine.rs` + `template/engine/`).
 2081 lib tests across the workspace; clippy, fmt, and doc clean.
+
 ### Key design decisions
 
 1. **Incremental leading-marker state machine, gated like pulldown-cmark's
