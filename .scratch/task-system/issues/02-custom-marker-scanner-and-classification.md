@@ -189,10 +189,13 @@ Key changes:
    (by-symbol hit, else incomplete Todo preserving the symbol). Issue 03
    can reuse it unchanged when the configured map replaces the parser's
    default map.
-3. **Parser builds `TaskStatusMap::default()` internally.** Real config
-   threading into `parse_markdown` is issue 03's "config resolution"
-   scope; this issue's ~570 `parse_markdown` call sites keep their
-   signature.
+3. **Parser resolves `TaskStatusMap::default()` via a `LazyLock` static
+   (`task::DEFAULT_TASK_STATUSES`), built once per process instead of once
+   per `parse_markdown` call.** Real config threading into `parse_markdown`
+   is issue 03's "config resolution" scope; this issue's ~570
+   `parse_markdown` call sites keep their signature. Benchmarking (below)
+   caught the per-call rebuild costing 6 `String` allocations + 3 `HashMap`s
+   on every parse before the static existed.
 4. **`Checkbox` ships as a bare unit variant.** No issue-02 code path
    constructs it (no tag filters yet); the spec reserves extending the
    variant without breaking the enum.
@@ -218,6 +221,44 @@ cargo clippy --workspace --all-targets --all-features  # clean
 cargo fmt -- --check        # clean
 cargo doc --no-deps --all-features  # clean with RUSTDOCFLAGS=-D warnings
 ```
+
+### Performance
+
+Added two `benches/note_parsing.rs` groups (`task_marker_variants`,
+`task_marker_scaling`) and re-ran the full suite on this branch against
+`main`'s pre-issue-02 implementation (same fixtures, same toolchain,
+`cargo bench --features test-utils`; medians from `target/criterion`
+`estimates.json`).
+
+Two rounds of measurement, not one:
+
+1. First pass showed small/medium notes regressing +142%/+23% alongside
+   the expected task-item cost. Root cause: `TaskStatusMap::default()` was
+   rebuilt (6 `String` allocs + 3 `HashMap`s) on every `parse_markdown`
+   call. Fixed by hoisting it to `task::DEFAULT_TASK_STATUSES`, a
+   `LazyLock<TaskStatusMap>` built once. Re-measured: small/medium/prose/
+   frontmatter/wikilink/line-density benches all landed within ±2% of
+   `main` (noise).
+2. A second experiment (temporarily stripping the `TaskStatus.name`
+   `String` clone out of `resolve()`) showed only ~2% recovery, ruling out
+   per-item allocation as the driver of the remaining cost.
+
+What's left is task-item-count-scaled: `list_item_scaling` and
+`task_marker_scaling` run +27–60% slower than `main` per task item
+(confirmed via `--features test-utils` event-shape dumps of both configs).
+Cause: `ENABLE_TASKLISTS` must stay disabled for custom-marker support, so
+pulldown-cmark no longer consumes `[ ]` in its own first-pass scanner.
+Instead it tokenizes a bracketed task item's leading run into 4 separate
+`Text` events (`"["`, `" "`, `"]"`, `" remainder"`) instead of one
+post-checkbox `Text` event, roughly 4x-ing `handle_event` dispatch per
+task item. Plain bullets (no brackets) are unaffected (+2%, noise). This
+is inherent to reading markers through pulldown's public `Event` stream
+rather than pulldown's own byte-level first-pass scanner
+(`scan_task_list_marker` in `firstpass.rs`) and is the cost of the custom
+markers this issue exists to add; recovering it would mean forking
+pulldown's first pass, out of scope here. In absolute terms it is small:
+a realistic note with a few dozen task items costs low-single-digit
+microseconds more to parse.
 
 Environment note: `hk check`/`mise run check` fail in this sandbox from
 a corrupted mbx build cache (cached build-script binaries are literally
