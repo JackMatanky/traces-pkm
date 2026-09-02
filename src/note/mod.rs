@@ -8,7 +8,8 @@
 //!
 //! 1. `pulldown-cmark` tokenizes raw Markdown with YAML and wikilink extensions
 //!    enabled. Task markers are not a pulldown-cmark extension:
-//!    [`marker::scan_marker`] recognizes them from item-leading text.
+//!    [`parser::marker::scan_marker_prefix`] recognizes them from item-leading
+//!    text.
 //! 2. `ParserContext` accumulates block-level state: frontmatter text, list
 //!    nesting, link targets, and plain-text scan buffers that exclude fenced
 //!    code blocks, indented code blocks, and inline code.
@@ -34,7 +35,6 @@ mod cursor;
 mod lexer;
 mod links;
 mod lists;
-mod marker;
 mod metadata;
 mod model;
 mod parser;

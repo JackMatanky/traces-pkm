@@ -246,8 +246,8 @@ fn wrapped_field_callback(
 /// `after_sep` starts immediately after the wrapped field's `::` separator.
 ///
 /// - Escaped delimiters (`\[`, `\]`, `\(`, `\)`) never close the field.
-/// - Same-kind nesting inside the value, such as `[value]` in `[key::
-///   [value]]`, does not close it early.
+/// - Same-kind nesting inside the value, such as `[value]` in `[key::[value]]`,
+///   does not close it early.
 fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
     let mut nesting = 0usize;
     let mut escaped = false;
