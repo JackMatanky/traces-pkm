@@ -117,15 +117,15 @@ impl QueryDisplayFormat {
     fn render_task_list(records: &[QueryRecord]) -> QueryResult<String> {
         let mut out = String::new();
         for record in records {
-            let Some(completed) = record.task_completed() else {
+            let Some(text) = record.task_text() else {
                 return Err(QueryError::TaskListRequiresTaskRows);
             };
-            out.push_str(if completed {
-                "- [x] "
-            } else {
-                "- [ ] "
+            out.push_str(match record.task_completed() {
+                Some(true) => "- [x] ",
+                Some(false) => "- [ ] ",
+                None => "- [-] ",
             });
-            out.push_str(record.task_text().unwrap_or_default());
+            out.push_str(text);
             out.push('\n');
         }
         Ok(out)

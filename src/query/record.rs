@@ -40,7 +40,8 @@ use super::{
 use crate::{
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
-    note::{ListItem, Note, NoteFieldValue, TaskStatus},
+    note::{ListItem, ListItemType, Note, NoteFieldValue},
+    task::TaskStatus,
 };
 
 /// A query row over one indexed [`FileEntry`].
@@ -86,29 +87,31 @@ impl QueryRecord {
     }
 
     /// Converts this record into a task-level row.
+    ///
+    /// No-ops for a `Plain` or `Checkbox` item; only [`ListItemType::Task`]
+    /// items carry a resolved status to promote.
     pub(super) fn with_task_item(mut self, item: &ListItem) -> Self {
-        let Some(status) = item.task_status() else {
+        let ListItemType::Task(status) = item.item_type() else {
             return self;
         };
         self.kind = RowKind::Task(TaskRow {
-            status,
+            status: status.clone(),
             text: item.text().to_owned(),
         });
         self
     }
 
     /// Returns task completion state if this is a task-level record, or `None`
-    /// for page-level records.
+    /// for page-level records or a cancelled task.
     ///
-    /// Returns `true` for `- [x]` and `false` for `- [ ]`.
+    /// `Some(true)` for a done task, `Some(false)` for an incomplete one,
+    /// `None` for a cancelled task or a page-level record.
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
         match &self.kind {
             RowKind::Page => None,
-            RowKind::Task(task) => {
-                Some(task.status == crate::note::TaskStatus::Complete)
-            }
+            RowKind::Task(task) => task.status.kind().completed(),
         }
     }
 
@@ -261,9 +264,10 @@ impl QueryRecord {
             return QueryFieldValueRef::Null;
         };
         match field {
-            TaskField::Completed => {
-                QueryFieldValueRef::Bool(task.status == TaskStatus::Complete)
-            }
+            TaskField::Completed => match task.status.kind().completed() {
+                Some(completed) => QueryFieldValueRef::Bool(completed),
+                None => QueryFieldValueRef::Null,
+            },
             TaskField::Text => QueryFieldValueRef::Text(&task.text),
         }
     }

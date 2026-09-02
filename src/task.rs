@@ -3,15 +3,19 @@
 //!
 //! - [`TaskStatus`]: a named, typed status keyed by its marker symbol.
 //! - [`TaskStatusMap`]: a lookup table built once at config resolution, indexed
-//!   by symbol, name, and type.
+//!   by symbol, name, and type. [`TaskStatusMap::resolve`] is the custom marker
+//!   scanner's entry point: known symbols resolve to their configured status,
+//!   unknown symbols fall back to an incomplete todo.
 //! - [`TaskStatusType`]: the workflow classification of a status (todo,
 //!   in-progress, on-hold, done, cancelled, non-task).
 //! - [`TaskStatusSymbol`]: the marker character inside `[<char>]`.
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct TaskStatus {
     symbol: TaskStatusSymbol,
     name: String,
@@ -69,15 +73,6 @@ impl TaskStatus {
     /// Returns the workflow status type.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for API symmetry \
-                      with symbol()/name() until the marker scanner consumes \
-                      it"
-        )
-    )]
     pub(crate) const fn kind(&self) -> TaskStatusType {
         self.kind
     }
@@ -100,19 +95,32 @@ impl TaskStatusMap {
     /// Looks up a status by its exact marker symbol.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by the custom \
-                      marker scanner added in a later task-system issue"
-        )
-    )]
     pub(crate) fn by_symbol(
         &self,
         symbol: TaskStatusSymbol,
     ) -> Option<&TaskStatus> {
         self.symbols.get(&symbol)
+    }
+
+    /// Resolves a scanned marker `symbol` to its configured [`TaskStatus`].
+    ///
+    /// Falls back to an incomplete todo status when no configured status uses
+    /// `symbol`, preserving `symbol` on the fallback for diagnostics. Unknown
+    /// markers are never downgraded to plain bullets: this is the custom
+    /// marker scanner's only source of truth for marker-to-status
+    /// resolution.
+    #[inline]
+    #[must_use]
+    pub(crate) fn resolve(&self, symbol: char) -> TaskStatus {
+        self.by_symbol(TaskStatusSymbol::new(symbol)).cloned().unwrap_or_else(
+            || {
+                TaskStatus::new(
+                    TaskStatusSymbol::new(symbol),
+                    "Todo",
+                    TaskStatusType::Todo,
+                )
+            },
+        )
     }
 
     /// Looks up a status by display name, normalized by case-folding, trimming,
@@ -196,7 +204,7 @@ impl Default for TaskStatusMap {
 }
 
 /// The workflow classification of a [`TaskStatus`].
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub(crate) enum TaskStatusType {
     /// Not yet started.
     Todo,
@@ -210,14 +218,6 @@ pub(crate) enum TaskStatusType {
     Cancelled,
     /// A checkbox status that never becomes a Task (reserved for future
     /// configured statuses; no default status uses it).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no default status uses this variant; reserved for \
-                      configured statuses added in a later task-system issue"
-        )
-    )]
     NonTask,
 }
 
@@ -229,15 +229,6 @@ impl TaskStatusType {
     /// `Some(false)` for every other status type.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by the custom \
-                      marker scanner and task.completed query field added in \
-                      a later task-system issue"
-        )
-    )]
     pub(crate) const fn completed(self) -> Option<bool> {
         match self {
             Self::Done => Some(true),
@@ -255,7 +246,7 @@ impl TaskStatusType {
 /// standard and custom-scanned task markers. Unknown single-character markers
 /// are still valid symbols; this type carries no validation beyond being a
 /// `char`.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub(crate) struct TaskStatusSymbol(char);
 
 impl TaskStatusSymbol {
@@ -364,6 +355,28 @@ mod tests {
             assert_eq!(done.kind(), TaskStatusType::Done);
 
             assert!(map.by_symbol(TaskStatusSymbol::new('?')).is_none());
+        }
+
+        #[test]
+        fn resolves_a_known_symbol_to_its_configured_status() {
+            let map = TaskStatusMap::default();
+
+            let resolved = map.resolve('x');
+
+            assert_eq!(resolved.name(), "Done");
+            assert_eq!(resolved.kind(), TaskStatusType::Done);
+            assert_eq!(resolved.symbol(), TaskStatusSymbol::new('x'));
+        }
+
+        #[test]
+        fn resolves_an_unknown_symbol_to_an_incomplete_todo_preserving_it() {
+            let map = TaskStatusMap::default();
+
+            let resolved = map.resolve('?');
+
+            assert_eq!(resolved.kind(), TaskStatusType::Todo);
+            assert_eq!(resolved.kind().completed(), Some(false));
+            assert_eq!(resolved.symbol(), TaskStatusSymbol::new('?'));
         }
 
         #[test]

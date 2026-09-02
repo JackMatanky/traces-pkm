@@ -25,14 +25,18 @@ use pulldown_cmark::{
 };
 
 use super::{
-    Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter,
-    TaskStatus, lexer, lists::ListItemPosition,
+    Frontmatter, Link, LinkType, List, ListItem, ListItemType, Note,
+    RawFrontmatter,
+    lexer::InlineTokenLexer,
+    lists::ListItemPosition,
+    marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
-use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag};
+use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag, task::TaskStatusMap};
 
 /// Parses Markdown source into a [`Note`].
 ///
-/// Enables task lists, YAML frontmatter blocks, and Obsidian wikilinks.
+/// Recognizes custom task markers, YAML frontmatter blocks, and Obsidian
+/// wikilinks.
 ///
 /// The parser walks the `pulldown-cmark` event stream once, collecting
 /// frontmatter, lists, outlinks, inline fields, and tags in document order.
@@ -55,7 +59,6 @@ use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag};
 #[must_use]
 pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
     let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     opts.insert(Options::ENABLE_WIKILINKS);
 
@@ -97,6 +100,11 @@ struct ParserContext {
     /// Precomputed line-start offsets for the source being parsed, used to
     /// populate [`ListItem`]'s `line`/`parent` position fields.
     line_tracker: ByteTracker,
+    /// Resolves scanned marker symbols to their [`TaskStatus`], used to
+    /// classify status-marked list items in [`ListTracker::end_item`].
+    ///
+    /// [`TaskStatus`]: crate::task::TaskStatus
+    task_statuses: TaskStatusMap,
 }
 
 impl ParserContext {
@@ -116,6 +124,7 @@ impl ParserContext {
             inline_fields: IndexMap::new(),
             tags: Vec::new(),
             line_tracker: ByteTracker::new(source),
+            task_statuses: TaskStatusMap::default(),
         }
     }
 
@@ -133,7 +142,10 @@ impl ParserContext {
                 link_type,
                 dest_url,
                 ..
-            }) => self.start_link(link_type, dest_url),
+            }) => {
+                self.list_nesting.close_leading();
+                self.start_link(link_type, dest_url);
+            }
             Event::End(TagEnd::Link) => self.end_link(),
             Event::Start(CmarkTag::CodeBlock(_)) => {
                 self.start_code_block();
@@ -150,17 +162,41 @@ impl ParserContext {
             Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
                 self.end_text_block();
             }
-            Event::Code(text) => self.inline_code(&text),
+            Event::Code(text) => {
+                self.list_nesting.close_leading();
+                self.inline_code(&text);
+            }
             Event::Start(CmarkTag::List(start_number)) => {
                 self.start_list(start_number.is_some());
             }
             Event::End(TagEnd::List(_)) => self.end_list(),
             Event::Start(CmarkTag::Item) => self.start_item(offset),
             Event::End(TagEnd::Item) => self.end_item(),
-            Event::TaskListMarker(checked) => self.set_task_status(checked),
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
-            _ => {}
+            // Inline markup occupying an item's leading slot means the task
+            // marker is not at the content start — mirroring pulldown-cmark,
+            // which scans for the marker before parsing any inline content.
+            // `- **[x] Task**` and `` - `[x]` Task `` stay plain.
+            Event::Start(
+                CmarkTag::Emphasis
+                | CmarkTag::Strong
+                | CmarkTag::Strikethrough
+                | CmarkTag::Image {
+                    ..
+                },
+            )
+            | Event::InlineHtml(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
+            | Event::Html(_)
+            | Event::FootnoteReference(_) => {
+                self.list_nesting.close_leading();
+            }
+            // Any other event ends the item's first line structurally (a nested
+            // list, a loose-item paragraph, the item's end), which counts as
+            // the marker's trailing whitespace.
+            _ => self.list_nesting.resolve_leading(),
         }
     }
 
@@ -247,11 +283,11 @@ impl ParserContext {
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
         if !self.list_nesting.is_item_active() {
-            for (key, value) in lexer::extract_inline_fields(&self.body_buffer)
-            {
+            let lexer = InlineTokenLexer::new(false);
+            for (key, value) in lexer.extract_fields(&self.body_buffer) {
                 self.inline_fields.entry(key).or_default().push(value);
             }
-            self.tags.extend(lexer::extract_tags(&self.body_buffer));
+            self.tags.extend(lexer.extract_tags(&self.body_buffer));
             self.body_buffer.clear();
         }
     }
@@ -300,12 +336,8 @@ impl ParserContext {
 
     /// Flushes and records the innermost list item.
     fn end_item(&mut self) {
-        let flushed = self.list_nesting.end_item();
+        let flushed = self.list_nesting.end_item(&self.task_statuses);
         self.extend_from_flush(flushed);
-    }
-
-    fn set_task_status(&mut self, checked: bool) {
-        self.list_nesting.set_task_status(checked);
     }
 
     /// Appends text to every active output buffer.
@@ -361,8 +393,8 @@ impl ParserContext {
 
 /// Converts UTF-8 byte offsets into 1-indexed source line numbers.
 ///
-/// Precomputes line-start byte offsets once per document; each conversion is
-/// an O(log n) binary search over them via [`slice::partition_point`].
+/// Precomputes line-start byte offsets once per document; each conversion is an
+/// O(log n) binary search over them via [`slice::partition_point`].
 struct ByteTracker {
     /// Byte offset of the first character of each line, ascending; always
     /// starts with `0` for line 1.
@@ -460,22 +492,45 @@ impl ListTracker {
         }
     }
 
+    /// Rejects a pending item-leading marker: inline content occupies the
+    /// item's leading slot, so no marker can be recognized there.
+    fn close_leading(&mut self) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.reject_leading();
+        }
+    }
+
+    /// Force-decides a pending item-leading marker as if the item's first line
+    /// ended: a complete `[<char>]` shape becomes a marker.
+    ///
+    /// Called before the marker state is read (scan-buffer flushes, item end)
+    /// and on block-structure events that terminate the first line.
+    fn resolve_leading(&mut self) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.resolve_leading();
+        }
+    }
+
     /// Lexes and clears the active list item's scan buffer.
     ///
     /// Returns the inline fields and tags yielded by that buffer, or `None` if
     /// no item is active or the buffer is empty. Called before nested lists
     /// start and when an item closes, both to preserve document-order metadata.
     fn flush_active_item_scan_buffer(&mut self) -> FlushedFields {
+        // The marker state must be decided before `has_marker` is read: a
+        // pending `- [x]` item flushes when a nested list starts, with no
+        // trailing-whitespace text chunk ever arriving.
+        self.resolve_leading();
         let item = self.item_stack.last_mut()?;
         if item.scan_buffer.is_empty() {
             return None;
         }
         let text = mem::take(&mut item.scan_buffer);
-        let raw_fields = if item.task_status.is_some() {
-            lexer::extract_task_inline_fields(&text)
-        } else {
-            lexer::extract_inline_fields(&text)
-        };
+        let lexer = InlineTokenLexer::new(matches!(
+            item.leading,
+            LeadingMarker::Decided(Some(_))
+        ));
+        let raw_fields = lexer.extract_fields(&text);
         // Two independently owned copies, not a borrow-checker workaround:
         // `item.fields` lets a task/list item resolve its own metadata
         // (`ListItem::fields`), while the returned copy feeds the caller's
@@ -492,7 +547,7 @@ impl ListTracker {
             page_fields.entry(key).or_default().push(value);
         }
         item.fields = item_fields;
-        let tags = lexer::extract_tags(&text);
+        let tags = lexer.extract_tags(&text);
         Some((page_fields, tags))
     }
 
@@ -526,15 +581,15 @@ impl ListTracker {
 
     /// Starts tracking a new list item at `line`.
     ///
-    /// `depth` is the number of currently open lists (0-indexed); `parent`
-    /// is the innermost active item's line, if this item is nested inside
-    /// another item's child list.
+    /// `depth` is the number of currently open lists (0-indexed); `parent` is
+    /// the innermost active item's line, if this item is nested inside another
+    /// item's child list.
     fn start_item(&mut self, line: SourceLine) {
         let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
             .unwrap_or(u8::MAX);
         let parent = self.item_stack.last().map(|item| item.position.line());
         self.item_stack.push(ItemFrame {
-            task_status: None,
+            leading: LeadingMarker::Pending,
             text_buffer: String::new(),
             scan_buffer: String::new(),
             fields: IndexMap::new(),
@@ -545,13 +600,23 @@ impl ListTracker {
 
     /// Flushes and records the innermost list item.
     ///
-    /// Returns the flushed inline fields and tags, if any.
-    fn end_item(&mut self) -> FlushedFields {
+    /// The flush decides any pending leading marker (see
+    /// [`Self::resolve_leading`]); a decided marker always resolves to
+    /// [`ListItemType::Task`] — tag-filter reclassification into
+    /// [`ListItemType::Checkbox`] is a later task-system issue. Returns the
+    /// flushed inline fields and tags, if any.
+    fn end_item(&mut self, statuses: &TaskStatusMap) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
+            let item_type = match item_frame.leading {
+                LeadingMarker::Decided(Some(symbol)) => {
+                    ListItemType::Task(statuses.resolve(symbol))
+                }
+                _ => ListItemType::Plain,
+            };
             let item = ListItem::with_children(
                 item_frame.text_buffer,
-                item_frame.task_status,
+                item_type,
                 item_frame.children,
             )
             .with_fields(item_frame.fields)
@@ -561,16 +626,6 @@ impl ListTracker {
             }
         }
         flushed
-    }
-
-    fn set_task_status(&mut self, checked: bool) {
-        if let Some(item) = self.item_stack.last_mut() {
-            item.task_status = Some(if checked {
-                TaskStatus::Complete
-            } else {
-                TaskStatus::Incomplete
-            });
-        }
     }
 
     /// Appends text to the active item's display text and scan buffer.
@@ -615,7 +670,11 @@ struct ListFrame {
 
 /// An active list item frame on the parser stack.
 struct ItemFrame {
-    task_status: Option<TaskStatus>,
+    /// Decision state for the item-leading task marker. Mirrors
+    /// pulldown-cmark's first-pass gating: the marker is only valid at the
+    /// item's content start, so the decision is finalized before any inline
+    /// content event or block boundary.
+    leading: LeadingMarker,
     text_buffer: String,
     /// Mirrors `text_buffer` but excludes code text.
     ///
@@ -632,25 +691,110 @@ struct ItemFrame {
     position: ListItemPosition,
 }
 
+/// Whether an item-leading task marker has been decided, and how.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum LeadingMarker {
+    /// The item's first chunks may still assemble into a marker; `text_buffer`
+    /// holds the candidate bytes so far.
+    Pending,
+    /// The leading position is decided: `Some` carries the recognized marker's
+    /// symbol (already trimmed from both buffers), `None` means the item does
+    /// not start with a marker.
+    Decided(Option<char>),
+}
+
 impl ItemFrame {
     /// Appends text to display text and, outside code blocks, the scan buffer.
+    /// While the leading marker is [`LeadingMarker::Pending`], the chunk first
+    /// feeds the incremental marker scan: Markdown splits a leading `[<char>]`
+    /// marker across several `Event::Text` runs (observed: `"["`, `"x"`, `"]"`,
+    /// `" Task"`), so each chunk extends the candidate and re-classifies it. A
+    /// recognized marker is trimmed from both buffers.
     fn push_text(&mut self, text: &str, in_code_block: bool) {
+        let pending = matches!(self.leading, LeadingMarker::Pending);
         self.text_buffer.push_str(text);
         if !in_code_block {
             self.scan_buffer.push_str(text);
         }
+        if pending {
+            match scan_marker_prefix(&self.text_buffer) {
+                MarkerPrefix::Incomplete => {}
+                MarkerPrefix::Rejected => {
+                    self.leading = LeadingMarker::Decided(None);
+                }
+                MarkerPrefix::Complete(scan) => {
+                    let symbol = scan.symbol();
+                    let prefix_len = self
+                        .text_buffer
+                        .len()
+                        .saturating_sub(scan.remainder().len());
+                    self.trim_marker_prefix(prefix_len);
+                    self.leading = LeadingMarker::Decided(Some(symbol));
+                }
+            }
+        }
     }
 
     /// Appends a line break to both the display text and scan buffer.
+    ///
+    /// A pending marker is decided first: the break terminates the marker's
+    /// trailing-whitespace slot (`- [x]` wrapped over two lines still carries
+    /// a marker).
     fn push_break(&mut self) {
+        self.decide_pending_at_line_end();
         self.text_buffer.push('\n');
         self.scan_buffer.push('\n');
     }
 
+    /// Rejects a pending marker: inline content (emphasis, code, links, images,
+    /// inline HTML) occupies the item's leading slot, so the item does not
+    /// start with a marker.
+    fn reject_leading(&mut self) {
+        if let LeadingMarker::Pending = self.leading {
+            self.leading = LeadingMarker::Decided(None);
+        }
+    }
+
+    /// Force-decides a pending marker as if the item's first line ended: a
+    /// complete `[<char>]` shape becomes a marker with empty text.
+    fn resolve_leading(&mut self) {
+        self.decide_pending_at_line_end();
+    }
+
+    /// Decides a pending marker using end-of-line semantics. Always leaves the
+    /// marker [`LeadingMarker::Decided`].
+    fn decide_pending_at_line_end(&mut self) {
+        if let LeadingMarker::Pending = self.leading {
+            let decision = match scan_marker_at_line_end(&self.text_buffer) {
+                Some(scan) => {
+                    let symbol = scan.symbol();
+                    let prefix_len = self.text_buffer.len();
+                    self.trim_marker_prefix(prefix_len);
+                    LeadingMarker::Decided(Some(symbol))
+                }
+                None => LeadingMarker::Decided(None),
+            };
+            self.leading = decision;
+        }
+    }
+
+    /// Drains the first `prefix_len` bytes from `text_buffer`, and from
+    /// `scan_buffer` only when it mirrors those bytes (inline code and link
+    /// brackets make the buffers diverge, in which case the scan buffer keeps
+    /// its own content).
+    fn trim_marker_prefix(&mut self, prefix_len: usize) {
+        if self.scan_buffer.as_bytes().get(..prefix_len)
+            == self.text_buffer.as_bytes().get(..prefix_len)
+        {
+            self.scan_buffer.drain(..prefix_len);
+        }
+        self.text_buffer.drain(..prefix_len);
+    }
+
     /// Pushes a literal character into the scan buffer only.
     ///
-    /// Used to reconstruct Markdown link brackets for visible-key inline
-    /// field scanning.
+    /// Used to reconstruct Markdown link brackets for visible-key inline field
+    /// scanning.
     fn push_scan_char(&mut self, ch: char) {
         self.scan_buffer.push(ch);
     }
@@ -812,6 +956,7 @@ mod tests {
         }
 
         #[test]
+        #[expect(clippy::panic, reason = "test assertion on enum variant")]
         fn extracts_task_item_completion_status() {
             let input = "- [ ] Incomplete task\n- [x] Completed task";
             let note = parse_markdown("note.md", input);
@@ -821,12 +966,16 @@ mod tests {
             let item1 = list.items().get(1).expect("item 1");
 
             assert_eq!(item0.text(), "Incomplete task");
-            assert_eq!(item0.is_task(), true);
-            assert_eq!(item0.is_completed(), false);
+            let ListItemType::Task(status0) = item0.item_type() else {
+                panic!("item0 must be a Task, got {:?}", item0.item_type());
+            };
+            assert_eq!(status0.kind().completed(), Some(false));
 
             assert_eq!(item1.text(), "Completed task");
-            assert_eq!(item1.is_task(), true);
-            assert_eq!(item1.is_completed(), true);
+            let ListItemType::Task(status1) = item1.item_type() else {
+                panic!("item1 must be a Task, got {:?}", item1.item_type());
+            };
+            assert_eq!(status1.kind().completed(), Some(true));
         }
 
         #[test]
@@ -1089,8 +1238,8 @@ mod tests {
 
             tracker.inline_code("code");
 
-            tracker.end_item();
-            tracker.end_item();
+            tracker.end_item(&TaskStatusMap::default());
+            tracker.end_item(&TaskStatusMap::default());
             tracker.end_list();
 
             // end_item pops LIFO: item2 is index 0, item1 is index 1
@@ -1164,7 +1313,7 @@ mod tests {
             tracker.start_item(SourceLine::new(1));
             tracker.push_text("Author:: Jane", false);
 
-            let flushed = tracker.end_item();
+            let flushed = tracker.end_item(&TaskStatusMap::default());
 
             assert!(flushed.is_some(), "end_item must flush scan buffer");
             let (fields, _) = flushed.unwrap();
@@ -1275,8 +1424,10 @@ mod tests {
 
     mod tasks {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
+        use crate::task::TaskStatusType;
 
         #[test]
         fn iterates_top_level_task_items() {
@@ -1290,6 +1441,7 @@ mod tests {
         }
 
         #[test]
+        #[expect(clippy::panic, reason = "test assertion on enum variant")]
         fn iterates_nested_sub_list_task_items() {
             let input = "- Plain parent\n  - [x] Subtask 1";
             let note = parse_markdown("note.md", input);
@@ -1297,7 +1449,169 @@ mod tests {
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);
             assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
-            assert_eq!(tasks.first().map(|t| t.is_completed()), Some(true));
+            let ListItemType::Task(status) = tasks.first().unwrap().item_type()
+            else {
+                panic!("subtask must be a Task");
+            };
+            assert_eq!(status.kind().completed(), Some(true));
+        }
+
+        #[rstest]
+        #[case::space_todo(' ', TaskStatusType::Todo)]
+        #[case::checked_lowercase('x', TaskStatusType::Done)]
+        #[case::checked_uppercase('X', TaskStatusType::Done)]
+        #[case::in_progress('/', TaskStatusType::InProgress)]
+        #[case::cancelled('-', TaskStatusType::Cancelled)]
+        #[case::on_hold('!', TaskStatusType::OnHold)]
+        fn classifies_every_default_marker_as_a_task(
+            #[case] symbol: char,
+            #[case] expected_kind: TaskStatusType,
+        ) {
+            let input = format!("- [{symbol}] Task text");
+            let note = parse_markdown("note.md", &input);
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1, "marker {symbol:?} must become a Task");
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Task text"));
+
+            let item = tasks.first().expect("task present");
+            assert!(
+                matches!(item.item_type(), ListItemType::Task(status) if
+                    status.kind() == expected_kind),
+                "marker {symbol:?} must resolve to {expected_kind:?}, got {:?}",
+                item.item_type()
+            );
+        }
+
+        #[test]
+        #[expect(clippy::panic, reason = "test assertion on enum variant")]
+        fn preserves_and_classifies_an_unknown_marker_as_an_incomplete_task() {
+            let note = parse_markdown("note.md", "- [?] Mystery task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "Mystery task");
+            let ListItemType::Task(status) = item.item_type() else {
+                panic!(
+                    "unknown marker must never be downgraded to a plain \
+                     bullet, got {:?}",
+                    item.item_type()
+                );
+            };
+            assert_eq!(
+                status.kind().completed(),
+                Some(false),
+                "unknown markers resolve as incomplete todos"
+            );
+        }
+
+        #[test]
+        fn does_not_treat_bracket_text_in_the_item_body_as_a_marker() {
+            let note = parse_markdown("note.md", "- Check [x] later");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "Check [x] later");
+            assert_eq!(item.item_type(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn classifies_a_bare_marker_with_no_trailing_text_as_a_task() {
+            // `- [x]` as an entire item: the line terminator supplies the
+            // marker's trailing whitespace, matching pulldown-cmark's
+            // ENABLE_TASKLISTS behavior.
+            let note = parse_markdown("note.md", "- [x]");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "");
+            assert_eq!(note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn resolves_a_pending_marker_before_a_nested_list_flush() {
+            // `- [x]` + nested list: no whitespace text chunk arrives before
+            // the child list starts, but the parent still carries a marker.
+            let note = parse_markdown("note.md", "- [x]\n  - sub");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "");
+            assert_eq!(note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn classifies_a_marker_before_a_soft_break_as_a_task() {
+            let note = parse_markdown("note.md", "- [x]\n  continued");
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks.first().map(|t| t.text()), Some("\ncontinued"));
+        }
+
+        #[test]
+        fn keeps_an_item_starting_with_inline_markup_plain() {
+            // The emphasis opens the item's content, so `[x]` is not at the
+            // item-leading position and must not become a marker.
+            let note = parse_markdown("note.md", "- **[x] Task**");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "[x] Task");
+            assert_eq!(item.item_type(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn keeps_an_item_starting_with_inline_code_plain() {
+            let note = parse_markdown("note.md", "- `[x]` Task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "[x] Task");
+            assert_eq!(item.item_type(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn keeps_a_link_lookalike_plain() {
+            // `- [x](y)` is a link whose text abuts the closing bracket —
+            // no whitespace after `]`, so no marker.
+            let note = parse_markdown("note.md", "- [x](y) z");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "x z");
+            assert_eq!(item.item_type(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn rejects_unicode_whitespace_after_the_marker() {
+            // NBSP is ordinary text in Markdown, not the marker's trailing
+            // whitespace (ASCII whitespace only, mirroring pulldown-cmark).
+            let note = parse_markdown("note.md", "- [x]\u{00A0}Task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "[x]\u{00A0}Task");
+            assert_eq!(item.item_type(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn classifies_a_multibyte_symbol_marker_as_an_incomplete_task() {
+            let note = parse_markdown("note.md", "- [β] Task");
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Task"));
+            let item = tasks.first().expect("task present");
+            assert!(matches!(
+                item.item_type(),
+                ListItemType::Task(status) if status.kind().completed() == Some(false)
+            ));
         }
     }
 
