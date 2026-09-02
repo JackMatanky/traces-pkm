@@ -8,7 +8,7 @@ use super::{
     },
 };
 use crate::{
-    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
+    LexError, LexTokenStream, LexedToken, lexical_unquote,
     note::NoteFieldValue,
     query::{
         QueryRecord,
@@ -426,17 +426,13 @@ enum FilterToken {
 }
 
 /// Unescapes a lexed single- or double-quoted string literal into a
-/// [`NoteFieldValue::String`]. Quote-agnostic (like `source.rs`'s
-/// `quoted_callback`): strips exactly one leading and trailing character,
-/// whichever quote matched, rather than assuming `"`.
+/// [`NoteFieldValue::String`].
 #[expect(
     clippy::needless_pass_by_ref_mut,
     reason = "logos Callback trait requires &mut Lexer"
 )]
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
-    let raw = lex.slice();
-    let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    NoteFieldValue::String(lexical_backslash_unescape(inner))
+    NoteFieldValue::String(lexical_unquote(lex.slice()))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use super::expr::{
 use crate::{
     LexTokenStream, LexedToken,
     index::FileEntry,
-    lexical_backslash_unescape,
+    lexical_unquote,
     note::{Note, NoteFieldValue},
     query::{
         QueryError, QueryResult,
@@ -633,9 +633,7 @@ enum SourceToken {
     reason = "logos Callback trait requires &mut Lexer"
 )]
 fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
-    let raw = lexer.slice();
-    let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    lexical_backslash_unescape(inner)
+    lexical_unquote(lexer.slice())
 }
 
 #[cfg(test)]

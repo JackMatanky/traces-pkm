@@ -40,6 +40,14 @@ impl<'a> SourceText<'a> {
     /// Returns `true` if the source at `pos` starts with `needle`.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept for SourceText API completeness; tested in unit \
+                      suite"
+        )
+    )]
     pub(super) fn starts_with(&self, pos: usize, needle: &str) -> bool {
         self.from(pos).is_some_and(|source| source.starts_with(needle))
     }

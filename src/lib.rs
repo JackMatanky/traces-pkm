@@ -99,7 +99,8 @@ pub use index::{
     FileEntry, FileIndex, IndexerService, derive_inlinks, path as path_codec,
 };
 pub(crate) use lexer::{
-    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
+    DelimiterType, LexError, LexTokenStream, LexedToken,
+    find_closing_delimiter, lexical_backslash_unescape, lexical_unquote,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{Note, NoteFieldValue, parse_markdown};

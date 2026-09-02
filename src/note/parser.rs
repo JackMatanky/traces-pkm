@@ -5,8 +5,11 @@
 //!
 //! # Architecture
 //!
-//! The parser is organized into four specialized submodules:
+//! The parser is organized into five specialized submodules:
 //!
+//! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
+//!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
+//!   strings, durations, wikilinks, booleans, dates, numbers, tags).
 //! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
 //!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
 //!   tokens from plain-text scan buffers using [`logos`].
@@ -21,7 +24,6 @@
 //!   whitespace rules.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to the
-//! submodules, tracks top-level block boundaries, accumulates link targets, and
 //! assembles the final [`Note`].
 //!
 //! # Metadata Extraction
@@ -51,6 +53,7 @@ use crate::{
     task::{DEFAULT_TASK_STATUSES, TaskStatusMap},
 };
 
+mod inline;
 mod lexer;
 mod line;
 mod list;
