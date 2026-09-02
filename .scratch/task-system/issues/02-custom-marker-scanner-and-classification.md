@@ -154,27 +154,26 @@ Key changes:
 
 | File | Purpose |
 |------|---------|
-| `src/note/parser/marker.rs` (new, moved from `src/note/marker.rs`) | `MarkerScan` / `MarkerPrefix` / `scan_marker_prefix` / `scan_marker_at_line_end` — the sole source of truth for marker identity; 17 tests |
-| `src/note/lists.rs` | `ListItemType` (Plain/Checkbox/Task) replaces the old `TaskStatus` DTO; `ListItem.item_type()`; accessors `is_task`/`is_completed`/`task_status` deleted |
-| `src/note/lexer.rs` | `InlineTokenLexer { has_marker }` with `extract_fields`/`extract_tags` replaces the three free functions; tests rewritten onto the struct |
-| `src/note/parser.rs` + `src/note/parser/list.rs` (new) | `ENABLE_TASKLISTS` dropped; `Event::TaskListMarker` arm and `set_task_status` removed; `ListTracker`/`ItemFrame.leading` (`LeadingMarker` Pending/Decided) incremental scanner now lives in `parser/list.rs`; `end_item` classifies via `TaskStatusMap::resolve`; 13 new classification tests moved with it |
-| `src/note/model.rs` | `TaskIter` filters on `matches!(item_type, Task(_))`; `excludes_plain_and_checkbox_items` test |
-| `src/note/mod.rs` | old `TaskStatus` re-export removed; `ListItemType` re-exported `pub(crate)`; `marker` module declaration later moved into `note::parser` (see below) |
-| `src/task.rs` | serde derives (postcard persistence through `Note`); `TaskStatusMap::resolve(symbol)` — by-symbol hit or incomplete-Todo fallback preserving the symbol |
-| `src/query/record.rs` | `TaskRow.status` is issue 01's `TaskStatus`; `task_completed()`/`task.completed` route through `TaskStatusType::completed()` (cancelled → `None`/null) |
-| `src/query/format.rs` | `render_task_list` distinguishes page rows from cancelled tasks via `task_text()`, rendering `- [-]` for cancelled instead of erroring |
+| `src/lexer.rs` | `DelimiterType`, `QuoteType`, `DelimiterStack`, `find_closing_delimiter`, `lexical_unquote`, `LexTokenStream::delimited` — deep shared primitives for balanced delimiter tracking and quote unescaping; 18 tests |
+| `src/note/parser/marker.rs` | `MarkerScan` / `MarkerPrefix` / `scan_marker_prefix` / `scan_marker_at_line_end` — the sole source of truth for marker identity; 17 tests |
+| `src/note/parser/inline.rs` | `parse_inline_value` / `InlineValueParser` — recursive-descent value parser for Dataview inline field values (lists, quotes, durations, wikilinks, dates, numbers, tags); 6 test modules |
+| `src/note/parser/lexer.rs` | `InlineTokenLexer { has_marker }` with `extract_fields`/`extract_tags` — Logos token scanner using shared `find_closing_delimiter` for wrapped fields; tests rewritten onto the struct |
+| `src/note/parser/line.rs` | `ByteTracker` — precomputed newline byte offsets for $O(\log n)$ line lookup; 5 tests |
+| `src/note/parser/list.rs` | `ListTracker`/`ItemFrame.leading` (`LeadingMarker` Pending/Decided) incremental scanner; `end_item` classifies via `TaskStatusMap::resolve`; 20 tests |
+| `src/note/parser.rs` | `parse_markdown` orchestrator + `ParserContext` event loop |
+| `src/note/lists.rs` | `ListItemType` (Plain/Checkbox/Task) replaces old `TaskStatus` DTO; `ListItem.item_type()` |
+| `src/note/links.rs` | `find_wikilink_close` delegates to shared `find_closing_delimiter(..., DelimiterType::DoubleBracket)` |
+| `src/note/model.rs` | `TaskIter` filters on `matches!(item_type, Task(_))` |
+| `src/task.rs` | serde derives; `TaskStatusMap::resolve(symbol)` |
+| `src/query/record.rs` | `TaskRow.status` is issue 01's `TaskStatus`; `task_completed()` routes through `TaskStatusType::completed()` |
+| `src/query/format.rs` | `render_task_list` distinguishes page rows from cancelled tasks |
+| `src/query/grammar/{filter,source}.rs` | Uses shared `lexical_unquote` from `src/lexer.rs` |
 
-`src/note/parser.rs` (2079 → ~1200 lines incl. tests) was later split
-into `src/note/parser/{list,line,marker}.rs`, matching the codebase's
+`src/note/parser.rs` is organized into five specialized submodules:
+`src/note/parser/{inline,lexer,line,list,marker}.rs`, matching the codebase's
 sibling-file-plus-directory convention (`schema/fields.rs` +
-`schema/fields/`, `template/engine.rs` + `template/engine/`) instead of
-the older `query/grammar/mod.rs` pattern. `list.rs` holds the marker
-state machine above; `line.rs` holds `ByteTracker` (byte offset → source
-line, previously inline in `parser.rs`); `marker.rs` moved from
-`note/marker.rs` since its only real consumer was `note::parser` (grep-
-verified). No behavior change; 2063 lib tests before and after, no
-duplicate `#[test]` fn names across the split (grep-verified).
-
+`schema/fields/`, `template/engine.rs` + `template/engine/`).
+2081 lib tests across the workspace; clippy, fmt, and doc clean.
 ### Key design decisions
 
 1. **Incremental leading-marker state machine, gated like pulldown-cmark's
