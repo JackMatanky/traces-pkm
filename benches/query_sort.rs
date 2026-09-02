@@ -1,7 +1,7 @@
 //! Performance benchmark suite for query sorting.
 //!
 //! Exposes and monitors the CPU cost of sorting in the query engine, including
-//! TopK optimizations, comparator overhead, and permutation cost.
+//! `TopK` optimizations, comparator overhead, and permutation cost.
 //!
 //! ### Data Flow Diagram
 //!
@@ -24,7 +24,6 @@
 
 #![expect(
     clippy::expect_used,
-    clippy::arithmetic_side_effects,
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]

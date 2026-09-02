@@ -35,17 +35,6 @@ impl SourceLine {
     pub(crate) const fn new(line: u32) -> Self {
         Self(line)
     }
-
-    /// Returns the raw 1-indexed line number.
-    #[inline]
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "crate-internal accessor method for newtype inner value"
-    )]
-    pub(crate) const fn get(self) -> u32 {
-        self.0
-    }
 }
 
 impl fmt::Display for SourceLine {
@@ -94,17 +83,6 @@ impl ByteOffset {
     pub(crate) const fn new(offset: usize) -> Self {
         Self(offset)
     }
-
-    /// Returns the raw byte offset.
-    #[inline]
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "crate-internal accessor method for newtype inner value"
-    )]
-    pub(crate) const fn get(self) -> usize {
-        self.0
-    }
 }
 
 impl From<usize> for ByteOffset {
@@ -135,14 +113,12 @@ mod tests {
     #[test]
     fn source_line_conversions_and_accessors() {
         let line = SourceLine::from(42u32);
-        assert_eq!(line.get(), 42);
         assert_eq!(u32::from(line), 42);
     }
 
     #[test]
     fn byte_offset_conversions_and_accessors() {
         let offset = ByteOffset::from(128usize);
-        assert_eq!(offset.get(), 128);
         assert_eq!(usize::from(offset), 128);
         assert_eq!(offset, ByteOffset::new(128));
     }

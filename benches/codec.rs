@@ -83,6 +83,10 @@ fn non_unicode_path() -> PathBuf {
 /// matching the payload shape `IndexStore`'s private `encode_row` actually
 /// serializes for the `NOTES` table — `PathWrapper` above only exercises a
 /// bare path, which understates a real row's size.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "bench fixture; n > 0 by callers"
+)]
 fn generate_notes(n: usize) -> Vec<traces_pkm::Note> {
     (0..n)
         .map(|i| {
