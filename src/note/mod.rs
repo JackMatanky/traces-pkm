@@ -13,10 +13,10 @@
 //! 2. `ParserContext` accumulates block-level state: frontmatter text, list
 //!    nesting, link targets, and plain-text scan buffers that exclude fenced
 //!    code blocks, indented code blocks, and inline code.
-//! 3. When a text block closes, [`lexer::InlineTokenLexer`] scans its buffer
-//!    for `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and `#tag` tokens.
-//!    Status-marked list items also recognize date-shorthand emoji (`🗓️`, `➕`,
-//!    `🛫`, `⏳`, `✅`).
+//! 3. When a text block closes, [`parser::lexer::InlineTokenLexer`] scans its
+//!    buffer for `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and `#tag`
+//!    tokens. Status-marked list items also recognize date-shorthand emoji
+//!    (`🗓️`, `➕`, `🛫`, `⏳`, `✅`).
 //! 4. The assembled [`Note`] stores all extracted data in document order.
 //!
 //! # Main Types
@@ -32,7 +32,6 @@
 //! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;
-mod lexer;
 mod links;
 mod lists;
 mod metadata;

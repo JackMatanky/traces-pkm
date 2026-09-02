@@ -15,8 +15,11 @@
 use logos::{Filter, Lexer, Logos};
 use phf::phf_set;
 
-use super::{Link, NoteFieldValue, cursor::SourceText, metadata::is_iso_date};
-use crate::{FieldKey, tag::Tag};
+use crate::{
+    FieldKey,
+    note::{Link, NoteFieldValue, cursor::SourceText, metadata::is_iso_date},
+    tag::Tag,
+};
 
 /// Extracts inline fields and tags from a parser scan buffer.
 ///

@@ -24,19 +24,19 @@ use pulldown_cmark::{
     TagEnd,
 };
 
-use super::{
-    Frontmatter, Link, LinkType, Note, RawFrontmatter, lexer::InlineTokenLexer,
-};
+use super::{Frontmatter, Link, LinkType, Note, RawFrontmatter};
 use crate::{
     ByteOffset, FieldKey,
     tag::Tag,
     task::{DEFAULT_TASK_STATUSES, TaskStatusMap},
 };
 
+mod lexer;
 mod line;
 mod list;
 mod marker;
 
+use lexer::InlineTokenLexer;
 use line::ByteTracker;
 use list::ListTracker;
 

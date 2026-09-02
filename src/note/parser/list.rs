@@ -13,13 +13,13 @@ use indexmap::IndexMap;
 
 use super::{
     FlushedFields,
+    lexer::InlineTokenLexer,
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
 use crate::{
     FieldKey, SourceLine,
     note::{
-        List, ListItem, ListItemType, NoteFieldValue, lexer::InlineTokenLexer,
-        lists::ListItemPosition,
+        List, ListItem, ListItemType, NoteFieldValue, lists::ListItemPosition,
     },
     task::TaskStatusMap,
 };
