@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::cursor::SourceText;
+use crate::DelimiterType;
 
 /// The syntax used by an extracted [`Link`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -301,13 +302,10 @@ fn find_unescaped(
     None
 }
 
-/// Finds the byte offset of the first unescaped `]` in `s` that is immediately
-/// followed by a second `]`, marking the wikilink's closing `]]`.
+/// Finds the byte offset of the first unescaped `]]` in `s`, marking the
+/// wikilink's closing double brackets.
 fn find_wikilink_close(s: &str) -> Option<usize> {
-    let source = SourceText::new(s);
-    find_unescaped(s, |index, ch| {
-        ch == ']' && source.starts_with(source.advance_char(index, ch), "]")
-    })
+    DelimiterType::DoubleBracket.find_closing(s)
 }
 
 /// Splits wikilink inner text at the first unescaped `|` into a `(target,

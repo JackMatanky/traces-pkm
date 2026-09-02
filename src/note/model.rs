@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     links::Link,
-    lists::{List, ListItem},
+    lists::{List, ListItem, ListItemType},
     metadata::{Frontmatter, NoteFieldValue},
 };
 use crate::{FieldKey, FieldKeyRef, tag::Tag};
@@ -221,7 +221,7 @@ impl<'a> Iterator for TaskIter<'a> {
             self.stack.extend(
                 item.children().iter().rev().map(|list| list.items().iter()),
             );
-            if item.is_task() {
+            if matches!(item.item_type(), ListItemType::Task(_)) {
                 return Some(item);
             }
         }
@@ -235,7 +235,10 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
-    use crate::note::{LinkType, NoteFieldValue, TaskStatus};
+    use crate::{
+        note::{LinkType, NoteFieldValue},
+        task::{TaskStatus, TaskStatusSymbol, TaskStatusType},
+    };
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -245,7 +248,10 @@ mod tests {
         #[test]
         fn constructs_note_with_the_given_path_and_parts() {
             let frontmatter = Frontmatter::new(IndexMap::new());
-            let list = List::new(false, vec![ListItem::new("item", None)]);
+            let list = List::new(false, vec![ListItem::new(
+                "item",
+                ListItemType::Plain,
+            )]);
             let outlink = Link::new("target", "text", LinkType::Wikilink);
 
             let note = Note::new(
@@ -365,16 +371,30 @@ mod tests {
 
         use super::*;
 
+        fn task(
+            name: &str,
+            symbol: char,
+            kind: TaskStatusType,
+        ) -> ListItemType {
+            ListItemType::Task(TaskStatus::new(
+                TaskStatusSymbol::new(symbol),
+                name,
+                kind,
+            ))
+        }
+
         #[test]
         fn yields_task_items_from_top_level_and_nested_lists_in_order() {
-            let child_task =
-                ListItem::new("child task", Some(TaskStatus::Complete));
+            let child_task = ListItem::new(
+                "child task",
+                task("Done", 'x', TaskStatusType::Done),
+            );
             let parent = ListItem::with_children(
                 "parent task",
-                Some(TaskStatus::Incomplete),
+                task("Todo", ' ', TaskStatusType::Todo),
                 vec![List::new(false, vec![child_task])],
             );
-            let plain = ListItem::new("plain item", None);
+            let plain = ListItem::new("plain item", ListItemType::Plain);
             let note = Note::new(
                 "notes/a.md",
                 None,
@@ -385,6 +405,21 @@ mod tests {
             let task_text: Vec<&str> =
                 note.tasks().map(ListItem::text).collect();
             assert_eq!(task_text, ["parent task", "child task"]);
+        }
+
+        #[test]
+        fn excludes_plain_and_checkbox_items() {
+            let plain = ListItem::new("plain item", ListItemType::Plain);
+            let checkbox =
+                ListItem::new("checkbox item", ListItemType::Checkbox);
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                vec![List::new(false, vec![plain, checkbox])],
+                Vec::new(),
+            );
+
+            assert_eq!(note.tasks().count(), 0);
         }
     }
 }

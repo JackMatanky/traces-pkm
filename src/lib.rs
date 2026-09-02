@@ -53,6 +53,7 @@
 //!   interactive and preset dialog prompts.
 
 mod config;
+mod delimiter;
 mod dialog;
 mod dirs;
 mod dirtree;
@@ -77,6 +78,7 @@ pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use config::{Config, ConfigService, TrustRequest};
+pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,
     TerminalDialogProvider,
@@ -99,7 +101,7 @@ pub use index::{
     FileEntry, FileIndex, IndexerService, derive_inlinks, path as path_codec,
 };
 pub(crate) use lexer::{
-    LexError, LexTokenStream, LexedToken, lexical_backslash_unescape,
+    LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{Note, NoteFieldValue, parse_markdown};

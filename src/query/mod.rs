@@ -904,6 +904,21 @@ mod tests {
         }
 
         #[test]
+        fn renders_a_dash_checkbox_for_a_cancelled_task_without_erroring() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "- [-] Abandoned task\n")
+                .expect("write file");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::tasks(SourceSelector::All));
+            let rendered = outcome.task_list().expect("valid task_list");
+
+            assert_eq!(rendered, "- [-] Abandoned task\n");
+        }
+
+        #[test]
         fn renders_an_empty_string_for_an_empty_outcome() {
             let rendered =
                 QueryRecordSet::default().task_list().expect("valid task_list");

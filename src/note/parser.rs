@@ -3,9 +3,30 @@
 //! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
 //! [`Note`] from frontmatter, lists, outlinks, inline fields, and tags.
 //!
-//! Parser state lives in [`ParserContext`], while [`ListTracker`] handles
-//! explicit list and list-item stacks so nested Markdown never recurses
-//! through the call stack.
+//! # Architecture
+//!
+//! The parser is organized into five specialized submodules:
+//!
+//! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
+//!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
+//!   strings, durations, wikilinks, booleans, dates, numbers, tags).
+//! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
+//!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
+//!   tokens from plain-text scan buffers using [`logos`].
+//! - [`line`]: [`ByteTracker`] precomputes line-start byte offsets for $O(\log
+//!   n)$ byte-to-line translation without scanning the source string multiple
+//!   times.
+//! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
+//!   nested Markdown never recurses through the call stack, driving the
+//!   item-leading marker state machine and flushing item metadata.
+//! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
+//!   markers at item-leading positions with pulldown-cmark-compatible
+//!   whitespace rules.
+//!
+//! Parser state lives in [`ParserContext`], which dispatches events to the
+//! assembles the final [`Note`].
+//!
+//! # Metadata Extraction
 //!
 //! Inline fields and tags are lexed from parser-built plain-text buffers: one
 //! per top-level paragraph or heading, and one per list item. The buffers
@@ -15,7 +36,8 @@
 //! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)` becomes a
 //! visible-key inline field while [`ListItem::text`] retains the plain display
 //! text.
-
+//!
+//! [`ListItem::text`]: crate::note::ListItem::text
 use std::{mem, path::PathBuf};
 
 use indexmap::IndexMap;
@@ -24,15 +46,27 @@ use pulldown_cmark::{
     TagEnd,
 };
 
-use super::{
-    Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter,
-    TaskStatus, lexer, lists::ListItemPosition,
+use super::{Frontmatter, Link, LinkType, Note, RawFrontmatter};
+use crate::{
+    ByteOffset, FieldKey,
+    tag::Tag,
+    task::{DEFAULT_TASK_STATUSES, TaskStatusMap},
 };
-use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag};
+
+mod inline;
+mod lexer;
+mod line;
+mod list;
+mod marker;
+
+use lexer::InlineTokenLexer;
+use line::ByteTracker;
+use list::ListTracker;
 
 /// Parses Markdown source into a [`Note`].
 ///
-/// Enables task lists, YAML frontmatter blocks, and Obsidian wikilinks.
+/// Recognizes custom task markers, YAML frontmatter blocks, and Obsidian
+/// wikilinks.
 ///
 /// The parser walks the `pulldown-cmark` event stream once, collecting
 /// frontmatter, lists, outlinks, inline fields, and tags in document order.
@@ -55,7 +89,6 @@ use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag};
 #[must_use]
 pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
     let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     opts.insert(Options::ENABLE_WIKILINKS);
 
@@ -97,6 +130,11 @@ struct ParserContext {
     /// Precomputed line-start offsets for the source being parsed, used to
     /// populate [`ListItem`]'s `line`/`parent` position fields.
     line_tracker: ByteTracker,
+    /// Resolves scanned marker symbols to their [`TaskStatus`], used to
+    /// classify status-marked list items in [`list::ListTracker::end_item`].
+    ///
+    /// [`TaskStatus`]: crate::task::TaskStatus
+    task_statuses: &'static TaskStatusMap,
 }
 
 impl ParserContext {
@@ -116,6 +154,7 @@ impl ParserContext {
             inline_fields: IndexMap::new(),
             tags: Vec::new(),
             line_tracker: ByteTracker::new(source),
+            task_statuses: &DEFAULT_TASK_STATUSES,
         }
     }
 
@@ -133,7 +172,10 @@ impl ParserContext {
                 link_type,
                 dest_url,
                 ..
-            }) => self.start_link(link_type, dest_url),
+            }) => {
+                self.list_nesting.reject_marker();
+                self.start_link(link_type, dest_url);
+            }
             Event::End(TagEnd::Link) => self.end_link(),
             Event::Start(CmarkTag::CodeBlock(_)) => {
                 self.start_code_block();
@@ -150,17 +192,41 @@ impl ParserContext {
             Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
                 self.end_text_block();
             }
-            Event::Code(text) => self.inline_code(&text),
+            Event::Code(text) => {
+                self.list_nesting.reject_marker();
+                self.inline_code(&text);
+            }
             Event::Start(CmarkTag::List(start_number)) => {
                 self.start_list(start_number.is_some());
             }
             Event::End(TagEnd::List(_)) => self.end_list(),
             Event::Start(CmarkTag::Item) => self.start_item(offset),
             Event::End(TagEnd::Item) => self.end_item(),
-            Event::TaskListMarker(checked) => self.set_task_status(checked),
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
-            _ => {}
+            // Inline markup occupying an item's leading slot means the task
+            // marker is not at the content start — mirroring pulldown-cmark,
+            // which scans for the marker before parsing any inline content.
+            // `- **[x] Task**` and `` - `[x]` Task `` stay plain.
+            Event::Start(
+                CmarkTag::Emphasis
+                | CmarkTag::Strong
+                | CmarkTag::Strikethrough
+                | CmarkTag::Image {
+                    ..
+                },
+            )
+            | Event::InlineHtml(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
+            | Event::Html(_)
+            | Event::FootnoteReference(_) => {
+                self.list_nesting.reject_marker();
+            }
+            // Any other event ends the item's first line structurally (a nested
+            // list, a loose-item paragraph, the item's end), which counts as
+            // the marker's trailing whitespace.
+            _ => self.list_nesting.resolve_pending_marker(),
         }
     }
 
@@ -247,11 +313,11 @@ impl ParserContext {
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
         if !self.list_nesting.is_item_active() {
-            for (key, value) in lexer::extract_inline_fields(&self.body_buffer)
-            {
+            let lexer = InlineTokenLexer::new(false);
+            for (key, value) in lexer.extract_fields(&self.body_buffer) {
                 self.inline_fields.entry(key).or_default().push(value);
             }
-            self.tags.extend(lexer::extract_tags(&self.body_buffer));
+            self.tags.extend(lexer.extract_tags(&self.body_buffer));
             self.body_buffer.clear();
         }
     }
@@ -300,12 +366,8 @@ impl ParserContext {
 
     /// Flushes and records the innermost list item.
     fn end_item(&mut self) {
-        let flushed = self.list_nesting.end_item();
+        let flushed = self.list_nesting.end_item(self.task_statuses);
         self.extend_from_flush(flushed);
-    }
-
-    fn set_task_status(&mut self, checked: bool) {
-        self.list_nesting.set_task_status(checked);
     }
 
     /// Appends text to every active output buffer.
@@ -359,50 +421,6 @@ impl ParserContext {
     }
 }
 
-/// Converts UTF-8 byte offsets into 1-indexed source line numbers.
-///
-/// Precomputes line-start byte offsets once per document; each conversion is
-/// an O(log n) binary search over them via [`slice::partition_point`].
-struct ByteTracker {
-    /// Byte offset of the first character of each line, ascending; always
-    /// starts with `0` for line 1.
-    line_starts: Box<[usize]>,
-}
-
-impl ByteTracker {
-    /// Precomputes line-start offsets for `source`.
-    #[inline]
-    #[must_use]
-    #[expect(
-        clippy::naive_bytecount,
-        reason = "avoid extra bytecount dependency for simple newline counting"
-    )]
-    fn new(source: &str) -> Self {
-        let count = source.as_bytes().iter().filter(|&&b| b == b'\n').count();
-        let mut line_starts = Vec::with_capacity(count.saturating_add(1));
-        line_starts.push(0);
-        line_starts.extend(
-            source
-                .match_indices('\n')
-                .map(|(offset, _)| offset.saturating_add(1)),
-        );
-        Self {
-            line_starts: line_starts.into_boxed_slice(),
-        }
-    }
-
-    /// Converts a byte offset into its 1-indexed source line.
-    ///
-    /// An offset beyond the source length resolves to the last line.
-    #[inline]
-    #[must_use]
-    fn byte_to_line(&self, offset: ByteOffset) -> SourceLine {
-        let offset = usize::from(offset);
-        let line = self.line_starts.partition_point(|&start| start <= offset);
-        SourceLine::new(u32::try_from(line).unwrap_or(u32::MAX))
-    }
-}
-
 /// A link currently being walked, accumulating its display text.
 struct ActiveLink {
     target: String,
@@ -420,252 +438,14 @@ impl ActiveLink {
     }
 }
 
-/// Nested list and list-item state for one Markdown event stream.
-///
-/// Completed top-level lists live in `lists`; still-open lists and items live
-/// on explicit stacks.
-#[derive(Default)]
-struct ListTracker {
-    lists: Vec<List>,
-    list_stack: Vec<ListFrame>,
-    item_stack: Vec<ItemFrame>,
-}
-
-impl ListTracker {
-    /// Starts a nested text block inside the active item.
-    ///
-    /// Separates it from prior scan-buffer content with a newline. Returns
-    /// `false` if no list item is active, allowing the caller to treat the
-    /// block as top-level text.
-    fn start_nested_text_block(&mut self) -> bool {
-        let Some(item) = self.item_stack.last_mut() else {
-            return false;
-        };
-        if !item.scan_buffer.is_empty() {
-            item.scan_buffer.push('\n');
-        }
-        true
-    }
-
-    /// Returns `true` if there is an active list item.
-    const fn is_item_active(&self) -> bool {
-        !self.item_stack.is_empty()
-    }
-
-    /// Records an inline code span on the active item's display text only.
-    /// Inline code is excluded from inline field/tag scanning.
-    fn inline_code(&mut self, text: &str) {
-        if let Some(item) = self.item_stack.last_mut() {
-            item.push_code(text);
-        }
-    }
-
-    /// Lexes and clears the active list item's scan buffer.
-    ///
-    /// Returns the inline fields and tags yielded by that buffer, or `None` if
-    /// no item is active or the buffer is empty. Called before nested lists
-    /// start and when an item closes, both to preserve document-order metadata.
-    fn flush_active_item_scan_buffer(&mut self) -> FlushedFields {
-        let item = self.item_stack.last_mut()?;
-        if item.scan_buffer.is_empty() {
-            return None;
-        }
-        let text = mem::take(&mut item.scan_buffer);
-        let raw_fields = if item.task_status.is_some() {
-            lexer::extract_task_inline_fields(&text)
-        } else {
-            lexer::extract_inline_fields(&text)
-        };
-        // Two independently owned copies, not a borrow-checker workaround:
-        // `item.fields` lets a task/list item resolve its own metadata
-        // (`ListItem::fields`), while the returned copy feeds the caller's
-        // document-order stream every page-level query already relies on. Both
-        // outlive this function inside different serialized structs, so neither
-        // can borrow from the other.
-        let mut item_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>> =
-            IndexMap::new();
-        let mut page_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>> =
-            IndexMap::new();
-        for (key, value) in raw_fields {
-            // ponytail: clone needed for two-out pattern (item + page fields)
-            item_fields.entry(key.clone()).or_default().push(value.clone());
-            page_fields.entry(key).or_default().push(value);
-        }
-        item.fields = item_fields;
-        let tags = lexer::extract_tags(&text);
-        Some((page_fields, tags))
-    }
-
-    /// Pushes a list frame and flushes any active parent item's scan buffer.
-    ///
-    /// Returns the flushed inline fields and tags, if any.
-    fn start_list(&mut self, is_ordered: bool) -> FlushedFields {
-        let flushed = self.flush_active_item_scan_buffer();
-        self.list_stack.push(ListFrame {
-            is_ordered,
-            items: Vec::new(),
-        });
-        flushed
-    }
-
-    /// Closes the innermost list.
-    ///
-    /// A list nested inside an active item is stored under
-    /// [`ListItem::children`]. Otherwise, it becomes a top-level completed
-    /// list.
-    fn end_list(&mut self) {
-        if let Some(frame) = self.list_stack.pop() {
-            let list = List::new(frame.is_ordered, frame.items);
-            if let Some(item) = self.item_stack.last_mut() {
-                item.children.push(list);
-            } else {
-                self.lists.push(list);
-            }
-        }
-    }
-
-    /// Starts tracking a new list item at `line`.
-    ///
-    /// `depth` is the number of currently open lists (0-indexed); `parent`
-    /// is the innermost active item's line, if this item is nested inside
-    /// another item's child list.
-    fn start_item(&mut self, line: SourceLine) {
-        let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
-            .unwrap_or(u8::MAX);
-        let parent = self.item_stack.last().map(|item| item.position.line());
-        self.item_stack.push(ItemFrame {
-            task_status: None,
-            text_buffer: String::new(),
-            scan_buffer: String::new(),
-            fields: IndexMap::new(),
-            children: Vec::new(),
-            position: ListItemPosition::new(line, depth, parent),
-        });
-    }
-
-    /// Flushes and records the innermost list item.
-    ///
-    /// Returns the flushed inline fields and tags, if any.
-    fn end_item(&mut self) -> FlushedFields {
-        let flushed = self.flush_active_item_scan_buffer();
-        if let Some(item_frame) = self.item_stack.pop() {
-            let item = ListItem::with_children(
-                item_frame.text_buffer,
-                item_frame.task_status,
-                item_frame.children,
-            )
-            .with_fields(item_frame.fields)
-            .with_position(item_frame.position);
-            if let Some(list_frame) = self.list_stack.last_mut() {
-                list_frame.items.push(item);
-            }
-        }
-        flushed
-    }
-
-    fn set_task_status(&mut self, checked: bool) {
-        if let Some(item) = self.item_stack.last_mut() {
-            item.task_status = Some(if checked {
-                TaskStatus::Complete
-            } else {
-                TaskStatus::Incomplete
-            });
-        }
-    }
-
-    /// Appends text to the active item's display text and scan buffer.
-    ///
-    /// Returns `false` if there is no active item.
-    fn push_text(&mut self, text: &str, in_code_block: bool) -> bool {
-        let Some(item) = self.item_stack.last_mut() else {
-            return false;
-        };
-        item.push_text(text, in_code_block);
-        true
-    }
-
-    /// Appends a line break to the active item's buffers.
-    ///
-    /// Returns `false` if there is no active item.
-    fn push_break(&mut self) -> bool {
-        let Some(item) = self.item_stack.last_mut() else {
-            return false;
-        };
-        item.push_break();
-        true
-    }
-
-    /// Pushes a literal character into the active item's scan buffer.
-    ///
-    /// Returns `false` if there is no active item.
-    fn push_scan_char(&mut self, ch: char) -> bool {
-        let Some(item) = self.item_stack.last_mut() else {
-            return false;
-        };
-        item.push_scan_char(ch);
-        true
-    }
-}
-
-/// An active list frame on the parser stack.
-struct ListFrame {
-    is_ordered: bool,
-    items: Vec<ListItem>,
-}
-
-/// An active list item frame on the parser stack.
-struct ItemFrame {
-    task_status: Option<TaskStatus>,
-    text_buffer: String,
-    /// Mirrors `text_buffer` but excludes code text.
-    ///
-    /// [`ListTracker::flush_active_item_scan_buffer`] lexes this buffer for
-    /// inline fields and tags.
-    scan_buffer: String,
-    /// Inline fields lexed from this item's own text.
-    ///
-    /// Kept separate from child items' fields so [`ListItem::fields`] resolves
-    /// per-item, not per-list.
-    fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
-    children: Vec<List>,
-    /// This item's source position: line, nesting depth, and parent line.
-    position: ListItemPosition,
-}
-
-impl ItemFrame {
-    /// Appends text to display text and, outside code blocks, the scan buffer.
-    fn push_text(&mut self, text: &str, in_code_block: bool) {
-        self.text_buffer.push_str(text);
-        if !in_code_block {
-            self.scan_buffer.push_str(text);
-        }
-    }
-
-    /// Appends a line break to both the display text and scan buffer.
-    fn push_break(&mut self) {
-        self.text_buffer.push('\n');
-        self.scan_buffer.push('\n');
-    }
-
-    /// Pushes a literal character into the scan buffer only.
-    ///
-    /// Used to reconstruct Markdown link brackets for visible-key inline
-    /// field scanning.
-    fn push_scan_char(&mut self, ch: char) {
-        self.scan_buffer.push(ch);
-    }
-
-    /// Appends inline code text to display text only.
-    ///
-    /// Inline code is excluded from inline field and tag scanning.
-    fn push_code(&mut self, text: &str) {
-        self.text_buffer.push_str(text);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{super::NoteFieldValue, *};
+    use super::{
+        super::{ListItem, ListItemType, NoteFieldValue},
+        *,
+    };
+    use crate::SourceLine;
+
     mod parse {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -812,6 +592,7 @@ mod tests {
         }
 
         #[test]
+        #[expect(clippy::panic, reason = "test assertion on enum variant")]
         fn extracts_task_item_completion_status() {
             let input = "- [ ] Incomplete task\n- [x] Completed task";
             let note = parse_markdown("note.md", input);
@@ -821,12 +602,16 @@ mod tests {
             let item1 = list.items().get(1).expect("item 1");
 
             assert_eq!(item0.text(), "Incomplete task");
-            assert_eq!(item0.is_task(), true);
-            assert_eq!(item0.is_completed(), false);
+            let ListItemType::Task(status0) = item0.item_type() else {
+                panic!("item0 must be a Task, got {:?}", item0.item_type());
+            };
+            assert_eq!(status0.kind().completed(), Some(false));
 
             assert_eq!(item1.text(), "Completed task");
-            assert_eq!(item1.is_task(), true);
-            assert_eq!(item1.is_completed(), true);
+            let ListItemType::Task(status1) = item1.item_type() else {
+                panic!("item1 must be a Task, got {:?}", item1.item_type());
+            };
+            assert_eq!(status1.kind().completed(), Some(true));
         }
 
         #[test]
@@ -1059,245 +844,6 @@ mod tests {
                 item_text.contains("inline code"),
                 "inline code must appear in list item text, got: {item_text:?}"
             );
-        }
-    }
-
-    mod list_tracker {
-        use super::*;
-
-        #[test]
-        fn is_item_active_returns_true_when_stack_nonempty() {
-            let mut tracker = ListTracker::default();
-            assert!(!tracker.is_item_active());
-
-            tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1));
-
-            assert!(
-                tracker.is_item_active(),
-                "is_item_active must return true after start_item"
-            );
-        }
-
-        #[test]
-        fn inline_code_pushes_to_last_item_not_first() {
-            let mut tracker = ListTracker::default();
-            tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1));
-            tracker.push_text("before ", false);
-            tracker.start_item(SourceLine::new(2));
-
-            tracker.inline_code("code");
-
-            tracker.end_item();
-            tracker.end_item();
-            tracker.end_list();
-
-            // end_item pops LIFO: item2 is index 0, item1 is index 1
-            let list = tracker.lists.first().expect("list must exist");
-            let items = list.items();
-            let item1_text = items.get(1).expect("item 1 must exist").text();
-            let item2_text = items.first().expect("item 2 must exist").text();
-            assert!(
-                !item1_text.contains("code"),
-                "inline code must not leak to item 1, got: {item1_text:?}"
-            );
-            assert!(
-                item2_text.contains("code"),
-                "inline code must be in item 2, got: {item2_text:?}"
-            );
-        }
-
-        #[test]
-        fn push_scan_char_returns_false_when_no_item_active() {
-            let mut tracker = ListTracker::default();
-            let result = tracker.push_scan_char('a');
-            assert!(
-                !result,
-                "push_scan_char must return false when no item is active"
-            );
-        }
-
-        #[test]
-        fn start_nested_text_block_returns_false_when_no_item() {
-            let mut tracker = ListTracker::default();
-            assert!(
-                !tracker.start_nested_text_block(),
-                "start_nested_text_block must return false with no item"
-            );
-        }
-
-        #[test]
-        fn start_nested_text_block_returns_true_with_active_item() {
-            let mut tracker = ListTracker::default();
-            tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1));
-            assert!(
-                tracker.start_nested_text_block(),
-                "start_nested_text_block must return true with active item"
-            );
-        }
-
-        #[test]
-        fn start_list_flushes_active_item_scan_buffer() {
-            let mut tracker = ListTracker::default();
-            tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1));
-            tracker.push_text("Status:: Draft", false);
-
-            let flushed = tracker.start_list(false);
-
-            assert!(
-                flushed.is_some(),
-                "start_list must flush active item scan buffer"
-            );
-            let (fields, _) = flushed.unwrap();
-            let has_status =
-                fields.keys().any(|k| k.is_canonical_match("status"));
-            assert!(has_status, "flushed fields must contain Status");
-        }
-
-        #[test]
-        fn end_item_flushes_scan_buffer() {
-            let mut tracker = ListTracker::default();
-            tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1));
-            tracker.push_text("Author:: Jane", false);
-
-            let flushed = tracker.end_item();
-
-            assert!(flushed.is_some(), "end_item must flush scan buffer");
-            let (fields, _) = flushed.unwrap();
-            let has_author =
-                fields.keys().any(|k| k.is_canonical_match("author"));
-            assert!(has_author, "flushed fields must contain Author");
-        }
-
-        #[test]
-        fn push_text_and_push_break_return_false_when_no_item_active() {
-            let mut tracker = ListTracker::default();
-            assert!(
-                !tracker.push_text("hello", false),
-                "push_text must return false when no item active"
-            );
-            assert!(
-                !tracker.push_break(),
-                "push_break must return false when no item active"
-            );
-        }
-    }
-
-    mod byte_tracker {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn resolves_any_offset_in_single_line_source_to_line_one() {
-            let tracker = ByteTracker::new("no newlines here");
-
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(0)),
-                SourceLine::new(1)
-            );
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(10)),
-                SourceLine::new(1)
-            );
-        }
-
-        #[test]
-        fn resolves_offsets_within_each_line_of_multi_line_source() {
-            let tracker = ByteTracker::new("one\ntwo\nthree");
-
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(0)),
-                SourceLine::new(1),
-                "start of line 1"
-            );
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(2)),
-                SourceLine::new(1),
-                "mid line 1"
-            );
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(4)),
-                SourceLine::new(2),
-                "start of line 2"
-            );
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(8)),
-                SourceLine::new(3),
-                "start of line 3"
-            );
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(12)),
-                SourceLine::new(3),
-                "last byte of line 3"
-            );
-        }
-
-        #[test]
-        fn counts_empty_lines_as_separate_lines() {
-            let tracker = ByteTracker::new("one\n\nthree");
-
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(4)),
-                SourceLine::new(2),
-                "the empty line"
-            );
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(5)),
-                SourceLine::new(3)
-            );
-        }
-
-        #[test]
-        fn resolves_empty_source_to_line_one() {
-            let tracker = ByteTracker::new("");
-
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(0)),
-                SourceLine::new(1)
-            );
-        }
-
-        #[test]
-        fn resolves_an_offset_beyond_source_length_to_the_last_line() {
-            let tracker = ByteTracker::new("one\ntwo\nthree");
-
-            assert_eq!(
-                tracker.byte_to_line(ByteOffset::new(1000)),
-                SourceLine::new(3)
-            );
-        }
-    }
-
-    mod tasks {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn iterates_top_level_task_items() {
-            let input = "- [ ] Task 1\n- Plain item\n- [x] Task 2";
-            let note = parse_markdown("note.md", input);
-
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks.len(), 2);
-            assert_eq!(tasks.first().map(|t| t.text()), Some("Task 1"));
-            assert_eq!(tasks.get(1).map(|t| t.text()), Some("Task 2"));
-        }
-
-        #[test]
-        fn iterates_nested_sub_list_task_items() {
-            let input = "- Plain parent\n  - [x] Subtask 1";
-            let note = parse_markdown("note.md", input);
-
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks.len(), 1);
-            assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
-            assert_eq!(tasks.first().map(|t| t.is_completed()), Some(true));
         }
     }
 

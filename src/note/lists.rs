@@ -1,9 +1,10 @@
 //! Markdown list, list item, and task-list structures.
 //!
 //! - [`List`]: an ordered or unordered Markdown list.
-//! - [`ListItem`]: a list item with optional task state, inline fields, and
-//!   child lists.
-//! - [`TaskStatus`]: the completion state of a task list item.
+//! - [`ListItem`]: a list item with a classified [`ListItemType`], inline
+//!   fields, and child lists.
+//! - [`ListItemType`]: whether a list item is a plain bullet, a checkbox, or a
+//!   Task carrying a resolved [`TaskStatus`].
 //! - [`ListItemPosition`]: a list item's nesting depth, source line, and parent
 //!   line.
 
@@ -11,7 +12,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::metadata::NoteFieldValue;
-use crate::{FieldKey, SourceLine};
+use crate::{FieldKey, SourceLine, task::TaskStatus};
 
 /// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -53,77 +54,12 @@ impl List {
         &self.items
     }
 }
-
-/// The completion state of a Markdown task list item.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub enum TaskStatus {
-    /// `- [ ]` incomplete task.
-    Incomplete,
-    /// `- [x]` completed task.
-    Complete,
-}
-
-/// A list item's position: its 0-indexed nesting depth, 1-indexed source
-/// line, and its immediate parent's 1-indexed line, if nested.
-///
-/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
-/// degenerate input, not a real document, so a `usize` counter would spend
-/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
-)]
-pub(super) struct ListItemPosition {
-    depth: u8,
-    line: SourceLine,
-    parent: Option<SourceLine>,
-}
-
-impl ListItemPosition {
-    /// Creates a position from its source line, 0-indexed nesting depth, and
-    /// optional parent line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(
-        line: SourceLine,
-        depth: u8,
-        parent: Option<SourceLine>,
-    ) -> Self {
-        Self {
-            depth,
-            line,
-            parent,
-        }
-    }
-
-    /// Returns the 0-indexed nesting level.
-    #[inline]
-    #[must_use]
-    pub(super) const fn depth(&self) -> u8 {
-        self.depth
-    }
-
-    /// Returns the 1-indexed source line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn line(&self) -> SourceLine {
-        self.line
-    }
-
-    /// Returns the immediate parent item's 1-indexed source line, if this
-    /// item is nested inside another item's child list.
-    #[inline]
-    #[must_use]
-    pub(super) const fn parent(&self) -> Option<SourceLine> {
-        self.parent
-    }
-}
-
-/// A Markdown list item with optional task state, child lists, and inline
-/// fields.
+/// A Markdown list item with a classified [`ListItemType`], child lists, and
+/// inline fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: String,
-    task_status: Option<TaskStatus>,
+    item_type: ListItemType,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     position: ListItemPosition,
@@ -143,11 +79,11 @@ impl ListItem {
     )]
     pub(crate) fn new(
         text: impl Into<String>,
-        task_status: Option<TaskStatus>,
+        item_type: ListItemType,
     ) -> Self {
         Self {
             text: text.into(),
-            task_status,
+            item_type,
             children: Vec::new(),
             fields: IndexMap::new(),
             position: ListItemPosition::default(),
@@ -162,12 +98,12 @@ impl ListItem {
     #[must_use]
     pub(crate) fn with_children(
         text: impl Into<String>,
-        task_status: Option<TaskStatus>,
+        item_type: ListItemType,
         children: Vec<List>,
     ) -> Self {
         Self {
             text: text.into(),
-            task_status,
+            item_type,
             children,
             fields: IndexMap::new(),
             position: ListItemPosition::default(),
@@ -181,33 +117,11 @@ impl ListItem {
         &self.text
     }
 
-    /// Returns the task completion state, if this item is a task.
+    /// Returns this item's classification: plain bullet, checkbox, or Task.
     #[inline]
     #[must_use]
-    pub(crate) const fn task_status(&self) -> Option<TaskStatus> {
-        self.task_status
-    }
-
-    /// Returns `true` if this item is a task item (`- [ ]` or `- [x]`).
-    #[inline]
-    #[must_use]
-    pub(crate) const fn is_task(&self) -> bool {
-        self.task_status.is_some()
-    }
-
-    /// Returns `true` if this task item is completed (`- [x]`).
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for ListItem \
-                      accessor symmetry with its fields"
-        )
-    )]
-    pub(crate) const fn is_completed(&self) -> bool {
-        matches!(self.task_status, Some(TaskStatus::Complete))
+    pub(crate) const fn item_type(&self) -> &ListItemType {
+        &self.item_type
     }
 
     /// Returns the nested lists under this item.
@@ -317,40 +231,123 @@ impl ListItem {
     }
 }
 
+/// How the custom marker scanner classified a Markdown list item.
+///
+/// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
+/// status-marked but did not match a configured task tag filter — they carry
+/// only derived completion state and are excluded from [`super::Note::tasks`].
+/// [`Self::Task`] items carry a resolved [`TaskStatus`] (symbol, name, and
+/// workflow type).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) enum ListItemType {
+    /// A plain bullet with no marker.
+    Plain,
+    /// A status-marked item that did not match a configured task tag filter.
+    ///
+    /// Reserved for tag-filter reclassification, added in a later
+    /// task-system issue; no production code constructs this variant yet.
+    Checkbox,
+    /// A status-marked item classified as a Task, carrying its resolved
+    /// status.
+    Task(TaskStatus),
+}
+
+/// A list item's position: its 0-indexed nesting depth, 1-indexed source
+/// line, and its immediate parent's 1-indexed line, if nested.
+///
+/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
+/// degenerate input, not a real document, so a `usize` counter would spend
+/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
+)]
+pub(super) struct ListItemPosition {
+    depth: u8,
+    line: SourceLine,
+    parent: Option<SourceLine>,
+}
+
+impl ListItemPosition {
+    /// Creates a position from its source line, 0-indexed nesting depth, and
+    /// optional parent line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        line: SourceLine,
+        depth: u8,
+        parent: Option<SourceLine>,
+    ) -> Self {
+        Self {
+            depth,
+            line,
+            parent,
+        }
+    }
+
+    /// Returns the 0-indexed nesting level.
+    #[inline]
+    #[must_use]
+    pub(super) const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Returns the 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn line(&self) -> SourceLine {
+        self.line
+    }
+
+    /// Returns the immediate parent item's 1-indexed source line, if this
+    /// item is nested inside another item's child list.
+    #[inline]
+    #[must_use]
+    pub(super) const fn parent(&self) -> Option<SourceLine> {
+        self.parent
+    }
+}
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     use super::*;
+    use crate::task::{TaskStatusSymbol, TaskStatusType};
+
+    fn done_task() -> ListItemType {
+        ListItemType::Task(TaskStatus::new(
+            TaskStatusSymbol::new('x'),
+            "Done",
+            TaskStatusType::Done,
+        ))
+    }
 
     #[rstest]
-    #[case::incomplete_task(Some(TaskStatus::Incomplete), true, false)]
-    #[case::completed_task(Some(TaskStatus::Complete), true, true)]
-    #[case::plain_bullet(None, false, false)]
-    fn evaluates_list_item_task_predicates(
-        #[case] task_status: Option<TaskStatus>,
-        #[case] expected_is_task: bool,
-        #[case] expected_is_completed: bool,
-    ) {
-        let item = ListItem::new("task item", task_status);
+    #[case::plain(ListItemType::Plain)]
+    #[case::checkbox(ListItemType::Checkbox)]
+    #[case::task(done_task())]
+    fn stores_the_given_item_type(#[case] item_type: ListItemType) {
+        let item = ListItem::new("task item", item_type.clone());
+
         assert_eq!(item.text(), "task item");
-        assert_eq!(item.task_status(), task_status);
-        assert_eq!(item.is_task(), expected_is_task);
-        assert_eq!(item.is_completed(), expected_is_completed);
+        assert_eq!(item.item_type(), &item_type);
     }
 
     #[test]
     fn stores_child_lists_when_constructed_with_children() {
-        let child = List::new(false, vec![ListItem::new("child", None)]);
-        let item = ListItem::with_children("parent", None, vec![child.clone()]);
+        let child =
+            List::new(false, vec![ListItem::new("child", ListItemType::Plain)]);
+        let item =
+            ListItem::with_children("parent", ListItemType::Plain, vec![
+                child.clone(),
+            ]);
 
         assert_eq!(item.children(), [child]);
     }
 
     #[test]
     fn stores_ordering_and_items() {
-        let item = ListItem::new("task item", Some(TaskStatus::Incomplete));
+        let item = ListItem::new("task item", done_task());
         let list = List::new(true, vec![item.clone()]);
 
         assert_eq!(list.is_ordered(), true);
@@ -364,22 +361,22 @@ mod tests {
         let key = FieldKey::try_new("priority").expect("valid test field key");
         let mut fields = IndexMap::new();
         fields.insert(key, vec![NoteFieldValue::String("high".to_owned())]);
-        let item = ListItem::new("task item", Some(TaskStatus::Incomplete))
-            .with_fields(fields.clone());
+        let item =
+            ListItem::new("task item", done_task()).with_fields(fields.clone());
 
         assert_eq!(item.fields(), &fields);
     }
 
     #[test]
     fn has_no_fields_by_default() {
-        let item = ListItem::new("plain item", None);
+        let item = ListItem::new("plain item", ListItemType::Plain);
 
         assert!(item.fields().is_empty());
     }
 
     #[test]
     fn defaults_position_to_zero_and_no_parent() {
-        let item = ListItem::new("item", None);
+        let item = ListItem::new("item", ListItemType::Plain);
 
         assert_eq!(item.line(), SourceLine::new(0));
         assert_eq!(item.depth(), 0);
@@ -393,7 +390,8 @@ mod tests {
             2,
             Some(SourceLine::new(1)),
         );
-        let item = ListItem::new("item", None).with_position(position);
+        let item =
+            ListItem::new("item", ListItemType::Plain).with_position(position);
 
         assert_eq!(item.line(), SourceLine::new(3));
         assert_eq!(item.depth(), 2);

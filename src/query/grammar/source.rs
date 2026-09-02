@@ -8,9 +8,9 @@ use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
-    LexTokenStream, LexedToken,
+    LexTokenStream, LexedToken, TokenSpec,
     index::FileEntry,
-    lexical_backslash_unescape,
+    lexical_unquote,
     note::{Note, NoteFieldValue},
     query::{
         QueryError, QueryResult,
@@ -420,7 +420,10 @@ impl SourceGrammar {
             |e| QuerySyntaxError::from_lex(QueryDialect::Source, input, e);
 
         tokens
-            .expect(input, &SourceToken::LParen, "`(` after `class`")
+            .expect(
+                input,
+                TokenSpec::new(&SourceToken::LParen, "`(` after `class`"),
+            )
             .map_err(&lex)?;
 
         let name_spanned = tokens
@@ -470,7 +473,10 @@ impl SourceGrammar {
         }
 
         tokens
-            .expect(input, &SourceToken::RParen, "`)` after `class(...)`")
+            .expect(
+                input,
+                TokenSpec::new(&SourceToken::RParen, "`)` after `class(...)`"),
+            )
             .map_err(&lex)?;
 
         let modifier = if tokens.peek_is_value(&SourceToken::WithChildren) {
@@ -633,9 +639,7 @@ enum SourceToken {
     reason = "logos Callback trait requires &mut Lexer"
 )]
 fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
-    let raw = lexer.slice();
-    let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    lexical_backslash_unescape(inner)
+    lexical_unquote(lexer.slice())
 }
 
 #[cfg(test)]

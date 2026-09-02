@@ -190,6 +190,36 @@ fn frontmatter_fields_source(field_count: usize) -> String {
     source
 }
 
+/// Builds a task-list note with `count` items whose markers cycle through
+/// the default symbol set plus an unknown marker, exercising every marker
+/// resolution path (`TaskStatusMap` hits and the incomplete-todo fallback).
+fn marker_variety_source(count: usize) -> String {
+    use std::fmt::Write as _;
+
+    let symbols = [' ', 'x', 'X', '/', '-', '!', '?'];
+    let mut source = String::from("# Marker Variety\n\n");
+    for (i, symbol) in symbols.iter().cycle().take(count).enumerate() {
+        let _ = writeln!(source, "- [{symbol}] Task {i}");
+    }
+    source
+}
+
+/// Builds a task-list note where every task carries one emoji shorthand date
+/// and one inline field, exercising the `has_marker` lexer path.
+fn task_metadata_source(count: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("# Task Metadata\n\n");
+    for i in 0..count {
+        let _ = writeln!(
+            source,
+            "- [ ] Task {i} 🗓2026-01-{:02} [priority:: high]",
+            (i % 28) + 1
+        );
+    }
+    source
+}
+
 // ----------------------------------------------------------- //
 //                         Benchmarks                          //
 // ----------------------------------------------------------- //
@@ -385,6 +415,99 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures task-marker overhead against an identical plain-bullet list, and
+/// across marker resolutions: plain bullets skip the scanner entirely, `- [
+/// ]` hits the todo entry, mixed symbols cycle `TaskStatusMap` hits plus
+/// the unknown-symbol todo fallback, and emoji/inline-field tasks add the
+/// `has_marker` lexer pass.
+///
+/// Expected outcomes:
+/// - Plain bullets are cheapest; marker overhead per item is small and roughly
+///   constant across symbol kinds.
+///
+/// Unexpected outcomes:
+/// - Task-marker items costing multiples of plain bullets, indicating the
+///   per-chunk marker re-classification dominating.
+fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse_markdown::task_marker_variants");
+    let path = std::path::Path::new("note.md");
+    let count = 1_000_usize;
+
+    let mut mixed_markers = String::from("# Mixed Markers\n\n");
+    {
+        use std::fmt::Write as _;
+        let symbols = [' ', 'x', 'X', '/', '-', '!', '?'];
+        for (i, symbol) in symbols.iter().cycle().take(count).enumerate() {
+            let _ = writeln!(mixed_markers, "- [{symbol}] Task {i}");
+        }
+    }
+
+    let mut plain_bullets = String::from("# Plain Bullets\n\n");
+    {
+        use std::fmt::Write as _;
+        for i in 0..count {
+            let _ = writeln!(plain_bullets, "- Plain item {i}");
+        }
+    }
+
+    let workloads = [
+        ("plain_bullets", plain_bullets),
+        ("plain_tasks", dense_tasks_only()),
+        ("mixed_markers", marker_variety_source(count)),
+        ("task_metadata", task_metadata_source(count)),
+    ];
+
+    for (label, source) in workloads {
+        group.throughput(Throughput::Elements(
+            u64::try_from(count).expect("count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures task-marker parsing cost scaled by marker count `[10, 100, 1_000,
+/// 5_000]`.
+///
+/// Isolates the per-item leading-marker scan (per-chunk classification until
+/// the marker decides) from prose/frontmatter bulk.
+///
+/// Expected outcomes:
+/// - Cost scales linearly with marker count; per-marker overhead stays flat.
+fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse_markdown::task_marker_scaling");
+    let path = std::path::Path::new("note.md");
+
+    for count in [10_usize, 100, 1_000, 5_000] {
+        let source = marker_variety_source(count);
+        group.throughput(Throughput::Elements(
+            u64::try_from(count).expect("count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(count),
+            &source,
+            |b, source| {
+                b.iter(|| {
+                    let note =
+                        parse_markdown(black_box(path), black_box(source));
+                    black_box(note);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 /// Measures YAML frontmatter parsing cost scaled by field count `[5, 20, 50,
 /// 200]`.
 ///
@@ -422,6 +545,8 @@ criterion_group!(
     bench_parse_markdown_list_item_scaling,
     bench_parse_markdown_nesting_depth,
     bench_parse_markdown_line_density,
-    bench_parse_markdown_frontmatter_field_scaling
+    bench_parse_markdown_frontmatter_field_scaling,
+    bench_parse_markdown_task_marker_variants,
+    bench_parse_markdown_task_marker_scaling
 );
 criterion_main!(benches);

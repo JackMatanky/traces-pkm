@@ -1,41 +1,15 @@
 //! Shared lexer primitives for tokenizing text into typed token streams.
+//!
+//! Provides token streaming with one-token lookahead ([`LexTokenStream`]),
+//! spanned token wrappers ([`LexedToken`]), token expectations ([`TokenSpec`]),
+//! error diagnostics ([`LexError`]), and string unescaping
+//! ([`lexical_unquote`], [`lexical_backslash_unescape`]).
 
 use std::{iter::Peekable, vec};
 
 use logos::Logos;
 use miette::SourceSpan;
 use thiserror::Error;
-
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub(crate) enum LexError {
-    #[error("found `{found}`, expected {expected}")]
-    UnexpectedToken {
-        span: SourceSpan,
-        found: String,
-        expected: &'static str,
-    },
-    #[error("unexpected end of input, expected {expected}")]
-    UnexpectedEndOfInput {
-        span: SourceSpan,
-        expected: &'static str,
-    },
-}
-
-impl LexError {
-    /// Returns the byte span of this error.
-    pub(crate) fn span(&self) -> SourceSpan {
-        match self {
-            Self::UnexpectedToken {
-                span,
-                ..
-            }
-            | Self::UnexpectedEndOfInput {
-                span,
-                ..
-            } => *span,
-        }
-    }
-}
 
 /// An owning one-token-lookahead cursor over a materialized token stream.
 pub(crate) struct LexTokenStream<T> {
@@ -70,8 +44,8 @@ impl<T> LexTokenStream<LexedToken<T>> {
     ///
     /// # Errors
     ///
-    /// Returns [`LexError`] when the logos lexer encounters an unrecognized
-    /// token or when `post` returns an error.
+    /// - [`LexError::UnexpectedToken`] when the logos lexer encounters an
+    ///   unrecognized token or when `post` returns an error.
     pub(crate) fn tokenize_with<'a>(
         input: &'a str,
         mut post: impl FnMut(LexedToken<T>) -> Result<LexedToken<T>, LexError>,
@@ -99,8 +73,8 @@ impl<T> LexTokenStream<LexedToken<T>> {
     ///
     /// # Errors
     ///
-    /// Returns [`LexError`] when the logos lexer encounters an unrecognized
-    /// token.
+    /// - [`LexError::UnexpectedToken`] when the logos lexer encounters an
+    ///   unrecognized token.
     pub(crate) fn tokenize<'a>(input: &'a str) -> Result<Self, LexError>
     where
         T: Logos<'a, Source = str>,
@@ -126,30 +100,36 @@ impl<T> LexTokenStream<LexedToken<T>> {
         self.peek().is_some_and(|spanned| *spanned.value() == *expected)
     }
 
-    /// Consumes and returns the next token if it equals `expected`.
+    /// Consumes and returns the next token if it equals `expected.value`.
     ///
     /// On success, returns the span of the consumed token.
-    /// On failure, returns a [`LexError::UnexpectedToken`] or
-    /// [`LexError::UnexpectedEndOfInput`] with diagnostic context.
+    ///
+    /// # Errors
+    ///
+    /// - [`LexError::UnexpectedToken`] if the next token does not match
+    ///   `expected.value`.
+    /// - [`LexError::UnexpectedEndOfInput`] if the stream is empty.
     pub(crate) fn expect<U>(
         &mut self,
         input: &str,
-        expected: &U,
-        expected_desc: &'static str,
+        expected: TokenSpec<'_, U>,
     ) -> Result<SourceSpan, LexError>
     where
         T: PartialEq<U> + std::fmt::Debug,
+        U: ?Sized,
     {
         match self.next() {
-            Some(token) if *token.value() == *expected => Ok(token.span()),
+            Some(token) if *token.value() == *expected.value => {
+                Ok(token.span())
+            }
             Some(token) => Err(LexError::UnexpectedToken {
                 span: token.span(),
                 found: format!("{:?}", token.value()),
-                expected: expected_desc,
+                expected: expected.desc,
             }),
             None => Err(LexError::UnexpectedEndOfInput {
                 span: SourceSpan::from((input.len(), 0)),
-                expected: expected_desc,
+                expected: expected.desc,
             }),
         }
     }
@@ -158,6 +138,11 @@ impl<T> LexTokenStream<LexedToken<T>> {
     ///
     /// The next token must exist and `f` must return `Some`. Otherwise
     /// returns a [`LexError`] with diagnostic context.
+    ///
+    /// # Errors
+    ///
+    /// - [`LexError::UnexpectedToken`] if `f` returns `None`.
+    /// - [`LexError::UnexpectedEndOfInput`] if the stream is empty.
     pub(crate) fn expect_map<F, R>(
         &mut self,
         input: &str,
@@ -186,14 +171,42 @@ impl<T> LexTokenStream<LexedToken<T>> {
             }),
         }
     }
-}
 
-impl<T> AsRef<T> for LexedToken<T> {
-    fn as_ref(&self) -> &T {
-        &self.value
+    /// Consumes an opening delimiter `open`, runs `parse_inner`, and consumes
+    /// the matching closing delimiter `close`.
+    ///
+    /// # Errors
+    ///
+    /// - [`LexError::UnexpectedToken`] if the opening or closing token does not
+    ///   match.
+    /// - [`LexError::UnexpectedEndOfInput`] if the stream ends unexpectedly.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "general token-stream combinator; tested in unit suite"
+        )
+    )]
+    pub(crate) fn delimited<U, R, F>(
+        &mut self,
+        input: &str,
+        open: TokenSpec<'_, U>,
+        close: TokenSpec<'_, U>,
+        parse_inner: F,
+    ) -> Result<R, LexError>
+    where
+        T: PartialEq<U> + std::fmt::Debug,
+        U: ?Sized,
+        F: FnOnce(&mut Self) -> Result<R, LexError>,
+    {
+        self.expect(input, open)?;
+        let result = parse_inner(self)?;
+        self.expect(input, close)?;
+        Ok(result)
     }
 }
 
+/// A token paired with its source span in the original input.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LexedToken<T> {
     value: T,
@@ -201,6 +214,7 @@ pub(crate) struct LexedToken<T> {
 }
 
 impl<T> LexedToken<T> {
+    /// Wraps `value` with its `span`.
     #[inline]
     #[must_use]
     pub(crate) const fn new(value: T, span: SourceSpan) -> Self {
@@ -210,12 +224,14 @@ impl<T> LexedToken<T> {
         }
     }
 
+    /// Returns a reference to the inner token value.
     #[inline]
     #[must_use]
     pub(crate) fn value(&self) -> &T {
         &self.value
     }
 
+    /// Returns the source span of this token.
     #[inline]
     #[must_use]
     pub(crate) fn span(&self) -> SourceSpan {
@@ -227,6 +243,105 @@ impl<T> LexedToken<T> {
     #[must_use]
     pub(crate) fn into_value(self) -> T {
         self.value
+    }
+}
+
+impl<T> AsRef<T> for LexedToken<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.value
+    }
+}
+
+/// An expected token specification pairing an expected token value with its
+/// diagnostic description.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct TokenSpec<'a, T: ?Sized> {
+    pub(crate) value: &'a T,
+    pub(crate) desc: &'static str,
+}
+
+impl<T: ?Sized> Clone for TokenSpec<'_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: ?Sized> Copy for TokenSpec<'_, T> {}
+
+impl<'a, T: ?Sized> TokenSpec<'a, T> {
+    /// Creates a new token specification.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(value: &'a T, desc: &'static str) -> Self {
+        Self {
+            value,
+            desc,
+        }
+    }
+}
+
+/// Diagnostic errors emitted during lexical tokenization and parsing.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub(crate) enum LexError {
+    /// An unexpected token was encountered where another token was expected.
+    #[error("found `{found}`, expected {expected}")]
+    UnexpectedToken {
+        /// The byte span of the unexpected token.
+        span: SourceSpan,
+        /// Description of the token found in the input.
+        found: String,
+        /// Description of the expected token.
+        expected: &'static str,
+    },
+    /// The input stream ended unexpectedly.
+    #[error("unexpected end of input, expected {expected}")]
+    UnexpectedEndOfInput {
+        /// The byte span at the end of input.
+        span: SourceSpan,
+        /// Description of the expected token.
+        expected: &'static str,
+    },
+}
+
+impl LexError {
+    /// Returns the byte span of this error.
+    #[must_use]
+    pub(crate) fn span(&self) -> SourceSpan {
+        match self {
+            Self::UnexpectedToken {
+                span,
+                ..
+            }
+            | Self::UnexpectedEndOfInput {
+                span,
+                ..
+            } => *span,
+        }
+    }
+}
+/// Strips matching single (`'...'`) or double (`"..."`) quotes from `raw` and
+/// unescapes backslash sequences via [`lexical_backslash_unescape`].
+///
+/// If `raw` is not enclosed in matching quotes, returns `raw` unescaped.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(lexical_unquote(r#""hello \"world\"""#), r#"hello "world""#);
+/// assert_eq!(lexical_unquote(r"'single \'quote\''"), "single 'quote'");
+/// assert_eq!(lexical_unquote(r"plain\ text"), "plain text");
+/// ```
+#[must_use]
+pub(crate) fn lexical_unquote(raw: &str) -> String {
+    if (raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2)
+        || (raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2)
+    {
+        let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
+        lexical_backslash_unescape(inner)
+    } else {
+        lexical_backslash_unescape(raw)
     }
 }
 
@@ -243,7 +358,8 @@ impl<T> LexedToken<T> {
 /// assert_eq!(lexical_backslash_unescape(r#"back\\slash"#), "back\\slash");
 /// assert_eq!(lexical_backslash_unescape("trailing\\"), "trailing\\");
 /// ```
-pub(crate) fn lexical_backslash_unescape(input: &str) -> String {
+#[must_use]
+fn lexical_backslash_unescape(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars();
     while let Some(ch) = chars.next() {
@@ -281,59 +397,32 @@ mod tests {
         }
 
         #[test]
-        fn display_unexpected_eof_includes_expected() {
+        fn display_unexpected_end_of_input_includes_expected() {
             let error = LexError::UnexpectedEndOfInput {
                 span: SourceSpan::from((5, 0)),
-                expected: "a closing parenthesis",
+                expected: "a literal value",
             };
             assert_eq!(
                 error.to_string(),
-                "unexpected end of input, expected a closing parenthesis"
+                "unexpected end of input, expected a literal value"
             );
         }
 
         #[test]
-        fn span_returns_offset_for_unexpected_token() {
-            let error = LexError::UnexpectedToken {
-                span: SourceSpan::from((3, 2)),
-                found: "foo".to_owned(),
-                expected: "bar",
+        fn span_returns_the_stored_source_span() {
+            let span = SourceSpan::from((3, 4));
+            let err = LexError::UnexpectedToken {
+                span,
+                found: "x".to_owned(),
+                expected: "y",
             };
-            assert_eq!(error.span(), SourceSpan::from((3, 2)));
-        }
+            assert_eq!(err.span(), span);
 
-        #[test]
-        fn span_returns_offset_for_unexpected_eof() {
-            let error = LexError::UnexpectedEndOfInput {
-                span: SourceSpan::from((10, 0)),
-                expected: "baz",
+            let err_eoi = LexError::UnexpectedEndOfInput {
+                span,
+                expected: "y",
             };
-            assert_eq!(error.span(), SourceSpan::from((10, 0)));
-        }
-    }
-
-    mod lexed_token {
-        use super::*;
-
-        #[test]
-        fn new_wraps_value_and_span() {
-            let token = LexedToken::new(42_i32, SourceSpan::from((0, 2)));
-            assert_eq!(token.value(), &42);
-            assert_eq!(token.span(), SourceSpan::from((0, 2)));
-        }
-
-        #[test]
-        fn into_value_consumes_wrapper() {
-            let token = LexedToken::new("hello", SourceSpan::from((0, 5)));
-            let value = token.into_value();
-            assert_eq!(value, "hello");
-        }
-
-        #[test]
-        fn as_ref_borrows_inner() {
-            let token = LexedToken::new(99_i32, SourceSpan::from((0, 2)));
-            let r: &i32 = token.as_ref();
-            assert_eq!(r, &99);
+            assert_eq!(err_eoi.span(), span);
         }
     }
 
@@ -341,20 +430,25 @@ mod tests {
         use super::*;
 
         #[test]
-        fn peek_does_not_consume() {
-            let mut ts = LexTokenStream::new(vec![1_i32, 2, 3]);
+        fn peek_returns_first_token_without_consuming() {
+            let mut ts = LexTokenStream::new(vec![1, 2, 3]);
             assert_eq!(ts.peek(), Some(&1));
             assert_eq!(ts.peek(), Some(&1));
             assert_eq!(ts.next(), Some(1));
+            assert_eq!(ts.next(), Some(2));
+            assert_eq!(ts.next(), Some(3));
+            assert_eq!(ts.next(), None);
+            assert_eq!(ts.peek(), None);
         }
 
         #[test]
-        fn peek_is_value_returns_true_on_match() {
-            let mut ts = LexTokenStream::new(vec![
-                LexedToken::new("hello", SourceSpan::from((0, 5))),
-                LexedToken::new("world", SourceSpan::from((6, 5))),
-            ]);
+        fn peek_is_value_returns_true_when_next_token_matches() {
+            let mut ts = LexTokenStream::new(vec![LexedToken::new(
+                "hello",
+                SourceSpan::from((0, 5)),
+            )]);
             assert!(ts.peek_is_value(&"hello"));
+            assert!(ts.peek().is_some());
         }
 
         #[test]
@@ -403,22 +497,28 @@ mod tests {
         fn returns_span_when_token_matches() {
             let mut ts =
                 LexTokenStream::<LexedToken<T>>::tokenize("a b").unwrap();
-            let span = ts.expect("a b", &T::A, "an `a` token").unwrap();
+            let span = ts
+                .expect("a b", TokenSpec::new(&T::A, "an `a` token"))
+                .unwrap();
             assert_eq!(span, SourceSpan::from((0, 1)));
         }
 
         #[test]
-        fn returns_unexpected_token_on_mismatch() {
+        fn returns_unexpected_token_when_mismatched() {
             let mut ts =
-                LexTokenStream::<LexedToken<T>>::tokenize("a b").unwrap();
-            let err = ts.expect("a b", &T::B, "a `b` token").unwrap_err();
+                LexTokenStream::<LexedToken<T>>::tokenize("b a").unwrap();
+            let err = ts
+                .expect("b a", TokenSpec::new(&T::A, "an `a` token"))
+                .unwrap_err();
             assert!(matches!(err, LexError::UnexpectedToken { .. }));
         }
 
         #[test]
-        fn returns_unexpected_eof_on_empty() {
+        fn returns_unexpected_end_of_input_when_empty() {
             let mut ts = LexTokenStream::<LexedToken<T>>::tokenize("").unwrap();
-            let err = ts.expect("", &T::A, "an `a` token").unwrap_err();
+            let err = ts
+                .expect("", TokenSpec::new(&T::A, "an `a` token"))
+                .unwrap_err();
             assert!(matches!(err, LexError::UnexpectedEndOfInput { .. }));
         }
     }
@@ -431,39 +531,36 @@ mod tests {
         #[derive(Logos, Debug, Clone, PartialEq)]
         #[logos(skip r"[ \t\n]+")]
         enum T {
-            #[token("a")]
-            A,
             #[regex("[0-9]+", |lex| lex.slice().parse::<i32>().ok())]
             Num(i32),
+            #[token("x")]
+            X,
         }
 
         #[test]
-        fn returns_mapped_value_when_closure_succeeds() {
+        fn returns_mapped_value_on_match() {
             let mut ts =
-                LexTokenStream::<LexedToken<T>>::tokenize("a 42").unwrap();
-            ts.next(); // skip A
-            let result = ts
-                .expect_map("a 42", "a number", |token| {
-                    if let T::Num(n) = token.into_value() {
-                        Some(n * 2)
-                    } else {
-                        None
+                LexTokenStream::<LexedToken<T>>::tokenize("42 x").unwrap();
+            let mapped = ts
+                .expect_map("42 x", "a number", |token| {
+                    match token.into_value() {
+                        T::Num(n) => Some(n * 2),
+                        T::X => None,
                     }
                 })
                 .unwrap();
-            assert_eq!(result.into_value(), 84);
+            assert_eq!(mapped.into_value(), 84);
         }
 
         #[test]
-        fn returns_unexpected_token_when_closure_returns_none() {
+        fn returns_unexpected_token_when_predicate_fails() {
             let mut ts =
-                LexTokenStream::<LexedToken<T>>::tokenize("42 a").unwrap();
+                LexTokenStream::<LexedToken<T>>::tokenize("x 42").unwrap();
             let err = ts
-                .expect_map("42 a", "a non-number", |token| {
-                    if matches!(token.into_value(), T::Num(_)) {
-                        None
-                    } else {
-                        Some(())
+                .expect_map("x 42", "a number", |token| {
+                    match token.into_value() {
+                        T::Num(n) => Some(n),
+                        T::X => None,
                     }
                 })
                 .unwrap_err();
@@ -471,49 +568,15 @@ mod tests {
         }
 
         #[test]
-        fn returns_unexpected_eof_on_empty() {
+        fn returns_unexpected_end_of_input_when_empty() {
             let mut ts = LexTokenStream::<LexedToken<T>>::tokenize("").unwrap();
             let err = ts
-                .expect_map("", "a token", |token| Some(token.into_value()))
+                .expect_map("", "a number", |token| match token.into_value() {
+                    T::Num(n) => Some(n),
+                    T::X => None,
+                })
                 .unwrap_err();
             assert!(matches!(err, LexError::UnexpectedEndOfInput { .. }));
-        }
-    }
-
-    mod tokenize {
-        use logos::Logos;
-
-        use super::*;
-
-        #[derive(Logos, Debug, Clone, PartialEq)]
-        #[logos(skip r"[ \t\n]+")]
-        enum T {
-            #[token("a")]
-            A,
-            #[token("b")]
-            B,
-        }
-
-        #[test]
-        fn returns_spanned_tokens() {
-            let mut ts =
-                LexTokenStream::<LexedToken<T>>::tokenize("a b").unwrap();
-            assert!(ts.peek_is_value(&T::A));
-            assert_eq!(
-                ts.expect("a b", &T::A, "an `a` token").unwrap(),
-                SourceSpan::from((0, 1))
-            );
-            assert_eq!(
-                ts.expect("a b", &T::B, "a `b` token").unwrap(),
-                SourceSpan::from((2, 1))
-            );
-            assert_eq!(ts.next(), None);
-        }
-
-        #[test]
-        fn returns_error_for_unrecognized_input() {
-            let result = LexTokenStream::<LexedToken<T>>::tokenize("a x");
-            assert!(result.is_err());
         }
     }
 
@@ -536,10 +599,10 @@ mod tests {
             match token.into_value() {
                 T::Num(n) if n > 100 => Err(LexError::UnexpectedToken {
                     span,
-                    found: format!("{n}"),
+                    found: n.to_string(),
                     expected: "a number <= 100",
                 }),
-                other => Ok(LexedToken::new(other, span)),
+                val => Ok(LexedToken::new(val, span)),
             }
         }
 
@@ -590,6 +653,90 @@ mod tests {
         #[test]
         fn returns_empty_for_empty_input() {
             assert_eq!(lexical_backslash_unescape(""), "");
+        }
+    }
+
+    mod lexical_unquote {
+        use super::*;
+
+        #[test]
+        fn unquotes_double_quoted_string() {
+            assert_eq!(
+                lexical_unquote(r#""hello \"world\"""#),
+                r#"hello "world""#
+            );
+        }
+
+        #[test]
+        fn unquotes_single_quoted_string() {
+            assert_eq!(
+                lexical_unquote(r"'single \'quote\''"),
+                "single 'quote'"
+            );
+        }
+
+        #[test]
+        fn unescapes_unquoted_string() {
+            assert_eq!(lexical_unquote(r"plain\ text"), "plain text");
+        }
+
+        #[test]
+        fn handles_empty_and_short_quotes() {
+            assert_eq!(lexical_unquote(r#""""#), "");
+            assert_eq!(lexical_unquote("''"), "");
+            assert_eq!(lexical_unquote(r#"""#), "\"");
+        }
+    }
+
+    mod delimited {
+        use super::*;
+
+        #[derive(Logos, Debug, PartialEq)]
+        enum SimpleToken {
+            #[token("(")]
+            LParen,
+            #[token(")")]
+            RParen,
+            #[token("x")]
+            X,
+        }
+
+        #[test]
+        fn parses_matching_delimited_content() {
+            let mut stream =
+                LexTokenStream::<LexedToken<SimpleToken>>::tokenize("(x)")
+                    .unwrap();
+            let result = stream.delimited(
+                "(x)",
+                TokenSpec::new(&SimpleToken::LParen, "`(`"),
+                TokenSpec::new(&SimpleToken::RParen, "`)`"),
+                |ts| {
+                    let token = ts.next().unwrap();
+                    assert_eq!(*token.value(), SimpleToken::X);
+                    Ok("parsed")
+                },
+            );
+            assert_eq!(result.unwrap(), "parsed");
+        }
+
+        #[test]
+        fn rejects_missing_close_delimiter() {
+            let mut stream =
+                LexTokenStream::<LexedToken<SimpleToken>>::tokenize("(x")
+                    .unwrap();
+            let result = stream.delimited(
+                "(x",
+                TokenSpec::new(&SimpleToken::LParen, "`(`"),
+                TokenSpec::new(&SimpleToken::RParen, "`)`"),
+                |ts| {
+                    let _ = ts.next();
+                    Ok(())
+                },
+            );
+            assert!(matches!(
+                result,
+                Err(LexError::UnexpectedEndOfInput { .. })
+            ));
         }
     }
 }
