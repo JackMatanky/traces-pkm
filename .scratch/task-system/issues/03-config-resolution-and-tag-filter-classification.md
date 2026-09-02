@@ -6,6 +6,14 @@ Status: ready-for-agent
 
 **Blocked by:** 02 (needs `ListItemType` classification).
 
+## Progress
+
+Config plumbing is complete: `Config.tasks`, `TaskConfig` default, `TaskStatusMap`
+resolution, `task`/`#task` normalization, invalid filter diagnostics, and
+local-over-global merge all work. The parser does not use any of this yet —
+`parse_markdown` accepts `(path, src)` with no config, and `end_item` classifies
+every marker hit as `Task` without consulting tag filters.
+
 - [x] `Config` gains `tasks: TaskConfig` field with `#[serde(default)]`
 - [x] `TaskConfig` has a `Default` impl (empty statuses map, empty tag filters)
 - [x] Config resolution builds `TaskStatusMap` once from configured statuses
@@ -84,6 +92,7 @@ Key changes:
 - [ ] Unit test: tag filter matching — item with non-matching tag becomes Checkbox
 - [ ] Unit test: empty tag_filters — all status-marked items are Tasks
 - [ ] Unit test: exact tag matching — `#task` does not match `#task/project`
+- [ ] `mise run verify` passes
 
 ## Out of scope
 
