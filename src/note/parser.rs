@@ -3,9 +3,28 @@
 //! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
 //! [`Note`] from frontmatter, lists, outlinks, inline fields, and tags.
 //!
-//! Parser state lives in [`ParserContext`], while [`list::ListTracker`]
-//! handles explicit list and list-item stacks so nested Markdown never
-//! recurses through the call stack.
+//! # Architecture
+//!
+//! The parser is organized into four specialized submodules:
+//!
+//! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
+//!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
+//!   tokens from plain-text scan buffers using [`logos`].
+//! - [`line`]: [`ByteTracker`] precomputes line-start byte offsets for $O(\log
+//!   n)$ byte-to-line translation without scanning the source string multiple
+//!   times.
+//! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
+//!   nested Markdown never recurses through the call stack, driving the
+//!   item-leading marker state machine and flushing item metadata.
+//! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
+//!   markers at item-leading positions with pulldown-cmark-compatible
+//!   whitespace rules.
+//!
+//! Parser state lives in [`ParserContext`], which dispatches events to the
+//! submodules, tracks top-level block boundaries, accumulates link targets, and
+//! assembles the final [`Note`].
+//!
+//! # Metadata Extraction
 //!
 //! Inline fields and tags are lexed from parser-built plain-text buffers: one
 //! per top-level paragraph or heading, and one per list item. The buffers
@@ -13,9 +32,10 @@
 //!
 //! Standard Markdown link text is copied into the surrounding scan buffer
 //! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)` becomes a
-//! visible-key inline field while `ListItem::text` retains the plain display
+//! visible-key inline field while [`ListItem::text`] retains the plain display
 //! text.
-
+//!
+//! [`ListItem::text`]: crate::note::ListItem::text
 use std::{mem, path::PathBuf};
 
 use indexmap::IndexMap;
