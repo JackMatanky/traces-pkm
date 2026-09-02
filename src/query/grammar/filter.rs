@@ -8,7 +8,7 @@ use super::{
     },
 };
 use crate::{
-    ExpectedToken, LexError, LexTokenStream, LexedToken, lexical_unquote,
+    LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
     note::NoteFieldValue,
     query::{
         QueryRecord,
@@ -271,7 +271,7 @@ impl FilterGrammar {
         tokens
             .expect(
                 input,
-                ExpectedToken::new(
+                TokenSpec::new(
                     &FilterToken::LParen,
                     "`(` after a function name",
                 ),
@@ -296,10 +296,7 @@ impl FilterGrammar {
         tokens
             .expect(
                 input,
-                ExpectedToken::new(
-                    &FilterToken::Comma,
-                    "`,` after the field path",
-                ),
+                TokenSpec::new(&FilterToken::Comma, "`,` after the field path"),
             )
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
@@ -310,7 +307,7 @@ impl FilterGrammar {
         tokens
             .expect(
                 input,
-                ExpectedToken::new(
+                TokenSpec::new(
                     &FilterToken::RParen,
                     "`)` after the function arguments",
                 ),

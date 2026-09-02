@@ -8,7 +8,7 @@ use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
-    ExpectedToken, LexTokenStream, LexedToken,
+    LexTokenStream, LexedToken, TokenSpec,
     index::FileEntry,
     lexical_unquote,
     note::{Note, NoteFieldValue},
@@ -422,7 +422,7 @@ impl SourceGrammar {
         tokens
             .expect(
                 input,
-                ExpectedToken::new(&SourceToken::LParen, "`(` after `class`"),
+                TokenSpec::new(&SourceToken::LParen, "`(` after `class`"),
             )
             .map_err(&lex)?;
 
@@ -475,10 +475,7 @@ impl SourceGrammar {
         tokens
             .expect(
                 input,
-                ExpectedToken::new(
-                    &SourceToken::RParen,
-                    "`)` after `class(...)`",
-                ),
+                TokenSpec::new(&SourceToken::RParen, "`)` after `class(...)`"),
             )
             .map_err(&lex)?;
 
