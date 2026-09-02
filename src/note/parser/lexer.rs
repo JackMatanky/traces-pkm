@@ -16,7 +16,7 @@ use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
 use crate::{
-    DelimiterType, FieldKey, find_closing_delimiter,
+    DelimiterType, FieldKey,
     note::{NoteFieldValue, metadata::is_iso_date},
     tag::Tag,
 };
@@ -211,7 +211,7 @@ fn wrapped_field_callback(
         return Filter::Skip;
     }
     let after_sep = remainder.get(sep.saturating_add(2)..).unwrap_or_default();
-    let Some(close) = find_closing_delimiter(after_sep, kind) else {
+    let Some(close) = kind.find_closing(after_sep) else {
         return Filter::Skip;
     };
     let Ok(key) = FieldKey::try_from(key) else {

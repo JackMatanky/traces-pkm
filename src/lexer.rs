@@ -342,6 +342,117 @@ impl DelimiterType {
             Self::DoubleBracket => 2,
         }
     }
+
+    /// Returns `true` if `ch` is the single-character closer for this
+    /// delimiter.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn matches_char_close(self, ch: char) -> bool {
+        match (self, ch) {
+            (Self::Parenthesis, ')')
+            | (Self::Bracket, ']')
+            | (Self::Brace, '}') => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the delimiter kind for an opening character, if recognized.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn from_open_char(ch: char) -> Option<Self> {
+        match ch {
+            '(' => Some(Self::Parenthesis),
+            '[' => Some(Self::Bracket),
+            '{' => Some(Self::Brace),
+            _ => None,
+        }
+    }
+
+    /// Finds the byte offset of this delimiter's matching closing token in
+    /// `input`, managing nested `()`, `[]`, `{}`, `[[]]`, and string quotes
+    /// (`"..."`, `'...'`).
+    ///
+    /// `input` begins immediately after this opening delimiter was consumed.
+    /// Returns `Some(byte_offset)` of the matching closing delimiter, or `None`
+    /// if delimiters are unclosed, mismatched, or truncated.
+    #[must_use]
+    pub(crate) fn find_closing(self, input: &str) -> Option<usize> {
+        let mut stack = DelimiterStack::with_root(self);
+        let mut escaped = false;
+        let mut byte_offset = 0usize;
+
+        while byte_offset < input.len() {
+            let rest = input.get(byte_offset..)?;
+            let ch = rest.chars().next()?;
+            let ch_len = ch.len_utf8();
+
+            if escaped {
+                escaped = false;
+                byte_offset = byte_offset.saturating_add(ch_len);
+                continue;
+            }
+
+            if ch == '\\' {
+                escaped = true;
+                byte_offset = byte_offset.saturating_add(ch_len);
+                continue;
+            }
+
+            if let Some(active_quote) = stack.active_quote {
+                if ch == active_quote.quote_char() {
+                    stack.active_quote = None;
+                }
+                byte_offset = byte_offset.saturating_add(ch_len);
+                continue;
+            }
+
+            if let Some(quote) = QuoteType::from_char(ch) {
+                stack.active_quote = Some(quote);
+                byte_offset = byte_offset.saturating_add(ch_len);
+                continue;
+            }
+
+            // Check for DoubleBracket closer `]]`
+            if stack.current_kind() == Some(Self::DoubleBracket)
+                && rest.starts_with("]]")
+            {
+                if stack.handle_double_close() {
+                    return Some(byte_offset);
+                }
+                byte_offset = byte_offset.saturating_add(2);
+                continue;
+            }
+
+            // Check for single-character closers
+            if matches!(ch, ')' | ']' | '}') {
+                match stack.handle_close(ch) {
+                    Ok(true) => return Some(byte_offset),
+                    Ok(false) => {
+                        byte_offset = byte_offset.saturating_add(ch_len);
+                        continue;
+                    }
+                    Err(()) => return None,
+                }
+            }
+
+            // Check for DoubleBracket opener `[[`
+            if rest.starts_with("[[") {
+                stack.push(Self::DoubleBracket);
+                byte_offset = byte_offset.saturating_add(2);
+                continue;
+            }
+
+            // Check for single-character openers
+            if let Some(open_kind) = Self::from_open_char(ch) {
+                stack.push(open_kind);
+                byte_offset = byte_offset.saturating_add(ch_len);
+                continue;
+            }
+            byte_offset = byte_offset.saturating_add(ch_len);
+        }
+
+        None
+    }
 }
 
 /// String quote kinds recognized by lexical scanners.
@@ -423,6 +534,36 @@ impl DelimiterStack {
         self.active_quote
     }
 
+    /// Handles a closing character.
+    ///
+    /// - Returns `Ok(true)` if the root delimiter was cleanly closed.
+    /// - Returns `Ok(false)` if an inner nested delimiter was closed or if `ch`
+    ///   is allowed content.
+    /// - Returns `Err(())` if `ch` mismatched the expected closing delimiter.
+    #[inline]
+    pub(crate) fn handle_close(&mut self, ch: char) -> Result<bool, ()> {
+        let Some(current) = self.current_kind() else {
+            return Err(());
+        };
+        if current.matches_char_close(ch) {
+            self.len = self.len.saturating_sub(1);
+            Ok(self.len == 0)
+        } else if current == DelimiterType::DoubleBracket && ch == ']' {
+            Ok(false)
+        } else {
+            Err(())
+        }
+    }
+
+    /// Handles a double-bracket closer `]]`.
+    ///
+    /// Returns `true` if the root double bracket was closed.
+    #[inline]
+    pub(crate) fn handle_double_close(&mut self) -> bool {
+        self.len = self.len.saturating_sub(1);
+        self.len == 0
+    }
+
     /// Returns the current delimiter kind at the top of the stack.
     #[inline]
     #[must_use]
@@ -430,116 +571,6 @@ impl DelimiterStack {
         let index = self.len.checked_sub(1)?;
         self.entries.get(index).copied()
     }
-}
-
-/// Finds the byte offset of the matching closing delimiter in `input`,
-/// managing nested `()`, `[]`, `{}`, `[[]]`, and string quotes (`"..."`,
-/// `'...'`).
-///
-/// `kind` specifies the root opening delimiter that began the span (e.g.
-/// [`DelimiterType::Bracket`] for an already-consumed `[`).
-///
-/// Returns `Some(byte_offset)` of the matching closing delimiter, or `None` if
-/// delimiters are unclosed, mismatched, or truncated.
-#[must_use]
-pub(crate) fn find_closing_delimiter(
-    input: &str,
-    kind: DelimiterType,
-) -> Option<usize> {
-    let mut stack = DelimiterStack::with_root(kind);
-    let mut escaped = false;
-    let mut byte_offset = 0usize;
-
-    while byte_offset < input.len() {
-        let rest = input.get(byte_offset..)?;
-        let ch = rest.chars().next()?;
-        let ch_len = ch.len_utf8();
-
-        if escaped {
-            escaped = false;
-            byte_offset = byte_offset.saturating_add(ch_len);
-            continue;
-        }
-
-        if ch == '\\' {
-            escaped = true;
-            byte_offset = byte_offset.saturating_add(ch_len);
-            continue;
-        }
-
-        if let Some(active_quote) = stack.active_quote {
-            if ch == active_quote.quote_char() {
-                stack.active_quote = None;
-            }
-            byte_offset = byte_offset.saturating_add(ch_len);
-            continue;
-        }
-
-        if let Some(quote) = QuoteType::from_char(ch) {
-            stack.active_quote = Some(quote);
-            byte_offset = byte_offset.saturating_add(ch_len);
-            continue;
-        }
-
-        // Check for DoubleBracket closer `]]`
-        if stack.current_kind() == Some(DelimiterType::DoubleBracket)
-            && rest.starts_with("]]")
-        {
-            stack.len = stack.len.saturating_sub(1);
-            if stack.len == 0 {
-                return Some(byte_offset);
-            }
-            byte_offset = byte_offset.saturating_add(2);
-            continue;
-        }
-
-        // Check for single-character closers
-        if matches!(ch, ')' | ']' | '}') {
-            let current = stack.current_kind()?;
-            let matches = match (current, ch) {
-                (DelimiterType::Parenthesis, ')')
-                | (DelimiterType::Bracket, ']')
-                | (DelimiterType::Brace, '}') => true,
-                _ => false,
-            };
-            if !matches {
-                if current == DelimiterType::DoubleBracket && ch == ']' {
-                    byte_offset = byte_offset.saturating_add(ch_len);
-                    continue;
-                }
-                return None;
-            }
-            stack.len = stack.len.saturating_sub(1);
-            if stack.len == 0 {
-                return Some(byte_offset);
-            }
-            byte_offset = byte_offset.saturating_add(ch_len);
-            continue;
-        }
-
-        // Check for DoubleBracket opener `[[`
-        if rest.starts_with("[[") {
-            stack.push(DelimiterType::DoubleBracket);
-            byte_offset = byte_offset.saturating_add(2);
-            continue;
-        }
-
-        // Check for single-character openers
-        if let Some(open_kind) = match ch {
-            '(' => Some(DelimiterType::Parenthesis),
-            '[' => Some(DelimiterType::Bracket),
-            '{' => Some(DelimiterType::Brace),
-            _ => None,
-        } {
-            stack.push(open_kind);
-            byte_offset = byte_offset.saturating_add(ch_len);
-            continue;
-        }
-
-        byte_offset = byte_offset.saturating_add(ch_len);
-    }
-
-    None
 }
 
 /// Strips matching single (`'...'`) or double (`"..."`) quotes from `raw` and
@@ -896,35 +927,26 @@ mod tests {
 
         #[test]
         fn finds_simple_closing_bracket() {
-            assert_eq!(
-                find_closing_delimiter("value]", DelimiterType::Bracket),
-                Some(5)
-            );
+            assert_eq!(DelimiterType::Bracket.find_closing("value]"), Some(5));
         }
 
         #[test]
         fn finds_closing_parenthesis() {
             assert_eq!(
-                find_closing_delimiter("hello)", DelimiterType::Parenthesis),
+                DelimiterType::Parenthesis.find_closing("hello)"),
                 Some(5)
             );
         }
 
         #[test]
         fn finds_closing_brace() {
-            assert_eq!(
-                find_closing_delimiter("key: val}", DelimiterType::Brace),
-                Some(8)
-            );
+            assert_eq!(DelimiterType::Brace.find_closing("key: val}"), Some(8));
         }
 
         #[test]
         fn finds_closing_double_bracket() {
             assert_eq!(
-                find_closing_delimiter(
-                    "Target|Alias]]",
-                    DelimiterType::DoubleBracket
-                ),
+                DelimiterType::DoubleBracket.find_closing("Target|Alias]]"),
                 Some(12)
             );
         }
@@ -932,10 +954,7 @@ mod tests {
         #[test]
         fn handles_nested_same_kind_brackets() {
             assert_eq!(
-                find_closing_delimiter(
-                    "outer [inner]]",
-                    DelimiterType::Bracket
-                ),
+                DelimiterType::Bracket.find_closing("outer [inner]]"),
                 Some(13)
             );
         }
@@ -943,10 +962,8 @@ mod tests {
         #[test]
         fn handles_nested_mixed_brackets() {
             assert_eq!(
-                find_closing_delimiter(
-                    "outer (paren) and [bracket]]",
-                    DelimiterType::Bracket
-                ),
+                DelimiterType::Bracket
+                    .find_closing("outer (paren) and [bracket]]"),
                 Some(27)
             );
         }
@@ -954,10 +971,8 @@ mod tests {
         #[test]
         fn ignores_brackets_inside_double_quotes() {
             assert_eq!(
-                find_closing_delimiter(
-                    r#"outer "[bracket]" text]"#,
-                    DelimiterType::Bracket
-                ),
+                DelimiterType::Bracket
+                    .find_closing(r#"outer "[bracket]" text]"#),
                 Some(22)
             );
         }
@@ -965,10 +980,7 @@ mod tests {
         #[test]
         fn ignores_brackets_inside_single_quotes() {
             assert_eq!(
-                find_closing_delimiter(
-                    "outer '[bracket]' text]",
-                    DelimiterType::Bracket
-                ),
+                DelimiterType::Bracket.find_closing("outer '[bracket]' text]"),
                 Some(22)
             );
         }
@@ -976,10 +988,7 @@ mod tests {
         #[test]
         fn skips_escaped_delimiters() {
             assert_eq!(
-                find_closing_delimiter(
-                    r"escaped \] bracket]",
-                    DelimiterType::Bracket
-                ),
+                DelimiterType::Bracket.find_closing(r"escaped \] bracket]"),
                 Some(18)
             );
         }
@@ -987,10 +996,7 @@ mod tests {
         #[test]
         fn rejects_mismatched_intersections() {
             assert_eq!(
-                find_closing_delimiter(
-                    "cross ( [ ) ]",
-                    DelimiterType::Parenthesis
-                ),
+                DelimiterType::Parenthesis.find_closing("cross ( [ ) ]"),
                 None
             );
         }
@@ -998,7 +1004,7 @@ mod tests {
         #[test]
         fn rejects_unclosed_delimiter() {
             assert_eq!(
-                find_closing_delimiter("never closed", DelimiterType::Bracket),
+                DelimiterType::Bracket.find_closing("never closed"),
                 None
             );
         }
@@ -1006,10 +1012,7 @@ mod tests {
         #[test]
         fn handles_lone_bracket_inside_double_bracket() {
             assert_eq!(
-                find_closing_delimiter(
-                    "lone ] bracket]]",
-                    DelimiterType::DoubleBracket
-                ),
+                DelimiterType::DoubleBracket.find_closing("lone ] bracket]]"),
                 Some(14)
             );
         }
