@@ -154,15 +154,26 @@ Key changes:
 
 | File | Purpose |
 |------|---------|
-| `src/note/marker.rs` (new) | `MarkerScan` / `MarkerPrefix` / `scan_marker_prefix` / `scan_marker_at_line_end` — the sole source of truth for marker identity; 17 tests |
+| `src/note/parser/marker.rs` (new, moved from `src/note/marker.rs`) | `MarkerScan` / `MarkerPrefix` / `scan_marker_prefix` / `scan_marker_at_line_end` — the sole source of truth for marker identity; 17 tests |
 | `src/note/lists.rs` | `ListItemType` (Plain/Checkbox/Task) replaces the old `TaskStatus` DTO; `ListItem.item_type()`; accessors `is_task`/`is_completed`/`task_status` deleted |
 | `src/note/lexer.rs` | `InlineTokenLexer { has_marker }` with `extract_fields`/`extract_tags` replaces the three free functions; tests rewritten onto the struct |
-| `src/note/parser.rs` | `ENABLE_TASKLISTS` dropped; `Event::TaskListMarker` arm and `set_task_status` removed; `ItemFrame.leading` (`LeadingMarker` Pending/Decided) incremental scanner; `end_item` classifies via `TaskStatusMap::resolve`; 13 new classification tests |
+| `src/note/parser.rs` + `src/note/parser/list.rs` (new) | `ENABLE_TASKLISTS` dropped; `Event::TaskListMarker` arm and `set_task_status` removed; `ListTracker`/`ItemFrame.leading` (`LeadingMarker` Pending/Decided) incremental scanner now lives in `parser/list.rs`; `end_item` classifies via `TaskStatusMap::resolve`; 13 new classification tests moved with it |
 | `src/note/model.rs` | `TaskIter` filters on `matches!(item_type, Task(_))`; `excludes_plain_and_checkbox_items` test |
-| `src/note/mod.rs` | old `TaskStatus` re-export removed; `ListItemType` re-exported `pub(crate)`; `marker` module declared |
+| `src/note/mod.rs` | old `TaskStatus` re-export removed; `ListItemType` re-exported `pub(crate)`; `marker` module declaration later moved into `note::parser` (see below) |
 | `src/task.rs` | serde derives (postcard persistence through `Note`); `TaskStatusMap::resolve(symbol)` — by-symbol hit or incomplete-Todo fallback preserving the symbol |
 | `src/query/record.rs` | `TaskRow.status` is issue 01's `TaskStatus`; `task_completed()`/`task.completed` route through `TaskStatusType::completed()` (cancelled → `None`/null) |
 | `src/query/format.rs` | `render_task_list` distinguishes page rows from cancelled tasks via `task_text()`, rendering `- [-]` for cancelled instead of erroring |
+
+`src/note/parser.rs` (2079 → ~1200 lines incl. tests) was later split
+into `src/note/parser/{list,line,marker}.rs`, matching the codebase's
+sibling-file-plus-directory convention (`schema/fields.rs` +
+`schema/fields/`, `template/engine.rs` + `template/engine/`) instead of
+the older `query/grammar/mod.rs` pattern. `list.rs` holds the marker
+state machine above; `line.rs` holds `ByteTracker` (byte offset → source
+line, previously inline in `parser.rs`); `marker.rs` moved from
+`note/marker.rs` since its only real consumer was `note::parser` (grep-
+verified). No behavior change; 2063 lib tests before and after, no
+duplicate `#[test]` fn names across the split (grep-verified).
 
 ### Key design decisions
 
@@ -230,7 +241,7 @@ Added two `benches/note_parsing.rs` groups (`task_marker_variants`,
 `cargo bench --features test-utils`; medians from `target/criterion`
 `estimates.json`).
 
-Two rounds of measurement, not one:
+Three rounds of measurement, not one:
 
 1. First pass showed small/medium notes regressing +142%/+23% alongside
    the expected task-item cost. Root cause: `TaskStatusMap::default()` was
@@ -242,23 +253,33 @@ Two rounds of measurement, not one:
 2. A second experiment (temporarily stripping the `TaskStatus.name`
    `String` clone out of `resolve()`) showed only ~2% recovery, ruling out
    per-item allocation as the driver of the remaining cost.
+3. A third experiment tested whether pulldown fragmenting a task item's
+   leading `[ ]` into 4 separate `Text` events (`"["`, `" "`, `"]"`,
+   `" remainder"`, once `ENABLE_TASKLISTS` is off) was the driver, on the
+   theory that 4x-ing `handle_event` dispatch explained the cost. Wiring
+   in `pulldown_cmark::TextMergeWithOffset` (public, offset-iterator
+   compatible, confirmed by a standalone probe to collapse those 4 events
+   into 1 `Text("[ ] remainder")` per item) produced **no measurable
+   change** on `task_marker_scaling`/`list_item_scaling` and a small
+   regression elsewhere (`plain_bullets` +2%→+10%, from the wrapper's
+   extra per-event indirection with nothing to merge). Reverted — the
+   dispatch-count theory was wrong.
 
 What's left is task-item-count-scaled: `list_item_scaling` and
-`task_marker_scaling` run +27–60% slower than `main` per task item
-(confirmed via `--features test-utils` event-shape dumps of both configs).
-Cause: `ENABLE_TASKLISTS` must stay disabled for custom-marker support, so
-pulldown-cmark no longer consumes `[ ]` in its own first-pass scanner.
-Instead it tokenizes a bracketed task item's leading run into 4 separate
-`Text` events (`"["`, `" "`, `"]"`, `" remainder"`) instead of one
-post-checkbox `Text` event, roughly 4x-ing `handle_event` dispatch per
-task item. Plain bullets (no brackets) are unaffected (+2%, noise). This
-is inherent to reading markers through pulldown's public `Event` stream
-rather than pulldown's own byte-level first-pass scanner
-(`scan_task_list_marker` in `firstpass.rs`) and is the cost of the custom
-markers this issue exists to add; recovering it would mean forking
-pulldown's first pass, out of scope here. In absolute terms it is small:
-a realistic note with a few dozen task items costs low-single-digit
-microseconds more to parse.
+`task_marker_scaling` run +27–60% slower than `main` per task item. The
+merge experiment isolates the cause to the classification work itself,
+not event count: with `ENABLE_TASKLISTS`, main gets a free
+`TaskListMarker(bool)` event and sets `task_status` from the bool
+directly - no lookup, no allocation, no state machine. This branch runs
+the full `LeadingMarker` char-by-char scan plus a `TaskStatusMap::resolve`
+`HashMap` lookup (config-driven, so it can't be a compile-time match) and
+builds a wider `ListItemType::Task(TaskStatus)` variant, once per task
+item - real work in exchange for arbitrary configurable single-char
+markers instead of a hardcoded `x`/`X` boolean. That trade is this
+issue's entire purpose; recovering the difference would mean caching or
+skipping the classification, not touching event plumbing. In absolute
+terms it is small: a realistic note with a few dozen task items costs
+low-single-digit microseconds more to parse.
 
 Environment note: `hk check`/`mise run check` fail in this sandbox from
 a corrupted mbx build cache (cached build-script binaries are literally
