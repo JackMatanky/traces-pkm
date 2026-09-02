@@ -179,6 +179,32 @@ impl DelimiterType {
         }
     }
 
+    /// Returns the single opening character for single-character delimiters,
+    /// or `None` for multi-character delimiters (e.g. [`Self::DoubleBracket`]).
+    #[inline]
+    #[must_use]
+    pub(crate) const fn open_char(self) -> Option<char> {
+        match self {
+            Self::Parenthesis => Some('('),
+            Self::Bracket => Some('['),
+            Self::Brace => Some('{'),
+            Self::DoubleBracket => None,
+        }
+    }
+
+    /// Returns the single closing character for single-character delimiters,
+    /// or `None` for multi-character delimiters (e.g. [`Self::DoubleBracket`]).
+    #[inline]
+    #[must_use]
+    pub(crate) const fn close_char(self) -> Option<char> {
+        match self {
+            Self::Parenthesis => Some(')'),
+            Self::Bracket => Some(']'),
+            Self::Brace => Some('}'),
+            Self::DoubleBracket => None,
+        }
+    }
+
     /// Returns the delimiter kind for an opening character, if recognized.
     #[inline]
     #[must_use]

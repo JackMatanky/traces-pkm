@@ -3,8 +3,8 @@
 //!
 //! [`ListTracker`] holds explicit list and list-item stacks so nested Markdown
 //! never recurses through the call stack. [`ItemFrame`] runs the incremental
-//! [`LeadingMarker`] state machine that recognizes a list item's leading task
-//! marker, gated like `pulldown-cmark`'s own first-pass
+//! [`ItemClassificationState`] state machine that determines an item's leading
+//! marker and classification, gated like `pulldown-cmark`'s own first-pass
 //! `scan_task_list_marker`: the marker is only valid at an item's content
 //! start, so the decision is finalized before any inline content event or block
 //! boundary.
@@ -66,20 +66,20 @@ impl ListTracker {
 
     /// Rejects a pending item-leading marker: inline content occupies the
     /// item's leading slot, so no marker can be recognized there.
-    pub(super) fn close_leading(&mut self) {
+    pub(super) fn reject_marker(&mut self) {
         if let Some(item) = self.item_stack.last_mut() {
-            item.reject_leading();
+            item.reject_marker();
         }
     }
 
     /// Force-decides a pending item-leading marker as if the item's first line
     /// ended: a complete `[<char>]` shape becomes a marker.
     ///
-    /// Called before the marker state is read (scan-buffer flushes, item end)
-    /// and on block-structure events that terminate the first line.
-    pub(super) fn resolve_leading(&mut self) {
+    /// Called before the classification state is read (scan-buffer flushes,
+    /// item end) and on block-structure events that terminate the first line.
+    pub(super) fn resolve_pending_marker(&mut self) {
         if let Some(item) = self.item_stack.last_mut() {
-            item.resolve_leading();
+            item.resolve_pending_marker();
         }
     }
 
@@ -92,16 +92,13 @@ impl ListTracker {
         // The marker state must be decided before `has_marker` is read: a
         // pending `- [x]` item flushes when a nested list starts, with no
         // trailing-whitespace text chunk ever arriving.
-        self.resolve_leading();
+        self.resolve_pending_marker();
         let item = self.item_stack.last_mut()?;
         if item.scan_buffer.is_empty() {
             return None;
         }
         let text = std::mem::take(&mut item.scan_buffer);
-        let lexer = InlineTokenLexer::new(matches!(
-            item.leading,
-            LeadingMarker::Decided(Some(_))
-        ));
+        let lexer = InlineTokenLexer::new(item.classification.is_marked());
         let raw_fields = lexer.extract_fields(&text);
         // Two independently owned copies, not a borrow-checker workaround:
         // `item.fields` lets a task/list item resolve its own metadata
@@ -161,7 +158,7 @@ impl ListTracker {
             .unwrap_or(u8::MAX);
         let parent = self.item_stack.last().map(|item| item.position.line());
         self.item_stack.push(ItemFrame {
-            leading: LeadingMarker::Pending,
+            classification: ItemClassificationState::Pending,
             text_buffer: String::new(),
             scan_buffer: String::new(),
             fields: IndexMap::new(),
@@ -173,7 +170,7 @@ impl ListTracker {
     /// Flushes and records the innermost list item.
     ///
     /// The flush decides any pending leading marker (see
-    /// [`Self::resolve_leading`]); a decided marker always resolves to
+    /// [`Self::resolve_pending_marker`]); a decided marker always resolves to
     /// [`ListItemType::Task`] — tag-filter reclassification into
     /// [`ListItemType::Checkbox`] is a later task-system issue. Returns the
     /// flushed inline fields and tags, if any.
@@ -183,11 +180,12 @@ impl ListTracker {
     ) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
-            let item_type = match item_frame.leading {
-                LeadingMarker::Decided(Some(symbol)) => {
+            let item_type = match item_frame.classification {
+                ItemClassificationState::Marked(symbol) => {
                     ListItemType::Task(statuses.resolve(symbol))
                 }
-                _ => ListItemType::Plain,
+                ItemClassificationState::Plain
+                | ItemClassificationState::Pending => ListItemType::Plain,
             };
             let item = ListItem::with_children(
                 item_frame.text_buffer,
@@ -249,11 +247,11 @@ struct ListFrame {
 
 /// An active list item frame on the parser stack.
 struct ItemFrame {
-    /// Decision state for the item-leading task marker. Mirrors
+    /// Classification decision state for the list item. Mirrors
     /// pulldown-cmark's first-pass gating: the marker is only valid at the
     /// item's content start, so the decision is finalized before any inline
     /// content event or block boundary.
-    leading: LeadingMarker,
+    classification: ItemClassificationState,
     text_buffer: String,
     /// Mirrors `text_buffer` but excludes code text.
     ///
@@ -270,27 +268,54 @@ struct ItemFrame {
     position: ListItemPosition,
 }
 
-/// Whether an item-leading task marker has been decided, and how.
+/// The incremental classification state of an active list item during parsing.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum LeadingMarker {
+enum ItemClassificationState {
     /// The item's first chunks may still assemble into a marker; `text_buffer`
     /// holds the candidate bytes so far.
     Pending,
-    /// The leading position is decided: `Some` carries the recognized marker's
-    /// symbol (already trimmed from both buffers), `None` means the item does
-    /// not start with a marker.
-    Decided(Option<char>),
+    /// The item has no task marker (plain bullet / regular list item).
+    Plain,
+    /// A task marker was recognized, carrying its marker symbol character.
+    Marked(char),
 }
 
+impl ItemClassificationState {
+    /// Returns `true` if a task marker was detected on this item.
+    #[inline]
+    #[must_use]
+    const fn is_marked(&self) -> bool {
+        matches!(self, Self::Marked(_))
+    }
+
+    /// Returns the detected marker symbol, if any.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept for ItemClassificationState accessor symmetry; \
+                      consumed in tests"
+        )
+    )]
+    const fn symbol(&self) -> Option<char> {
+        match self {
+            Self::Marked(symbol) => Some(*symbol),
+            Self::Pending | Self::Plain => None,
+        }
+    }
+}
 impl ItemFrame {
     /// Appends text to display text and, outside code blocks, the scan buffer.
-    /// While the leading marker is [`LeadingMarker::Pending`], the chunk first
-    /// feeds the incremental marker scan: Markdown splits a leading `[<char>]`
-    /// marker across several `Event::Text` runs (observed: `"["`, `"x"`, `"]"`,
-    /// `" Task"`), so each chunk extends the candidate and re-classifies it. A
-    /// recognized marker is trimmed from both buffers.
+    /// While classification is [`ItemClassificationState::Pending`], the chunk
+    /// first feeds the incremental marker scan: Markdown splits a leading
+    /// `[<char>]` marker across several `Event::Text` runs (observed: `"["`,
+    /// `"x"`, `"]"`, `" Task"`), so each chunk extends the candidate and
+    /// re-classifies it. A recognized marker is trimmed from both buffers.
     fn push_text(&mut self, text: &str, in_code_block: bool) {
-        let pending = matches!(self.leading, LeadingMarker::Pending);
+        let pending =
+            matches!(self.classification, ItemClassificationState::Pending);
         self.text_buffer.push_str(text);
         if !in_code_block {
             self.scan_buffer.push_str(text);
@@ -299,7 +324,7 @@ impl ItemFrame {
             match scan_marker_prefix(&self.text_buffer) {
                 MarkerPrefix::Incomplete => {}
                 MarkerPrefix::Rejected => {
-                    self.leading = LeadingMarker::Decided(None);
+                    self.classification = ItemClassificationState::Plain;
                 }
                 MarkerPrefix::Complete(scan) => {
                     let symbol = scan.symbol();
@@ -308,7 +333,8 @@ impl ItemFrame {
                         .len()
                         .saturating_sub(scan.remainder().len());
                     self.trim_marker_prefix(prefix_len);
-                    self.leading = LeadingMarker::Decided(Some(symbol));
+                    self.classification =
+                        ItemClassificationState::Marked(symbol);
                 }
             }
         }
@@ -328,32 +354,32 @@ impl ItemFrame {
     /// Rejects a pending marker: inline content (emphasis, code, links, images,
     /// inline HTML) occupies the item's leading slot, so the item does not
     /// start with a marker.
-    fn reject_leading(&mut self) {
-        if let LeadingMarker::Pending = self.leading {
-            self.leading = LeadingMarker::Decided(None);
+    fn reject_marker(&mut self) {
+        if let ItemClassificationState::Pending = self.classification {
+            self.classification = ItemClassificationState::Plain;
         }
     }
 
     /// Force-decides a pending marker as if the item's first line ended: a
     /// complete `[<char>]` shape becomes a marker with empty text.
-    fn resolve_leading(&mut self) {
+    fn resolve_pending_marker(&mut self) {
         self.decide_pending_at_line_end();
     }
 
     /// Decides a pending marker using end-of-line semantics. Always leaves the
-    /// marker [`LeadingMarker::Decided`].
+    /// classification non-pending.
     fn decide_pending_at_line_end(&mut self) {
-        if let LeadingMarker::Pending = self.leading {
+        if let ItemClassificationState::Pending = self.classification {
             let decision = match scan_marker_at_line_end(&self.text_buffer) {
                 Some(scan) => {
                     let symbol = scan.symbol();
                     let prefix_len = self.text_buffer.len();
                     self.trim_marker_prefix(prefix_len);
-                    LeadingMarker::Decided(Some(symbol))
+                    ItemClassificationState::Marked(symbol)
                 }
-                None => LeadingMarker::Decided(None),
+                None => ItemClassificationState::Plain,
             };
-            self.leading = decision;
+            self.classification = decision;
         }
     }
 

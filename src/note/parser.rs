@@ -173,7 +173,7 @@ impl ParserContext {
                 dest_url,
                 ..
             }) => {
-                self.list_nesting.close_leading();
+                self.list_nesting.reject_marker();
                 self.start_link(link_type, dest_url);
             }
             Event::End(TagEnd::Link) => self.end_link(),
@@ -193,7 +193,7 @@ impl ParserContext {
                 self.end_text_block();
             }
             Event::Code(text) => {
-                self.list_nesting.close_leading();
+                self.list_nesting.reject_marker();
                 self.inline_code(&text);
             }
             Event::Start(CmarkTag::List(start_number)) => {
@@ -221,12 +221,12 @@ impl ParserContext {
             | Event::DisplayMath(_)
             | Event::Html(_)
             | Event::FootnoteReference(_) => {
-                self.list_nesting.close_leading();
+                self.list_nesting.reject_marker();
             }
             // Any other event ends the item's first line structurally (a nested
             // list, a loose-item paragraph, the item's end), which counts as
             // the marker's trailing whitespace.
-            _ => self.list_nesting.resolve_leading(),
+            _ => self.list_nesting.resolve_pending_marker(),
         }
     }
 

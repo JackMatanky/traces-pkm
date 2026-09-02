@@ -6,9 +6,19 @@
 //! ASCII whitespace character. Because that whitespace is frequently the item's
 //! line terminator (which never reaches the parser as a [`Event::Text`] chunk),
 //! [`scan_marker_at_line_end`] treats end-of-input as the trailing whitespace.
-//!
-//! [`Event::Text`]: pulldown_cmark::Event::Text
+use crate::DelimiterType;
 
+/// Opening bracket character for task markers (`[`).
+const OPEN_BRACKET: char = match DelimiterType::Bracket.open_char() {
+    Some(ch) => ch,
+    None => '[',
+};
+
+/// Closing bracket character for task markers (`]`).
+const CLOSE_BRACKET: char = match DelimiterType::Bracket.close_char() {
+    Some(ch) => ch,
+    None => ']',
+};
 /// A recognized item-leading task marker.
 ///
 /// `symbol` is the character inside `[<symbol>]`; `remainder` is the scanned
@@ -59,17 +69,17 @@ pub(super) enum MarkerPrefix<'a> {
 #[must_use]
 pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
     let mut chars = text.char_indices();
-    if chars.next().map(|(_, ch)| ch) != Some('[') {
+    if chars.next().map(|(_, ch)| ch) != Some(OPEN_BRACKET) {
         return MarkerPrefix::Rejected;
     }
     let symbol = match chars.next() {
         None => return MarkerPrefix::Incomplete,
-        Some((_, ch)) if ch != ']' => ch,
+        Some((_, ch)) if ch != CLOSE_BRACKET => ch,
         Some(_) => return MarkerPrefix::Rejected,
     };
     match chars.next() {
         None => return MarkerPrefix::Incomplete,
-        Some((_, ch)) if ch != ']' => return MarkerPrefix::Rejected,
+        Some((_, ch)) if ch != CLOSE_BRACKET => return MarkerPrefix::Rejected,
         _ => {}
     }
     match chars.next() {
@@ -100,15 +110,21 @@ pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
 pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
     match scan_marker_prefix(text) {
         MarkerPrefix::Complete(scan) => Some(scan),
-        // `Incomplete` with nothing left to wait for: exactly `[<char>]`.
-        MarkerPrefix::Incomplete
-            if text.chars().count() == 3 && text.ends_with(']') =>
-        {
-            let symbol = text.chars().nth(1)?;
-            Some(MarkerScan {
-                symbol,
-                remainder: "",
-            })
+        MarkerPrefix::Incomplete => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next(), chars.next(), chars.next()) {
+                (Some(o), Some(symbol), Some(c), None)
+                    if o == OPEN_BRACKET
+                        && c == CLOSE_BRACKET
+                        && symbol != CLOSE_BRACKET =>
+                {
+                    Some(MarkerScan {
+                        symbol,
+                        remainder: "",
+                    })
+                }
+                _ => None,
+            }
         }
         _ => None,
     }
