@@ -70,9 +70,15 @@ flag "--profile <profile>" help="Clean one Cargo profile"
 flag "--target-dir <dir>" help="Cargo target directory" default="target"
 flag "--reports" help="Remove generated coverage/mutation report files"
 flag "--all" help="Clean entire Cargo target directory"
-flag "--if-over-gib <gib>" help="Only clean Cargo target if it exceeds this size in GiB"
-flag "--sweep-days <days>" help="Use cargo-sweep to remove target artifacts older than DAYS"
-flag "--sweep-max-size <size>" help="Use cargo-sweep to shrink target below SIZE, e.g. 10GiB"
+flag "--if-over-gib <gib>" {
+  help "Only clean Cargo target if it exceeds this size in GiB"
+}
+flag "--sweep-days <days>" {
+  help "Use cargo-sweep to remove target artifacts older than DAYS"
+}
+flag "--sweep-max-size <size>" {
+  help "Use cargo-sweep to shrink target below SIZE, e.g. 10GiB"
+}
 '''
 run = '''
 #!/bin/bash
@@ -193,8 +199,12 @@ alias = "l"
 depends = ["fmt"]
 usage = '''
 flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
-flag "--deny-warnings" negate="--no-deny-warnings" default=#true help="Treat Clippy warnings as errors"
-flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" help="Override fix lint list (comma-separated)"
+flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
+  help "Treat Clippy warnings as errors"
+}
+flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" {
+  help "Override fix lint list (comma-separated)"
+}
 '''
 run = '''
 #!/bin/bash
@@ -312,7 +322,12 @@ fi
 [tasks.bench]
 description = "Run Criterion benchmarks"
 usage = '''
-flag "-f --files <pattern>" help="Select bench targets (benches/*.rs) whose file name contains this substring; not the same as criterion's own benchmark-name filter forwarded via [args]"
+flag "-f --files <pattern>" {
+  help "Select bench targets (benches/*.rs) by file-name substring"
+  long_help """
+  Matches bench target file names under benches/*.rs by substring; different from criterion's own benchmark-name filter, which runs at test time and is forwarded via [args] after --.
+  """
+}
 flag "-m --mod <module>" {
   help "Run benchmarks for a specific module"
   choices "hash" "index" "note" "query" "template"
@@ -327,16 +342,20 @@ flag "-r --report [name]" value_optional=#true {
   Skipped automatically when [args] already forwards --baseline, --baseline-lenient, --discard-baseline, or --load-baseline, since criterion rejects combining those with --save-baseline. Use --no-report to opt out entirely and fall back to criterion's own unnamed 'base'.
   """
 }
-flag "--no-report" help="Skip saving a named baseline; falls back to criterion's own unnamed 'base'"
+flag "--no-report" {
+  help "Skip the named baseline; fall back to criterion's unnamed 'base'"
+}
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
-flag "-q --quick" help="Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
+flag "-q --quick" {
+  help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
+}
 arg "[args]" var=#true {
   help "Extra arguments forwarded to cargo bench"
   long_help """
   Forwarded to `cargo bench`. Examples:
 
     mise run bench -- --list               # list available benchmarks
-    mise run bench -f note_parsing -- fast  # narrow file, then criterion's own runtime filter
+    mise run bench -f note_parsing -- fast  # narrow, then criterion's filter
     mise run bench -m index -- --warm-up 1 # custom warm-up time
     mise run bench -- --noplot             # skip HTML report generation
   """
@@ -481,9 +500,13 @@ sources = ["@group:rust", "tarpaulin.toml"]
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
 usage = '''
-flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
+flag "-j --jobs <jobs>" default="4" {
+  help "Number of cargo build/test jobs in parallel"
+}
 flag "-f --file <file>" help="Run mutants in a specific file only"
-flag "--iterate" negate="--no-iterate" default=#true help="Skip mutants that were caught in previous runs"
+flag "--iterate" negate="--no-iterate" default=#true {
+  help "Skip mutants that were caught in previous runs"
+}
 flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
@@ -514,8 +537,12 @@ depends_post = ["mutants-report"]
 [tasks.mutants-report]
 description = "Generate a structured Markdown report from missed mutants"
 usage = '''
-flag "-i --input <input>" help="Path to missed.txt input file" default="mutants.out/missed.txt"
-flag "-o --output <output>" help="Path to mutants-report.md output file" default="mutants-report.md"
+flag "-i --input <input>" default="mutants.out/missed.txt" {
+  help "Path to missed.txt input file"
+}
+flag "-o --output <output>" default="mutants-report.md" {
+  help "Path to mutants-report.md output file"
+}
 '''
 run = '''
 #!/bin/bash
