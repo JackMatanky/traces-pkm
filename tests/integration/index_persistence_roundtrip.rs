@@ -29,7 +29,7 @@ fn persist_then_load_recovers_the_same_file_count_and_paths() {
     let mut loaded_paths: Vec<_> = loaded
         .entries()
         .iter()
-        .map(|entry| entry.base().path().to_path_buf())
+        .map(|entry| entry.file().path().to_path_buf())
         .collect();
     loaded_paths.sort();
     assert_eq!(loaded_paths, vec![

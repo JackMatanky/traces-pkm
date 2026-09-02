@@ -262,6 +262,14 @@ impl ItemClassificationState {
     /// Returns the detected marker symbol, if any.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept for ItemClassificationState accessor symmetry; \
+                      tested in unit suite"
+        )
+    )]
     const fn symbol(self) -> Option<char> {
         match self {
             Self::Marked(symbol) => Some(symbol),

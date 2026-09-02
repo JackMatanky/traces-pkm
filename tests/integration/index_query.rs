@@ -27,7 +27,7 @@ fn page_query_returns_real_indexed_notes() {
     assert_eq!(outcome.len(), 3);
     let paths: Vec<_> = (&outcome)
         .into_iter()
-        .map(|row| row.base().path().to_path_buf())
+        .map(|row| row.file().path().to_path_buf())
         .collect();
     assert_eq!(paths, [
         Path::new("a.md"),
@@ -89,7 +89,7 @@ fn query_request_reuses_one_index_for_page_and_task_queries() {
 
     let page_paths: Vec<_> = (&pages)
         .into_iter()
-        .map(|row| row.base().path().to_path_buf())
+        .map(|row| row.file().path().to_path_buf())
         .collect();
     assert_eq!(page_paths, [Path::new("book.md"), Path::new("todo.md")]);
     assert_eq!(tasks.len(), 1);

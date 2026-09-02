@@ -40,7 +40,13 @@ impl DelimiterStack {
     }
 
     /// Returns the active quote kind if scanning inside a string literal.
-    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept for DelimiterStack inspection; tested in unit suite"
+        )
+    )]
     const fn active_quote(&self) -> Option<QuoteType> {
         self.active_quote
     }
@@ -131,6 +137,14 @@ impl DelimiterType {
     /// Returns the expected closing string representation.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kept for DelimiterType API completeness; tested in unit \
+                      suite"
+        )
+    )]
     pub(crate) const fn close_str(self) -> &'static str {
         match self {
             Self::Parenthesis => ")",
