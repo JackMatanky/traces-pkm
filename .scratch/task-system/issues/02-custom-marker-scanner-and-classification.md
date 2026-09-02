@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: implemented
 
 # 02 — Custom marker scanner and list item classification
 
@@ -92,43 +92,43 @@ Key changes:
 
 ## Acceptance criteria
 
-- [ ] `ListItemType` enum exists with `Plain`, `Checkbox`, `Task` variants
-- [ ] `ListItem` stores `ListItemType` instead of `task_status: Option<TaskStatus>` (old enum)
-- [ ] `ListItemType::Task` carries issue 01's `TaskStatus` struct
-- [ ] Old `TaskStatus` enum (`Incomplete`/`Complete`) deleted from `src/note/lists.rs`
-- [ ] Old `TaskStatus` removed from `pub use` in `src/note/mod.rs`
-- [ ] `ListItem.is_task()`, `is_completed()`, `task_status()` accessors removed
-- [ ] `ItemFrame` stores `marker_symbol: Option<char>` instead of `task_status: Option<TaskStatus>`
-- [ ] Free functions `extract_inline_fields` and `extract_task_inline_fields` replaced by `InlineTokenLexer` struct
-- [ ] `InlineTokenLexer` accepts `has_marker: bool` flag; `true` enables task emoji shorthand recognition
-- [ ] `InlineTokenLexer::extract_fields` returns `Vec<(FieldKey, NoteFieldValue)>` — flat token list, not IndexMap
-- [ ] `InlineTokenLexer::extract_tags` returns `Vec<Tag>` — flat token list
-- [ ] Lexer is unconditional on all list item types — no branch at call site, `has_marker` controls behavior internally
-- [ ] `flush_active_item_scan_buffer` creates lexer with `marker_symbol.is_some()` — single line, no conditional logic
-- [ ] Scanner recognizes `[x]`, `[X]`, `[/]`, `[-]`, `[!]`, `[?]`, and unknown single-character markers
-- [ ] Scanner only accepts markers at item-leading position followed by whitespace
-- [ ] Later bracket text in item body is not trimmed as a marker
-- [ ] `[x]` and `[X]` both resolve to Done status via `TaskStatusMap`
-- [ ] `[/]`, `[-]`, `[!]` resolve to configured default statuses (in-progress, on-hold, non-task)
-- [ ] Unknown markers (e.g. `[?]`) are preserved and resolved as incomplete todo by default
-- [ ] Unknown markers are never downgraded to plain bullets
-- [ ] When no tag filters are configured, all status-marked items become `ListItemType::Task`
-- [ ] `ENABLE_TASKLISTS` is removed from pulldown-cmark options
-- [ ] `set_task_status` method removed
-- [ ] `Event::TaskListMarker` arm removed from event handler
-- [ ] `end_item` classifies marker items as `Task` — all status-marked items become `Task` when no tag filters are configured
-- [ ] `Note.tasks()` classification filter uses `ListItemType::Task` (return type changes deferred to issue 07)
-- [ ] `query/record.rs` `TaskRow.status` uses issue 01's `TaskStatus` struct, not old enum
-- [ ] `query/record.rs` completion checks use `TaskStatusType::completed()`, not `== TaskStatus::Complete`
-- [ ] Unit tests cover scanner recognizing all marker types: `[x]`, `[X]`, `[/]`, `[-]`, `[!]`, `[?]`, unknown
-- [ ] Unit tests cover scanner only accepts markers at item-leading position followed by whitespace
-- [ ] Unit tests cover later bracket text in item body is not trimmed as marker
-- [ ] Unit tests cover unknown markers preserved and classified as incomplete todo
-- [ ] Unit tests cover `[x]`/`[X]` equivalence — both resolve to Done
-- [ ] Unit tests cover `[/]`, `[-]`, `[!]` resolution to default statuses
-- [ ] Unit tests cover `InlineTokenLexer` with `has_marker: true` and `has_marker: false`
-- [ ] All existing task classification tests rewritten against the scanner
-- [ ] `cargo test` passes, `cargo clippy` clean
+- [x] `ListItemType` enum exists with `Plain`, `Checkbox`, `Task` variants
+- [x] `ListItem` stores `ListItemType` instead of `task_status: Option<TaskStatus>` (old enum)
+- [x] `ListItemType::Task` carries issue 01's `TaskStatus` struct
+- [x] Old `TaskStatus` enum (`Incomplete`/`Complete`) deleted from `src/note/lists.rs`
+- [x] Old `TaskStatus` removed from `pub use` in `src/note/mod.rs`
+- [x] `ListItem.is_task()`, `is_completed()`, `task_status()` accessors removed
+- [x] `ItemFrame` stores `marker_symbol: Option<char>` instead of `task_status: Option<TaskStatus>`
+- [x] Free functions `extract_inline_fields` and `extract_task_inline_fields` replaced by `InlineTokenLexer` struct
+- [x] `InlineTokenLexer` accepts `has_marker: bool` flag; `true` enables task emoji shorthand recognition
+- [x] `InlineTokenLexer::extract_fields` returns `Vec<(FieldKey, NoteFieldValue)>` — flat token list, not IndexMap
+- [x] `InlineTokenLexer::extract_tags` returns `Vec<Tag>` — flat token list
+- [x] Lexer is unconditional on all list item types — no branch at call site, `has_marker` controls behavior internally
+- [x] `flush_active_item_scan_buffer` creates lexer with `marker_symbol.is_some()` — single line, no conditional logic
+- [x] Scanner recognizes `[x]`, `[X]`, `[/]`, `[-]`, `[!]`, `[?]`, and unknown single-character markers
+- [x] Scanner only accepts markers at item-leading position followed by whitespace
+- [x] Later bracket text in item body is not trimmed as a marker
+- [x] `[x]` and `[X]` both resolve to Done status via `TaskStatusMap`
+- [x] `[/]`, `[-]`, `[!]` resolve to configured default statuses (in-progress, on-hold, non-task)
+- [x] Unknown markers (e.g. `[?]`) are preserved and resolved as incomplete todo by default
+- [x] Unknown markers are never downgraded to plain bullets
+- [x] When no tag filters are configured, all status-marked items become `ListItemType::Task`
+- [x] `ENABLE_TASKLISTS` is removed from pulldown-cmark options
+- [x] `set_task_status` method removed
+- [x] `Event::TaskListMarker` arm removed from event handler
+- [x] `end_item` classifies marker items as `Task` — all status-marked items become `Task` when no tag filters are configured
+- [x] `Note.tasks()` classification filter uses `ListItemType::Task` (return type changes deferred to issue 07)
+- [x] `query/record.rs` `TaskRow.status` uses issue 01's `TaskStatus` struct, not old enum
+- [x] `query/record.rs` completion checks use `TaskStatusType::completed()`, not `== TaskStatus::Complete`
+- [x] Unit tests cover scanner recognizing all marker types: `[x]`, `[X]`, `[/]`, `[-]`, `[!]`, `[?]`, unknown
+- [x] Unit tests cover scanner only accepts markers at item-leading position followed by whitespace
+- [x] Unit tests cover later bracket text in item body is not trimmed as marker
+- [x] Unit tests cover unknown markers preserved and classified as incomplete todo
+- [x] Unit tests cover `[x]`/`[X]` equivalence — both resolve to Done
+- [x] Unit tests cover `[/]`, `[-]`, `[!]` resolution to default statuses
+- [x] Unit tests cover `InlineTokenLexer` with `has_marker: true` and `has_marker: false`
+- [x] All existing task classification tests rewritten against the scanner
+- [x] `cargo test` passes, `cargo clippy` clean
 
 ## Out of scope
 
@@ -143,3 +143,83 @@ Key changes:
 - Template `tasks.*` namespace changes — issue 09
 - CLI task command changes (`--sort`, `--table`, `--from`) — issue 10
 - `ByteTracker` utility — issue 04 (parallel with issue 01, not this issue)
+
+## Implementation notes
+
+**Date**: 2026-09-02. **Implemented in**: `35c8a0d`, branch
+`task-system/02-custom-marker-scanner` (worktree
+`.worktrees/02-custom-marker-scanner/`, not merged to `main`).
+
+### Where it landed
+
+| File | Purpose |
+|------|---------|
+| `src/note/marker.rs` (new) | `MarkerScan` / `MarkerPrefix` / `scan_marker_prefix` / `scan_marker_at_line_end` — the sole source of truth for marker identity; 17 tests |
+| `src/note/lists.rs` | `ListItemType` (Plain/Checkbox/Task) replaces the old `TaskStatus` DTO; `ListItem.item_type()`; accessors `is_task`/`is_completed`/`task_status` deleted |
+| `src/note/lexer.rs` | `InlineTokenLexer { has_marker }` with `extract_fields`/`extract_tags` replaces the three free functions; tests rewritten onto the struct |
+| `src/note/parser.rs` | `ENABLE_TASKLISTS` dropped; `Event::TaskListMarker` arm and `set_task_status` removed; `ItemFrame.leading` (`LeadingMarker` Pending/Decided) incremental scanner; `end_item` classifies via `TaskStatusMap::resolve`; 13 new classification tests |
+| `src/note/model.rs` | `TaskIter` filters on `matches!(item_type, Task(_))`; `excludes_plain_and_checkbox_items` test |
+| `src/note/mod.rs` | old `TaskStatus` re-export removed; `ListItemType` re-exported `pub(crate)`; `marker` module declared |
+| `src/task.rs` | serde derives (postcard persistence through `Note`); `TaskStatusMap::resolve(symbol)` — by-symbol hit or incomplete-Todo fallback preserving the symbol |
+| `src/query/record.rs` | `TaskRow.status` is issue 01's `TaskStatus`; `task_completed()`/`task.completed` route through `TaskStatusType::completed()` (cancelled → `None`/null) |
+| `src/query/format.rs` | `render_task_list` distinguishes page rows from cancelled tasks via `task_text()`, rendering `- [-]` for cancelled instead of erroring |
+
+### Key design decisions
+
+1. **Incremental leading-marker state machine, gated like pulldown-cmark's
+   first pass.** Studying `pulldown-cmark`'s `scan_task_list_marker`
+   (`scanners.rs`) and its `firstpass.rs` call site shows the marker is
+   scanned immediately after the list bullet, before any inline content —
+   and without `ENABLE_TASKLISTS`, pulldown splits a leading `[x] Task`
+   into four `Event::Text` chunks (`"["`, `"x"`, `"]"`, `" Task"`).
+   Consequences the parser must reproduce:
+   - each leading chunk extends a candidate that is re-classified until
+     the scanner decides (`ItemFrame::LeadingMarker`: Pending → Decided);
+   - inline content events (emphasis/code/links/images/inline HTML)
+     occupying the leading slot reject the marker (`- **[x] Task**` and
+     `` - `[x]` Task `` stay plain, matching old behavior);
+   - the trailing whitespace is ASCII-only (NBSP is ordinary text);
+   - a line terminator (soft break, nested-list start, item end) supplies
+     the trailing whitespace, so `- [x]` alone is still a task —
+     `scan_marker_at_line_end` implements this.
+   Scanning only the first chunk (the issue's `push_text` sketch) or only
+   once at item end both miss markers or misclassify; the state machine
+   keeps the issue's `push_text` placement while handling chunking.
+2. **`TaskStatusMap::resolve` centralizes the unknown-marker fallback**
+   (by-symbol hit, else incomplete Todo preserving the symbol). Issue 03
+   can reuse it unchanged when the configured map replaces the parser's
+   default map.
+3. **Parser builds `TaskStatusMap::default()` internally.** Real config
+   threading into `parse_markdown` is issue 03's "config resolution"
+   scope; this issue's ~570 `parse_markdown` call sites keep their
+   signature.
+4. **`Checkbox` ships as a bare unit variant.** No issue-02 code path
+   constructs it (no tag filters yet); the spec reserves extending the
+   variant without breaking the enum.
+5. **The tri-state surfaced one real bug beyond the brief**:
+   `render_task_list` treated "cancelled task" (`None`) and "not a task
+   row" (`None`) identically, so any `- [-]` note made `task_list`
+   rendering error out. Fixed by keying the row check on `task_text()`
+   presence; cancelled tasks render as `- [-]` (regression test added).
+
+### Deviations from the ticket
+
+| Ticket said | What happened | Why |
+|------------|---------------|-----|
+| `[/]`, `[-]`, `[!]` resolve to "in-progress, on-hold, non-task" | They resolve to the issue 01 default table: `/`→In Progress, `-`→Cancelled, `!`→On Hold | The issue-01 status table is the source of truth and already shipped; redefining defaults here would contradict the shipped model |
+| Scanner recognizes only "trailing whitespace" (unqualified) | ASCII whitespace only (space, tab, CR, LF, VT, FF) | Mirrors pulldown-cmark's `is_ascii_whitespace`; Unicode spaces such as NBSP are ordinary Markdown text |
+
+### Verification
+
+```sh
+cargo test --all-features   # 2063 lib + 4 unit-bin + 20 e2e
+                            # + 12 integration + 14 doc-tests, all pass
+cargo clippy --workspace --all-targets --all-features  # clean
+cargo fmt -- --check        # clean
+cargo doc --no-deps --all-features  # clean with RUSTDOCFLAGS=-D warnings
+```
+
+Environment note: `hk check`/`mise run check` fail in this sandbox from
+a corrupted mbx build cache (cached build-script binaries are literally
+the `mbx` binary — reproduced on pristine `main`); verification ran with
+the same cargo toolchain invoked directly.
