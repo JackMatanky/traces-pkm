@@ -175,9 +175,9 @@ impl<'a> IndexBuilder<'a> {
             }
             None => (None, Vec::new()),
         };
-        let inlink_map =
+        let inlinks =
             new_inlinks_if_stale.unwrap_or_else(|| cache.into_inlinks());
-        entry::redistribute_inlinks(&mut entries, inlink_map);
+        entry::redistribute_inlinks(&mut entries, inlinks);
 
         let delta = IndexDelta::Incremental(Box::new(IncrementalDelta {
             upserted,

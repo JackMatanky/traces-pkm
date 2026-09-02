@@ -142,6 +142,10 @@ impl NoteEntry {
             inlinks: Box::default(),
         }
     }
+
+    pub(super) fn set_inlinks(&mut self, inlinks: Box<[PathBuf]>) {
+        self.inlinks = inlinks;
+    }
 }
 
 /// Position of a [`FileEntry`] within [`FileIndex::entries`].
@@ -165,23 +169,6 @@ impl RowIndex {
     }
 }
 
-/// Distributes inlink sources from `inlink_map` into each matching
-/// [`FileEntry`].
-pub(super) fn redistribute_inlinks(
-    entries: &mut [FileEntry],
-    inlink_map: InlinkMap,
-) {
-    for (target, sources) in inlink_map {
-        if let Ok(index) =
-            entries.binary_search_by(|entry| entry.file().path().cmp(&target))
-            && let Some(note_entry) =
-                entries.get_mut(index).and_then(|entry| entry.note.as_mut())
-        {
-            note_entry.inlinks = sources.into_boxed_slice();
-        }
-    }
-}
-
 /// Merges sorted `files` with sorted `notes`, redistributes `inlinks` into
 /// each entry, and returns boxed [`FileEntry`]s. Used by
 /// [`super::IndexerService::load`].
@@ -192,16 +179,34 @@ pub(super) fn assemble_entries(
 ) -> Box<[FileEntry]> {
     let mut notes_iter = notes.into_iter().peekable();
     let mut entries = Vec::with_capacity(files.len());
-    for base in files {
-        while notes_iter.peek().is_some_and(|note| note.path() < base.path()) {
+    for file in files {
+        while notes_iter.peek().is_some_and(|note| note.path() < file.path()) {
             notes_iter.next();
         }
-        let note = notes_iter.next_if(|note| note.path() == base.path());
-        entries.push(FileEntry::new(base, note));
+        let note = notes_iter.next_if(|note| note.path() == file.path());
+        entries.push(FileEntry::new(file, note));
     }
     redistribute_inlinks(&mut entries, inlinks);
     entries.into_boxed_slice()
 }
+
+/// Distributes inlink sources from `inlinks` map into each matching
+/// [`FileEntry`].
+pub(super) fn redistribute_inlinks(
+    entries: &mut [FileEntry],
+    inlinks: InlinkMap,
+) {
+    for (target, sources) in inlinks {
+        if let Ok(index) =
+            entries.binary_search_by(|entry| entry.file().path().cmp(&target))
+            && let Some(note_entry) =
+                entries.get_mut(index).and_then(|entry| entry.note.as_mut())
+        {
+            note_entry.set_inlinks(sources.into_boxed_slice());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
