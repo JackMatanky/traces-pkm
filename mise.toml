@@ -13,6 +13,7 @@ rust = { version = "nightly", profile = "default", components = [
 hk = "latest"
 taplo = "latest"
 gitleaks = "latest"
+"mr-boxington" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
@@ -25,9 +26,14 @@ gitleaks = "latest"
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 "cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 
+[wrappers.cargo]
+command = "mbx"
+env = { MBX_CARGO_SHIM_MODE = "1" }
+
 [settings]
-# Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
-# into mise.lock so installs are reproducible across machines and CI.
+# Pin resolved "latest" tool versions (hk, taplo, gitleaks, mr-boxington,
+# cargo:* subcommands) into mise.lock so installs are reproducible across
+# machines and CI.
 lockfile = true
 task.disable_spec_from_run_scripts = true
 experimental = true
@@ -104,13 +110,15 @@ if [[ "${clean_target}" == "true" ]]; then
       exit 2
     fi
 
-    sweep_args=()
+    declare -a sweep_args=()
     [[ "${usage_dry_run:-false}" == "true" ]] && sweep_args+=(--dry-run)
-    [[ -n "${usage_sweep_days:-}" ]] && sweep_args+=(--time "${usage_sweep_days}")
-    [[ -n "${usage_sweep_max_size:-}" ]] && sweep_args+=(--maxsize "${usage_sweep_max_size}")
+    [[ -n "${usage_sweep_days:-}" ]] \
+      && sweep_args+=(--time "${usage_sweep_days}")
+    [[ -n "${usage_sweep_max_size:-}" ]] \
+      && sweep_args+=(--maxsize "${usage_sweep_max_size}")
     cargo sweep "${sweep_args[@]}"
   else
-    cargo_args=(clean --target-dir "${target_dir}")
+    declare -a cargo_args=(clean --target-dir "${target_dir}")
     [[ "${usage_dry_run:-false}" == "true" ]] && cargo_args+=(--dry-run)
     [[ "${usage_release:-false}" == "true" ]] && cargo_args+=(--release)
     [[ "${usage_doc:-false}" == "true" ]] && cargo_args+=(--doc)
@@ -120,7 +128,13 @@ if [[ "${clean_target}" == "true" ]]; then
 fi
 
 if [[ "${clean_reports}" == "true" ]]; then
-  readonly -a reports=(lcov.info tarpaulin-report.html mutants.out mutants.out.old mutants-report.md)
+  readonly -a reports=(
+    lcov.info
+    tarpaulin-report.html
+    mutants.out
+    mutants.out.old
+    mutants-report.md
+  )
   if [[ "${usage_dry_run:-false}" == "true" ]]; then
     printf 'would remove generated reports: %s\n' "${reports[*]}"
   else
@@ -163,7 +177,7 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
-args=(--all)
+declare -a args=(--all)
 [[ "${usage_check:-false}" == "true" ]] && args+=(-- --check)
 cargo fmt "${args[@]}"
 '''
@@ -265,8 +279,13 @@ arg "[args]" var=#true {
 '''
 run = '''
 #!/bin/bash
+# nextest_extra (below) is populated via eval from mise's usage_args
+# (var=#true arg); see docs/refs/mise_tasks/06_arguments.md.
+# shellcheck disable=SC2154
 set -euo pipefail
 
+declare -a nextest_args
+declare -a cargo_test_args
 if [[ "${usage_feature?}" == "all" ]]; then
   nextest_args=(-p traces-pkm --all-features)
   cargo_test_args=(--workspace --all-features)
@@ -298,7 +317,16 @@ flag "-m --mod <module>" {
   help "Run benchmarks for a specific module"
   choices "codec" "hash" "index" "note" "query" "template"
 }
-flag "-r --report [name]" value_optional=#true help="Save a named baseline (default: auto-named from git branch+sha; pass a value for a custom name)"
+flag "-r --report [name]" value_optional=#true {
+  help "Save a named baseline (default: auto-named from git branch+sha)"
+  long_help """
+  Bare -r auto-names the baseline `<branch>-<short-sha>[-dirty][-quick]`: rerunning on the *same* commit overwrites one bounded baseline dir, while a new commit/branch gets its own comparable checkpoint. Pass a value for an explicit, memorable name instead, e.g. for a long-lived comparison point:
+
+    mise run bench -r position-refactor
+
+  Skipped automatically when [args] already forwards --baseline, --baseline-lenient, --discard-baseline, or --load-baseline, since criterion rejects combining those with --save-baseline. Use --no-report to opt out entirely and fall back to criterion's own unnamed 'base'.
+  """
+}
 flag "--no-report" help="Skip saving a named baseline; falls back to criterion's own unnamed 'base'"
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
 flag "-q --quick" help="Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
@@ -316,14 +344,17 @@ arg "[args]" var=#true {
 '''
 run = '''
 #!/bin/bash
+# extra_args (below) is populated via eval from mise's usage_args
+# (var=#true arg); see docs/refs/mise_tasks/06_arguments.md.
+# shellcheck disable=SC2154
 set -euo pipefail
 
-bench_args=(bench --features test-utils)
+declare -a bench_args=(bench --features test-utils)
 declare -a criterion_args=()
 has_criterion_args=false
 
 # --- Resolve bench files ---
-bench_files=()
+declare -a bench_files=()
 if [[ -n "${usage_mod:-}" ]]; then
   case "${usage_mod}" in
     codec)    bench_files=(codec) ;;
@@ -346,32 +377,29 @@ else
   done
 fi
 
-if [[ "${#bench_files[@]}" -eq 0 ]]; then
+if (( ${#bench_files[@]} == 0 )); then
   printf 'no benchmark files match\n' >&2
   exit 1
 fi
 
 # --- Quick mode ---
 if [[ "${usage_quick:-false}" == "true" ]]; then
-  criterion_args+=(--sample-size 10 --measurement-time 1 --warm-up-time 1 --noplot)
+  criterion_args+=(
+    --sample-size 10 --measurement-time 1 --warm-up-time 1 --noplot
+  )
   has_criterion_args=true
 fi
 
 # --- Extra args ---
+# extra_args is populated by eval below; mise pre-quotes each usage_args
+# token specifically for this reconstruction (see docs/refs/mise_tasks/
+# 06_arguments.md), so shellcheck can't trace the assignment, but the
+# input isn't attacker-controlled free text.
 eval "extra_args=(${usage_args:-})"
 criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 [[ -n "${usage_args:-}" ]] && has_criterion_args=true
 
-# --- Report (save baseline) ---
-# Defaults on: every run is auto-tagged to the current git branch+sha so
-# rerunning on the *same* commit overwrites one bounded baseline dir, while
-# a new commit/branch gets its own comparable checkpoint. `-r <name>`
-# overrides with an explicit, memorable name (e.g. a long-lived comparison
-# point); `--no-report` opts out and falls back to criterion's own "base".
-#
-# Skipped when the forwarded args already manage baselines themselves
-# (--baseline/--baseline-lenient/--discard-baseline/--load-baseline), since
-# criterion rejects combining those with --save-baseline.
+# --- Report (save baseline); see -r/--report --help for behavior ---
 manages_baseline=false
 for a in "${extra_args[@]+"${extra_args[@]}"}"; do
   case "${a}" in
@@ -381,7 +409,8 @@ for a in "${extra_args[@]+"${extra_args[@]}"}"; do
   esac
 done
 
-if [[ "${usage_no_report:-false}" != "true" && "${manages_baseline}" == "false" ]]; then
+if [[ "${usage_no_report:-false}" != "true" \
+  && "${manages_baseline}" == "false" ]]; then
   if [[ -n "${usage_report:-}" && "${usage_report}" != "true" ]]; then
     report_name="${usage_report}"
   else
@@ -435,7 +464,7 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
-args=(--workspace --out html)
+declare -a args=(--workspace --out html)
 if [[ -n "${usage_mod:-}" ]]; then
   args=(--include "src/${usage_mod}/**" --out html)
 fi
