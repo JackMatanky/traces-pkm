@@ -31,7 +31,11 @@ use super::{
     lists::ListItemPosition,
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
-use crate::{ByteOffset, FieldKey, SourceLine, tag::Tag, task::TaskStatusMap};
+use crate::{
+    ByteOffset, FieldKey, SourceLine,
+    tag::Tag,
+    task::{DEFAULT_TASK_STATUSES, TaskStatusMap},
+};
 
 /// Parses Markdown source into a [`Note`].
 ///
@@ -104,7 +108,7 @@ struct ParserContext {
     /// classify status-marked list items in [`ListTracker::end_item`].
     ///
     /// [`TaskStatus`]: crate::task::TaskStatus
-    task_statuses: TaskStatusMap,
+    task_statuses: &'static TaskStatusMap,
 }
 
 impl ParserContext {
@@ -124,7 +128,7 @@ impl ParserContext {
             inline_fields: IndexMap::new(),
             tags: Vec::new(),
             line_tracker: ByteTracker::new(source),
-            task_statuses: TaskStatusMap::default(),
+            task_statuses: &DEFAULT_TASK_STATUSES,
         }
     }
 

@@ -186,6 +186,11 @@ impl TaskStatusMap {
     }
 }
 
+/// Shared, lazily built default status map for parsers that run without
+/// resolved configuration.
+pub(crate) static DEFAULT_TASK_STATUSES: std::sync::LazyLock<TaskStatusMap> =
+    std::sync::LazyLock::new(TaskStatusMap::default);
+
 impl Default for TaskStatusMap {
     /// Builds the map from the always-available default statuses.
     #[inline]
