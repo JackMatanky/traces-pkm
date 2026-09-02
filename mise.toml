@@ -146,7 +146,6 @@ alias = "b"
 run = "cargo build"
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
-rust_cache = true
 
 [tasks.watch]
 description = "Watch Cargo check/test on changes"
@@ -294,20 +293,24 @@ fi
 [tasks.bench]
 description = "Run Criterion benchmarks"
 usage = '''
-flag "-f --filter <filter>" help="Run only benchmarks matching this substring"
-flag "-b --baseline <name>" help="Save results under this baseline name for later comparison"
-flag "--baseline-compare <name>" help="Compare against a previously saved baseline via critcmp"
-flag "-q --quick" help="Fast iteration: reduced sample size and measurement time"
-flag "--sample-size <n>" env="BENCH_SAMPLE_SIZE" help="Minimum number of iterations (default: 100)"
-flag "--measurement-time <secs>" env="BENCH_MEASUREMENT_TIME" help="Target measurement time in seconds (default: 5)"
+flag "-f --files <pattern>" help="Select bench targets (benches/*.rs) whose file name contains this substring; not the same as criterion's own benchmark-name filter forwarded via [args]"
+flag "-m --mod <module>" {
+  help "Run benchmarks for a specific module"
+  choices "codec" "hash" "index" "note" "query" "template"
+}
+flag "-r --report [name]" value_optional=#true help="Save a named baseline (default: auto-named from git branch+sha; pass a value for a custom name)"
+flag "--no-report" help="Skip saving a named baseline; falls back to criterion's own unnamed 'base'"
+flag "--compare <name>" help="Compare against a saved baseline via critcmp"
+flag "-q --quick" help="Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
 arg "[args]" var=#true {
   help "Extra arguments forwarded to cargo bench"
   long_help """
   Forwarded to `cargo bench`. Examples:
 
-    mise run bench -- --list                 # list available benchmarks
-    mise run bench -f codec -- --warm-up 1   # custom warm-up time
-    mise run bench -- --noplot               # skip HTML report generation
+    mise run bench -- --list               # list available benchmarks
+    mise run bench -f note_parsing -- fast  # narrow file, then criterion's own runtime filter
+    mise run bench -m index -- --warm-up 1 # custom warm-up time
+    mise run bench -- --noplot             # skip HTML report generation
   """
 }
 '''
@@ -315,54 +318,106 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
-bench_args=(--features test-utils)
+bench_args=(bench --features test-utils)
 declare -a criterion_args=()
 has_criterion_args=false
 
-if [[ -n "${usage_baseline:-}" ]]; then
-  criterion_args+=(--save-baseline "${usage_baseline}")
-  has_criterion_args=true
-fi
-
-if [[ "${usage_quick:-false}" == "true" ]]; then
-  criterion_args+=(--sample-size 10 --measurement-time 1 --warm-up-time 1)
-  has_criterion_args=true
+# --- Resolve bench files ---
+bench_files=()
+if [[ -n "${usage_mod:-}" ]]; then
+  case "${usage_mod}" in
+    codec)    bench_files=(codec) ;;
+    hash)     bench_files=(hash) ;;
+    index)    bench_files=(index_lifecycle) ;;
+    note)     bench_files=(note_parsing) ;;
+    query)    bench_files=(query_execution query_parsing query_sort) ;;
+    template) bench_files=(template_render) ;;
+  esac
+elif [[ -n "${usage_files:-}" ]]; then
+  for f in benches/*.rs; do
+    bf="${f##*/}"
+    bf="${bf%.rs}"
+    [[ "${bf}" == *"${usage_files}"* ]] && bench_files+=("${bf}")
+  done
 else
-  if [[ -n "${usage_sample_size:-}" ]]; then
-    criterion_args+=(--sample-size "${usage_sample_size}")
-    has_criterion_args=true
-  fi
-  if [[ -n "${usage_measurement_time:-}" ]]; then
-    criterion_args+=(--measurement-time "${usage_measurement_time}")
-    has_criterion_args=true
-  fi
+  for f in benches/*.rs; do
+    bf="${f##*/}"
+    bench_files+=("${bf%.rs}")
+  done
 fi
 
+if [[ "${#bench_files[@]}" -eq 0 ]]; then
+  printf 'no benchmark files match\n' >&2
+  exit 1
+fi
+
+# --- Quick mode ---
+if [[ "${usage_quick:-false}" == "true" ]]; then
+  criterion_args+=(--sample-size 10 --measurement-time 1 --warm-up-time 1 --noplot)
+  has_criterion_args=true
+fi
+
+# --- Extra args ---
 eval "extra_args=(${usage_args:-})"
 criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 [[ -n "${usage_args:-}" ]] && has_criterion_args=true
 
-if [[ "${has_criterion_args}" == "true" ]]; then
-  bench_args+=(--bench)
-  for bench_file in benches/*.rs; do
-    bench_name="${bench_file##*/}"
-    bench_name="${bench_name%.rs}"
-    if [[ -z "${usage_filter:-}" || "${bench_name}" == *"${usage_filter}"* ]]; then
-      bench_args+=("${bench_name}")
+# --- Report (save baseline) ---
+# Defaults on: every run is auto-tagged to the current git branch+sha so
+# rerunning on the *same* commit overwrites one bounded baseline dir, while
+# a new commit/branch gets its own comparable checkpoint. `-r <name>`
+# overrides with an explicit, memorable name (e.g. a long-lived comparison
+# point); `--no-report` opts out and falls back to criterion's own "base".
+#
+# Skipped when the forwarded args already manage baselines themselves
+# (--baseline/--baseline-lenient/--discard-baseline/--load-baseline), since
+# criterion rejects combining those with --save-baseline.
+manages_baseline=false
+for a in "${extra_args[@]+"${extra_args[@]}"}"; do
+  case "${a}" in
+    --baseline | --baseline-lenient | --discard-baseline | --load-baseline)
+      manages_baseline=true
+      ;;
+  esac
+done
+
+if [[ "${usage_no_report:-false}" != "true" && "${manages_baseline}" == "false" ]]; then
+  if [[ -n "${usage_report:-}" && "${usage_report}" != "true" ]]; then
+    report_name="${usage_report}"
+  else
+    if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
+      branch="${branch//\//-}"
+      [[ "${branch}" == "HEAD" ]] && branch="detached"
+      sha="$(git rev-parse --short HEAD)"
+      dirty=""
+      git diff --quiet HEAD || dirty="-dirty"
+      report_name="${branch}-${sha}${dirty}"
+    else
+      report_name="$(date +%Y%m%d-%H%M%S)"
     fi
-  done
-  bench_args+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
-elif [[ -n "${usage_filter:-}" ]]; then
-  bench_args+=("${usage_filter}")
+    [[ "${usage_quick:-false}" == "true" ]] && report_name+="-quick"
+  fi
+  criterion_args+=(--save-baseline "${report_name}")
+  has_criterion_args=true
 fi
 
-cargo bench "${bench_args[@]}"
+# --- Build and run every selected bench target in a single cargo
+# invocation: cargo accepts repeated --bench flags, so this shares one
+# build/link pass across all targets instead of paying N separate cargo
+# startup + fingerprint-check costs in a loop. ---
+for bf in "${bench_files[@]}"; do
+  bench_args+=(--bench "${bf}")
+done
+if [[ "${has_criterion_args}" == "true" ]]; then
+  bench_args+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
+fi
+cargo "${bench_args[@]}"
 
-if [[ -n "${usage_baseline_compare:-}" ]]; then
-  critcmp "${usage_baseline_compare}"
+# --- Compare ---
+if [[ -n "${usage_compare:-}" ]]; then
+  critcmp "${usage_compare}"
 fi
 '''
-sources = ["benches/**/*.rs", "Cargo.toml", "Cargo.lock"]
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #
@@ -477,7 +532,6 @@ alias = "r"
 run = "cargo build --release"
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
-rust_cache = true
 
 [tasks.doc]
 raw_args = true
@@ -486,7 +540,6 @@ env = { RUSTDOCFLAGS = "-D warnings" }
 run = "cargo doc --no-deps"
 sources = ["@group:rust"]
 outputs = ["target/doc"]
-rust_cache = true
 
 [tasks.verify]
 description = "Full verification gate: check, lint, all tests"
