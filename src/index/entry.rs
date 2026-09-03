@@ -107,16 +107,6 @@ impl FileEntry {
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         self.note.as_deref().map_or(&[], |entry| &entry.inlinks)
     }
-
-    /// Builds a [`FileEntry`] with the given fields.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[allow(
-        dead_code,
-        reason = "fixture helper used by tests outside entry.rs"
-    )]
-    pub(crate) fn new_test(file: FileBase, note: Option<Note>) -> Self {
-        Self::new(file, note)
-    }
 }
 
 /// A [`Note`] paired with its inbound links, boxed to keep non-Note `FileEntry`

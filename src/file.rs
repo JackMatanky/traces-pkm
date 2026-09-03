@@ -99,8 +99,7 @@ impl FileBase {
     }
 
     /// Builds a [`FileBase`] with custom fields for test fixtures.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[allow(dead_code, reason = "fixture helper used by tests outside file.rs")]
+    #[cfg(test)]
     pub(crate) fn new_test(
         path: PathBuf,
         folder: PathBuf,

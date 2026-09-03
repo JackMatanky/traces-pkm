@@ -515,7 +515,7 @@ mod tests {
         }
     }
 
-    mod task_iter {
+    mod task {
         use super::*;
 
         mod iteration {
