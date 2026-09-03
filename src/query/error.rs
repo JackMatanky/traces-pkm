@@ -261,7 +261,6 @@ impl fmt::Display for QueryDialect {
 #[cfg(test)]
 mod tests {
     use miette::{Diagnostic, SourceSpan};
-    use pretty_assertions::assert_eq;
 
     use super::*;
 
@@ -273,105 +272,126 @@ mod tests {
         );
     }
 
-    #[test]
-    fn syntax_error_preserves_dialect_input_span_and_label() {
-        let error = QuerySyntaxError::new(
-            QueryDialect::Filter,
-            "rating >",
-            SourceSpan::from((7, 0)),
-            "a literal value",
-        );
+    mod syntax_error {
+        use super::*;
 
-        assert_eq!(error.dialect, QueryDialect::Filter);
-        assert_eq!(error.input, "rating >");
-        assert_eq!(error.span, SourceSpan::from((7, 0)));
-        assert_eq!(*error.lex_error, LexError::UnexpectedEndOfInput {
-            span: SourceSpan::from((7, 0)),
-            expected: "a literal value",
-        });
-        assert_eq!(
-            error
-                .labels()
-                .expect("syntax diagnostic has a label")
-                .map(|label| (
-                    label.offset(),
-                    label.len(),
-                    label.label().map(str::to_owned)
-                ))
-                .collect::<Vec<_>>(),
-            vec![(
-                7,
-                0,
-                Some(
-                    "unexpected end of input, expected a literal value"
-                        .to_owned()
-                )
-            )]
-        );
-        assert!(error.source_code().is_some());
+        #[test]
+        fn syntax_error_preserves_dialect_input_span_and_label() {
+            let error = QuerySyntaxError::new(
+                QueryDialect::Filter,
+                "rating >",
+                SourceSpan::from((7, 0)),
+                "a literal value",
+            );
+
+            assert_eq!(error.dialect, QueryDialect::Filter);
+            assert_eq!(error.input, "rating >");
+            assert_eq!(error.span, SourceSpan::from((7, 0)));
+            assert_eq!(*error.lex_error, LexError::UnexpectedEndOfInput {
+                span: SourceSpan::from((7, 0)),
+                expected: "a literal value",
+            });
+            assert_eq!(
+                error
+                    .labels()
+                    .expect("syntax diagnostic has a label")
+                    .map(|label| (
+                        label.offset(),
+                        label.len(),
+                        label.label().map(str::to_owned)
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![(
+                    7,
+                    0,
+                    Some(
+                        "unexpected end of input, expected a literal value"
+                            .to_owned()
+                    )
+                )]
+            );
+            assert!(error.source_code().is_some());
+        }
+
+        #[test]
+        fn query_error_exposes_nested_syntax_diagnostic() {
+            let error = QueryError::from(QuerySyntaxError::new(
+                QueryDialect::Source,
+                "#book and",
+                SourceSpan::from((9, 0)),
+                "a source term",
+            ));
+
+            assert_eq!(error.to_string(), "invalid source expression");
+            assert!(error.diagnostic_source().is_some());
+        }
     }
 
-    #[test]
-    fn query_error_exposes_nested_syntax_diagnostic() {
-        let error = QueryError::from(QuerySyntaxError::new(
-            QueryDialect::Source,
-            "#book and",
-            SourceSpan::from((9, 0)),
-            "a source term",
-        ));
+    mod field_path_error {
+        use super::*;
 
-        assert_eq!(error.to_string(), "invalid source expression");
-        assert!(error.diagnostic_source().is_some());
+        #[test]
+        fn field_path_error_formats_display_message() {
+            let error =
+                QueryError::from(FieldPathError::new("file.bogus", None));
+
+            assert_display(
+                &error,
+                "invalid field path \"file.bogus\"; expected `file.<field>` \
+                 (path, name, folder, size, ctime, cdate, mtime, mdate), \
+                 `task.<field>` (completed, text), or a single frontmatter, \
+                 inline field, or `tags` name",
+            );
+        }
+
+        #[test]
+        fn field_path_error_appends_a_did_you_mean_suggestion() {
+            let error = QueryError::from(FieldPathError::new(
+                "file.nam",
+                Some("file.name"),
+            ));
+
+            assert_display(
+                &error,
+                "invalid field path \"file.nam\"; expected `file.<field>` \
+                 (path, name, folder, size, ctime, cdate, mtime, mdate), \
+                 `task.<field>` (completed, text), or a single frontmatter, \
+                 inline field, or `tags` name (did you mean `file.name`?)",
+            );
+        }
     }
 
-    #[test]
-    fn field_path_error_formats_display_message() {
-        let error = QueryError::from(FieldPathError::new("file.bogus", None));
+    mod display {
+        use super::*;
 
-        assert_display(
-            &error,
-            "invalid field path \"file.bogus\"; expected `file.<field>` \
-             (path, name, folder, size, ctime, cdate, mtime, mdate), \
-             `task.<field>` (completed, text), or a single frontmatter, \
-             inline field, or `tags` name",
-        );
-    }
+        #[test]
+        fn limit_out_of_range_formats_display_message() {
+            assert_display(
+                &QueryError::from(QueryBuilderError::LimitOutOfRange {
+                    value: -5,
+                }),
+                "invalid limit -5; expected a non-negative row count",
+            );
+        }
 
-    #[test]
-    fn field_path_error_appends_a_did_you_mean_suggestion() {
-        let error = QueryError::from(FieldPathError::new(
-            "file.nam",
-            Some("file.name"),
-        ));
+        #[test]
+        fn task_list_requires_task_rows_formats_display_message() {
+            assert_display(
+                &QueryError::TaskListRequiresTaskRows,
+                "task_list requires task-level records from the `tasks` \
+                 namespace; got page-level records with no task fields",
+            );
+        }
 
-        assert_display(
-            &error,
-            "invalid field path \"file.nam\"; expected `file.<field>` (path, \
-             name, folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
-             (completed, text), or a single frontmatter, inline field, or \
-             `tags` name (did you mean `file.name`?)",
-        );
-    }
-
-    #[test]
-    fn direct_operation_errors_format_display_messages() {
-        assert_display(
-            &QueryError::from(QueryBuilderError::LimitOutOfRange {
-                value: -5,
-            }),
-            "invalid limit -5; expected a non-negative row count",
-        );
-        assert_display(
-            &QueryError::TaskListRequiresTaskRows,
-            "task_list requires task-level records from the `tasks` \
-             namespace; got page-level records with no task fields",
-        );
-        assert_display(
-            &QueryError::TableColumnCountMismatch {
-                headers: 2,
-                columns: 1,
-            },
-            "table headers (2) and columns (1) must have the same length",
-        );
+        #[test]
+        fn table_column_count_mismatch_formats_display_message() {
+            assert_display(
+                &QueryError::TableColumnCountMismatch {
+                    headers: 2,
+                    columns: 1,
+                },
+                "table headers (2) and columns (1) must have the same length",
+            );
+        }
     }
 }

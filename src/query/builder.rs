@@ -385,11 +385,15 @@ mod tests {
         }
 
         #[test]
-        fn wraps_request_builder_errors() {
+        fn returns_syntax_error_for_invalid_filter_expression() {
             assert!(matches!(
                 QueryBuilder::pages(SourceSelector::All).filter("rating >"),
                 Err(QueryBuilderError::Syntax(_))
             ));
+        }
+
+        #[test]
+        fn returns_field_path_error_for_invalid_sort_field() {
             assert_eq!(
                 QueryBuilder::pages(SourceSelector::All)
                     .sort("file.bogus", false)
@@ -399,6 +403,10 @@ mod tests {
                     None
                 )))
             );
+        }
+
+        #[test]
+        fn returns_limit_out_of_range_error_for_negative_limit() {
             assert_eq!(
                 QueryBuilder::pages(SourceSelector::All).limit(-1).err(),
                 Some(QueryBuilderError::LimitOutOfRange {
