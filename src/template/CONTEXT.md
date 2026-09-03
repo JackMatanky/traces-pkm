@@ -62,13 +62,12 @@ directory, confined to the Project Root.
 
 #### Write Mode
 
-The execution mode choosing whether rendered content is previewed on stdout
-(`Preview` / dry-run) or committed to disk (`Commit`).
-*Avoid*: dry-run mode, execution mode
+The execution mode choosing whether rendered content is returned unwritten
+(`DryRun`) or committed to disk (`Commit`).
+*Avoid*: dry-run mode, preview mode, execution mode
 
 #### Commit Policy
 
 The rule governing how committed writes handle existing files: fail on
-collision (`CreateNew`), overwrite (`Overwrite`), or prompt for an alternative
-path.
+collision (`CreateNew`) or overwrite (`Overwrite`).
 *Avoid*: collision policy, overwrite flag

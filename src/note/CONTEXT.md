@@ -7,11 +7,11 @@ and task list processing.
 
 ### Document Model
 
-#### Note Document
+#### Note
 
-A parsed Markdown document capturing page-level frontmatter, lists, outgoing
-links, inline fields, and tags in document order.
-*Avoid*: Output file, document, page, markdown file
+The indexed form of a Markdown note: parsed frontmatter, inline fields, tags,
+lists, tasks, and outgoing links.
+*Avoid*: note document, document, page, markdown file, output file
 
 ### Metadata & Fields
 
@@ -49,9 +49,15 @@ wikilink syntax.
 
 #### Task
 
-A checklist item carrying completion status (`- [ ]` or `- [x]`), description
-text, and optional date-shorthand emoji markers.
+A checklist item carrying a configurable Task Status symbol (`[ ]`, `[x]`,
+`[-]`, ...), description text, and optional date-shorthand emoji markers.
 *Avoid*: todo item, checkbox line, action item
+
+#### Task Status
+
+The configurable workflow classification selected by a task's checkbox symbol:
+todo, in-progress, on-hold, done, cancelled, or non-task.
+*Avoid*: completion status, checkbox state, done flag
 
 #### Tag
 

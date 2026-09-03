@@ -15,9 +15,9 @@ interactively (TTY) or deterministically (preset replay).
 
 #### Prompt
 
-An individual user interaction request: boolean confirmation (`Confirm`),
-freeform input (`Text`), single choice (`Select`), or multiple choices
-(`Multi-Select`).
+An individual user interaction request: boolean confirmation (`confirm`),
+freeform input (`text`), single choice (`select`), or multiple choices
+(`multi_select`).
 *Avoid*: input request, inquiry
 
 #### Selection by Position

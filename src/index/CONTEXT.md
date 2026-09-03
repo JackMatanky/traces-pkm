@@ -23,15 +23,16 @@ disk, loading cached data, and performing differential refreshes.
 
 #### File Base
 
-The base indexed metadata captured for every regular file: relative path, size,
-timestamps, and format classification.
+The filesystem metadata captured for every regular file regardless of document
+type: relative path, size, timestamps, and format classification.
 *Avoid*: file metadata, fs entry, raw record
 
-#### Note Metadata
+#### Note
 
-The rich structured data extracted from Markdown files: frontmatter, inline
-fields, tags, lists, tasks, and outgoing links.
-*Avoid*: page data, document info, note payload
+The indexed form of a Markdown note: the parsed frontmatter, inline fields,
+tags, lists, tasks, and outgoing links persisted for querying, distinct from
+the File Base carrying its file metadata.
+*Avoid*: note metadata, page data, document info, note payload
 
 #### Inlink
 

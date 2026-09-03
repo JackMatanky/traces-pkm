@@ -18,8 +18,8 @@ domain terms, and seams for that area.
   derived inbound link graph (`src/index/`)
 - [Note](./src/note/CONTEXT.md) — Markdown note AST parsing, YAML frontmatter,
   inline fields, links, and tasks (`src/note/`)
-- [Query](./src/query/CONTEXT.md) — Source selection DSL, query record
-  projection, and pipeline transformations (`src/query/`)
+- [Query](./src/query/CONTEXT.md) — Source selection DSL, row projection, and
+  CTE result-set transformations (`src/query/`)
 - [Schema](./src/schema/CONTEXT.md) — Schema registry, field resolution,
   inheritance DAG, and class hierarchy (`src/schema/`)
 - [Template](./src/template/CONTEXT.md) — Template resolution, minijinja engine
@@ -61,7 +61,7 @@ graph TD
   `FileIndex` and expands `@Class*` hierarchies via the `FileClassExpander`
   seam without direct dependency on `Schema`.
 - **Template Composition**: `Template` registers `query`, `tasks`, `schema`,
-  `dialog`, `file`, and `date` helpers into the minijinja runtime and enforces
+  `ui`, `file`, and `date` helpers into the minijinja runtime and enforces
   root confinement during output writing.
 
 ## Reading order

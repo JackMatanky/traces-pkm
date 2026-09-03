@@ -1,6 +1,6 @@
 # Query
 
-Read-side source selection, record projection, transformations, and output
+Read-side source selection, row projection, transformations, and output
 rendering.
 
 ## Language
@@ -25,23 +25,38 @@ The row evaluation granularity of a query: `Pages` (one row per Note) or
 `Tasks` (one row per task checklist item).
 *Avoid*: query type, evaluation level
 
-### Execution & Records
+### Execution & Rows
 
-#### Query Record
+#### Query Builder
 
-A single query result row pairing file metadata with parsed note metadata, task
-state, and resolved field paths.
-*Avoid*: IndexRecord, QueryOutcome, QueryRow, page, record
+The declarative specification of a query: Query Mode, Source Expression, and
+the pending Query Plan, built before execution.
+*Avoid*: query request, request
 
-#### Query Record Set
+#### Query Plan
 
-An ordered, indexable, and iterable collection of Query Records returned by
-query execution, supporting chained transformations and formatting.
-*Avoid*: QueryOutcome, QueryResult, result set
+The ordered transform sequence a query applies to rows, fused where possible
+(adjacent filters, Sort followed by Limit) and executed lazily on first read.
+*Avoid*: plan steps, ops list
 
-#### Pipeline Query
+#### Query Row
 
-A template-side query composed by chaining transformation methods (`where`,
-`sort`, `limit`, `group_by`, `flatten`) and terminal formatters (`table`,
-`list`, `task_list`, `count`).
-*Avoid*: DQL, dataview query
+A single query result row pairing a Note with its File Base, task state, and
+resolved field paths.
+*Avoid*: Query Record, record, IndexRecord, QueryOutcome, page
+
+#### Query Set
+
+A memoized, branchable Common Table Expression over Query Rows: cloning shares
+the evaluated rows, chained transforms append in `O(1)`, and reads flush the
+pending plan once. Transform methods (`where`/`filter`, `sort`, `limit`,
+`group_by`, `flatten`, `with_children`, `with_descendants`) chain; terminal
+methods (`table`, `list`, `task_list`, `count`) render output.
+*Avoid*: Query Record Set, QueryOutcome, result set, pipeline query, DQL,
+dataview query
+
+#### Task Path Style
+
+Whether task list output appends each row's file path in parentheses (`Suffix`)
+or omits it (`None`).
+*Avoid*: path display, path suffix toggle

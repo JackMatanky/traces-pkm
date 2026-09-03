@@ -31,8 +31,9 @@ templates, rejecting untrusted or altered project roots.
 #### Trust Status
 
 The trust state of a workspace root: `Trusted` (known root with matching
-digest), `Untrusted` (unknown root), or `Stale` (configuration modified since
-trust was granted).
+digest), `Untrusted` (unknown root), `Stale` (configuration modified since
+trust was granted), or `MissingBaseline` (trusted root with no recorded digest
+for the config file).
 *Avoid*: trust level, security state
 
 #### Companion Hash
@@ -55,3 +56,12 @@ Canonical frontmatter keys configured under `[frontmatter]` mapping
 project-specific names for title, aliases, creation date, and modification
 date.
 *Avoid*: field mapping, canonical attributes
+
+### Task Recognition
+
+#### Task Configuration
+
+The `[tasks]` table configuring task recognition: the mapping of checkbox
+status symbols to Task Status workflow states, and the tag filter deciding
+which tagged items count as tasks.
+*Avoid*: status settings, task options
