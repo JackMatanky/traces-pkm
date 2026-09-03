@@ -7,7 +7,9 @@
 //! - [`ListItem`]: a list item with a classified [`ListItemType`], child lists,
 //!   inline fields, and source positioning.
 //! - [`ListItemType`]: classification of an item as a plain bullet, a checkbox,
-//!   or a Task carrying a resolved [`TaskStatus`].
+//!   or a Task carrying a [`TaskListItem`].
+//! - [`TaskListItem`]: task-specific metadata (resolved status and precomputed
+//!   fully-complete subtree state) carried by [`ListItemType::Task`].
 //! - [`ListItemPosition`]: a list item's source line, nesting depth, and parent
 //!   line.
 //! - [`TaskIter`]: a depth-first iterator yielding task items across top-level
@@ -232,22 +234,61 @@ impl ListItem {
     }
 }
 
+/// Task-specific data carried by a [`ListItemType::Task`] item.
+///
+/// Holds the task's resolved [`TaskStatus`] and a precomputed
+/// `is_fully_complete` flag indicating whether every descendant task in this
+/// item's subtree has a complete or cancelled status.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct TaskListItem {
+    status: TaskStatus,
+    fully_complete: bool,
+}
+
+impl TaskListItem {
+    /// Creates a task list item with its resolved status and precomputed
+    /// fully-complete state.
+    #[inline]
+    #[must_use]
+    pub fn new(status: TaskStatus, fully_complete: bool) -> Self {
+        Self {
+            status,
+            fully_complete,
+        }
+    }
+
+    /// Returns the task's resolved status (marker symbol, display name, and
+    /// workflow type).
+    #[inline]
+    #[must_use]
+    pub const fn status(&self) -> &TaskStatus {
+        &self.status
+    }
+
+    /// Returns `true` if all descendant tasks in this item's subtree are
+    /// resolved (done or cancelled), or if this item has no descendant tasks.
+    #[inline]
+    #[must_use]
+    pub const fn is_fully_complete(&self) -> bool {
+        self.fully_complete
+    }
+}
+
 /// How the custom marker scanner classified a Markdown list item.
 ///
 /// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
 /// status-marked items that did not match a configured task tag filter. They
 /// carry only derived completion state and are excluded from
-/// [`super::Note::tasks`]. [`Self::Task`] items carry a resolved task status
-/// (symbol, name, and workflow type).
+/// [`super::Note::tasks`]. [`Self::Task`] items carry task-specific data
+/// encapsulated in a [`TaskListItem`].
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum ListItemType {
     /// A plain bullet with no marker.
     Plain,
     /// A status-marked item that did not match a configured task tag filter.
     Checkbox,
-    /// A status-marked item classified as a Task, carrying its resolved
-    /// status.
-    Task(TaskStatus),
+    /// A status-marked item classified as a Task, carrying its task data.
+    Task(TaskListItem),
 }
 
 impl ListItemType {
@@ -395,18 +436,24 @@ mod tests {
     use crate::{TaskStatusSymbol, TaskStatusType};
 
     fn done_task() -> ListItemType {
-        ListItemType::Task(TaskStatus::new(
-            TaskStatusSymbol::new('x'),
-            "Done",
-            TaskStatusType::Done,
+        ListItemType::Task(TaskListItem::new(
+            TaskStatus::new(
+                TaskStatusSymbol::new('x'),
+                "Done",
+                TaskStatusType::Done,
+            ),
+            true,
         ))
     }
 
     fn todo_task() -> ListItemType {
-        ListItemType::Task(TaskStatus::new(
-            TaskStatusSymbol::new(' '),
-            "Todo",
-            TaskStatusType::Todo,
+        ListItemType::Task(TaskListItem::new(
+            TaskStatus::new(
+                TaskStatusSymbol::new(' '),
+                "Todo",
+                TaskStatusType::Todo,
+            ),
+            true,
         ))
     }
     mod list_item {
@@ -574,6 +621,57 @@ mod tests {
                 let mut iter = TaskIter::new(&lists);
 
                 assert_eq!(iter.next(), None);
+            }
+        }
+    }
+
+    mod task_list_item {
+        use super::*;
+
+        mod constructor {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+            #[test]
+            fn stores_status_and_fully_complete_flag() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new('x'),
+                    "Done",
+                    TaskStatusType::Done,
+                );
+                let item = TaskListItem::new(status.clone(), true);
+
+                assert_eq!(item.status(), &status);
+                assert_eq!(item.is_fully_complete(), true);
+            }
+        }
+
+        mod accessors {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+            #[test]
+            fn returns_status_reference() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new('/'),
+                    "In Progress",
+                    TaskStatusType::InProgress,
+                );
+                let item = TaskListItem::new(status.clone(), false);
+
+                assert_eq!(item.status(), &status);
+            }
+
+            #[test]
+            fn returns_fully_complete_boolean() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new(' '),
+                    "Todo",
+                    TaskStatusType::Todo,
+                );
+                let item = TaskListItem::new(status, false);
+
+                assert_eq!(item.is_fully_complete(), false);
             }
         }
     }

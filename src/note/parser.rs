@@ -640,16 +640,16 @@ mod tests {
             let item1 = list.items().get(1).expect("item 1");
 
             assert_eq!(item0.text(), "Incomplete task");
-            let ListItemType::Task(status0) = item0.kind() else {
+            let ListItemType::Task(task0) = item0.kind() else {
                 panic!("item0 must be a Task, got {:?}", item0.kind());
             };
-            assert_eq!(status0.kind().completed(), Some(false));
+            assert_eq!(task0.status().kind().completed(), Some(false));
 
             assert_eq!(item1.text(), "Completed task");
-            let ListItemType::Task(status1) = item1.kind() else {
+            let ListItemType::Task(task1) = item1.kind() else {
                 panic!("item1 must be a Task, got {:?}", item1.kind());
             };
-            assert_eq!(status1.kind().completed(), Some(true));
+            assert_eq!(task1.status().kind().completed(), Some(true));
         }
 
         #[test]

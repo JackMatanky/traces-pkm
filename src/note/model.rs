@@ -201,7 +201,9 @@ mod tests {
     use super::*;
     use crate::{
         TaskStatus, TaskStatusSymbol, TaskStatusType,
-        note::{LinkType, ListItem, ListItemType, NoteFieldValue},
+        note::{
+            LinkType, ListItem, ListItemType, NoteFieldValue, TaskListItem,
+        },
     };
 
     mod constructor {
@@ -340,10 +342,9 @@ mod tests {
             symbol: char,
             kind: TaskStatusType,
         ) -> ListItemType {
-            ListItemType::Task(TaskStatus::new(
-                TaskStatusSymbol::new(symbol),
-                name,
-                kind,
+            ListItemType::Task(TaskListItem::new(
+                TaskStatus::new(TaskStatusSymbol::new(symbol), name, kind),
+                true,
             ))
         }
 

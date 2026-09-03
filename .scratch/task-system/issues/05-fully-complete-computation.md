@@ -1,4 +1,7 @@
-Status: ready-for-agent
+Status: implemented
+
+**Date**: 2026-09-03
+**Implemented in**: branch `task-system/05-fully-complete-computation` (worktree `.worktrees/task-system-05/`)
 
 # 05 — TaskListItem and fully-complete computation
 
@@ -41,53 +44,53 @@ Cancelled tasks (`TaskStatusType::Cancelled`, `completed() → None`) count as r
 
 ### TaskListItem struct
 
-- [ ] `TaskListItem` struct with `status: TaskStatus` and `fully_complete: bool` fields
-- [ ] `TaskListItem::new(status: TaskStatus, fully_complete: bool) -> Self`
-- [ ] `TaskListItem::status(&self) -> &TaskStatus`
-- [ ] `TaskListItem::fully_complete(&self) -> bool`
-- [ ] `ListItemType::Task(TaskListItem)` replaces `ListItemType::Task(TaskStatus)`
+- [x] `TaskListItem` struct with `status: TaskStatus` and `fully_complete: bool` fields
+- [x] `TaskListItem::new(status: TaskStatus, fully_complete: bool) -> Self`
+- [x] `TaskListItem::status(&self) -> &TaskStatus`
+- [x] `TaskListItem::is_fully_complete(&self) -> bool`
+- [x] `ListItemType::Task(TaskListItem)` replaces `ListItemType::Task(TaskStatus)`
 
 ### Parser integration
 
-- [ ] `end_item` constructs `TaskListItem::new(status, fully_complete)` instead of bare `Task(status)`
-- [ ] `fully_complete` computed in `end_item` after children are built — no second pass
-- [ ] Non-task items (`Plain`, `Checkbox`) have no `fully_complete` concept
-- [ ] `ListItem::kind()` accessor exists (returns `&ListItemType`) — verify or add
+- [x] `end_item` constructs `TaskListItem::new(status, fully_complete)` instead of bare `Task(status)`
+- [x] `fully_complete` computed in `end_item` after children are built — no second pass
+- [x] Non-task items (`Plain`, `Checkbox`) have no `fully_complete` concept
+- [x] `ListItem::kind()` accessor exists (returns `&ListItemType`) — verify or add
 
 ### Fully-complete computation
 
-- [ ] Computation checks the task itself and recursively checks task children only
-- [ ] Plain bullet children (`ListItemType::Plain`) ignored for fully_complete
-- [ ] Non-task checkbox children (`ListItemType::Checkbox`) ignored for fully_complete
-- [ ] Only `ListItemType::Task` descendants participate in the calculation
-- [ ] Cancelled status counts as resolved (subtree is resolved when all tasks are done or cancelled)
-- [ ] A task with no task children is vacuously `fully_complete = true`
-- [ ] Short-circuits on first incomplete descendant (no wasted traversal)
+- [x] Computation checks the task itself and recursively checks task children only
+- [x] Plain bullet children (`ListItemType::Plain`) ignored for fully_complete
+- [x] Non-task checkbox children (`ListItemType::Checkbox`) ignored for fully_complete
+- [x] Only `ListItemType::Task` descendants participate in the calculation
+- [x] Cancelled status counts as resolved (subtree is resolved when all tasks are done or cancelled)
+- [x] A task with no task children is vacuously `fully_complete = true`
+- [x] Short-circuits on first incomplete descendant (no wasted traversal)
 
 ### Downstream updates
 
 All `ListItemType::Task(status)` pattern matches updated to destructure through `TaskListItem`:
 
-- [ ] `src/note/parser/list.rs` — `end_item` construction
-- [ ] `src/query/record.rs` — `with_task_item` accesses `task.status()`
-- [ ] `src/note/model.rs` — test construction wraps in `TaskListItem`
-- [ ] `src/note/lists.rs` — test helper `done_task()` wraps in `TaskListItem`
-- [ ] `src/note/parser.rs` — test assertions destructure through `TaskListItem`
-- [ ] `src/note/parser/list.rs` — test assertions access `task.status()` and `task.fully_complete()`
+- [x] `src/note/parser/list.rs` — `end_item` construction
+- [x] `src/query/record.rs` — `with_task_item` accesses `task.status()`
+- [x] `src/note/model.rs` — test construction wraps in `TaskListItem`
+- [x] `src/note/lists.rs` — test helper `done_task()` wraps in `TaskListItem`
+- [x] `src/note/parser.rs` — test assertions destructure through `TaskListItem`
+- [x] `src/note/parser/list.rs` — test assertions access `task.status()` and `task.fully_complete()`
 
 ### Tests
 
-- [ ] Unit test: single task with no children → fully_complete = true
-- [ ] Unit test: parent with all done children → fully_complete = true
-- [ ] Unit test: parent with cancelled child → fully_complete = true
-- [ ] Unit test: parent with mixed done + cancelled children → fully_complete = true
-- [ ] Unit test: parent with incomplete child → fully_complete = false
-- [ ] Unit test: parent with plain bullet children ignored (only non-task children → true)
-- [ ] Unit test: parent with non-task checkbox children ignored (only non-task children → true)
-- [ ] Unit test: deeply nested tasks (3+ levels) all done → fully_complete = true
-- [ ] Unit test: deeply nested — intermediate done task has incomplete grandchild → false
-- [ ] Unit test: `TaskListItem::status()` and `TaskListItem::fully_complete()` accessors
-- [ ] `mise run verify` passes
+- [x] Unit test: single task with no children → fully_complete = true
+- [x] Unit test: parent with all done children → fully_complete = true
+- [x] Unit test: parent with cancelled child → fully_complete = true
+- [x] Unit test: parent with mixed done + cancelled children → fully_complete = true
+- [x] Unit test: parent with incomplete child → fully_complete = false
+- [x] Unit test: parent with plain bullet children ignored (only non-task children → true)
+- [x] Unit test: parent with non-task checkbox children ignored (only non-task children → true)
+- [x] Unit test: deeply nested tasks (3+ levels) all done → fully_complete = true
+- [x] Unit test: deeply nested — intermediate done task has incomplete grandchild → false
+- [x] Unit test: `TaskListItem::status()` and `TaskListItem::fully_complete()` accessors
+- [x] `mise run verify` passes
 
 ## Out of scope
 

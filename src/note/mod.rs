@@ -41,7 +41,9 @@ mod parser;
 
 pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
-pub use lists::{List, ListItem, ListItemType, TaskIter};
+#[cfg(any(test, feature = "test-utils"))]
+pub use lists::TaskIter;
+pub use lists::{List, ListItem, ListItemType, TaskListItem};
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
 pub use model::Note;
