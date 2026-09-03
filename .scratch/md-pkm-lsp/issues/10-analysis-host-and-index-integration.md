@@ -1,7 +1,7 @@
 # Analysis host architecture & integration with IndexerService/QueryService/SchemaService
 
 Type: grilling
-Blocked by: 09
+Blocked by: 09, 36, 37, 38
 Status: claimed
 
 ## Question
