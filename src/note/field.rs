@@ -60,6 +60,20 @@ impl NoteFieldValue {
             _ => None,
         }
     }
+
+    /// Returns the parsed calendar date if this value is
+    /// [`NoteFieldValue::Date`] or a [`NoteFieldValue::String`] beginning
+    /// with a valid `YYYY-MM-DD` ISO date, or `None` otherwise.
+    #[inline]
+    #[must_use]
+    pub fn as_date(&self) -> Option<chrono::NaiveDate> {
+        match self {
+            Self::Date(s) | Self::String(s) if s.len() >= 10 => {
+                chrono::NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Converts YAML scalars, sequences, mappings, and tags into metadata values.

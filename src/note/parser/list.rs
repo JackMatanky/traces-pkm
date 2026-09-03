@@ -395,7 +395,7 @@ fn extract_single_date(
                 continue;
             }
             for val in values {
-                if let Some(date) = parse_field_value_date(val) {
+                if let Some(date) = val.as_date() {
                     return Some(date);
                 }
             }
@@ -403,17 +403,6 @@ fn extract_single_date(
     }
 
     None
-}
-
-fn parse_field_value_date(val: &NoteFieldValue) -> Option<NaiveDate> {
-    let s = match val {
-        NoteFieldValue::Date(s) | NoteFieldValue::String(s) => s.as_str(),
-        _ => return None,
-    };
-    if s.len() < 10 {
-        return None;
-    }
-    NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok()
 }
 
 /// Parses an ISO date immediately following `emoji` (with optional whitespace).

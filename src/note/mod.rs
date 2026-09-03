@@ -44,10 +44,8 @@ mod parser;
 
 pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
-#[cfg(any(test, feature = "test-utils"))]
-pub use lists::TaskIter;
 pub use lists::{
-    List, ListItem, ListItemType, ListText, TaskDates, TaskListItem,
+    List, ListItem, ListItemType, ListText, TaskDates, TaskIter, TaskListItem,
     TaskPriority,
 };
 pub use metadata::Frontmatter;

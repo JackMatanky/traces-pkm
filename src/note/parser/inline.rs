@@ -8,7 +8,7 @@
 use phf::phf_set;
 
 use crate::note::{
-    Link, NoteFieldValue, cursor::SourceText, metadata::is_iso_date,
+    Link, NoteFieldValue, cursor::SourceText, field::is_iso_date,
 };
 
 static DURATION_UNITS: phf::Set<&'static str> = phf_set! {

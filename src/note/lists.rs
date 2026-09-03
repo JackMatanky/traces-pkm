@@ -430,6 +430,21 @@ impl TaskPriority {
             _ => None,
         }
     }
+
+    /// Returns the canonical emoji representation for this priority, or
+    /// [`None`] for [`Self::Normal`].
+    #[inline]
+    #[must_use]
+    pub const fn emoji(&self) -> Option<&'static str> {
+        match self {
+            Self::Highest => Some("🔺"),
+            Self::High => Some("⏫"),
+            Self::Medium => Some("🔼"),
+            Self::Low => Some("🔽"),
+            Self::Lowest => Some("⏬"),
+            Self::Normal => None,
+        }
+    }
 }
 
 impl std::fmt::Display for TaskPriority {
