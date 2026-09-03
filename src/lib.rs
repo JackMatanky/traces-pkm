@@ -119,8 +119,8 @@ pub use template::{
     WriteMode, WriteOutcome,
 };
 
-/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
-/// under the `test-utils` feature, for external `tests/`/`benches/` consumers.
+/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and, under
+/// the `test-utils` feature, for external `tests/`/`benches/` consumers.
 ///
 /// - [`fixture_service`] returns a [`ConfigService`] backed by temporary
 ///   directories.
