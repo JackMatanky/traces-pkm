@@ -184,7 +184,7 @@ fn bench_execute_tasks(c: &mut Criterion) {
 /// Measured finding (20,000 rows): sort accounts for the large majority of this
 /// benchmark's cost (~4.7 ms of ~5.2 ms combined), not field lookup (~1.8 ms
 /// filter-only, ~141 µs unfiltered baseline) — `sort_by_cached_key` over 20,000
-/// `QueryRecord`s dominates, not metadata resolution.
+/// `QueryRow`s dominates, not metadata resolution.
 ///
 /// Expected outcomes:
 /// - Cost tracks [`bench_sort_by_metadata`]'s sort-only cost plus
@@ -289,16 +289,16 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
 
-/// Measures the cost of cloning a `QueryRecordSet`, swept over workspace
+/// Measures the cost of cloning a `QuerySet`, swept over workspace
 /// size.
 ///
 /// `src/template/engine/query.rs`'s `Object::call_method` for
-/// `QueryRecordSet` clones the entire outcome (`self.as_ref().clone()`) on
+/// `QuerySet` clones the entire outcome (`self.as_ref().clone()`) on
 /// every non-terminal chained call (`.where`/`.filter`/`.sort`/`.limit`/
-/// `.group_by`/`.flatten`). Since the CTE redesign, `QueryRecordSet::records`
-/// is `Arc<[QueryRecord]>`, so `#[derive(Clone)]` clones an `Arc` pointer
+/// `.group_by`/`.flatten`). Since the CTE redesign, `QuerySet::records`
+/// is `Arc<[QueryRow]>`, so `#[derive(Clone)]` clones an `Arc` pointer
 /// (and a short pending-plan `Vec`), not the row data — this benchmark
-/// confirms that claim directly, rather than through the `Vec<QueryRecord>`
+/// confirms that claim directly, rather than through the `Vec<QueryRow>`
 /// proxy the pre-redesign version used.
 ///
 /// Expected outcomes:
@@ -307,9 +307,9 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 ///
 /// Unexpected outcomes:
 /// - Cost scales with `n`, indicating `records` is no longer `Arc`-backed, or
-///   `QueryRecordSet::clone` is deep-copying rows somewhere.
-fn bench_clone_query_record_set(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/clone_record_set");
+///   `QuerySet::clone` is deep-copying rows somewhere.
+fn bench_clone_query_set(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::execute/clone_query_set");
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
         let outcome = QueryService::new("class")
@@ -318,7 +318,7 @@ fn bench_clone_query_record_set(c: &mut Criterion) {
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
-            BenchmarkId::new("record_set_clone", n),
+            BenchmarkId::new("query_set_clone", n),
             &outcome,
             |b, outcome| {
                 b.iter(|| black_box(outcome.clone()));
@@ -328,18 +328,18 @@ fn bench_clone_query_record_set(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the cost of `QueryRecordSet`'s owned `IntoIterator::into_iter()`,
+/// Measures the cost of `QuerySet`'s owned `IntoIterator::into_iter()`,
 /// swept over workspace size and row shape (page vs. task).
 ///
-/// `QueryRecordSet::into_iter()` (owned) clones every row out of the
-/// materialized `Arc<[QueryRecord]>` instead of moving them, since an
+/// `QuerySet::into_iter()` (owned) clones every row out of the
+/// materialized `Arc<[QueryRow]>` instead of moving them, since an
 /// `Arc<[T]>` has no owned `into_iter` (see its doc comment). A page row's
 /// clone is just an `Arc<FileIndex>` refcount bump; a task row's clone also
 /// heap-allocates a fresh `text: String`. This measures that cost directly,
 /// as the baseline for judging a sole-owner fast path — see
-/// `QueryRecordSet::into_iter`'s doc comment for why no safe, no-regression
+/// `QuerySet::into_iter`'s doc comment for why no safe, no-regression
 /// fast path exists today (`Arc::try_unwrap` requires `T: Sized`, which
-/// `[QueryRecord]` isn't; confirmed by compiling the substitution).
+/// `[QueryRow]` isn't; confirmed by compiling the substitution).
 ///
 /// Measured finding (this session, 100-20,000 rows): `pages` clones at
 /// ~21-23 ns/element (flat across sizes — an `Arc<FileIndex>` bump plus a
@@ -410,7 +410,7 @@ criterion_group!(
     bench_execute_tasks,
     bench_execute_pages_by_metadata,
     bench_filter_by_metadata_field_count,
-    bench_clone_query_record_set,
+    bench_clone_query_set,
     bench_into_iter_owned
 );
 criterion_main!(benches);

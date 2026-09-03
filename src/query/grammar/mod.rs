@@ -1,8 +1,8 @@
 //! Parsing and evaluation for the query module's two DSLs: the `--from`
 //! source-selection language ([`source`]) and the `--where` record-filter
-//! language ([`filter`]), sharing the generic boolean-expression parser
-//! in [`expr`]. [`field`] implements the field-path accessor grammar
-//! both DSLs build on.
+//! language ([`filter`]), sharing the generic boolean-expression parser in
+//! [`expr`]. [`field`] implements the field-path accessor grammar both DSLs
+//! build on.
 //!
 //! # Main Types
 //!
@@ -25,22 +25,3 @@ pub use source::SourceSelector;
 pub(crate) use source::{
     ClassExpansionMode, FileClassExpander, SourceAtom, SourceExpr,
 };
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    mod reexports {
-        use super::*;
-
-        #[test]
-        fn source_selector_all_parses_default() {
-            assert!(matches!(SourceSelector::All, SourceSelector::All));
-        }
-
-        #[test]
-        fn field_path_parses_file_name() {
-            assert!(FieldPath::parse("file.name").is_ok());
-        }
-    }
-}

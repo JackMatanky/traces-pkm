@@ -1,12 +1,12 @@
 //! Performance benchmark suite for query parsing.
 //!
 //! Exposes and monitors the CPU cost of parsing source selectors and filter
-//! expressions via `QueryRequest` and `SourceSelector`.
+//! expressions via `QueryBuilder` and `SourceSelector`.
 //!
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [String] ──(QueryRequest::filter)──► [FilterExpression AST]
+//! [String] ──(QueryBuilder::filter)──► [FilterExpression AST]
 //! [String] ──(SourceSelector::parse)─► [SourceSelector AST]
 //! ```
 //!
