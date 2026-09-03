@@ -53,7 +53,7 @@ mod error;
 mod format;
 mod grammar;
 mod plan;
-mod row;
+mod results;
 mod service;
 mod sort;
 mod value;
@@ -70,7 +70,7 @@ pub(crate) use grammar::{
     SourceExpr,
 };
 use plan::{QueryPlan, QueryTransform};
-pub use row::{QueryRow, QuerySet};
+pub use results::{QueryRow, QuerySet};
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
 

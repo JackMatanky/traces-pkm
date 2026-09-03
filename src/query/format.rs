@@ -1,6 +1,6 @@
 //! Markdown display formats for query result rows.
 
-use super::{QueryError, QueryResult, grammar::FieldPath, row::QueryRow};
+use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 
 /// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
 #[derive(Copy, Clone, Debug, Default)]
