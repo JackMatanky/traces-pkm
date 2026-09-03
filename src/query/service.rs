@@ -129,8 +129,8 @@ mod tests {
 
     use super::*;
     use crate::{
+        Note,
         index::{FileIndex, IndexerService},
-        note::Note,
         query::{QueryRecord, QueryRecordSet, QueryRequest, SourceSelector},
     };
 
@@ -158,7 +158,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::tag::Tag;
+        use crate::Tag;
 
         fn note_paths(outcome: &QueryRecordSet) -> Vec<&Path> {
             outcome
@@ -574,7 +574,7 @@ mod tests {
 
             assert_eq!(
                 record.field("title"),
-                Ok(crate::note::NoteFieldValue::String("Launch".to_owned()))
+                Ok(crate::NoteFieldValue::String("Launch".to_owned()))
             );
         }
 
@@ -595,8 +595,8 @@ mod tests {
 
             assert_eq!(
                 record.field("tags"),
-                Ok(crate::note::NoteFieldValue::List(vec![
-                    crate::note::NoteFieldValue::String("#projects".to_owned())
+                Ok(crate::NoteFieldValue::List(vec![
+                    crate::NoteFieldValue::String("#projects".to_owned())
                 ]))
             );
         }

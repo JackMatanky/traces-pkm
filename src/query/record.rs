@@ -26,8 +26,8 @@
 //!     .execute(&index, QueryRequest::pages(SourceSelector::All));
 //! ```
 //!
-//! [`FileBase`]: crate::file::FileBase
-//! [`Note`]: crate::note::Note
+//! [`FileBase`]: crate::FileBase
+//! [`Note`]: crate::Note
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -38,10 +38,10 @@ use super::{
     value::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::{
+    TaskStatus,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue},
-    task::TaskStatus,
 };
 
 /// A query row over one indexed [`FileEntry`].
@@ -91,7 +91,7 @@ impl QueryRecord {
     /// No-ops for a `Plain` or `Checkbox` item; only [`ListItemType::Task`]
     /// items carry a resolved status to promote.
     pub(super) fn with_task_item(mut self, item: &ListItem) -> Self {
-        let ListItemType::Task(status) = item.item_type() else {
+        let ListItemType::Task(status) = item.kind() else {
             return self;
         };
         self.kind = RowKind::Task(TaskRow {
@@ -119,7 +119,7 @@ impl QueryRecord {
     /// for page-level records.
     #[inline]
     #[must_use]
-    pub(crate) fn task_text(&self) -> Option<&str> {
+    pub fn task_text(&self) -> Option<&str> {
         match &self.kind {
             RowKind::Page => None,
             RowKind::Task(task) => Some(task.text.as_str()),

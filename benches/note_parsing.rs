@@ -33,7 +33,13 @@ use std::hint::black_box;
 use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use traces_pkm::parse_markdown;
+use traces_pkm::{MarkdownParserInput, parse_markdown};
+
+#[inline]
+fn bench_parse(path: &std::path::Path, src: &str) -> traces_pkm::Note {
+    let input = MarkdownParserInput::for_test(path, src);
+    parse_markdown(&input)
+}
 
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
@@ -241,8 +247,7 @@ fn bench_parse_markdown_prose_floor(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -280,8 +285,7 @@ fn bench_parse_markdown(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -321,8 +325,7 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -349,8 +352,7 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -378,8 +380,7 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -405,8 +406,7 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -466,8 +466,7 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -498,8 +497,7 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },
@@ -527,8 +525,7 @@ fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter(|| {
-                    let note =
-                        parse_markdown(black_box(path), black_box(source));
+                    let note = bench_parse(black_box(path), black_box(source));
                     black_box(note);
                 });
             },

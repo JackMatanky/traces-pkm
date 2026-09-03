@@ -16,9 +16,8 @@ use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
 use crate::{
-    DelimiterType, FieldKey,
+    DelimiterType, FieldKey, Tag,
     note::{NoteFieldValue, metadata::is_iso_date},
-    tag::Tag,
 };
 
 /// Extracts inline fields and tags from a parser scan buffer.
@@ -195,7 +194,7 @@ fn body_field_callback(
 /// - there is no `::` separator before the text ends,
 /// - the key is empty, contains a bracket character, or has an empty canonical
 ///   form (punctuation-only text), or
-/// - [`find_closing_delimiter`] finds no matching closing delimiter.
+/// - no matching closing delimiter is found.
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     kind: DelimiterType,
@@ -671,7 +670,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::tag::Tag;
+        use crate::Tag;
 
         #[rstest]
         #[case::standalone(

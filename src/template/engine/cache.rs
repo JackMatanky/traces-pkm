@@ -1,6 +1,6 @@
 //! Cache render-scoped resources in `State`'s temp storage.
 //!
-//! [`cached`] backs `query.rs`'s [`FileIndex`](crate::index::FileIndex)
+//! [`cached`] backs `query.rs`'s [`FileIndex`](crate::FileIndex)
 //! cache: it stashes a load result behind a fixed key so a render calling
 //! into a namespace several times pays for one load, instead of
 //! hand-rolling its own downcastable wrapper and get-or-load body per

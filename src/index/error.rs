@@ -79,7 +79,7 @@ pub enum IndexBuilderError {
         #[source]
         source: io::Error,
     },
-    /// Markdown file could not be read or parsed into a [`crate::note::Note`].
+    /// Markdown file could not be read or parsed into a [`crate::Note`].
     #[error("failed to parse note {path}")]
     NoteParse {
         /// The markdown file that failed to parse.
@@ -95,7 +95,7 @@ pub enum IndexBuilderError {
         /// The record path whose expected note was absent.
         path: PathBuf,
     },
-    /// A previously-persisted [`crate::note::Note`] could not be read via a
+    /// A previously-persisted [`crate::Note`] could not be read via a
     /// point lookup during refresh reconciliation.
     #[error("failed to read persisted note for {path}")]
     NoteLookup {

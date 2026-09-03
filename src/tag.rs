@@ -15,7 +15,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```ignore
-/// # use crate::tag::Tag;
+/// # use crate::Tag;
 /// let tag = Tag::parse("#projects/active").unwrap();
 /// assert_eq!(tag.as_str(), "#projects/active");
 /// assert!(tag.is_contained_in("#projects"));
@@ -29,18 +29,24 @@ pub struct Tag {
 /// Errors returned by [`Tag::parse`].
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum TagError {
+    /// The input tag string is missing the leading `#` prefix.
     #[error("tag must start with `#`")]
     MissingHash,
+    /// The character immediately following `#` is not an ASCII letter.
     #[error("tag must start with `#` followed by a letter, found `{found}`")]
     InvalidFirstCharacter {
+        /// The invalid character found after `#`.
         found: char,
     },
+    /// The tag body contains an invalid character.
     #[error(
         "invalid character `{found}` in tag; only letters, digits, `_`, `-`, \
          and `/` are allowed"
     )]
     InvalidBodyCharacter {
+        /// Byte offset in the input where the invalid character occurred.
         offset: usize,
+        /// The invalid character encountered.
         found: char,
     },
 }
@@ -102,12 +108,14 @@ impl Tag {
         })
     }
 
+    /// Returns the full tag string, including its leading `#`.
     #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.full
     }
 
+    /// Returns the hierarchical tag segments from root to leaf.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -122,8 +130,8 @@ impl Tag {
         &self.segments
     }
 
-    /// Returns `true` if this tag is contained in `prefix` — either
-    /// identical to `prefix` or nested below it at a `/` boundary.
+    /// Returns `true` if this tag is contained in `prefix`, matching either
+    /// an identical tag or a nested child below it at a `/` boundary.
     #[inline]
     #[must_use]
     pub fn is_contained_in(&self, prefix: &str) -> bool {
@@ -136,14 +144,6 @@ impl Tag {
     /// containment check: `#task` does not exactly match `#task/project`.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by task tag \
-                      filter classification added in a later task-system issue"
-        )
-    )]
     pub fn is_exact_match(&self, other: &Self) -> bool {
         self == other
     }

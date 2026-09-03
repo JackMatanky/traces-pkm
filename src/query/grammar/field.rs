@@ -15,8 +15,8 @@
 //! - `inlinks`: Project-relative paths of Notes linking to this Note.
 //! - Bare keys: frontmatter or inline metadata field keys.
 //!
-//! [`NoteFieldValue`]: crate::note::NoteFieldValue
-//! [`FileBase`]: crate::file::FileBase
+//! [`NoteFieldValue`]: crate::NoteFieldValue
+//! [`FileBase`]: crate::FileBase
 
 use crate::{FieldKey, field, query::error::FieldPathError};
 
@@ -29,28 +29,28 @@ use crate::{FieldKey, field, query::error::FieldPathError};
 /// The full set of accepted accessor names (including aliases like `ctime`
 /// for `created_at`) is listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
-/// [`FileBase`]: crate::file::FileBase
-/// [`NoteFieldValue`]: crate::note::NoteFieldValue
+/// [`FileBase`]: crate::FileBase
+/// [`NoteFieldValue`]: crate::NoteFieldValue
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
-    /// Accesses [`crate::file::FileBase::path`].
+    /// Accesses [`crate::FileBase::path`].
     Path,
-    /// Accesses [`crate::file::FileBase::name`].
+    /// Accesses [`crate::FileBase::name`].
     Name,
-    /// Accesses [`crate::file::FileBase::folder`].
+    /// Accesses [`crate::FileBase::folder`].
     Folder,
-    /// Accesses [`crate::file::FileBase::size`].
+    /// Accesses [`crate::FileBase::size`].
     Size,
-    /// Accesses [`crate::file::FileBase::created_at_or_modified`] as a
+    /// Accesses [`crate::FileBase::created_at_or_modified`] as a
     /// datetime without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`crate::file::FileBase::created_at_or_modified`] as a bare
+    /// Accesses [`crate::FileBase::created_at_or_modified`] as a bare
     /// date.
     CreatedDate,
-    /// Accesses [`crate::file::FileBase::modified_at`] as a datetime without
+    /// Accesses [`crate::FileBase::modified_at`] as a datetime without
     /// a UTC offset.
     ModifiedDateTime,
-    /// Accesses [`crate::file::FileBase::modified_at`] as a bare date.
+    /// Accesses [`crate::FileBase::modified_at`] as a bare date.
     ModifiedDate,
 }
 
@@ -93,7 +93,7 @@ impl FileField {
 
 /// A `task.<field>` accessor valid on task-level records.
 ///
-/// Resolves to [`crate::note::NoteFieldValue::Null`] on page-level records.
+/// Resolves to [`crate::NoteFieldValue::Null`] on page-level records.
 /// Accepted names: `completed`, `text`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TaskField {
@@ -131,21 +131,21 @@ impl TaskField {
 /// or a bare frontmatter key. Unknown `file.*` or `task.*` accessors produce
 /// a [`FieldPathError`] with an optional "did you mean" suggestion.
 ///
-/// [`NoteFieldValue`]: crate::note::NoteFieldValue
+/// [`NoteFieldValue`]: crate::NoteFieldValue
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldPath {
     /// Wraps a `file.<field>` accessor ([`FileField`]).
     File(FileField),
     /// Wraps a `task.<field>` accessor ([`TaskField`]), which resolves to
-    /// [`crate::note::NoteFieldValue::Null`] on page-level records.
+    /// [`crate::NoteFieldValue::Null`] on page-level records.
     Task(TaskField),
     /// Accesses a frontmatter or inline field key.
     Metadata(String),
-    /// Accesses Note tags as a [`crate::note::NoteFieldValue::List`] of tag
+    /// Accesses Note tags as a [`crate::NoteFieldValue::List`] of tag
     /// strings.
     Tags,
     /// Accesses project-relative paths of Notes linking to this Note as a
-    /// [`crate::note::NoteFieldValue::List`].
+    /// [`crate::NoteFieldValue::List`].
     ///
     /// Derived dynamically by `derive_inlinks` rather than stored directly on
     /// the Note.

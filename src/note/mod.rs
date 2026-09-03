@@ -1,47 +1,48 @@
 //! Parse Obsidian-style Markdown notes into structured records.
 //!
 //! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
-//! [`Note`] that holds frontmatter, lists, outgoing links, inline fields, and
-//! tags.
+//! [`Note`] that holds YAML frontmatter, lists, outgoing links, inline fields,
+//! and tags.
 //!
-//! # Pipeline
+//! # Architecture and Parsing Pipeline
 //!
-//! 1. `pulldown-cmark` tokenizes raw Markdown with YAML and wikilink extensions
-//!    enabled. Task markers are not a pulldown-cmark extension:
-//!    [`parser::marker::scan_marker_prefix`] recognizes them from item-leading
-//!    text.
-//! 2. `ParserContext` accumulates block-level state: frontmatter text, list
-//!    nesting, link targets, and plain-text scan buffers that exclude fenced
-//!    code blocks, indented code blocks, and inline code.
-//! 3. When a text block closes, [`parser::lexer::InlineTokenLexer`] scans its
-//!    buffer for `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and `#tag`
-//!    tokens. Status-marked list items also recognize date-shorthand emoji
-//!    (`🗓️`, `➕`, `🛫`, `⏳`, `✅`).
+//! 1. `pulldown-cmark` tokenizes raw Markdown with YAML metadata blocks and
+//!    wikilinks enabled. Task markers are recognized at item-leading positions
+//!    using pulldown-cmark-compatible whitespace rules.
+//! 2. `ParserContext` accumulates block-level state, including frontmatter
+//!    text, list nesting, link targets, and plain-text scan buffers that
+//!    exclude fenced code blocks, indented code blocks, and inline code spans.
+//! 3. When a text block closes, inline token lexing scans its buffer for `Key::
+//!    Value`, `[Key:: Value]`, `(Key:: Value)`, and `#tag` tokens.
+//!    Status-marked list items also recognize task emoji shorthands (`🗓️`,
+//!    `➕`, `🛫`, `⏳`, `✅`).
 //! 4. The assembled [`Note`] stores all extracted data in document order.
 //!
-//! # Main Types
+//! # Key Types
 //!
 //! - [`Note`]: parsed record for one Markdown file.
-//! - [`List`], [`ListItem`], [`ListItemType`]: ordered and unordered lists,
-//!   including classified task items and nested child lists.
+//! - [`List`], [`ListItem`], [`ListItemType`], [`TaskIter`]: ordered and
+//!   unordered lists, including classified task items, checkboxes, nested child
+//!   lists, and depth-first task iterators.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
-//! - [`Frontmatter`], `RawFrontmatter`: YAML frontmatter as structured fields
+//! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
 //!   or raw text.
 //! - [`NoteFieldValue`]: body metadata values parsed from `Key:: Value` syntax.
-//! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
+//! - [`Tag`](crate::Tag): Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;
+mod field;
 mod links;
 mod lists;
 mod metadata;
 mod model;
 mod parser;
 
+pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
-pub(crate) use lists::ListItemType;
-pub use lists::{List, ListItem};
+pub use lists::{List, ListItem, ListItemType, TaskIter};
+pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
-pub use metadata::{Frontmatter, NoteFieldValue};
 pub use model::Note;
-pub use parser::parse_markdown;
+pub use parser::{MarkdownParserInput, parse_markdown};

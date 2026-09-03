@@ -111,7 +111,7 @@ pub(crate) struct RawTaskConfig {
     /// Tags that classify a status-marked list item as a Task.
     ///
     /// Entries may omit the leading `#`; config resolution normalizes each
-    /// entry before constructing a [`crate::tag::Tag`]. Empty means no
+    /// entry before constructing a [`crate::Tag`]. Empty means no
     /// filter is configured: every status-marked list item becomes a Task.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) tag_filters: Vec<String>,

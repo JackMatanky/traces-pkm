@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use super::{delta::IndexDelta, inlinks::InlinkMap};
-use crate::{file::FileBase, note::Note};
+use crate::{FileBase, Note};
 
 /// Persisted cache of file records, parsed Note metadata, and derived inbound
 /// links.
@@ -96,7 +96,7 @@ impl FileEntry {
     /// Returns the parsed [`Note`], or `None` for a non-Markdown file.
     #[inline]
     #[must_use]
-    pub(crate) fn note(&self) -> Option<&Note> {
+    pub fn note(&self) -> Option<&Note> {
         self.note.as_deref().map(|entry| &entry.note)
     }
 
@@ -106,16 +106,6 @@ impl FileEntry {
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         self.note.as_deref().map_or(&[], |entry| &entry.inlinks)
-    }
-
-    /// Builds a [`FileEntry`] with the given fields.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[allow(
-        dead_code,
-        reason = "fixture helper used by tests outside entry.rs"
-    )]
-    pub(crate) fn new_test(file: FileBase, note: Option<Note>) -> Self {
-        Self::new(file, note)
     }
 }
 

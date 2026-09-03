@@ -21,7 +21,10 @@ use super::{
     FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
     entry, error::IndexBuilderError, store::IndexStore,
 };
-use crate::{DirTree, DirTreeError, file::FileBase};
+use crate::{
+    Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
+    file::FileBase,
+};
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
@@ -42,6 +45,8 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
+    tasks: TaskConfig,
+    frontmatter: FrontmatterConfig,
 }
 
 impl IndexerService {
@@ -51,7 +56,19 @@ impl IndexerService {
     pub fn new<P: Into<PathBuf>>(root: P) -> Self {
         Self {
             root: root.into(),
+            tasks: TaskConfig::default(),
+            frontmatter: FrontmatterConfig::default(),
         }
+    }
+
+    /// Attaches resolved [`Config`] settings for task and frontmatter
+    /// classification.
+    #[inline]
+    #[must_use]
+    pub fn with_config(mut self, config: &Config) -> Self {
+        self.tasks = config.tasks().clone();
+        self.frontmatter = config.frontmatter().clone();
+        self
     }
 
     /// Scans this service's root and builds a [`FileIndex`] in memory.
@@ -63,7 +80,10 @@ impl IndexerService {
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
-        Ok(builder::IndexBuilder::new(files).build(&self.root)?)
+        Ok(builder::IndexBuilder::new(files)
+            .with_tasks(self.tasks.clone())
+            .with_frontmatter(self.frontmatter.clone())
+            .build(&self.root)?)
     }
 
     /// Refreshes the persisted index for this service's root against current
@@ -73,7 +93,7 @@ impl IndexerService {
     ///
     /// Re-scans the root and diffs against the previously persisted index:
     ///
-    /// - Unchanged markdown Notes reuse their parsed [`crate::note::Note`].
+    /// - Unchanged markdown Notes reuse their parsed [`crate::Note`].
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
@@ -103,6 +123,8 @@ impl IndexerService {
             let files = self.scan()?;
             builder::IndexBuilder::new(files)
                 .with_cache(cache)
+                .with_tasks(self.tasks.clone())
+                .with_frontmatter(self.frontmatter.clone())
                 .build(&self.root)?
         };
         // read_txn (and cache, which borrows it) drop here, before
@@ -205,9 +227,9 @@ mod tests {
 
     use super::{super::IndexError, *};
     use crate::{
+        Note,
         file::FileBase,
         index::FileEntry,
-        note::Note,
         query::{QueryRecordSet, QueryRequest, QueryService, SourceSelector},
     };
 
@@ -477,8 +499,8 @@ mod tests {
 
         use super::*;
         use crate::{
+            Tag,
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
-            tag::Tag,
         };
 
         /// The `upserted`/`deleted`/link path lists extracted from an
@@ -846,7 +868,7 @@ mod tests {
             let loaded_b = find_note(&loaded, "b.md").expect("note b");
             assert_eq!(
                 loaded_b.frontmatter().and_then(|fm| fm.get("title").cloned()),
-                Some(crate::note::NoteFieldValue::String("B".to_owned()))
+                Some(crate::NoteFieldValue::String("B".to_owned()))
             );
         }
 

@@ -77,7 +77,9 @@ mod template;
 pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use config::{Config, ConfigService, TrustRequest};
+pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use config::{Config, ConfigService, TaskConfig, TrustRequest};
 pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,
@@ -96,6 +98,8 @@ pub(crate) use file_store::{
 pub use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
     FileEntry, FileIndex, IndexerService, derive_inlinks, path as path_codec,
@@ -104,7 +108,12 @@ pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use note::{Note, NoteFieldValue, parse_markdown};
+pub use note::{
+    List, ListItem, ListItemType, MarkdownParserInput, Note, NoteFieldValue,
+    TaskIter, parse_markdown,
+};
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use note::{Note, NoteFieldValue};
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
@@ -113,6 +122,15 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
+#[cfg(any(test, feature = "test-utils"))]
+pub use tag::{Tag, TagError};
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use tag::{Tag, TagError};
+pub(crate) use task::{TaskStatus, TaskStatusMap};
+#[cfg(test)]
+pub(crate) use task::{TaskStatusSymbol, TaskStatusType};
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use template::TemplateService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,

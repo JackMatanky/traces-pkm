@@ -13,8 +13,7 @@ use clap::{ArgGroup, Args};
 
 use super::error::{CliError, CliResult};
 use crate::{
-    DialogError, DialogProvider, PresetDialogProvider,
-    config::{Config, ConfigService},
+    Config, ConfigService, DialogError, DialogProvider, PresetDialogProvider,
     template::{
         TemplateError, TemplatePathInput, TemplateService, WriteMode,
         WriteOutcome,

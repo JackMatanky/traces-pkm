@@ -8,7 +8,7 @@ use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
 
 use super::error::{CliError, CliResult};
-use crate::{config::ConfigService, template::TemplateService};
+use crate::{ConfigService, template::TemplateService};
 
 /// Arguments for `traces completions`.
 ///

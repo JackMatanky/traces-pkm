@@ -22,7 +22,7 @@ use super::{
     path::{DeclaredOutputPath, TemplatePath, TemplatePathInput},
     writer::{TemplateWriteTarget, WriteMode, WriteOutcome},
 };
-use crate::{DialogProvider, config::Config};
+use crate::{Config, DialogProvider};
 
 /// Resolves, renders, and writes templates for one configuration.
 ///
@@ -282,7 +282,7 @@ impl<'a> TemplateService<'a> {
     /// Treats [`Config::output_dir`] as a trusted base directory rather than an
     /// untrusted user path.
     ///
-    /// [`Config::output_dir`]: crate::config::Config::output_dir
+    /// [`Config::output_dir`]: crate::Config::output_dir
     fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         self.config.output_dir().join(resolved.default_output_filename())
     }

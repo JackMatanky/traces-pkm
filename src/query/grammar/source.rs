@@ -844,7 +844,7 @@ mod tests {
         use std::{fs, path::Path};
 
         use super::*;
-        use crate::{FileIndex, index::IndexerService};
+        use crate::{FileIndex, IndexerService};
 
         fn find_entry<'a>(
             entries: &'a [crate::index::FileEntry],
@@ -995,10 +995,11 @@ mod tests {
 
         #[test]
         fn extracts_values_from_list_field() {
-            let note = crate::note::parse_markdown(
-                "test.md",
+            let input = crate::note::MarkdownParserInput::for_test(
+                std::path::Path::new("test.md"),
                 "---\ntags:\n  - rust\n  - pkm\n---\nBody.",
             );
+            let note = crate::note::parse_markdown(&input);
             let values: Vec<&str> = class_values(&note, "tags").collect();
             assert_eq!(values, vec!["rust", "pkm"]);
         }

@@ -75,8 +75,8 @@ use minijinja::{
 
 use super::error::TemplateEngineResult;
 use crate::{
+    NoteFieldValue,
     index::{FileIndex, IndexError, IndexerService},
-    note::NoteFieldValue,
     query::{
         ClassExpansionMode, FieldPath, FileField, QueryError, QueryRecord,
         QueryRecordSet, QueryRequest, QueryService, SourceAtom, SourceSelector,

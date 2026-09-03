@@ -38,8 +38,8 @@ pub(crate) use cwd::CwdGuard;
 pub use error::{CliError, CliResult};
 
 use crate::{
-    DialogProvider,
-    config::{Config, ConfigService, DiscoveryScope, TrustRequests},
+    Config, ConfigService, DialogProvider,
+    config::{DiscoveryScope, TrustRequests},
     index::{FileIndex, IndexerService},
     query::{
         QueryError, QueryRecordSet, QueryRequest, QueryService, SourceSelector,
@@ -259,13 +259,14 @@ fn refresh_page_query(
     descending: bool,
 ) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index =
-        Arc::new(IndexerService::new(root).refresh().map_err(|source| {
-            CliError::Index {
+    let index = Arc::new(
+        IndexerService::new(root).with_config(config).refresh().map_err(
+            |source| CliError::Index {
                 root: root.to_path_buf(),
                 source,
-            }
-        })?);
+            },
+        )?,
+    );
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut request = QueryRequest::pages(source);
@@ -297,13 +298,14 @@ fn refresh_task_query(
     filters: &[String],
 ) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index =
-        Arc::new(IndexerService::new(root).refresh().map_err(|source| {
-            CliError::Index {
+    let index = Arc::new(
+        IndexerService::new(root).with_config(config).refresh().map_err(
+            |source| CliError::Index {
                 root: root.to_path_buf(),
                 source,
-            }
-        })?);
+            },
+        )?,
+    );
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut request = QueryRequest::tasks(source);
@@ -754,8 +756,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            cli::CwdGuard,
-            config::{ConfigService, TrustRequest},
+            ConfigService, TrustRequest, cli::CwdGuard,
             dialog::PresetDialogProvider,
         };
 
@@ -1213,7 +1214,7 @@ mod tests {
             >::try_new(config_file)
             .expect("valid local config");
             service
-                .trust(&crate::config::TrustRequest::from(&config))
+                .trust(&crate::TrustRequest::from(&config))
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&root);
 

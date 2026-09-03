@@ -8,7 +8,7 @@
 //! - [`SchemasConfig`] resolves the `[schemas]` class field and registry path.
 //! - [`FrontmatterConfig`] resolves `[frontmatter]` key names.
 //! - [`DateFieldConfig`] pairs a date frontmatter key with its format.
-
+//! - [`TaskConfig`] resolves `[tasks]` task statuses and tag filters.
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -22,10 +22,8 @@ use super::{
     },
 };
 use crate::{
-    FieldName, FieldNameError,
+    FieldName, FieldNameError, Tag, TaskStatusMap,
     path::{PathError, RootConfinedPath, SafeRelativePath},
-    tag::Tag,
-    task::TaskStatusMap,
 };
 
 /// Default `[schemas] class_field` when unconfigured.
@@ -129,17 +127,6 @@ impl Config {
     /// Returns the resolved `[frontmatter]` settings.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "public accessor surface kept for API stability; only \
-                      config/service.rs's config-resolution test suite reads \
-                      it directly (title/aliases/date-field assertions), \
-                      production code reaches [`Config`]'s per-field \
-                      projection methods instead"
-        )
-    )]
     pub const fn frontmatter(&self) -> &FrontmatterConfig {
         &self.frontmatter
     }
@@ -147,15 +134,6 @@ impl Config {
     /// Returns the resolved `[tasks]` settings.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "public accessor surface kept for API stability; no \
-                      production consumer until the task-system parser and \
-                      classification issues land"
-        )
-    )]
     pub const fn tasks(&self) -> &TaskConfig {
         &self.tasks
     }
@@ -219,6 +197,15 @@ impl Config {
     #[must_use]
     pub fn with_frontmatter(mut self, frontmatter: FrontmatterConfig) -> Self {
         self.frontmatter = frontmatter;
+        self
+    }
+
+    /// Overrides the `[tasks]` resolution on a test-built config.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn with_tasks(mut self, tasks: TaskConfig) -> Self {
+        self.tasks = tasks;
         self
     }
 }
@@ -706,14 +693,6 @@ impl TaskConfig {
     /// which is a genuine resolved-setting read.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by the custom \
-                      marker scanner added in a later task-system issue"
-        )
-    )]
     pub(crate) const fn statuses(&self) -> &TaskStatusMap {
         &self.statuses
     }
@@ -724,16 +703,19 @@ impl TaskConfig {
     /// becomes a Task.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no production consumer until task classification added \
-                      in a later task-system issue"
-        )
-    )]
     pub fn tag_filters(&self) -> &[Tag] {
         &self.tag_filters
+    }
+
+    /// Builds a task config with custom tag filters for tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn for_test(tag_filters: Vec<Tag>) -> Self {
+        Self {
+            statuses: TaskStatusMap::default(),
+            tag_filters,
+        }
     }
 }
 

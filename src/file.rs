@@ -99,8 +99,7 @@ impl FileBase {
     }
 
     /// Builds a [`FileBase`] with custom fields for test fixtures.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[allow(dead_code, reason = "fixture helper used by tests outside file.rs")]
+    #[cfg(test)]
     pub(crate) fn new_test(
         path: PathBuf,
         folder: PathBuf,
@@ -298,12 +297,12 @@ impl std::borrow::Borrow<str> for BaseNameRef<'_> {
 /// Markdown notes get parsed [`Note`] metadata in addition to their
 /// [`FileBase`]. Other files only keep general file metadata.
 ///
-/// [`Note`]: crate::note::Note
+/// [`Note`]: crate::Note
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FileFormat {
     /// Markdown file parsed into a [`Note`].
     ///
-    /// [`Note`]: crate::note::Note
+    /// [`Note`]: crate::Note
     Note,
     /// Regular non-markdown file.
     Other,

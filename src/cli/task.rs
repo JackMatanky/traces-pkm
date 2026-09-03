@@ -4,12 +4,12 @@
 //! selecting a source scope, applying the optional filter, and printing
 //! matching tasks as Markdown checkbox lines.
 //!
-//! [`FileIndex`]: crate::index::FileIndex
+//! [`FileIndex`]: crate::FileIndex
 
 use clap::Args;
 
 use super::error::{CliError, CliResult};
-use crate::config::{Config, ConfigService};
+use crate::{Config, ConfigService};
 
 /// Arguments for `traces task`.
 ///
@@ -42,7 +42,7 @@ impl Task {
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`FileIndex`]: crate::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
@@ -76,7 +76,7 @@ impl Task {
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`FileIndex`]: crate::FileIndex
     fn lines(&self, config: &Config) -> Result<Vec<String>, CliError> {
         let outcome = super::refresh_task_query(
             config,

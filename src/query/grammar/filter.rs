@@ -8,8 +8,8 @@ use super::{
     },
 };
 use crate::{
-    LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
-    note::NoteFieldValue,
+    LexError, LexTokenStream, LexedToken, NoteFieldValue, TokenSpec,
+    lexical_unquote,
     query::{
         QueryRecord,
         error::{QueryDialect, QueryRequestError, QuerySyntaxError},
@@ -452,7 +452,7 @@ mod tests {
 
     use super::FilterExpr;
     use crate::{
-        index::IndexerService,
+        IndexerService,
         query::{QueryError, *},
     };
 
@@ -861,7 +861,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use crate::{
-            note::NoteFieldValue,
+            NoteFieldValue,
             query::value::{QueryFieldValueRef, QueryListValueRef},
         };
 

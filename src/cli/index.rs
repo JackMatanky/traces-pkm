@@ -1,27 +1,26 @@
 //! Persisted index rebuild command.
 //!
 //! Handles `traces index` by loading the trusted project root, refreshing its
-//! [`FileIndex`], and replacing the stored index. Task queries live in the task
-//! command module.
+//! [`FileIndex`](crate::FileIndex), and replacing the stored index. Task
+//! queries live in the task command module.
 
 use clap::Args;
 
 use super::error::{CliError, CliResult};
-use crate::{config::ConfigService, index::IndexerService};
+use crate::{ConfigService, IndexerService};
 
 /// Arguments for `traces index`.
 ///
 /// Takes no positional or optional arguments. Scans the trusted project root
-/// and persists a fresh [`FileIndex`].
+/// and persists a fresh [`FileIndex`](crate::FileIndex).
 #[derive(Debug, Args)]
 pub(super) struct Index;
 
 impl Index {
     /// Runs `traces index` for the trusted project root.
     ///
-    /// Scans the root, persists the fresh [`FileIndex`], and reports the
-    /// indexed file count to stderr.
-    ///
+    /// Scans the root, persists the fresh [`FileIndex`](crate::FileIndex), and
+    /// reports the indexed file count to stderr.
     /// # Errors
     ///
     /// - [`CliError::CurrentDirectory`] if the current directory cannot be
@@ -29,8 +28,7 @@ impl Index {
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
     /// - [`CliError::Index`] if scanning the project root or persisting the
-    ///   [`FileIndex`] fails.
-    #[inline]
+    ///   [`FileIndex`](crate::FileIndex) fails.
     #[expect(
         clippy::unused_self,
         reason = "keeps the dispatch signature consistent with every other \
@@ -44,7 +42,7 @@ impl Index {
             root: root.to_path_buf(),
             source,
         };
-        let indexer = IndexerService::new(root);
+        let indexer = IndexerService::new(root).with_config(&config);
         let index = indexer.build().map_err(index_error)?;
         indexer.persist(&index).map_err(index_error)?;
         eprintln!(
@@ -61,7 +59,7 @@ mod tests {
     use super::*;
 
     mod fixtures {
-        use crate::index::FileIndex;
+        use crate::FileIndex;
 
         pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
             index

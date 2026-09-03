@@ -19,6 +19,7 @@
 //!
 //! - [`ConfigService`] owns the load pipeline and trust administration.
 //! - [`Config`] holds merged settings ready for consumers.
+//! - [`TaskConfig`] holds resolved task status mappings and tag filters.
 //! - [`TrustRequest`] names a workspace root or config file for trust
 //!   operations.
 //!
@@ -44,7 +45,7 @@ pub(crate) use error::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
-pub use model::Config;
+pub use model::{Config, FrontmatterConfig, TaskConfig};
 pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
