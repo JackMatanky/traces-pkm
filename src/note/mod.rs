@@ -28,8 +28,7 @@
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
 //!   or raw text.
 //! - [`NoteFieldValue`]: body metadata values parsed from `Key:: Value` syntax.
-//! - [`Tag`](crate::tag::Tag): Markdown tags such as `#book` and
-//!   `#projects/active`.
+//! - [`Tag`](crate::Tag): Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;
 mod field;

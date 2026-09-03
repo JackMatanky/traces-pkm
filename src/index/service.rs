@@ -22,8 +22,7 @@ use super::{
     entry, error::IndexBuilderError, store::IndexStore,
 };
 use crate::{
-    DirTree, DirTreeError,
-    config::{Config, FrontmatterConfig, TaskConfig},
+    Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
     file::FileBase,
 };
 
@@ -94,7 +93,7 @@ impl IndexerService {
     ///
     /// Re-scans the root and diffs against the previously persisted index:
     ///
-    /// - Unchanged markdown Notes reuse their parsed [`crate::note::Note`].
+    /// - Unchanged markdown Notes reuse their parsed [`crate::Note`].
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
@@ -228,9 +227,9 @@ mod tests {
 
     use super::{super::IndexError, *};
     use crate::{
+        Note,
         file::FileBase,
         index::FileEntry,
-        note::Note,
         query::{QueryRecordSet, QueryRequest, QueryService, SourceSelector},
     };
 
@@ -500,8 +499,8 @@ mod tests {
 
         use super::*;
         use crate::{
+            Tag,
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
-            tag::Tag,
         };
 
         /// The `upserted`/`deleted`/link path lists extracted from an
@@ -869,7 +868,7 @@ mod tests {
             let loaded_b = find_note(&loaded, "b.md").expect("note b");
             assert_eq!(
                 loaded_b.frontmatter().and_then(|fm| fm.get("title").cloned()),
-                Some(crate::note::NoteFieldValue::String("B".to_owned()))
+                Some(crate::NoteFieldValue::String("B".to_owned()))
             );
         }
 

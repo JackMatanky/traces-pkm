@@ -26,7 +26,7 @@ use super::{
     error::{DbError, DbResult, IndexResult},
     inlinks::InlinkMap,
 };
-use crate::{file::FileBase, note::Note};
+use crate::{FileBase, Note};
 
 /// File metadata table.
 ///
@@ -664,7 +664,7 @@ mod tests {
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
     use crate::{
-        index::IndexerService,
+        IndexerService,
         note::{MarkdownParserInput, parse_markdown},
     };
 
@@ -1361,7 +1361,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
                 .expect("write note");
-            let indexer = crate::index::IndexerService::new(temp.path());
+            let indexer = crate::IndexerService::new(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");

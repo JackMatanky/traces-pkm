@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use super::{FileFormat, inlinks::InlinkMap};
-use crate::file::FileBase;
+use crate::FileBase;
 
 /// Per-path persistence plan produced by
 /// [`super::builder::IndexBuilder::build`].
@@ -39,8 +39,8 @@ pub(crate) enum IndexDelta {
 ///
 /// Each field names the paths that changed since the last persist:
 ///
-/// - `upserted` and `deleted` cover [`crate::file::FileBase`] and
-///   [`crate::note::Note`] rows.
+/// - `upserted` and `deleted` cover [`crate::FileBase`] and [`crate::Note`]
+///   rows.
 /// - `links_upserted` and `links_deleted` cover the
 ///   [`super::inlinks::InlinkMap`] multimap table.
 ///
@@ -231,7 +231,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::IndexerService;
+        use crate::IndexerService;
 
         #[test]
         fn deleted_note_sets_has_deleted_note() {

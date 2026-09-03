@@ -844,7 +844,7 @@ mod tests {
         use std::{fs, path::Path};
 
         use super::*;
-        use crate::{FileIndex, index::IndexerService};
+        use crate::{FileIndex, IndexerService};
 
         fn find_entry<'a>(
             entries: &'a [crate::index::FileEntry],

@@ -173,7 +173,7 @@ static TRACES_STATE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 /// Contains BLAKE3-keyed symbolic links on Unix and path-bearing files on
 /// Windows for every config file [`ConfigService`] has loaded.
 ///
-/// [`ConfigService`]: crate::config::ConfigService
+/// [`ConfigService`]: crate::ConfigService
 pub(crate) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("tracked-configs"));
 

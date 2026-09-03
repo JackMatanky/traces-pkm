@@ -4,8 +4,8 @@ use std::{cmp::Ordering, fmt::Write as _, path::PathBuf};
 
 use super::sort::compare_field_values;
 use crate::{
+    Tag,
     note::{Link, NoteFieldValue},
-    tag::Tag,
 };
 
 /// Borrowed field value resolved from a [`super::QueryRecord`].

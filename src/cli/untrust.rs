@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use super::error::{CliError, CliResult};
-use crate::config::ConfigService;
+use crate::ConfigService;
 
 /// Arguments for `traces untrust`.
 ///
@@ -63,8 +63,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        TrustRequest,
         cli::tests::fixtures::{create_empty_config, service},
-        config::{ConfigTrustStatus, TrustRequest},
+        config::ConfigTrustStatus,
     };
     #[derive(Debug, Parser)]
     struct TestCli {

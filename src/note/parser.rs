@@ -50,7 +50,7 @@ use pulldown_cmark::{
 use super::{
     Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
-use crate::{ByteOffset, FieldKey, tag::Tag, task::TaskStatusMap};
+use crate::{ByteOffset, FieldKey, Tag, task::TaskStatusMap};
 
 mod inline;
 mod input;
@@ -474,7 +474,7 @@ mod tests {
         parse_markdown(&input)
     }
 
-    fn parse_with_tasks(src: &str, tasks: &crate::config::TaskConfig) -> Note {
+    fn parse_with_tasks(src: &str, tasks: &crate::TaskConfig) -> Note {
         let frontmatter = crate::config::FrontmatterConfig::default();
         let input = MarkdownParserInput::new(
             std::path::Path::new("note.md"),
@@ -889,7 +889,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::tag::Tag;
+        use crate::Tag;
 
         #[rstest]
         #[case::body("Author:: Jane Doe", "author", "Jane Doe")]
@@ -1315,7 +1315,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::config::TaskConfig;
+        use crate::TaskConfig;
 
         #[test]
         fn classifies_matching_items_as_tasks_and_non_matching_as_checkboxes() {

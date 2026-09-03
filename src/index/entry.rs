@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use super::{delta::IndexDelta, inlinks::InlinkMap};
-use crate::{file::FileBase, note::Note};
+use crate::{FileBase, Note};
 
 /// Persisted cache of file records, parsed Note metadata, and derived inbound
 /// links.

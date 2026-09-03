@@ -11,7 +11,7 @@ use super::{
     lists::{List, TaskIter},
     metadata::Frontmatter,
 };
-use crate::{FieldKey, FieldKeyRef, tag::Tag};
+use crate::{FieldKey, FieldKeyRef, Tag};
 
 /// A parsed Markdown note.
 ///

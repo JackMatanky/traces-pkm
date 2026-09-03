@@ -16,9 +16,8 @@ use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
 use crate::{
-    DelimiterType, FieldKey,
+    DelimiterType, FieldKey, Tag,
     note::{NoteFieldValue, metadata::is_iso_date},
-    tag::Tag,
 };
 
 /// Extracts inline fields and tags from a parser scan buffer.
@@ -671,7 +670,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::tag::Tag;
+        use crate::Tag;
 
         #[rstest]
         #[case::standalone(

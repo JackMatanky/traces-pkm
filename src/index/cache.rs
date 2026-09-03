@@ -3,7 +3,7 @@
 //! [`RefreshCache`] loads the previous scan and inbound-link map through a
 //! caller-supplied read transaction, then diffs a fresh scan against them
 //! (delegating the two-pointer merge algorithms to [`super::delta`]) and
-//! resolves each record's [`crate::note::Note`] via point lookup or backdated
+//! resolves each record's [`crate::Note`] via point lookup or backdated
 //! reparse. Used exclusively by
 //! [`super::builder::IndexBuilder::build_with_cache`].
 
@@ -15,7 +15,7 @@ use super::{
     error::{IndexBuilderError, IndexError, IndexResult},
     inlinks::InlinkMap,
 };
-use crate::file::FileBase;
+use crate::FileBase;
 
 /// Whether a record's previously-persisted Note is still valid, decided by
 /// [`RefreshCache::diff_files`]'s merge-join. Replaces a bare `is_upserted:
@@ -114,10 +114,10 @@ impl<'a> RefreshCache<'a> {
         state: NoteCacheState,
         root: &Path,
         (tasks, frontmatter): (
-            &crate::config::TaskConfig,
+            &crate::TaskConfig,
             &crate::config::FrontmatterConfig,
         ),
-    ) -> Result<(crate::note::Note, bool), IndexBuilderError> {
+    ) -> Result<(crate::Note, bool), IndexBuilderError> {
         match state {
             NoteCacheState::Upserted => {
                 self.reparse_and_backdate(file, root, tasks, frontmatter)
@@ -143,7 +143,7 @@ impl<'a> RefreshCache<'a> {
     fn recall_unchanged_note(
         &self,
         file: &FileBase,
-    ) -> Result<crate::note::Note, IndexBuilderError> {
+    ) -> Result<crate::Note, IndexBuilderError> {
         self.store
             .read_note(self.txn, file.path())
             .map_err(|source| IndexBuilderError::NoteLookup {
@@ -169,9 +169,9 @@ impl<'a> RefreshCache<'a> {
         &self,
         file: &FileBase,
         root: &Path,
-        tasks: &crate::config::TaskConfig,
+        tasks: &crate::TaskConfig,
         frontmatter: &crate::config::FrontmatterConfig,
-    ) -> Result<(crate::note::Note, bool), IndexBuilderError> {
+    ) -> Result<(crate::Note, bool), IndexBuilderError> {
         let note = parse_note(root, file, tasks, frontmatter)?;
         let outlinks_changed = match self.store.read_note(self.txn, file.path())
         {
@@ -224,7 +224,7 @@ fn log_backdating_lookup_failure(path: &Path, source: &IndexError) {
 /// `Link::text` (display text) is deliberately excluded: comparing it would
 /// force a recompute on the common case of a user renaming a wikilink's display
 /// text without moving its target.
-fn outlink_targets(note: &crate::note::Note) -> Vec<&str> {
+fn outlink_targets(note: &crate::Note) -> Vec<&str> {
     let mut targets: Vec<&str> =
         note.outlinks().iter().map(crate::note::Link::target).collect();
     targets.sort_unstable();
@@ -275,7 +275,7 @@ mod tests {
             let cache = load_cache(&store, &txn);
             let file = files.first().expect("one record");
 
-            let tasks = crate::config::TaskConfig::default();
+            let tasks = crate::TaskConfig::default();
             let frontmatter = crate::config::FrontmatterConfig::default();
             let (_, outlinks_changed) = cache
                 .reconcile_note(
@@ -300,7 +300,7 @@ mod tests {
             let cache = load_cache(&store, &txn);
             let file = files.first().expect("one record");
 
-            let tasks = crate::config::TaskConfig::default();
+            let tasks = crate::TaskConfig::default();
             let frontmatter = crate::config::FrontmatterConfig::default();
             let (note, outlinks_changed) = cache
                 .reconcile_note(

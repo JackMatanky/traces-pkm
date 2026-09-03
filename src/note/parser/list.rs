@@ -17,11 +17,10 @@ use super::{
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
 use crate::{
-    FieldKey, SourceLine,
+    FieldKey, SourceLine, Tag,
     note::{
         List, ListItem, ListItemType, NoteFieldValue, lists::ListItemPosition,
     },
-    tag::Tag,
     task::TaskStatusMap,
 };
 

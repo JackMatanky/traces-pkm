@@ -4,15 +4,12 @@
 //! selecting a source scope, applying the optional filter, and printing
 //! matching pages as a Markdown table.
 //!
-//! [`FileIndex`]: crate::index::FileIndex
+//! [`FileIndex`]: crate::FileIndex
 
 use clap::Args;
 
 use super::error::CliError;
-use crate::{
-    config::{Config, ConfigService},
-    query::SortOrder,
-};
+use crate::{Config, ConfigService, query::SortOrder};
 
 /// Arguments for `traces table`.
 ///
@@ -57,7 +54,7 @@ impl Table {
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`FileIndex`]: crate::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "table output is primary command output, not diagnostic \
@@ -85,7 +82,7 @@ impl Table {
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`FileIndex`]: crate::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let outcome = super::refresh_page_query(

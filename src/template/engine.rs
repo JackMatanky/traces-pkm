@@ -52,8 +52,7 @@ use super::{
     error::TemplateError, loader::TemplateLoader, path::DeclaredOutputPath,
 };
 use crate::{
-    DialogProvider,
-    config::Config,
+    Config, DialogProvider,
     schema::{SchemaService, warn_schema_construction_diagnostics},
 };
 
@@ -66,7 +65,7 @@ use crate::{
 ///
 /// [`TemplateService`]: super::service::TemplateService
 /// [`TemplateLoader`]: super::loader::TemplateLoader
-/// [`Config`]: crate::config::Config
+/// [`Config`]: crate::Config
 #[derive(Debug)]
 pub(super) struct TemplateEngine {
     env: Environment<'static>,

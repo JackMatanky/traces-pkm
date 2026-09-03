@@ -38,8 +38,8 @@ pub(crate) use cwd::CwdGuard;
 pub use error::{CliError, CliResult};
 
 use crate::{
-    DialogProvider,
-    config::{Config, ConfigService, DiscoveryScope, TrustRequests},
+    Config, ConfigService, DialogProvider,
+    config::{DiscoveryScope, TrustRequests},
     index::{FileIndex, IndexerService},
     query::{
         QueryError, QueryRecordSet, QueryRequest, QueryService, SourceSelector,
@@ -756,8 +756,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            cli::CwdGuard,
-            config::{ConfigService, TrustRequest},
+            ConfigService, TrustRequest, cli::CwdGuard,
             dialog::PresetDialogProvider,
         };
 
@@ -1215,7 +1214,7 @@ mod tests {
             >::try_new(config_file)
             .expect("valid local config");
             service
-                .trust(&crate::config::TrustRequest::from(&config))
+                .trust(&crate::TrustRequest::from(&config))
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&root);
 

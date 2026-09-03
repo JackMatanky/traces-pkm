@@ -15,7 +15,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```ignore
-/// # use crate::tag::Tag;
+/// # use crate::Tag;
 /// let tag = Tag::parse("#projects/active").unwrap();
 /// assert_eq!(tag.as_str(), "#projects/active");
 /// assert!(tag.is_contained_in("#projects"));

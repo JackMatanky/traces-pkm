@@ -267,7 +267,7 @@ directory = "global_schemas"
             let builder = ConfigBuilder::new(root, local, Some(global));
             let config = builder.build().expect("build merged config");
 
-            assert_eq!(config.tasks().tag_filters(), [crate::tag::Tag::parse(
+            assert_eq!(config.tasks().tag_filters(), [crate::Tag::parse(
                 "#task"
             )
             .unwrap()]);
@@ -297,7 +297,7 @@ directory = "global_schemas"
             let builder = ConfigBuilder::new(root, local, Some(global));
             let config = builder.build().expect("build merged config");
 
-            assert_eq!(config.tasks().tag_filters(), [crate::tag::Tag::parse(
+            assert_eq!(config.tasks().tag_filters(), [crate::Tag::parse(
                 "#todo"
             )
             .unwrap()]);

@@ -5,7 +5,7 @@ use super::{
     grammar::{FieldPath, FilterExpr, SourceSelector},
     sort::SortKey,
 };
-use crate::note::NoteFieldValue;
+use crate::NoteFieldValue;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum QueryMode {
@@ -313,7 +313,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        index::IndexerService,
+        IndexerService,
         query::{FieldPathError, QueryService},
     };
 

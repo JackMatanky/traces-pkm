@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 
 use super::error::{CliError, CliResult};
-use crate::config::{ConfigService, TrustRequest};
+use crate::{ConfigService, TrustRequest};
 
 /// Arguments for `traces trust`.
 ///

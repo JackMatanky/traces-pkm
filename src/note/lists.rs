@@ -134,7 +134,7 @@ impl ListItem {
     /// queries. This per-item list preserves the field-to-item relationship for
     /// task and list queries.
     ///
-    /// [`Note::inline_fields`]: crate::note::Note::inline_fields
+    /// [`Note::inline_fields`]: crate::Note::inline_fields
     #[inline]
     #[must_use]
     pub(crate) fn with_fields(
@@ -268,6 +268,62 @@ impl ListItemType {
         matches!(self, Self::Plain)
     }
 }
+
+/// A list item's position: its 0-indexed nesting depth, 1-indexed source
+/// line, and its immediate parent's 1-indexed line, if nested.
+///
+/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
+/// degenerate input, not a real document, so a `usize` counter would spend
+/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
+)]
+pub(super) struct ListItemPosition {
+    depth: u8,
+    line: SourceLine,
+    parent: Option<SourceLine>,
+}
+
+impl ListItemPosition {
+    /// Creates a position from its source line, 0-indexed nesting depth, and
+    /// optional parent line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        line: SourceLine,
+        depth: u8,
+        parent: Option<SourceLine>,
+    ) -> Self {
+        Self {
+            depth,
+            line,
+            parent,
+        }
+    }
+
+    /// Returns the 0-indexed nesting level.
+    #[inline]
+    #[must_use]
+    pub(super) const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Returns the 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn line(&self) -> SourceLine {
+        self.line
+    }
+
+    /// Returns the immediate parent item's 1-indexed source line, if this
+    /// item is nested inside another item's child list.
+    #[inline]
+    #[must_use]
+    pub(super) const fn parent(&self) -> Option<SourceLine> {
+        self.parent
+    }
+}
+
 /// Depth-first iterator over task list items in a [`super::Note`].
 ///
 /// Yields items classified as [`ListItemType::Task`], recursing through child
@@ -326,60 +382,6 @@ impl<'a> Iterator for TaskIter<'a> {
     }
 }
 
-/// A list item's position: its 0-indexed nesting depth, 1-indexed source
-/// line, and its immediate parent's 1-indexed line, if nested.
-///
-/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
-/// degenerate input, not a real document, so a `usize` counter would spend
-/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
-)]
-pub(super) struct ListItemPosition {
-    depth: u8,
-    line: SourceLine,
-    parent: Option<SourceLine>,
-}
-
-impl ListItemPosition {
-    /// Creates a position from its source line, 0-indexed nesting depth, and
-    /// optional parent line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(
-        line: SourceLine,
-        depth: u8,
-        parent: Option<SourceLine>,
-    ) -> Self {
-        Self {
-            depth,
-            line,
-            parent,
-        }
-    }
-
-    /// Returns the 0-indexed nesting level.
-    #[inline]
-    #[must_use]
-    pub(super) const fn depth(&self) -> u8 {
-        self.depth
-    }
-
-    /// Returns the 1-indexed source line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn line(&self) -> SourceLine {
-        self.line
-    }
-
-    /// Returns the immediate parent item's 1-indexed source line, if this
-    /// item is nested inside another item's child list.
-    #[inline]
-    #[must_use]
-    pub(super) const fn parent(&self) -> Option<SourceLine> {
-        self.parent
-    }
-}
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -430,7 +432,7 @@ mod tests {
 
     #[test]
     fn stores_fields_when_attached_with_with_fields() {
-        use crate::note::NoteFieldValue;
+        use crate::NoteFieldValue;
 
         let key = FieldKey::try_new("priority").expect("valid test field key");
         let mut fields = IndexMap::new();

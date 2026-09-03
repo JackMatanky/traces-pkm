@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use crate::note::NoteFieldValue;
+use crate::NoteFieldValue;
 
 /// Sort direction for sorting operations and CLI configuration.
 ///
@@ -142,7 +142,7 @@ mod tests {
     use std::{fs, path::Path, sync::Arc};
 
     use super::super::*;
-    use crate::index::IndexerService;
+    use crate::IndexerService;
 
     fn outcome_for_files(
         temp: &Path,
@@ -291,7 +291,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::compare_field_values;
-        use crate::note::NoteFieldValue;
+        use crate::NoteFieldValue;
 
         #[test]
         fn orders_false_before_true() {
@@ -311,7 +311,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::sort_key_cmp;
-        use crate::note::NoteFieldValue;
+        use crate::NoteFieldValue;
         #[test]
         fn null_is_less_than_any_value() {
             let null = NoteFieldValue::Null;

@@ -26,8 +26,8 @@
 //!     .execute(&index, QueryRequest::pages(SourceSelector::All));
 //! ```
 //!
-//! [`FileBase`]: crate::file::FileBase
-//! [`Note`]: crate::note::Note
+//! [`FileBase`]: crate::FileBase
+//! [`Note`]: crate::Note
 
 use std::{path::PathBuf, sync::Arc};
 

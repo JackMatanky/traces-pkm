@@ -7,7 +7,7 @@
 use clap::Args;
 
 use super::error::{CliError, CliResult};
-use crate::{config::ConfigService, index::IndexerService};
+use crate::{ConfigService, IndexerService};
 
 /// Arguments for `traces index`.
 ///
@@ -59,7 +59,7 @@ mod tests {
     use super::*;
 
     mod fixtures {
-        use crate::index::FileIndex;
+        use crate::FileIndex;
 
         pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
             index

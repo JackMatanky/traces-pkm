@@ -16,7 +16,8 @@ use super::{
     inlinks::derive_inlinks,
 };
 use crate::{
-    config::{FrontmatterConfig, TaskConfig},
+    TaskConfig,
+    config::FrontmatterConfig,
     file::FileBase,
     note::{MarkdownParserInput, parse_markdown},
 };
@@ -152,7 +153,7 @@ impl<'a> IndexBuilder<'a> {
              sorts records, and this loop preserves that order while building \
              FileEntry values"
         );
-        let notes_view: Vec<&crate::note::Note> =
+        let notes_view: Vec<&crate::Note> =
             entries.iter().filter_map(entry::FileEntry::note).collect();
         let inlinks = derive_inlinks(&notes_view);
         entry::redistribute_inlinks(&mut entries, inlinks);
@@ -207,7 +208,7 @@ impl<'a> IndexBuilder<'a> {
         );
 
         let new_inlinks_if_stale = stale.then(|| {
-            let notes_view: Vec<&crate::note::Note> =
+            let notes_view: Vec<&crate::Note> =
                 entries.iter().filter_map(entry::FileEntry::note).collect();
             derive_inlinks(&notes_view)
         });
@@ -243,7 +244,7 @@ pub(super) fn parse_note(
     file: &FileBase,
     tasks: &TaskConfig,
     frontmatter: &FrontmatterConfig,
-) -> Result<crate::note::Note, IndexBuilderError> {
+) -> Result<crate::Note, IndexBuilderError> {
     let full_path = root.join(file.path());
     let content = std::fs::read_to_string(&full_path).map_err(|source| {
         IndexBuilderError::NoteParse {
@@ -262,9 +263,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        Note,
         file::FileBase,
         index::{FileEntry, FileIndex, IndexerService, store::IndexStore},
-        note::Note,
     };
 
     /// Persists `previous` to `root` and reopens the store, mirroring what
@@ -528,7 +529,7 @@ mod tests {
                 .and_then(|fm| fm.get("title").cloned());
             assert_eq!(
                 title,
-                Some(crate::note::NoteFieldValue::String("V2".to_owned()))
+                Some(crate::NoteFieldValue::String("V2".to_owned()))
             );
         }
 

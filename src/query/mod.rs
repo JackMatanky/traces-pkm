@@ -44,9 +44,9 @@
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
 //!   transformation constraint violations.
 //!
-//! [`FileBase`]: crate::file::FileBase
-//! [`FileIndex`]: crate::index::FileIndex
-//! [`Note`]: crate::note::Note
+//! [`FileBase`]: crate::FileBase
+//! [`FileIndex`]: crate::FileIndex
+//! [`Note`]: crate::Note
 
 mod error;
 mod format;
@@ -80,7 +80,7 @@ mod tests {
     };
 
     use super::{format::QueryDisplayFormat, *};
-    use crate::{index::IndexerService, note::NoteFieldValue};
+    use crate::{IndexerService, NoteFieldValue};
 
     mod fixtures {
         use std::{fs, path::Path};
@@ -127,7 +127,7 @@ mod tests {
         pub(super) fn find_base<'a>(
             entries: &'a [crate::index::FileEntry],
             path: &Path,
-        ) -> &'a crate::file::FileBase {
+        ) -> &'a crate::FileBase {
             find_entry(entries, path).file()
         }
     }

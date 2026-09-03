@@ -22,9 +22,8 @@ use super::{
     },
 };
 use crate::{
-    FieldName, FieldNameError,
+    FieldName, FieldNameError, Tag,
     path::{PathError, RootConfinedPath, SafeRelativePath},
-    tag::Tag,
     task::TaskStatusMap,
 };
 

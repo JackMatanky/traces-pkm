@@ -298,12 +298,12 @@ impl std::borrow::Borrow<str> for BaseNameRef<'_> {
 /// Markdown notes get parsed [`Note`] metadata in addition to their
 /// [`FileBase`]. Other files only keep general file metadata.
 ///
-/// [`Note`]: crate::note::Note
+/// [`Note`]: crate::Note
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FileFormat {
     /// Markdown file parsed into a [`Note`].
     ///
-    /// [`Note`]: crate::note::Note
+    /// [`Note`]: crate::Note
     Note,
     /// Regular non-markdown file.
     Other,

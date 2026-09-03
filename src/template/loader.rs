@@ -34,7 +34,7 @@ use std::{
 use minijinja::{Error, ErrorKind};
 
 use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
-use crate::{DirTree, DirTreeError, config::Config};
+use crate::{Config, DirTree, DirTreeError};
 
 /// A template search path: at most one local directory and at most one global
 /// directory, searched local-first.
