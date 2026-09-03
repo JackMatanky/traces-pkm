@@ -2,7 +2,7 @@
 
 Type: grilling
 Blocked by: 07, 35
-Status: claimed
+Status: resolved
 
 ## Question
 
@@ -14,3 +14,15 @@ Traces' codebase is synchronous *today* (no tokio/async-std anywhere; confirmed 
 - Base protocol handling (Content-Length framing) — confirm the chosen crate covers it or whether it needs implementing.
 
 This is the foundational decision most other architecture tickets (10, 12, 21, 23, 26, 34) depend on.
+
+## Answer
+
+**Crate**: `tower-lsp-server` (0.23.0, the actively-maintained `tower-lsp-community` fork) for JSON-RPC/LSP transport and protocol DTOs. Confirmed via direct inspection of its module structure (`rust-docs-mcp`): its `codec` module (`LanguageServerCodec`, `decode_headers`) natively handles Content-Length framing — no protocol-framing code needs to be written. `lsp-server`+`lsp-types` was the alternative (rust-analyzer's own pick); rejected in favor of `tower-lsp-server` given the runtime decision below.
+
+**Runtime scope — (b) transport-loop-only**: `tokio` is adopted, confined to the LSP transport/dispatch layer (`tower-lsp-server`'s `Server`/`LspService`) and whatever concurrent I/O the LSP process genuinely needs (filesystem watching for out-of-band changes, since `FileIndex` has none today; ticket 10/14 own the concrete mechanism). Every Index/Query/Schema/Template/parsing call stays synchronous, invoked from async handlers via blocking-task dispatch (ticket 12 owns the concrete mechanism — thread pool vs `spawn_blocking` vs other).
+
+Revised from an initial sync-only lean after ticket 35's research (see [Decisions so far](../map.md)) found zero precedent, across `ty`, `ruff server`, Biome, and Taplo, for making the *core analysis engine* itself async (option (c), whole-process-async) — every performant Rust LSP examined keeps parsing/analysis synchronous regardless of transport choice. The discriminator that separates the two viable shapes found is whether the LSP process has non-trivial concurrent I/O beyond request/response: `ty`/`ruff server` don't and stay fully synchronous; Biome does (file-watch events, multi-client sessions) and adopted `tokio`+`tower-lsp-server` at the transport boundary specifically for that reason. Traces will need filesystem watching (a real gap today), placing it in Biome's shape. **Option (c) is not foreclosed** — if a concrete, evidenced need to push async deeper into the core surfaces later (e.g. from ticket 12's cancellation design or real profiling), nothing here prevents revisiting it; this decision locks in the transport boundary as the starting shape, not a permanent ceiling.
+
+**Template `DialogProvider` interaction — (a) static-analysis-only as the default**: template-related LSP features (ticket 22) start by never invoking `ui.*` helpers — a non-executing analysis path (parse template, walk for referenced helpers/variables/`tp.*` members) instead of rendering. **(b) a non-interactive `DialogProvider` implementation is explicitly kept open**, not closed off, for ticket 22 to adopt later if static analysis alone proves insufficient for some feature (e.g. render-based dry-run error detection).
+
+**Base protocol handling**: covered by `tower-lsp-server`'s `codec` module (see Crate above) — confirmed, not left open.
