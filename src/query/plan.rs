@@ -365,13 +365,9 @@ mod tests {
             );
 
             let optimized = plan.fuse_filters();
-            assert_eq!(optimized.ops.len(), 1);
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "test asserts ops slice length == 1"
-            )]
-            let first_op = &optimized.ops[0];
-            assert!(matches!(first_op, QueryTransform::Filter(_)));
+            let [QueryTransform::Filter(_)] = &optimized.ops[..] else {
+                panic!("expected single fused filter op");
+            };
         }
 
         #[test]
@@ -383,17 +379,16 @@ mod tests {
             plan.push(QueryTransform::limit(5).expect("valid limit"));
 
             let optimized = plan.fuse_sort_limit();
-            assert_eq!(optimized.ops.len(), 1);
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "test asserts ops slice length == 1"
-            )]
-            let first_op = &optimized.ops[0];
-            assert!(matches!(first_op, QueryTransform::TopK {
-                n: 5,
-                descending: true,
-                ..
-            }));
+            let [
+                QueryTransform::TopK {
+                    n: 5,
+                    descending: true,
+                    ..
+                },
+            ] = &optimized.ops[..]
+            else {
+                panic!("expected single fused TopK op");
+            };
         }
     }
 
