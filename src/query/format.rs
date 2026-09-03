@@ -67,31 +67,31 @@ impl QueryDisplayFormat {
         }
     }
 
-    /// Renders `records` according to this display format.
+    /// Renders `rows` according to this display format.
     ///
     /// # Errors
     ///
     /// Returns query errors for malformed field paths, table column mismatches,
     /// or task-list rendering on page rows.
-    pub(super) fn render(&self, records: &[QueryRow]) -> QueryResult<String> {
+    pub(super) fn render(&self, rows: &[QueryRow]) -> QueryResult<String> {
         match self {
             Self::Table {
                 headers,
                 columns,
-            } => Self::render_table(headers, columns, records),
+            } => Self::render_table(headers, columns, rows),
             Self::List {
                 field,
-            } => Self::render_list(field, records),
+            } => Self::render_list(field, rows),
             Self::TaskList {
                 path_style,
-            } => Self::render_task_list(records, *path_style),
+            } => Self::render_task_list(rows, *path_style),
         }
     }
 
     fn render_table(
         headers: &[String],
         columns: &[String],
-        records: &[QueryRow],
+        rows: &[QueryRow],
     ) -> QueryResult<String> {
         if headers.len() != columns.len() {
             return Err(QueryError::TableColumnCountMismatch {
@@ -107,11 +107,11 @@ impl QueryDisplayFormat {
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table
             .set_header(headers.iter().map(|header| escape_table_text(header)));
-        for record in records {
+        for row in rows {
             table.add_row(
                 paths
                     .iter()
-                    .map(|path| record.resolve_ref(path).table_cell_text()),
+                    .map(|path| row.resolve_ref(path).table_cell_text()),
             );
         }
         let mut out = table.to_string();
@@ -119,29 +119,29 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    fn render_list(field: &str, records: &[QueryRow]) -> QueryResult<String> {
+    fn render_list(field: &str, rows: &[QueryRow]) -> QueryResult<String> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
-        for record in records {
+        for row in rows {
             out.push_str("- ");
-            record.resolve_ref(&field_path).append_text(&mut out);
+            row.resolve_ref(&field_path).append_text(&mut out);
             out.push('\n');
         }
         Ok(out)
     }
 
     fn render_task_list(
-        records: &[QueryRow],
+        rows: &[QueryRow],
         path_style: TaskPathStyle,
     ) -> QueryResult<String> {
         use std::fmt::Write as _;
 
         let mut out = String::new();
-        for record in records {
-            let Some(text) = record.task_text() else {
+        for row in rows {
+            let Some(text) = row.task_text() else {
                 return Err(QueryError::TaskListRequiresTaskRows);
             };
-            out.push_str(match record.task_completed() {
+            out.push_str(match row.task_completed() {
                 Some(true) => "- [x] ",
                 Some(false) => "- [ ] ",
                 None => "- [-] ",
@@ -149,8 +149,7 @@ impl QueryDisplayFormat {
             out.push_str(text);
             match path_style {
                 TaskPathStyle::Suffix => {
-                    let _ =
-                        write!(out, " ({})", record.file().path().display());
+                    let _ = write!(out, " ({})", row.file().path().display());
                 }
                 TaskPathStyle::None => {}
             }

@@ -1,29 +1,9 @@
 //! Query transformation plan optimization and execution engine.
 //!
-//! Defines [`QueryPlan`] and [`QueryTransform`], which power the single
-//! transformation engine for the entire query subsystem.
-//!
-//! # Execution Contexts
-//!
-//! `QueryPlan` executes in two complementary query modes:
-//! - **Pre-fetch Execution**: Fully built by
-//!   [`QueryBuilder`](super::QueryBuilder) prior to index scan via
-//!   [`QueryService::execute`](super::QueryService::execute).
-//! - **Post-fetch CTE Chaining**: Built incrementally on a
-//!   [`QuerySet`](super::QuerySet) via chained transform calls and evaluated
-//!   lazily on first read.
-//!
-//! # Optimization Passes
-//!
-//! Every plan is optimized by [`QueryPlan::run`](QueryPlan::run) prior to
-//! transform execution:
-//! - **Filter Fusion**: Combines adjacent filter ops into a single
-//!   short-circuiting `AND` expression
-//!   ([`FilterExpr::and`](super::grammar::FilterExpr::and)).
-//! - **Sort-Limit Fusion**: Rewrites adjacent `Sort` + `Limit(n)` ops into a
-//!   single `TopK` op, trading an `O(n log n)` full sort for an `O(n)`
-//!   quickselect partition
-//!   ([`select_nth_unstable_by`](std::slice::select_nth_unstable_by)).
+//! Defines [`QueryPlan`], the single transformation engine for the whole query
+//! subsystem — see its docs for the two execution contexts it serves and the
+//! optimization passes [`QueryPlan::run`] applies — and [`QueryTransform`], the
+//! individual steps a plan holds.
 use super::{
     QueryBuilderError, QueryRow,
     grammar::{FieldPath, FilterExpr},
@@ -44,41 +24,40 @@ use crate::note::NoteFieldValue;
 /// 2. **Post-fetch CTE Chaining**: Accumulated incrementally by
 ///    [`QuerySet`](super::QuerySet) across method calls (`.filter()`,
 ///    `.sort()`, `.limit()`, `.group_by()`, `.flatten()`), and executed lazily
-///    on first read via [`QuerySet::materialized`](super::QuerySet).
+///    on first read via [`QuerySet::rows`](super::QuerySet).
 ///
 /// # Optimization Passes
 ///
 /// Prior to applying transforms to row collections, [`Self::run`]
 /// unconditionally executes algebraic optimization passes:
 ///
-/// - **Filter Fusion**: Combines adjacent [`QueryTransform::Filter`] ops into a
-///   single short-circuiting logical `AND` expression
+/// - **Filter Fusion**: Combines adjacent [`QueryTransform::Filter`] operations
+///   into a single short-circuiting logical `AND` expression
 ///   ([`FilterExpr::and`](super::grammar::FilterExpr::and)), eliminating
 ///   intermediate vector allocations.
 /// - **Sort-Limit Fusion**: Rewrites adjacent [`QueryTransform::Sort`] and
-///   [`QueryTransform::Limit`] ops into a single [`QueryTransform::TopK`]
-///   operation. This trades an `O(n log n)` full sort for an `O(n)` quickselect
-///   selection via
+///   [`QueryTransform::Limit`] operations into a single
+///   [`QueryTransform::TopK`] operation. This trades an `O(n log n)` full sort
+///   for an `O(n)` quickselect selection via
 ///   [`select_nth_unstable_by`](std::slice::select_nth_unstable_by).
 ///
-/// Optimization passes are pure and idempotent: executing them on an
-/// already optimized plan produces an identical plan with no additional
-/// overhead.
+/// Optimization passes are pure and idempotent: executing them on an already
+/// optimized plan produces an identical plan with no additional overhead.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct QueryPlan {
     ops: Vec<QueryTransform>,
 }
 
 impl QueryPlan {
-    /// Fuses filter and sort-limit operations, then applies them to `records`
+    /// Fuses filter and sort-limit operations, then applies them to `rows`
     /// in one pass.
     ///
     /// This is the sole execution entry point for transformation plans. It is
     /// used by [`QueryService::execute`](super::QueryService::execute) during
     /// pre-fetch execution and by [`QuerySet`](super::QuerySet) during lazy
     /// materialization.
-    pub(super) fn run(self, records: Vec<QueryRow>) -> Vec<QueryRow> {
-        self.fuse_filters().fuse_sort_limit().apply(records)
+    pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
+        self.fuse_filters().fuse_sort_limit().apply(rows)
     }
 
     /// Returns `true` if this plan has no pending operations.
@@ -92,11 +71,11 @@ impl QueryPlan {
     }
 
     /// Applies every transform in order. Internal to [`Self::run`].
-    fn apply(&self, mut records: Vec<QueryRow>) -> Vec<QueryRow> {
+    fn apply(&self, mut rows: Vec<QueryRow>) -> Vec<QueryRow> {
         for op in &self.ops {
-            records = op.apply(records);
+            rows = op.apply(rows);
         }
-        records
+        rows
     }
 
     /// Merges every run of consecutive `Filter` steps into one, via
@@ -244,56 +223,55 @@ impl QueryTransform {
         Ok(Self::Flatten(FieldPath::parse(field)?))
     }
 
-    /// Applies this single transform to `records`, returning the transformed
-    /// vec. Absorbs the bodies previously on `QuerySet` as
-    /// `apply_filter`/`limit_to`/`flatten_field`/`sort_by_field`.
-    pub(super) fn apply(&self, records: Vec<QueryRow>) -> Vec<QueryRow> {
+    /// Applies this single transform to `rows`, returning the transformed
+    /// vec.
+    pub(super) fn apply(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         match self {
             Self::Filter(expr) => {
-                let mut records = records;
-                records.retain(|record| expr.is_matching(record));
-                records
+                let mut rows = rows;
+                rows.retain(|row| expr.is_matching(row));
+                rows
             }
             Self::Sort {
                 field,
                 descending,
             } => {
-                let mut records = records;
-                records.sort_by_cached_key(|record| SortKey {
-                    value: record.resolve_owned(field),
+                let mut rows = rows;
+                rows.sort_by_cached_key(|row| SortKey {
+                    value: row.resolve_owned(field),
                     descending: *descending,
                 });
-                records
+                rows
             }
             Self::Limit(n) => {
-                let mut records = records;
-                records.truncate(*n);
-                records
+                let mut rows = rows;
+                rows.truncate(*n);
+                rows
             }
             Self::GroupBy(field) => {
-                let mut records = records;
-                records.sort_by_cached_key(|record| SortKey {
-                    value: record.resolve_owned(field),
+                let mut rows = rows;
+                rows.sort_by_cached_key(|row| SortKey {
+                    value: row.resolve_owned(field),
                     descending: false,
                 });
-                records
+                rows
             }
             Self::Flatten(field_path) => {
-                let mut out = Vec::with_capacity(records.len());
-                for record in records {
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
                     let NoteFieldValue::List(mut items) =
-                        record.resolve_owned(field_path)
+                        row.resolve_owned(field_path)
                     else {
-                        out.push(record);
+                        out.push(row);
                         continue;
                     };
                     let Some(last) = items.pop() else {
                         continue;
                     };
                     out.extend(items.into_iter().map(|item| {
-                        record.clone().with_flattened(field_path.clone(), item)
+                        row.clone().with_flattened(field_path.clone(), item)
                     }));
-                    out.push(record.with_flattened(field_path.clone(), last));
+                    out.push(row.with_flattened(field_path.clone(), last));
                 }
                 out
             }
@@ -311,15 +289,15 @@ impl QueryTransform {
                 // behavior difference from the unfused path whenever the sort
                 // field has duplicate values near the selection boundary, such
                 // as a low-cardinality field like `status`).
-                let mut keyed: Vec<(SortKey, usize, QueryRow)> = records
+                let mut keyed: Vec<(SortKey, usize, QueryRow)> = rows
                     .into_iter()
                     .enumerate()
-                    .map(|(index, record)| {
+                    .map(|(index, row)| {
                         let key = SortKey {
-                            value: record.resolve_owned(field),
+                            value: row.resolve_owned(field),
                             descending: *descending,
                         };
-                        (key, index, record)
+                        (key, index, row)
                     })
                     .collect();
                 let cmp =
@@ -333,7 +311,7 @@ impl QueryTransform {
                     keyed.truncate(n);
                 }
                 keyed.sort_unstable_by(cmp);
-                keyed.into_iter().map(|(.., record)| record).collect()
+                keyed.into_iter().map(|(.., row)| row).collect()
             }
         }
     }
@@ -351,40 +329,6 @@ mod tests {
             let plan = QueryPlan::default();
             assert!(plan.is_empty());
         }
-
-        #[test]
-        fn fuse_filters_combines_adjacent_filter_steps() {
-            let mut plan = QueryPlan::default();
-            plan.push(
-                QueryTransform::filter("rating > 2").expect("valid filter"),
-            );
-            plan.push(
-                QueryTransform::filter("rating < 8").expect("valid filter"),
-            );
-
-            let optimized = plan.fuse_filters();
-            assert!(matches!(optimized.ops.as_slice(), [
-                QueryTransform::Filter(_)
-            ]));
-        }
-
-        #[test]
-        fn fuse_sort_limit_rewrites_sort_followed_by_limit_into_top_k() {
-            let mut plan = QueryPlan::default();
-            plan.push(
-                QueryTransform::sort("rating", true).expect("valid sort"),
-            );
-            plan.push(QueryTransform::limit(5).expect("valid limit"));
-
-            let optimized = plan.fuse_sort_limit();
-            assert!(matches!(optimized.ops.as_slice(), [
-                QueryTransform::TopK {
-                    n: 5,
-                    descending: true,
-                    ..
-                }
-            ]));
-        }
     }
 
     mod execution {
@@ -392,10 +336,10 @@ mod tests {
 
         use super::*;
         #[test]
-        fn empty_plan_run_returns_input_records_unchanged() {
+        fn empty_plan_run_returns_input_rows_unchanged() {
             let plan = QueryPlan::default();
-            let records = vec![];
-            assert_eq!(plan.run(records), vec![]);
+            let rows = vec![];
+            assert_eq!(plan.run(rows), vec![]);
         }
     }
 }

@@ -4,7 +4,7 @@
 //! Defines [`FilterExpr`], which parses boolean filter expressions containing
 //! field path accessors (`file.name`, `task.completed`, frontmatter keys),
 //! comparison operators, and function calls (`contains`), evaluating candidate
-//! [`QueryRow`] records.
+//! [`QueryRow`] rows.
 
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
@@ -90,9 +90,9 @@ impl FilterExpr {
         Self(BooleanExpr::And(children))
     }
 
-    /// Whether `record` satisfies this expression.
-    pub(crate) fn is_matching(&self, record: &QueryRow) -> bool {
-        self.0.is_satisfied_by(|atom| atom.is_matching(record))
+    /// Whether `row` satisfies this expression.
+    pub(crate) fn is_matching(&self, row: &QueryRow) -> bool {
+        self.0.is_satisfied_by(|atom| atom.is_matching(row))
     }
 }
 
@@ -109,10 +109,10 @@ pub(crate) enum FilterAtom {
 }
 
 impl FilterAtom {
-    fn is_matching(&self, record: &QueryRow) -> bool {
+    fn is_matching(&self, row: &QueryRow) -> bool {
         match self {
-            Self::Comparison(comparison) => comparison.is_matching(record),
-            Self::Function(function) => function.is_matching(record),
+            Self::Comparison(comparison) => comparison.is_matching(row),
+            Self::Function(function) => function.is_matching(row),
         }
     }
 }
@@ -147,12 +147,12 @@ impl FilterFunction {
         }
     }
 
-    fn is_matching(&self, record: &QueryRow) -> bool {
+    fn is_matching(&self, row: &QueryRow) -> bool {
         match self {
             Self::Contains {
                 field,
                 target,
-            } => record.resolve_ref(field).is_containing(target),
+            } => row.resolve_ref(field).is_containing(target),
         }
     }
 }
@@ -160,7 +160,7 @@ impl FilterFunction {
 /// A parsed `<field> <op> <value>` comparison node in a filter expression.
 ///
 /// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
-/// [`NoteFieldValue`] to evaluate against the resolved field of each record.
+/// [`NoteFieldValue`] to evaluate against the resolved field of each row.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComparisonExpr {
     field: FieldPath,
@@ -181,10 +181,10 @@ impl ComparisonExpr {
         }
     }
 
-    /// Returns whether the given index record satisfies this comparison
+    /// Returns whether the given index row satisfies this comparison
     /// expression.
-    pub(super) fn is_matching(&self, record: &QueryRow) -> bool {
-        self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
+    pub(super) fn is_matching(&self, row: &QueryRow) -> bool {
+        self.op.is_satisfied_by(&row.resolve_ref(&self.field), &self.value)
     }
 }
 
@@ -493,7 +493,7 @@ mod tests {
     fn names(outcome: &QuerySet) -> Vec<String> {
         outcome
             .iter()
-            .map(|record| record.file().name().as_str().to_owned())
+            .map(|row| row.file().name().as_str().to_owned())
             .collect()
     }
 

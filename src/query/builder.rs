@@ -121,9 +121,9 @@ impl QueryBuilder {
     }
 
     /// Appends a limit transform to restrict the outcome to at most `n` leading
-    /// records.
+    /// rows.
     ///
-    /// Retains up to `n` records from the evaluated result set.
+    /// Retains up to `n` rows from the evaluated result set.
     ///
     /// # Errors
     ///
