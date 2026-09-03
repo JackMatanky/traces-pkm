@@ -21,6 +21,22 @@ static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
 ///
 /// Borrows the source text, path, and configuration settings so parsing can
 /// run without allocating or cloning configuration tables.
+///
+/// # Examples
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input =
+///     MarkdownParserInput::for_test(Path::new("todo.md"), "- [ ] Task");
+/// let note = parse_markdown(&input);
+/// assert_eq!(note.tasks().count(), 1);
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct MarkdownParserInput<'a> {
     path: &'a Path,
