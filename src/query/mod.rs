@@ -1057,10 +1057,10 @@ mod tests {
         }
 
         /// Chained `.sort().limit(n)` on a `QuerySet` (the CTE path)
-        /// must match a full sort's first `n` rows, including tie order —
-        /// the same property `builder.rs`'s
+        /// must match a full sort's first `n` rows, including tie order (the
+        /// same property `builder.rs`'s
         /// `top_k_matches_full_sort_order_for_tied_keys` proves for
-        /// `QueryBuilder` (the pre-fetch path) — confirming the deferred
+        /// `QueryBuilder`, the pre-fetch path), confirming the deferred
         /// plan reaches the same `Sort`+`Limit` -> `TopK` fusion.
         #[test]
         fn chained_sort_then_limit_matches_full_sort_order_for_tied_keys() {
@@ -1114,7 +1114,7 @@ mod tests {
         }
 
         /// Two branches derived from the same base `QuerySet` must
-        /// each see every base row, and the base itself must be untouched —
+        /// each see every base row, and the base itself must be untouched,
         /// proving `.filter()`/etc. consume-and-return a new value rather
         /// than mutating shared state.
         #[test]

@@ -233,8 +233,8 @@ mod tests {
         #[test]
         fn top_k_matches_full_sort_order_for_tied_keys() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            // 200 notes across only 4 distinct rating values — a
-            // low-cardinality field like `status` at PKM scale, large enough
+            // 200 notes across only 4 distinct rating values (a
+            // low-cardinality field like `status` at PKM scale), large enough
             // to exercise `select_nth_unstable_by`'s real partitioning logic
             // (not a small-slice fast path that could coincidentally
             // preserve order without a stability guarantee).

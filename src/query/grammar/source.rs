@@ -953,7 +953,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             // Requires an intermediate segment between `covers/` and the
-            // final `*.md`, so a direct child does not match — proving
+            // final `*.md`, so a direct child does not match, proving
             // `**` (unlike `*`) crosses `/` boundaries, not merely that it
             // behaves like the `covers/` folder shorthand.
             let expression =

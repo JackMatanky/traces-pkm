@@ -9,10 +9,10 @@ use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 /// Controls whether task list output includes each row's file path.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) enum TaskPathStyle {
-    /// `- [x] text` — path omitted (used by template rendering).
+    /// `- [x] text`: path omitted (used by template rendering).
     #[default]
     None,
-    /// `- [x] text (path)` — path appended in parentheses (used by `traces
+    /// `- [x] text (path)`: path appended in parentheses (used by `traces
     /// task`).
     Suffix,
 }

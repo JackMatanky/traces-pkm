@@ -197,9 +197,9 @@ impl QueryRow {
 
     /// Returns a copy of this record with `path` overridden to `value`.
     ///
-    /// Used by [`QuerySet::flatten`] to set the resolved value for
-    /// exploded list rows. If `path` already has an override, the value is
-    /// updated in place.
+    /// Used by [`QuerySet::flatten`] to set the resolved value for exploded
+    /// list rows. If `path` already has an override, the value is updated in
+    /// place.
     pub(super) fn with_flattened(
         mut self,
         path: FieldPath,
@@ -323,8 +323,7 @@ pub struct QuerySet {
 }
 
 impl QuerySet {
-    /// Wraps `records` into a new [`QuerySet`] with no pending
-    /// transforms.
+    /// Wraps `records` into a new [`QuerySet`] with no pending transforms.
     pub(super) fn new(records: Vec<QueryRow>) -> Self {
         Self {
             records: records.into(),
@@ -378,11 +377,10 @@ impl QuerySet {
         self.materialized().iter()
     }
 
-    /// Appends `transform` to this query set's pending plan, returning a
-    /// new [`QuerySet`] over the same base rows. Cheap: moves the
-    /// `Arc` (no refcount bump; `self` is consumed) and the short
-    /// transform-step list — nothing is evaluated until [`Self::materialized`]
-    /// runs on read.
+    /// Appends `transform` to this query set's pending plan, returning a new
+    /// [`QuerySet`] over the same base rows. Cheap: moves the `Arc` (no
+    /// refcount bump; `self` is consumed) and the short transform-step list;
+    /// nothing is evaluated until [`Self::materialized`] runs on read.
     fn push(self, transform: QueryTransform) -> Self {
         let mut plan = self.plan;
         plan.push(transform);
@@ -550,10 +548,10 @@ impl QuerySet {
     }
 }
 
-/// Compares evaluated rows, not the pending plan or cache state — two
-/// query sets that reach the same rows via different transform paths
-/// (e.g. two chained `.filter()` calls vs. one combined filter expression)
-/// must compare equal once both are materialized.
+/// Compares evaluated rows, not the pending plan or cache state. Two query sets
+/// that reach the same rows via different transform paths (e.g. two chained
+/// `.filter()` calls vs. one combined filter expression) must compare equal
+/// once both are materialized.
 impl PartialEq for QuerySet {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -561,11 +559,11 @@ impl PartialEq for QuerySet {
     }
 }
 
-/// Shows the materialized rows, not the pending plan or cache state — a
-/// derived `Debug` would leak `QuerySet`'s internal representation
-/// (the pre-transform `records` and the lazily-populated `cache`, which
-/// duplicate each other's content once materialized), confusing test-failure
-/// diffs. Mirrors [`QueryRow`]'s own hand-rolled [`std::fmt::Debug`].
+/// Shows the materialized rows, not the pending plan or cache state. A derived
+/// `Debug` would leak `QuerySet`'s internal representation (the pre-transform
+/// `records` and the lazily-populated `cache`, which duplicate each other's
+/// content once materialized), confusing test-failure diffs. Mirrors
+/// [`QueryRow`]'s own hand-rolled [`std::fmt::Debug`].
 impl std::fmt::Debug for QuerySet {
     #[inline]
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -587,8 +585,8 @@ impl IntoIterator for QuerySet {
     }
 }
 
-/// Creates an iterator over borrowed [`QueryRow`] rows from the
-/// [`QuerySet`], flushing any pending plan first.
+/// Creates an iterator over borrowed [`QueryRow`] rows from the [`QuerySet`],
+/// flushing any pending plan first.
 impl<'a> IntoIterator for &'a QuerySet {
     type IntoIter = std::slice::Iter<'a, QueryRow>;
     type Item = &'a QueryRow;
@@ -607,7 +605,7 @@ mod tests {
         let size = std::mem::size_of::<QueryRow>();
         assert!(
             size <= 112,
-            "QueryRow grew to {size} bytes, past its ~96-byte target — check \
+            "QueryRow grew to {size} bytes, past its ~96-byte target; check \
              for an accidentally un-boxed field before raising this bound"
         );
     }

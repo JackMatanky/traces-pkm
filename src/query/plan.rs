@@ -10,15 +10,40 @@ use super::{
 };
 use crate::note::NoteFieldValue;
 
-/// Ordered, optimizable sequence of [`QueryTransform`] steps.
+/// An ordered, optimizable transformation pipeline executed over query rows.
 ///
-/// The single transform engine for the whole query subsystem, used two ways:
-/// [`super::QueryBuilder`] builds one fully before a single [`Self::run`] call
-/// (pre-fetch, via [`super::QueryService::execute`]); [`super::QuerySet`]
-/// accumulates one incrementally across chained calls and calls [`Self::run`]
-/// lazily on first read, memoizing the result (post-fetch CTE chaining).
-/// [`Self::optimize`] is pure and idempotent — safe to run on a plan built
-/// either way.
+/// `QueryPlan` serves as the central transformation engine for the query
+/// subsystem, operating in two complementary contexts:
+///
+/// 1. **Pre-fetch Execution**: Constructed by
+///    [`QueryBuilder`](super::QueryBuilder) to define filter, sort, and limit
+///    criteria before querying the borrowed
+///    [`FileIndex`](crate::index::FileIndex) via
+///    [`QueryService::execute`](super::QueryService::execute).
+/// 2. **Post-fetch CTE Chaining**: Accumulated incrementally by
+///    [`QuerySet`](super::QuerySet) across method calls (`.filter()`,
+///    `.sort()`, `.limit()`, `.group_by()`, `.flatten()`), and executed lazily
+///    on first read via [`QuerySet::materialized`](super::QuerySet).
+///
+/// # Optimization Passes
+///
+/// Prior to applying transforms to row collections, [`Self::run`]
+/// unconditionally runs [`Self::optimize`], executing two algebraic
+/// optimization passes:
+///
+/// - **Filter Fusion**: Combines adjacent [`QueryTransform::Filter`] steps into
+///   a single short-circuiting logical `AND` expression
+///   ([`FilterExpr::and`](super::grammar::FilterExpr::and)), eliminating
+///   intermediate vector allocations.
+/// - **Sort-Limit Fusion**: Rewrites adjacent [`QueryTransform::Sort`] and
+///   [`QueryTransform::Limit`] steps into a single [`QueryTransform::TopK`]
+///   operation. This trades an $O(N \log N)$ full sort for an $O(N)$
+///   quickselect selection via
+///   [`select_nth_unstable_by`](std::slice::select_nth_unstable_by).
+///
+/// Optimization passes are pure and idempotent: executing `optimize` on an
+/// already optimized plan produces an identical plan with no additional
+/// overhead.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct QueryPlan {
     steps: Vec<QueryTransform>,
@@ -36,17 +61,20 @@ impl QueryPlan {
     }
 
     /// Fuses this plan via [`Self::optimize`] and applies it to `records` in
-    /// one pass. The only way a [`QueryTransform`] in this plan ever runs —
-    /// used by [`super::QueryService::execute`] (pre-fetch, plan built once)
-    /// and [`super::QuerySet`]'s materialization (post-fetch, plan built
-    /// incrementally then flushed on first read).
+    /// one pass.
+    ///
+    /// This is the sole execution entry point for transformation plans. It is
+    /// used by [`QueryService::execute`](super::QueryService::execute) during
+    /// pre-fetch execution and by [`QuerySet`](super::QuerySet) during lazy
+    /// materialization.
     pub(super) fn run(self, records: Vec<QueryRow>) -> Vec<QueryRow> {
         self.optimize().apply(records)
     }
 
-    /// Fuses adjacent steps that can run cheaper combined. Internal to
-    /// [`Self::run`] — nothing outside this type calls it directly, so a
-    /// plan can never run unoptimized.
+    /// Fuses adjacent steps that can run more efficiently combined.
+    ///
+    /// Internal helper called by [`Self::run`]. Outside callers cannot invoke
+    /// transformations without optimization.
     #[must_use]
     fn optimize(self) -> Self {
         self.fuse_filters().fuse_sort_limit()
@@ -113,10 +141,12 @@ impl QueryPlan {
         records
     }
 }
-/// One step in a [`QueryPlan`], produced by [`super::QueryBuilder`]'s builder
-/// methods and [`super::QuerySet`]'s chained calls. Never constructed or held
-/// apart from a [`QueryPlan`] — every constructor below is immediately passed
-/// to [`QueryPlan::push`].
+/// One step in a [`QueryPlan`], produced by
+/// [`QueryBuilder`](super::QueryBuilder) and [`QuerySet`](super::QuerySet)
+/// method calls.
+///
+/// `QueryTransform` steps are constructed exclusively within a [`QueryPlan`]
+/// and passed immediately to [`QueryPlan::push`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
@@ -265,10 +295,10 @@ impl QueryTransform {
                 // matching `sort_by_cached_key`'s stability guarantee (used by
                 // the unfused `Sort` arm above). Without the index,
                 // `select_nth_unstable_by`/`sort_unstable_by` are free to
-                // reorder or reselect among tied keys arbitrarily — a real
+                // reorder or reselect among tied keys arbitrarily (a real
                 // behavior difference from the unfused path whenever the sort
-                // field has duplicate values near the selection boundary (e.g.
-                // a low-cardinality field like `status`).
+                // field has duplicate values near the selection boundary, such
+                // as a low-cardinality field like `status`).
                 let mut keyed: Vec<(SortKey, usize, QueryRow)> = records
                     .into_iter()
                     .enumerate()
