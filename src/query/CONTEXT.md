@@ -47,13 +47,13 @@ resolved field paths.
 
 #### Query Set
 
-A memoized, branchable Common Table Expression over Query Rows: cloning shares
-the evaluated rows, chained transforms append in `O(1)`, and reads flush the
-pending plan once. Transform methods (`where`/`filter`, `sort`, `limit`,
-`group_by`, `flatten`, `with_children`, `with_descendants`) chain; terminal
-methods (`table`, `list`, `task_list`, `count`) render output.
-*Avoid*: Query Record Set, QueryOutcome, result set, pipeline query, DQL,
-dataview query
+A query result set of evaluated Query Rows, usable directly or like a CTE as
+an intermediate result set: cloning shares the memoized rows, chained
+transforms append in `O(1)`, and reads flush the pending plan once. Transform
+methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`,
+`with_children`, `with_descendants`) chain; terminal methods (`table`, `list`,
+`task_list`, `count`) render output.
+*Avoid*: Query Record Set, QueryOutcome, pipeline query, DQL, dataview query
 
 #### Task Path Style
 

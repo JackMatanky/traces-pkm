@@ -19,7 +19,7 @@ domain terms, and seams for that area.
 - [Note](./src/note/CONTEXT.md) — Markdown note AST parsing, YAML frontmatter,
   inline fields, links, and tasks (`src/note/`)
 - [Query](./src/query/CONTEXT.md) — Source selection DSL, row projection, and
-  CTE result-set transformations (`src/query/`)
+  memoized result-set transformations (`src/query/`)
 - [Schema](./src/schema/CONTEXT.md) — Schema registry, field resolution,
   inheritance DAG, and class hierarchy (`src/schema/`)
 - [Template](./src/template/CONTEXT.md) — Template resolution, minijinja engine
