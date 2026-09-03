@@ -151,7 +151,7 @@ mod tests {
         let index =
             Arc::new(IndexerService::new(temp).build().expect("build index"));
         QueryService::new("class")
-            .execute(&index, QueryBuilder::pages(SourceSelector::All))
+            .run(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QuerySet {

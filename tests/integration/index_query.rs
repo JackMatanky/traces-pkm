@@ -22,7 +22,7 @@ fn page_query_returns_real_indexed_notes() {
         IndexerService::new(temp.path()).build().expect("build index"),
     );
     let outcome = QueryService::new("class")
-        .execute(&index, QueryBuilder::pages(SourceSelector::All));
+        .run(&index, QueryBuilder::pages(SourceSelector::All));
 
     assert_eq!(outcome.len(), 3);
     let paths: Vec<_> = (&outcome)
@@ -49,7 +49,7 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
         IndexerService::new(temp.path()).build().expect("build index"),
     );
     let tasks = QueryService::new("class")
-        .execute(&index, QueryBuilder::tasks(SourceSelector::All));
+        .run(&index, QueryBuilder::tasks(SourceSelector::All));
     assert_eq!(tasks.len(), 2);
     let completed: Vec<bool> = (0..tasks.len())
         .map(|i| {
@@ -80,12 +80,10 @@ fn query_builder_reuses_one_index_for_page_and_task_queries() {
     );
     let service = QueryService::new("class");
 
-    let pages =
-        service.execute(&index, QueryBuilder::pages(SourceSelector::All));
-    let tasks =
-        service.execute(&index, QueryBuilder::tasks(SourceSelector::All));
+    let pages = service.run(&index, QueryBuilder::pages(SourceSelector::All));
+    let tasks = service.run(&index, QueryBuilder::tasks(SourceSelector::All));
     let pages_again =
-        service.execute(&index, QueryBuilder::pages(SourceSelector::All));
+        service.run(&index, QueryBuilder::pages(SourceSelector::All));
 
     let page_paths: Vec<_> = (&pages)
         .into_iter()

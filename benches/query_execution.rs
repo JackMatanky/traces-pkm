@@ -1,12 +1,12 @@
 //! Performance benchmark suite for query execution.
 //!
-//! Exposes and monitors the CPU cost of [`QueryService::execute`] over
+//! Exposes and monitors the CPU cost of [`QueryService::run`] over
 //! pre-built page and task indexes.
 //!
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [FileIndex] ──(QueryService::execute)──► [QueryResponse]
+//! [FileIndex] ──(QueryService::run)──► [QueryResponse]
 //!                   │
 //!                   ├── pages (SourceSelector)
 //!                   └── tasks (SourceSelector)
@@ -16,7 +16,7 @@
 //!
 //! To profile query execution CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench query_execution -- --bench "QueryService::execute pages"
+//! cargo flamegraph --bench query_execution -- --bench "QueryService::run pages"
 //! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
@@ -109,8 +109,8 @@ fn create_index_with_field_count(n: usize, fields: usize) -> Arc<FileIndex> {
 /// Unexpected outcomes:
 /// - Linear or worse scaling with note count, indicating unindexed scans or
 ///   redundant allocation per row.
-fn bench_execute_pages(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute");
+fn bench_run_pages(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run");
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
         group.throughput(Throughput::Elements(
@@ -120,10 +120,8 @@ fn bench_execute_pages(c: &mut Criterion) {
             b.iter_batched(
                 || index.clone(),
                 |index| {
-                    QueryService::new("class").execute(
-                        &index,
-                        QueryBuilder::pages(SourceSelector::All),
-                    )
+                    QueryService::new("class")
+                        .run(&index, QueryBuilder::pages(SourceSelector::All))
                 },
                 BatchSize::SmallInput,
             );
@@ -145,8 +143,8 @@ fn bench_execute_pages(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Cost significantly exceeds page-query cost for same note count, indicating
 ///   task parsing overhead or redundant regex evaluation.
-fn bench_execute_tasks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute");
+fn bench_run_tasks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run");
     for &n in WORKSPACE_SIZES {
         let index = create_task_index(n);
         group.throughput(Throughput::Elements(
@@ -156,10 +154,8 @@ fn bench_execute_tasks(c: &mut Criterion) {
             b.iter_batched(
                 || index.clone(),
                 |index| {
-                    QueryService::new("class").execute(
-                        &index,
-                        QueryBuilder::tasks(SourceSelector::All),
-                    )
+                    QueryService::new("class")
+                        .run(&index, QueryBuilder::tasks(SourceSelector::All))
                 },
                 BatchSize::SmallInput,
             );
@@ -175,7 +171,7 @@ fn bench_execute_tasks(c: &mut Criterion) {
 /// Measures page-row filtering and sorting by frontmatter metadata combined,
 /// swept over workspace size.
 ///
-/// Distinct from [`bench_execute_pages`], which never touches a
+/// Distinct from [`bench_run_pages`], which never touches a
 /// `FieldPath::Metadata`/`Tags` field and would not catch regressions in
 /// per-record Note metadata resolution. Combining filter and sort here cannot
 /// attribute a regression to either one; see
@@ -195,8 +191,8 @@ fn bench_execute_tasks(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Cost exceeding the sum of the isolated halves, indicating the combined
 ///   path introduces overhead not present in either half alone.
-fn bench_execute_pages_by_metadata(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute");
+fn bench_run_pages_by_metadata(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run");
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
         group.throughput(Throughput::Elements(
@@ -209,7 +205,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
                 b.iter_batched(
                     || index.clone(),
                     |index| {
-                        QueryService::new("class").execute(
+                        QueryService::new("class").run(
                             &index,
                             QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
@@ -243,7 +239,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
 /// "case-mismatched query candidate" benchmark here expecting it to exercise
 /// that fallback: it cannot, by construction.
 ///
-/// Distinct from [`bench_execute_pages_by_metadata`], which combines filter
+/// Distinct from [`bench_run_pages_by_metadata`], which combines filter
 /// and sort and never varies field count, so it cannot distinguish a filter
 /// regression from a sort regression, or an O(K)-scan regression from a flat
 /// O(1) lookup at any field count.
@@ -257,7 +253,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
 ///   linear scan per lookup.
 fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
     let mut group =
-        c.benchmark_group("QueryService::execute/filter_by_field_count");
+        c.benchmark_group("QueryService::run/filter_by_field_count");
     let n = 20_000_usize;
     for &fields in FIELD_COUNTS {
         let index = create_index_with_field_count(n, fields);
@@ -271,7 +267,7 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
                 b.iter_batched(
                     || index.clone(),
                     |index| {
-                        QueryService::new("class").execute(
+                        QueryService::new("class").run(
                             &index,
                             QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
@@ -310,11 +306,11 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 /// - Cost scales with `n`, indicating `base` is no longer `Arc`-backed, or
 ///   `QuerySet::clone` is deep-copying rows somewhere.
 fn bench_clone_query_set(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/clone_query_set");
+    let mut group = c.benchmark_group("QueryService::run/clone_query_set");
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
         let outcome = QueryService::new("class")
-            .execute(&index, QueryBuilder::pages(SourceSelector::All));
+            .run(&index, QueryBuilder::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -351,7 +347,7 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///   retains an extra reference to the outcome's cached rows before
 ///   `.into_iter()` runs.
 fn bench_into_iter_owned(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/into_iter_owned");
+    let mut group = c.benchmark_group("QueryService::run/into_iter_owned");
     for &n in WORKSPACE_SIZES {
         let page_index = create_page_index(n);
         group.throughput(Throughput::Elements(
@@ -363,7 +359,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
             |b, index| {
                 b.iter_batched(
                     || {
-                        QueryService::new("class").execute(
+                        QueryService::new("class").run(
                             index,
                             QueryBuilder::pages(SourceSelector::All),
                         )
@@ -384,7 +380,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
             |b, index| {
                 b.iter_batched(
                     || {
-                        QueryService::new("class").execute(
+                        QueryService::new("class").run(
                             index,
                             QueryBuilder::tasks(SourceSelector::All),
                         )
@@ -400,9 +396,9 @@ fn bench_into_iter_owned(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_execute_pages,
-    bench_execute_tasks,
-    bench_execute_pages_by_metadata,
+    bench_run_pages,
+    bench_run_tasks,
+    bench_run_pages_by_metadata,
     bench_filter_by_metadata_field_count,
     bench_clone_query_set,
     bench_into_iter_owned

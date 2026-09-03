@@ -33,8 +33,7 @@ use crate::index::{FileIndex, RowIndex};
 /// let index = Arc::new(IndexerService::new(temp.path()).build()?);
 ///
 /// let service = QueryService::new("class");
-/// let outcome =
-///     service.execute(&index, QueryBuilder::pages(SourceSelector::All));
+/// let outcome = service.run(&index, QueryBuilder::pages(SourceSelector::All));
 /// assert_eq!(outcome.len(), 0);
 /// # Ok(())
 /// # }
@@ -75,13 +74,13 @@ impl QueryService {
         self
     }
 
-    /// Executes `builder` against `index` and returns a [`QuerySet`].
+    /// Runs `builder` against `index` and returns a [`QuerySet`].
     ///
     /// Resolves candidate notes from `index` according to `builder`'s mode and
     /// source selector, then attaches any pending transformations to the
     /// returned [`QuerySet`].
     #[inline]
-    pub fn execute(
+    pub fn run(
         &self,
         index: &Arc<FileIndex>,
         builder: QueryBuilder,
@@ -167,7 +166,7 @@ mod tests {
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryBuilder::pages(source.clone()))
+            .run(index, QueryBuilder::pages(source.clone()))
     }
 
     /// Task-level counterpart to [`query_pages`].
@@ -176,7 +175,7 @@ mod tests {
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryBuilder::tasks(source.clone()))
+            .run(index, QueryBuilder::tasks(source.clone()))
     }
 
     mod query {

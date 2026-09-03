@@ -30,8 +30,8 @@
 //!
 //! # Main Types
 //!
-//! - [`QueryService`] drives query execution: [`QueryService::execute`] borrows
-//!   a [`FileIndex`] and a [`QueryBuilder`], producing a [`QuerySet`].
+//! - [`QueryService`] drives query execution: [`QueryService::run`] borrows a
+//!   [`FileIndex`] and a [`QueryBuilder`], producing a [`QuerySet`].
 //! - [`QueryBuilder`] describes page/task mode, source selection, and ordered
 //!   transformations.
 //! - [`SourceSelector`] is the top-level entry point: either all Notes or a
@@ -65,7 +65,7 @@
 //! let builder =
 //!     QueryBuilder::pages(SourceSelector::All).filter("rating >= 5")?;
 //!
-//! let set = service.execute(&index, builder);
+//! let set = service.run(&index, builder);
 //! assert_eq!(set.len(), 1);
 //! # Ok(())
 //! # }
@@ -119,7 +119,7 @@ pub(super) mod test_support {
         let index =
             Arc::new(IndexerService::new(temp).build().expect("build index"));
         QueryService::new("class")
-            .execute(&index, QueryBuilder::pages(SourceSelector::All))
+            .run(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
     /// Builds a single-record [`QuerySet`] from a single Markdown

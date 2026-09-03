@@ -278,7 +278,7 @@ fn refresh_page_query(
             .sort(path, descending)
             .map_err(|error| query_error(root, error.into()))?;
     }
-    execute_query_builder(config, &index, builder, has_classes)
+    run_query_builder(config, &index, builder, has_classes)
 }
 
 /// Refreshes `root`'s [`FileIndex`] and returns task-level records selected by
@@ -312,7 +312,7 @@ fn refresh_task_query(
             .filter(expr)
             .map_err(|error| query_error(root, error.into()))?;
     }
-    execute_query_builder(config, &index, builder, has_classes)
+    run_query_builder(config, &index, builder, has_classes)
 }
 
 fn parse_source(
@@ -324,7 +324,7 @@ fn parse_source(
         .map_err(|source| query_error(root, source))
 }
 
-fn execute_query_builder(
+fn run_query_builder(
     config: &Config,
     index: &Arc<FileIndex>,
     builder: QueryBuilder,
@@ -333,9 +333,9 @@ fn execute_query_builder(
     let service = QueryService::new(config.schemas().class_field_name());
     if has_classes {
         let schema_service = Arc::new(load_schema_service(config)?);
-        Ok(service.with_class_expander(schema_service).execute(index, builder))
+        Ok(service.with_class_expander(schema_service).run(index, builder))
     } else {
-        Ok(service.execute(index, builder))
+        Ok(service.run(index, builder))
     }
 }
 
@@ -975,7 +975,7 @@ mod tests {
                 IndexerService::new(&project).refresh().expect("refresh index"),
             );
             let _list = QueryService::new("class")
-                .execute(
+                .run(
                     &list_index,
                     QueryBuilder::pages(
                         SourceSelector::parse("#book").expect("valid source"),
@@ -1002,7 +1002,7 @@ mod tests {
                 IndexerService::new(&project).refresh().expect("refresh index"),
             );
             let _table = QueryService::new("class")
-                .execute(&table_index, QueryBuilder::pages(SourceSelector::All))
+                .run(&table_index, QueryBuilder::pages(SourceSelector::All))
                 .table(&["Name", "Rating"], &["file.name", "rating"])
                 .expect("valid table");
 
@@ -1015,7 +1015,7 @@ mod tests {
                 IndexerService::new(&project).refresh().expect("refresh index"),
             );
             let _tasks = QueryService::new("class")
-                .execute(&task_index, QueryBuilder::tasks(SourceSelector::All))
+                .run(&task_index, QueryBuilder::tasks(SourceSelector::All))
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
         }
@@ -1041,7 +1041,7 @@ mod tests {
                 IndexerService::new(&project).refresh().expect("refresh index"),
             );
             let expected = QueryService::new("class")
-                .execute(
+                .run(
                     &index,
                     QueryBuilder::pages(
                         SourceSelector::parse("#book").expect("valid source"),
@@ -1068,7 +1068,7 @@ mod tests {
                 IndexerService::new(&project).refresh().expect("refresh index"),
             );
             let inlinks = QueryService::new("class")
-                .execute(
+                .run(
                     &index,
                     QueryBuilder::pages(
                         SourceSelector::parse("books/").expect("valid source"),

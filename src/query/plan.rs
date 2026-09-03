@@ -26,7 +26,7 @@ use crate::note::NoteFieldValue;
 ///    [`QueryBuilder`](super::QueryBuilder) to define filter, sort, and limit
 ///    criteria before querying the borrowed
 ///    [`FileIndex`](crate::index::FileIndex) via
-///    [`QueryService::execute`](super::QueryService::execute).
+///    [`QueryService::run`](super::QueryService::run).
 /// 2. **Post-fetch CTE Chaining**: Accumulated incrementally by
 ///    [`QuerySet`](super::QuerySet) across method calls (`.filter()`,
 ///    `.sort()`, `.limit()`, `.group_by()`, `.flatten()`), and executed lazily
@@ -59,7 +59,7 @@ impl QueryPlan {
     /// in one pass.
     ///
     /// This is the sole execution entry point for transformation plans. It is
-    /// used by [`QueryService::execute`](super::QueryService::execute) during
+    /// used by [`QueryService::run`](super::QueryService::run) during
     /// pre-fetch execution and by [`QuerySet`](super::QuerySet) during lazy
     /// materialization.
     pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {

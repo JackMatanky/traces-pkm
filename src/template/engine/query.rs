@@ -187,7 +187,7 @@ impl QueryOps {
         } else {
             QueryBuilder::pages(source)
         };
-        Ok(Value::from_object(self.service.execute(&index, builder)))
+        Ok(Value::from_object(self.service.run(&index, builder)))
     }
 }
 

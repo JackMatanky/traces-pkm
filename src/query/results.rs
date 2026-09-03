@@ -675,7 +675,7 @@ mod tests {
             );
             let file = find_base(index.entries(), Path::new("a.md"));
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::pages(SourceSelector::All));
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
             let row = outcome.get(0).expect("row");
             assert_eq!(row.file(), file);
         }
@@ -692,7 +692,7 @@ mod tests {
                 .note()
                 .expect("note");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::pages(SourceSelector::All));
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
             let row = outcome.get(0).expect("row");
             assert_eq!(row.note(), Some(note));
         }
@@ -706,7 +706,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
+                .run(&index, QueryBuilder::tasks(SourceSelector::All));
             let row = outcome.get(0).expect("row");
             assert_eq!(row.task_completed(), Some(true));
         }
@@ -720,7 +720,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
+                .run(&index, QueryBuilder::tasks(SourceSelector::All));
             let row = outcome.get(0).expect("row");
             assert_eq!(row.task_text(), Some("Buy milk"));
         }
@@ -906,7 +906,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
+                .run(&index, QueryBuilder::tasks(SourceSelector::All));
             let row = outcome.get(0).expect("row");
             assert_eq!(
                 row.field("task.completed"),
@@ -1408,7 +1408,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
+                .run(&index, QueryBuilder::tasks(SourceSelector::All));
             let rendered = outcome
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
@@ -1425,7 +1425,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
+                .run(&index, QueryBuilder::tasks(SourceSelector::All));
             let rendered = outcome
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");

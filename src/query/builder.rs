@@ -3,7 +3,7 @@
 //!
 //! Defines [`QueryBuilder`], which configures index query execution before
 //! passing the request to
-//! [`QueryService::execute`](super::QueryService::execute).
+//! [`QueryService::run`](super::QueryService::run).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
@@ -28,7 +28,7 @@ pub(super) enum QueryMode {
 /// Constructing a `QueryBuilder` does not touch the filesystem or execute query
 /// expressions. The builder accumulates transformation steps into an internal
 /// [`QueryPlan`](super::QueryPlan) and passes them to
-/// [`QueryService::execute`](super::QueryService::execute), which evaluates the
+/// [`QueryService::run`](super::QueryService::run), which evaluates the
 /// plan against a borrowed [`FileIndex`](crate::index::FileIndex).
 ///
 /// # Examples
@@ -145,7 +145,7 @@ impl QueryBuilder {
     }
 
     /// Splits this builder into its mode, source, and transform plan for
-    /// [`super::QueryService::execute`].
+    /// [`super::QueryService::run`].
     pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
         (self.mode, self.source, self.plan)
     }
@@ -183,7 +183,7 @@ mod tests {
                 .filter("rating >= 5")
                 .expect("valid filter");
 
-            let outcome = QueryService::new("class").execute(&index, request);
+            let outcome = QueryService::new("class").run(&index, request);
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
@@ -217,7 +217,7 @@ mod tests {
                 .limit(2)
                 .expect("valid limit");
 
-            let outcome = QueryService::new("class").execute(&index, request);
+            let outcome = QueryService::new("class").run(&index, request);
 
             assert_eq!(outcome.len(), 2);
             assert_eq!(
@@ -256,7 +256,7 @@ mod tests {
                     .limit(i64::try_from(n).expect("limit fits i64"))
                     .expect("valid limit");
                 let topk_outcome =
-                    QueryService::new("class").execute(&index, topk_request);
+                    QueryService::new("class").run(&index, topk_request);
                 let topk_paths: Vec<_> = (0..topk_outcome.len())
                     .map(|i| {
                         topk_outcome
@@ -272,8 +272,8 @@ mod tests {
                     QueryBuilder::pages(SourceSelector::All)
                         .sort("rating", false)
                         .expect("valid sort");
-                let full_outcome = QueryService::new("class")
-                    .execute(&index, full_sort_request);
+                let full_outcome =
+                    QueryService::new("class").run(&index, full_sort_request);
                 let full_first_n: Vec<_> = (0..n)
                     .map(|i| {
                         full_outcome
@@ -323,7 +323,7 @@ mod tests {
                 .limit(2)
                 .expect("valid limit");
 
-            let outcome = QueryService::new("class").execute(&index, request);
+            let outcome = QueryService::new("class").run(&index, request);
 
             assert_eq!(outcome.len(), 2);
             assert_eq!(
@@ -364,14 +364,14 @@ mod tests {
                 .expect("valid filter");
 
             let fused_outcome =
-                QueryService::new("class").execute(&index, fused_request);
+                QueryService::new("class").run(&index, fused_request);
 
             // Single combined filter for comparison
             let combined_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2 and rating < 8")
                 .expect("valid filter");
             let combined_outcome =
-                QueryService::new("class").execute(&index, combined_request);
+                QueryService::new("class").run(&index, combined_request);
 
             assert_eq!(fused_outcome, combined_outcome);
             assert_eq!(fused_outcome.len(), 3);
@@ -427,7 +427,7 @@ mod tests {
                 SourceSelector::parse("@book").expect("source"),
             );
 
-            let outcome = QueryService::new("class").execute(&index, request);
+            let outcome = QueryService::new("class").run(&index, request);
 
             assert!(outcome.is_empty());
         }

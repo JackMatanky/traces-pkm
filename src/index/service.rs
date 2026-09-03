@@ -239,7 +239,7 @@ mod tests {
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryBuilder::pages(source.clone()))
+            .run(index, QueryBuilder::pages(source.clone()))
     }
 
     /// Finds a [`Note`] by project-relative path in `index`.

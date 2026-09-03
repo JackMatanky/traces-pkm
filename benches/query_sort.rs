@@ -120,7 +120,7 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 
 /// Measures sort-only cost by frontmatter metadata, swept over workspace size.
 ///
-/// Isolated from [`bench_execute_pages_by_metadata`]'s combined measurement so
+/// Isolated from [`bench_run_pages_by_metadata`]'s combined measurement so
 /// a regression in `sort_by_cached_key`'s comparison or permutation cost is
 /// distinguishable from a regression in filter evaluation or field resolution.
 /// The size sweep (not a single point) exists so the result can be fit as
@@ -136,7 +136,7 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 /// - Cost dominated by the linear term at all sizes, indicating key
 ///   materialization dominates and comparator dispatch is not the bottleneck.
 fn bench_sort_by_metadata(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/sort_by_metadata");
+    let mut group = c.benchmark_group("QueryService::run/sort_by_metadata");
     for &n in SORT_SWEEP_SIZES {
         let index = create_page_index(n);
         group.throughput(Throughput::Elements(
@@ -146,7 +146,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
             b.iter_batched(
                 || index.clone(),
                 |index| {
-                    QueryService::new("class").execute(
+                    QueryService::new("class").run(
                         &index,
                         QueryBuilder::pages(SourceSelector::All)
                             .sort("rating", false)
@@ -168,7 +168,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 /// unfused full sort, swept over workspace size.
 ///
 /// `QueryBuilder::sort(...).limit(...)` executed through
-/// `QueryService::execute` always passes through `QueryPlan::run`
+/// `QueryService::run` always passes through `QueryPlan::run`
 /// (`src/query/service.rs`: `plan.run(records)`), which fuses an
 /// adjacent `Sort`+`Limit` into one `TopK` step using
 /// `select_nth_unstable_by` (`O(n)` selection) instead of a full
@@ -199,7 +199,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 ///   and the fusion buys little for this workload. A gap that does not widen
 ///   with `n` would contradict the `O(n)` vs. `O(n log n)` prediction.
 fn bench_topk_vs_full_sort(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/topk_fusion");
+    let mut group = c.benchmark_group("QueryService::run/topk_fusion");
     for &n in SORT_SWEEP_SIZES {
         let index = create_page_index(n);
         group.throughput(Throughput::Elements(
@@ -212,7 +212,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                 b.iter_batched(
                     || index.clone(),
                     |index| {
-                        QueryService::new("class").execute(
+                        QueryService::new("class").run(
                             &index,
                             QueryBuilder::pages(SourceSelector::All)
                                 .sort("rating", false)
@@ -230,7 +230,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                 b.iter_batched(
                     || index.clone(),
                     |index| {
-                        QueryService::new("class").execute(
+                        QueryService::new("class").run(
                             &index,
                             QueryBuilder::pages(SourceSelector::All)
                                 .sort("rating", false)
@@ -264,7 +264,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 /// a linear-cost operation's *share* of an `n log n` operation shrinks as `n`
 /// grows, so a single point cannot confirm the share stays small at scale.
 ///
-/// Records are produced through the public query API (`execute` then
+/// Records are produced through the public query API (`run` then
 /// `QuerySet::get` + clone); no internals are reached.
 ///
 /// Expected outcomes:
@@ -275,12 +275,12 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 /// - Shuffle cost comparable to sort-only cost, indicating element-move
 ///   dominates and `QueryRow` size should be reduced.
 fn bench_permute_query_rows(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/permute_records");
+    let mut group = c.benchmark_group("QueryService::run/permute_records");
     for &n in SORT_SWEEP_SIZES {
         let index = create_page_index(n);
         let base: Vec<QueryRow> = {
             let set = QueryService::new("class")
-                .execute(&index, QueryBuilder::pages(SourceSelector::All));
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
             (0..set.len())
                 .map(|i| set.get(i).expect("row present").clone())
                 .collect()
@@ -327,7 +327,7 @@ fn bench_permute_query_rows(c: &mut Criterion) {
 /// - Cost matching sort-only or replica benchmarks, indicating overhead beyond
 ///   raw comparison dominates and the floor is not the bottleneck.
 fn bench_sort_f64_floor(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/sort_f64_floor");
+    let mut group = c.benchmark_group("QueryService::run/sort_f64_floor");
     for &n in SORT_SWEEP_SIZES {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
@@ -371,8 +371,7 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
 /// - Cost significantly exceeding the f64 floor, indicating enum dispatch in
 ///   the real comparator is a meaningful cost contributor.
 fn bench_sort_note_field_value_replica(c: &mut Criterion) {
-    let mut group =
-        c.benchmark_group("QueryService::execute/sort_value_replica");
+    let mut group = c.benchmark_group("QueryService::run/sort_value_replica");
     let descending = false;
     for &n in SORT_SWEEP_SIZES {
         group.throughput(Throughput::Elements(
