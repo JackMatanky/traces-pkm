@@ -255,6 +255,15 @@ impl ListItemType {
     /// Returns `true` if this list item is classified as a Task.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence and task queries added in a later \
+                      task-system issue"
+        )
+    )]
     pub const fn is_task(&self) -> bool {
         matches!(self, Self::Task(_))
     }
@@ -262,6 +271,15 @@ impl ListItemType {
     /// Returns `true` if this list item is classified as a Checkbox.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence and task queries added in a later \
+                      task-system issue"
+        )
+    )]
     pub const fn is_checkbox(&self) -> bool {
         matches!(self, Self::Checkbox)
     }
@@ -269,6 +287,15 @@ impl ListItemType {
     /// Returns `true` if this list item is classified as a plain bullet.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence and task queries added in a later \
+                      task-system issue"
+        )
+    )]
     pub const fn is_plain(&self) -> bool {
         matches!(self, Self::Plain)
     }
@@ -311,6 +338,24 @@ impl TaskListItem {
     #[must_use]
     pub const fn is_fully_complete(&self) -> bool {
         self.fully_complete
+    }
+
+    /// Returns `true` if all descendant tasks in this item's subtree are
+    /// resolved (done or cancelled), or if this item has no descendant tasks.
+    ///
+    /// Alias for [`Self::is_fully_complete`].
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; consumed by LISTS \
+                      persistence in issue 07"
+        )
+    )]
+    pub const fn fully_complete(&self) -> bool {
+        self.is_fully_complete()
     }
 }
 
@@ -672,6 +717,7 @@ mod tests {
                 let item = TaskListItem::new(status, false);
 
                 assert_eq!(item.is_fully_complete(), false);
+                assert_eq!(item.fully_complete(), false);
             }
         }
     }
