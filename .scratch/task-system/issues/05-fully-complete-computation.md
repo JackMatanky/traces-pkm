@@ -19,6 +19,24 @@ The grilling session (Q76/Q79) designed `TaskListItem` as the composed data insi
 - `TaskListItem::fully_complete(&self) -> bool`
 - `fully_complete` computation — recursive over `Task` descendants only; Plain and Checkbox children ignored; cancelled counts as resolved
 
+## Fully-complete algorithm
+
+The computation runs inside `end_item` after children are built (no second pass). For a given list item being closed:
+
+1. If the item is not a Task (`Plain` or `Checkbox`), skip — no `fully_complete` concept.
+2. If the item is a Task, walk its `children: Vec<List>` recursively:
+   - For each child list, iterate its `items`.
+   - For each child item:
+     - If `ListItemType::Plain` or `ListItemType::Checkbox` → skip (ignored for calculation).
+     - If `ListItemType::Task(task)`:
+       - If `task.status().kind().completed()` returns `Some(false)` (incomplete) → parent is **not** fully_complete, short-circuit return `false`.
+       - Otherwise (done or cancelled) → continue.
+     - Recurse into the child task's own children.
+   - After all children processed without short-circuiting → this subtree is resolved.
+3. If no `ListItemType::Task` descendants exist (leaf task or only non-task children) → vacuously `fully_complete = true`.
+
+Cancelled tasks (`TaskStatusType::Cancelled`, `completed() → None`) count as resolved — they are terminal and do not block parent completion.
+
 ## Checklist
 
 ### TaskListItem struct
@@ -34,6 +52,7 @@ The grilling session (Q76/Q79) designed `TaskListItem` as the composed data insi
 - [ ] `end_item` constructs `TaskListItem::new(status, fully_complete)` instead of bare `Task(status)`
 - [ ] `fully_complete` computed in `end_item` after children are built — no second pass
 - [ ] Non-task items (`Plain`, `Checkbox`) have no `fully_complete` concept
+- [ ] `ListItem::kind()` accessor exists (returns `&ListItemType`) — verify or add
 
 ### Fully-complete computation
 
@@ -43,6 +62,7 @@ The grilling session (Q76/Q79) designed `TaskListItem` as the composed data insi
 - [ ] Only `ListItemType::Task` descendants participate in the calculation
 - [ ] Cancelled status counts as resolved (subtree is resolved when all tasks are done or cancelled)
 - [ ] A task with no task children is vacuously `fully_complete = true`
+- [ ] Short-circuits on first incomplete descendant (no wasted traversal)
 
 ### Downstream updates
 
@@ -60,10 +80,12 @@ All `ListItemType::Task(status)` pattern matches updated to destructure through 
 - [ ] Unit test: single task with no children → fully_complete = true
 - [ ] Unit test: parent with all done children → fully_complete = true
 - [ ] Unit test: parent with cancelled child → fully_complete = true
+- [ ] Unit test: parent with mixed done + cancelled children → fully_complete = true
 - [ ] Unit test: parent with incomplete child → fully_complete = false
-- [ ] Unit test: parent with plain bullet children ignored
-- [ ] Unit test: parent with non-task checkbox children ignored
+- [ ] Unit test: parent with plain bullet children ignored (only non-task children → true)
+- [ ] Unit test: parent with non-task checkbox children ignored (only non-task children → true)
 - [ ] Unit test: deeply nested tasks (3+ levels) all done → fully_complete = true
+- [ ] Unit test: deeply nested — intermediate done task has incomplete grandchild → false
 - [ ] Unit test: `TaskListItem::status()` and `TaskListItem::fully_complete()` accessors
 - [ ] `mise run verify` passes
 
