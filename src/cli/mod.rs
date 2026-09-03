@@ -217,8 +217,8 @@ pub fn run() -> Result<CommandOutcome, CliError> {
 ///
 /// # Errors
 ///
-/// Returns [`CliError::CurrentDirectory`] if the directory does not exist or
-/// cannot be accessed.
+/// - [`CliError::CurrentDirectory`] if the directory does not exist or cannot
+///   be accessed.
 fn current_dir() -> Result<Cwd, CliError> {
     Cwd::new().map_err(|source| CliError::CurrentDirectory {
         source,
@@ -246,9 +246,9 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 ///
 /// # Errors
 ///
-/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails, or
-/// [`CliError::Query`] if any filter expression or the sort field path is
-/// malformed.
+/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// - [`CliError::Query`] if any filter expression or the sort field path is
+///   malformed.
 fn refresh_page_query(
     config: &Config,
     from: Option<&str>,
@@ -288,8 +288,8 @@ fn refresh_page_query(
 ///
 /// # Errors
 ///
-/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails, or
-/// [`CliError::Query`] if any filter expression is malformed.
+/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// - [`CliError::Query`] if any filter expression is malformed.
 fn refresh_task_query(
     config: &Config,
     from: Option<&str>,

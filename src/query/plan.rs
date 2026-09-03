@@ -44,8 +44,7 @@ use crate::note::NoteFieldValue;
 /// - **Sort-Limit Fusion**: Rewrites adjacent [`QueryTransform::Sort`] and
 ///   [`QueryTransform::Limit`] operations into a single
 ///   [`QueryTransform::TopK`] operation. This trades an `O(n log n)` full sort
-///   for an `O(n)` quickselect selection via
-///   [`select_nth_unstable_by`](std::slice::select_nth_unstable_by).
+///   for an `O(n)` quickselect selection via [`slice::select_nth_unstable_by`].
 ///
 /// Optimization passes are pure and idempotent: executing them on an already
 /// optimized plan produces an identical plan with no additional overhead.

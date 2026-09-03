@@ -76,7 +76,7 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, or a markdown file cannot be parsed.
+    ///   cannot be inspected, or a Markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
@@ -93,8 +93,8 @@ impl IndexerService {
     ///
     /// Re-scans the root and diffs against the previously persisted index:
     ///
-    /// - Unchanged markdown Notes reuse their parsed [`crate::Note`].
-    /// - Added or changed markdown Notes are parsed from disk.
+    /// - Unchanged Markdown Notes reuse their parsed [`crate::Note`].
+    /// - Added or changed Markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
     /// Derived inlinks are recomputed in full when a Note is added or removed,
@@ -110,7 +110,7 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, a markdown file cannot be parsed, or an unchanged
+    ///   cannot be inspected, a Markdown file cannot be parsed, or an unchanged
     ///   Note's previous value cannot be recalled.
     /// - `IndexError::Store` if the previously persisted index cannot be
     ///   loaded.

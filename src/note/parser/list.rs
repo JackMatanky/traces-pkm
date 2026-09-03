@@ -1,14 +1,14 @@
-//! Nested list and list-item tracking, and item-leading task marker
-//! classification.
+//! Nested list and list-item tracking, marker classification, and task
+//! metadata extraction.
 //!
-//! [`ListTracker`] holds explicit list and list-item stacks so nested Markdown
-//! never recurses through the call stack. [`ItemFrame`] runs the incremental
-//! [`ItemClassificationState`] state machine that determines an item's leading
-//! marker and classification, gated like `pulldown-cmark`'s own first-pass
-//! `scan_task_list_marker`: the marker is only valid at an item's content
-//! start, so the decision is finalized before any inline content event or block
-//! boundary. Status-marked items are evaluated against configured tag filters
-//! to classify them into tasks or checkboxes.
+//! [`ListTracker`] maintains explicit list and list-item stacks so nested
+//! Markdown structures never recurse through the call stack. [`ItemFrame`]
+//! drives the incremental [`ItemClassificationState`] state machine that
+//! detects leading task markers.
+//!
+//! Status-marked items are evaluated against configured tag filters to
+//! classify them as [`ListItemType::Task`] or [`ListItemType::Checkbox`],
+//! extracting dates, priorities, and normalized clean text.
 use chrono::NaiveDate;
 use indexmap::IndexMap;
 
@@ -501,6 +501,7 @@ fn compute_clean_text(raw_text: &str, tag_filters: &[Tag]) -> String {
     normalize_whitespace(&cleaned)
 }
 
+/// Scans `text` for configured task tag filters and records their byte spans.
 fn find_tag_filter_spans(
     text: &str,
     tag_filters: &[Tag],
@@ -525,6 +526,7 @@ fn find_tag_filter_spans(
     }
 }
 
+/// Scans a single tag candidate starting at `start_idx`.
 fn scan_tag_candidate<'a>(
     text: &'a str,
     start_idx: usize,
@@ -546,6 +548,7 @@ fn scan_tag_candidate<'a>(
     Some((start_idx, tag_end, candidate))
 }
 
+/// Scans `text` for date shorthand emojis and records their removal byte spans.
 fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     let date_emojis = [
         "\u{1F4C5}\u{FE0F}",
@@ -601,6 +604,7 @@ fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     }
 }
 
+/// Scans `text` for priority emojis and records their removal byte spans.
 fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     let priority_emojis = [
         "\u{1F53A}\u{FE0F}",
@@ -628,6 +632,8 @@ fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     }
 }
 
+/// Scans `text` for Dataview-style inline task fields and records their removal
+/// byte spans.
 fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     for (open_delim, close_delim) in [('[', ']'), ('(', ')')] {
         let mut search_from = 0;
@@ -652,6 +658,8 @@ fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     }
 }
 
+/// Scans a single bracketed or parenthesized inline task field starting at
+/// `match_start`.
 fn scan_inline_task_field(
     match_start: usize,
     remainder: &str,
@@ -678,6 +686,7 @@ fn scan_inline_task_field(
     )
 }
 
+/// Returns `true` if `key` matches a recognized task metadata field name.
 fn is_task_field_key(key: &str) -> bool {
     matches!(
         key.trim().to_ascii_lowercase().as_str(),
@@ -692,6 +701,7 @@ fn is_task_field_key(key: &str) -> bool {
     )
 }
 
+/// Collapses consecutive whitespace in `text` while preserving newlines.
 fn normalize_whitespace(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut first_line = true;
@@ -1181,7 +1191,7 @@ mod tests {
 
         #[test]
         fn keeps_a_link_lookalike_plain() {
-            // `- [x](y)` is a link whose text abuts the closing bracket —
+            // `- [x](y)` is a link whose text abuts the closing bracket;
             // no whitespace after `]`, so no marker.
             let note = parse("- [x](y) z");
 

@@ -20,19 +20,37 @@
 //!
 //! # Key Types
 //!
-//! - [`Note`]: parsed record for one Markdown file.
-//! - [`List`], [`ListItem`], [`ListItemType`], [`TaskListItem`]: ordered and
+//! - [`Note`]: Parsed record for one Markdown file.
+//! - [`List`], [`ListItem`], [`ListItemType`], [`TaskListItem`]: Ordered and
 //!   unordered lists, including classified task items, checkboxes, and nested
 //!   child lists.
-//! - [`ListText`], [`TaskDates`], [`TaskPriority`]: normalized list text,
+//! - [`ListText`], [`TaskDates`], [`TaskPriority`]: Normalized list text,
 //!   extracted task dates, and priority levels.
-//! - [`TaskIter`](lists::TaskIter): depth-first task iterators.
-//! - [`Link`], [`LinkType`], [`LinkTarget`]: outgoing links from Markdown
+//! - [`TaskIter`]: Depth-first task iterators across list trees.
+//! - [`Link`], [`LinkType`], [`LinkTarget`]: Outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
 //!   or raw text.
-//! - [`NoteFieldValue`]: body metadata values parsed from `Key:: Value` syntax.
+//! - [`NoteFieldValue`]: Body metadata values parsed from `Key:: Value` syntax.
 //! - [`Tag`](crate::Tag): Markdown tags such as `#book` and `#projects/active`.
+//!
+//! # Examples
+//!
+//! ```rust
+//! # #[cfg(feature = "test-utils")]
+//! # {
+//! use std::path::Path;
+//!
+//! use traces_pkm::{MarkdownParserInput, parse_markdown};
+//!
+//! let input = MarkdownParserInput::for_test(
+//!     Path::new("todo.md"),
+//!     "- [ ] Action item 📅 2025-01-15\n- Plain bullet",
+//! );
+//! let note = parse_markdown(&input);
+//! assert_eq!(note.tasks().count(), 1);
+//! # }
+//! ```
 
 mod cursor;
 mod field;

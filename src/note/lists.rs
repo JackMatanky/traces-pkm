@@ -1,19 +1,46 @@
 //! Markdown list, list item, and task-list structures.
 //!
+//! This module defines the core data model for ordered and unordered Markdown
+//! lists, individual list items, task-specific metadata, and recursive task
+//! iterators.
+//!
 //! # Key Types
 //!
-//! - [`List`]: an ordered or unordered Markdown list holding direct child
+//! - [`List`]: An ordered or unordered Markdown list holding direct child
 //!   items.
-//! - [`ListItem`]: a list item with a classified [`ListItemType`], child lists,
+//! - [`ListItem`]: A list item with a classified [`ListItemType`], child lists,
 //!   inline fields, and source positioning.
-//! - [`ListItemType`]: classification of an item as a plain bullet, a checkbox,
-//!   or a Task carrying a [`TaskListItem`].
-//! - [`TaskListItem`]: task-specific metadata (resolved status and precomputed
-//!   fully-complete subtree state) carried by [`ListItemType::Task`].
-//! - [`ListItemPosition`]: a list item's source line, nesting depth, and parent
-//!   line.
-//! - [`TaskIter`]: a depth-first iterator yielding task items across top-level
-//!   and nested child lists.
+//! - [`ListItemType`]: Classification of an item as a plain bullet, a checkbox,
+//!   or a task carrying a [`TaskListItem`].
+//! - [`TaskListItem`]: Task-specific metadata (resolved status, priority,
+//!   dates, and precomputed subtree completion state) carried by
+//!   [`ListItemType::Task`].
+//! - [`TaskPriority`]: Six-level task priority enum mapped to emoji and text
+//!   representations.
+//! - [`TaskDates`]: Six distinct task-lifecycle calendar dates (created,
+//!   scheduled, start, due, done, cancelled).
+//! - [`ListText`]: Dual-representation text container maintaining both raw
+//!   source and clean display text.
+//! - [`TaskIter`]: A depth-first iterator yielding task items across top-level
+//!   and nested child lists in document order.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use traces_pkm::{
+//!     ListText, TaskDates, TaskListItem, TaskPriority, TaskStatus,
+//! };
+//!
+//! let dates = TaskDates::default();
+//! let task = TaskListItem::new(
+//!     dates,
+//!     Some(TaskPriority::High),
+//!     TaskStatus::default(),
+//!     true,
+//! );
+//! assert_eq!(task.priority(), Some(TaskPriority::High));
+//! assert!(task.is_fully_complete());
+//! ```
 use chrono::NaiveDate;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -21,6 +48,27 @@ use serde::{Deserialize, Serialize};
 use super::field::NoteFieldValue;
 use crate::{FieldKey, SourceLine, TaskStatus};
 /// An ordered or unordered Markdown list.
+///
+/// Holds direct child [`ListItem`] elements and a flag indicating whether the
+/// list is numbered (ordered) or bulleted (unordered).
+///
+/// # Examples
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input = MarkdownParserInput::for_test(
+///     Path::new("note.md"),
+///     "1. First\n2. Second",
+/// );
+/// let note = parse_markdown(&input);
+/// assert_eq!(note.lists().len(), 1);
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct List {
     is_ordered: bool,
@@ -54,6 +102,27 @@ impl List {
     }
 
     /// Returns the direct child items in this list.
+    ///
+    /// Does not include descendant items nested inside child lists.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("note.md"),
+    ///     "- Item 1\n- Item 2",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// let list = &note.lists()[0];
+    /// assert_eq!(list.items().len(), 2);
+    /// # }
+    /// ```
     #[inline]
     #[must_use]
     pub fn items(&self) -> &[ListItem] {
@@ -62,6 +131,30 @@ impl List {
 }
 /// A Markdown list item with a classified [`ListItemType`], child lists, and
 /// inline fields.
+///
+/// Stores both raw and normalized text representations via [`ListText`], nested
+/// child [`List`] structures, extracted Dataview-style inline fields, and
+/// source line positioning information.
+///
+/// # Examples
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input = MarkdownParserInput::for_test(
+///     Path::new("note.md"),
+///     "- [ ] Action item",
+/// );
+/// let note = parse_markdown(&input);
+/// let item = &note.lists()[0].items()[0];
+/// assert!(item.kind().is_task());
+/// assert_eq!(item.clean_text(), "Action item");
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: ListText,
@@ -132,6 +225,26 @@ impl ListItem {
 
     /// Returns the plain or normalized text representation holding both raw
     /// and clean variants.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("note.md"),
+    ///     "- [ ] Task 📅 2025-01-15",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// let item = &note.lists()[0].items()[0];
+    /// assert_eq!(item.text().raw(), "Task 📅 2025-01-15");
+    /// assert_eq!(item.text().clean(), "Task");
+    /// # }
+    /// ```
     #[inline]
     #[must_use]
     pub fn text(&self) -> &ListText {
@@ -139,6 +252,27 @@ impl ListItem {
     }
 
     /// Returns the raw text with only the leading marker prefix stripped.
+    ///
+    /// Retains tags, dates, priority emojis, and inline fields.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("note.md"),
+    ///     "- [ ] Task 📅 2025-01-15",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// let item = &note.lists()[0].items()[0];
+    /// assert_eq!(item.raw_text(), "Task 📅 2025-01-15");
+    /// # }
+    /// ```
     #[inline]
     #[must_use]
     pub fn raw_text(&self) -> &str {
@@ -146,6 +280,28 @@ impl ListItem {
     }
 
     /// Returns the normalized clean text with task metadata stripped.
+    ///
+    /// Strips configured task tag filters, date shorthand syntax, priority
+    /// emojis, and inline task fields.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("note.md"),
+    ///     "- [ ] Task 📅 2025-01-15",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// let item = &note.lists()[0].items()[0];
+    /// assert_eq!(item.clean_text(), "Task");
+    /// # }
+    /// ```
     #[inline]
     #[must_use]
     pub fn clean_text(&self) -> &str {
@@ -153,6 +309,23 @@ impl ListItem {
     }
 
     /// Returns this item's classification: plain bullet, checkbox, or Task.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input =
+    ///     MarkdownParserInput::for_test(Path::new("note.md"), "- [ ] Task");
+    /// let note = parse_markdown(&input);
+    /// let item = &note.lists()[0].items()[0];
+    /// assert!(item.kind().is_task());
+    /// # }
+    /// ```
     #[inline]
     #[must_use]
     pub const fn kind(&self) -> &ListItemType {
@@ -249,13 +422,36 @@ impl ListItem {
     }
 }
 
-/// How the custom marker scanner classified a Markdown list item.
+/// Classification of a Markdown list item.
 ///
-/// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
-/// status-marked items that did not match a configured task tag filter. They
-/// carry only derived completion state and are excluded from
-/// [`super::Note::tasks`]. [`Self::Task`] items carry task-specific data
-/// encapsulated in a [`TaskListItem`].
+/// List items are classified during parsing based on leading marker syntax and
+/// configured task tag filters:
+///
+/// - [`Self::Plain`]: Standard bullet or numbered item with no checkbox marker.
+/// - [`Self::Checkbox`]: Status-marked item that did not match configured task
+///   tag filters. Checkboxes carry no task-specific metadata and are excluded
+///   from [`super::Note::tasks`].
+/// - [`Self::Task`]: Status-marked item classified as an active task, carrying
+///   an encapsulated [`TaskListItem`].
+///
+/// # Examples
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input = MarkdownParserInput::for_test(
+///     Path::new("note.md"),
+///     "- Plain\n- [ ] Task",
+/// );
+/// let note = parse_markdown(&input);
+/// assert!(note.lists()[0].items()[0].kind().is_plain());
+/// assert!(note.lists()[0].items()[1].kind().is_task());
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum ListItemType {
     /// A plain bullet with no marker.
@@ -268,6 +464,21 @@ pub enum ListItemType {
 
 impl ListItemType {
     /// Returns `true` if this list item is classified as a Task.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{ListItemType, TaskDates, TaskListItem, TaskStatus};
+    ///
+    /// let kind = ListItemType::Task(TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     None,
+    ///     TaskStatus::default(),
+    ///     false,
+    /// ));
+    /// assert!(kind.is_task());
+    /// assert!(!kind.is_plain());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_task(&self) -> bool {
@@ -275,6 +486,16 @@ impl ListItemType {
     }
 
     /// Returns `true` if this list item is classified as a Checkbox.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::ListItemType;
+    ///
+    /// let kind = ListItemType::Checkbox;
+    /// assert!(kind.is_checkbox());
+    /// assert!(!kind.is_task());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_checkbox(&self) -> bool {
@@ -282,6 +503,16 @@ impl ListItemType {
     }
 
     /// Returns `true` if this list item is classified as a plain bullet.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::ListItemType;
+    ///
+    /// let kind = ListItemType::Plain;
+    /// assert!(kind.is_plain());
+    /// assert!(!kind.is_task());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_plain(&self) -> bool {
@@ -291,8 +522,24 @@ impl ListItemType {
 
 /// Task-specific data carried by a [`ListItemType::Task`] item.
 ///
-/// Holds the task's resolved status, a precomputed `is_fully_complete` flag,
-/// an optional priority level, and extracted task dates.
+/// Encapsulates extracted task lifecycle dates ([`TaskDates`]), an optional
+/// priority ([`TaskPriority`]), the resolved [`TaskStatus`], and a precomputed
+/// boolean flag indicating whether the entire task subtree is complete.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{TaskDates, TaskListItem, TaskPriority, TaskStatus};
+///
+/// let task = TaskListItem::new(
+///     TaskDates::default(),
+///     Some(TaskPriority::Highest),
+///     TaskStatus::default(),
+///     true,
+/// );
+/// assert_eq!(task.priority(), Some(TaskPriority::Highest));
+/// assert!(task.is_fully_complete());
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskListItem {
     dates: TaskDates,
@@ -304,6 +551,20 @@ pub struct TaskListItem {
 impl TaskListItem {
     /// Creates a task list item with its dates, priority, resolved status,
     /// and precomputed fully-complete state.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{TaskDates, TaskListItem, TaskPriority, TaskStatus};
+    ///
+    /// let task = TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     Some(TaskPriority::Low),
+    ///     TaskStatus::default(),
+    ///     false,
+    /// );
+    /// assert_eq!(task.priority(), Some(TaskPriority::Low));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn new(
@@ -322,6 +583,20 @@ impl TaskListItem {
 
     /// Returns the task's resolved status (marker symbol, display name, and
     /// workflow type).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{TaskDates, TaskListItem, TaskStatus};
+    ///
+    /// let task = TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     None,
+    ///     TaskStatus::default(),
+    ///     true,
+    /// );
+    /// assert_eq!(task.status().symbol(), ' ');
+    /// ```
     #[inline]
     #[must_use]
     pub const fn status(&self) -> &TaskStatus {
@@ -330,6 +605,20 @@ impl TaskListItem {
 
     /// Returns `true` if all descendant tasks in this item's subtree are
     /// resolved (done or cancelled), or if this item has no descendant tasks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{TaskDates, TaskListItem, TaskStatus};
+    ///
+    /// let task = TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     None,
+    ///     TaskStatus::default(),
+    ///     true,
+    /// );
+    /// assert!(task.is_fully_complete());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_fully_complete(&self) -> bool {
@@ -347,6 +636,20 @@ impl TaskListItem {
     }
 
     /// Returns the task's priority, or [`None`] if no priority was specified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{TaskDates, TaskListItem, TaskPriority, TaskStatus};
+    ///
+    /// let task = TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     Some(TaskPriority::Medium),
+    ///     TaskStatus::default(),
+    ///     false,
+    /// );
+    /// assert_eq!(task.priority(), Some(TaskPriority::Medium));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn priority(&self) -> Option<TaskPriority> {
@@ -354,6 +657,20 @@ impl TaskListItem {
     }
 
     /// Returns the task's dates.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{TaskDates, TaskListItem, TaskStatus};
+    ///
+    /// let task = TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     None,
+    ///     TaskStatus::default(),
+    ///     false,
+    /// );
+    /// assert!(task.dates().is_empty());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn dates(&self) -> TaskDates {
@@ -363,7 +680,19 @@ impl TaskListItem {
 
 /// Task priority level.
 ///
-/// Can be parsed from priority emojis or specified via inline fields.
+/// Supports six priority levels ordered from lowest to highest:
+/// [`Self::Lowest`] < [`Self::Low`] < [`Self::Normal`] < [`Self::Medium`] <
+/// [`Self::High`] < [`Self::Highest`].
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::TaskPriority;
+///
+/// assert!(TaskPriority::Highest > TaskPriority::High);
+/// assert!(TaskPriority::High > TaskPriority::Medium);
+/// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
+/// ```
 #[derive(
     Copy,
     Clone,
@@ -391,9 +720,17 @@ pub enum TaskPriority {
     /// Highest priority (`🔺`).
     Highest,
 }
-
 impl TaskPriority {
     /// Returns the canonical lowercase string name of the priority.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::Highest.as_str(), "highest");
+    /// assert_eq!(TaskPriority::Normal.as_str(), "normal");
+    /// ```
     #[inline]
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
@@ -417,6 +754,16 @@ impl TaskPriority {
     /// | 🔼    | medium   |
     /// | 🔽    | low      |
     /// | ⏬    | lowest   |
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
+    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
+    /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
+    /// ```
     #[inline]
     #[must_use]
     pub fn from_emoji(emoji: &str) -> Option<Self> {
@@ -433,6 +780,15 @@ impl TaskPriority {
 
     /// Returns the canonical emoji representation for this priority, or
     /// [`None`] for [`Self::Normal`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::Highest.emoji(), Some("🔺"));
+    /// assert_eq!(TaskPriority::Normal.emoji(), None);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn emoji(&self) -> Option<&'static str> {
@@ -473,8 +829,20 @@ impl std::str::FromStr for TaskPriority {
 
 /// Date metadata associated with a [`TaskListItem`].
 ///
-/// Supports created, scheduled, start, due, done, and cancelled dates.
-/// Missing dates are [`None`].
+/// Stores six distinct task-lifecycle dates parsed from emoji shorthand or
+/// Dataview inline field syntax. Missing dates are represented as [`None`].
+///
+/// # Examples
+///
+/// ```rust
+/// use chrono::NaiveDate;
+/// use traces_pkm::TaskDates;
+///
+/// let mut dates = TaskDates::default();
+/// dates.due = NaiveDate::from_ymd_opt(2025, 1, 15);
+/// assert!(!dates.is_empty());
+/// assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
+/// ```
 #[derive(
     Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize,
 )]
@@ -492,9 +860,19 @@ pub struct TaskDates {
     /// Date when the task was cancelled (`❌` or `[cancelled::]`).
     pub cancelled: Option<NaiveDate>,
 }
-
 impl TaskDates {
     /// Creates a new `TaskDates` instance with all dates specified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let due = NaiveDate::from_ymd_opt(2025, 1, 15);
+    /// let dates = TaskDates::new(None, None, None, due, None, None);
+    /// assert_eq!(dates.due(), due);
+    /// ```
     #[inline]
     #[must_use]
     #[expect(
@@ -520,6 +898,14 @@ impl TaskDates {
     }
 
     /// Returns `true` if no dates are set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDates;
+    ///
+    /// assert!(TaskDates::default().is_empty());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -532,6 +918,17 @@ impl TaskDates {
     }
 
     /// Returns the task's creation date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let mut dates = TaskDates::default();
+    /// dates.created = NaiveDate::from_ymd_opt(2025, 1, 1);
+    /// assert_eq!(dates.created(), NaiveDate::from_ymd_opt(2025, 1, 1));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn created(&self) -> Option<NaiveDate> {
@@ -539,6 +936,17 @@ impl TaskDates {
     }
 
     /// Returns the task's scheduled date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let mut dates = TaskDates::default();
+    /// dates.scheduled = NaiveDate::from_ymd_opt(2025, 1, 10);
+    /// assert_eq!(dates.scheduled(), NaiveDate::from_ymd_opt(2025, 1, 10));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn scheduled(&self) -> Option<NaiveDate> {
@@ -546,6 +954,17 @@ impl TaskDates {
     }
 
     /// Returns the task's start date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let mut dates = TaskDates::default();
+    /// dates.start = NaiveDate::from_ymd_opt(2025, 1, 12);
+    /// assert_eq!(dates.start(), NaiveDate::from_ymd_opt(2025, 1, 12));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn start(&self) -> Option<NaiveDate> {
@@ -553,6 +972,17 @@ impl TaskDates {
     }
 
     /// Returns the task's due date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let mut dates = TaskDates::default();
+    /// dates.due = NaiveDate::from_ymd_opt(2025, 1, 15);
+    /// assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn due(&self) -> Option<NaiveDate> {
@@ -560,6 +990,17 @@ impl TaskDates {
     }
 
     /// Returns the task's completion date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let mut dates = TaskDates::default();
+    /// dates.done = NaiveDate::from_ymd_opt(2025, 1, 20);
+    /// assert_eq!(dates.done(), NaiveDate::from_ymd_opt(2025, 1, 20));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn done(&self) -> Option<NaiveDate> {
@@ -567,6 +1008,17 @@ impl TaskDates {
     }
 
     /// Returns the task's cancellation date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::TaskDates;
+    ///
+    /// let mut dates = TaskDates::default();
+    /// dates.cancelled = NaiveDate::from_ymd_opt(2025, 1, 22);
+    /// assert_eq!(dates.cancelled(), NaiveDate::from_ymd_opt(2025, 1, 22));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn cancelled(&self) -> Option<NaiveDate> {
@@ -582,6 +1034,16 @@ impl TaskDates {
 ///   preserved.
 /// - `clean`: Normalized text with task marker, configured task tag filters,
 ///   date syntax, priority emojis, and inline task fields stripped.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::ListText;
+///
+/// let text = ListText::new("Buy milk 📅 2025-01-15", "Buy milk");
+/// assert_eq!(text.raw(), "Buy milk 📅 2025-01-15");
+/// assert_eq!(text.clean(), "Buy milk");
+/// ```
 #[derive(
     Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize,
 )]
@@ -593,7 +1055,16 @@ pub struct ListText {
 }
 
 impl ListText {
-    /// Creates a new `ListText`.
+    /// Creates a new `ListText` from raw and clean text representations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::ListText;
+    ///
+    /// let text = ListText::new("Task 📅 2025-01-15", "Task");
+    /// assert_eq!(text.clean(), "Task");
+    /// ```
     #[inline]
     #[must_use]
     pub fn new<R: Into<String>, C: Into<String>>(raw: R, clean: C) -> Self {
@@ -604,6 +1075,15 @@ impl ListText {
     }
 
     /// Returns the raw text with only the leading marker prefix stripped.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::ListText;
+    ///
+    /// let text = ListText::new("Task 📅 2025-01-15", "Task");
+    /// assert_eq!(text.raw(), "Task 📅 2025-01-15");
+    /// ```
     #[inline]
     #[must_use]
     pub fn raw(&self) -> &str {
@@ -611,13 +1091,21 @@ impl ListText {
     }
 
     /// Returns the normalized clean text suitable for display and queries.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::ListText;
+    ///
+    /// let text = ListText::new("Task 📅 2025-01-15", "Task");
+    /// assert_eq!(text.clean(), "Task");
+    /// ```
     #[inline]
     #[must_use]
     pub fn clean(&self) -> &str {
         &self.clean
     }
 }
-
 impl std::fmt::Display for ListText {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

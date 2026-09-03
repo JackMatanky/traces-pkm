@@ -99,9 +99,9 @@ pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
 /// Scans `text` for an item-leading marker, treating end-of-input as the
 /// trailing whitespace.
 ///
-/// A list item's line ends without a whitespace [`Event::Text`] chunk — the
-/// newline is consumed structurally (by a nested list, a soft break, or the
-/// item's end) — so `- [x]` as an entire item still carries a marker, exactly
+/// A list item's line ends without a whitespace [`Event::Text`] chunk (the
+/// newline is consumed structurally by a nested list, a soft break, or the
+/// item's end), so `- [x]` as an entire item still carries a marker, exactly
 /// as pulldown-cmark treats the line terminator as whitespace. Returns `None`
 /// when `text` is not a complete `[<char>]` marker shape.
 ///

@@ -7,25 +7,24 @@
 //!
 //! The parser is organized into six specialized submodules:
 //!
-//! - [`inline`](self::inline): [`inline::parse_inline_value`] parses raw inline
-//!   field value text into strongly typed
-//!   [`NoteFieldValue`](super::NoteFieldValue) records (comma lists, quoted
+//! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
+//!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
 //!   strings, durations, wikilinks, booleans, dates, numbers, tags).
-//! - [`input`](self::input): [`MarkdownParserInput`] encapsulates borrowed
-//!   path, source text, and configuration references for parsing.
-//! - [`lexer`](self::lexer): [`InlineTokenLexer`] extracts `Key:: Value`,
-//!   `[Key:: Value]`, and `(Key:: Value)` inline fields, task emoji shorthands,
-//!   and `#tag` tokens from plain-text scan buffers using [`logos`].
+//! - [`input`]: [`MarkdownParserInput`] encapsulates borrowed path, source
+//!   text, and configuration references for parsing.
+//! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
+//!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
+//!   tokens from plain-text scan buffers using [`logos`].
 //! - [`mod@line`]: [`ByteTracker`] precomputes line-start byte offsets for
 //!   $O(\log n)$ byte-to-line translation without scanning the source string
 //!   multiple times.
-//! - [`list`](self::list): [`ListTracker`] manages explicit list and list-item
-//!   stacks so nested Markdown never recurses through the call stack, driving
-//!   the item-leading marker state machine, tag filter classification, and
-//!   flushing item metadata.
-//! - [`marker`](self::marker): custom task marker scanner that recognizes
-//!   `[<symbol>]` markers at item-leading positions with
-//!   pulldown-cmark-compatible whitespace rules.
+//! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
+//!   nested Markdown never recurses through the call stack, driving the
+//!   item-leading marker state machine, tag filter classification, and flushing
+//!   item metadata.
+//! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
+//!   markers at item-leading positions with pulldown-cmark-compatible
+//!   whitespace rules.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
 //! specialized handlers and assembles the final [`Note`].
@@ -227,7 +226,7 @@ impl<'a> ParserContext<'a> {
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
             // Inline markup occupying an item's leading slot means the task
-            // marker is not at the content start — mirroring pulldown-cmark,
+            // marker is not at the content start, mirroring pulldown-cmark,
             // which scans for the marker before parsing any inline content.
             // `- **[x] Task**` and `` - `[x]` Task `` stay plain.
             Event::Start(

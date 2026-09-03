@@ -268,13 +268,13 @@ fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
 /// that class instead of matching every non-Note file. The `Class` atom's match
 /// set stays empty here, the same unresolved shape DSL parsing produces for
 /// `@Book`/`class(Name)`, and is populated later by
-/// [`query::resolve_classes`](crate::query::resolve_classes), the same pass
+/// [`crate::query::SourceSelector::resolve_classes`], the same pass
 /// that resolves DSL-parsed class atoms.
 ///
 /// # Errors
 ///
 /// Returns a [`regex::Error`] if a folder/extension glob fails to compile
-/// (see [`compile_glob`]'s docs: not expected in practice).
+/// (see `compile_glob`: not expected in practice).
 fn file_field_source(
     filter: &SchemaFileFieldRef<'_>,
 ) -> Result<SourceSelector, regex::Error> {
@@ -317,7 +317,7 @@ fn file_field_source(
 /// Builds the glob matching every file under `folder` (or, when `folder` is
 /// empty, every file anywhere in the project) with the given `ext`.
 ///
-/// Mirrors the DSL's own glob compilation ([`compile_glob`]) so a `file`
+/// Mirrors the DSL's own glob compilation (`compile_glob`) so a `file`
 /// field's filter composes identically to hand-written source text.
 ///
 /// # Errors

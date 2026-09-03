@@ -51,13 +51,13 @@
 //! `record.file.*` and `record.task.*` use forwarding wrappers ([`FileFields`]
 //! and [`TaskFields`]) instead: minijinja resolves a dotted attribute path one
 //! segment at a time, so the wrappers call
-//! [`FileField::parse`]/[`FileField::resolve`] and
+//! [`FileField::parse`] and
 //! [`QueryRow::task_completed`]/[`QueryRow::task_text`] directly,
 //! skipping the string-prefix handling [`QueryRow::field`] needs once the
 //! `file`/`task` segment is already known.
 //! # Errors
 //!
-//! [`FileIndex::refresh`] and [`QueryError`] failures become
+//! [`IndexerService::refresh`] and [`QueryError`] failures become
 //! [`minijinja::Error`] values with stable messages and the original error
 //! preserved as [`std::error::Error::source`], mirroring [`super::ui`]'s
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
@@ -90,9 +90,9 @@ const METHODS: &[&str] = &["from"];
 ///
 /// Shared by the `query` and `tasks` namespaces (both dispatch through
 /// [`QueryOps::run`]) so a render calling into both pays for one
-/// [`FileIndex::refresh`] instead of one per query call. `State`'s temp storage
-/// is scoped to one render, including `{% include %}`s, and resets for the
-/// next. A cache field on [`QueryOps`] itself would wrongly persist across
+/// [`IndexerService::refresh`] instead of one per query call. `State`'s temp
+/// storage is scoped to one render, including `{% include %}`s, and resets for
+/// the next. A cache field on [`QueryOps`] itself would wrongly persist across
 /// independent renders on a reused [`Environment`]/[`super::TemplateEngine`].
 const INDEX_CACHE_KEY: &str = "query.index_cache";
 
@@ -219,7 +219,7 @@ impl Object for QueryOps {
 ///
 /// # Errors
 ///
-/// - Any error [`FileIndex::refresh`] returns.
+/// - Any error [`IndexerService::refresh`](crate::index::IndexerService::refresh) returns.
 pub(super) fn cached_refresh(
     state: &State,
     root: &Path,
@@ -463,7 +463,7 @@ fn with_descendants_filter(source: &SourceSelector) -> Value {
 }
 
 /// Replaces every `Class` atom's [`ClassExpansionMode`] in `source`, keeping
-/// the match set empty (still unresolved; [`resolve_classes`] fills it in at
+/// the match set empty (still unresolved; `resolve_classes` fills it in at
 fn set_class_depth(
     mut source: SourceSelector,
     mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
@@ -516,7 +516,7 @@ impl Object for QueryRow {
 }
 
 /// Forwards `record.file.<field>` to
-/// [`FileField::parse`]/[`FileField::resolve`].
+/// [`FileField::parse`].
 ///
 /// A thin wrapper rather than a second lookup path, needed only because
 /// minijinja resolves a dotted attribute path one segment at a time:

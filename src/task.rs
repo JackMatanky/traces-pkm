@@ -42,50 +42,39 @@ impl TaskStatus {
     /// Returns the marker symbol.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for API symmetry \
-                      with name()/kind() until the marker scanner consumes it"
-        )
-    )]
-    pub(crate) const fn symbol(&self) -> TaskStatusSymbol {
+    pub const fn symbol(&self) -> TaskStatusSymbol {
         self.symbol
     }
 
     /// Returns the display name exactly as configured.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for API symmetry \
-                      with symbol()/kind() until task.status query rendering \
-                      consumes it"
-        )
-    )]
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
     /// Returns the workflow status type.
     #[inline]
     #[must_use]
-    pub(crate) const fn kind(&self) -> TaskStatusType {
+    pub const fn kind(&self) -> TaskStatusType {
         self.kind
+    }
+}
+
+impl Default for TaskStatus {
+    #[inline]
+    fn default() -> Self {
+        Self::new(TaskStatusSymbol::new(' '), "Todo", TaskStatusType::Todo)
     }
 }
 
 /// A [`TaskStatus`] lookup table, built once at config resolution.
 ///
-/// Indexes the same statuses three ways: by marker symbol, by normalized
 /// display name, and by workflow type. Default statuses are always present;
 /// [`Self::insert`] lets configuration add new statuses or override a default
 /// one that shares its symbol.
 #[derive(Clone, Debug)]
-pub(crate) struct TaskStatusMap {
+pub struct TaskStatusMap {
     symbols: HashMap<TaskStatusSymbol, TaskStatus>,
     names: HashMap<String, TaskStatus>,
     kinds: HashMap<TaskStatusType, Vec<TaskStatus>>,
@@ -205,7 +194,7 @@ impl Default for TaskStatusMap {
 
 /// The workflow classification of a [`TaskStatus`].
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub(crate) enum TaskStatusType {
+pub enum TaskStatusType {
     /// Not yet started.
     Todo,
     /// Actively being worked on.
@@ -247,14 +236,21 @@ impl TaskStatusType {
 /// are still valid symbols; this type carries no validation beyond being a
 /// `char`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub(crate) struct TaskStatusSymbol(char);
+pub struct TaskStatusSymbol(char);
 
 impl TaskStatusSymbol {
     /// Wraps `symbol` as a task status marker character.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(symbol: char) -> Self {
+    pub const fn new(symbol: char) -> Self {
         Self(symbol)
+    }
+
+    /// Returns the underlying marker character.
+    #[inline]
+    #[must_use]
+    pub const fn as_char(&self) -> char {
+        self.0
     }
 }
 
@@ -262,6 +258,20 @@ impl From<char> for TaskStatusSymbol {
     #[inline]
     fn from(symbol: char) -> Self {
         Self::new(symbol)
+    }
+}
+
+impl PartialEq<char> for TaskStatusSymbol {
+    #[inline]
+    fn eq(&self, other: &char) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<TaskStatusSymbol> for char {
+    #[inline]
+    fn eq(&self, other: &TaskStatusSymbol) -> bool {
+        *self == other.0
     }
 }
 

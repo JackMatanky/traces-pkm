@@ -1,9 +1,17 @@
 //! Metadata field values parsed from YAML frontmatter and inline field text.
 //!
-//! [`NoteFieldValue`] represents strongly typed values extracted from Markdown
-//! notes, including scalars (booleans, numbers, strings, dates, durations),
-//! links, lists, and objects.
-
+//! This module provides [`NoteFieldValue`], which represents strongly typed
+//! metadata values extracted from Markdown notes, including scalars (booleans,
+//! numbers, strings, dates, durations), links, lists, and objects.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use traces_pkm::NoteFieldValue;
+//!
+//! let val = NoteFieldValue::String("value".to_owned());
+//! assert_eq!(val.as_str(), Some("value"));
+//! ```
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use yaml_serde as serde_yaml;
@@ -52,6 +60,18 @@ impl NoteFieldValue {
     /// Returns the inner text for [`NoteFieldValue::String`],
     /// [`NoteFieldValue::Date`], and [`NoteFieldValue::Duration`] variants,
     /// or `None` for any other kind.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::NoteFieldValue;
+    ///
+    /// let val = NoteFieldValue::String("Draft".to_owned());
+    /// assert_eq!(val.as_str(), Some("Draft"));
+    ///
+    /// let num = NoteFieldValue::Number(42.0);
+    /// assert_eq!(num.as_str(), None);
+    /// ```
     #[inline]
     #[must_use]
     pub fn as_str(&self) -> Option<&str> {
@@ -64,6 +84,22 @@ impl NoteFieldValue {
     /// Returns the parsed calendar date if this value is
     /// [`NoteFieldValue::Date`] or a [`NoteFieldValue::String`] beginning
     /// with a valid `YYYY-MM-DD` ISO date, or `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::NoteFieldValue;
+    ///
+    /// let date_val = NoteFieldValue::Date("2025-01-15".to_owned());
+    /// assert_eq!(date_val.as_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
+    ///
+    /// let str_val = NoteFieldValue::String("2025-01-15T12:00:00".to_owned());
+    /// assert_eq!(str_val.as_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
+    ///
+    /// let invalid = NoteFieldValue::String("not-a-date".to_owned());
+    /// assert_eq!(invalid.as_date(), None);
+    /// ```
     #[inline]
     #[must_use]
     pub fn as_date(&self) -> Option<chrono::NaiveDate> {

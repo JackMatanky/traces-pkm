@@ -159,8 +159,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::InvalidSubDir`] when the Schema directory
-    /// escapes the config root or cannot be verified.
+    /// - [`ConfigFileError::InvalidSubDir`] when the Schema directory escapes
+    ///   the config root or cannot be verified.
     #[inline]
     pub(crate) fn resolved_schema_directory(
         &self,
@@ -282,8 +282,8 @@ impl ConfigSubDir {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::InvalidSubDir`] if the resolved path escapes
-    /// `root` or fails verification.
+    /// - [`ConfigFileError::InvalidSubDir`] if the resolved path escapes `root`
+    ///   or fails verification.
     pub(crate) fn resolve_against(
         &self,
         root: &Path,
@@ -395,8 +395,10 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
 
     /// # Errors
     ///
-    /// See [`FieldName::try_from`] and [`ConfigSubDir::try_from`] for when
-    /// fields fail validation.
+    /// - [`ConfigFileError::InvalidFieldKey`] if `class_field` fails field name
+    ///   validation.
+    /// - [`ConfigFileError::InvalidSubDir`] if `directory` fails path
+    ///   verification.
     #[inline]
     fn try_from(raw: RawSchemasConfig) -> Result<Self, Self::Error> {
         let class_field = FieldName::try_from(
@@ -560,8 +562,8 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
 
     /// # Errors
     ///
-    /// See [`FieldName::try_from`] for when `raw.title` or `raw.aliases`
-    /// fails validation.
+    /// - [`ConfigFileError::InvalidFieldKey`] if `title` or `aliases` fails
+    ///   field name validation.
     #[inline]
     fn try_from(raw: RawFrontmatterConfig) -> Result<Self, Self::Error> {
         let invalid_key =
@@ -656,8 +658,7 @@ impl DateFieldConfig {
     ///
     /// # Errors
     ///
-    /// See [`FieldName::try_from`] for when a configured `raw.name` fails
-    /// validation.
+    /// - [`FieldNameError`] if a configured `raw.name` fails validation.
     #[inline]
     fn from_raw_or_default(
         raw: Option<RawDateFieldConfig>,
@@ -734,8 +735,8 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
 
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::InvalidTagFilter`] when a `tag_filters`
-    /// entry does not normalize into a valid [`Tag`].
+    /// - [`ConfigFileError::InvalidTagFilter`] when a `tag_filters` entry does
+    ///   not normalize into a valid [`Tag`].
     #[inline]
     fn try_from(raw: RawTaskConfig) -> Result<Self, Self::Error> {
         let tag_filters = raw

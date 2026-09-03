@@ -28,10 +28,13 @@
 //! # Examples
 //!
 //! ```rust
+//! # #[cfg(feature = "test-utils")]
+//! # {
 //! use traces_pkm::QuerySet;
 //! let set = QuerySet::default();
 //! assert!(set.is_empty());
 //! assert_eq!(set.len(), 0);
+//! # }
 //! ```
 //!
 //! [`FileBase`]: crate::FileBase
@@ -318,9 +321,12 @@ impl std::fmt::Debug for QueryRow {
 /// # Examples
 ///
 /// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
 /// use traces_pkm::QuerySet;
 /// let set = QuerySet::default();
 /// assert!(set.is_empty());
+/// # }
 /// ```
 #[must_use]
 #[derive(Clone, Default)]
