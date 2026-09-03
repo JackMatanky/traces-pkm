@@ -1,3 +1,9 @@
+//! Source expression DSL parser and evaluation engine for `--from` queries.
+//!
+//! Defines [`SourceSelector`], the primary entry point for matching candidate
+//! notes against tag leaves (`#tag`), path leaves (`folder/`, `file.md`,
+//! `**/*.md`), and File Class leaves (`@Class`).
+
 use std::{collections::BTreeSet, path::Path};
 
 use logos::{Lexer, Logos};

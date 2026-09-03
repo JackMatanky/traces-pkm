@@ -1,21 +1,30 @@
-//! Query rows and result set types for query execution.
+//! Query result row representations and common table expression (CTE) result
+//! sets.
 //!
-//! This module implements [`QueryRow`], which pairs a [`FileBase`] with its
-//! parsed [`Note`] and resolves field paths for template rendering and CLI
-//! output, and [`QuerySet`], a memoized CTE table supporting chained
-//! transformations and terminal rendering.
+//! Defines [`QueryRow`] and [`QuerySet`], which encapsulate evaluated index
+//! rows and provide post-fetch CTE transformation pipelines.
+//!
+//! # Common Table Expression (CTE) Semantics
+//!
+//! [`QuerySet`] acts as a branchable, memoized common table expression (CTE)
+//! table:
+//! - **`O(1)` Appends**: Chained transform calls ([`filter`](QuerySet::filter),
+//!   [`sort`](QuerySet::sort), [`limit`](QuerySet::limit),
+//!   [`group_by`](QuerySet::group_by), [`flatten`](QuerySet::flatten)) append
+//!   steps to an internal [`QueryPlan`](super::QueryPlan) in `O(1)` time.
+//! - **Lazy Materialization**: Computes transformations lazily on first access
+//!   ([`len`](QuerySet::len), [`get`](QuerySet::get), [`iter`](QuerySet::iter),
+//!   or terminal renderers), memoizing the resulting rows.
+//! - **Branching Support**: Multiple derived `QuerySet` instances can branch
+//!   off one base set without mutating base state or re-evaluating shared
+//!   prefixes.
 //!
 //! # Main Types
 //!
-//! - [`QueryRow`] is the primary query row produced by
-//!   [`super::QueryService::execute`].
-//! - [`QuerySet`] stores result rows and provides chained transformation
-//!   methods ([`filter`](QuerySet::filter), [`sort`](QuerySet::sort),
-//!   [`limit`](QuerySet::limit), [`group_by`](QuerySet::group_by),
-//!   [`flatten`](QuerySet::flatten)) and terminal rendering methods
-//!   ([`table`](QuerySet::table), [`list`](QuerySet::list),
-//!   [`task_list`](QuerySet::task_list)).
-//!
+//! - [`QueryRow`] - Individual page or task record paired with indexed file
+//!   metadata.
+//! - [`QuerySet`] - Lazily evaluated result set with chained transform methods
+//!   and terminal renderers.
 //! # Examples
 //!
 //! ```rust
@@ -301,8 +310,7 @@ impl std::fmt::Debug for QueryRow {
 ///
 /// `QuerySet` acts as a common table expression (CTE) result set:
 /// transformation methods ([`filter`](Self::filter), [`sort`](Self::sort),
-/// [`limit`](Self::limit), [`group_by`](Self::group_by),
-/// [`flatten`](Self::flatten)) append transformations in $O(1)$ time to a
+/// [`flatten`](Self::flatten)) append transformations in `O(1)` time to a
 /// pending plan. Execution occurs lazily on first read ([`len`](Self::len),
 /// [`get`](Self::get), [`iter`](Self::iter), or any terminal renderer),
 /// memoizing the result for all subsequent reads and branch evaluations.

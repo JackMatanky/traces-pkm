@@ -1,3 +1,11 @@
+//! Record filter expression DSL parser and evaluation engine for `--where`
+//! queries.
+//!
+//! Defines [`FilterExpr`], which parses boolean filter expressions containing
+//! field path accessors (`file.name`, `task.completed`, frontmatter keys),
+//! comparison operators, and function calls (`contains`), evaluating candidate
+//! [`QueryRow`] records.
+
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
 

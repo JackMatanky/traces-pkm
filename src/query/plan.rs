@@ -1,8 +1,29 @@
 //! Query transformation plan optimization and execution engine.
 //!
-//! Defines [`QueryPlan`], which optimizes and executes ordered sequence of
-//! [`QueryTransform`] steps.
-
+//! Defines [`QueryPlan`] and [`QueryTransform`], which power the single
+//! transformation engine for the entire query subsystem.
+//!
+//! # Execution Contexts
+//!
+//! `QueryPlan` executes in two complementary query modes:
+//! - **Pre-fetch Execution**: Fully built by
+//!   [`QueryBuilder`](super::QueryBuilder) prior to index scan via
+//!   [`QueryService::execute`](super::QueryService::execute).
+//! - **Post-fetch CTE Chaining**: Built incrementally on a
+//!   [`QuerySet`](super::QuerySet) via chained transform calls and evaluated
+//!   lazily on first read.
+//!
+//! # Optimization Passes
+//!
+//! Every plan is optimized by [`QueryPlan::run`](QueryPlan::run) prior to
+//! transform execution:
+//! - **Filter Fusion**: Combines adjacent filter steps into a single
+//!   short-circuiting `AND` expression
+//!   ([`FilterExpr::and`](super::grammar::FilterExpr::and)).
+//! - **Sort-Limit Fusion**: Rewrites adjacent `Sort` + `Limit(n)` steps into a
+//!   single `TopK` step, trading an `O(n log n)` full sort for an `O(n)`
+//!   quickselect partition
+//!   ([`select_nth_unstable_by`](std::slice::select_nth_unstable_by)).
 use super::{
     QueryBuilderError, QueryRow,
     grammar::{FieldPath, FilterExpr},
@@ -37,9 +58,8 @@ use crate::note::NoteFieldValue;
 ///   intermediate vector allocations.
 /// - **Sort-Limit Fusion**: Rewrites adjacent [`QueryTransform::Sort`] and
 ///   [`QueryTransform::Limit`] steps into a single [`QueryTransform::TopK`]
-///   operation. This trades an $O(N \log N)$ full sort for an $O(N)$
-///   quickselect selection via
-///   [`select_nth_unstable_by`](std::slice::select_nth_unstable_by).
+///   operation. This trades an `O(n log n)` full sort for an `O(n)` quickselect
+///   selection via
 ///
 /// Optimization passes are pure and idempotent: executing `optimize` on an
 /// already optimized plan produces an identical plan with no additional
