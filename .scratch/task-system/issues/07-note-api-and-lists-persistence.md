@@ -2,15 +2,15 @@ Status: ready-for-agent
 
 # 07 — Note API and LISTS persistence
 
-**What to build:** Expose parsed list items through the Note API and persist them in the FileIndex. `Note.list_items()` returns a lazy iterator over the nested list hierarchy. `Note.tasks()` continues to return only Task items (already implemented). `ListRecord` wraps a project-relative path and the parsed `ListItem` with accessor methods for query-relevant fields. LISTS persistence table in redb stores postcard-encoded records keyed by `(path, line)`.
+**What to build:** Expose parsed list items through the Note API and persist them in the FileIndex. `Note.list_items()` returns a lazy iterator over the nested list hierarchy. `Note.tasks()` composes from `ListItemIter` with a filter, replacing the redundant `TaskIter`. `ListRecord` wraps a project-relative path and the parsed `ListItem` with accessor methods for query-relevant fields. LISTS persistence table in redb stores postcard-encoded records keyed by `(path, line)`.
 
 **Blocked by:** 02 (needs `ListItemType`), 05 (needs `TaskListItem` with `fully_complete`), 06 (needs priority and dates on `TaskListItem`).
 
 ## Key interfaces
 
-- `ListItemIter<'_>` — lazy depth-first iterator over `&ListItem`, walking nested lists in document order
+- `ListItemIter<'_>` — lazy depth-first iterator over `&ListItem`, walking nested lists in document order. The single traversal type for all list iteration.
 - `Note.list_items()` returns `ListItemIter<'_>` — **public** API, yields all item kinds (Plain, Checkbox, Task)
-- `Note.tasks()` returns `TaskIter<'_>` — already implemented, no change
+- `Note.tasks()` returns `ListItemIter<'_>` filtered to `ListItemType::Task` items — replaces `TaskIter`, which is removed (both traversed identically; `TaskIter` filtered at yield time, not traversal time)
 - `ListRecord` struct wrapping `path: String` and `ListItem`; derives `Serialize`/`Deserialize` for postcard encoding
 - `ListRecord` accessor methods delegate through `ListItemType` discriminant:
   - `status_type()` → `ListItemType::Task(task)` → `task.status().kind()`
@@ -38,7 +38,9 @@ Status: ready-for-agent
 ### Note API
 
 - [ ] `Note.list_items()` returns `ListItemIter<'_>` iterator over nested list hierarchy in document order (depth-first, matching parser construction order)
-- [ ] `Note.tasks()` returns filtered iterator yielding only `ListItemType::Task` items (already implemented, verify no regression)
+- [ ] `Note.tasks()` returns `ListItemIter<'_>` filtered to Task items — replaces `TaskIter` return type
+- [ ] Remove `TaskIter` struct and its `Iterator` impl from `src/note/lists.rs`
+- [ ] Remove `TaskIter` references from `src/note/model.rs` (`Note::tasks()` return type and doc)
 
 ### ListRecord
 
