@@ -365,6 +365,7 @@ impl<'a> TaskIter<'a> {
 impl<'a> Iterator for TaskIter<'a> {
     type Item = &'a ListItem;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(items) = self.stack.last_mut() {
             let Some(item) = items.next() else {

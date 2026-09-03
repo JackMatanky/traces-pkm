@@ -552,6 +552,34 @@ mod tests {
             assert_eq!(config.root(), root.as_path());
             assert_eq!(config.output_dir(), Path::new("notes"));
         }
+
+        #[test]
+        fn fails_to_load_when_tag_filter_is_invalid() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let cwd = root.join("notes");
+            fs::create_dir_all(&cwd).unwrap();
+
+            let config_path = Fixture::create_config(
+                &root,
+                "[templates]\ndirectory = \
+                 \".traces/templates\"\n\n[tasks]\ntag_filters = \
+                 [\"1invalid\"]\n",
+            );
+            fixture.trust_config(&config_path);
+
+            // Act
+            let result = fixture.service.load(&cwd);
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(ConfigLoadError::Build(ConfigBuilderError::ConfigFile(
+                    ConfigFileError::InvalidTagFilter { .. }
+                )))
+            ));
+        }
     }
 
     mod build {

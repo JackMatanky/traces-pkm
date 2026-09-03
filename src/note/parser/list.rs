@@ -186,11 +186,10 @@ impl ListTracker {
                 ItemClassificationState::Marked(symbol) => {
                     let status = statuses.resolve(symbol);
                     if tag_filters.is_empty()
-                        || item_frame.tags.iter().any(|tag| {
-                            tag_filters
-                                .iter()
-                                .any(|filter| filter.is_exact_match(tag))
-                        })
+                        || item_frame
+                            .tags
+                            .iter()
+                            .any(|tag| tag_filters.contains(tag))
                     {
                         ListItemType::Task(status)
                     } else {
