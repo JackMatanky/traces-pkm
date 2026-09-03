@@ -331,29 +331,31 @@ fn bench_clone_query_record_set(c: &mut Criterion) {
 /// Measures the cost of `QueryRecordSet`'s owned `IntoIterator::into_iter()`,
 /// swept over workspace size and row shape (page vs. task).
 ///
-/// # Baseline for a `try_unwrap` fast path
-///
 /// `QueryRecordSet::into_iter()` (owned) clones every row out of the
 /// materialized `Arc<[QueryRecord]>` instead of moving them, since an
 /// `Arc<[T]>` has no owned `into_iter` (see its doc comment). A page row's
 /// clone is just an `Arc<FileIndex>` refcount bump; a task row's clone also
-/// heap-allocates a fresh `text: String`. This measures whether that
-/// difference is large enough to justify an `Arc::try_unwrap`-based fast
-/// path that skips the clone when nothing else holds the base `Arc`.
+/// heap-allocates a fresh `text: String`. This measures that cost directly,
+/// as the baseline for judging a sole-owner fast path — see
+/// `QueryRecordSet::into_iter`'s doc comment for why no safe, no-regression
+/// fast path exists today (`Arc::try_unwrap` requires `T: Sized`, which
+/// `[QueryRecord]` isn't; confirmed by compiling the substitution).
 ///
 /// Measured finding (this session, 100-20,000 rows): `pages` clones at
 /// ~21-23 ns/element (flat across sizes — an `Arc<FileIndex>` bump plus a
-/// few `Copy` fields); `tasks` clones at ~65-70 ns/element, roughly 3x more,
-/// with the ~45 ns/element delta attributable to the `String` allocation.
-/// The difference is real but small in absolute terms (a few ms even at
-/// 60,000 task rows) — and, per `QueryRecordSet::into_iter`'s doc comment,
-/// zero call sites in this crate currently use the owned form at all (every
-/// caller iterates by reference). Conclusion: a `try_unwrap` fast path is
-/// not currently justified — there is no live cost to cut, and the fast
-/// path would be unreliable besides: it depends on whether `.len()`/`.get()`
-/// already ran and populated `QueryRecordSet`'s own cache, which holds a
-/// second `Arc` clone of the base rows. Revisit if a real caller of the
-/// owned form appears and this benchmark shows it on a hot path.
+/// few `Copy` fields); `tasks` clones at ~65-70 ns/element, roughly 3x
+/// more, with the ~45 ns/element delta attributable to the `String`
+/// allocation. Both are cheap in absolute terms (a few ms even at 60,000
+/// task rows).
+///
+/// Expected outcomes:
+/// - Cost scales linearly with `n` for both shapes (a clone has no shortcut).
+/// - `tasks` costs measurably more per element than `pages`, isolating the
+///   `String` allocation's contribution.
+///
+/// Unexpected outcomes:
+/// - `tasks` and `pages` cost about the same, indicating the `String`
+///   allocation is not measurable relative to the `Arc<FileIndex>` bump.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/into_iter_owned");
     for &n in WORKSPACE_SIZES {

@@ -563,8 +563,19 @@ impl QueryRecordSet {
 /// read; clones each row out of the materialized `Arc<[QueryRecord]>` since
 /// an `Arc<[T]>` has no owned `into_iter`. For a page row this is just an
 /// `Arc<FileIndex>` refcount bump; a task row additionally clones its own
-/// small owned `text: String`, and a `flatten()`-derived row clones
-/// its `flattened` field vec — neither duplicates the underlying `Note`.
+/// small owned `text: String`, and a `flatten()`-derived row clones its
+/// `flattened` field vec — neither duplicates the underlying `Note`.
+///
+/// No zero-copy fast path for the sole-owner case: `Arc::try_unwrap`/
+/// `Arc::into_inner` require `T: Sized`, so neither exists for
+/// `Arc<[QueryRecord]>` (confirmed: substituting either does not compile).
+/// Reconstructing a `Box<[T]>` from a sole-owned `Arc<[T]>` needs `unsafe`
+/// pointer surgery with no safe std API for it, and switching the
+/// `records`/`cache` fields to `Arc<Vec<QueryRecord>>` to unlock a safe
+/// `try_unwrap` would add an extra allocation and indirection to every
+/// read (`.len()`/`.get()`/materialization), not just this one call. See
+/// `benches/query_execution.rs`'s `bench_into_iter_owned` for the measured
+/// per-row cost this clone actually pays.
 impl IntoIterator for QueryRecordSet {
     type IntoIter = std::vec::IntoIter<Self::Item>;
     type Item = QueryRecord;
