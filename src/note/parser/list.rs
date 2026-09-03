@@ -205,10 +205,10 @@ impl ListTracker {
                         let dates =
                             extract_task_dates(text.raw(), &item_frame.fields);
                         ListItemType::Task(TaskListItem::new(
+                            dates,
+                            priority,
                             status,
                             fully_complete,
-                            priority,
-                            dates,
                         ))
                     } else {
                         ListItemType::Checkbox
@@ -423,11 +423,17 @@ fn parse_emoji_date(text: &str, emoji: &str) -> Option<NaiveDate> {
         let match_start = search_from.saturating_add(pos);
         let emoji_end = match_start.saturating_add(emoji.len());
         let after_emoji = &text[emoji_end..];
-        let ws_len = after_emoji
+        let var_len = if after_emoji.starts_with('\u{FE0F}') {
+            '\u{FE0F}'.len_utf8()
+        } else {
+            0
+        };
+        let after_var = &after_emoji[var_len..];
+        let ws_len = after_var
             .char_indices()
             .find(|&(_, c)| c != ' ' && c != '\t')
-            .map_or(after_emoji.len(), |(offset, _)| offset);
-        let after_ws = &after_emoji[ws_len..];
+            .map_or(after_var.len(), |(offset, _)| offset);
+        let after_ws = &after_var[ws_len..];
         if after_ws.len() >= 10 {
             let candidate = &after_ws[..10];
             let next_char_valid = after_ws[10..]
@@ -441,7 +447,7 @@ fn parse_emoji_date(text: &str, emoji: &str) -> Option<NaiveDate> {
                 return Some(date);
             }
         }
-        search_from = emoji_end;
+        search_from = emoji_end.saturating_add(var_len);
     }
     None
 }
@@ -572,11 +578,17 @@ fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
             let match_start = search_from.saturating_add(pos);
             let emoji_end = match_start.saturating_add(emoji.len());
             let after_emoji = &text[emoji_end..];
-            let ws_len = after_emoji
+            let var_len = if after_emoji.starts_with('\u{FE0F}') {
+                '\u{FE0F}'.len_utf8()
+            } else {
+                0
+            };
+            let after_var = &after_emoji[var_len..];
+            let ws_len = after_var
                 .char_indices()
                 .find(|&(_, c)| c != ' ' && c != '\t')
-                .map_or(after_emoji.len(), |(offset, _)| offset);
-            let after_ws = &after_emoji[ws_len..];
+                .map_or(after_var.len(), |(offset, _)| offset);
+            let after_ws = &after_var[ws_len..];
             if after_ws.len() >= 10 {
                 let candidate = &after_ws[..10];
                 let next_char_valid = after_ws[10..]
@@ -586,14 +598,16 @@ fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
                 if next_char_valid
                     && NaiveDate::parse_from_str(candidate, "%Y-%m-%d").is_ok()
                 {
-                    let span_end =
-                        emoji_end.saturating_add(ws_len).saturating_add(10);
+                    let span_end = emoji_end
+                        .saturating_add(var_len)
+                        .saturating_add(ws_len)
+                        .saturating_add(10);
                     spans.push((match_start, span_end));
                     search_from = span_end;
                     continue;
                 }
             }
-            search_from = emoji_end;
+            search_from = emoji_end.saturating_add(var_len);
         }
     }
 }
@@ -1744,6 +1758,26 @@ mod tests {
             assert_eq!(task_item.text().clean(), "Task");
         }
 
+        #[test]
+        fn extracts_dates_from_emoji_syntax_with_variation_selectors() {
+            let input = "- [ ] Task ➕\u{FE0F} 2025-01-01 🛫\u{FE0F} \
+                         2025-01-05 ⏳\u{FE0F} 2025-01-10 📅\u{FE0F} \
+                         2025-01-15 ✅\u{FE0F} 2025-01-20 ❌\u{FE0F} \
+                         2025-01-25";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+            let dates = task.dates();
+
+            assert_eq!(dates.created, NaiveDate::from_ymd_opt(2025, 1, 1));
+            assert_eq!(dates.start, NaiveDate::from_ymd_opt(2025, 1, 5));
+            assert_eq!(dates.scheduled, NaiveDate::from_ymd_opt(2025, 1, 10));
+            assert_eq!(dates.due, NaiveDate::from_ymd_opt(2025, 1, 15));
+            assert_eq!(dates.done, NaiveDate::from_ymd_opt(2025, 1, 20));
+            assert_eq!(dates.cancelled, NaiveDate::from_ymd_opt(2025, 1, 25));
+            assert_eq!(task_item.text().clean(), "Task");
+        }
         #[test]
         fn extracts_dates_from_inline_field_syntax() {
             let input = "- [ ] Task [created:: 2025-02-01] [start:: \

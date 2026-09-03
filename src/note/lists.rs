@@ -295,28 +295,28 @@ impl ListItemType {
 /// an optional priority level, and extracted task dates.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskListItem {
+    dates: TaskDates,
+    priority: Option<TaskPriority>,
     status: TaskStatus,
     fully_complete: bool,
-    priority: Option<TaskPriority>,
-    dates: TaskDates,
 }
 
 impl TaskListItem {
-    /// Creates a task list item with its resolved status, precomputed
-    /// fully-complete state, priority, and dates.
+    /// Creates a task list item with its dates, priority, resolved status,
+    /// and precomputed fully-complete state.
     #[inline]
     #[must_use]
     pub const fn new(
+        dates: TaskDates,
+        priority: Option<TaskPriority>,
         status: TaskStatus,
         fully_complete: bool,
-        priority: Option<TaskPriority>,
-        dates: TaskDates,
     ) -> Self {
         Self {
+            dates,
+            priority,
             status,
             fully_complete,
-            priority,
-            dates,
         }
     }
 
@@ -807,27 +807,27 @@ mod tests {
 
     fn done_task() -> ListItemType {
         ListItemType::Task(TaskListItem::new(
+            TaskDates::default(),
+            None,
             TaskStatus::new(
                 TaskStatusSymbol::new('x'),
                 "Done",
                 TaskStatusType::Done,
             ),
             true,
-            None,
-            TaskDates::default(),
         ))
     }
 
     fn todo_task() -> ListItemType {
         ListItemType::Task(TaskListItem::new(
+            TaskDates::default(),
+            None,
             TaskStatus::new(
                 TaskStatusSymbol::new(' '),
                 "Todo",
                 TaskStatusType::Todo,
             ),
             true,
-            None,
-            TaskDates::default(),
         ))
     }
     mod list_item {
@@ -1025,12 +1025,11 @@ mod tests {
                     None,
                 );
                 let item = TaskListItem::new(
+                    dates,
+                    Some(TaskPriority::High),
                     status.clone(),
                     true,
-                    Some(TaskPriority::High),
-                    dates,
                 );
-
                 assert_eq!(item.status(), &status);
                 assert_eq!(item.is_fully_complete(), true);
                 assert_eq!(item.priority(), Some(TaskPriority::High));
@@ -1050,10 +1049,10 @@ mod tests {
                     TaskStatusType::InProgress,
                 );
                 let item = TaskListItem::new(
+                    TaskDates::default(),
+                    None,
                     status.clone(),
                     false,
-                    None,
-                    TaskDates::default(),
                 );
 
                 assert_eq!(item.status(), &status);
@@ -1067,10 +1066,10 @@ mod tests {
                     TaskStatusType::Todo,
                 );
                 let item = TaskListItem::new(
+                    TaskDates::default(),
+                    None,
                     status,
                     false,
-                    None,
-                    TaskDates::default(),
                 );
 
                 assert_eq!(item.is_fully_complete(), false);
@@ -1085,18 +1084,17 @@ mod tests {
                     TaskStatusType::Todo,
                 );
                 let item_without = TaskListItem::new(
+                    TaskDates::default(),
+                    None,
                     status.clone(),
                     false,
-                    None,
-                    TaskDates::default(),
                 );
                 let item_with = TaskListItem::new(
+                    TaskDates::default(),
+                    Some(TaskPriority::Highest),
                     status,
                     false,
-                    Some(TaskPriority::Highest),
-                    TaskDates::default(),
                 );
-
                 assert_eq!(item_without.priority(), None);
                 assert_eq!(item_with.priority(), Some(TaskPriority::Highest));
             }
@@ -1116,7 +1114,7 @@ mod tests {
                     None,
                     None,
                 );
-                let item = TaskListItem::new(status, false, None, dates);
+                let item = TaskListItem::new(dates, None, status, false);
 
                 assert_eq!(item.dates(), dates);
                 assert_eq!(

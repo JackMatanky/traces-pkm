@@ -344,10 +344,10 @@ mod tests {
             kind: TaskStatusType,
         ) -> ListItemType {
             ListItemType::Task(TaskListItem::new(
+                TaskDates::default(),
+                None,
                 TaskStatus::new(TaskStatusSymbol::new(symbol), name, kind),
                 true,
-                None,
-                TaskDates::default(),
             ))
         }
 

@@ -243,11 +243,17 @@ fn task_field_callback(
         return Filter::Skip;
     }
     let remainder = lex.remainder();
-    let ws_end = remainder
+    let var_len = if remainder.starts_with('\u{FE0F}') {
+        '\u{FE0F}'.len_utf8()
+    } else {
+        0
+    };
+    let after_var = remainder.get(var_len..).unwrap_or_default();
+    let ws_end = after_var
         .char_indices()
         .find(|&(_, ch)| !matches!(ch, ' ' | '\t'))
-        .map_or(remainder.len(), |(offset, _)| offset);
-    let after_ws = remainder.get(ws_end..).unwrap_or_default();
+        .map_or(after_var.len(), |(offset, _)| offset);
+    let after_ws = after_var.get(ws_end..).unwrap_or_default();
     let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
         return Filter::Skip;
     };
@@ -257,7 +263,7 @@ fn task_field_callback(
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
+    lex.bump(var_len.saturating_add(ws_end).saturating_add(ISO_DATE_LEN));
     Filter::Emit((key, NoteFieldValue::Date(candidate.to_owned())))
 }
 
