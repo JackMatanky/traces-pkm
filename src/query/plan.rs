@@ -1,9 +1,15 @@
 //! Query transformation plan optimization and execution engine.
 //!
-//! Defines [`QueryPlan`], the single transformation engine for the whole query
-//! subsystem — see its docs for the two execution contexts it serves and the
-//! optimization passes [`QueryPlan::run`] applies — and [`QueryTransform`], the
-//! individual steps a plan holds.
+//! [`QueryPlan`] is the single transformation engine for the whole query
+//! subsystem. [`QueryBuilder`](super::QueryBuilder) builds one fully before a
+//! single pre-fetch [`QueryPlan::run`] call; [`QuerySet`](super::QuerySet)
+//! accumulates one incrementally across chained calls and runs it lazily on
+//! first read. Either way, [`QueryPlan::run`] fuses adjacent `Filter` steps
+//! into one and rewrites `Sort` followed by `Limit` into a single `TopK`
+//! step, trading an `O(n log n)` full sort for an `O(n)` quickselect
+//! partition where possible.
+//!
+//! [`QueryTransform`] is the individual step type a [`QueryPlan`] holds.
 use super::{
     QueryBuilderError, QueryRow,
     grammar::{FieldPath, FilterExpr},

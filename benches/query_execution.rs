@@ -98,9 +98,10 @@ fn create_index_with_field_count(n: usize, fields: usize) -> Arc<FileIndex> {
 
 /// Measures page-row construction and filtering, swept over workspace size.
 ///
-/// Every `traces query` invocation pays this path — regressions here directly
-/// degrade CLI responsiveness — so isolating page queries catches regressions
-/// in filter logic or row materialization that a correctness test would miss.
+/// Every `traces query` invocation pays this path, and regressions here
+/// directly degrade CLI responsiveness, so isolating page queries catches
+/// regressions in filter logic or row materialization that a correctness
+/// test would miss.
 ///
 /// Expected outcomes:
 /// - Constant-time execution regardless of index size (all notes match).
@@ -183,7 +184,7 @@ fn bench_execute_tasks(c: &mut Criterion) {
 ///
 /// Measured finding (20,000 rows): sort accounts for the large majority of this
 /// benchmark's cost (~4.7 ms of ~5.2 ms combined), not field lookup (~1.8 ms
-/// filter-only, ~141 µs unfiltered baseline) — `sort_by_cached_key` over 20,000
+/// filter-only, ~141 µs unfiltered baseline): `sort_by_cached_key` over 20,000
 /// `QueryRow`s dominates, not metadata resolution.
 ///
 /// Expected outcomes:
@@ -236,7 +237,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
 /// canonicalizes a query's metadata field name once at parse time, not per row:
 /// every row a query touches calls `Frontmatter::get`/`Note::get` with an
 /// already-canonical candidate, so the allocating canonicalize-on-mismatch
-/// fallback inside metadata field lookup is unreachable from the query engine —
+/// fallback inside metadata field lookup is unreachable from the query engine;
 /// it only matters for direct `Frontmatter`/`Note` callers outside a query,
 /// already covered by `src/field.rs`'s own unit tests. Do not add a
 /// "case-mismatched query candidate" benchmark here expecting it to exercise
@@ -297,7 +298,7 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 /// every non-terminal chained call (`.where`/`.filter`/`.sort`/`.limit`/
 /// `.group_by`/`.flatten`). `QuerySet::base` is `Arc<Vec<QueryRow>>`, so
 /// `#[derive(Clone)]` clones an `Arc` pointer (and a short pending-plan
-/// `Vec`), not the row data — this benchmark confirms that claim directly,
+/// `Vec`), not the row data; this benchmark confirms that claim directly,
 /// rather than through the `Vec<QueryRow>` proxy the pre-redesign version
 /// used.
 ///
@@ -346,8 +347,8 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///
 /// Unexpected outcomes:
 /// - Cost scales linearly with `n`, indicating `Arc::try_unwrap` is taking the
-///   `Err` (shared) branch and falling back to a full clone — check that
-///   nothing retains an extra reference to the outcome's cached rows before
+///   `Err` (shared) branch and falling back to a full clone; check that nothing
+///   retains an extra reference to the outcome's cached rows before
 ///   `.into_iter()` runs.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/into_iter_owned");

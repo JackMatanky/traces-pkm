@@ -77,9 +77,9 @@ fn replica_cmp(
 }
 
 /// Deterministic Linear Congruential Generator (LCG): `state = state * a + c`
-/// mod 2^64. One multiply and one add per element — no dependency on `rand`,
-/// reproducible across runs so regression detection isn't confounded by
-/// different shuffle order.
+/// mod 2^64. One multiply and one add per element, with no dependency on
+/// `rand`, reproducible across runs so regression detection isn't confounded
+/// by different shuffle order.
 fn lcg_next(state: &mut u64) -> u64 {
     *state = state
         .wrapping_mul(6_364_136_223_846_793_005)
@@ -175,7 +175,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 /// `sort_by_cached_key` (`O(n log n)`). Since the `QuerySet` CTE
 /// redesign, `.sort(...).limit(...)` chained directly on a `QuerySet`
 /// (the shape the template `tasks`/`query` namespaces use) reaches the same
-/// fusion — deferred into the same `QueryPlan`, flushed once on read — so
+/// fusion (deferred into the same `QueryPlan`, flushed once on read), so
 /// this gap is no longer template-specific; it's the general cost of `TopK`
 /// fusion vs. a full sort, still worth guarding against regression. The
 /// chained-`QuerySet` path itself isn't benchmarked here:
@@ -260,8 +260,8 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 /// element-move cost is ruled out as the dominant component and the cost must
 /// live in the comparator or key materialization. Swept over the same sizes as
 /// [`bench_sort_by_metadata`] (not a single point) so the permutation share of
-/// sort cost can be checked at each `n`, not projected from one measurement
-/// — a linear-cost operation's *share* of an `n log n` operation shrinks as `n`
+/// sort cost can be checked at each `n`, not projected from one measurement:
+/// a linear-cost operation's *share* of an `n log n` operation shrinks as `n`
 /// grows, so a single point cannot confirm the share stays small at scale.
 ///
 /// Records are produced through the public query API (`execute` then
@@ -357,7 +357,7 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
 /// unreachable from an external bench, so this replicates the exact arm
 /// structure the Number-vs-Number path exercises (enum `match` on both
 /// operands, then `f64::total_cmp`, with the `descending` branch) against real
-/// `NoteFieldValue` values. It measures what a comparator of this shape costs —
+/// `NoteFieldValue` values. It measures what a comparator of this shape costs,
 /// not the production function itself; conclusions must treat it as a
 /// shape-equivalent upper bound on dispatch cost. Swept over the same sizes as
 /// [`bench_sort_by_metadata`] (not a single point) so dispatch overhead can be
