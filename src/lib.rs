@@ -119,7 +119,7 @@ pub use query::{
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
 #[cfg(any(test, feature = "test-utils"))]
-pub use tag::Tag;
+pub use tag::{Tag, TagError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,

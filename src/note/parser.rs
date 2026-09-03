@@ -5,27 +5,29 @@
 //!
 //! # Architecture
 //!
-//! The parser is organized into five specialized submodules:
+//! The parser is organized into six specialized submodules:
 //!
-//! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
-//!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
+//! - [`inline`](self::inline): [`inline::parse_inline_value`] parses raw inline
+//!   field value text into strongly typed
+//!   [`NoteFieldValue`](super::NoteFieldValue) records (comma lists, quoted
 //!   strings, durations, wikilinks, booleans, dates, numbers, tags).
-//! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
-//!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
-//!   tokens from plain-text scan buffers using [`logos`].
-//! - [`line`]: [`ByteTracker`] precomputes line-start byte offsets for $O(\log
-//!   n)$ byte-to-line translation without scanning the source string multiple
-//!   times.
-//! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
-//!   nested Markdown never recurses through the call stack, driving the
-//!   item-leading marker state machine and flushing item metadata.
-//! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
-//!   markers at item-leading positions with pulldown-cmark-compatible
-//!   whitespace rules.
+//! - [`input`](self::input): [`MarkdownParserInput`] encapsulates borrowed
+//!   path, source text, and configuration references for parsing.
+//! - [`lexer`](self::lexer): [`InlineTokenLexer`] extracts `Key:: Value`,
+//!   `[Key:: Value]`, and `(Key:: Value)` inline fields, task emoji shorthands,
+//!   and `#tag` tokens from plain-text scan buffers using [`logos`].
+//! - [`mod@line`]: [`ByteTracker`] precomputes line-start byte offsets for
+//!   $O(\log n)$ byte-to-line translation without scanning the source string
+//!   multiple times.
+//! - [`list`](self::list): [`ListTracker`] manages explicit list and list-item
+//!   stacks so nested Markdown never recurses through the call stack, driving
+//!   the item-leading marker state machine and flushing item metadata.
+//! - [`marker`](self::marker): custom task marker scanner that recognizes
+//!   `[<symbol>]` markers at item-leading positions with
+//!   pulldown-cmark-compatible whitespace rules.
 //!
-//! Parser state lives in [`ParserContext`], which dispatches events to the
-//! assembles the final [`Note`].
-//!
+//! Parser state lives in [`ParserContext`], which dispatches events to
+//! specialized handlers and assembles the final [`Note`].
 //! # Metadata Extraction
 //!
 //! Inline fields and tags are lexed from parser-built plain-text buffers: one
@@ -34,10 +36,8 @@
 //!
 //! Standard Markdown link text is copied into the surrounding scan buffer
 //! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)` becomes a
-//! visible-key inline field while [`ListItem::text`] retains the plain display
-//! text.
-//!
-//! [`ListItem::text`]: crate::note::ListItem::text
+//! visible-key inline field while [`ListItem::text`](super::ListItem::text)
+//! retains the plain display text.
 use std::{mem, path::PathBuf};
 
 use indexmap::IndexMap;
@@ -136,10 +136,12 @@ struct ParserContext<'a> {
     inline_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     tags: Vec<Tag>,
     /// Precomputed line-start offsets for the source being parsed, used to
-    /// populate [`ListItem`]'s `line`/`parent` position fields.
+    /// populate [`ListItem`](super::ListItem)'s `line`/`parent` position
+    /// fields.
     line_tracker: ByteTracker,
     /// Resolves scanned marker symbols to their [`TaskStatus`], used to
-    /// classify status-marked list items in [`list::ListTracker::end_item`].
+    /// classify status-marked list items in
+    /// [`list::ListTracker::end_item`](self::list::ListTracker::end_item).
     ///
     /// [`TaskStatus`]: crate::task::TaskStatus
     task_statuses: &'a TaskStatusMap,
@@ -367,8 +369,8 @@ impl<'a> ParserContext<'a> {
     /// Closes the innermost list.
     ///
     /// A list nested inside an active item is stored under
-    /// [`ListItem::children`]. Otherwise, it becomes a top-level
-    /// [`Note::lists`] entry.
+    /// [`ListItem::children`](super::ListItem::children). Otherwise, it becomes
+    /// a top-level [`Note::lists`] entry.
     fn end_list(&mut self) {
         self.list_nesting.end_list();
     }

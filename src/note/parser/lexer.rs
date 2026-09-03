@@ -195,7 +195,7 @@ fn body_field_callback(
 /// - there is no `::` separator before the text ends,
 /// - the key is empty, contains a bracket character, or has an empty canonical
 ///   form (punctuation-only text), or
-/// - [`find_closing_delimiter`] finds no matching closing delimiter.
+/// - no matching closing delimiter is found.
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     kind: DelimiterType,

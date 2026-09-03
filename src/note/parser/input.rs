@@ -1,9 +1,25 @@
-//! Input parameters for Markdown note parsing.
+//! Borrowed input parameters for Markdown note parsing.
 //!
-//! [`MarkdownParserInput`] pairs a note's project-relative path and source text
-//! with resolved [`TaskConfig`] and [`FrontmatterConfig`] settings, avoiding
-//! global state and threading configuration cleanly into
-//! [`super::parse_markdown`].
+//! [`MarkdownParserInput`] encapsulates a note's project-relative path and raw
+//! Markdown source text alongside resolved [`TaskConfig`] and
+//! [`FrontmatterConfig`] settings. By borrowing all components, parsing
+//! operates without heap allocations or cloning configuration tables.
+//!
+//! # Examples
+//!
+//! ```rust
+//! # #[cfg(feature = "test-utils")]
+//! # {
+//! use std::path::Path;
+//!
+//! use traces_pkm::{MarkdownParserInput, parse_markdown};
+//!
+//! let input =
+//!     MarkdownParserInput::for_test(Path::new("todo.md"), "- [ ] Task");
+//! let note = parse_markdown(&input);
+//! assert_eq!(note.tasks().count(), 1);
+//! # }
+//! ```
 
 use std::path::Path;
 
@@ -17,9 +33,9 @@ static DEFAULT_TASK_CONFIG: std::sync::LazyLock<TaskConfig> =
 static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
     std::sync::LazyLock::new(FrontmatterConfig::default);
 
-/// Input parameters for [`super::parse_markdown`].
+/// Borrowed input container for [`super::parse_markdown`].
 ///
-/// Borrows the source text, path, and configuration settings so parsing can
+/// Pairs the source text, path, and configuration settings so parsing can
 /// run without allocating or cloning configuration tables.
 ///
 /// # Examples
@@ -39,14 +55,17 @@ static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
 /// ```
 #[derive(Clone, Debug)]
 pub struct MarkdownParserInput<'a> {
+    /// Project-relative path of the note being parsed.
     path: &'a Path,
+    /// Raw Markdown source text.
     src: &'a str,
+    /// Resolved task status and tag filter configuration settings.
     tasks: &'a TaskConfig,
+    /// Resolved frontmatter field mapping and schema settings.
     frontmatter: &'a FrontmatterConfig,
 }
-
 impl<'a> MarkdownParserInput<'a> {
-    /// Creates a new parser input borrowing the path, source text, and
+    /// Creates a parser input borrowing the path, source text, and
     /// configuration components.
     #[inline]
     #[must_use]

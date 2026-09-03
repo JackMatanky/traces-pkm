@@ -1,7 +1,7 @@
 //! Integration tests for task tag filter configuration and classification.
 //!
 //! Proves that configured task tag filters correctly classify status-marked
-//! markdown list items as Tasks vs Checkboxes across real files, config
+//! Markdown list items as Tasks vs Checkboxes across real files, config
 //! resolution, indexing, and query execution through the public service
 //! surface.
 

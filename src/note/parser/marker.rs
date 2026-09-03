@@ -3,9 +3,10 @@
 //! The functions here are the sole source of truth for task marker identity.
 //! They mirror `pulldown-cmark`'s `scan_task_list_marker` first-pass gating:
 //! the marker is only valid at a list item's content start, followed by one
-//! ASCII whitespace character. Because that whitespace is frequently the item's
-//! line terminator (which never reaches the parser as a [`Event::Text`] chunk),
-//! [`scan_marker_at_line_end`] treats end-of-input as the trailing whitespace.
+//! ASCII whitespace character. Because that whitespace is frequently the
+//! item's line terminator (which never reaches the parser as a
+//! [`pulldown_cmark::Event::Text`] chunk), [`scan_marker_at_line_end`]
+//! treats end-of-input as the trailing whitespace.
 use crate::DelimiterType;
 
 /// Opening bracket character for task markers (`[`).

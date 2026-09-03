@@ -29,18 +29,24 @@ pub struct Tag {
 /// Errors returned by [`Tag::parse`].
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum TagError {
+    /// The input tag string is missing the leading `#` prefix.
     #[error("tag must start with `#`")]
     MissingHash,
+    /// The character immediately following `#` is not an ASCII letter.
     #[error("tag must start with `#` followed by a letter, found `{found}`")]
     InvalidFirstCharacter {
+        /// The invalid character found after `#`.
         found: char,
     },
+    /// The tag body contains an invalid character.
     #[error(
         "invalid character `{found}` in tag; only letters, digits, `_`, `-`, \
          and `/` are allowed"
     )]
     InvalidBodyCharacter {
+        /// Byte offset in the input where the invalid character occurred.
         offset: usize,
+        /// The invalid character encountered.
         found: char,
     },
 }
@@ -124,8 +130,8 @@ impl Tag {
         &self.segments
     }
 
-    /// Returns `true` if this tag is contained in `prefix` — either
-    /// identical to `prefix` or nested below it at a `/` boundary.
+    /// Returns `true` if this tag is contained in `prefix`, matching either
+    /// an identical tag or a nested child below it at a `/` boundary.
     #[inline]
     #[must_use]
     pub fn is_contained_in(&self, prefix: &str) -> bool {

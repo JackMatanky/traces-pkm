@@ -234,10 +234,10 @@ impl ListItem {
 /// How the custom marker scanner classified a Markdown list item.
 ///
 /// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
-/// status-marked but did not match a configured task tag filter — they carry
-/// only derived completion state and are excluded from [`super::Note::tasks`].
-/// [`Self::Task`] items carry a resolved [`TaskStatus`] (symbol, name, and
-/// workflow type).
+/// status-marked items that did not match a configured task tag filter. They
+/// carry only derived completion state and are excluded from
+/// [`super::Note::tasks`]. [`Self::Task`] items carry a resolved task status
+/// (symbol, name, and workflow type).
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum ListItemType {
     /// A plain bullet with no marker.
