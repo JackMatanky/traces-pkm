@@ -200,8 +200,8 @@ mod tests {
 
     use super::*;
     use crate::{
+        TaskStatus, TaskStatusSymbol, TaskStatusType,
         note::{LinkType, ListItem, ListItemType, NoteFieldValue},
-        task::{TaskStatus, TaskStatusSymbol, TaskStatusType},
     };
 
     mod constructor {

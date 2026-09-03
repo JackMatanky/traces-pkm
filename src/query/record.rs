@@ -38,10 +38,10 @@ use super::{
     value::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::{
+    TaskStatus,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue},
-    task::TaskStatus,
 };
 
 /// A query row over one indexed [`FileEntry`].

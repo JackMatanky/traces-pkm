@@ -22,9 +22,8 @@ use super::{
     },
 };
 use crate::{
-    FieldName, FieldNameError, Tag,
+    FieldName, FieldNameError, Tag, TaskStatusMap,
     path::{PathError, RootConfinedPath, SafeRelativePath},
-    task::TaskStatusMap,
 };
 
 /// Default `[schemas] class_field` when unconfigured.

@@ -50,7 +50,7 @@ use pulldown_cmark::{
 use super::{
     Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
-use crate::{ByteOffset, FieldKey, Tag, task::TaskStatusMap};
+use crate::{ByteOffset, FieldKey, Tag, TaskStatusMap};
 
 mod inline;
 mod input;
@@ -147,7 +147,7 @@ struct ParserContext<'a> {
     /// classify status-marked list items in
     /// [`list::ListTracker::end_item`](self::list::ListTracker::end_item).
     ///
-    /// [`TaskStatus`]: crate::task::TaskStatus
+    /// [`TaskStatus`]: crate::TaskStatus
     task_statuses: &'a TaskStatusMap,
     /// Tag filters that classify status-marked items as Tasks vs Checkboxes.
     tag_filters: &'a [Tag],

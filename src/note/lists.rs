@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, task::TaskStatus};
+use crate::{FieldKey, SourceLine, TaskStatus};
 
 /// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -388,7 +388,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::task::{TaskStatusSymbol, TaskStatusType};
+    use crate::{TaskStatusSymbol, TaskStatusType};
 
     fn done_task() -> ListItemType {
         ListItemType::Task(TaskStatus::new(

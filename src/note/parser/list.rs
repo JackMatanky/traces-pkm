@@ -17,11 +17,10 @@ use super::{
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
 use crate::{
-    FieldKey, SourceLine, Tag,
+    FieldKey, SourceLine, Tag, TaskStatusMap,
     note::{
         List, ListItem, ListItemType, NoteFieldValue, lists::ListItemPosition,
     },
-    task::TaskStatusMap,
 };
 
 /// Nested list and list-item state for one Markdown event stream.
@@ -440,11 +439,11 @@ mod tests {
 
     use super::*;
     use crate::{
+        TaskStatusType,
         note::{
             Note,
             parser::{MarkdownParserInput, parse_markdown},
         },
-        task::TaskStatusType,
     };
     fn parse(src: &str) -> Note {
         let input = MarkdownParserInput::for_test(Path::new("note.md"), src);

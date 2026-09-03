@@ -120,6 +120,9 @@ pub use query::{
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use tag::{Tag, TagError};
+pub(crate) use task::{TaskStatus, TaskStatusMap};
+#[cfg(test)]
+pub(crate) use task::{TaskStatusSymbol, TaskStatusType};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,
