@@ -1,8 +1,8 @@
 //! Parsing and evaluation for the query module's two DSLs: the `--from`
 //! source-selection language ([`source`]) and the `--where` record-filter
-//! language ([`filter`]), sharing the generic boolean-expression parser
-//! in [`expr`]. [`field`] implements the field-path accessor grammar
-//! both DSLs build on.
+//! language ([`filter`]), sharing the generic boolean-expression parser in
+//! [`expr`]. [`field`] implements the field-path accessor grammar both DSLs
+//! build on.
 //!
 //! # Main Types
 //!

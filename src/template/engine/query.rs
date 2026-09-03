@@ -15,9 +15,8 @@
 //!   descendant.
 //!
 //! Each call reuses the render's cached [`FileIndex`], refreshing it once per
-//! render (see [`cached_refresh`]), and returns a [`QueryRecordSet`] wrapped in
+//! render (see [`cached_refresh`]), and returns a [`QuerySet`] wrapped in
 //! a [`Value`].
-//!
 //! # Row Shape
 //!
 //! `query` returns one row per Note. `tasks` returns one row per task item,
@@ -29,35 +28,33 @@
 //!
 //! Template callers chain `.where(...)`/`.filter(...)`, `.sort(...)`,
 //! `.limit(...)`, `.group_by(...)`, and `.flatten(...)`. The transformation
-//! logic lives on [`QueryRecordSet`] itself; this module only supplies the
+//! logic lives on [`QuerySet`] itself; this module only supplies the
 //! minijinja [`Object`] wiring.
 //!
-//! [`QueryRecordSet::table`], [`QueryRecordSet::list`],
-//! [`QueryRecordSet::task_list`], and `count` (an alias for
-//! [`QueryRecordSet::len`]) are terminal instead: they render final
+//! [`QuerySet::table`], [`QuerySet::list`],
+//! [`QuerySet::task_list`], and `count` (an alias for
+//! [`QuerySet::len`]) are terminal instead: they render final
 //! markdown/scalar output and end a chain rather than continue it. Each is
 //! reachable both as a `call_method` (`outcome.table(["Name"], ["file.name"])`)
 //! and as a pipeline filter, registered once by
 //! [`QueryOps::register_terminal_filters`] (`outcome | table(["Name"],
-//! ["file.name"])`). Both forms call the same [`QueryRecordSet`] method.
-//!
+//! ["file.name"])`). Both forms call the same [`QuerySet`] method.
 //! # Object Wiring
 //!
-//! [`QueryRecordSet`] and [`QueryRecord`] get their [`Object`] impls here
+//! [`QuerySet`] and [`QueryRow`] get their [`Object`] impls here
 //! instead of in [`crate::index`], keeping that module independent from
-//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryRecordSet`], and
-//! [`QueryRecord`] without pulling in rendering concerns.
+//! minijinja so `traces task` can reuse [`FileIndex`], [`QuerySet`], and
+//! [`QueryRow`] without pulling in rendering concerns.
 //!
 //! `record` attributes other than `file` and `task` forward to
-//! [`QueryRecord::field`], the same resolver `.where()` and `.sort()` use.
+//! [`QueryRow::field`], the same resolver `.where()` and `.sort()` use.
 //! `record.file.*` and `record.task.*` use forwarding wrappers ([`FileFields`]
 //! and [`TaskFields`]) instead: minijinja resolves a dotted attribute path one
 //! segment at a time, so the wrappers call
 //! [`FileField::parse`]/[`FileField::resolve`] and
-//! [`QueryRecord::task_completed`]/[`QueryRecord::task_text`] directly,
-//! skipping the string-prefix handling [`QueryRecord::field`] needs once the
+//! [`QueryRow::task_completed`]/[`QueryRow::task_text`] directly,
+//! skipping the string-prefix handling [`QueryRow::field`] needs once the
 //! `file`/`task` segment is already known.
-//!
 //! # Errors
 //!
 //! [`FileIndex::refresh`] and [`QueryError`] failures become
@@ -78,8 +75,9 @@ use crate::{
     NoteFieldValue,
     index::{FileIndex, IndexError, IndexerService},
     query::{
-        ClassExpansionMode, FieldPath, FileField, QueryError, QueryRecord,
-        QueryRecordSet, QueryRequest, QueryService, SourceAtom, SourceSelector,
+        ClassExpansionMode, FieldPath, FileField, QueryBuilder, QueryError,
+        QueryRow, QueryService, QuerySet, SourceAtom, SourceSelector,
+        TaskPathStyle,
     },
     schema::SchemaService,
 };
@@ -100,19 +98,15 @@ const INDEX_CACHE_KEY: &str = "query.index_cache";
 
 /// Backs both the `query` and `tasks` minijinja namespace objects: one instance
 /// per namespace, differing only in which global it registers as and which
-/// [`QueryRequest`] mode it executes. See [`Self::page`]/[`Self::task`].
+/// [`QueryBuilder`] mode it executes. See [`Self::page`]/[`Self::task`].
 #[derive(Debug)]
 pub(super) struct QueryOps {
     /// The minijinja global this instance registers as.
     name: &'static str,
     root: Arc<Path>,
-    /// Frontmatter field naming a Note's File Class(es), from `[schemas]
-    /// class_field`. Passed to source matching at execution time.
-    class_field: Arc<str>,
-    /// Shared with `schema.get()` so both namespaces resolve the same,
-    /// already-resolved Schema registry, built once at
-    /// [`super::TemplateEngine::new`].
-    service: Arc<SchemaService>,
+    /// Pre-configured once at construction (see [`Self::page`]/[`Self::task`])
+    /// instead of being rebuilt on every `.from()` call.
+    service: QueryService,
     /// `false` for page-level `query`, `true` for task-level `tasks`.
     is_task: bool,
 }
@@ -121,34 +115,32 @@ impl QueryOps {
     /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
-    pub(super) const fn page(
+    pub(super) fn page(
         root: Arc<Path>,
-        class_field: Arc<str>,
-        service: Arc<SchemaService>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
     ) -> Self {
         Self {
             name: "query",
             root,
-            class_field,
-            service,
+            service: QueryService::new(class_field).with_class_expander(schema),
             is_task: false,
         }
     }
 
-    /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
-    /// is one task item instead of one Note; see the module docs.
+    /// Wraps `root` for task-level dispatch under the `tasks` global. Each
+    /// row is one task item instead of one Note; see the module docs.
     #[inline]
     #[must_use]
-    pub(super) const fn task(
+    pub(super) fn task(
         root: Arc<Path>,
-        class_field: Arc<str>,
-        service: Arc<SchemaService>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
     ) -> Self {
         Self {
             name: "tasks",
             root,
-            class_field,
-            service,
+            service: QueryService::new(class_field).with_class_expander(schema),
             is_task: true,
         }
     }
@@ -163,10 +155,9 @@ impl QueryOps {
     /// Registers `table`, `list`, `task_list`, and `count` as pipeline filters:
     /// `outcome | table(["Name"], ["file.name"])`, mirroring the call-method
     /// form `outcome.table(["Name"], ["file.name"])` documented on
-    /// [`Object::call_method`] for [`QueryRecordSet`]. Registered once, not per
+    /// [`Object::call_method`] for [`QuerySet`]. Registered once, not per
     /// instance: these filters carry no state and apply to any
-    /// [`QueryRecordSet`] regardless of which namespace produced it.
-    #[inline]
+    /// [`QuerySet`] regardless of which namespace produced it.
     pub(super) fn register_terminal_filters(env: &mut Environment<'static>) {
         env.add_filter("table", table_filter);
         env.add_filter("list", list_filter);
@@ -191,15 +182,12 @@ impl QueryOps {
         source: SourceSelector,
     ) -> TemplateEngineResult<Value> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
-        let request = if self.is_task {
-            QueryRequest::tasks(source)
+        let builder = if self.is_task {
+            QueryBuilder::tasks(source)
         } else {
-            QueryRequest::pages(source)
+            QueryBuilder::pages(source)
         };
-        let outcome = QueryService::new(&*self.class_field)
-            .with_class_expander(self.service.as_ref())
-            .execute(&index, request);
-        Ok(Value::from_object(outcome))
+        Ok(Value::from_object(self.service.execute(&index, builder)))
     }
 }
 
@@ -296,7 +284,7 @@ fn resolve_from_arg(
 /// purely to smuggle a typed value through a `Value`.
 impl Object for SourceSelector {}
 
-impl Object for QueryRecordSet {
+impl Object for QuerySet {
     #[inline]
     fn repr(self: &Arc<Self>) -> ObjectRepr {
         ObjectRepr::Seq
@@ -312,7 +300,7 @@ impl Object for QueryRecordSet {
         Enumerator::Seq(self.len())
     }
 
-    /// Dispatches [`QueryRecordSet`] methods by template name.
+    /// Dispatches [`QuerySet`] methods by template name.
     ///
     /// The terminal methods `table`, `list`, `task_list`, and `count` render
     /// final output and return early, without touching the non-terminal chain
@@ -320,17 +308,17 @@ impl Object for QueryRecordSet {
     ///
     /// - `table(headers, columns)` and `list(path)` render field path strings
     ///   (or, for `table`'s `headers`, display labels), not further
-    ///   [`QueryRecordSet`] arguments.
+    ///   [`QuerySet`] arguments.
     /// - `task_list()` takes no arguments.
-    /// - `count()` takes no arguments and returns [`QueryRecordSet::len`]
-    ///   directly; it cannot fail, unlike the other three.
+    /// - `count()` takes no arguments and returns [`QuerySet::len`] directly;
+    ///   it cannot fail, unlike the other three.
     ///
     /// Every other name falls through to the non-terminal chain: `.where`/
     /// `.filter`, `.sort`, `.limit`, `.group_by`, and `.flatten`. Each of those
     /// calls consumes a clone of the current outcome and wraps the transformed
     /// result in a [`Value`] for further chaining:
     ///
-    /// - `where` and `filter` both call `QueryRecordSet::filter`. The Rust-side
+    /// - `where` and `filter` both call `QuerySet::filter`. The Rust-side
     ///   `r#where` alias exists only for Rust callers.
     /// - `sort` defaults to ascending order when the optional `descending`
     ///   argument is omitted.
@@ -374,7 +362,10 @@ impl Object for QueryRecordSet {
             }
             "task_list" => {
                 from_args::<()>(args)?;
-                return self.task_list().map(Value::from).map_err(query_error);
+                return self
+                    .task_list(TaskPathStyle::default())
+                    .map(Value::from)
+                    .map_err(query_error);
             }
             "count" => {
                 from_args::<()>(args)?;
@@ -410,7 +401,7 @@ impl Object for QueryRecordSet {
     }
 }
 
-/// `outcome | table(...)` filter body. See [`QueryRecordSet::table`].
+/// `outcome | table(...)` filter body. See [`QuerySet::table`].
 ///
 /// Takes owned `Vec<String>` for `headers`/`columns` rather than borrowed
 /// `Vec<&str>`. Two reasons stack here:
@@ -429,7 +420,7 @@ impl Object for QueryRecordSet {
               signature; the body only needs to borrow each entry"
 )]
 fn table_filter(
-    outcome: &QueryRecordSet,
+    outcome: &QuerySet,
     headers: Vec<String>,
     columns: Vec<String>,
 ) -> TemplateEngineResult<String> {
@@ -438,21 +429,18 @@ fn table_filter(
     outcome.table(&headers_slice, &columns_slice).map_err(query_error)
 }
 
-/// `outcome | list(path)` filter body. See [`QueryRecordSet::list`].
-fn list_filter(
-    outcome: &QueryRecordSet,
-    path: &str,
-) -> TemplateEngineResult<String> {
+/// `outcome | list(path)` filter body. See [`QuerySet::list`].
+fn list_filter(outcome: &QuerySet, path: &str) -> TemplateEngineResult<String> {
     outcome.list(path).map_err(query_error)
 }
 
-/// `outcome | task_list` filter body. See [`QueryRecordSet::task_list`].
-fn task_list_filter(outcome: &QueryRecordSet) -> TemplateEngineResult<String> {
-    outcome.task_list().map_err(query_error)
+/// `outcome | task_list` filter body. See [`QuerySet::task_list`].
+fn task_list_filter(outcome: &QuerySet) -> TemplateEngineResult<String> {
+    outcome.task_list(TaskPathStyle::default()).map_err(query_error)
 }
 
 /// `outcome | count` filter body: the number of records in `outcome`.
-const fn count_filter(outcome: &QueryRecordSet) -> usize {
+fn count_filter(outcome: &QuerySet) -> usize {
     outcome.len()
 }
 
@@ -476,7 +464,6 @@ fn with_descendants_filter(source: &SourceSelector) -> Value {
 
 /// Replaces every `Class` atom's [`ClassExpansionMode`] in `source`, keeping
 /// the match set empty (still unresolved; [`resolve_classes`] fills it in at
-/// `.from()` dispatch time, same as DSL-parsed sources).
 fn set_class_depth(
     mut source: SourceSelector,
     mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
@@ -495,11 +482,11 @@ fn set_class_depth(
     source
 }
 
-impl Object for QueryRecord {
+impl Object for QueryRow {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
     /// `"file"` and `"task"` return forwarding wrappers for `record.file.*` and
-    /// `record.task.*`. Every other key resolves through [`QueryRecord`]'s
+    /// `record.task.*`. Every other key resolves through [`QueryRow`]'s
     /// field lookup, the same frontmatter, inline-field, and tag lookup used by
     /// `.where()` and `.sort()`.
     ///
@@ -535,11 +522,11 @@ impl Object for QueryRecord {
 /// minijinja resolves a dotted attribute path one segment at a time:
 /// `record.file` must itself resolve to *something* before `.name` can be
 /// looked up on it. Calls the same [`FileField`] accessor pair
-/// [`QueryRecord::field`] uses for its `file.*` branch, skipping that method's
+/// [`QueryRow::field`] uses for its `file.*` branch, skipping that method's
 /// string-based `file.` prefix handling, which doesn't apply here: `key` is
 /// already a single attribute segment, never a dotted path.
 #[derive(Debug)]
-struct FileFields(Arc<QueryRecord>);
+struct FileFields(Arc<QueryRow>);
 
 impl Object for FileFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -553,18 +540,18 @@ impl Object for FileFields {
 }
 
 /// Forwards `record.task.<field>` to
-/// [`QueryRecord::task_completed`]/[`QueryRecord::task_text`].
+/// [`QueryRow::task_completed`]/[`QueryRow::task_text`].
 ///
 /// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
 /// segment at a time, so `record.task` must itself resolve to something before
 /// `.completed`/`.text` can be looked up.
 ///
-/// On a page-level record (not built by a task [`QueryRequest`]) both
+/// On a page-level record (not built by a task [`QueryBuilder`]) both
 /// accessors resolve to minijinja's `none`, a defined empty value rather than a
 /// missing attribute, matching [`field_value`]'s handling of
 /// [`NoteFieldValue::Null`].
 #[derive(Debug)]
-struct TaskFields(Arc<QueryRecord>);
+struct TaskFields(Arc<QueryRow>);
 
 impl Object for TaskFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -589,9 +576,9 @@ impl Object for TaskFields {
 /// Converts a resolved [`NoteFieldValue`] into a minijinja [`Value`].
 ///
 /// - [`NoteFieldValue::Null`] becomes minijinja's `none` rather than
-///   `undefined`: [`QueryRecord::field`]'s own docs note that a well-formed
-///   path with no value resolves to `Null`, not an error. That's a defined
-///   empty value, not a missing attribute.
+///   `undefined`: [`QueryRow`]'s own docs note that a well-formed path with no
+///   value resolves to `Null`, not an error. That's a defined empty value, not
+///   a missing attribute.
 /// - [`NoteFieldValue::Link`] renders as its target path; Traces has no
 ///   minijinja-facing link type yet.
 fn field_value(value: NoteFieldValue) -> Value {
@@ -636,20 +623,12 @@ mod tests {
     /// Builds a `query` [`QueryOps`] for `root` with the default class field
     /// (`class`) and Schema registry directory (`root/.traces/schemas`).
     fn page_ops(root: &Path) -> QueryOps {
-        QueryOps::page(
-            Arc::from(root),
-            Arc::from("class"),
-            schema_service(root),
-        )
+        QueryOps::page(Arc::from(root), "class", schema_service(root))
     }
 
     /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
     fn task_ops(root: &Path) -> QueryOps {
-        QueryOps::task(
-            Arc::from(root),
-            Arc::from("class"),
-            schema_service(root),
-        )
+        QueryOps::task(Arc::from(root), "class", schema_service(root))
     }
 
     /// A minimal [`Environment`] with `query` and `tasks` registered against
@@ -674,16 +653,12 @@ mod tests {
         class_field: &str,
         source: &str,
     ) -> TemplateEngineResult<String> {
-        let field: Arc<str> = Arc::from(class_field);
         let service = schema_service(root);
         let mut env = Environment::new();
-        QueryOps::page(
-            Arc::from(root),
-            Arc::clone(&field),
-            Arc::clone(&service),
-        )
-        .register(&mut env);
-        QueryOps::task(Arc::from(root), field, service).register(&mut env);
+        QueryOps::page(Arc::from(root), class_field, Arc::clone(&service))
+            .register(&mut env);
+        QueryOps::task(Arc::from(root), class_field, service)
+            .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env.render_str(source, minijinja::context!())
     }
@@ -1429,8 +1404,8 @@ mod tests {
                 task_from.call(&state, &[]).expect("tasks.from succeeds");
 
             let count = tasks
-                .downcast_object_ref::<QueryRecordSet>()
-                .expect("value wraps a QueryRecordSet")
+                .downcast_object_ref::<QuerySet>()
+                .expect("value wraps a QuerySet")
                 .len();
             assert_eq!(count, 0);
         }

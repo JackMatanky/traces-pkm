@@ -6,8 +6,8 @@
 //!
 //! - `schema.get(name)`: binds the resolved [`Schema`] named `name` directly
 //!   (`Schema` implements minijinja's [`Object`] itself, mirroring
-//!   [`super::query`]'s `impl Object for QueryRecordSet`), hard-erroring if no
-//!   Schema by that name resolves.
+//!   [`super::query`]'s `impl Object for QuerySet`), hard-erroring if no Schema
+//!   by that name resolves.
 //!
 //! The bound [`Schema`] exposes one plain attribute and three methods:
 //!
@@ -399,11 +399,10 @@ mod tests {
         let service = Arc::new(
             SchemaService::new(directory).expect("valid test schema directory"),
         );
-        let class_field: Arc<str> = Arc::from("class");
         let mut env = Environment::new();
         crate::template::engine::QueryOps::page(
             Arc::clone(&root),
-            class_field,
+            "class",
             Arc::clone(&service),
         )
         .register(&mut env);

@@ -9,7 +9,7 @@ use std::{fs, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    Config, IndexerService, ListItemType, QueryRequest, QueryService,
+    Config, IndexerService, ListItemType, QueryBuilder, QueryService,
     SourceSelector, Tag, TaskConfig,
 };
 
@@ -47,7 +47,7 @@ fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
 
     let query_service = QueryService::new("class");
     let task_rows =
-        query_service.execute(&index, QueryRequest::tasks(SourceSelector::All));
+        query_service.execute(&index, QueryBuilder::tasks(SourceSelector::All));
 
     assert_eq!(task_rows.len(), 2);
     let task_texts: Vec<&str> = (&task_rows)
@@ -101,7 +101,7 @@ fn config_without_tag_filters_classifies_all_status_marked_items_as_tasks() {
 
     let query_service = QueryService::new("class");
     let task_rows =
-        query_service.execute(&index, QueryRequest::tasks(SourceSelector::All));
+        query_service.execute(&index, QueryBuilder::tasks(SourceSelector::All));
 
     assert_eq!(task_rows.len(), 3);
     let task_texts: Vec<&str> = (&task_rows)

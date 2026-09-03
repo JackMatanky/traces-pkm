@@ -95,7 +95,7 @@ impl Table {
         let count = outcome.len();
         let columns =
             self.columns.iter().map(String::as_str).collect::<Vec<_>>();
-        // `QueryRecordSet::table` escapes both headers and cell values, so a
+        // `QuerySet::table` escapes both headers and cell values, so a
         // `--column` value doubling as its header stays row-safe without the
         // CLI escaping it a second time.
         let rendered = outcome
@@ -118,7 +118,7 @@ mod tests {
         use super::*;
         use crate::{
             index::{IndexBuilderError, IndexError},
-            query::{QueryError, QueryRequestError},
+            query::{QueryBuilderError, QueryError},
         };
 
         fn config(root: &Path) -> Config {
@@ -215,7 +215,7 @@ mod tests {
                 .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryRequestError::FieldPath(_)),
+                source: QueryError::Builder(QueryBuilderError::FieldPath(_)),
                 ..
             }));
         }
@@ -331,7 +331,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryRequestError::Syntax(_)),
+                source: QueryError::Builder(QueryBuilderError::Syntax(_)),
                 ..
             }));
         }

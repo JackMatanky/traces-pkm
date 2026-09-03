@@ -1,89 +1,119 @@
-//! Query execution over a borrowed [`FileIndex`].
+//! Query service executing [`QueryBuilder`] queries over a borrowed
+//! [`FileIndex`].
+//!
+//! Defines [`QueryService`], which matches notes against candidate source
+//! selectors and applies pre-fetch query plans.
 
 use std::sync::Arc;
 
 use super::{
-    QueryMode, QueryRecord, QueryRecordSet, QueryRequest,
+    QueryBuilder, QueryMode, QueryRow, QuerySet,
     grammar::{FileClassExpander, SourceSelector},
 };
 use crate::index::{FileIndex, RowIndex};
 
-/// Executes queries over a borrowed [`FileIndex`].
+/// Query execution engine over a borrowed [`FileIndex`].
+///
+/// `QueryService` executes [`QueryBuilder`] specifications against an indexed
+/// repository. It evaluates candidate source expressions, filters page or task
+/// rows, resolves optional File Class hierarchies via an attached
+/// [`FileClassExpander`], and produces a [`QuerySet`].
+///
+/// # Examples
+///
+/// ```rust
+/// use std::sync::Arc;
+///
+/// use traces_pkm::{
+///     IndexerService, QueryBuilder, QueryService, SourceSelector,
+/// };
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let temp = tempfile::tempdir()?;
+/// let index = Arc::new(IndexerService::new(temp.path()).build()?);
+///
+/// let service = QueryService::new("class");
+/// let outcome =
+///     service.execute(&index, QueryBuilder::pages(SourceSelector::All));
+/// assert_eq!(outcome.len(), 0);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
-#[expect(
-    clippy::struct_field_names,
-    reason = "fields refer to the configured file class field and expander"
-)]
-pub struct QueryService<'a> {
+pub struct QueryService {
     class_field: String,
-    class_field_canonical: String,
-    class_expander: Option<&'a dyn FileClassExpander>,
+    class_expander: Option<Arc<dyn FileClassExpander>>,
 }
 
-impl<'a> QueryService<'a> {
-    /// Creates a service that reads File Class values from `class_field`.
+impl QueryService {
+    /// Creates a query service configured to read File Class values from
+    /// `class_field`.
+    ///
+    /// Canonicalizes `class_field` so matching is case- and key-normalized.
     #[inline]
     #[must_use]
     pub fn new<S: Into<String>>(class_field: S) -> Self {
         let class_field = class_field.into();
-        let class_field_canonical = crate::FieldKey::try_new(&class_field)
-            .map_or_else(
-                |_| class_field.to_lowercase(),
-                |key| key.canonical().to_owned(),
-            );
+        let class_field = crate::FieldKey::try_new(&class_field).map_or_else(
+            |_| class_field.to_lowercase(),
+            |key| key.canonical().to_owned(),
+        );
         Self {
             class_field,
-            class_field_canonical,
             class_expander: None,
         }
     }
 
-    /// Adds a File Class expander used at execution time.
+    /// Attaches a [`FileClassExpander`] to resolve class hierarchy expansions.
     #[inline]
     #[must_use]
-    pub(crate) fn with_class_expander<R: FileClassExpander + 'a>(
+    pub(crate) fn with_class_expander(
         mut self,
-        expander: &'a R,
+        expander: Arc<dyn FileClassExpander>,
     ) -> Self {
         self.class_expander = Some(expander);
         self
     }
 
-    /// Executes `request` against `index`.
+    /// Executes `builder` against `index` and returns a [`QuerySet`].
+    ///
+    /// Resolves candidate notes from `index` according to `builder`'s mode and
+    /// source selector, then attaches any pending transformations to the
+    /// returned [`QuerySet`].
     #[inline]
     pub fn execute(
         &self,
         index: &Arc<FileIndex>,
-        request: QueryRequest,
-    ) -> QueryRecordSet {
-        let (mode, mut source, plan) = request.into_parts();
+        builder: QueryBuilder,
+    ) -> QuerySet {
+        let (mode, mut source, plan) = builder.into_parts();
         if source.has_classes()
-            && let Some(expander) = self.class_expander
+            && let Some(expander) = self.class_expander.as_deref()
         {
             source.resolve_classes(expander);
         }
-        let records = match mode {
-            QueryMode::Pages => self.page_records(index, &source),
-            QueryMode::Tasks => self.task_records(index, &source),
+        let rows = match mode {
+            QueryMode::Pages => self.page_rows(index, &source),
+            QueryMode::Tasks => self.task_rows(index, &source),
         };
-        QueryRecordSet::new(plan.optimize().apply(records))
+        QuerySet::new(plan.run(rows))
     }
 
-    fn page_records(
+    fn page_rows(
         &self,
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> Vec<QueryRecord> {
-        self.matched_file_records(index, source).collect()
+    ) -> Vec<QueryRow> {
+        self.matched_file_rows(index, source).collect()
     }
 
-    fn task_records(
+    fn task_rows(
         &self,
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> Vec<QueryRecord> {
+    ) -> Vec<QueryRow> {
         let mut out = Vec::new();
-        for base in self.matched_file_records(index, source) {
+        for base in self.matched_file_rows(index, source) {
             let Some(note) = base.note() else {
                 continue;
             };
@@ -94,26 +124,23 @@ impl<'a> QueryService<'a> {
         out
     }
 
-    fn matched_file_records<'b>(
+    fn matched_file_rows<'b>(
         &'b self,
         index: &'b Arc<FileIndex>,
         source: &'b SourceSelector,
-    ) -> impl Iterator<Item = QueryRecord> + 'b {
+    ) -> impl Iterator<Item = QueryRow> + 'b {
         (0..index.entries().len())
             .map(RowIndex::new)
             .filter(move |&position| {
-                source.is_match(
-                    index.entry_at(position),
-                    &self.class_field_canonical,
-                )
+                source.is_match(index.entry_at(position), &self.class_field)
             })
             .map(move |position| {
-                QueryRecord::from_row(Arc::clone(index), position)
+                QueryRow::from_row(Arc::clone(index), position)
             })
     }
 }
 
-impl std::fmt::Debug for QueryService<'_> {
+impl std::fmt::Debug for QueryService {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueryService")
@@ -131,25 +158,25 @@ mod tests {
     use crate::{
         Note,
         index::{FileIndex, IndexerService},
-        query::{QueryRecord, QueryRecordSet, QueryRequest, SourceSelector},
+        query::{QueryBuilder, QueryRow, QuerySet, SourceSelector},
     };
 
     /// Runs a page-level query via [`QueryService`].
     fn query_pages(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> QueryRecordSet {
+    ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryRequest::pages(source.clone()))
+            .execute(index, QueryBuilder::pages(source.clone()))
     }
 
     /// Task-level counterpart to [`query_pages`].
     fn query_tasks(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> QueryRecordSet {
+    ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryRequest::tasks(source.clone()))
+            .execute(index, QueryBuilder::tasks(source.clone()))
     }
 
     mod query {
@@ -160,10 +187,10 @@ mod tests {
         use super::*;
         use crate::Tag;
 
-        fn note_paths(outcome: &QueryRecordSet) -> Vec<&Path> {
+        fn note_paths(outcome: &QuerySet) -> Vec<&Path> {
             outcome
                 .iter()
-                .filter_map(|record| record.note().map(Note::path))
+                .filter_map(|row| row.note().map(Note::path))
                 .collect()
         }
 
@@ -330,9 +357,9 @@ mod tests {
             let index = build_book_index();
 
             let outcome = query_pages(&index, &SourceSelector::All);
-            let record = outcome.iter().next().expect("one record");
+            let row = outcome.iter().next().expect("one row");
 
-            assert_eq!(record.file().path(), Path::new("book.md"));
+            assert_eq!(row.file().path(), Path::new("book.md"));
         }
 
         #[test]
@@ -340,12 +367,8 @@ mod tests {
             let index = build_book_index();
 
             let outcome = query_pages(&index, &SourceSelector::All);
-            let note = outcome
-                .iter()
-                .next()
-                .expect("one record")
-                .note()
-                .expect("note");
+            let note =
+                outcome.iter().next().expect("one row").note().expect("note");
 
             assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(1));
         }
@@ -355,12 +378,8 @@ mod tests {
             let index = build_book_index();
 
             let outcome = query_pages(&index, &SourceSelector::All);
-            let note = outcome
-                .iter()
-                .next()
-                .expect("one record")
-                .note()
-                .expect("note");
+            let note =
+                outcome.iter().next().expect("one row").note().expect("note");
 
             assert_eq!(
                 note.inline_fields()
@@ -376,12 +395,8 @@ mod tests {
             let index = build_book_index();
 
             let outcome = query_pages(&index, &SourceSelector::All);
-            let note = outcome
-                .iter()
-                .next()
-                .expect("one record")
-                .note()
-                .expect("note");
+            let note =
+                outcome.iter().next().expect("one row").note().expect("note");
 
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
@@ -399,8 +414,8 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
-                .expect("target record");
+                .find(|row| row.file().path() == Path::new("target.md"))
+                .expect("target row");
 
             assert_eq!(target.inlinks(), [
                 PathBuf::from("a.md"),
@@ -422,7 +437,7 @@ mod tests {
                 &index,
                 &SourceSelector::parse("#book").expect("valid source"),
             );
-            let target = outcome.iter().next().expect("target record");
+            let target = outcome.iter().next().expect("target row");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
@@ -444,8 +459,8 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
-                .expect("target record");
+                .find(|row| row.file().path() == Path::new("target.md"))
+                .expect("target row");
 
             assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
         }
@@ -460,8 +475,8 @@ mod tests {
             let outcome = query_pages(&index, &SourceSelector::All);
             let source = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("b.md"))
-                .expect("self-linking record");
+                .find(|row| row.file().path() == Path::new("b.md"))
+                .expect("self-linking row");
 
             assert_eq!(source.inlinks(), [PathBuf::from("b.md")]);
         }
@@ -481,7 +496,7 @@ mod tests {
             let target = outcome
                 .iter()
                 .find(|r| r.file().path() == Path::new("target.md"))
-                .expect("target record");
+                .expect("target row");
 
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
         }
@@ -495,14 +510,11 @@ mod tests {
         use super::*;
 
         /// `(completed, text)` pairs for every row in `outcome`, in order.
-        fn task_rows(outcome: &QueryRecordSet) -> Vec<(Option<bool>, &str)> {
+        fn task_rows(outcome: &QuerySet) -> Vec<(Option<bool>, &str)> {
             outcome
                 .iter()
-                .map(|record| {
-                    (
-                        record.task_completed(),
-                        record.task_text().unwrap_or_default(),
-                    )
+                .map(|row| {
+                    (row.task_completed(), row.task_text().unwrap_or_default())
                 })
                 .collect()
         }
@@ -521,7 +533,7 @@ mod tests {
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
-                outcome.iter().next().and_then(QueryRecord::task_text),
+                outcome.iter().next().and_then(QueryRow::task_text),
                 Some("buy milk")
             );
         }
@@ -552,9 +564,9 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = query_tasks(&index, &SourceSelector::All);
-            let record = outcome.iter().next().expect("one task row");
+            let row = outcome.iter().next().expect("one task row");
 
-            assert_eq!(record.file().path(), Path::new("project.md"));
+            assert_eq!(row.file().path(), Path::new("project.md"));
         }
 
         #[test]
@@ -570,10 +582,10 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = query_tasks(&index, &SourceSelector::All);
-            let record = outcome.iter().next().expect("one task row");
+            let row = outcome.iter().next().expect("one task row");
 
             assert_eq!(
-                record.field("title"),
+                row.field("title"),
                 Ok(crate::NoteFieldValue::String("Launch".to_owned()))
             );
         }
@@ -591,10 +603,10 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = query_tasks(&index, &SourceSelector::All);
-            let record = outcome.iter().next().expect("one task row");
+            let row = outcome.iter().next().expect("one task row");
 
             assert_eq!(
-                record.field("tags"),
+                row.field("tags"),
                 Ok(crate::NoteFieldValue::List(vec![
                     crate::NoteFieldValue::String("#projects".to_owned())
                 ]))

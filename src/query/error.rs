@@ -3,7 +3,7 @@
 //! The error hierarchy:
 //!
 //! - [`QueryError`]: top-level error type covering all query failures.
-//! - [`QueryRequestError`]: isolates failures during request construction.
+//! - [`QueryBuilderError`]: isolates failures during request construction.
 //! - [`QuerySyntaxError`]: syntax errors with [`miette::Diagnostic`]
 //!   integration for rich source-location-aware rendering.
 //! - [`FieldPathError`]: invalid field paths with "did you mean" suggestions.
@@ -18,34 +18,96 @@ use crate::LexError;
 /// Convenience alias for query operations that may fail.
 pub type QueryResult<T> = std::result::Result<T, QueryError>;
 
-/// Identifies the query language that rejected an expression.
+/// Top-level error enum for query parsing and transformation.
 ///
-/// Used by [`QuerySyntaxError`] to produce a human-readable message that names
-/// the failing dialect (for example, "invalid filter expression").
+/// Covers all failure modes from expression parsing through field resolution to
+/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
+/// inner [`QuerySyntaxError`] for syntax errors.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use traces_pkm::query::QueryDialect;
+/// use traces_pkm::query::{QueryBuilderError, QueryError};
 ///
-/// assert_eq!(QueryDialect::Source.to_string(), "source");
-/// assert_eq!(QueryDialect::Filter.to_string(), "filter");
+/// let error = QueryError::from(QueryBuilderError::LimitOutOfRange {
+///     value: -1,
+/// });
+/// assert_eq!(
+///     error.to_string(),
+///     "invalid limit -1; expected a non-negative row count"
+/// );
 /// ```
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum QueryDialect {
-    /// The `--from` source-selection language.
-    Source,
-    /// The `--where` record-filtering language.
-    Filter,
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum QueryError {
+    /// A query builder rejected syntax, field paths, or limits.
+    #[error(transparent)]
+    Builder(#[from] QueryBuilderError),
+    /// A source or filter expression has invalid syntax.
+    #[error(transparent)]
+    Syntax(#[from] QuerySyntaxError),
+    /// A field path cannot be parsed or names an unknown accessor.
+    #[error(transparent)]
+    FieldPath(#[from] FieldPathError),
+    /// [`super::QuerySet::task_list`] received page-level records
+    #[error(
+        "task_list requires task-level records from the `tasks` namespace; \
+         got page-level records with no task fields"
+    )]
+    TaskListRequiresTaskRows,
+    /// [`super::QuerySet::table`] received `headers` and `columns` slices
+    /// of unequal length.
+    #[error(
+        "table headers ({headers}) and columns ({columns}) must have the same \
+         length"
+    )]
+    TableColumnCountMismatch {
+        /// The number of header titles provided.
+        headers: usize,
+        /// The number of column field paths provided.
+        columns: usize,
+    },
 }
 
-impl fmt::Display for QueryDialect {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// Establishes diagnostic capabilities for `QueryError`.
+impl Diagnostic for QueryError {
+    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
         match self {
-            Self::Source => formatter.write_str("source"),
-            Self::Filter => formatter.write_str("filter"),
+            Self::Syntax(source)
+            | Self::Builder(QueryBuilderError::Syntax(source)) => Some(source),
+            Self::Builder(
+                QueryBuilderError::FieldPath(_)
+                | QueryBuilderError::LimitOutOfRange {
+                    ..
+                },
+            )
+            | Self::FieldPath(_)
+            | Self::TaskListRequiresTaskRows
+            | Self::TableColumnCountMismatch {
+                ..
+            } => None,
         }
     }
+}
+
+/// Error while building a [`super::QueryBuilder`].
+///
+/// Separates builder-construction failures from execution/rendering failures
+/// while still embedding into [`QueryError`] for callers that want one query
+/// error type.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum QueryBuilderError {
+    /// A source or filter expression has invalid syntax.
+    #[error(transparent)]
+    Syntax(#[from] QuerySyntaxError),
+    /// A field path cannot be parsed or names an unknown accessor.
+    #[error(transparent)]
+    FieldPath(#[from] FieldPathError),
+    /// A query limit was negative or exceeded platform [`usize`] bounds.
+    #[error("invalid limit {value}; expected a non-negative row count")]
+    LimitOutOfRange {
+        /// The rejected limit count.
+        value: i64,
+    },
 }
 
 /// A syntax error in a source or filter expression.
@@ -166,94 +228,32 @@ impl FieldPathError {
     }
 }
 
-/// Error while building a [`super::QueryRequest`].
+/// Identifies the query language that rejected an expression.
 ///
-/// Separates request-construction failures from execution/rendering failures
-/// while still embedding into [`QueryError`] for callers that want one query
-/// error type.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum QueryRequestError {
-    /// A source or filter expression has invalid syntax.
-    #[error(transparent)]
-    Syntax(#[from] QuerySyntaxError),
-    /// A field path cannot be parsed or names an unknown accessor.
-    #[error(transparent)]
-    FieldPath(#[from] FieldPathError),
-    /// A query limit was negative or exceeded platform [`usize`] bounds.
-    #[error("invalid limit {value}; expected a non-negative row count")]
-    LimitOutOfRange {
-        /// The rejected limit count.
-        value: i64,
-    },
-}
-
-/// Top-level error enum for query parsing and transformation.
-///
-/// Covers all failure modes from expression parsing through field resolution to
-/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
-/// inner [`QuerySyntaxError`] for syntax errors.
+/// Used by [`QuerySyntaxError`] to produce a human-readable message that names
+/// the failing dialect (for example, "invalid filter expression").
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use traces_pkm::query::{QueryError, QueryRequestError};
+/// use traces_pkm::query::QueryDialect;
 ///
-/// let error = QueryError::from(QueryRequestError::LimitOutOfRange {
-///     value: -1,
-/// });
-/// assert_eq!(
-///     error.to_string(),
-///     "invalid limit -1; expected a non-negative row count"
-/// );
+/// assert_eq!(QueryDialect::Source.to_string(), "source");
+/// assert_eq!(QueryDialect::Filter.to_string(), "filter");
 /// ```
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum QueryError {
-    /// A request builder rejected syntax, field paths, or limits.
-    #[error(transparent)]
-    Request(#[from] QueryRequestError),
-    /// A source or filter expression has invalid syntax.
-    #[error(transparent)]
-    Syntax(#[from] QuerySyntaxError),
-    /// A field path cannot be parsed or names an unknown accessor.
-    #[error(transparent)]
-    FieldPath(#[from] FieldPathError),
-    /// [`super::QueryRecordSet::task_list`] received page-level records
-    #[error(
-        "task_list requires task-level records from the `tasks` namespace; \
-         got page-level records with no task fields"
-    )]
-    TaskListRequiresTaskRows,
-    /// [`super::QueryRecordSet::table`] received `headers` and `columns` slices
-    /// of unequal length.
-    #[error(
-        "table headers ({headers}) and columns ({columns}) must have the same \
-         length"
-    )]
-    TableColumnCountMismatch {
-        /// The number of header titles provided.
-        headers: usize,
-        /// The number of column field paths provided.
-        columns: usize,
-    },
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum QueryDialect {
+    /// The `--from` source-selection language.
+    Source,
+    /// The `--where` record-filtering language.
+    Filter,
 }
 
-/// Establishes diagnostic capabilities for `QueryError`.
-impl Diagnostic for QueryError {
-    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
+impl fmt::Display for QueryDialect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Syntax(source)
-            | Self::Request(QueryRequestError::Syntax(source)) => Some(source),
-            Self::Request(
-                QueryRequestError::FieldPath(_)
-                | QueryRequestError::LimitOutOfRange {
-                    ..
-                },
-            )
-            | Self::FieldPath(_)
-            | Self::TaskListRequiresTaskRows
-            | Self::TableColumnCountMismatch {
-                ..
-            } => None,
+            Self::Source => formatter.write_str("source"),
+            Self::Filter => formatter.write_str("filter"),
         }
     }
 }
@@ -261,7 +261,6 @@ impl Diagnostic for QueryError {
 #[cfg(test)]
 mod tests {
     use miette::{Diagnostic, SourceSpan};
-    use pretty_assertions::assert_eq;
 
     use super::*;
 
@@ -273,105 +272,126 @@ mod tests {
         );
     }
 
-    #[test]
-    fn syntax_error_preserves_dialect_input_span_and_label() {
-        let error = QuerySyntaxError::new(
-            QueryDialect::Filter,
-            "rating >",
-            SourceSpan::from((7, 0)),
-            "a literal value",
-        );
+    mod syntax_error {
+        use super::*;
 
-        assert_eq!(error.dialect, QueryDialect::Filter);
-        assert_eq!(error.input, "rating >");
-        assert_eq!(error.span, SourceSpan::from((7, 0)));
-        assert_eq!(*error.lex_error, LexError::UnexpectedEndOfInput {
-            span: SourceSpan::from((7, 0)),
-            expected: "a literal value",
-        });
-        assert_eq!(
-            error
-                .labels()
-                .expect("syntax diagnostic has a label")
-                .map(|label| (
-                    label.offset(),
-                    label.len(),
-                    label.label().map(str::to_owned)
-                ))
-                .collect::<Vec<_>>(),
-            vec![(
-                7,
-                0,
-                Some(
-                    "unexpected end of input, expected a literal value"
-                        .to_owned()
-                )
-            )]
-        );
-        assert!(error.source_code().is_some());
+        #[test]
+        fn syntax_error_preserves_dialect_input_span_and_label() {
+            let error = QuerySyntaxError::new(
+                QueryDialect::Filter,
+                "rating >",
+                SourceSpan::from((7, 0)),
+                "a literal value",
+            );
+
+            assert_eq!(error.dialect, QueryDialect::Filter);
+            assert_eq!(error.input, "rating >");
+            assert_eq!(error.span, SourceSpan::from((7, 0)));
+            assert_eq!(*error.lex_error, LexError::UnexpectedEndOfInput {
+                span: SourceSpan::from((7, 0)),
+                expected: "a literal value",
+            });
+            assert_eq!(
+                error
+                    .labels()
+                    .expect("syntax diagnostic has a label")
+                    .map(|label| (
+                        label.offset(),
+                        label.len(),
+                        label.label().map(str::to_owned)
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![(
+                    7,
+                    0,
+                    Some(
+                        "unexpected end of input, expected a literal value"
+                            .to_owned()
+                    )
+                )]
+            );
+            assert!(error.source_code().is_some());
+        }
+
+        #[test]
+        fn query_error_exposes_nested_syntax_diagnostic() {
+            let error = QueryError::from(QuerySyntaxError::new(
+                QueryDialect::Source,
+                "#book and",
+                SourceSpan::from((9, 0)),
+                "a source term",
+            ));
+
+            assert_eq!(error.to_string(), "invalid source expression");
+            assert!(error.diagnostic_source().is_some());
+        }
     }
 
-    #[test]
-    fn query_error_exposes_nested_syntax_diagnostic() {
-        let error = QueryError::from(QuerySyntaxError::new(
-            QueryDialect::Source,
-            "#book and",
-            SourceSpan::from((9, 0)),
-            "a source term",
-        ));
+    mod field_path_error {
+        use super::*;
 
-        assert_eq!(error.to_string(), "invalid source expression");
-        assert!(error.diagnostic_source().is_some());
+        #[test]
+        fn field_path_error_formats_display_message() {
+            let error =
+                QueryError::from(FieldPathError::new("file.bogus", None));
+
+            assert_display(
+                &error,
+                "invalid field path \"file.bogus\"; expected `file.<field>` \
+                 (path, name, folder, size, ctime, cdate, mtime, mdate), \
+                 `task.<field>` (completed, text), or a single frontmatter, \
+                 inline field, or `tags` name",
+            );
+        }
+
+        #[test]
+        fn field_path_error_appends_a_did_you_mean_suggestion() {
+            let error = QueryError::from(FieldPathError::new(
+                "file.nam",
+                Some("file.name"),
+            ));
+
+            assert_display(
+                &error,
+                "invalid field path \"file.nam\"; expected `file.<field>` \
+                 (path, name, folder, size, ctime, cdate, mtime, mdate), \
+                 `task.<field>` (completed, text), or a single frontmatter, \
+                 inline field, or `tags` name (did you mean `file.name`?)",
+            );
+        }
     }
 
-    #[test]
-    fn field_path_error_formats_display_message() {
-        let error = QueryError::from(FieldPathError::new("file.bogus", None));
+    mod display {
+        use super::*;
 
-        assert_display(
-            &error,
-            "invalid field path \"file.bogus\"; expected `file.<field>` \
-             (path, name, folder, size, ctime, cdate, mtime, mdate), \
-             `task.<field>` (completed, text), or a single frontmatter, \
-             inline field, or `tags` name",
-        );
-    }
+        #[test]
+        fn limit_out_of_range_formats_display_message() {
+            assert_display(
+                &QueryError::from(QueryBuilderError::LimitOutOfRange {
+                    value: -5,
+                }),
+                "invalid limit -5; expected a non-negative row count",
+            );
+        }
 
-    #[test]
-    fn field_path_error_appends_a_did_you_mean_suggestion() {
-        let error = QueryError::from(FieldPathError::new(
-            "file.nam",
-            Some("file.name"),
-        ));
+        #[test]
+        fn task_list_requires_task_rows_formats_display_message() {
+            assert_display(
+                &QueryError::TaskListRequiresTaskRows,
+                "task_list requires task-level records from the `tasks` \
+                 namespace; got page-level records with no task fields",
+            );
+        }
 
-        assert_display(
-            &error,
-            "invalid field path \"file.nam\"; expected `file.<field>` (path, \
-             name, folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
-             (completed, text), or a single frontmatter, inline field, or \
-             `tags` name (did you mean `file.name`?)",
-        );
-    }
-
-    #[test]
-    fn direct_operation_errors_format_display_messages() {
-        assert_display(
-            &QueryError::from(QueryRequestError::LimitOutOfRange {
-                value: -5,
-            }),
-            "invalid limit -5; expected a non-negative row count",
-        );
-        assert_display(
-            &QueryError::TaskListRequiresTaskRows,
-            "task_list requires task-level records from the `tasks` \
-             namespace; got page-level records with no task fields",
-        );
-        assert_display(
-            &QueryError::TableColumnCountMismatch {
-                headers: 2,
-                columns: 1,
-            },
-            "table headers (2) and columns (1) must have the same length",
-        );
+        #[test]
+        fn table_column_count_mismatch_formats_display_message() {
+            assert_display(
+                &QueryError::TableColumnCountMismatch {
+                    headers: 2,
+                    columns: 1,
+                },
+                "table headers (2) and columns (1) must have the same length",
+            );
+        }
     }
 }

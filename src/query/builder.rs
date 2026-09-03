@@ -1,11 +1,13 @@
-//! Query execution request, transform plan, and optimization.
+//! Declarative query builder for source selection, execution mode, and
+//! transform pipelines.
+//!
+//! Defines [`QueryBuilder`], which configures index query execution before
+//! passing the request to
+//! [`QueryService::execute`](super::QueryService::execute).
 
 use super::{
-    QueryRecord, QueryRequestError,
-    grammar::{FieldPath, FilterExpr, SourceSelector},
-    sort::SortKey,
+    QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
 };
-use crate::NoteFieldValue;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum QueryMode {
@@ -13,300 +15,141 @@ pub(super) enum QueryMode {
     Tasks,
 }
 
-/// Query execution request.
+/// Declarative query specification for index queries.
+///
+/// `QueryBuilder` specifies whether to return page-level rows
+/// ([`pages`](Self::pages)) or task-level rows ([`tasks`](Self::tasks)),
+/// selects candidate files via a [`SourceSelector`], and builds an ordered
+/// sequence of transformation steps ([`filter`](Self::filter),
+/// [`sort`](Self::sort), [`limit`](Self::limit)).
+///
+/// # Execution Lifecycle
+///
+/// Constructing a `QueryBuilder` does not touch the filesystem or execute query
+/// expressions. The builder accumulates transformation steps into an internal
+/// [`QueryPlan`](super::QueryPlan) and passes them to
+/// [`QueryService::execute`](super::QueryService::execute), which evaluates the
+/// plan against a borrowed [`FileIndex`](crate::index::FileIndex).
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{QueryBuilder, SourceSelector};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let builder = QueryBuilder::pages(SourceSelector::All)
+///     .filter("rating >= 4")?
+///     .sort("file.name", false)?
+///     .limit(10)?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
-pub struct QueryRequest {
+pub struct QueryBuilder {
     mode: QueryMode,
     source: SourceSelector,
     plan: QueryPlan,
 }
 
-impl QueryRequest {
-    /// Builds a page-row query request for `source`.
+impl QueryBuilder {
+    /// Builds a page-row query builder for `source`.
+    ///
+    /// Page-level queries evaluate candidate files against `source` and produce
+    /// one [`QueryRow`](super::QueryRow) per matching note.
     #[inline]
     #[must_use]
     pub fn pages(source: SourceSelector) -> Self {
         Self {
             mode: QueryMode::Pages,
             source,
-            plan: QueryPlan::new(),
+            plan: QueryPlan::default(),
         }
     }
 
-    /// Builds a task-row query request for `source`.
+    /// Builds a task-row query builder for `source`.
+    ///
+    /// Task-level queries evaluate candidate files against `source` and produce
+    /// one [`QueryRow`](super::QueryRow) per task list item in each matching
+    /// note.
     #[inline]
     #[must_use]
     pub fn tasks(source: SourceSelector) -> Self {
         Self {
             mode: QueryMode::Tasks,
             source,
-            plan: QueryPlan::new(),
+            plan: QueryPlan::default(),
         }
     }
 
-    /// Appends a parsed filter transform.
+    /// Appends a filter expression to the query transform plan.
+    ///
+    /// Evaluates `expr` against candidate note frontmatter, task metadata,
+    /// tags, and file properties when the query executes.
     ///
     /// # Errors
     ///
-    /// Returns `QueryRequestError` when `expr` is not a valid filter.
+    /// - [`Syntax`] if `expr` cannot be parsed as a valid boolean filter
+    ///   expression.
+    /// - [`FieldPath`] if `expr` references an invalid or malformed field path.
+    ///
+    /// [`Syntax`]: QueryBuilderError::Syntax
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     #[inline]
-    pub fn filter(mut self, expr: &str) -> Result<Self, QueryRequestError> {
+    pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::filter(expr)?);
         Ok(self)
     }
 
-    /// Appends a parsed sort transform.
+    /// Appends a sort transform for `field` to the query transform plan.
+    ///
+    /// Sorts matching rows in ascending order when `descending` is `false`, or
+    /// descending order when `descending` is `true`.
     ///
     /// # Errors
     ///
-    /// Returns `QueryRequestError` when `field` is not a valid field path.
+    /// - [`FieldPath`] if `field` cannot be parsed as a valid field path.
+    ///
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     #[inline]
     pub fn sort(
         mut self,
         field: &str,
         descending: bool,
-    ) -> Result<Self, QueryRequestError> {
+    ) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::sort(field, descending)?);
         Ok(self)
     }
 
-    /// Appends a parsed limit transform.
+    /// Appends a limit transform to restrict the outcome to at most `n` leading
+    /// rows.
+    ///
+    /// Retains up to `n` rows from the evaluated result set.
     ///
     /// # Errors
     ///
-    /// Returns `QueryRequestError` when `n` is negative or too large for this
-    /// platform.
+    /// - [`LimitOutOfRange`] if `n` is negative or exceeds `usize::MAX`.
+    ///
+    /// [`LimitOutOfRange`]: QueryBuilderError::LimitOutOfRange
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
             dead_code,
-            reason = "public builder method on QueryRequest; exercised in \
+            reason = "public builder method on QueryBuilder; exercised in \
                       tests and test-utils"
         )
     )]
-    pub fn limit(mut self, n: i64) -> Result<Self, QueryRequestError> {
+    pub fn limit(mut self, n: i64) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::limit(n)?);
         Ok(self)
     }
 
-    /// Splits this request into its mode, source, and transform plan for
-    /// [`super::QueryService::execute`]. The only way anything outside this
-    /// file observes `QueryRequest`'s fields — they stay private.
+    /// Splits this builder into its mode, source, and transform plan for
+    /// [`super::QueryService::execute`].
     pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
         (self.mode, self.source, self.plan)
     }
 }
-
-/// Ordered, optimizable sequence of [`QueryTransform`] steps.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct QueryPlan {
-    steps: Vec<QueryTransform>,
-}
-
-impl QueryPlan {
-    const fn new() -> Self {
-        Self {
-            steps: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, transform: QueryTransform) {
-        self.steps.push(transform);
-    }
-
-    /// Fuses consecutive `Filter` steps into one and rewrites adjacent
-    /// `Sort`+`Limit(n)` into a `TopK` step.
-    #[must_use]
-    pub(super) fn optimize(mut self) -> Self {
-        let mut optimized = Vec::with_capacity(self.steps.len());
-        let mut steps = self.steps.into_iter().peekable();
-        while let Some(step) = steps.next() {
-            if let QueryTransform::Filter(mut expr) = step {
-                while let Some(QueryTransform::Filter(next)) =
-                    steps.next_if(|s| matches!(s, QueryTransform::Filter(_)))
-                {
-                    expr = expr.and(next);
-                }
-                optimized.push(QueryTransform::Filter(expr));
-            } else if let QueryTransform::Sort {
-                field,
-                descending,
-            } = &step
-                && let Some(QueryTransform::Limit(n)) = steps.peek()
-            {
-                let n = *n;
-                optimized.push(QueryTransform::TopK {
-                    field: field.clone(),
-                    descending: *descending,
-                    n,
-                });
-                steps.next();
-            } else {
-                optimized.push(step);
-            }
-        }
-        self.steps = optimized;
-        self
-    }
-
-    /// Applies every step in order, used by [`super::QueryService::execute`].
-    pub(super) fn apply(
-        &self,
-        mut records: Vec<QueryRecord>,
-    ) -> Vec<QueryRecord> {
-        for step in &self.steps {
-            records = step.apply(records);
-        }
-        records
-    }
-}
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum QueryTransform {
-    Filter(FilterExpr),
-    Sort {
-        field: FieldPath,
-        descending: bool,
-    },
-    Limit(usize),
-    GroupBy(FieldPath),
-    Flatten(FieldPath),
-    /// Sort-then-limit fused by [`QueryPlan::optimize`]. Never constructed
-    /// directly by the parse constructors below.
-    TopK {
-        field: FieldPath,
-        descending: bool,
-        n: usize,
-    },
-}
-
-impl QueryTransform {
-    pub(super) fn filter(expr: &str) -> Result<Self, QueryRequestError> {
-        Ok(Self::Filter(FilterExpr::parse(expr)?))
-    }
-
-    pub(super) fn sort(
-        field: &str,
-        descending: bool,
-    ) -> Result<Self, QueryRequestError> {
-        Ok(Self::Sort {
-            field: FieldPath::parse(field)?,
-            descending,
-        })
-    }
-
-    pub(super) fn limit(n: i64) -> Result<Self, QueryRequestError> {
-        let n = usize::try_from(n).map_err(|_source| {
-            QueryRequestError::LimitOutOfRange {
-                value: n,
-            }
-        })?;
-        Ok(Self::Limit(n))
-    }
-
-    pub(super) fn group_by(field: &str) -> Result<Self, QueryRequestError> {
-        Ok(Self::GroupBy(FieldPath::parse(field)?))
-    }
-
-    pub(super) fn flatten(field: &str) -> Result<Self, QueryRequestError> {
-        Ok(Self::Flatten(FieldPath::parse(field)?))
-    }
-
-    /// Applies this single transform to `records`, returning the transformed
-    /// vec. Absorbs the bodies previously on `QueryRecordSet` as
-    /// `apply_filter`/`limit_to`/`flatten_field`/`sort_by_field`.
-    pub(super) fn apply(&self, records: Vec<QueryRecord>) -> Vec<QueryRecord> {
-        match self {
-            Self::Filter(expr) => {
-                let mut records = records;
-                records.retain(|record| expr.is_matching(record));
-                records
-            }
-            Self::Sort {
-                field,
-                descending,
-            } => {
-                let mut records = records;
-                records.sort_by_cached_key(|record| SortKey {
-                    value: record.resolve_owned(field),
-                    descending: *descending,
-                });
-                records
-            }
-            Self::Limit(n) => {
-                let mut records = records;
-                records.truncate(*n);
-                records
-            }
-            Self::GroupBy(field) => {
-                let mut records = records;
-                records.sort_by_cached_key(|record| SortKey {
-                    value: record.resolve_owned(field),
-                    descending: false,
-                });
-                records
-            }
-            Self::Flatten(field_path) => {
-                let mut out = Vec::with_capacity(records.len());
-                for record in records {
-                    let NoteFieldValue::List(mut items) =
-                        record.resolve_owned(field_path)
-                    else {
-                        out.push(record);
-                        continue;
-                    };
-                    let Some(last) = items.pop() else {
-                        continue;
-                    };
-                    out.extend(items.into_iter().map(|item| {
-                        record.clone().with_flattened(field_path.clone(), item)
-                    }));
-                    out.push(record.with_flattened(field_path.clone(), last));
-                }
-                out
-            }
-            Self::TopK {
-                field,
-                descending,
-                n,
-            } => {
-                let n = *n;
-                // `(SortKey, original index)` breaks ties by input position,
-                // matching `sort_by_cached_key`'s stability guarantee (used
-                // by the unfused `Sort` arm above). Without the index,
-                // `select_nth_unstable_by`/`sort_unstable_by` are free to
-                // reorder or reselect among tied keys arbitrarily — a real
-                // behavior difference from the unfused path whenever the
-                // sort field has duplicate values near the selection
-                // boundary (e.g. a low-cardinality field like `status`).
-                let mut keyed: Vec<(SortKey, usize, QueryRecord)> = records
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, record)| {
-                        let key = SortKey {
-                            value: record.resolve_owned(field),
-                            descending: *descending,
-                        };
-                        (key, index, record)
-                    })
-                    .collect();
-                let cmp =
-                    |a: &(SortKey, usize, QueryRecord),
-                     b: &(SortKey, usize, QueryRecord)| {
-                        a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1))
-                    };
-                if n < keyed.len() {
-                    let k = n.saturating_sub(1);
-                    keyed.select_nth_unstable_by(k, cmp);
-                    keyed.truncate(n);
-                }
-                keyed.sort_unstable_by(cmp);
-                keyed.into_iter().map(|(.., record)| record).collect()
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path, sync::Arc};
@@ -317,13 +160,13 @@ mod tests {
         query::{FieldPathError, QueryService},
     };
 
-    mod query_request {
+    mod query_builder {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn query_request_preserves_transform_order() {
+        fn query_builder_preserves_transform_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "---\nrating: 1\n---\n")
                 .expect("write a.md");
@@ -334,7 +177,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let request = QueryRequest::pages(SourceSelector::All)
+            let request = QueryBuilder::pages(SourceSelector::All)
                 .limit(2)
                 .expect("valid limit")
                 .filter("rating >= 5")
@@ -368,7 +211,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let request = QueryRequest::pages(SourceSelector::All)
+            let request = QueryBuilder::pages(SourceSelector::All)
                 .sort("rating", true)
                 .expect("valid sort")
                 .limit(2)
@@ -390,8 +233,8 @@ mod tests {
         #[test]
         fn top_k_matches_full_sort_order_for_tied_keys() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            // 200 notes across only 4 distinct rating values — a
-            // low-cardinality field like `status` at PKM scale, large enough
+            // 200 notes across only 4 distinct rating values (a
+            // low-cardinality field like `status` at PKM scale), large enough
             // to exercise `select_nth_unstable_by`'s real partitioning logic
             // (not a small-slice fast path that could coincidentally
             // preserve order without a stability guarantee).
@@ -407,7 +250,7 @@ mod tests {
             );
 
             for n in [5_usize, 50, 100] {
-                let topk_request = QueryRequest::pages(SourceSelector::All)
+                let topk_request = QueryBuilder::pages(SourceSelector::All)
                     .sort("rating", false)
                     .expect("valid sort")
                     .limit(i64::try_from(n).expect("limit fits i64"))
@@ -426,7 +269,7 @@ mod tests {
                     .collect();
 
                 let full_sort_request =
-                    QueryRequest::pages(SourceSelector::All)
+                    QueryBuilder::pages(SourceSelector::All)
                         .sort("rating", false)
                         .expect("valid sort");
                 let full_outcome = QueryService::new("class")
@@ -472,7 +315,7 @@ mod tests {
             // A naive fusion would pick the top 2 (b, d) before the filter
             // removes d, leaving only [b]. The filter must run between the
             // sort and the limit, so the correct result is [b, e].
-            let request = QueryRequest::pages(SourceSelector::All)
+            let request = QueryBuilder::pages(SourceSelector::All)
                 .sort("rating", true)
                 .expect("valid sort")
                 .filter("file.path != \"d.md\"")
@@ -514,27 +357,17 @@ mod tests {
             );
 
             // Build sequential filters (simulating multiple --where flags)
-            let fused_request = QueryRequest::pages(SourceSelector::All)
+            let fused_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2")
                 .expect("valid filter")
                 .filter("rating < 8")
                 .expect("valid filter");
 
-            // Verify that optimize() fuses adjacent filters into a single
-            // Filter step
-            let (_, _, plan) = QueryRequest::pages(SourceSelector::All)
-                .filter("rating > 2")
-                .expect("valid filter")
-                .filter("rating < 8")
-                .expect("valid filter")
-                .into_parts();
-            assert_eq!(plan.optimize().steps.len(), 1);
-
             let fused_outcome =
                 QueryService::new("class").execute(&index, fused_request);
 
             // Single combined filter for comparison
-            let combined_request = QueryRequest::pages(SourceSelector::All)
+            let combined_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2 and rating < 8")
                 .expect("valid filter");
             let combined_outcome =
@@ -552,23 +385,31 @@ mod tests {
         }
 
         #[test]
-        fn wraps_request_builder_errors() {
+        fn returns_syntax_error_for_invalid_filter_expression() {
             assert!(matches!(
-                QueryRequest::pages(SourceSelector::All).filter("rating >"),
-                Err(QueryRequestError::Syntax(_))
+                QueryBuilder::pages(SourceSelector::All).filter("rating >"),
+                Err(QueryBuilderError::Syntax(_))
             ));
+        }
+
+        #[test]
+        fn returns_field_path_error_for_invalid_sort_field() {
             assert_eq!(
-                QueryRequest::pages(SourceSelector::All)
+                QueryBuilder::pages(SourceSelector::All)
                     .sort("file.bogus", false)
                     .err(),
-                Some(QueryRequestError::FieldPath(FieldPathError::new(
+                Some(QueryBuilderError::FieldPath(FieldPathError::new(
                     "file.bogus",
                     None
                 )))
             );
+        }
+
+        #[test]
+        fn returns_limit_out_of_range_error_for_negative_limit() {
             assert_eq!(
-                QueryRequest::pages(SourceSelector::All).limit(-1).err(),
-                Some(QueryRequestError::LimitOutOfRange {
+                QueryBuilder::pages(SourceSelector::All).limit(-1).err(),
+                Some(QueryBuilderError::LimitOutOfRange {
                     value: -1
                 })
             );
@@ -582,7 +423,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let request = QueryRequest::pages(
+            let request = QueryBuilder::pages(
                 SourceSelector::parse("@book").expect("source"),
             );
 

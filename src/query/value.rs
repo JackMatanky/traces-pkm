@@ -8,7 +8,7 @@ use crate::{
     note::{Link, NoteFieldValue},
 };
 
-/// Borrowed field value resolved from a [`super::QueryRecord`].
+/// Borrowed field value resolved from a [`super::QueryRow`].
 pub(super) enum QueryFieldValueRef<'a> {
     Null,
     Bool(bool),
@@ -183,7 +183,7 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
     }
 }
 
-/// Borrowed list value resolved from a [`super::QueryRecord`].
+/// Borrowed list value resolved from a [`super::QueryRow`].
 pub(super) enum QueryListValueRef<'a> {
     Values(&'a [NoteFieldValue]),
     Tags(&'a [Tag]),
@@ -334,167 +334,184 @@ fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
 mod tests {
     use std::cmp::Ordering;
 
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    #[test]
-    fn compare_number_greater() {
-        assert_eq!(
-            QueryFieldValueRef::Number(5.0)
-                .compare_to_literal(&NoteFieldValue::Number(3.0)),
-            Some(Ordering::Greater)
-        );
+    mod comparison {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        #[test]
+        fn returns_greater_when_comparing_larger_number_to_literal() {
+            assert_eq!(
+                QueryFieldValueRef::Number(5.0)
+                    .compare_to_literal(&NoteFieldValue::Number(3.0)),
+                Some(Ordering::Greater)
+            );
+        }
+
+        #[test]
+        fn returns_less_when_comparing_smaller_string_to_literal() {
+            assert_eq!(
+                QueryFieldValueRef::Text("abc")
+                    .compare_to_literal(&NoteFieldValue::String("abd".into())),
+                Some(Ordering::Less)
+            );
+        }
+
+        #[test]
+        fn returns_none_when_comparing_incompatible_types() {
+            assert_eq!(
+                QueryFieldValueRef::Bool(true)
+                    .compare_to_literal(&NoteFieldValue::Number(1.0)),
+                None
+            );
+        }
+
+        #[test]
+        fn returns_equal_when_comparing_owned_value_to_matching_literal() {
+            assert_eq!(
+                QueryFieldValueRef::Owned(NoteFieldValue::Number(5.0))
+                    .compare_to_literal(&NoteFieldValue::Number(5.0)),
+                Some(Ordering::Equal)
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_null_to_null_literal() {
+            assert!(
+                QueryFieldValueRef::Null
+                    .is_equal_to_literal(&NoteFieldValue::Null)
+            );
+        }
+
+        #[test]
+        fn returns_false_when_comparing_null_to_number_literal() {
+            assert!(
+                !QueryFieldValueRef::Null
+                    .is_equal_to_literal(&NoteFieldValue::Number(1.0))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_text_ref_to_matching_string_literal() {
+            assert!(
+                QueryFieldValueRef::Text("hello").is_equal_to_literal(
+                    &NoteFieldValue::String("hello".into())
+                )
+            );
+        }
+
+        #[test]
+        fn returns_false_when_comparing_text_ref_to_mismatched_string_literal()
+        {
+            assert!(
+                !QueryFieldValueRef::Text("hello").is_equal_to_literal(
+                    &NoteFieldValue::String("world".into())
+                )
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_number_ref_to_matching_number_literal() {
+            assert!(
+                QueryFieldValueRef::Number(5.0)
+                    .is_equal_to_literal(&NoteFieldValue::Number(5.0))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_text_ref_contains_substring() {
+            assert!(
+                QueryFieldValueRef::Text("hello world")
+                    .is_containing(&NoteFieldValue::String("world".into()))
+            );
+        }
+
+        #[test]
+        fn returns_false_when_text_ref_does_not_contain_substring() {
+            assert!(
+                !QueryFieldValueRef::Text("hello")
+                    .is_containing(&NoteFieldValue::String("xyz".into()))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_list_ref_contains_tag_prefix() {
+            let items = [NoteFieldValue::String("#book/fiction".into())];
+            let list =
+                QueryFieldValueRef::List(QueryListValueRef::Values(&items));
+            assert!(
+                list.is_containing(&NoteFieldValue::String("#book".into()))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_owned_list_ref_contains_matching_element() {
+            let list = QueryFieldValueRef::Owned(NoteFieldValue::List(vec![
+                NoteFieldValue::String("a".into()),
+            ]));
+            assert!(list.is_containing(&NoteFieldValue::String("a".into())));
+        }
     }
 
-    #[test]
-    fn compare_string_less() {
-        assert_eq!(
-            QueryFieldValueRef::Text("abc")
-                .compare_to_literal(&NoteFieldValue::String("abd".into())),
-            Some(Ordering::Less)
-        );
+    mod formatting {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        #[test]
+        fn formats_empty_string_for_null_value() {
+            let mut out = String::new();
+            QueryFieldValueRef::Null.append_text(&mut out);
+            assert_eq!(out, "");
+        }
+
+        #[test]
+        fn formats_boolean_as_lowercase_literal() {
+            let mut out = String::new();
+            QueryFieldValueRef::Bool(true).append_text(&mut out);
+            assert_eq!(out, "true");
+        }
+
+        #[test]
+        fn formats_number_without_unnecessary_decimals() {
+            let mut out = String::new();
+            QueryFieldValueRef::Number(42.0).append_text(&mut out);
+            assert_eq!(out, "42");
+        }
+
+        #[test]
+        fn formats_text_verbatim() {
+            let mut out = String::new();
+            QueryFieldValueRef::Text("hello").append_text(&mut out);
+            assert_eq!(out, "hello");
+        }
     }
 
-    #[test]
-    fn compare_bool_vs_number_is_none() {
-        assert_eq!(
-            QueryFieldValueRef::Bool(true)
-                .compare_to_literal(&NoteFieldValue::Number(1.0)),
-            None
-        );
-    }
+    mod equality {
 
-    #[test]
-    fn compare_owned_fallback() {
-        assert_eq!(
-            QueryFieldValueRef::Owned(NoteFieldValue::Number(5.0))
-                .compare_to_literal(&NoteFieldValue::Number(5.0)),
-            Some(Ordering::Equal)
-        );
-    }
+        use super::*;
+        #[test]
+        fn returns_true_for_identical_note_field_values() {
+            assert!(fields_equal(
+                &NoteFieldValue::Number(1.0),
+                &NoteFieldValue::Number(1.0)
+            ));
+        }
 
-    #[test]
-    fn equal_null_null() {
-        assert!(
-            QueryFieldValueRef::Null.is_equal_to_literal(&NoteFieldValue::Null)
-        );
-    }
+        #[test]
+        fn returns_false_for_different_note_field_values() {
+            assert!(!fields_equal(
+                &NoteFieldValue::Number(1.0),
+                &NoteFieldValue::Number(2.0)
+            ));
+        }
 
-    #[test]
-    fn equal_null_vs_number() {
-        assert!(
-            !QueryFieldValueRef::Null
-                .is_equal_to_literal(&NoteFieldValue::Number(1.0))
-        );
-    }
-
-    #[test]
-    fn equal_text_string_match() {
-        assert!(
-            QueryFieldValueRef::Text("hello")
-                .is_equal_to_literal(&NoteFieldValue::String("hello".into()))
-        );
-    }
-
-    #[test]
-    fn equal_text_string_mismatch() {
-        assert!(
-            !QueryFieldValueRef::Text("hello")
-                .is_equal_to_literal(&NoteFieldValue::String("world".into()))
-        );
-    }
-
-    #[test]
-    fn equal_number_exact() {
-        assert!(
-            QueryFieldValueRef::Number(5.0)
-                .is_equal_to_literal(&NoteFieldValue::Number(5.0))
-        );
-    }
-
-    // -- is_containing --
-
-    #[test]
-    fn containing_substring() {
-        assert!(
-            QueryFieldValueRef::Text("hello world")
-                .is_containing(&NoteFieldValue::String("world".into()))
-        );
-    }
-
-    #[test]
-    fn containing_no_match() {
-        assert!(
-            !QueryFieldValueRef::Text("hello")
-                .is_containing(&NoteFieldValue::String("xyz".into()))
-        );
-    }
-
-    #[test]
-    fn containing_list_tag_prefix() {
-        let items = [NoteFieldValue::String("#book/fiction".into())];
-        let list = QueryFieldValueRef::List(QueryListValueRef::Values(&items));
-        assert!(list.is_containing(&NoteFieldValue::String("#book".into())));
-    }
-
-    #[test]
-    fn containing_owned_list() {
-        let list = QueryFieldValueRef::Owned(NoteFieldValue::List(vec![
-            NoteFieldValue::String("a".into()),
-        ]));
-        assert!(list.is_containing(&NoteFieldValue::String("a".into())));
-    }
-
-    #[test]
-    fn append_text_null() {
-        let mut out = String::new();
-        QueryFieldValueRef::Null.append_text(&mut out);
-        assert_eq!(out, "");
-    }
-
-    #[test]
-    fn append_text_bool() {
-        let mut out = String::new();
-        QueryFieldValueRef::Bool(true).append_text(&mut out);
-        assert_eq!(out, "true");
-    }
-
-    #[test]
-    fn append_text_number() {
-        let mut out = String::new();
-        QueryFieldValueRef::Number(42.0).append_text(&mut out);
-        assert_eq!(out, "42");
-    }
-
-    #[test]
-    fn append_text_text() {
-        let mut out = String::new();
-        QueryFieldValueRef::Text("hello").append_text(&mut out);
-        assert_eq!(out, "hello");
-    }
-
-    #[test]
-    fn fields_equal_same_values() {
-        assert!(fields_equal(
-            &NoteFieldValue::Number(1.0),
-            &NoteFieldValue::Number(1.0)
-        ));
-    }
-
-    #[test]
-    fn fields_equal_different_values() {
-        assert!(!fields_equal(
-            &NoteFieldValue::Number(1.0),
-            &NoteFieldValue::Number(2.0)
-        ));
-    }
-
-    #[test]
-    fn fields_equal_string_date_cross_kind() {
-        assert!(fields_equal(
-            &NoteFieldValue::String("2024-01-01".into()),
-            &NoteFieldValue::Date("2024-01-01".into())
-        ));
+        #[test]
+        fn returns_true_for_cross_kind_string_and_date_equality() {
+            assert!(fields_equal(
+                &NoteFieldValue::String("2024-01-01".into()),
+                &NoteFieldValue::Date("2024-01-01".into())
+            ));
+        }
     }
 }

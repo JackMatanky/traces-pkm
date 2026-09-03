@@ -2,7 +2,7 @@
 //!
 //! A query field path string (for example, `file.name`, `task.completed`,
 //! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
-//! can be applied to each [`crate::query::QueryRecord`] to extract a
+//! can be applied to each [`crate::query::QueryRow`] to extract a
 //! [`NoteFieldValue`].
 //!
 //! # Supported Accessors
@@ -26,8 +26,8 @@ use crate::{FieldKey, field, query::error::FieldPathError};
 /// `file.mtime`) and resolves to a [`NoteFieldValue`] by reading the
 /// corresponding [`FileBase`] method.
 ///
-/// The full set of accepted accessor names (including aliases like `ctime`
-/// for `created_at`) is listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
+/// The full set of accepted accessor names (including aliases like `ctime` for
+/// `created_at`) is listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
 /// [`FileBase`]: crate::FileBase
 /// [`NoteFieldValue`]: crate::NoteFieldValue
@@ -123,13 +123,13 @@ impl TaskField {
 
 /// A resolved query field path.
 ///
-/// A `FieldPath` is parsed once per [`crate::query::QueryRecordSet`]
-/// transformation and subsequently applied to each
-/// [`crate::query::QueryRecord`] to extract a [`NoteFieldValue`].
+/// A `FieldPath` is parsed once per [`crate::query::QuerySet`] transformation
+/// and subsequently applied to each [`crate::query::QueryRow`] to extract a
+/// [`NoteFieldValue`].
 ///
-/// Recognized path forms: `file.<field>`, `task.<field>`, `tags`, `inlinks`,
-/// or a bare frontmatter key. Unknown `file.*` or `task.*` accessors produce
-/// a [`FieldPathError`] with an optional "did you mean" suggestion.
+/// Recognized path forms: `file.<field>`, `task.<field>`, `tags`, `inlinks`, or
+/// a bare frontmatter key. Unknown `file.*` or `task.*` accessors produce a
+/// [`FieldPathError`] with an optional "did you mean" suggestion.
 ///
 /// [`NoteFieldValue`]: crate::NoteFieldValue
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -159,9 +159,9 @@ impl FieldPath {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldPathError`] if `path` is empty, has invalid `.`
-    /// structure (for example, `file.` or `a.b`), or names an unknown
-    /// `file.<field>` or `task.<field>` accessor.
+    /// Returns [`FieldPathError`] if `path` is empty, has invalid `.` structure
+    /// (for example, `file.` or `a.b`), or names an unknown `file.<field>` or
+    /// `task.<field>` accessor.
     ///
     /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(crate) fn parse(path: &str) -> Result<Self, FieldPathError> {

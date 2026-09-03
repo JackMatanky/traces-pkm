@@ -1,3 +1,9 @@
+//! Source expression DSL parser and evaluation engine for `--from` queries.
+//!
+//! Defines [`SourceSelector`], the primary entry point for matching candidate
+//! notes against tag leaves (`#tag`), path leaves (`folder/`, `file.md`,
+//! `**/*.md`), and File Class leaves (`@Class`).
+
 use std::{collections::BTreeSet, path::Path};
 
 use logos::{Lexer, Logos};
@@ -14,7 +20,7 @@ use crate::{
     note::{Note, NoteFieldValue},
     query::{
         QueryError, QueryResult,
-        error::{QueryDialect, QueryRequestError, QuerySyntaxError},
+        error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
     },
 };
 
@@ -99,7 +105,7 @@ impl SourceExpr {
     /// # Errors
     ///
     /// Returns [`QueryError::Syntax`] on any tokenization or parse failure.
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryRequestError> {
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
         let tokens = LexTokenStream::<LexedToken<SourceToken>>::tokenize(input)
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Source, input, e)
@@ -349,7 +355,12 @@ impl ClassExpansionMode {
 }
 
 /// Resolves File Class names against the Schema domain.
-pub(crate) trait FileClassExpander {
+///
+/// `Send + Sync` bound required so `Arc<dyn FileClassExpander>` inside
+/// [`super::super::QueryService`] satisfies minijinja's `Object: Send + Sync`
+/// bound once `QueryOps` (`src/template/engine/query.rs`) holds a persistent
+/// `QueryService`.
+pub(crate) trait FileClassExpander: Send + Sync {
     /// Populates `mode`'s match set from `classes` at its requested depth.
     fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
 }
@@ -368,7 +379,7 @@ impl SourceGrammar {
         input: &str,
         sigil: &str,
         span: SourceSpan,
-    ) -> Result<SourceAtom, QueryRequestError> {
+    ) -> Result<SourceAtom, QueryBuilderError> {
         let raw = sigil.strip_prefix('@').ok_or_else(|| {
             QuerySyntaxError::new(
                 QueryDialect::Source,
@@ -415,7 +426,7 @@ impl SourceGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<SourceToken>>,
         class_span: SourceSpan,
-    ) -> Result<SourceAtom, QueryRequestError> {
+    ) -> Result<SourceAtom, QueryBuilderError> {
         let lex =
             |e| QuerySyntaxError::from_lex(QueryDialect::Source, input, e);
 
@@ -538,7 +549,7 @@ impl AtomParser for SourceGrammar {
         &self,
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-    ) -> Result<Self::Atom, QueryRequestError> {
+    ) -> Result<Self::Atom, QueryBuilderError> {
         let next_span = tokens.next_span(input);
         match tokens.next() {
             Some(spanned) => {
@@ -948,7 +959,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             // Requires an intermediate segment between `covers/` and the
-            // final `*.md`, so a direct child does not match — proving
+            // final `*.md`, so a direct child does not match, proving
             // `**` (unlike `*`) crosses `/` boundaries, not merely that it
             // behaves like the `covers/` folder shorthand.
             let expression =
@@ -1025,10 +1036,12 @@ mod tests {
 
         /// Test double for [`FileClassExpander`]: records every call and
         /// resolves each class name to itself, so unresolved (not-yet-a-
-        /// Schema) names are preserved rather than dropped.
+        /// Schema) names are preserved rather than dropped. Uses a `Mutex`
+        /// rather than a `RefCell` so this type satisfies
+        /// [`FileClassExpander`]'s `Send + Sync` supertrait bound.
         #[derive(Default)]
         struct RecordingExpander {
-            calls: std::cell::RefCell<Vec<Vec<String>>>,
+            calls: std::sync::Mutex<Vec<Vec<String>>>,
         }
 
         impl FileClassExpander for RecordingExpander {
@@ -1037,7 +1050,7 @@ mod tests {
                 classes: &[String],
                 mode: &mut ClassExpansionMode,
             ) {
-                self.calls.borrow_mut().push(classes.to_vec());
+                self.calls.lock().expect("lock calls").push(classes.to_vec());
                 mode.set_classes(classes.iter().cloned().collect());
             }
         }
@@ -1050,7 +1063,7 @@ mod tests {
 
             source.resolve_classes(&expander);
 
-            assert_eq!(expander.calls.into_inner(), vec![
+            assert_eq!(expander.calls.into_inner().expect("lock calls"), vec![
                 vec!["thing".to_owned()],
                 vec!["ghost".to_owned()],
             ]);

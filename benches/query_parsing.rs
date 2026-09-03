@@ -1,12 +1,12 @@
 //! Performance benchmark suite for query parsing.
 //!
 //! Exposes and monitors the CPU cost of parsing source selectors and filter
-//! expressions via `QueryRequest` and `SourceSelector`.
+//! expressions via `QueryBuilder` and `SourceSelector`.
 //!
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [String] ──(QueryRequest::filter)──► [FilterExpression AST]
+//! [String] ──(QueryBuilder::filter)──► [FilterExpression AST]
 //! [String] ──(SourceSelector::parse)─► [SourceSelector AST]
 //! ```
 //!
@@ -29,7 +29,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use traces_pkm::{QueryRequest, SourceSelector};
+use traces_pkm::{QueryBuilder, SourceSelector};
 
 // ----------------------------------------------------------- //
 //                     Benchmarks: Parsing                     //
@@ -55,7 +55,7 @@ fn bench_query_parsing(c: &mut Criterion) {
     ));
     group.bench_function("simple_filter", |b| {
         b.iter(|| {
-            let req = QueryRequest::pages(SourceSelector::All)
+            let req = QueryBuilder::pages(SourceSelector::All)
                 .filter(black_box(simple_filter))
                 .expect("parse filter");
             black_box(req);
@@ -69,7 +69,7 @@ fn bench_query_parsing(c: &mut Criterion) {
     ));
     group.bench_function("complex_boolean_filter", |b| {
         b.iter(|| {
-            let req = QueryRequest::pages(SourceSelector::All)
+            let req = QueryBuilder::pages(SourceSelector::All)
                 .filter(black_box(complex_filter))
                 .expect("parse filter");
             black_box(req);

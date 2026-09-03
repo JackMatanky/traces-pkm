@@ -1,6 +1,21 @@
-//! Markdown display formats for query result rows.
+//! Markdown display formatting renderers for query result rows.
+//!
+//! Defines [`QueryDisplayFormat`] and [`TaskPathStyle`], which render
+//! [`QueryRow`] collections into Markdown tables, bullet lists, or task list
+//! checkboxes.
 
-use super::{QueryError, QueryResult, grammar::FieldPath, record::QueryRecord};
+use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
+
+/// Controls whether task list output includes each row's file path.
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) enum TaskPathStyle {
+    /// `- [x] text`: path omitted (used by template rendering).
+    #[default]
+    None,
+    /// `- [x] text (path)`: path appended in parentheses (used by `traces
+    /// task`).
+    Suffix,
+}
 
 /// Markdown display formats supported by query results.
 pub(super) enum QueryDisplayFormat {
@@ -13,8 +28,11 @@ pub(super) enum QueryDisplayFormat {
     List {
         field: String,
     },
-    /// Markdown task list rendered from task rows.
-    TaskList,
+    /// Markdown task list rendered from task rows, optionally suffixed with
+    /// each row's file path.
+    TaskList {
+        path_style: TaskPathStyle,
+    },
 }
 
 impl QueryDisplayFormat {
@@ -43,36 +61,37 @@ impl QueryDisplayFormat {
 
     /// Builds a task-list display format.
     #[must_use]
-    pub(super) const fn task_list() -> Self {
-        Self::TaskList
+    pub(super) const fn task_list(path_style: TaskPathStyle) -> Self {
+        Self::TaskList {
+            path_style,
+        }
     }
 
-    /// Renders `records` according to this display format.
+    /// Renders `rows` according to this display format.
     ///
     /// # Errors
     ///
-    /// Returns query errors for malformed field paths, table column
-    /// mismatches, or task-list rendering on page rows.
-    pub(super) fn render(
-        &self,
-        records: &[QueryRecord],
-    ) -> QueryResult<String> {
+    /// Returns query errors for malformed field paths, table column mismatches,
+    /// or task-list rendering on page rows.
+    pub(super) fn render(&self, rows: &[QueryRow]) -> QueryResult<String> {
         match self {
             Self::Table {
                 headers,
                 columns,
-            } => Self::render_table(headers, columns, records),
+            } => Self::render_table(headers, columns, rows),
             Self::List {
                 field,
-            } => Self::render_list(field, records),
-            Self::TaskList => Self::render_task_list(records),
+            } => Self::render_list(field, rows),
+            Self::TaskList {
+                path_style,
+            } => Self::render_task_list(rows, *path_style),
         }
     }
 
     fn render_table(
         headers: &[String],
         columns: &[String],
-        records: &[QueryRecord],
+        rows: &[QueryRow],
     ) -> QueryResult<String> {
         if headers.len() != columns.len() {
             return Err(QueryError::TableColumnCountMismatch {
@@ -88,11 +107,11 @@ impl QueryDisplayFormat {
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table
             .set_header(headers.iter().map(|header| escape_table_text(header)));
-        for record in records {
+        for row in rows {
             table.add_row(
                 paths
                     .iter()
-                    .map(|path| record.resolve_ref(path).table_cell_text()),
+                    .map(|path| row.resolve_ref(path).table_cell_text()),
             );
         }
         let mut out = table.to_string();
@@ -100,32 +119,40 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    fn render_list(
-        field: &str,
-        records: &[QueryRecord],
-    ) -> QueryResult<String> {
+    fn render_list(field: &str, rows: &[QueryRow]) -> QueryResult<String> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
-        for record in records {
+        for row in rows {
             out.push_str("- ");
-            record.resolve_ref(&field_path).append_text(&mut out);
+            row.resolve_ref(&field_path).append_text(&mut out);
             out.push('\n');
         }
         Ok(out)
     }
 
-    fn render_task_list(records: &[QueryRecord]) -> QueryResult<String> {
+    fn render_task_list(
+        rows: &[QueryRow],
+        path_style: TaskPathStyle,
+    ) -> QueryResult<String> {
+        use std::fmt::Write as _;
+
         let mut out = String::new();
-        for record in records {
-            let Some(text) = record.task_text() else {
+        for row in rows {
+            let Some(text) = row.task_text() else {
                 return Err(QueryError::TaskListRequiresTaskRows);
             };
-            out.push_str(match record.task_completed() {
+            out.push_str(match row.task_completed() {
                 Some(true) => "- [x] ",
                 Some(false) => "- [ ] ",
                 None => "- [-] ",
             });
             out.push_str(text);
+            match path_style {
+                TaskPathStyle::Suffix => {
+                    let _ = write!(out, " ({})", row.file().path().display());
+                }
+                TaskPathStyle::None => {}
+            }
             out.push('\n');
         }
         Ok(out)
@@ -134,4 +161,30 @@ impl QueryDisplayFormat {
 
 pub(super) fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod escape_table_text {
+        use pretty_assertions::assert_eq;
+
+        use super::escape_table_text;
+
+        #[test]
+        fn escapes_pipe_characters_in_table_cells() {
+            assert_eq!(escape_table_text("A | B"), "A \\| B");
+        }
+
+        #[test]
+        fn replaces_newlines_with_spaces_in_table_cells() {
+            assert_eq!(escape_table_text("line1\nline2"), "line1 line2");
+        }
+
+        #[test]
+        fn passes_plain_text_unmodified() {
+            assert_eq!(escape_table_text("hello world"), "hello world");
+        }
+    }
 }

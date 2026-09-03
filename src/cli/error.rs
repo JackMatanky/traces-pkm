@@ -22,7 +22,7 @@ use crate::{
         ConfigScaffoldError, ConfigStateError, DiscoveryError,
     },
     index::IndexError,
-    query::{QueryDialect, QueryError, QueryRequestError},
+    query::{QueryBuilderError, QueryDialect, QueryError},
     schema::SchemaError,
     template::{RenderFailureKind, TemplateError, TemplatePathError},
 };
@@ -542,7 +542,7 @@ fn init_config_write_help(
 /// Builds typed diagnostic help text for [`CliError::Query`].
 fn query_help(source: &QueryError) -> Box<dyn Display + 'static> {
     let help = match source {
-        QueryError::Request(QueryRequestError::Syntax(error))
+        QueryError::Builder(QueryBuilderError::Syntax(error))
         | QueryError::Syntax(error) => match error.dialect {
             QueryDialect::Source => {
                 "check the `--from` source expression syntax"
@@ -551,9 +551,9 @@ fn query_help(source: &QueryError) -> Box<dyn Display + 'static> {
                 "check the `--where` filter expression syntax"
             }
         },
-        QueryError::Request(QueryRequestError::FieldPath(_))
+        QueryError::Builder(QueryBuilderError::FieldPath(_))
         | QueryError::FieldPath(_) => "check every referenced field path",
-        QueryError::Request(QueryRequestError::LimitOutOfRange {
+        QueryError::Builder(QueryBuilderError::LimitOutOfRange {
             ..
         }) => "pass a non-negative query row limit",
         QueryError::TaskListRequiresTaskRows => {

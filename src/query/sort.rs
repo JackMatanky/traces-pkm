@@ -62,8 +62,8 @@ pub(super) fn compare_field_values(
 }
 
 /// Compares two resolved [`NoteFieldValue`] instances to establish a total
-/// order for [`super::QueryRecordSet::sort`] and
-/// [`super::QueryRecordSet::group_by`].
+/// order for [`super::QuerySet::sort`] and
+/// [`super::QuerySet::group_by`].
 ///
 /// # Arguments
 ///
@@ -144,27 +144,24 @@ mod tests {
     use super::super::*;
     use crate::IndexerService;
 
-    fn outcome_for_files(
-        temp: &Path,
-        files: &[(&str, &str)],
-    ) -> QueryRecordSet {
+    fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QuerySet {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
         let index =
             Arc::new(IndexerService::new(temp).build().expect("build index"));
         QueryService::new("class")
-            .execute(&index, QueryRequest::pages(SourceSelector::All))
+            .execute(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
-    fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
+    fn outcome_for(temp: &Path, content: &str) -> QuerySet {
         outcome_for_files(temp, &[("note.md", content)])
     }
 
-    fn names(outcome: &QueryRecordSet) -> Vec<String> {
+    fn names(outcome: &QuerySet) -> Vec<String> {
         outcome
             .iter()
-            .map(|record| record.file().name().as_str().to_owned())
+            .map(|row| row.file().name().as_str().to_owned())
             .collect()
     }
 
@@ -237,7 +234,7 @@ mod tests {
 
             assert_eq!(
                 outcome.sort("file.bogus", false),
-                Err(QueryError::Request(QueryRequestError::FieldPath(
+                Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );

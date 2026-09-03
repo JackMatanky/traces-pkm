@@ -35,8 +35,7 @@ use criterion::{
     criterion_main,
 };
 use traces_pkm::{
-    FileIndex, IndexerService, QueryRecord, QueryRequest, QueryService,
-    SourceSelector,
+    FileIndex, IndexerService, QueryBuilder, QueryService, SourceSelector,
 };
 
 // ----------------------------------------------------------- //
@@ -99,9 +98,10 @@ fn create_index_with_field_count(n: usize, fields: usize) -> Arc<FileIndex> {
 
 /// Measures page-row construction and filtering, swept over workspace size.
 ///
-/// Every `traces query` invocation pays this path — regressions here directly
-/// degrade CLI responsiveness — so isolating page queries catches regressions
-/// in filter logic or row materialization that a correctness test would miss.
+/// Every `traces query` invocation pays this path, and regressions here
+/// directly degrade CLI responsiveness, so isolating page queries catches
+/// regressions in filter logic or row materialization that a correctness
+/// test would miss.
 ///
 /// Expected outcomes:
 /// - Constant-time execution regardless of index size (all notes match).
@@ -122,7 +122,7 @@ fn bench_execute_pages(c: &mut Criterion) {
                 |index| {
                     QueryService::new("class").execute(
                         &index,
-                        QueryRequest::pages(SourceSelector::All),
+                        QueryBuilder::pages(SourceSelector::All),
                     )
                 },
                 BatchSize::SmallInput,
@@ -158,7 +158,7 @@ fn bench_execute_tasks(c: &mut Criterion) {
                 |index| {
                     QueryService::new("class").execute(
                         &index,
-                        QueryRequest::tasks(SourceSelector::All),
+                        QueryBuilder::tasks(SourceSelector::All),
                     )
                 },
                 BatchSize::SmallInput,
@@ -184,8 +184,8 @@ fn bench_execute_tasks(c: &mut Criterion) {
 ///
 /// Measured finding (20,000 rows): sort accounts for the large majority of this
 /// benchmark's cost (~4.7 ms of ~5.2 ms combined), not field lookup (~1.8 ms
-/// filter-only, ~141 µs unfiltered baseline) — `sort_by_cached_key` over 20,000
-/// `QueryRecord`s dominates, not metadata resolution.
+/// filter-only, ~141 µs unfiltered baseline): `sort_by_cached_key` over 20,000
+/// `QueryRow`s dominates, not metadata resolution.
 ///
 /// Expected outcomes:
 /// - Cost tracks [`bench_sort_by_metadata`]'s sort-only cost plus
@@ -211,7 +211,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
                                 .expect("valid filter")
                                 .sort("rating", false)
@@ -237,7 +237,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
 /// canonicalizes a query's metadata field name once at parse time, not per row:
 /// every row a query touches calls `Frontmatter::get`/`Note::get` with an
 /// already-canonical candidate, so the allocating canonicalize-on-mismatch
-/// fallback inside metadata field lookup is unreachable from the query engine —
+/// fallback inside metadata field lookup is unreachable from the query engine;
 /// it only matters for direct `Frontmatter`/`Note` callers outside a query,
 /// already covered by `src/field.rs`'s own unit tests. Do not add a
 /// "case-mismatched query candidate" benchmark here expecting it to exercise
@@ -273,7 +273,7 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
                                 .expect("valid filter"),
                         )
@@ -290,52 +290,108 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
 
-/// Measures the cost of cloning a full `QueryRecordSet` (as a
-/// `Vec<QueryRecord>`), swept over workspace size.
+/// Measures the cost of cloning a `QuerySet`, swept over workspace
+/// size.
 ///
-/// `src/template/engine/query.rs`'s `Object::call_method` for `QueryRecordSet`
-/// clones the entire outcome (`self.as_ref().clone()`) on every non-terminal
-/// chained call (`.where`/`.filter`/`.sort`/`.limit`/`.group_by`/`.flatten`),
-/// so a template chain of `k` steps over `n` records pays `k` full clones of
-/// (shrinking) size up to `n` — on top of each step's own transform cost, which
-/// `bench_filter_by_metadata_field_count`/`bench_sort_by_metadata` already
-/// measure. This isolates just the clone, the cost a "unified lazy query
-/// engine" redesign (deferring materialization until a terminal call) would
-/// remove. `QueryRecordSet`'s only field is `records: Vec<QueryRecord>` with a
-/// derived `Clone`, so cloning the record set is exactly cloning this `Vec`:
-/// this benchmark reaches it through the public API (`execute` +
-/// `IntoIterator`) without depending on `QueryRecordSet` internals.
-///
-/// `QueryRecord` itself holds `Arc<FileIndex>` (an atomic refcount bump, not a
-/// deep copy) + `RowIndex` (`Copy`) + an overlay `Vec` (empty for fresh page
-/// rows) + a `RowKind` tag — so this also measures how close to "zero-copy"
-/// cloning already is in practice: no `Note` data is duplicated.
+/// `src/template/engine/query.rs`'s `Object::call_method` for
+/// `QuerySet` clones the entire outcome (`self.as_ref().clone()`) on
+/// every non-terminal chained call (`.where`/`.filter`/`.sort`/`.limit`/
+/// `.group_by`/`.flatten`). `QuerySet::base` is `Arc<Vec<QueryRow>>`, so
+/// `#[derive(Clone)]` clones an `Arc` pointer (and a short pending-plan
+/// `Vec`), not the row data; this benchmark confirms that claim directly,
+/// rather than through the `Vec<QueryRow>` proxy the pre-redesign version
+/// used.
 ///
 /// Expected outcomes:
-/// - Cost scales linearly with `n` (a `Vec` clone has no shortcut) and stays
-///   small per element (no `Note` data is cloned, only `Arc` bumps).
+/// - Cost is small and roughly constant across workspace sizes (an `Arc`
+///   refcount bump, not proportional to `n`).
 ///
 /// Unexpected outcomes:
-/// - Cost per element grows with `n` (would indicate allocator contention, not
-///   itself expected for a single-threaded bench) or is large in absolute terms
-///   (would indicate `QueryRecord` carries more owned data than its fields
-///   suggest).
-fn bench_clone_query_record_set(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::execute/clone_record_set");
+/// - Cost scales with `n`, indicating `base` is no longer `Arc`-backed, or
+///   `QuerySet::clone` is deep-copying rows somewhere.
+fn bench_clone_query_set(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::execute/clone_query_set");
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
-        let records: Vec<QueryRecord> = QueryService::new("class")
-            .execute(&index, QueryRequest::pages(SourceSelector::All))
-            .into_iter()
-            .collect();
+        let outcome = QueryService::new("class")
+            .execute(&index, QueryBuilder::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
-            BenchmarkId::new("vec_clone", n),
-            &records,
-            |b, records| {
-                b.iter(|| black_box(records.clone()));
+            BenchmarkId::new("query_set_clone", n),
+            &outcome,
+            |b, outcome| {
+                b.iter(|| black_box(outcome.clone()));
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures the cost of `QuerySet`'s owned `IntoIterator::into_iter()`,
+/// swept over workspace size and row shape (page vs. task).
+///
+/// `QuerySet::into_iter()` (owned) reclaims the materialized rows without
+/// cloning when `self` is the sole owner of the cached `Arc<Vec<QueryRow>>`
+/// (via `Arc::try_unwrap`), falling back to a per-row clone only when
+/// another `QuerySet` branch still shares the same cached rows. Every
+/// iteration here calls `.into_iter()` on a freshly constructed, never-cloned
+/// `QuerySet`, so this measures the sole-owner fast path: an `O(1)` move out
+/// of the `Arc`, not an `O(n)` clone.
+///
+/// Expected outcomes:
+/// - Cost is small and roughly constant across workspace sizes (matching
+///   [`bench_clone_query_set`]'s `Arc`-bump-only cost), for both `pages` and
+///   `tasks` shapes.
+///
+/// Unexpected outcomes:
+/// - Cost scales linearly with `n`, indicating `Arc::try_unwrap` is taking the
+///   `Err` (shared) branch and falling back to a full clone; check that nothing
+///   retains an extra reference to the outcome's cached rows before
+///   `.into_iter()` runs.
+fn bench_into_iter_owned(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::execute/into_iter_owned");
+    for &n in WORKSPACE_SIZES {
+        let page_index = create_page_index(n);
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("pages", n),
+            &page_index,
+            |b, index| {
+                b.iter_batched(
+                    || {
+                        QueryService::new("class").execute(
+                            index,
+                            QueryBuilder::pages(SourceSelector::All),
+                        )
+                    },
+                    |outcome| black_box(outcome.into_iter().count()),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+
+        let task_index = create_task_index(n);
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64").saturating_mul(3),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("tasks", n),
+            &task_index,
+            |b, index| {
+                b.iter_batched(
+                    || {
+                        QueryService::new("class").execute(
+                            index,
+                            QueryBuilder::tasks(SourceSelector::All),
+                        )
+                    },
+                    |outcome| black_box(outcome.into_iter().count()),
+                    BatchSize::SmallInput,
+                );
             },
         );
     }
@@ -348,6 +404,7 @@ criterion_group!(
     bench_execute_tasks,
     bench_execute_pages_by_metadata,
     bench_filter_by_metadata_field_count,
-    bench_clone_query_record_set
+    bench_clone_query_set,
+    bench_into_iter_owned
 );
 criterion_main!(benches);

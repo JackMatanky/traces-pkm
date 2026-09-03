@@ -6,9 +6,9 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [QueryRecordSet] ──(QueryRecordSet::sort)──► [PendingSort]
-//!                          │
-//!                          └──(.limit)───────► [QueryRecordSet (TopK)]
+//! [QuerySet] ──(QuerySet::sort)──► [PendingSort]
+//!                  │
+//!                  └──(.limit)───────► [QuerySet (TopK)]
 //! ```
 //!
 //! ### Profiling Integration
@@ -27,6 +27,7 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
+
 use std::{cmp::Ordering, hint::black_box, sync::Arc};
 
 use criterion::{
@@ -34,7 +35,7 @@ use criterion::{
     criterion_main,
 };
 use traces_pkm::{
-    FileIndex, IndexerService, NoteFieldValue, QueryRecord, QueryRequest,
+    FileIndex, IndexerService, NoteFieldValue, QueryBuilder, QueryRow,
     QueryService, SourceSelector,
 };
 
@@ -76,9 +77,9 @@ fn replica_cmp(
 }
 
 /// Deterministic Linear Congruential Generator (LCG): `state = state * a + c`
-/// mod 2^64. One multiply and one add per element — no dependency on `rand`,
-/// reproducible across runs so regression detection isn't confounded by
-/// different shuffle order.
+/// mod 2^64. One multiply and one add per element, with no dependency on
+/// `rand`, reproducible across runs so regression detection isn't confounded
+/// by different shuffle order.
 fn lcg_next(state: &mut u64) -> u64 {
     *state = state
         .wrapping_mul(6_364_136_223_846_793_005)
@@ -147,7 +148,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
                 |index| {
                     QueryService::new("class").execute(
                         &index,
-                        QueryRequest::pages(SourceSelector::All)
+                        QueryBuilder::pages(SourceSelector::All)
                             .sort("rating", false)
                             .expect("valid sort"),
                     )
@@ -163,30 +164,34 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 //             Benchmarks: Sort Plan Optimization              //
 // ----------------------------------------------------------- //
 
-/// Measures `QueryPlan::optimize()`'s `Sort`+`Limit(n)` → `TopK` fusion against
-/// an unfused full sort, swept over workspace size.
+/// Measures `QueryPlan`'s `Sort`+`Limit(n)` → `TopK` fusion against an
+/// unfused full sort, swept over workspace size.
 ///
-/// `QueryRequest::sort(...).limit(...)` executed through
-/// `QueryService::execute` always passes through `QueryPlan::optimize()`
-/// (`src/query/service.rs`: `plan.optimize().apply(records)`), which rewrites
-/// an adjacent `Sort`+`Limit` into one `TopK` step using
+/// `QueryBuilder::sort(...).limit(...)` executed through
+/// `QueryService::execute` always passes through `QueryPlan::run`
+/// (`src/query/service.rs`: `plan.run(records)`), which fuses an
+/// adjacent `Sort`+`Limit` into one `TopK` step using
 /// `select_nth_unstable_by` (`O(n)` selection) instead of a full
-/// `sort_by_cached_key` (`O(n log n)`). The template chain
-/// (`src/template/engine/query.rs`) cannot reach this fusion structurally:
-/// `.sort(...)` materializes and returns a new `QueryRecordSet` *before*
-/// `.limit(...)` is even called, so by the time `.limit` runs, the full sort
-/// already happened. This isolates how much a template's `.sort().limit(k)`
-/// chain pays for that missing lookahead, independent of the per-step clone
-/// measured by `bench_clone_query_record_set`. Swept over the same sizes as
-/// [`bench_sort_by_metadata`] (not a single point) so the fusion's advantage
-/// can be checked against its `O(n)` vs. `O(n log n)` prediction: the ratio
-/// between the two sub-benchmarks should widen as `n` grows, not stay flat.
+/// `sort_by_cached_key` (`O(n log n)`). Since the `QuerySet` CTE
+/// redesign, `.sort(...).limit(...)` chained directly on a `QuerySet`
+/// (the shape the template `tasks`/`query` namespaces use) reaches the same
+/// fusion (deferred into the same `QueryPlan`, flushed once on read), so
+/// this gap is no longer template-specific; it's the general cost of `TopK`
+/// fusion vs. a full sort, still worth guarding against regression. The
+/// chained-`QuerySet` path itself isn't benchmarked here:
+/// `QuerySet::sort`/`limit` are `pub(crate)`, unreachable from this
+/// external bench crate even under `test-utils`; its correctness (not
+/// performance) is proven by
+/// `src/query/results.rs`'s
+/// `cte_chaining::chained_sort_then_limit_matches_full_sort_order_for_tied_keys`
+/// unit test. Swept over the same sizes as [`bench_sort_by_metadata`] (not a
+/// single point) so the fusion's advantage can be checked against its `O(n)`
+/// vs. `O(n log n)` prediction: the ratio between the two sub-benchmarks
+/// should widen as `n` grows, not stay flat.
 ///
 /// Expected outcomes:
 /// - `topk_limit_10` costs meaningfully less than `full_sort_no_limit` at every
-///   size, confirming the missing fusion — not the per-step clone — is the
-///   larger share of template-vs-CLI sort overhead for small-limit chains, and
-///   the gap between them widens as `n` grows.
+///   size, and the gap widens as `n` grows.
 ///
 /// Unexpected outcomes:
 /// - Costs are comparable, indicating `TopK`'s key-materialization pass (paid
@@ -209,7 +214,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .sort("rating", false)
                                 .expect("valid sort"),
                         )
@@ -227,7 +232,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .sort("rating", false)
                                 .expect("valid sort")
                                 .limit(10)
@@ -246,21 +251,21 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 //               Benchmarks: Sort Decomposition                //
 // ----------------------------------------------------------- //
 
-/// Measures bare `QueryRecord` move/permutation cost, isolated from all
+/// Measures bare `QueryRow` move/permutation cost, isolated from all
 /// comparison and field resolution, swept over workspace size.
 ///
 /// Decomposition of [`bench_sort_by_metadata`]: if a full Fisher-Yates shuffle
-/// (n moves of `QueryRecord`, each carrying its `Arc<FileIndex>` + `RowIndex` +
+/// (n moves of `QueryRow`, each carrying its `Arc<FileIndex>` + `RowIndex` +
 /// overlay fields) costs a small fraction of the real sort at every size,
 /// element-move cost is ruled out as the dominant component and the cost must
 /// live in the comparator or key materialization. Swept over the same sizes as
 /// [`bench_sort_by_metadata`] (not a single point) so the permutation share of
-/// sort cost can be checked at each `n`, not extrapolated from one measurement
-/// — a linear-cost operation's *share* of an `n log n` operation shrinks as `n`
+/// sort cost can be checked at each `n`, not projected from one measurement:
+/// a linear-cost operation's *share* of an `n log n` operation shrinks as `n`
 /// grows, so a single point cannot confirm the share stays small at scale.
 ///
 /// Records are produced through the public query API (`execute` then
-/// `QueryRecordSet::get` + clone); no internals are reached.
+/// `QuerySet::get` + clone); no internals are reached.
 ///
 /// Expected outcomes:
 /// - Shuffle cost is a small fraction of sort-only cost at every size, ruling
@@ -268,14 +273,14 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 ///
 /// Unexpected outcomes:
 /// - Shuffle cost comparable to sort-only cost, indicating element-move
-///   dominates and `QueryRecord` size should be reduced.
-fn bench_permute_query_records(c: &mut Criterion) {
+///   dominates and `QueryRow` size should be reduced.
+fn bench_permute_query_rows(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/permute_records");
     for &n in SORT_SWEEP_SIZES {
         let index = create_page_index(n);
-        let base: Vec<QueryRecord> = {
+        let base: Vec<QueryRow> = {
             let set = QueryService::new("class")
-                .execute(&index, QueryRequest::pages(SourceSelector::All));
+                .execute(&index, QueryBuilder::pages(SourceSelector::All));
             (0..set.len())
                 .map(|i| set.get(i).expect("row present").clone())
                 .collect()
@@ -306,7 +311,7 @@ fn bench_permute_query_records(c: &mut Criterion) {
 /// workspace size.
 ///
 /// Reference lower bound for `n·log n` comparisons with no enum dispatch, no
-/// `SortKey` wrapping, and no `QueryRecord` permutation. The gap between this
+/// `SortKey` wrapping, and no `QueryRow` permutation. The gap between this
 /// floor and [`bench_sort_by_metadata`] is what the replica and permutation
 /// benchmarks attribute. Swept over the same sizes as
 /// [`bench_sort_by_metadata`] (not a single point) so the floor's `n log n`
@@ -315,7 +320,7 @@ fn bench_permute_query_records(c: &mut Criterion) {
 ///
 /// Expected outcomes:
 /// - Cost is lower than sort-only and replica benchmarks at every size,
-///   confirming enum dispatch and `QueryRecord` permutation add measurable
+///   confirming enum dispatch and `QueryRow` permutation add measurable
 ///   overhead.
 ///
 /// Unexpected outcomes:
@@ -352,7 +357,7 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
 /// unreachable from an external bench, so this replicates the exact arm
 /// structure the Number-vs-Number path exercises (enum `match` on both
 /// operands, then `f64::total_cmp`, with the `descending` branch) against real
-/// `NoteFieldValue` values. It measures what a comparator of this shape costs —
+/// `NoteFieldValue` values. It measures what a comparator of this shape costs,
 /// not the production function itself; conclusions must treat it as a
 /// shape-equivalent upper bound on dispatch cost. Swept over the same sizes as
 /// [`bench_sort_by_metadata`] (not a single point) so dispatch overhead can be
@@ -402,7 +407,7 @@ criterion_group!(
     benches,
     bench_sort_by_metadata,
     bench_topk_vs_full_sort,
-    bench_permute_query_records,
+    bench_permute_query_rows,
     bench_sort_f64_floor,
     bench_sort_note_field_value_replica
 );
