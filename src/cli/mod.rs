@@ -863,7 +863,9 @@ mod tests {
                 TrustRequest,
             },
             dialog::PresetDialogProvider,
-            query::{QueryError, QueryRequestError, SourceSelector},
+            query::{
+                QueryError, QueryRequestError, SourceSelector, TaskPathStyle,
+            },
             template::{
                 TemplateError, TemplatePathInput, TemplateService, WriteMode,
                 WriteOutcome,
@@ -1015,7 +1017,7 @@ mod tests {
             );
             let _tasks = QueryService::new("class")
                 .execute(&task_index, QueryRequest::tasks(SourceSelector::All))
-                .task_list()
+                .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
         }
 

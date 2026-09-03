@@ -80,6 +80,7 @@ use crate::{
     query::{
         ClassExpansionMode, FieldPath, FileField, QueryError, QueryRecord,
         QueryRecordSet, QueryRequest, QueryService, SourceAtom, SourceSelector,
+        TaskPathStyle,
     },
     schema::SchemaService,
 };
@@ -365,7 +366,10 @@ impl Object for QueryRecordSet {
             }
             "task_list" => {
                 from_args::<()>(args)?;
-                return self.task_list().map(Value::from).map_err(query_error);
+                return self
+                    .task_list(TaskPathStyle::default())
+                    .map(Value::from)
+                    .map_err(query_error);
             }
             "count" => {
                 from_args::<()>(args)?;
@@ -439,7 +443,7 @@ fn list_filter(
 
 /// `outcome | task_list` filter body. See [`QueryRecordSet::task_list`].
 fn task_list_filter(outcome: &QueryRecordSet) -> TemplateEngineResult<String> {
-    outcome.task_list().map_err(query_error)
+    outcome.task_list(TaskPathStyle::default()).map_err(query_error)
 }
 
 /// `outcome | count` filter body: the number of records in `outcome`.

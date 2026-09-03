@@ -33,7 +33,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use super::{
     QueryPlan, QueryResult, QueryTransform,
-    format::QueryDisplayFormat,
+    format::{QueryDisplayFormat, TaskPathStyle},
     grammar::{FieldPath, FileField, TaskField},
     value::{QueryFieldValueRef, QueryListValueRef},
 };
@@ -521,27 +521,19 @@ impl QueryRecordSet {
     }
 
     /// Renders task-level records as a Markdown task list (`- [ ]`/`- [x]`/
-    /// `- [-]`), used by the template `tasks` namespace.
+    /// `- [-]`). `path_style` controls whether each row's file path is
+    /// appended in parentheses: [`TaskPathStyle::None`] for the template
+    /// `tasks` namespace, [`TaskPathStyle::Suffix`] for `traces task`.
     ///
     /// # Errors
     ///
     /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
     ///   fields.
-    pub(crate) fn task_list(&self) -> QueryResult<String> {
-        self.format(&QueryDisplayFormat::task_list())
-    }
-
-    /// Renders task-level records as a Markdown task list with each row's
-    /// file path appended in parentheses (`- [x] text (path)`), used by
-    /// `traces task`. See [`Self::task_list`] for the path-free form
-    /// templates use.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
-    ///   fields.
-    pub(crate) fn task_list_with_path(&self) -> QueryResult<String> {
-        self.format(&QueryDisplayFormat::task_list_with_path())
+    pub(crate) fn task_list(
+        &self,
+        path_style: TaskPathStyle,
+    ) -> QueryResult<String> {
+        self.format(&QueryDisplayFormat::task_list(path_style))
     }
 
     /// Renders records using the given display format.

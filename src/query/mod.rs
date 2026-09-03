@@ -56,24 +56,23 @@ mod record;
 mod request;
 mod service;
 mod sort;
-mod transform;
 mod value;
 
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryDialect, QueryError, QueryRequestError, QueryResult};
+pub(crate) use format::TaskPathStyle;
 pub use grammar::SourceSelector;
 pub(crate) use grammar::{
     ClassExpansionMode, FieldPath, FileClassExpander, FileField, SourceAtom,
     SourceExpr,
 };
-use plan::QueryPlan;
+use plan::{QueryPlan, QueryTransform};
 pub use record::{QueryRecord, QueryRecordSet};
 use request::QueryMode;
 pub use request::QueryRequest;
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
-use transform::QueryTransform;
 
 #[cfg(test)]
 mod tests {
@@ -902,7 +901,9 @@ mod tests {
             );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
-            let rendered = outcome.task_list().expect("valid task_list");
+            let rendered = outcome
+                .task_list(TaskPathStyle::default())
+                .expect("valid task_list");
 
             assert_eq!(rendered, "- [ ] Buy milk\n- [x] Walk dog\n");
         }
@@ -917,15 +918,18 @@ mod tests {
             );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryRequest::tasks(SourceSelector::All));
-            let rendered = outcome.task_list().expect("valid task_list");
+            let rendered = outcome
+                .task_list(TaskPathStyle::default())
+                .expect("valid task_list");
 
             assert_eq!(rendered, "- [-] Abandoned task\n");
         }
 
         #[test]
         fn renders_an_empty_string_for_an_empty_outcome() {
-            let rendered =
-                QueryRecordSet::default().task_list().expect("valid task_list");
+            let rendered = QueryRecordSet::default()
+                .task_list(TaskPathStyle::default())
+                .expect("valid task_list");
 
             assert_eq!(rendered, "");
         }
@@ -936,7 +940,7 @@ mod tests {
             let outcome = outcome_for(temp.path(), "# Just a Note");
 
             assert_eq!(
-                outcome.task_list(),
+                outcome.task_list(TaskPathStyle::default()),
                 Err(QueryError::TaskListRequiresTaskRows)
             );
         }

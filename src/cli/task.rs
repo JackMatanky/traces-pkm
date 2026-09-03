@@ -9,7 +9,10 @@
 use clap::Args;
 
 use super::error::{CliError, CliResult};
-use crate::config::{Config, ConfigService};
+use crate::{
+    config::{Config, ConfigService},
+    query::TaskPathStyle,
+};
 
 /// Arguments for `traces task`.
 ///
@@ -80,7 +83,7 @@ impl Task {
         )?;
         let count = outcome.len();
         let rendered = outcome
-            .task_list_with_path()
+            .task_list(TaskPathStyle::Suffix)
             .map_err(|source| super::query_error(root, source))?;
         Ok((rendered, count))
     }

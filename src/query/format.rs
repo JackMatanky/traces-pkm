@@ -21,9 +21,10 @@ pub(super) enum QueryDisplayFormat {
 }
 
 /// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
-#[derive(Copy, Clone, Debug)]
-pub(super) enum TaskPathStyle {
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) enum TaskPathStyle {
     /// `- [x] text` — used by the template `tasks` namespace.
+    #[default]
     None,
     /// `- [x] text (path)` — used by `traces task`.
     Suffix,
@@ -53,20 +54,11 @@ impl QueryDisplayFormat {
         }
     }
 
-    /// Builds a task-list display format with no path suffix.
+    /// Builds a task-list display format.
     #[must_use]
-    pub(super) const fn task_list() -> Self {
+    pub(super) const fn task_list(path_style: TaskPathStyle) -> Self {
         Self::TaskList {
-            path_style: TaskPathStyle::None,
-        }
-    }
-
-    /// Builds a task-list display format with each row's file path
-    /// appended.
-    #[must_use]
-    pub(super) const fn task_list_with_path() -> Self {
-        Self::TaskList {
-            path_style: TaskPathStyle::Suffix,
+            path_style,
         }
     }
 
