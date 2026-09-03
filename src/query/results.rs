@@ -21,7 +21,7 @@
 //!
 //! # Main Types
 //!
-//! - [`QueryRow`] - Individual page or task record paired with indexed file
+//! - [`QueryRow`] - Individual page or task row paired with indexed file
 //!   metadata.
 //! - [`QuerySet`] - Lazily evaluated result set with chained transform methods
 //!   and terminal renderers.
@@ -90,12 +90,12 @@ impl QueryRow {
         }
     }
 
-    /// Resolves this record's indexed [`FileEntry`].
+    /// Resolves this row's indexed [`FileEntry`].
     fn entry(&self) -> &FileEntry {
         self.index.entry_at(self.position)
     }
 
-    /// Converts this record into a task-level row.
+    /// Promotes this row to task level.
     ///
     /// No-ops for a `Plain` or `Checkbox` item; only [`ListItemType::Task`]
     /// items carry a resolved status to promote.
@@ -114,7 +114,7 @@ impl QueryRow {
     /// `None`.
     ///
     /// Returns `Some(true)` for completed tasks, `Some(false)` for incomplete
-    /// tasks, and `None` for page-level records or cancelled tasks.
+    /// tasks, and `None` for page-level rows or cancelled tasks.
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
@@ -124,8 +124,8 @@ impl QueryRow {
         }
     }
 
-    /// Returns the task item's text if this is a task-level record, or `None`
-    /// for page-level records.
+    /// Returns the task item's text if this is a task-level row, or `None`
+    /// for page-level rows.
     #[inline]
     #[must_use]
     pub(crate) fn task_text(&self) -> Option<&str> {
@@ -152,14 +152,14 @@ impl QueryRow {
     }
 
     /// Returns project-relative paths of Notes whose wikilinks resolve to this
-    /// record's Note, or an empty slice if no Notes link to it.
+    /// row's Note, or an empty slice if no Notes link to it.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         self.entry().inlinks()
     }
 
-    /// Resolves a field path string against this record's metadata.
+    /// Resolves a field path string against this row's metadata.
     ///
     /// # Errors
     ///
@@ -204,7 +204,7 @@ impl QueryRow {
         self.resolve_ref(path).to_owned_value()
     }
 
-    /// Returns a copy of this record with `path` overridden to `value`.
+    /// Returns a copy of this row with `path` overridden to `value`.
     ///
     /// Used by [`QuerySet::flatten`] to set the resolved value for exploded
     /// list rows. If `path` already has an override, the value is updated in
@@ -325,16 +325,16 @@ impl std::fmt::Debug for QueryRow {
 #[must_use]
 #[derive(Clone, Default)]
 pub struct QuerySet {
-    records: Arc<[QueryRow]>,
+    base: Arc<Vec<QueryRow>>,
     plan: QueryPlan,
-    cache: std::sync::OnceLock<Arc<[QueryRow]>>,
+    cache: std::sync::OnceLock<Arc<Vec<QueryRow>>>,
 }
 
 impl QuerySet {
-    /// Wraps `records` into a new [`QuerySet`] with no pending transforms.
-    pub(super) fn new(records: Vec<QueryRow>) -> Self {
+    /// Wraps `rows` into a new [`QuerySet`] with no pending transforms.
+    pub(super) fn new(rows: Vec<QueryRow>) -> Self {
         Self {
-            records: records.into(),
+            base: rows.into(),
             plan: QueryPlan::default(),
             cache: std::sync::OnceLock::new(),
         }
@@ -346,12 +346,12 @@ impl QuerySet {
     /// terminal renderers) goes through this, so a chain of
     /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::run`] at
     /// most once, however many times the resulting rows are read.
-    fn materialized(&self) -> &Arc<[QueryRow]> {
+    fn rows(&self) -> &Arc<Vec<QueryRow>> {
         self.cache.get_or_init(|| {
             if self.plan.is_empty() {
-                Arc::clone(&self.records)
+                Arc::clone(&self.base)
             } else {
-                Arc::from(self.plan.clone().run(self.records.to_vec()))
+                Arc::new(self.plan.clone().run(self.base.to_vec()))
             }
         })
     }
@@ -360,14 +360,14 @@ impl QuerySet {
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.materialized().len()
+        self.rows().len()
     }
 
     /// Returns `true` if this query set contains no [`QueryRow`] rows.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.materialized().is_empty()
+        self.rows().is_empty()
     }
 
     /// Returns a reference to the [`QueryRow`] at `index`, or `None` if
@@ -375,25 +375,25 @@ impl QuerySet {
     #[inline]
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&QueryRow> {
-        self.materialized().get(index)
+        self.rows().get(index)
     }
 
     /// Returns an iterator over references to the contained [`QueryRow`]
     /// rows.
     #[inline]
     pub fn iter(&self) -> std::slice::Iter<'_, QueryRow> {
-        self.materialized().iter()
+        self.rows().iter()
     }
 
     /// Appends `transform` to this query set's pending plan, returning a new
     /// [`QuerySet`] over the same base rows. Cheap: moves the `Arc` (no
     /// refcount bump; `self` is consumed) and the short transform-step list;
-    /// nothing is evaluated until [`Self::materialized`] runs on read.
+    /// nothing is evaluated until [`Self::rows`] runs on read.
     fn push(self, transform: QueryTransform) -> Self {
         let mut plan = self.plan;
         plan.push(transform);
         Self {
-            records: self.records,
+            base: self.base,
             plan,
             cache: std::sync::OnceLock::new(),
         }
@@ -535,7 +535,7 @@ impl QuerySet {
         self.format(&QueryDisplayFormat::task_list(path_style))
     }
 
-    /// Renders records using the given display format.
+    /// Renders rows using the given display format.
     ///
     /// # Errors
     ///
@@ -552,7 +552,7 @@ impl QuerySet {
         &self,
         format: &QueryDisplayFormat,
     ) -> QueryResult<String> {
-        format.render(self.materialized())
+        format.render(self.rows())
     }
 }
 
@@ -563,33 +563,53 @@ impl QuerySet {
 impl PartialEq for QuerySet {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.materialized() == other.materialized()
+        self.rows() == other.rows()
     }
 }
 
 /// Shows the materialized rows, not the pending plan or cache state. A derived
 /// `Debug` would leak `QuerySet`'s internal representation (the pre-transform
-/// `records` and the lazily-populated `cache`, which duplicate each other's
+/// `base` and the lazily-populated `cache`, which duplicate each other's
 /// content once materialized), confusing test-failure diffs. Mirrors
 /// [`QueryRow`]'s own hand-rolled [`std::fmt::Debug`].
 impl std::fmt::Debug for QuerySet {
     #[inline]
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_tuple("QuerySet").field(&self.materialized()).finish()
+        formatter.debug_tuple("QuerySet").field(&self.rows()).finish()
     }
 }
 
 /// Converts the [`QuerySet`] into an iterator over owned [`QueryRow`]
-/// rows. Flushes any pending plan first, like every other read; clones each row
-/// out of the materialized `Arc<[QueryRow]>` since an `Arc<[T]>` has no
-/// owned `into_iter`.
+/// rows. Flushes any pending plan first, like every other read.
+///
+/// Reclaims the materialized rows without cloning when this is the only
+/// surviving reference to them (the common case: a chain like
+/// `query.from().filter(...)` that was never [`Clone`]d for branching) via
+/// [`Arc::try_unwrap`]. Falls back to cloning only when another [`QuerySet`]
+/// branch still shares the same cached rows.
 impl IntoIterator for QuerySet {
     type IntoIter = std::vec::IntoIter<Self::Item>;
     type Item = QueryRow;
 
     #[inline]
+    #[expect(
+        clippy::expect_used,
+        reason = "self.rows() on the line above always populates the OnceLock \
+                  before this reads it"
+    )]
     fn into_iter(self) -> Self::IntoIter {
-        self.materialized().to_vec().into_iter()
+        let _ = self.rows();
+        let Self {
+            base,
+            cache,
+            ..
+        } = self;
+        drop(base);
+        let rows = cache.into_inner().expect("populated by self.rows() above");
+        match Arc::try_unwrap(rows) {
+            Ok(owned) => owned.into_iter(),
+            Err(shared) => (*shared).clone().into_iter(),
+        }
     }
 }
 
@@ -656,8 +676,8 @@ mod tests {
             let file = find_base(index.entries(), Path::new("a.md"));
             let outcome = QueryService::new("class")
                 .execute(&index, QueryBuilder::pages(SourceSelector::All));
-            let record = outcome.get(0).expect("record");
-            assert_eq!(record.file(), file);
+            let row = outcome.get(0).expect("row");
+            assert_eq!(row.file(), file);
         }
 
         #[test]
@@ -673,8 +693,8 @@ mod tests {
                 .expect("note");
             let outcome = QueryService::new("class")
                 .execute(&index, QueryBuilder::pages(SourceSelector::All));
-            let record = outcome.get(0).expect("record");
-            assert_eq!(record.note(), Some(note));
+            let row = outcome.get(0).expect("row");
+            assert_eq!(row.note(), Some(note));
         }
 
         #[test]
@@ -687,8 +707,8 @@ mod tests {
             );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryBuilder::tasks(SourceSelector::All));
-            let record = outcome.get(0).expect("record");
-            assert_eq!(record.task_completed(), Some(true));
+            let row = outcome.get(0).expect("row");
+            assert_eq!(row.task_completed(), Some(true));
         }
 
         #[test]
@@ -701,8 +721,8 @@ mod tests {
             );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryBuilder::tasks(SourceSelector::All));
-            let record = outcome.get(0).expect("record");
-            assert_eq!(record.task_text(), Some("Buy milk"));
+            let row = outcome.get(0).expect("row");
+            assert_eq!(row.task_text(), Some("Buy milk"));
         }
 
         #[test]
@@ -710,10 +730,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let outcome = outcome_for(temp.path(), "body");
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
-            assert_eq!(record.task_completed(), None);
-            assert_eq!(record.task_text(), None);
+            assert_eq!(row.task_completed(), None);
+            assert_eq!(row.task_text(), None);
         }
 
         #[test]
@@ -723,12 +743,12 @@ mod tests {
                 ("target.md", "# Target"),
                 ("b.md", "[[target]]"),
             ]);
-            let record = outcome
+            let row = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
-                .expect("target record");
+                .find(|row| row.file().path() == Path::new("target.md"))
+                .expect("target row");
 
-            assert_eq!(record.inlinks(), [PathBuf::from("b.md")]);
+            assert_eq!(row.inlinks(), [PathBuf::from("b.md")]);
         }
     }
 
@@ -743,63 +763,54 @@ mod tests {
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
             let outcome =
                 outcome_for_files(temp.path(), &[("notes/todo.md", "body")]);
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
             assert_eq!(
-                record.field("file.path"),
+                row.field("file.path"),
                 Ok(NoteFieldValue::String("notes/todo.md".to_owned()))
             );
             assert_eq!(
-                record.field("file.name"),
+                row.field("file.name"),
                 Ok(NoteFieldValue::String("todo".to_owned()))
             );
             assert_eq!(
-                record.field("file.folder"),
+                row.field("file.folder"),
                 Ok(NoteFieldValue::String("notes".to_owned()))
             );
-            assert_eq!(
-                record.field("file.size"),
-                Ok(NoteFieldValue::Number(4.0))
-            );
+            assert_eq!(row.field("file.size"), Ok(NoteFieldValue::Number(4.0)));
         }
 
         #[test]
         fn resolves_dataview_style_time_accessors_from_file_record() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "body");
-            let record = outcome.get(0).expect("record");
-            let file = record.file();
+            let row = outcome.get(0).expect("row");
+            let file = row.file();
 
             assert_eq!(
-                record.field("file.mtime"),
+                row.field("file.mtime"),
                 Ok(NoteFieldValue::Date(
                     file.modified_at().to_datetime_string()
                 ))
             );
             assert_eq!(
-                record.field("file.mdate"),
+                row.field("file.mdate"),
                 Ok(NoteFieldValue::Date(file.modified_at().to_date_string()))
             );
             assert_eq!(
-                record.field("file.ctime"),
+                row.field("file.ctime"),
                 Ok(NoteFieldValue::Date(
                     file.created_at_or_modified().to_datetime_string()
                 ))
             );
             assert_eq!(
-                record.field("file.cdate"),
+                row.field("file.cdate"),
                 Ok(NoteFieldValue::Date(
                     file.created_at_or_modified().to_date_string()
                 ))
             );
-            assert_eq!(
-                record.field("file.created_at"),
-                record.field("file.ctime")
-            );
-            assert_eq!(
-                record.field("file.modified_at"),
-                record.field("file.mtime")
-            );
+            assert_eq!(row.field("file.created_at"), row.field("file.ctime"));
+            assert_eq!(row.field("file.modified_at"), row.field("file.mtime"));
         }
 
         #[test]
@@ -807,11 +818,11 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome =
                 outcome_for(temp.path(), "---\nrating: 5\n---\nStatus:: Draft");
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
-            assert_eq!(record.field("rating"), Ok(NoteFieldValue::Number(5.0)));
+            assert_eq!(row.field("rating"), Ok(NoteFieldValue::Number(5.0)));
             assert_eq!(
-                record.field("Status"),
+                row.field("Status"),
                 Ok(NoteFieldValue::String("Draft".to_owned()))
             );
         }
@@ -823,10 +834,10 @@ mod tests {
                 temp.path(),
                 "---\nstatus: Approved\n---\nstatus:: Draft",
             );
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
             assert_eq!(
-                record.field("status"),
+                row.field("status"),
                 Ok(NoteFieldValue::String("Approved".to_owned()))
             );
         }
@@ -835,10 +846,10 @@ mod tests {
         fn resolves_tags_as_a_list_of_tag_strings() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "Filed under #book #read");
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
             assert_eq!(
-                record.field("tags"),
+                row.field("tags"),
                 Ok(NoteFieldValue::List(vec![
                     NoteFieldValue::String("#book".to_owned()),
                     NoteFieldValue::String("#read".to_owned()),
@@ -854,13 +865,13 @@ mod tests {
                 ("a.md", "[[target]]"),
                 ("b.md", "[[target]]"),
             ]);
-            let record = outcome
+            let row = outcome
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
-                .expect("target record");
+                .find(|row| row.file().path() == Path::new("target.md"))
+                .expect("target row");
 
             assert_eq!(
-                record.field("inlinks"),
+                row.field("inlinks"),
                 Ok(NoteFieldValue::List(vec![
                     NoteFieldValue::String("a.md".to_owned()),
                     NoteFieldValue::String("b.md".to_owned()),
@@ -872,21 +883,18 @@ mod tests {
         fn resolves_inlinks_as_an_empty_list_when_nothing_links_to_the_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "No inbound links here.");
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
-            assert_eq!(
-                record.field("inlinks"),
-                Ok(NoteFieldValue::List(vec![]))
-            );
+            assert_eq!(row.field("inlinks"), Ok(NoteFieldValue::List(vec![])));
         }
 
         #[test]
         fn missing_field_resolves_to_null() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "body, no frontmatter");
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
-            assert_eq!(record.field("no_such_field"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("no_such_field"), Ok(NoteFieldValue::Null));
         }
 
         #[test]
@@ -899,13 +907,13 @@ mod tests {
             );
             let outcome = QueryService::new("class")
                 .execute(&index, QueryBuilder::tasks(SourceSelector::All));
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
             assert_eq!(
-                record.field("task.completed"),
+                row.field("task.completed"),
                 Ok(NoteFieldValue::Bool(true))
             );
             assert_eq!(
-                record.field("task.text"),
+                row.field("task.text"),
                 Ok(NoteFieldValue::String("Buy milk".to_owned()))
             );
         }
@@ -914,13 +922,10 @@ mod tests {
         fn task_fields_resolve_to_null_on_page_level_records() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "body");
-            let record = outcome.get(0).expect("record");
+            let row = outcome.get(0).expect("row");
 
-            assert_eq!(
-                record.field("task.completed"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(record.field("task.text"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("task.completed"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("task.text"), Ok(NoteFieldValue::Null));
         }
     }
 
@@ -993,7 +998,7 @@ mod tests {
 
             let categories: Vec<NoteFieldValue> = grouped
                 .iter()
-                .map(|record| record.field("category").expect("valid path"))
+                .map(|row| row.field("category").expect("valid path"))
                 .collect();
             assert_eq!(categories, [
                 NoteFieldValue::String("article".to_owned()),
@@ -1034,16 +1039,16 @@ mod tests {
             assert_eq!(flattened.len(), 2);
             let authors: Vec<NoteFieldValue> = flattened
                 .iter()
-                .map(|record| record.field("authors").expect("valid path"))
+                .map(|row| row.field("authors").expect("valid path"))
                 .collect();
             assert_eq!(authors, [
                 NoteFieldValue::String("Alice".to_owned()),
                 NoteFieldValue::String("Bob".to_owned()),
             ]);
-            // Every other field still resolves from the original record.
-            for record in &flattened {
+            // Every other field still resolves from the original row.
+            for row in &flattened {
                 assert_eq!(
-                    record.field("title"),
+                    row.field("title"),
                     Ok(NoteFieldValue::String("Multi".to_owned()))
                 );
             }
@@ -1068,7 +1073,7 @@ mod tests {
 
             assert_eq!(flattened.len(), 1);
             assert_eq!(
-                flattened.get(0).expect("record").field("rating"),
+                flattened.get(0).expect("row").field("rating"),
                 Ok(NoteFieldValue::Number(5.0))
             );
         }
@@ -1082,7 +1087,7 @@ mod tests {
 
             let tags: Vec<NoteFieldValue> = flattened
                 .iter()
-                .map(|record| record.field("tags").expect("valid path"))
+                .map(|row| row.field("tags").expect("valid path"))
                 .collect();
             assert_eq!(tags, [
                 NoteFieldValue::String("#book".to_owned()),
@@ -1119,7 +1124,7 @@ mod tests {
 
             assert_eq!(filtered.len(), 1);
             assert_eq!(
-                filtered.get(0).expect("record").field("authors"),
+                filtered.get(0).expect("row").field("authors"),
                 Ok(NoteFieldValue::String("Bob".to_owned()))
             );
         }
@@ -1143,10 +1148,10 @@ mod tests {
             assert_eq!(flattened.len(), 4);
             let pairs: Vec<(NoteFieldValue, NoteFieldValue)> = flattened
                 .iter()
-                .map(|record| {
+                .map(|row| {
                     (
-                        record.field("authors").expect("valid authors"),
-                        record.field("tags").expect("valid tags"),
+                        row.field("authors").expect("valid authors"),
+                        row.field("tags").expect("valid tags"),
                     )
                 })
                 .collect();

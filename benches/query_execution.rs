@@ -295,18 +295,18 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 /// `src/template/engine/query.rs`'s `Object::call_method` for
 /// `QuerySet` clones the entire outcome (`self.as_ref().clone()`) on
 /// every non-terminal chained call (`.where`/`.filter`/`.sort`/`.limit`/
-/// `.group_by`/`.flatten`). Since the CTE redesign, `QuerySet::records`
-/// is `Arc<[QueryRow]>`, so `#[derive(Clone)]` clones an `Arc` pointer
-/// (and a short pending-plan `Vec`), not the row data — this benchmark
-/// confirms that claim directly, rather than through the `Vec<QueryRow>`
-/// proxy the pre-redesign version used.
+/// `.group_by`/`.flatten`). `QuerySet::base` is `Arc<Vec<QueryRow>>`, so
+/// `#[derive(Clone)]` clones an `Arc` pointer (and a short pending-plan
+/// `Vec`), not the row data — this benchmark confirms that claim directly,
+/// rather than through the `Vec<QueryRow>` proxy the pre-redesign version
+/// used.
 ///
 /// Expected outcomes:
 /// - Cost is small and roughly constant across workspace sizes (an `Arc`
 ///   refcount bump, not proportional to `n`).
 ///
 /// Unexpected outcomes:
-/// - Cost scales with `n`, indicating `records` is no longer `Arc`-backed, or
+/// - Cost scales with `n`, indicating `base` is no longer `Arc`-backed, or
 ///   `QuerySet::clone` is deep-copying rows somewhere.
 fn bench_clone_query_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/clone_query_set");
@@ -331,31 +331,24 @@ fn bench_clone_query_set(c: &mut Criterion) {
 /// Measures the cost of `QuerySet`'s owned `IntoIterator::into_iter()`,
 /// swept over workspace size and row shape (page vs. task).
 ///
-/// `QuerySet::into_iter()` (owned) clones every row out of the
-/// materialized `Arc<[QueryRow]>` instead of moving them, since an
-/// `Arc<[T]>` has no owned `into_iter` (see its doc comment). A page row's
-/// clone is just an `Arc<FileIndex>` refcount bump; a task row's clone also
-/// heap-allocates a fresh `text: String`. This measures that cost directly,
-/// as the baseline for judging a sole-owner fast path — see
-/// `QuerySet::into_iter`'s doc comment for why no safe, no-regression
-/// fast path exists today (`Arc::try_unwrap` requires `T: Sized`, which
-/// `[QueryRow]` isn't; confirmed by compiling the substitution).
-///
-/// Measured finding (this session, 100-20,000 rows): `pages` clones at
-/// ~21-23 ns/element (flat across sizes — an `Arc<FileIndex>` bump plus a
-/// few `Copy` fields); `tasks` clones at ~65-70 ns/element, roughly 3x
-/// more, with the ~45 ns/element delta attributable to the `String`
-/// allocation. Both are cheap in absolute terms (a few ms even at 60,000
-/// task rows).
+/// `QuerySet::into_iter()` (owned) reclaims the materialized rows without
+/// cloning when `self` is the sole owner of the cached `Arc<Vec<QueryRow>>`
+/// (via `Arc::try_unwrap`), falling back to a per-row clone only when
+/// another `QuerySet` branch still shares the same cached rows. Every
+/// iteration here calls `.into_iter()` on a freshly constructed, never-cloned
+/// `QuerySet`, so this measures the sole-owner fast path: an `O(1)` move out
+/// of the `Arc`, not an `O(n)` clone.
 ///
 /// Expected outcomes:
-/// - Cost scales linearly with `n` for both shapes (a clone has no shortcut).
-/// - `tasks` costs measurably more per element than `pages`, isolating the
-///   `String` allocation's contribution.
+/// - Cost is small and roughly constant across workspace sizes (matching
+///   [`bench_clone_query_set`]'s `Arc`-bump-only cost), for both `pages` and
+///   `tasks` shapes.
 ///
 /// Unexpected outcomes:
-/// - `tasks` and `pages` cost about the same, indicating the `String`
-///   allocation is not measurable relative to the `Arc<FileIndex>` bump.
+/// - Cost scales linearly with `n`, indicating `Arc::try_unwrap` is taking the
+///   `Err` (shared) branch and falling back to a full clone — check that
+///   nothing retains an extra reference to the outcome's cached rows before
+///   `.into_iter()` runs.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/into_iter_owned");
     for &n in WORKSPACE_SIZES {
