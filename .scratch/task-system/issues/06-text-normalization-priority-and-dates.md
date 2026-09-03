@@ -12,6 +12,49 @@ Status: ready-for-agent
 - `ListText` struct with `raw: String` and `clean: String` — lives on `ListItem`, not `TaskListItem`
 - `TaskPriority` enum: lowest, low, normal, medium, high, highest
 - `TaskDates` struct with optional date fields: created, scheduled, start, due, done, cancelled
+- Date type: `Option<NaiveDate>` (chrono) for each field — missing dates are `None`/null in queries
+
+## Emoji-to-field mapping
+
+| Emoji | Field     | Source                        |
+| ----- | --------- | ----------------------------- |
+| ➕    | created   | Tasks plugin convention       |
+| 🛫    | start     | Tasks plugin convention       |
+| ⏳    | scheduled | Tasks plugin convention       |
+| 📅    | due       | Tasks plugin convention       |
+| ✅    | done      | Tasks plugin convention       |
+| ❌    | cancelled | Chosen for Traces (no Tasks plugin equivalent) |
+
+## Priority emoji mapping
+
+| Emoji | Priority |
+| ----- | -------- |
+| 🔺    | highest  |
+| ⏫    | high     |
+| 🔼    | medium   |
+| 🔽    | low      |
+| ⏬    | lowest   |
+
+No emoji → `None` (missing priority, does not default to normal).
+
+## Inline field syntax
+
+Existing inline fields (`[field:: value]`) continue to work for task dates. Field names: `created`, `start`, `scheduled`, `due`, `done`, `cancelled`.
+
+## Precedence
+
+When both emoji and inline field syntax are present for the same date, **emoji wins**. This matches the Tasks plugin convention where emoji is the primary syntax.
+
+## Worked examples
+
+Input: `- [ ] Buy milk 📅 2025-01-15 #task`
+- `raw`: `Buy milk 📅 2025-01-15 #task` (marker prefix stripped)
+- `clean` (with `tag_filters: ["#task"]`): `Buy milk` (marker, tag, date stripped)
+- `clean` (with `tag_filters: []`): `Buy milk 📅 2025-01-15` (marker stripped, no tag filter configured so tag not stripped, date stripped)
+
+Input: `- [x] Pay rent 🔼 [due:: 2025-02-01]`
+- `raw`: `Pay rent 🔼 [due:: 2025-02-01]`
+- `clean`: `Pay rent` (marker, priority, inline field stripped)
 
 ## Checklist
 
@@ -37,14 +80,16 @@ Status: ready-for-agent
 - [ ] Task priority enum: lowest, low, normal, medium, high, highest
 - [ ] Priority stored as `Option<TaskPriority>` — missing priority remains absent, does not default to normal
 - [ ] Priority emojis parsed into priority enum (do not store raw emoji as model data)
+- [ ] Emoji-to-priority mapping: 🔺→highest, ⏫→high, 🔼→medium, 🔽→low, ⏬→lowest
 
 ### Dates
 
 - [ ] Task dates: created, scheduled, start, due, done, cancelled
-- [ ] Emoji date syntax parsed (🗓️, ➕, 🛫, ⏳, ✅)
-- [ ] Emoji-to-date mapping: 🗓️→created, ➕→scheduled, 🛫→start, ⏳→due, ✅→done
-- [ ] Existing inline field syntax for task dates continues to work
-- [ ] Valid `YYYY-MM-DD` dates parsed as date field values
+- [ ] Emoji date syntax parsed (➕, 🛫, ⏳, 📅, ✅, ❌)
+- [ ] Emoji-to-date mapping: ➕→created, 🛫→start, ⏳→scheduled, 📅→due, ✅→done, ❌→cancelled
+- [ ] Existing inline field syntax for task dates continues to work (`[created::]`, `[start::]`, `[scheduled::]`, `[due::]`, `[done::]`, `[cancelled::]`)
+- [ ] When both emoji and inline field present for same date, emoji wins
+- [ ] Valid `YYYY-MM-DD` dates parsed as `NaiveDate` values
 - [ ] Missing dates resolve to null in query results
 
 ### Tests
@@ -53,6 +98,7 @@ Status: ready-for-agent
 - [ ] Unit tests for priority emoji parsing and missing priority
 - [ ] Unit tests for date extraction from emoji and inline field syntax
 - [ ] Unit tests for clean text stripping with and without tag filters
+- [ ] Unit test for emoji-over-inline-field precedence
 - [ ] `mise run verify` passes
 
 ## Out of scope
