@@ -11,8 +11,8 @@ use crate::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
     note::NoteFieldValue,
     query::{
-        QueryRecord,
-        error::{QueryDialect, QueryRequestError, QuerySyntaxError},
+        QueryRow,
+        error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
         value::QueryFieldValueRef,
     },
 };
@@ -20,7 +20,7 @@ use crate::{
 /// A parsed filter expression AST.
 ///
 /// Wraps [`BooleanExpr`] with [`FilterAtom`] leaves, providing the concrete
-/// type used by [`crate::query::QueryRecordSet::filter`].
+/// type used by [`crate::query::QuerySet::filter`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FilterExpr(BooleanExpr<FilterAtom>);
 
@@ -30,7 +30,7 @@ impl FilterExpr {
     /// # Errors
     ///
     /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryRequestError> {
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
         let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
             input,
             |token| {
@@ -79,7 +79,7 @@ impl FilterExpr {
     }
 
     /// Whether `record` satisfies this expression.
-    pub(crate) fn is_matching(&self, record: &QueryRecord) -> bool {
+    pub(crate) fn is_matching(&self, record: &QueryRow) -> bool {
         self.0.is_satisfied_by(|atom| atom.is_matching(record))
     }
 }
@@ -97,7 +97,7 @@ pub(crate) enum FilterAtom {
 }
 
 impl FilterAtom {
-    fn is_matching(&self, record: &QueryRecord) -> bool {
+    fn is_matching(&self, record: &QueryRow) -> bool {
         match self {
             Self::Comparison(comparison) => comparison.is_matching(record),
             Self::Function(function) => function.is_matching(record),
@@ -135,7 +135,7 @@ impl FilterFunction {
         }
     }
 
-    fn is_matching(&self, record: &QueryRecord) -> bool {
+    fn is_matching(&self, record: &QueryRow) -> bool {
         match self {
             Self::Contains {
                 field,
@@ -171,7 +171,7 @@ impl ComparisonExpr {
 
     /// Returns whether the given index record satisfies this comparison
     /// expression.
-    pub(super) fn is_matching(&self, record: &QueryRecord) -> bool {
+    pub(super) fn is_matching(&self, record: &QueryRow) -> bool {
         self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
     }
 }
@@ -248,7 +248,7 @@ impl FilterGrammar {
     fn parse_literal_arg(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
-    ) -> Result<NoteFieldValue, QueryRequestError> {
+    ) -> Result<NoteFieldValue, QueryBuilderError> {
         let spanned = tokens
             .expect_map(input, "a literal value", |token| {
                 let spanned = token;
@@ -267,7 +267,7 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         name: &str,
-    ) -> Result<FilterFunction, QueryRequestError> {
+    ) -> Result<FilterFunction, QueryBuilderError> {
         tokens
             .expect(
                 input,
@@ -331,7 +331,7 @@ impl FilterGrammar {
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
         field_ident: &str,
-    ) -> Result<ComparisonExpr, QueryRequestError> {
+    ) -> Result<ComparisonExpr, QueryBuilderError> {
         let op_spanned = tokens
             .expect_map(input, "a comparison operator", |token| {
                 let spanned = token;
@@ -372,7 +372,7 @@ impl AtomParser for FilterGrammar {
         &self,
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
-    ) -> Result<Self::Atom, QueryRequestError> {
+    ) -> Result<Self::Atom, QueryBuilderError> {
         let spanned_ident = tokens
             .expect_map(input, "a filter term", |token| {
                 let spanned = token;
@@ -456,24 +456,21 @@ mod tests {
         query::{QueryError, *},
     };
 
-    fn outcome_for_files(
-        temp: &Path,
-        files: &[(&str, &str)],
-    ) -> QueryRecordSet {
+    fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QuerySet {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
         let index =
             Arc::new(IndexerService::new(temp).build().expect("build index"));
         QueryService::new("class")
-            .execute(&index, QueryRequest::pages(SourceSelector::All))
+            .execute(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
-    fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
+    fn outcome_for(temp: &Path, content: &str) -> QuerySet {
         outcome_for_files(temp, &[("note.md", content)])
     }
 
-    fn rated_outcome(temp: &Path) -> QueryRecordSet {
+    fn rated_outcome(temp: &Path) -> QuerySet {
         outcome_for_files(temp, &[
             ("low.md", "---\nrating: 3\nstatus: draft\n---"),
             ("high.md", "---\nrating: 7\nstatus: done\n---"),
@@ -481,7 +478,7 @@ mod tests {
         ])
     }
 
-    fn names(outcome: &QueryRecordSet) -> Vec<String> {
+    fn names(outcome: &QuerySet) -> Vec<String> {
         outcome
             .iter()
             .map(|record| record.file().name().as_str().to_owned())
@@ -509,7 +506,7 @@ mod tests {
 
             assert!(matches!(
                 outcome.filter(expr),
-                Err(QueryError::Request(QueryRequestError::Syntax(_)))
+                Err(QueryError::Request(QueryBuilderError::Syntax(_)))
             ));
         }
 
@@ -522,7 +519,7 @@ mod tests {
         fn rejects_incomplete_boolean_logic(#[case] expr: &str) {
             assert!(matches!(
                 FilterExpr::parse(expr),
-                Err(QueryRequestError::Syntax(_))
+                Err(QueryBuilderError::Syntax(_))
             ));
         }
 
@@ -537,10 +534,10 @@ mod tests {
         ) {
             let result = FilterExpr::parse(expr);
             assert!(
-                matches!(result, Err(QueryRequestError::Syntax(_))),
+                matches!(result, Err(QueryBuilderError::Syntax(_))),
                 "expected syntax error"
             );
-            if let Err(QueryRequestError::Syntax(error)) = result {
+            if let Err(QueryBuilderError::Syntax(error)) = result {
                 assert_eq!(*error.lex_error, LexError::UnexpectedToken {
                     span: SourceSpan::from((offset, length)),
                     found: "NaN or infinity".to_owned(),
@@ -557,7 +554,7 @@ mod tests {
 
             assert_eq!(
                 outcome.filter("file.bogus == 1"),
-                Err(QueryError::Request(QueryRequestError::FieldPath(
+                Err(QueryError::Request(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );
@@ -567,7 +564,7 @@ mod tests {
         fn rejects_malformed_field_path_in_function() {
             assert_eq!(
                 FilterExpr::parse("contains(file.bogus, \"x\")"),
-                Err(QueryRequestError::FieldPath(FieldPathError::new(
+                Err(QueryBuilderError::FieldPath(FieldPathError::new(
                     "file.bogus",
                     None
                 )))

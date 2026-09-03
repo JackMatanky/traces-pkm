@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::{
-    QueryMode, QueryRecord, QueryRecordSet, QueryRequest,
+    QueryBuilder, QueryMode, QueryRow, QuerySet,
     grammar::{FileClassExpander, SourceSelector},
 };
 use crate::index::{FileIndex, RowIndex};
@@ -42,14 +42,14 @@ impl QueryService {
         self
     }
 
-    /// Executes `request` against `index`.
+    /// Executes `builder` against `index`.
     #[inline]
     pub fn execute(
         &self,
         index: &Arc<FileIndex>,
-        request: QueryRequest,
-    ) -> QueryRecordSet {
-        let (mode, mut source, plan) = request.into_parts();
+        builder: QueryBuilder,
+    ) -> QuerySet {
+        let (mode, mut source, plan) = builder.into_parts();
         if source.has_classes()
             && let Some(expander) = self.class_expander.as_deref()
         {
@@ -59,14 +59,14 @@ impl QueryService {
             QueryMode::Pages => self.page_records(index, &source),
             QueryMode::Tasks => self.task_records(index, &source),
         };
-        QueryRecordSet::new(plan.run(records))
+        QuerySet::new(plan.run(records))
     }
 
     fn page_records(
         &self,
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> Vec<QueryRecord> {
+    ) -> Vec<QueryRow> {
         self.matched_file_records(index, source).collect()
     }
 
@@ -74,7 +74,7 @@ impl QueryService {
         &self,
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> Vec<QueryRecord> {
+    ) -> Vec<QueryRow> {
         let mut out = Vec::new();
         for base in self.matched_file_records(index, source) {
             let Some(note) = base.note() else {
@@ -91,14 +91,14 @@ impl QueryService {
         &'b self,
         index: &'b Arc<FileIndex>,
         source: &'b SourceSelector,
-    ) -> impl Iterator<Item = QueryRecord> + 'b {
+    ) -> impl Iterator<Item = QueryRow> + 'b {
         (0..index.entries().len())
             .map(RowIndex::new)
             .filter(move |&position| {
                 source.is_match(index.entry_at(position), &self.class_field)
             })
             .map(move |position| {
-                QueryRecord::from_row(Arc::clone(index), position)
+                QueryRow::from_row(Arc::clone(index), position)
             })
     }
 }
@@ -121,25 +121,25 @@ mod tests {
     use crate::{
         index::{FileIndex, IndexerService},
         note::Note,
-        query::{QueryRecord, QueryRecordSet, QueryRequest, SourceSelector},
+        query::{QueryBuilder, QueryRow, QuerySet, SourceSelector},
     };
 
     /// Runs a page-level query via [`QueryService`].
     fn query_pages(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> QueryRecordSet {
+    ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryRequest::pages(source.clone()))
+            .execute(index, QueryBuilder::pages(source.clone()))
     }
 
     /// Task-level counterpart to [`query_pages`].
     fn query_tasks(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> QueryRecordSet {
+    ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryRequest::tasks(source.clone()))
+            .execute(index, QueryBuilder::tasks(source.clone()))
     }
 
     mod query {
@@ -150,7 +150,7 @@ mod tests {
         use super::*;
         use crate::tag::Tag;
 
-        fn note_paths(outcome: &QueryRecordSet) -> Vec<&Path> {
+        fn note_paths(outcome: &QuerySet) -> Vec<&Path> {
             outcome
                 .iter()
                 .filter_map(|record| record.note().map(Note::path))
@@ -485,7 +485,7 @@ mod tests {
         use super::*;
 
         /// `(completed, text)` pairs for every row in `outcome`, in order.
-        fn task_rows(outcome: &QueryRecordSet) -> Vec<(Option<bool>, &str)> {
+        fn task_rows(outcome: &QuerySet) -> Vec<(Option<bool>, &str)> {
             outcome
                 .iter()
                 .map(|record| {
@@ -511,7 +511,7 @@ mod tests {
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
-                outcome.iter().next().and_then(QueryRecord::task_text),
+                outcome.iter().next().and_then(QueryRow::task_text),
                 Some("buy milk")
             );
         }

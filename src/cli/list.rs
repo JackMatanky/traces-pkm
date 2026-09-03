@@ -112,7 +112,7 @@ mod tests {
         use super::*;
         use crate::{
             index::{IndexBuilderError, IndexError},
-            query::{QueryError, QueryRequestError},
+            query::{QueryBuilderError, QueryError},
         };
 
         fn config(root: &Path) -> Config {
@@ -196,7 +196,7 @@ mod tests {
                 .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryRequestError::FieldPath(_)),
+                source: QueryError::Request(QueryBuilderError::FieldPath(_)),
                 ..
             }));
         }
@@ -296,7 +296,7 @@ mod tests {
                 list.render(&config(temp.path())).expect_err("invalid source");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryRequestError::Syntax(_)),
+                source: QueryError::Request(QueryBuilderError::Syntax(_)),
                 ..
             }));
         }
@@ -361,7 +361,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryRequestError::Syntax(_)),
+                source: QueryError::Request(QueryBuilderError::Syntax(_)),
                 ..
             }));
         }

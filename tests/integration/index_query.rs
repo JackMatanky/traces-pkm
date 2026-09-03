@@ -1,11 +1,11 @@
-//! Proves `FileIndex::build` → `QueryRequest` execution works across real files
+//! Proves `FileIndex::build` → `QueryBuilder` execution works across real files
 //! through the test-utils surface alone. Unit coverage inside `src/query/`
 //! exercises crate-internal transforms.
 
 use std::{fs, path::Path, sync::Arc};
 
 use pretty_assertions::assert_eq;
-use traces_pkm::{IndexerService, QueryRequest, QueryService, SourceSelector};
+use traces_pkm::{IndexerService, QueryBuilder, QueryService, SourceSelector};
 
 /// Checks a page request returns every indexed note without consuming the
 /// borrowed index.
@@ -22,7 +22,7 @@ fn page_query_returns_real_indexed_notes() {
         IndexerService::new(temp.path()).build().expect("build index"),
     );
     let outcome = QueryService::new("class")
-        .execute(&index, QueryRequest::pages(SourceSelector::All));
+        .execute(&index, QueryBuilder::pages(SourceSelector::All));
 
     assert_eq!(outcome.len(), 3);
     let paths: Vec<_> = (&outcome)
@@ -39,7 +39,7 @@ fn page_query_returns_real_indexed_notes() {
 /// Checks task queries flatten two tasks in one note into two rows, each with
 /// the correct completion state.
 ///
-/// Proves `QueryRecord::task_completed` works from outside the crate.
+/// Proves `QueryRow::task_completed` works from outside the crate.
 #[test]
 fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
     let temp = tempfile::tempdir().expect("create temp dir");
@@ -49,7 +49,7 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
         IndexerService::new(temp.path()).build().expect("build index"),
     );
     let tasks = QueryService::new("class")
-        .execute(&index, QueryRequest::tasks(SourceSelector::All));
+        .execute(&index, QueryBuilder::tasks(SourceSelector::All));
     assert_eq!(tasks.len(), 2);
     let completed: Vec<bool> = (0..tasks.len())
         .map(|i| {
@@ -81,11 +81,11 @@ fn query_request_reuses_one_index_for_page_and_task_queries() {
     let service = QueryService::new("class");
 
     let pages =
-        service.execute(&index, QueryRequest::pages(SourceSelector::All));
+        service.execute(&index, QueryBuilder::pages(SourceSelector::All));
     let tasks =
-        service.execute(&index, QueryRequest::tasks(SourceSelector::All));
+        service.execute(&index, QueryBuilder::tasks(SourceSelector::All));
     let pages_again =
-        service.execute(&index, QueryRequest::pages(SourceSelector::All));
+        service.execute(&index, QueryBuilder::pages(SourceSelector::All));
 
     let page_paths: Vec<_> = (&pages)
         .into_iter()

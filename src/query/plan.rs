@@ -2,7 +2,7 @@
 //! ordered sequence of them.
 
 use super::{
-    QueryRecord, QueryRequestError,
+    QueryBuilderError, QueryRow,
     grammar::{FieldPath, FilterExpr},
     sort::SortKey,
 };
@@ -11,9 +11,9 @@ use crate::note::NoteFieldValue;
 /// Ordered, optimizable sequence of [`QueryTransform`] steps.
 ///
 /// The single transform engine for the whole query subsystem, used two
-/// ways: [`super::QueryRequest`] builds one fully before a single
+/// ways: [`super::QueryBuilder`] builds one fully before a single
 /// [`Self::run`] call (pre-fetch, via [`super::QueryService::execute`]);
-/// [`super::QueryRecordSet`] accumulates one incrementally across chained
+/// [`super::QuerySet`] accumulates one incrementally across chained
 /// calls and calls [`Self::run`] lazily on first read, memoizing the result
 /// (post-fetch CTE chaining). [`Self::optimize`] is pure and idempotent —
 /// safe to run on a plan built either way.
@@ -35,9 +35,9 @@ impl QueryPlan {
     /// Fuses this plan via [`Self::optimize`] and applies it to `records` in
     /// one pass. The only way a [`QueryTransform`] in this plan ever runs —
     /// used by [`super::QueryService::execute`] (pre-fetch, plan built once)
-    /// and [`super::QueryRecordSet`]'s materialization (post-fetch, plan
+    /// and [`super::QuerySet`]'s materialization (post-fetch, plan
     /// built incrementally then flushed on first read).
-    pub(super) fn run(self, records: Vec<QueryRecord>) -> Vec<QueryRecord> {
+    pub(super) fn run(self, records: Vec<QueryRow>) -> Vec<QueryRow> {
         self.optimize().apply(records)
     }
 
@@ -103,15 +103,15 @@ impl QueryPlan {
     }
 
     /// Applies every step in order. Internal to [`Self::run`].
-    fn apply(&self, mut records: Vec<QueryRecord>) -> Vec<QueryRecord> {
+    fn apply(&self, mut records: Vec<QueryRow>) -> Vec<QueryRow> {
         for step in &self.steps {
             records = step.apply(records);
         }
         records
     }
 }
-/// One step in a [`QueryPlan`], produced by [`super::QueryRequest`]'s
-/// builder methods and [`super::QueryRecordSet`]'s chained calls. Never
+/// One step in a [`QueryPlan`], produced by [`super::QueryBuilder`]'s
+/// builder methods and [`super::QuerySet`]'s chained calls. Never
 /// constructed or held apart from a [`QueryPlan`] — every constructor below
 /// is immediately passed to [`QueryPlan::push`].
 #[derive(Clone, Debug, PartialEq)]
@@ -134,41 +134,41 @@ pub(super) enum QueryTransform {
 }
 
 impl QueryTransform {
-    pub(super) fn filter(expr: &str) -> Result<Self, QueryRequestError> {
+    pub(super) fn filter(expr: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Filter(FilterExpr::parse(expr)?))
     }
 
     pub(super) fn sort(
         field: &str,
         descending: bool,
-    ) -> Result<Self, QueryRequestError> {
+    ) -> Result<Self, QueryBuilderError> {
         Ok(Self::Sort {
             field: FieldPath::parse(field)?,
             descending,
         })
     }
 
-    pub(super) fn limit(n: i64) -> Result<Self, QueryRequestError> {
+    pub(super) fn limit(n: i64) -> Result<Self, QueryBuilderError> {
         let n = usize::try_from(n).map_err(|_source| {
-            QueryRequestError::LimitOutOfRange {
+            QueryBuilderError::LimitOutOfRange {
                 value: n,
             }
         })?;
         Ok(Self::Limit(n))
     }
 
-    pub(super) fn group_by(field: &str) -> Result<Self, QueryRequestError> {
+    pub(super) fn group_by(field: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::GroupBy(FieldPath::parse(field)?))
     }
 
-    pub(super) fn flatten(field: &str) -> Result<Self, QueryRequestError> {
+    pub(super) fn flatten(field: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Flatten(FieldPath::parse(field)?))
     }
 
     /// Applies this single transform to `records`, returning the transformed
-    /// vec. Absorbs the bodies previously on `QueryRecordSet` as
+    /// vec. Absorbs the bodies previously on `QuerySet` as
     /// `apply_filter`/`limit_to`/`flatten_field`/`sort_by_field`.
-    pub(super) fn apply(&self, records: Vec<QueryRecord>) -> Vec<QueryRecord> {
+    pub(super) fn apply(&self, records: Vec<QueryRow>) -> Vec<QueryRow> {
         match self {
             Self::Filter(expr) => {
                 let mut records = records;
@@ -232,7 +232,7 @@ impl QueryTransform {
                 // behavior difference from the unfused path whenever the sort
                 // field has duplicate values near the selection boundary (e.g.
                 // a low-cardinality field like `status`).
-                let mut keyed: Vec<(SortKey, usize, QueryRecord)> = records
+                let mut keyed: Vec<(SortKey, usize, QueryRow)> = records
                     .into_iter()
                     .enumerate()
                     .map(|(index, record)| {
@@ -244,8 +244,8 @@ impl QueryTransform {
                     })
                     .collect();
                 let cmp =
-                    |a: &(SortKey, usize, QueryRecord),
-                     b: &(SortKey, usize, QueryRecord)| {
+                    |a: &(SortKey, usize, QueryRow),
+                     b: &(SortKey, usize, QueryRow)| {
                         a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1))
                     };
                 if n < keyed.len() {

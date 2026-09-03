@@ -8,7 +8,7 @@ use crate::{
     tag::Tag,
 };
 
-/// Borrowed field value resolved from a [`super::QueryRecord`].
+/// Borrowed field value resolved from a [`super::QueryRow`].
 pub(super) enum QueryFieldValueRef<'a> {
     Null,
     Bool(bool),
@@ -183,7 +183,7 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
     }
 }
 
-/// Borrowed list value resolved from a [`super::QueryRecord`].
+/// Borrowed list value resolved from a [`super::QueryRow`].
 pub(super) enum QueryListValueRef<'a> {
     Values(&'a [NoteFieldValue]),
     Tags(&'a [Tag]),

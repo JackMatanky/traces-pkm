@@ -35,7 +35,7 @@ use criterion::{
     criterion_main,
 };
 use traces_pkm::{
-    FileIndex, IndexerService, QueryRequest, QueryService, SourceSelector,
+    FileIndex, IndexerService, QueryBuilder, QueryService, SourceSelector,
 };
 
 // ----------------------------------------------------------- //
@@ -121,7 +121,7 @@ fn bench_execute_pages(c: &mut Criterion) {
                 |index| {
                     QueryService::new("class").execute(
                         &index,
-                        QueryRequest::pages(SourceSelector::All),
+                        QueryBuilder::pages(SourceSelector::All),
                     )
                 },
                 BatchSize::SmallInput,
@@ -157,7 +157,7 @@ fn bench_execute_tasks(c: &mut Criterion) {
                 |index| {
                     QueryService::new("class").execute(
                         &index,
-                        QueryRequest::tasks(SourceSelector::All),
+                        QueryBuilder::tasks(SourceSelector::All),
                     )
                 },
                 BatchSize::SmallInput,
@@ -210,7 +210,7 @@ fn bench_execute_pages_by_metadata(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
                                 .expect("valid filter")
                                 .sort("rating", false)
@@ -272,7 +272,7 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
                                 .expect("valid filter"),
                         )
@@ -313,7 +313,7 @@ fn bench_clone_query_record_set(c: &mut Criterion) {
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
         let outcome = QueryService::new("class")
-            .execute(&index, QueryRequest::pages(SourceSelector::All));
+            .execute(&index, QueryBuilder::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -371,7 +371,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
                     || {
                         QueryService::new("class").execute(
                             index,
-                            QueryRequest::pages(SourceSelector::All),
+                            QueryBuilder::pages(SourceSelector::All),
                         )
                     },
                     |outcome| black_box(outcome.into_iter().count()),
@@ -392,7 +392,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
                     || {
                         QueryService::new("class").execute(
                             index,
-                            QueryRequest::tasks(SourceSelector::All),
+                            QueryBuilder::tasks(SourceSelector::All),
                         )
                     },
                     |outcome| black_box(outcome.into_iter().count()),

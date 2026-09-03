@@ -3,7 +3,7 @@
 //! The error hierarchy:
 //!
 //! - [`QueryError`]: top-level error type covering all query failures.
-//! - [`QueryRequestError`]: isolates failures during request construction.
+//! - [`QueryBuilderError`]: isolates failures during request construction.
 //! - [`QuerySyntaxError`]: syntax errors with [`miette::Diagnostic`]
 //!   integration for rich source-location-aware rendering.
 //! - [`FieldPathError`]: invalid field paths with "did you mean" suggestions.
@@ -27,9 +27,9 @@ pub type QueryResult<T> = std::result::Result<T, QueryError>;
 /// # Examples
 ///
 /// ```ignore
-/// use traces_pkm::query::{QueryError, QueryRequestError};
+/// use traces_pkm::query::{QueryBuilderError, QueryError};
 ///
-/// let error = QueryError::from(QueryRequestError::LimitOutOfRange {
+/// let error = QueryError::from(QueryBuilderError::LimitOutOfRange {
 ///     value: -1,
 /// });
 /// assert_eq!(
@@ -41,20 +41,20 @@ pub type QueryResult<T> = std::result::Result<T, QueryError>;
 pub enum QueryError {
     /// A request builder rejected syntax, field paths, or limits.
     #[error(transparent)]
-    Request(#[from] QueryRequestError),
+    Request(#[from] QueryBuilderError),
     /// A source or filter expression has invalid syntax.
     #[error(transparent)]
     Syntax(#[from] QuerySyntaxError),
     /// A field path cannot be parsed or names an unknown accessor.
     #[error(transparent)]
     FieldPath(#[from] FieldPathError),
-    /// [`super::QueryRecordSet::task_list`] received page-level records
+    /// [`super::QuerySet::task_list`] received page-level records
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"
     )]
     TaskListRequiresTaskRows,
-    /// [`super::QueryRecordSet::table`] received `headers` and `columns` slices
+    /// [`super::QuerySet::table`] received `headers` and `columns` slices
     /// of unequal length.
     #[error(
         "table headers ({headers}) and columns ({columns}) must have the same \
@@ -73,10 +73,10 @@ impl Diagnostic for QueryError {
     fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
         match self {
             Self::Syntax(source)
-            | Self::Request(QueryRequestError::Syntax(source)) => Some(source),
+            | Self::Request(QueryBuilderError::Syntax(source)) => Some(source),
             Self::Request(
-                QueryRequestError::FieldPath(_)
-                | QueryRequestError::LimitOutOfRange {
+                QueryBuilderError::FieldPath(_)
+                | QueryBuilderError::LimitOutOfRange {
                     ..
                 },
             )
@@ -89,13 +89,13 @@ impl Diagnostic for QueryError {
     }
 }
 
-/// Error while building a [`super::QueryRequest`].
+/// Error while building a [`super::QueryBuilder`].
 ///
-/// Separates request-construction failures from execution/rendering failures
+/// Separates builder-construction failures from execution/rendering failures
 /// while still embedding into [`QueryError`] for callers that want one query
 /// error type.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum QueryRequestError {
+pub enum QueryBuilderError {
     /// A source or filter expression has invalid syntax.
     #[error(transparent)]
     Syntax(#[from] QuerySyntaxError),
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn direct_operation_errors_format_display_messages() {
         assert_display(
-            &QueryError::from(QueryRequestError::LimitOutOfRange {
+            &QueryError::from(QueryBuilderError::LimitOutOfRange {
                 value: -5,
             }),
             "invalid limit -5; expected a non-negative row count",

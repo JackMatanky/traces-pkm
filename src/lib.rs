@@ -41,7 +41,7 @@
 //!   trust verification.
 //! - `Note`, `Frontmatter`, `NoteFieldValue`, `Link` - parsed note data
 //!   structures.
-//! - `FileIndex`, `QueryRequest`, `QueryRecordSet` - persistent index and query
+//! - `FileIndex`, `QueryBuilder`, `QuerySet` - persistent index and query
 //!   execution.
 //! - `TemplateService`, `CommitPolicy`, `WriteMode` - template rendering and
 //!   write operations.
@@ -108,8 +108,7 @@ pub use note::{Note, NoteFieldValue, parse_markdown};
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
-    QueryRecord, QueryRecordSet, QueryRequest, QueryResult, QueryService,
-    SourceSelector,
+    QueryBuilder, QueryResult, QueryRow, QueryService, QuerySet, SourceSelector,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};

@@ -1,36 +1,36 @@
 //! Query rows and result set types for query execution.
-//!
-//! This module implements [`QueryRecord`], which pairs a [`FileBase`] with its
-//! parsed [`Note`] and resolves field paths for template rendering and CLI
-//! output. Each record resolves `file.*`, `task.*`, frontmatter, inline fields,
-//! `tags`, and derived inlinks.
-//!
-//! # Main Types
-//!
-//! - [`QueryRecord`] is the primary query row, produced by
-//!   [`super::QueryService::execute`].
-//! - [`QueryRecordSet`] stores result rows and provides chained transformation
-//!   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and terminal
-//!   rendering methods (`table`, `list`, `task_list`).
-//! - Task rows carry a small overlay with `task.completed` and `task.text`.
-//!
-//! # Examples
-//!
-//! ```ignore
-//! use std::sync::Arc;
-//!
-//! use traces_pkm::{IndexerService, QueryRequest, QueryService, SourceSelector};
-//!
-//! let index = Arc::new(IndexerService::new(".").build().unwrap());
-//! let records = QueryService::new("class")
-//!     .execute(&index, QueryRequest::pages(SourceSelector::All));
-//! ```
-//!
-//! [`FileBase`]: crate::file::FileBase
-//! [`Note`]: crate::note::Note
 
 use std::{path::PathBuf, sync::Arc};
 
+/// This module implements [`QueryRow`], which pairs a [`FileBase`] with
+/// its parsed [`Note`] and resolves field paths for template rendering and
+/// CLI output. Each row resolves `file.*`, `task.*`, frontmatter, inline
+/// fields, `tags`, and derived inlinks.
+///
+/// # Main Types
+///
+/// - [`QueryRow`] is the primary query row, produced by
+///   [`super::QueryService::execute`].
+/// - [`QuerySet`] stores result rows and provides chained transformation
+///   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and
+///   terminal rendering methods (`table`, `list`, `task_list`).
+/// - Task rows carry a small overlay with `task.completed` and
+///   `task.text`.
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::sync::Arc;
+///
+/// use traces_pkm::{IndexerService, QueryBuilder, QueryService, SourceSelector};
+///
+/// let index = Arc::new(IndexerService::new(".").build().unwrap());
+/// let rows = QueryService::new("class")
+///     .execute(&index, QueryBuilder::pages(SourceSelector::All));
+/// ```
+///
+/// [`FileBase`]: crate::file::FileBase
+/// [`Note`]: crate::note::Note
 use super::{
     QueryPlan, QueryResult, QueryTransform,
     format::{QueryDisplayFormat, TaskPathStyle},
@@ -58,20 +58,20 @@ struct TaskRow {
 
 /// A query row over one indexed [`FileEntry`].
 ///
-/// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
+/// Each row resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
 /// and derived inlinks for template rendering and CLI output.
 #[derive(Clone)]
-pub struct QueryRecord {
+pub struct QueryRow {
     index: Arc<FileIndex>,
     position: RowIndex,
     /// Overrides field resolution for exploded rows produced by
-    /// [`QueryRecordSet::flatten`].
+    /// [`QuerySet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
     kind: RowKind,
 }
 
-impl QueryRecord {
-    /// Constructs a new [`QueryRecord`] at `position` in `index`.
+impl QueryRow {
+    /// Constructs a new [`QueryRow`] at `position` in `index`.
     pub(super) fn from_row(index: Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
             index,
@@ -196,7 +196,7 @@ impl QueryRecord {
 
     /// Returns a copy of this record with `path` overridden to `value`.
     ///
-    /// Used by [`QueryRecordSet::flatten`] to set the resolved value for
+    /// Used by [`QuerySet::flatten`] to set the resolved value for
     /// exploded list rows. If `path` already has an override, the value is
     /// updated in place.
     pub(super) fn with_flattened(
@@ -273,7 +273,7 @@ impl QueryRecord {
     }
 }
 
-impl PartialEq for QueryRecord {
+impl PartialEq for QueryRow {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.entry() == other.entry()
@@ -282,11 +282,11 @@ impl PartialEq for QueryRecord {
     }
 }
 
-impl std::fmt::Debug for QueryRecord {
+impl std::fmt::Debug for QueryRow {
     #[inline]
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("QueryRecord")
+            .debug_struct("QueryRow")
             .field("position", &self.position)
             .field("entry", self.entry())
             .field("flattened", &self.flattened)
@@ -295,32 +295,32 @@ impl std::fmt::Debug for QueryRecord {
     }
 }
 
-/// An ordered collection of [`QueryRecord`] rows produced by an index query.
+/// An ordered collection of [`QueryRow`] rows produced by an index query.
 ///
 /// Page-level outcomes contain one row per Note, while task-level outcomes
 /// contain one row per task item. Transformation methods consume and return
-/// a [`QueryRecordSet`], enabling method chaining.
+/// a [`QuerySet`], enabling method chaining.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use traces_pkm::query::QueryRecordSet;
+/// use traces_pkm::query::QuerySet;
 ///
-/// let outcome = QueryRecordSet::default();
+/// let outcome = QuerySet::default();
 /// assert!(outcome.is_empty());
 /// ```
 #[must_use]
 #[derive(Clone, Default)]
-pub struct QueryRecordSet {
-    records: Arc<[QueryRecord]>,
+pub struct QuerySet {
+    records: Arc<[QueryRow]>,
     plan: QueryPlan,
-    cache: std::sync::OnceLock<Arc<[QueryRecord]>>,
+    cache: std::sync::OnceLock<Arc<[QueryRow]>>,
 }
 
-impl QueryRecordSet {
-    /// Wraps `records` into a new [`QueryRecordSet`] with no pending
+impl QuerySet {
+    /// Wraps `records` into a new [`QuerySet`] with no pending
     /// transforms.
-    pub(super) fn new(records: Vec<QueryRecord>) -> Self {
+    pub(super) fn new(records: Vec<QueryRow>) -> Self {
         Self {
             records: records.into(),
             plan: QueryPlan::default(),
@@ -328,13 +328,13 @@ impl QueryRecordSet {
         }
     }
 
-    /// Returns this record set's rows with every pending transform applied,
+    /// Returns this query set's rows with every pending transform applied,
     /// computing and memoizing the result on first access. Every read (`len`,
     /// `get`, `iter`, the minijinja `Object` iteration methods, and the
     /// terminal renderers) goes through this, so a chain of
     /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::run`] at
     /// most once, however many times the resulting rows are read.
-    fn materialized(&self) -> &Arc<[QueryRecord]> {
+    fn materialized(&self) -> &Arc<[QueryRow]> {
         self.cache.get_or_init(|| {
             if self.plan.is_empty() {
                 Arc::clone(&self.records)
@@ -344,37 +344,37 @@ impl QueryRecordSet {
         })
     }
 
-    /// Returns the number of [`QueryRecord`] rows in this record set.
+    /// Returns the number of [`QueryRow`] rows in this query set.
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
         self.materialized().len()
     }
 
-    /// Returns `true` if this record set contains no [`QueryRecord`] rows.
+    /// Returns `true` if this query set contains no [`QueryRow`] rows.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.materialized().is_empty()
     }
 
-    /// Returns a reference to the [`QueryRecord`] at `index`, or `None` if
+    /// Returns a reference to the [`QueryRow`] at `index`, or `None` if
     /// out of bounds.
     #[inline]
     #[must_use]
-    pub fn get(&self, index: usize) -> Option<&QueryRecord> {
+    pub fn get(&self, index: usize) -> Option<&QueryRow> {
         self.materialized().get(index)
     }
 
-    /// Returns an iterator over references to the contained [`QueryRecord`]
+    /// Returns an iterator over references to the contained [`QueryRow`]
     /// rows.
     #[inline]
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, QueryRecord> {
+    pub fn iter(&self) -> std::slice::Iter<'_, QueryRow> {
         self.materialized().iter()
     }
 
-    /// Appends `transform` to this record set's pending plan, returning a
-    /// new [`QueryRecordSet`] over the same base rows. Cheap: moves the
+    /// Appends `transform` to this query set's pending plan, returning a
+    /// new [`QuerySet`] over the same base rows. Cheap: moves the
     /// `Arc` (no refcount bump; `self` is consumed) and the short
     /// transform-step list — nothing is evaluated until [`Self::materialized`]
     /// runs on read.
@@ -525,10 +525,10 @@ impl QueryRecordSet {
 }
 
 /// Compares evaluated rows, not the pending plan or cache state — two
-/// record sets that reach the same rows via different transform paths
+/// query sets that reach the same rows via different transform paths
 /// (e.g. two chained `.filter()` calls vs. one combined filter expression)
 /// must compare equal once both are materialized.
-impl PartialEq for QueryRecordSet {
+impl PartialEq for QuerySet {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.materialized() == other.materialized()
@@ -536,41 +536,24 @@ impl PartialEq for QueryRecordSet {
 }
 
 /// Shows the materialized rows, not the pending plan or cache state — a
-/// derived `Debug` would leak `QueryRecordSet`'s internal representation
+/// derived `Debug` would leak `QuerySet`'s internal representation
 /// (the pre-transform `records` and the lazily-populated `cache`, which
 /// duplicate each other's content once materialized), confusing test-failure
-/// diffs. Mirrors [`QueryRecord`]'s own hand-rolled [`std::fmt::Debug`].
-impl std::fmt::Debug for QueryRecordSet {
+/// diffs. Mirrors [`QueryRow`]'s own hand-rolled [`std::fmt::Debug`].
+impl std::fmt::Debug for QuerySet {
     #[inline]
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_tuple("QueryRecordSet")
-            .field(&self.materialized())
-            .finish()
+        formatter.debug_tuple("QuerySet").field(&self.materialized()).finish()
     }
 }
 
-/// Converts the [`QueryRecordSet`] into an iterator over owned [`QueryRecord`]
+/// Converts the [`QuerySet`] into an iterator over owned [`QueryRow`]
 /// rows. Flushes any pending plan first, like every other read; clones each row
-/// out of the materialized `Arc<[QueryRecord]>` since an `Arc<[T]>` has no
-/// owned `into_iter`. For a page row this is just an `Arc<FileIndex>` refcount
-/// bump; a task row additionally clones its own small owned `text: String`, and
-/// a `flatten()`-derived row clones its `flattened` field vec — neither
-/// duplicates the underlying `Note`.
-///
-/// No zero-copy fast path for the sole-owner case: `Arc::try_unwrap`/
-/// `Arc::into_inner` require `T: Sized`, so neither exists for
-/// `Arc<[QueryRecord]>` (confirmed: substituting either does not compile).
-/// Reconstructing a `Box<[T]>` from a sole-owned `Arc<[T]>` needs `unsafe`
-/// pointer surgery with no safe std API for it, and switching the
-/// `records`/`cache` fields to `Arc<Vec<QueryRecord>>` to unlock a safe
-/// `try_unwrap` would add an extra allocation and indirection to every read
-/// (`.len()`/`.get()`/materialization), not just this one call. See
-/// `benches/query_execution.rs`'s `bench_into_iter_owned` for the measured
-/// per-row cost this clone actually pays.
-impl IntoIterator for QueryRecordSet {
+/// out of the materialized `Arc<[QueryRow]>` since an `Arc<[T]>` has no
+/// owned `into_iter`.
+impl IntoIterator for QuerySet {
     type IntoIter = std::vec::IntoIter<Self::Item>;
-    type Item = QueryRecord;
+    type Item = QueryRow;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -578,30 +561,28 @@ impl IntoIterator for QueryRecordSet {
     }
 }
 
-/// Creates an iterator over borrowed [`QueryRecord`] rows from the
-/// [`QueryRecordSet`], flushing any pending plan first.
-impl<'a> IntoIterator for &'a QueryRecordSet {
-    type IntoIter = std::slice::Iter<'a, QueryRecord>;
-    type Item = &'a QueryRecord;
+/// Creates an iterator over borrowed [`QueryRow`] rows from the
+/// [`QuerySet`], flushing any pending plan first.
+impl<'a> IntoIterator for &'a QuerySet {
+    type IntoIter = std::slice::Iter<'a, QueryRow>;
+    type Item = &'a QueryRow;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use super::QueryRecord;
+    use super::QueryRow;
 
     #[test]
-    fn query_record_stays_within_its_size_budget() {
-        let size = std::mem::size_of::<QueryRecord>();
+    fn query_row_stays_within_its_size_budget() {
+        let size = std::mem::size_of::<QueryRow>();
         assert!(
             size <= 112,
-            "QueryRecord grew to {size} bytes, past its ~96-byte target — \
-             check for an accidentally un-boxed field before raising this \
-             bound"
+            "QueryRow grew to {size} bytes, past its ~96-byte target — check \
+             for an accidentally un-boxed field before raising this bound"
         );
     }
 }

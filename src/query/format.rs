@@ -1,6 +1,6 @@
 //! Markdown display formats for query result rows.
 
-use super::{QueryError, QueryResult, grammar::FieldPath, record::QueryRecord};
+use super::{QueryError, QueryResult, grammar::FieldPath, row::QueryRow};
 
 /// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
 #[derive(Copy, Clone, Debug, Default)]
@@ -68,10 +68,7 @@ impl QueryDisplayFormat {
     ///
     /// Returns query errors for malformed field paths, table column
     /// mismatches, or task-list rendering on page rows.
-    pub(super) fn render(
-        &self,
-        records: &[QueryRecord],
-    ) -> QueryResult<String> {
+    pub(super) fn render(&self, records: &[QueryRow]) -> QueryResult<String> {
         match self {
             Self::Table {
                 headers,
@@ -89,7 +86,7 @@ impl QueryDisplayFormat {
     fn render_table(
         headers: &[String],
         columns: &[String],
-        records: &[QueryRecord],
+        records: &[QueryRow],
     ) -> QueryResult<String> {
         if headers.len() != columns.len() {
             return Err(QueryError::TableColumnCountMismatch {
@@ -117,10 +114,7 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    fn render_list(
-        field: &str,
-        records: &[QueryRecord],
-    ) -> QueryResult<String> {
+    fn render_list(field: &str, records: &[QueryRow]) -> QueryResult<String> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
         for record in records {
@@ -132,7 +126,7 @@ impl QueryDisplayFormat {
     }
 
     fn render_task_list(
-        records: &[QueryRecord],
+        records: &[QueryRow],
         path_style: TaskPathStyle,
     ) -> QueryResult<String> {
         use std::fmt::Write as _;

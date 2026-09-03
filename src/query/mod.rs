@@ -1,9 +1,9 @@
 //! Query source selection, field resolution, and result transformation.
 //!
-//! [`QueryService`] borrows a [`FileIndex`] and executes a [`QueryRequest`].
+//! [`QueryService`] borrows a [`FileIndex`] and executes a [`QueryBuilder`].
 //! The pipeline selects Notes via [`SourceSelector`], pairs each matching Note
-//! with its [`FileBase`] as a [`QueryRecord`], and applies chained
-//! transformations through [`QueryRecordSet`].
+//! with its [`FileBase`] as a [`QueryRow`], and applies chained
+//! transformations through [`QuerySet`].
 //!
 //! # Source Expression Language
 //!
@@ -31,14 +31,14 @@
 //! # Main Types
 //!
 //! - [`QueryService`] drives query execution: [`QueryService::execute`] borrows
-//!   a [`FileIndex`] and a [`QueryRequest`], producing a [`QueryRecordSet`].
-//! - [`QueryRequest`] describes page/task mode, source selection, and ordered
+//!   a [`FileIndex`] and a [`QueryBuilder`], producing a [`QuerySet`].
+//! - [`QueryBuilder`] describes page/task mode, source selection, and ordered
 //!   transformations.
 //! - [`SourceSelector`] is the top-level entry point: either all Notes or a
 //!   parsed expression.
-//! - [`QueryRecord`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
+//! - [`QueryRow`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
 //!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
-//! - [`QueryRecordSet`] stores result rows and provides chained transformation
+//! - [`QuerySet`] stores result rows and provides chained transformation
 //!   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and terminal
 //!   rendering methods (`table`, `list`, `task_list`).
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
@@ -48,19 +48,21 @@
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`Note`]: crate::note::Note
 
+mod builder;
 mod error;
 mod format;
 mod grammar;
 mod plan;
-mod record;
-mod request;
+mod row;
 mod service;
 mod sort;
 mod value;
 
+pub use builder::QueryBuilder;
+use builder::QueryMode;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
-pub use error::{QueryDialect, QueryError, QueryRequestError, QueryResult};
+pub use error::{QueryBuilderError, QueryDialect, QueryError, QueryResult};
 pub(crate) use format::TaskPathStyle;
 pub use grammar::SourceSelector;
 pub(crate) use grammar::{
@@ -68,9 +70,7 @@ pub(crate) use grammar::{
     SourceExpr,
 };
 use plan::{QueryPlan, QueryTransform};
-pub use record::{QueryRecord, QueryRecordSet};
-use request::QueryMode;
-pub use request::QueryRequest;
+pub use row::{QueryRow, QuerySet};
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
 
@@ -90,12 +90,12 @@ mod tests {
 
         use super::*;
 
-        /// Builds a [`QueryRecordSet`] over every Markdown Note in `files`
+        /// Builds a [`QuerySet`] over every Markdown Note in `files`
         /// written under `temp`.
         pub(super) fn outcome_for_files(
             temp: &Path,
             files: &[(&str, &str)],
-        ) -> QueryRecordSet {
+        ) -> QuerySet {
             for (name, content) in files {
                 fs::write(temp.join(name), content).expect("write note");
             }
@@ -103,15 +103,12 @@ mod tests {
                 IndexerService::new(temp).build().expect("build index"),
             );
             QueryService::new("class")
-                .execute(&index, QueryRequest::pages(SourceSelector::All))
+                .execute(&index, QueryBuilder::pages(SourceSelector::All))
         }
 
-        /// Builds a single-record [`QueryRecordSet`] from a single Markdown
+        /// Builds a single-record [`QuerySet`] from a single Markdown
         /// Note's content.
-        pub(super) fn outcome_for(
-            temp: &Path,
-            content: &str,
-        ) -> QueryRecordSet {
+        pub(super) fn outcome_for(temp: &Path, content: &str) -> QuerySet {
             outcome_for_files(temp, &[("note.md", content)])
         }
 
@@ -151,7 +148,7 @@ mod tests {
             );
             let file = find_base(index.entries(), Path::new("a.md"));
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::pages(SourceSelector::All));
+                .execute(&index, QueryBuilder::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
             assert_eq!(record.file(), file);
         }
@@ -168,7 +165,7 @@ mod tests {
                 .note()
                 .expect("note");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::pages(SourceSelector::All));
+                .execute(&index, QueryBuilder::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
             assert_eq!(record.note(), Some(note));
         }
@@ -182,7 +179,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(SourceSelector::All));
+                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
             assert_eq!(record.task_completed(), Some(true));
         }
@@ -196,7 +193,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(SourceSelector::All));
+                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
             assert_eq!(record.task_text(), Some("Buy milk"));
         }
@@ -394,7 +391,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(SourceSelector::All));
+                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
             assert_eq!(
                 record.field("task.completed"),
@@ -425,7 +422,7 @@ mod tests {
 
         use super::*;
 
-        fn outcome_of_three(temp: &Path) -> QueryRecordSet {
+        fn outcome_of_three(temp: &Path) -> QuerySet {
             outcome_for_files(temp, &[
                 ("a.md", "# A"),
                 ("b.md", "# B"),
@@ -464,7 +461,7 @@ mod tests {
 
             assert_eq!(
                 outcome.limit(-1),
-                Err(QueryError::Request(QueryRequestError::LimitOutOfRange {
+                Err(QueryError::Request(QueryBuilderError::LimitOutOfRange {
                     value: -1
                 }))
             );
@@ -505,7 +502,7 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::Request(QueryRequestError::FieldPath(
+                Err(QueryError::Request(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );
@@ -593,7 +590,7 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::Request(QueryRequestError::FieldPath(
+                Err(QueryError::Request(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );
@@ -694,7 +691,7 @@ mod tests {
 
         #[test]
         fn renders_no_data_rows_for_an_empty_outcome() {
-            let table = QueryRecordSet::default()
+            let table = QuerySet::default()
                 .table(&["Name"], &["file.name"])
                 .expect("valid table");
 
@@ -716,7 +713,7 @@ mod tests {
 
         #[test]
         fn escapes_pipe_characters_in_headers_the_same_way_as_cell_values() {
-            let table = QueryRecordSet::default()
+            let table = QuerySet::default()
                 .table(&["A|B"], &["file.name"])
                 .expect("valid table");
 
@@ -791,8 +788,7 @@ mod tests {
 
         #[test]
         fn renders_an_empty_string_for_an_empty_outcome() {
-            let list =
-                QueryRecordSet::default().list("rating").expect("valid list");
+            let list = QuerySet::default().list("rating").expect("valid list");
 
             assert_eq!(list, "");
         }
@@ -900,7 +896,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(SourceSelector::All));
+                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
             let rendered = outcome
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
@@ -917,7 +913,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(SourceSelector::All));
+                .execute(&index, QueryBuilder::tasks(SourceSelector::All));
             let rendered = outcome
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
@@ -927,7 +923,7 @@ mod tests {
 
         #[test]
         fn renders_an_empty_string_for_an_empty_outcome() {
-            let rendered = QueryRecordSet::default()
+            let rendered = QuerySet::default()
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
 
@@ -953,13 +949,13 @@ mod tests {
 
         #[test]
         fn len_returns_zero_for_an_empty_outcome() {
-            let empty = QueryRecordSet::default();
+            let empty = QuerySet::default();
             assert_eq!(empty.len(), 0);
         }
 
         #[test]
         fn is_empty_returns_true_for_an_empty_outcome() {
-            let empty = QueryRecordSet::default();
+            let empty = QuerySet::default();
             assert!(empty.is_empty());
         }
 

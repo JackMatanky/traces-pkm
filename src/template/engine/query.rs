@@ -78,8 +78,8 @@ use crate::{
     index::{FileIndex, IndexError, IndexerService},
     note::NoteFieldValue,
     query::{
-        ClassExpansionMode, FieldPath, FileField, QueryError, QueryRecord,
-        QueryRecordSet, QueryRequest, QueryService, SourceAtom, SourceSelector,
+        ClassExpansionMode, FieldPath, FileField, QueryBuilder, QueryError,
+        QueryRow, QueryService, QuerySet, SourceAtom, SourceSelector,
         TaskPathStyle,
     },
     schema::SchemaService,
@@ -186,12 +186,12 @@ impl QueryOps {
         source: SourceSelector,
     ) -> TemplateEngineResult<Value> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
-        let request = if self.is_task {
-            QueryRequest::tasks(source)
+        let builder = if self.is_task {
+            QueryBuilder::tasks(source)
         } else {
-            QueryRequest::pages(source)
+            QueryBuilder::pages(source)
         };
-        Ok(Value::from_object(self.service.execute(&index, request)))
+        Ok(Value::from_object(self.service.execute(&index, builder)))
     }
 }
 
@@ -288,7 +288,7 @@ fn resolve_from_arg(
 /// purely to smuggle a typed value through a `Value`.
 impl Object for SourceSelector {}
 
-impl Object for QueryRecordSet {
+impl Object for QuerySet {
     #[inline]
     fn repr(self: &Arc<Self>) -> ObjectRepr {
         ObjectRepr::Seq
@@ -424,7 +424,7 @@ impl Object for QueryRecordSet {
               signature; the body only needs to borrow each entry"
 )]
 fn table_filter(
-    outcome: &QueryRecordSet,
+    outcome: &QuerySet,
     headers: Vec<String>,
     columns: Vec<String>,
 ) -> TemplateEngineResult<String> {
@@ -434,20 +434,17 @@ fn table_filter(
 }
 
 /// `outcome | list(path)` filter body. See [`QueryRecordSet::list`].
-fn list_filter(
-    outcome: &QueryRecordSet,
-    path: &str,
-) -> TemplateEngineResult<String> {
+fn list_filter(outcome: &QuerySet, path: &str) -> TemplateEngineResult<String> {
     outcome.list(path).map_err(query_error)
 }
 
 /// `outcome | task_list` filter body. See [`QueryRecordSet::task_list`].
-fn task_list_filter(outcome: &QueryRecordSet) -> TemplateEngineResult<String> {
+fn task_list_filter(outcome: &QuerySet) -> TemplateEngineResult<String> {
     outcome.task_list(TaskPathStyle::default()).map_err(query_error)
 }
 
 /// `outcome | count` filter body: the number of records in `outcome`.
-fn count_filter(outcome: &QueryRecordSet) -> usize {
+fn count_filter(outcome: &QuerySet) -> usize {
     outcome.len()
 }
 
@@ -471,7 +468,6 @@ fn with_descendants_filter(source: &SourceSelector) -> Value {
 
 /// Replaces every `Class` atom's [`ClassExpansionMode`] in `source`, keeping
 /// the match set empty (still unresolved; [`resolve_classes`] fills it in at
-/// `.from()` dispatch time, same as DSL-parsed sources).
 fn set_class_depth(
     mut source: SourceSelector,
     mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
@@ -490,7 +486,7 @@ fn set_class_depth(
     source
 }
 
-impl Object for QueryRecord {
+impl Object for QueryRow {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
     /// `"file"` and `"task"` return forwarding wrappers for `record.file.*` and
@@ -534,7 +530,7 @@ impl Object for QueryRecord {
 /// string-based `file.` prefix handling, which doesn't apply here: `key` is
 /// already a single attribute segment, never a dotted path.
 #[derive(Debug)]
-struct FileFields(Arc<QueryRecord>);
+struct FileFields(Arc<QueryRow>);
 
 impl Object for FileFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -559,7 +555,7 @@ impl Object for FileFields {
 /// missing attribute, matching [`field_value`]'s handling of
 /// [`NoteFieldValue::Null`].
 #[derive(Debug)]
-struct TaskFields(Arc<QueryRecord>);
+struct TaskFields(Arc<QueryRow>);
 
 impl Object for TaskFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -1412,8 +1408,8 @@ mod tests {
                 task_from.call(&state, &[]).expect("tasks.from succeeds");
 
             let count = tasks
-                .downcast_object_ref::<QueryRecordSet>()
-                .expect("value wraps a QueryRecordSet")
+                .downcast_object_ref::<QuerySet>()
+                .expect("value wraps a QuerySet")
                 .len();
             assert_eq!(count, 0);
         }

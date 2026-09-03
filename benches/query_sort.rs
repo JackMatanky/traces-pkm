@@ -34,7 +34,7 @@ use criterion::{
     criterion_main,
 };
 use traces_pkm::{
-    FileIndex, IndexerService, NoteFieldValue, QueryRecord, QueryRequest,
+    FileIndex, IndexerService, NoteFieldValue, QueryBuilder, QueryRow,
     QueryService, SourceSelector,
 };
 
@@ -147,7 +147,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
                 |index| {
                     QueryService::new("class").execute(
                         &index,
-                        QueryRequest::pages(SourceSelector::All)
+                        QueryBuilder::pages(SourceSelector::All)
                             .sort("rating", false)
                             .expect("valid sort"),
                     )
@@ -213,7 +213,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .sort("rating", false)
                                 .expect("valid sort"),
                         )
@@ -231,7 +231,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                     |index| {
                         QueryService::new("class").execute(
                             &index,
-                            QueryRequest::pages(SourceSelector::All)
+                            QueryBuilder::pages(SourceSelector::All)
                                 .sort("rating", false)
                                 .expect("valid sort")
                                 .limit(10)
@@ -277,9 +277,9 @@ fn bench_permute_query_records(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/permute_records");
     for &n in SORT_SWEEP_SIZES {
         let index = create_page_index(n);
-        let base: Vec<QueryRecord> = {
+        let base: Vec<QueryRow> = {
             let set = QueryService::new("class")
-                .execute(&index, QueryRequest::pages(SourceSelector::All));
+                .execute(&index, QueryBuilder::pages(SourceSelector::All));
             (0..set.len())
                 .map(|i| set.get(i).expect("row present").clone())
                 .collect()

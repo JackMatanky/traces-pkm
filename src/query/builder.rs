@@ -1,7 +1,7 @@
-//! Query execution request: source, mode, and transform-plan builder.
+//! Declarative query builder: source, mode, and transform plan.
 
 use super::{
-    QueryPlan, QueryRequestError, QueryTransform, grammar::SourceSelector,
+    QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -10,15 +10,15 @@ pub(super) enum QueryMode {
     Tasks,
 }
 
-/// Query execution request.
+/// Declarative query builder.
 #[derive(Clone, Debug, PartialEq)]
-pub struct QueryRequest {
+pub struct QueryBuilder {
     mode: QueryMode,
     source: SourceSelector,
     plan: QueryPlan,
 }
 
-impl QueryRequest {
+impl QueryBuilder {
     /// Builds a page-row query request for `source`.
     #[inline]
     #[must_use]
@@ -45,9 +45,9 @@ impl QueryRequest {
     ///
     /// # Errors
     ///
-    /// Returns `QueryRequestError` when `expr` is not a valid filter.
+    /// Returns `QueryBuilderError` when `expr` is not a valid filter.
     #[inline]
-    pub fn filter(mut self, expr: &str) -> Result<Self, QueryRequestError> {
+    pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::filter(expr)?);
         Ok(self)
     }
@@ -55,14 +55,13 @@ impl QueryRequest {
     /// Appends a parsed sort transform.
     ///
     /// # Errors
-    ///
-    /// Returns `QueryRequestError` when `field` is not a valid field path.
+    /// Returns `QueryBuilderError` when `field` is not a valid field path.
     #[inline]
     pub fn sort(
         mut self,
         field: &str,
         descending: bool,
-    ) -> Result<Self, QueryRequestError> {
+    ) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::sort(field, descending)?);
         Ok(self)
     }
@@ -71,25 +70,25 @@ impl QueryRequest {
     ///
     /// # Errors
     ///
-    /// Returns `QueryRequestError` when `n` is negative or too large for this
+    /// Returns `QueryBuilderError` when `n` is negative or too large for this
     /// platform.
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
             dead_code,
-            reason = "public builder method on QueryRequest; exercised in \
+            reason = "public builder method on QueryBuilder; exercised in \
                       tests and test-utils"
         )
     )]
-    pub fn limit(mut self, n: i64) -> Result<Self, QueryRequestError> {
+    pub fn limit(mut self, n: i64) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::limit(n)?);
         Ok(self)
     }
 
-    /// Splits this request into its mode, source, and transform plan for
+    /// Splits this builder into its mode, source, and transform plan for
     /// [`super::QueryService::execute`]. The only way anything outside this
-    /// file observes `QueryRequest`'s fields — they stay private.
+    /// file observes `QueryBuilder`'s fields — they stay private.
     pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
         (self.mode, self.source, self.plan)
     }
@@ -105,13 +104,13 @@ mod tests {
         query::{FieldPathError, QueryService},
     };
 
-    mod query_request {
+    mod query_builder {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn query_request_preserves_transform_order() {
+        fn query_builder_preserves_transform_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "---\nrating: 1\n---\n")
                 .expect("write a.md");
@@ -122,7 +121,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let request = QueryRequest::pages(SourceSelector::All)
+            let request = QueryBuilder::pages(SourceSelector::All)
                 .limit(2)
                 .expect("valid limit")
                 .filter("rating >= 5")
@@ -156,7 +155,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let request = QueryRequest::pages(SourceSelector::All)
+            let request = QueryBuilder::pages(SourceSelector::All)
                 .sort("rating", true)
                 .expect("valid sort")
                 .limit(2)
@@ -195,7 +194,7 @@ mod tests {
             );
 
             for n in [5_usize, 50, 100] {
-                let topk_request = QueryRequest::pages(SourceSelector::All)
+                let topk_request = QueryBuilder::pages(SourceSelector::All)
                     .sort("rating", false)
                     .expect("valid sort")
                     .limit(i64::try_from(n).expect("limit fits i64"))
@@ -214,7 +213,7 @@ mod tests {
                     .collect();
 
                 let full_sort_request =
-                    QueryRequest::pages(SourceSelector::All)
+                    QueryBuilder::pages(SourceSelector::All)
                         .sort("rating", false)
                         .expect("valid sort");
                 let full_outcome = QueryService::new("class")
@@ -260,7 +259,7 @@ mod tests {
             // A naive fusion would pick the top 2 (b, d) before the filter
             // removes d, leaving only [b]. The filter must run between the
             // sort and the limit, so the correct result is [b, e].
-            let request = QueryRequest::pages(SourceSelector::All)
+            let request = QueryBuilder::pages(SourceSelector::All)
                 .sort("rating", true)
                 .expect("valid sort")
                 .filter("file.path != \"d.md\"")
@@ -302,7 +301,7 @@ mod tests {
             );
 
             // Build sequential filters (simulating multiple --where flags)
-            let fused_request = QueryRequest::pages(SourceSelector::All)
+            let fused_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2")
                 .expect("valid filter")
                 .filter("rating < 8")
@@ -312,7 +311,7 @@ mod tests {
                 QueryService::new("class").execute(&index, fused_request);
 
             // Single combined filter for comparison
-            let combined_request = QueryRequest::pages(SourceSelector::All)
+            let combined_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2 and rating < 8")
                 .expect("valid filter");
             let combined_outcome =
@@ -332,21 +331,21 @@ mod tests {
         #[test]
         fn wraps_request_builder_errors() {
             assert!(matches!(
-                QueryRequest::pages(SourceSelector::All).filter("rating >"),
-                Err(QueryRequestError::Syntax(_))
+                QueryBuilder::pages(SourceSelector::All).filter("rating >"),
+                Err(QueryBuilderError::Syntax(_))
             ));
             assert_eq!(
-                QueryRequest::pages(SourceSelector::All)
+                QueryBuilder::pages(SourceSelector::All)
                     .sort("file.bogus", false)
                     .err(),
-                Some(QueryRequestError::FieldPath(FieldPathError::new(
+                Some(QueryBuilderError::FieldPath(FieldPathError::new(
                     "file.bogus",
                     None
                 )))
             );
             assert_eq!(
-                QueryRequest::pages(SourceSelector::All).limit(-1).err(),
-                Some(QueryRequestError::LimitOutOfRange {
+                QueryBuilder::pages(SourceSelector::All).limit(-1).err(),
+                Some(QueryBuilderError::LimitOutOfRange {
                     value: -1
                 })
             );
@@ -360,7 +359,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            let request = QueryRequest::pages(
+            let request = QueryBuilder::pages(
                 SourceSelector::parse("@book").expect("source"),
             );
 

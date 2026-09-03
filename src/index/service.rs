@@ -208,16 +208,16 @@ mod tests {
         file::FileBase,
         index::FileEntry,
         note::Note,
-        query::{QueryRecordSet, QueryRequest, QueryService, SourceSelector},
+        query::{QueryBuilder, QueryService, QuerySet, SourceSelector},
     };
 
     /// Runs a page-level query via [`QueryService`].
     fn query_pages(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
-    ) -> QueryRecordSet {
+    ) -> QuerySet {
         QueryService::new("class")
-            .execute(index, QueryRequest::pages(source.clone()))
+            .execute(index, QueryBuilder::pages(source.clone()))
     }
 
     /// Finds a [`Note`] by project-relative path in `index`.
