@@ -39,9 +39,9 @@ pub type QueryResult<T> = std::result::Result<T, QueryError>;
 /// ```
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum QueryError {
-    /// A request builder rejected syntax, field paths, or limits.
+    /// A query builder rejected syntax, field paths, or limits.
     #[error(transparent)]
-    Request(#[from] QueryBuilderError),
+    Builder(#[from] QueryBuilderError),
     /// A source or filter expression has invalid syntax.
     #[error(transparent)]
     Syntax(#[from] QuerySyntaxError),
@@ -73,8 +73,8 @@ impl Diagnostic for QueryError {
     fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
         match self {
             Self::Syntax(source)
-            | Self::Request(QueryBuilderError::Syntax(source)) => Some(source),
-            Self::Request(
+            | Self::Builder(QueryBuilderError::Syntax(source)) => Some(source),
+            Self::Builder(
                 QueryBuilderError::FieldPath(_)
                 | QueryBuilderError::LimitOutOfRange {
                     ..

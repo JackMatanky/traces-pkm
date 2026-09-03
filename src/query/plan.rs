@@ -346,3 +346,74 @@ impl QueryTransform {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod optimization {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn empty_plan_is_empty() {
+            let plan = QueryPlan::default();
+            assert!(plan.is_empty());
+        }
+
+        #[test]
+        fn fuse_filters_combines_adjacent_filter_steps() {
+            let mut plan = QueryPlan::default();
+            plan.push(
+                QueryTransform::filter("rating > 2").expect("valid filter"),
+            );
+            plan.push(
+                QueryTransform::filter("rating < 8").expect("valid filter"),
+            );
+
+            let optimized = plan.optimize();
+            assert_eq!(optimized.steps.len(), 1);
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "test asserts steps slice length == 1"
+            )]
+            let first_step = &optimized.steps[0];
+            assert!(matches!(first_step, QueryTransform::Filter(_)));
+        }
+
+        #[test]
+        fn fuse_sort_limit_rewrites_sort_followed_by_limit_into_top_k() {
+            let mut plan = QueryPlan::default();
+            plan.push(
+                QueryTransform::sort("rating", true).expect("valid sort"),
+            );
+            plan.push(QueryTransform::limit(5).expect("valid limit"));
+
+            let optimized = plan.optimize();
+            assert_eq!(optimized.steps.len(), 1);
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "test asserts steps slice length == 1"
+            )]
+            let first_step = &optimized.steps[0];
+            assert!(matches!(first_step, QueryTransform::TopK {
+                n: 5,
+                descending: true,
+                ..
+            }));
+        }
+    }
+
+    mod execution {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        #[test]
+        fn empty_plan_run_returns_input_records_unchanged() {
+            let plan = QueryPlan::default();
+            let records = vec![];
+            assert_eq!(plan.run(records), vec![]);
+        }
+    }
+}

@@ -405,9 +405,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`Request`] if `expr` is an invalid filter expression.
+    /// - [`Builder`] if `expr` is an invalid filter expression.
     ///
-    /// [`Request`]: super::QueryError::Request
+    /// [`Builder`]: super::QueryError::Builder
     #[inline]
     pub(crate) fn filter(self, expr: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::filter(expr)?))
@@ -418,9 +418,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`Request`] if `expr` is an invalid filter expression.
+    /// - [`Builder`] if `expr` is an invalid filter expression.
     ///
-    /// [`Request`]: super::QueryError::Request
+    /// [`Builder`]: super::QueryError::Builder
     #[inline]
     #[cfg_attr(
         not(test),
@@ -438,9 +438,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`Request`] if `path` cannot be parsed as a valid field path.
+    /// - [`Builder`] if `path` cannot be parsed as a valid field path.
     ///
-    /// [`Request`]: super::QueryError::Request
+    /// [`Builder`]: super::QueryError::Builder
     #[inline]
     pub(crate) fn sort(
         self,
@@ -454,10 +454,10 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`Request`] if `n` is negative or exceeds platform pointer-width
+    /// - [`Builder`] if `n` is negative or exceeds platform pointer-width
     ///   limits (`usize::MAX`).
     ///
-    /// [`Request`]: super::QueryError::Request
+    /// [`Builder`]: super::QueryError::Builder
     #[inline]
     pub(crate) fn limit(self, n: i64) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::limit(n)?))
@@ -467,9 +467,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`Request`] if `path` cannot be parsed as a valid field path.
+    /// - [`Builder`] if `path` cannot be parsed as a valid field path.
     ///
-    /// [`Request`]: super::QueryError::Request
+    /// [`Builder`]: super::QueryError::Builder
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::group_by(path)?))
@@ -479,9 +479,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`Request`] if `path` cannot be parsed as a valid field path.
+    /// - [`Builder`] if `path` cannot be parsed as a valid field path.
     ///
-    /// [`Request`]: super::QueryError::Request
+    /// [`Builder`]: super::QueryError::Builder
     pub(crate) fn flatten(self, path: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::flatten(path)?))
     }

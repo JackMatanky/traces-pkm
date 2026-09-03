@@ -487,7 +487,7 @@ mod tests {
 
             assert_eq!(
                 outcome.limit(-1),
-                Err(QueryError::Request(QueryBuilderError::LimitOutOfRange {
+                Err(QueryError::Builder(QueryBuilderError::LimitOutOfRange {
                     value: -1
                 }))
             );
@@ -528,7 +528,7 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::Request(QueryBuilderError::FieldPath(
+                Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );
@@ -616,7 +616,7 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::Request(QueryBuilderError::FieldPath(
+                Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );

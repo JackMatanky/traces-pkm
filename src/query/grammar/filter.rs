@@ -518,7 +518,7 @@ mod tests {
 
             assert!(matches!(
                 outcome.filter(expr),
-                Err(QueryError::Request(QueryBuilderError::Syntax(_)))
+                Err(QueryError::Builder(QueryBuilderError::Syntax(_)))
             ));
         }
 
@@ -566,7 +566,7 @@ mod tests {
 
             assert_eq!(
                 outcome.filter("file.bogus == 1"),
-                Err(QueryError::Request(QueryBuilderError::FieldPath(
+                Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );

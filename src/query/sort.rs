@@ -234,7 +234,7 @@ mod tests {
 
             assert_eq!(
                 outcome.sort("file.bogus", false),
-                Err(QueryError::Request(QueryBuilderError::FieldPath(
+                Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.bogus", None)
                 )))
             );

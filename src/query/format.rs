@@ -163,3 +163,56 @@ impl QueryDisplayFormat {
 pub(super) fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod escape_table_text {
+        use pretty_assertions::assert_eq;
+
+        use super::escape_table_text;
+
+        #[test]
+        fn escapes_pipe_characters_in_table_cells() {
+            assert_eq!(escape_table_text("A | B"), "A \\| B");
+        }
+
+        #[test]
+        fn replaces_newlines_with_spaces_in_table_cells() {
+            assert_eq!(escape_table_text("line1\nline2"), "line1 line2");
+        }
+
+        #[test]
+        fn passes_plain_text_unmodified() {
+            assert_eq!(escape_table_text("hello world"), "hello world");
+        }
+    }
+
+    mod display_format {
+        use super::*;
+
+        #[test]
+        fn task_path_style_default_is_none() {
+            assert!(matches!(TaskPathStyle::default(), TaskPathStyle::None));
+        }
+
+        #[test]
+        fn table_constructor_creates_table_variant() {
+            let fmt = QueryDisplayFormat::table(&["Name"], &["file.name"]);
+            assert!(matches!(fmt, QueryDisplayFormat::Table { .. }));
+        }
+
+        #[test]
+        fn list_constructor_creates_list_variant() {
+            let fmt = QueryDisplayFormat::list("rating");
+            assert!(matches!(fmt, QueryDisplayFormat::List { .. }));
+        }
+
+        #[test]
+        fn task_list_constructor_creates_task_list_variant() {
+            let fmt = QueryDisplayFormat::task_list(TaskPathStyle::Suffix);
+            assert!(matches!(fmt, QueryDisplayFormat::TaskList { .. }));
+        }
+    }
+}

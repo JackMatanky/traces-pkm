@@ -1102,7 +1102,7 @@ mod tests {
             assert!(matches!(
                 &bad_field,
                 CliError::Query {
-                    source: QueryError::Request(QueryBuilderError::FieldPath(error)),
+                    source: QueryError::Builder(QueryBuilderError::FieldPath(error)),
                     ..
                 } if error.suggestion.as_deref() == Some("file.name")
             ));
@@ -1122,7 +1122,7 @@ mod tests {
             .run(&service, Arc::new(PresetDialogProvider::new()))
             .expect_err("unparsable filter fails");
             assert!(matches!(bad_filter, CliError::Query {
-                source: QueryError::Request(QueryBuilderError::Syntax(_)),
+                source: QueryError::Builder(QueryBuilderError::Syntax(_)),
                 ..
             }));
         }

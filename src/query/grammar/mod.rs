@@ -25,3 +25,22 @@ pub use source::SourceSelector;
 pub(crate) use source::{
     ClassExpansionMode, FileClassExpander, SourceAtom, SourceExpr,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod reexports {
+        use super::*;
+
+        #[test]
+        fn source_selector_all_parses_default() {
+            assert!(matches!(SourceSelector::All, SourceSelector::All));
+        }
+
+        #[test]
+        fn field_path_parses_file_name() {
+            assert!(FieldPath::parse("file.name").is_ok());
+        }
+    }
+}

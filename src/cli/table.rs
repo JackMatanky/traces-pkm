@@ -218,7 +218,7 @@ mod tests {
                 .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryBuilderError::FieldPath(_)),
+                source: QueryError::Builder(QueryBuilderError::FieldPath(_)),
                 ..
             }));
         }
@@ -334,7 +334,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Request(QueryBuilderError::Syntax(_)),
+                source: QueryError::Builder(QueryBuilderError::Syntax(_)),
                 ..
             }));
         }
