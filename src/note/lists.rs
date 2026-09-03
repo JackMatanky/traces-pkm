@@ -14,12 +14,12 @@
 //!   line.
 //! - [`TaskIter`]: a depth-first iterator yielding task items across top-level
 //!   and nested child lists.
+use chrono::NaiveDate;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
 use crate::{FieldKey, SourceLine, TaskStatus};
-
 /// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct List {
@@ -64,7 +64,7 @@ impl List {
 /// inline fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
-    text: String,
+    text: ListText,
     kind: ListItemType,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
@@ -83,7 +83,7 @@ impl ListItem {
                       constructor symmetry with with_children"
         )
     )]
-    pub(crate) fn new(text: impl Into<String>, kind: ListItemType) -> Self {
+    pub(crate) fn new(text: impl Into<ListText>, kind: ListItemType) -> Self {
         Self {
             text: text.into(),
             kind,
@@ -100,7 +100,7 @@ impl ListItem {
     #[inline]
     #[must_use]
     pub(crate) fn with_children(
-        text: impl Into<String>,
+        text: impl Into<ListText>,
         kind: ListItemType,
         children: Vec<List>,
     ) -> Self {
@@ -130,11 +130,26 @@ impl ListItem {
         self
     }
 
-    /// Returns the plain text content.
+    /// Returns the plain or normalized text representation holding both raw
+    /// and clean variants.
     #[inline]
     #[must_use]
-    pub fn text(&self) -> &str {
+    pub fn text(&self) -> &ListText {
         &self.text
+    }
+
+    /// Returns the raw text with only the leading marker prefix stripped.
+    #[inline]
+    #[must_use]
+    pub fn raw_text(&self) -> &str {
+        self.text.raw()
+    }
+
+    /// Returns the normalized clean text with task metadata stripped.
+    #[inline]
+    #[must_use]
+    pub fn clean_text(&self) -> &str {
+        self.text.clean()
     }
 
     /// Returns this item's classification: plain bullet, checkbox, or Task.
@@ -255,15 +270,6 @@ impl ListItemType {
     /// Returns `true` if this list item is classified as a Task.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
     pub const fn is_task(&self) -> bool {
         matches!(self, Self::Task(_))
     }
@@ -271,15 +277,6 @@ impl ListItemType {
     /// Returns `true` if this list item is classified as a Checkbox.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
     pub const fn is_checkbox(&self) -> bool {
         matches!(self, Self::Checkbox)
     }
@@ -287,15 +284,6 @@ impl ListItemType {
     /// Returns `true` if this list item is classified as a plain bullet.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
     pub const fn is_plain(&self) -> bool {
         matches!(self, Self::Plain)
     }
@@ -303,24 +291,32 @@ impl ListItemType {
 
 /// Task-specific data carried by a [`ListItemType::Task`] item.
 ///
-/// Holds the task's resolved status and a precomputed `is_fully_complete` flag
-/// indicating whether every descendant task in this item's subtree has a
-/// complete or cancelled status.
+/// Holds the task's resolved status, a precomputed `is_fully_complete` flag,
+/// an optional priority level, and extracted task dates.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskListItem {
     status: TaskStatus,
     fully_complete: bool,
+    priority: Option<TaskPriority>,
+    dates: TaskDates,
 }
 
 impl TaskListItem {
-    /// Creates a task list item with its resolved status and precomputed
-    /// fully-complete state.
+    /// Creates a task list item with its resolved status, precomputed
+    /// fully-complete state, priority, and dates.
     #[inline]
     #[must_use]
-    pub const fn new(status: TaskStatus, fully_complete: bool) -> Self {
+    pub const fn new(
+        status: TaskStatus,
+        fully_complete: bool,
+        priority: Option<TaskPriority>,
+        dates: TaskDates,
+    ) -> Self {
         Self {
             status,
             fully_complete,
+            priority,
+            dates,
         }
     }
 
@@ -346,16 +342,345 @@ impl TaskListItem {
     /// Alias for [`Self::is_fully_complete`].
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence in issue 07"
-        )
-    )]
     pub const fn fully_complete(&self) -> bool {
         self.is_fully_complete()
+    }
+
+    /// Returns the task's priority, or [`None`] if no priority was specified.
+    #[inline]
+    #[must_use]
+    pub const fn priority(&self) -> Option<TaskPriority> {
+        self.priority
+    }
+
+    /// Returns the task's dates.
+    #[inline]
+    #[must_use]
+    pub const fn dates(&self) -> TaskDates {
+        self.dates
+    }
+}
+
+/// Task priority level.
+///
+/// Can be parsed from priority emojis or specified via inline fields.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Deserialize,
+    Serialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskPriority {
+    /// Lowest priority (`⏬`).
+    Lowest,
+    /// Low priority (`🔽`).
+    Low,
+    /// Normal priority (stored as `None` on [`TaskListItem`] when unspecified).
+    Normal,
+    /// Medium priority (`🔼`).
+    Medium,
+    /// High priority (`⏫`).
+    High,
+    /// Highest priority (`🔺`).
+    Highest,
+}
+
+impl TaskPriority {
+    /// Returns the canonical lowercase string name of the priority.
+    #[inline]
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Lowest => "lowest",
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Highest => "highest",
+        }
+    }
+
+    /// Parses a priority from an emoji, with or without variation selector 16
+    /// (`\u{FE0F}`).
+    ///
+    /// | Emoji | Priority |
+    /// | ----- | -------- |
+    /// | 🔺    | highest  |
+    /// | ⏫    | high     |
+    /// | 🔼    | medium   |
+    /// | 🔽    | low      |
+    /// | ⏬    | lowest   |
+    #[inline]
+    #[must_use]
+    pub fn from_emoji(emoji: &str) -> Option<Self> {
+        let trimmed = emoji.trim_end_matches('\u{FE0F}');
+        match trimmed {
+            "\u{1F53A}" => Some(Self::Highest),
+            "\u{23EB}" => Some(Self::High),
+            "\u{1F53C}" => Some(Self::Medium),
+            "\u{1F53D}" => Some(Self::Low),
+            "\u{23EC}" => Some(Self::Lowest),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TaskPriority {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TaskPriority {
+    type Err = ();
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "lowest" => Ok(Self::Lowest),
+            "low" => Ok(Self::Low),
+            "normal" => Ok(Self::Normal),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "highest" => Ok(Self::Highest),
+            _ => Self::from_emoji(s).ok_or(()),
+        }
+    }
+}
+
+/// Date metadata associated with a [`TaskListItem`].
+///
+/// Supports created, scheduled, start, due, done, and cancelled dates.
+/// Missing dates are [`None`].
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize,
+)]
+pub struct TaskDates {
+    /// Date when the task was created (`➕` or `[created::]`).
+    pub created: Option<NaiveDate>,
+    /// Date when the task is scheduled (`⏳` or `[scheduled::]`).
+    pub scheduled: Option<NaiveDate>,
+    /// Date when work on the task begins (`🛫` or `[start::]`).
+    pub start: Option<NaiveDate>,
+    /// Date when the task is due (`📅` or `[due::]`).
+    pub due: Option<NaiveDate>,
+    /// Date when the task was completed (`✅` or `[done::]`).
+    pub done: Option<NaiveDate>,
+    /// Date when the task was cancelled (`❌` or `[cancelled::]`).
+    pub cancelled: Option<NaiveDate>,
+}
+
+impl TaskDates {
+    /// Creates a new `TaskDates` instance with all dates specified.
+    #[inline]
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor accepts all 6 task dates"
+    )]
+    pub const fn new(
+        created: Option<NaiveDate>,
+        scheduled: Option<NaiveDate>,
+        start: Option<NaiveDate>,
+        due: Option<NaiveDate>,
+        done: Option<NaiveDate>,
+        cancelled: Option<NaiveDate>,
+    ) -> Self {
+        Self {
+            created,
+            scheduled,
+            start,
+            due,
+            done,
+            cancelled,
+        }
+    }
+
+    /// Returns `true` if no dates are set.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.created.is_none()
+            && self.scheduled.is_none()
+            && self.start.is_none()
+            && self.due.is_none()
+            && self.done.is_none()
+            && self.cancelled.is_none()
+    }
+
+    /// Returns the task's creation date, if set.
+    #[inline]
+    #[must_use]
+    pub const fn created(&self) -> Option<NaiveDate> {
+        self.created
+    }
+
+    /// Returns the task's scheduled date, if set.
+    #[inline]
+    #[must_use]
+    pub const fn scheduled(&self) -> Option<NaiveDate> {
+        self.scheduled
+    }
+
+    /// Returns the task's start date, if set.
+    #[inline]
+    #[must_use]
+    pub const fn start(&self) -> Option<NaiveDate> {
+        self.start
+    }
+
+    /// Returns the task's due date, if set.
+    #[inline]
+    #[must_use]
+    pub const fn due(&self) -> Option<NaiveDate> {
+        self.due
+    }
+
+    /// Returns the task's completion date, if set.
+    #[inline]
+    #[must_use]
+    pub const fn done(&self) -> Option<NaiveDate> {
+        self.done
+    }
+
+    /// Returns the task's cancellation date, if set.
+    #[inline]
+    #[must_use]
+    pub const fn cancelled(&self) -> Option<NaiveDate> {
+        self.cancelled
+    }
+}
+
+/// Text representation of a list item holding both raw source-like text and
+/// cleaned display text.
+///
+/// - `raw`: Source text minus the leading `[<char>] ` marker prefix only. All
+///   other inline syntax (tags, date syntax, priority emojis, inline fields) is
+///   preserved.
+/// - `clean`: Normalized text with task marker, configured task tag filters,
+///   date syntax, priority emojis, and inline task fields stripped.
+#[derive(
+    Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize,
+)]
+pub struct ListText {
+    /// Source text minus the leading `[<char>] ` marker prefix only.
+    pub raw: String,
+    /// Normalized display text with task metadata stripped.
+    pub clean: String,
+}
+
+impl ListText {
+    /// Creates a new `ListText`.
+    #[inline]
+    #[must_use]
+    pub fn new<R: Into<String>, C: Into<String>>(raw: R, clean: C) -> Self {
+        Self {
+            raw: raw.into(),
+            clean: clean.into(),
+        }
+    }
+
+    /// Returns the raw text with only the leading marker prefix stripped.
+    #[inline]
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Returns the normalized clean text suitable for display and queries.
+    #[inline]
+    #[must_use]
+    pub fn clean(&self) -> &str {
+        &self.clean
+    }
+}
+
+impl std::fmt::Display for ListText {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.clean)
+    }
+}
+
+impl From<&str> for ListText {
+    #[inline]
+    fn from(s: &str) -> Self {
+        Self {
+            raw: s.to_owned(),
+            clean: s.to_owned(),
+        }
+    }
+}
+
+impl From<String> for ListText {
+    #[inline]
+    fn from(s: String) -> Self {
+        Self {
+            raw: s.clone(),
+            clean: s,
+        }
+    }
+}
+
+impl From<(&str, &str)> for ListText {
+    #[inline]
+    fn from((raw, clean): (&str, &str)) -> Self {
+        Self {
+            raw: raw.to_owned(),
+            clean: clean.to_owned(),
+        }
+    }
+}
+
+impl From<(String, String)> for ListText {
+    #[inline]
+    fn from((raw, clean): (String, String)) -> Self {
+        Self {
+            raw,
+            clean,
+        }
+    }
+}
+impl AsRef<str> for ListText {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        &self.raw
+    }
+}
+
+impl PartialEq<str> for ListText {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        self.raw == other
+    }
+}
+
+impl PartialEq<&str> for ListText {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        self.raw == *other
+    }
+}
+
+impl PartialEq<ListText> for str {
+    #[inline]
+    fn eq(&self, other: &ListText) -> bool {
+        self == other.raw
+    }
+}
+
+impl PartialEq<ListText> for &str {
+    #[inline]
+    fn eq(&self, other: &ListText) -> bool {
+        *self == other.raw
     }
 }
 
@@ -488,6 +813,8 @@ mod tests {
                 TaskStatusType::Done,
             ),
             true,
+            None,
+            TaskDates::default(),
         ))
     }
 
@@ -499,6 +826,8 @@ mod tests {
                 TaskStatusType::Todo,
             ),
             true,
+            None,
+            TaskDates::default(),
         ))
     }
     mod list_item {
@@ -515,7 +844,10 @@ mod tests {
             fn stores_the_given_kind(#[case] kind: ListItemType) {
                 let item = ListItem::new("task item", kind.clone());
 
-                assert_eq!(item.text(), "task item");
+                assert_eq!(item.text().raw(), "task item");
+                assert_eq!(item.text().clean(), "task item");
+                assert_eq!(item.raw_text(), "task item");
+                assert_eq!(item.clean_text(), "task item");
                 assert_eq!(item.kind(), &kind);
             }
 
@@ -636,7 +968,7 @@ mod tests {
                 ];
 
                 let iter = TaskIter::new(&lists);
-                let texts: Vec<&str> = iter.map(ListItem::text).collect();
+                let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
 
                 assert_eq!(texts, [
                     "parent task",
@@ -655,7 +987,7 @@ mod tests {
                 let lists = vec![List::new(false, vec![plain, checkbox, task])];
 
                 let iter = TaskIter::new(&lists);
-                let texts: Vec<&str> = iter.map(ListItem::text).collect();
+                let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
 
                 assert_eq!(texts, ["task item"]);
             }
@@ -678,16 +1010,31 @@ mod tests {
 
             use super::*;
             #[test]
-            fn stores_status_and_fully_complete_flag() {
+            fn stores_status_and_fully_complete_flag_and_priority_and_dates() {
                 let status = TaskStatus::new(
                     TaskStatusSymbol::new('x'),
                     "Done",
                     TaskStatusType::Done,
                 );
-                let item = TaskListItem::new(status.clone(), true);
+                let dates = TaskDates::new(
+                    NaiveDate::from_ymd_opt(2025, 1, 1),
+                    None,
+                    None,
+                    NaiveDate::from_ymd_opt(2025, 1, 15),
+                    None,
+                    None,
+                );
+                let item = TaskListItem::new(
+                    status.clone(),
+                    true,
+                    Some(TaskPriority::High),
+                    dates,
+                );
 
                 assert_eq!(item.status(), &status);
                 assert_eq!(item.is_fully_complete(), true);
+                assert_eq!(item.priority(), Some(TaskPriority::High));
+                assert_eq!(item.dates(), dates);
             }
         }
 
@@ -702,7 +1049,12 @@ mod tests {
                     "In Progress",
                     TaskStatusType::InProgress,
                 );
-                let item = TaskListItem::new(status.clone(), false);
+                let item = TaskListItem::new(
+                    status.clone(),
+                    false,
+                    None,
+                    TaskDates::default(),
+                );
 
                 assert_eq!(item.status(), &status);
             }
@@ -714,11 +1066,210 @@ mod tests {
                     "Todo",
                     TaskStatusType::Todo,
                 );
-                let item = TaskListItem::new(status, false);
+                let item = TaskListItem::new(
+                    status,
+                    false,
+                    None,
+                    TaskDates::default(),
+                );
 
                 assert_eq!(item.is_fully_complete(), false);
                 assert_eq!(item.fully_complete(), false);
             }
+
+            #[test]
+            fn returns_priority_when_present_or_absent() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new(' '),
+                    "Todo",
+                    TaskStatusType::Todo,
+                );
+                let item_without = TaskListItem::new(
+                    status.clone(),
+                    false,
+                    None,
+                    TaskDates::default(),
+                );
+                let item_with = TaskListItem::new(
+                    status,
+                    false,
+                    Some(TaskPriority::Highest),
+                    TaskDates::default(),
+                );
+
+                assert_eq!(item_without.priority(), None);
+                assert_eq!(item_with.priority(), Some(TaskPriority::Highest));
+            }
+
+            #[test]
+            fn returns_dates() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new(' '),
+                    "Todo",
+                    TaskStatusType::Todo,
+                );
+                let dates = TaskDates::new(
+                    None,
+                    None,
+                    None,
+                    NaiveDate::from_ymd_opt(2025, 2, 1),
+                    None,
+                    None,
+                );
+                let item = TaskListItem::new(status, false, None, dates);
+
+                assert_eq!(item.dates(), dates);
+                assert_eq!(
+                    item.dates().due,
+                    NaiveDate::from_ymd_opt(2025, 2, 1)
+                );
+            }
+        }
+    }
+
+    mod task_priority {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case(TaskPriority::Lowest, "lowest")]
+        #[case(TaskPriority::Low, "low")]
+        #[case(TaskPriority::Normal, "normal")]
+        #[case(TaskPriority::Medium, "medium")]
+        #[case(TaskPriority::High, "high")]
+        #[case(TaskPriority::Highest, "highest")]
+        fn returns_canonical_name_for_each_level(
+            #[case] priority: TaskPriority,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(priority.as_str(), expected);
+            assert_eq!(format!("{priority}"), expected);
+        }
+
+        #[rstest]
+        #[case("🔺", Some(TaskPriority::Highest))]
+        #[case("🔺\u{FE0F}", Some(TaskPriority::Highest))]
+        #[case("⏫", Some(TaskPriority::High))]
+        #[case("⏫\u{FE0F}", Some(TaskPriority::High))]
+        #[case("🔼", Some(TaskPriority::Medium))]
+        #[case("🔼\u{FE0F}", Some(TaskPriority::Medium))]
+        #[case("🔽", Some(TaskPriority::Low))]
+        #[case("🔽\u{FE0F}", Some(TaskPriority::Low))]
+        #[case("⏬", Some(TaskPriority::Lowest))]
+        #[case("⏬\u{FE0F}", Some(TaskPriority::Lowest))]
+        #[case("⭐", None)]
+        #[case("", None)]
+        fn parses_priority_emojis_with_and_without_variation_selector(
+            #[case] emoji: &str,
+            #[case] expected: Option<TaskPriority>,
+        ) {
+            assert_eq!(TaskPriority::from_emoji(emoji), expected);
+        }
+
+        #[rstest]
+        #[case("lowest", Ok(TaskPriority::Lowest))]
+        #[case("LOW", Ok(TaskPriority::Low))]
+        #[case("Normal", Ok(TaskPriority::Normal))]
+        #[case("medium", Ok(TaskPriority::Medium))]
+        #[case("HIGH", Ok(TaskPriority::High))]
+        #[case("highest", Ok(TaskPriority::Highest))]
+        #[case("🔺", Ok(TaskPriority::Highest))]
+        #[case("invalid", Err(()))]
+        fn parses_names_and_emojis_case_insensitively(
+            #[case] input: &str,
+            #[case] expected: Result<TaskPriority, ()>,
+        ) {
+            assert_eq!(input.parse::<TaskPriority>(), expected);
+        }
+
+        #[test]
+        fn orders_priorities_from_lowest_to_highest() {
+            assert!(TaskPriority::Lowest < TaskPriority::Low);
+            assert!(TaskPriority::Low < TaskPriority::Normal);
+            assert!(TaskPriority::Normal < TaskPriority::Medium);
+            assert!(TaskPriority::Medium < TaskPriority::High);
+            assert!(TaskPriority::High < TaskPriority::Highest);
+        }
+    }
+
+    mod task_dates {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_true_when_no_dates_are_set() {
+            let dates = TaskDates::default();
+
+            assert_eq!(dates.is_empty(), true);
+            assert_eq!(dates.created, None);
+            assert_eq!(dates.scheduled, None);
+            assert_eq!(dates.start, None);
+            assert_eq!(dates.due, None);
+            assert_eq!(dates.done, None);
+            assert_eq!(dates.cancelled, None);
+        }
+
+        #[test]
+        fn returns_false_when_any_date_is_set() {
+            let dates = TaskDates::new(
+                None,
+                None,
+                None,
+                NaiveDate::from_ymd_opt(2025, 1, 15),
+                None,
+                None,
+            );
+
+            assert_eq!(dates.is_empty(), false);
+            assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
+        }
+
+        #[test]
+        fn returns_configured_date_values() {
+            let created = NaiveDate::from_ymd_opt(2025, 1, 1);
+            let scheduled = NaiveDate::from_ymd_opt(2025, 1, 2);
+            let start = NaiveDate::from_ymd_opt(2025, 1, 3);
+            let due = NaiveDate::from_ymd_opt(2025, 1, 4);
+            let done = NaiveDate::from_ymd_opt(2025, 1, 5);
+            let cancelled = NaiveDate::from_ymd_opt(2025, 1, 6);
+            let dates =
+                TaskDates::new(created, scheduled, start, due, done, cancelled);
+
+            assert_eq!(dates.created(), created);
+            assert_eq!(dates.scheduled(), scheduled);
+            assert_eq!(dates.start(), start);
+            assert_eq!(dates.due(), due);
+            assert_eq!(dates.done(), done);
+            assert_eq!(dates.cancelled(), cancelled);
+        }
+    }
+
+    mod list_text {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn stores_raw_and_clean_text() {
+            let text = ListText::new("raw text", "clean text");
+
+            assert_eq!(text.raw(), "raw text");
+            assert_eq!(text.clean(), "clean text");
+            assert_eq!(format!("{text}"), "clean text");
+        }
+
+        #[test]
+        fn converts_from_str_and_tuples() {
+            let from_str: ListText = "plain".into();
+            assert_eq!(from_str.raw(), "plain");
+            assert_eq!(from_str.clean(), "plain");
+
+            let from_tuple: ListText = ("raw", "clean").into();
+            assert_eq!(from_tuple.raw(), "raw");
+            assert_eq!(from_tuple.clean(), "clean");
         }
     }
 }

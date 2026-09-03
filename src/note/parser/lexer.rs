@@ -146,12 +146,15 @@ enum FieldToken {
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
     #[token("[", |lex| wrapped_field_callback(lex, DelimiterType::Bracket))]
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
+    #[token("\u{1F4C5}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
+    #[token("\u{1F4C5}", |lex| task_field_callback(lex, "due"))]
     #[token("\u{1F5D3}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
     #[token("\u{1F5D3}", |lex| task_field_callback(lex, "due"))]
     #[token("\u{2795}", |lex| task_field_callback(lex, "created"))]
     #[token("\u{1F6EB}", |lex| task_field_callback(lex, "start"))]
     #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
-    #[token("\u{2705}", |lex| task_field_callback(lex, "completion"))]
+    #[token("\u{2705}", |lex| task_field_callback(lex, "done"))]
+    #[token("\u{274C}", |lex| task_field_callback(lex, "cancelled"))]
     Field((FieldKey, NoteFieldValue)),
     #[regex(r"[\s\S]", priority = 0)]
     Ignored,

@@ -109,11 +109,14 @@ pub(crate) use lexer::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
-    List, ListItem, ListItemType, MarkdownParserInput, Note, NoteFieldValue,
-    TaskIter, TaskListItem, parse_markdown,
+    List, ListItem, ListItemType, ListText, MarkdownParserInput, Note,
+    NoteFieldValue, TaskDates, TaskIter, TaskListItem, TaskPriority,
+    parse_markdown,
 };
 #[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use note::{Note, NoteFieldValue};
+pub(crate) use note::{
+    ListText, Note, NoteFieldValue, TaskDates, TaskPriority,
+};
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{

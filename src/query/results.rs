@@ -105,7 +105,7 @@ impl QueryRow {
         };
         self.kind = RowKind::Task(TaskRow {
             status: task.status().clone(),
-            text: item.text().to_owned(),
+            text: item.clean_text().to_owned(),
         });
         self
     }

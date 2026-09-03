@@ -9,6 +9,7 @@
 //! start, so the decision is finalized before any inline content event or block
 //! boundary. Status-marked items are evaluated against configured tag filters
 //! to classify them into tasks or checkboxes.
+use chrono::NaiveDate;
 use indexmap::IndexMap;
 
 use super::{
@@ -19,8 +20,8 @@ use super::{
 use crate::{
     FieldKey, SourceLine, Tag, TaskStatusMap,
     note::{
-        List, ListItem, ListItemType, NoteFieldValue, TaskListItem,
-        lists::ListItemPosition,
+        List, ListItem, ListItemType, ListText, NoteFieldValue, TaskDates,
+        TaskListItem, TaskPriority, lists::ListItemPosition,
     },
 };
 
@@ -183,6 +184,9 @@ impl ListTracker {
     ) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
+            let clean =
+                compute_clean_text(&item_frame.text_buffer, tag_filters);
+            let text = ListText::new(item_frame.text_buffer, clean);
             let item_type = match item_frame.classification {
                 ItemClassificationState::Marked(symbol) => {
                     let status = statuses.resolve(symbol);
@@ -194,9 +198,17 @@ impl ListTracker {
                     {
                         let fully_complete =
                             is_descendant_tree_complete(&item_frame.children);
+                        let priority = extract_task_priority(
+                            text.raw(),
+                            &item_frame.fields,
+                        );
+                        let dates =
+                            extract_task_dates(text.raw(), &item_frame.fields);
                         ListItemType::Task(TaskListItem::new(
                             status,
                             fully_complete,
+                            priority,
+                            dates,
                         ))
                     } else {
                         ListItemType::Checkbox
@@ -205,13 +217,10 @@ impl ListTracker {
                 ItemClassificationState::Plain
                 | ItemClassificationState::Pending => ListItemType::Plain,
             };
-            let item = ListItem::with_children(
-                item_frame.text_buffer,
-                item_type,
-                item_frame.children,
-            )
-            .with_fields(item_frame.fields)
-            .with_position(item_frame.position);
+            let item =
+                ListItem::with_children(text, item_type, item_frame.children)
+                    .with_fields(item_frame.fields)
+                    .with_position(item_frame.position);
             if let Some(list_frame) = self.list_stack.last_mut() {
                 list_frame.items.push(item);
             }
@@ -283,6 +292,414 @@ fn is_descendant_tree_complete(children: &[List]) -> bool {
         }
     }
     true
+}
+
+/// Extracts task priority from text emojis or an inline `[priority:: <level>]`
+/// field.
+///
+/// Priority emojis take precedence over inline fields. When multiple priority
+/// emojis are present, the first one in document order wins. Returns [`None`]
+/// if no priority is specified.
+fn extract_task_priority(
+    text: &str,
+    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
+) -> Option<TaskPriority> {
+    let mut first_priority = None;
+    let mut first_pos = usize::MAX;
+
+    for (emoji, priority) in [
+        ("\u{1F53A}", TaskPriority::Highest),
+        ("\u{23EB}", TaskPriority::High),
+        ("\u{1F53C}", TaskPriority::Medium),
+        ("\u{1F53D}", TaskPriority::Low),
+        ("\u{23EC}", TaskPriority::Lowest),
+    ] {
+        if let Some(pos) = text.find(emoji)
+            && pos < first_pos
+        {
+            first_pos = pos;
+            first_priority = Some(priority);
+        }
+    }
+
+    if let Some(priority) = first_priority {
+        return Some(priority);
+    }
+
+    for (key, values) in fields {
+        if !key.is_canonical_match("priority") {
+            continue;
+        }
+        for val in values {
+            let Some(s) = val.as_str() else {
+                continue;
+            };
+            if let Ok(p) = s.parse::<TaskPriority>() {
+                return Some(p);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extracts task dates from text emoji syntax and inline field syntax.
+///
+/// Supported dates: created (`➕`), scheduled (`⏳`), start (`🛫`), due (`📅`),
+/// done (`✅`), and cancelled (`❌`). When both emoji and inline field syntax
+/// are present for the same date field, emoji syntax wins.
+fn extract_task_dates(
+    text: &str,
+    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
+) -> TaskDates {
+    TaskDates::new(
+        extract_single_date(text, fields, &["\u{2795}"], &["created"]),
+        extract_single_date(text, fields, &["\u{23F3}"], &["scheduled"]),
+        extract_single_date(text, fields, &["\u{1F6EB}"], &["start"]),
+        extract_single_date(
+            text,
+            fields,
+            &[
+                "\u{1F4C5}\u{FE0F}",
+                "\u{1F4C5}",
+                "\u{1F5D3}\u{FE0F}",
+                "\u{1F5D3}",
+            ],
+            &["due"],
+        ),
+        extract_single_date(text, fields, &["\u{2705}"], &[
+            "done",
+            "completion",
+        ]),
+        extract_single_date(text, fields, &["\u{274C}"], &["cancelled"]),
+    )
+}
+
+/// Extracts a single date by first searching for any of `emojis` in `text`,
+/// then falling back to checking `fields` for any of `field_keys`.
+fn extract_single_date(
+    text: &str,
+    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    emojis: &[&str],
+    field_keys: &[&str],
+) -> Option<NaiveDate> {
+    for emoji in emojis {
+        if let Some(date) = parse_emoji_date(text, emoji) {
+            return Some(date);
+        }
+    }
+
+    for key_name in field_keys {
+        for (key, values) in fields {
+            if !key.is_canonical_match(key_name) {
+                continue;
+            }
+            for val in values {
+                if let Some(date) = parse_field_value_date(val) {
+                    return Some(date);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_field_value_date(val: &NoteFieldValue) -> Option<NaiveDate> {
+    let s = match val {
+        NoteFieldValue::Date(s) | NoteFieldValue::String(s) => s.as_str(),
+        _ => return None,
+    };
+    if s.len() < 10 {
+        return None;
+    }
+    NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok()
+}
+
+/// Parses an ISO date immediately following `emoji` (with optional whitespace).
+fn parse_emoji_date(text: &str, emoji: &str) -> Option<NaiveDate> {
+    let mut search_from = 0;
+    while let Some(pos) = text.get(search_from..).and_then(|t| t.find(emoji)) {
+        let match_start = search_from.saturating_add(pos);
+        let emoji_end = match_start.saturating_add(emoji.len());
+        let after_emoji = &text[emoji_end..];
+        let ws_len = after_emoji
+            .char_indices()
+            .find(|&(_, c)| c != ' ' && c != '\t')
+            .map_or(after_emoji.len(), |(offset, _)| offset);
+        let after_ws = &after_emoji[ws_len..];
+        if after_ws.len() >= 10 {
+            let candidate = &after_ws[..10];
+            let next_char_valid = after_ws[10..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_alphanumeric());
+            if next_char_valid
+                && let Ok(date) =
+                    NaiveDate::parse_from_str(candidate, "%Y-%m-%d")
+            {
+                return Some(date);
+            }
+        }
+        search_from = emoji_end;
+    }
+    None
+}
+
+/// Computes normalized clean list text by stripping task marker prefix,
+/// configured task tag filters, date syntax, priority emojis, and inline task
+/// fields.
+///
+/// When `tag_filters` is empty, no tags are stripped.
+fn compute_clean_text(raw_text: &str, tag_filters: &[Tag]) -> String {
+    let mut remove_spans: Vec<(usize, usize)> = Vec::new();
+
+    // 1. Tag filters (only if configured)
+    if !tag_filters.is_empty() {
+        find_tag_filter_spans(raw_text, tag_filters, &mut remove_spans);
+    }
+
+    // 2. Date syntax (emoji dates)
+    find_emoji_date_spans(raw_text, &mut remove_spans);
+
+    // 3. Priority emojis
+    find_priority_emoji_spans(raw_text, &mut remove_spans);
+
+    // 4. Inline task fields: [field:: value] or (field:: value)
+    find_inline_task_field_spans(raw_text, &mut remove_spans);
+
+    // Merge overlapping/adjacent removal spans
+    remove_spans.sort_unstable_by_key(|&(start, _)| start);
+    let mut merged: Vec<(usize, usize)> =
+        Vec::with_capacity(remove_spans.len());
+    for (start, end) in remove_spans {
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
+        }
+        merged.push((start, end));
+    }
+
+    // Extract unremoved slices
+    let mut cleaned = String::with_capacity(raw_text.len());
+    let mut current_idx = 0;
+    for (start, end) in merged {
+        if start > current_idx
+            && let Some(slice) = raw_text.get(current_idx..start)
+        {
+            cleaned.push_str(slice);
+        }
+        current_idx = current_idx.max(end);
+    }
+    if current_idx < raw_text.len()
+        && let Some(slice) = raw_text.get(current_idx..)
+    {
+        cleaned.push_str(slice);
+    }
+
+    normalize_whitespace(&cleaned)
+}
+
+fn find_tag_filter_spans(
+    text: &str,
+    tag_filters: &[Tag],
+    spans: &mut Vec<(usize, usize)>,
+) {
+    let mut iter = text.char_indices().peekable();
+    let mut prev_char: Option<char> = None;
+
+    while let Some((idx, ch)) = iter.next() {
+        let is_word_char =
+            prev_char.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        prev_char = Some(ch);
+        if ch != '#' || is_word_char {
+            continue;
+        }
+        if let Some((start, end, tag)) =
+            scan_tag_candidate(text, idx, &mut iter)
+            && tag_filters.contains(&tag)
+        {
+            spans.push((start, end));
+        }
+    }
+}
+
+fn scan_tag_candidate(
+    text: &str,
+    start_idx: usize,
+    iter: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+) -> Option<(usize, usize, Tag)> {
+    let (_, next_ch) = iter.peek().copied()?;
+    if !next_ch.is_alphabetic() {
+        return None;
+    }
+    let mut tag_end = start_idx.saturating_add('#'.len_utf8());
+    while let Some(&(cur_idx, cur_ch)) = iter.peek() {
+        if !cur_ch.is_alphanumeric() && !matches!(cur_ch, '_' | '/' | '-') {
+            break;
+        }
+        tag_end = cur_idx.saturating_add(cur_ch.len_utf8());
+        iter.next();
+    }
+    let candidate = text.get(start_idx..tag_end)?;
+    let tag = Tag::parse(candidate).ok()?;
+    Some((start_idx, tag_end, tag))
+}
+
+fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
+    let date_emojis = [
+        "\u{1F4C5}\u{FE0F}",
+        "\u{1F4C5}",
+        "\u{1F5D3}\u{FE0F}",
+        "\u{1F5D3}",
+        "\u{2795}",
+        "\u{1F6EB}",
+        "\u{23F3}",
+        "\u{2705}",
+        "\u{274C}",
+    ];
+
+    for emoji in date_emojis {
+        let mut search_from = 0;
+        while let Some(pos) =
+            text.get(search_from..).and_then(|t| t.find(emoji))
+        {
+            let match_start = search_from.saturating_add(pos);
+            let emoji_end = match_start.saturating_add(emoji.len());
+            let after_emoji = &text[emoji_end..];
+            let ws_len = after_emoji
+                .char_indices()
+                .find(|&(_, c)| c != ' ' && c != '\t')
+                .map_or(after_emoji.len(), |(offset, _)| offset);
+            let after_ws = &after_emoji[ws_len..];
+            if after_ws.len() >= 10 {
+                let candidate = &after_ws[..10];
+                let next_char_valid = after_ws[10..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !ch.is_alphanumeric());
+                if next_char_valid
+                    && NaiveDate::parse_from_str(candidate, "%Y-%m-%d").is_ok()
+                {
+                    let span_end =
+                        emoji_end.saturating_add(ws_len).saturating_add(10);
+                    spans.push((match_start, span_end));
+                    search_from = span_end;
+                    continue;
+                }
+            }
+            search_from = emoji_end;
+        }
+    }
+}
+
+fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
+    let priority_emojis = [
+        "\u{1F53A}\u{FE0F}",
+        "\u{1F53A}",
+        "\u{23EB}\u{FE0F}",
+        "\u{23EB}",
+        "\u{1F53C}\u{FE0F}",
+        "\u{1F53C}",
+        "\u{1F53D}\u{FE0F}",
+        "\u{1F53D}",
+        "\u{23EC}\u{FE0F}",
+        "\u{23EC}",
+    ];
+
+    for emoji in priority_emojis {
+        let mut search_from = 0;
+        while let Some(pos) =
+            text.get(search_from..).and_then(|t| t.find(emoji))
+        {
+            let match_start = search_from.saturating_add(pos);
+            let match_end = match_start.saturating_add(emoji.len());
+            spans.push((match_start, match_end));
+            search_from = match_end;
+        }
+    }
+}
+
+fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
+    for (open_delim, close_delim) in [('[', ']'), ('(', ')')] {
+        let mut search_from = 0;
+        while let Some(open_pos) =
+            text.get(search_from..).and_then(|t| t.find(open_delim))
+        {
+            let match_start = search_from.saturating_add(open_pos);
+            let open_end = match_start.saturating_add(open_delim.len_utf8());
+            let remainder = &text[open_end..];
+            if let Some(match_end) = scan_inline_task_field(
+                match_start,
+                remainder,
+                open_delim,
+                close_delim,
+            ) {
+                spans.push((match_start, match_end));
+                search_from = match_end;
+            } else {
+                search_from = open_end;
+            }
+        }
+    }
+}
+
+fn scan_inline_task_field(
+    match_start: usize,
+    remainder: &str,
+    open_delim: char,
+    close_delim: char,
+) -> Option<usize> {
+    let close_pos = remainder.find(close_delim)?;
+    let inside = &remainder[..close_pos];
+    let sep_pos = inside.find("::")?;
+    let key = inside[..sep_pos].trim();
+    if !is_task_field_key(key) {
+        return None;
+    }
+    Some(
+        match_start
+            .saturating_add(open_delim.len_utf8())
+            .saturating_add(close_pos)
+            .saturating_add(close_delim.len_utf8()),
+    )
+}
+
+fn is_task_field_key(key: &str) -> bool {
+    matches!(
+        key.trim().to_ascii_lowercase().as_str(),
+        "created"
+            | "start"
+            | "scheduled"
+            | "due"
+            | "done"
+            | "cancelled"
+            | "priority"
+            | "completion"
+    )
+}
+
+fn normalize_whitespace(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut first_line = true;
+    for line in text.split('\n') {
+        let mut words = line.split_whitespace();
+        let Some(first_word) = words.next() else {
+            continue;
+        };
+        if !first_line {
+            result.push('\n');
+        }
+        result.push_str(first_word);
+        for word in words {
+            result.push(' ');
+            result.push_str(word);
+        }
+        first_line = false;
+    }
+    result
 }
 
 /// The incremental classification state of an active list item during parsing.
@@ -516,8 +933,10 @@ mod tests {
             // end_item pops LIFO: item2 is index 0, item1 is index 1
             let list = tracker.lists.first().expect("list must exist");
             let items = list.items();
-            let item1_text = items.get(1).expect("item 1 must exist").text();
-            let item2_text = items.first().expect("item 2 must exist").text();
+            let item1_text =
+                items.get(1).expect("item 1 must exist").raw_text();
+            let item2_text =
+                items.first().expect("item 2 must exist").raw_text();
             assert!(
                 !item1_text.contains("code"),
                 "inline code must not leak to item 1, got: {item1_text:?}"
@@ -641,7 +1060,10 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1, "marker {symbol:?} must become a Task");
-            assert_eq!(tasks.first().map(|t| t.text()), Some("Task text"));
+            assert_eq!(
+                tasks.first().copied().map(ListItem::raw_text),
+                Some("Task text")
+            );
 
             let item = tasks.first().expect("task present");
             assert!(
@@ -716,7 +1138,10 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);
-            assert_eq!(tasks.first().map(|t| t.text()), Some("\ncontinued"));
+            assert_eq!(
+                tasks.first().copied().map(ListItem::raw_text),
+                Some("\ncontinued")
+            );
         }
 
         #[test]
@@ -775,7 +1200,10 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);
-            assert_eq!(tasks.first().map(|t| t.text()), Some("Task"));
+            assert_eq!(
+                tasks.first().copied().map(ListItem::raw_text),
+                Some("Task")
+            );
             let item = tasks.first().expect("task present");
             assert!(matches!(
                 item.kind(),
@@ -795,8 +1223,14 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 2);
-            assert_eq!(tasks.first().map(|t| t.text()), Some("Task 1"));
-            assert_eq!(tasks.get(1).map(|t| t.text()), Some("Task 2"));
+            assert_eq!(
+                tasks.first().copied().map(ListItem::raw_text),
+                Some("Task 1")
+            );
+            assert_eq!(
+                tasks.get(1).copied().map(ListItem::raw_text),
+                Some("Task 2")
+            );
         }
 
         #[test]
@@ -807,7 +1241,10 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);
-            assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
+            assert_eq!(
+                tasks.first().copied().map(ListItem::raw_text),
+                Some("Subtask 1")
+            );
             let ListItemType::Task(task) = tasks.first().unwrap().kind() else {
                 panic!("subtask must be a Task");
             };
@@ -1158,5 +1595,262 @@ mod tests {
             };
             assert_eq!(parent_task.is_fully_complete(), false);
         }
+    }
+
+    mod raw_vs_clean {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn stores_raw_and_clean_text_with_inline_syntax() {
+            let note = parse("- [ ] Buy milk 📅 2025-01-15 #task");
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+
+            assert_eq!(item.text().raw(), "Buy milk 📅 2025-01-15 #task");
+            assert_eq!(item.text().clean(), "Buy milk #task");
+        }
+
+        #[test]
+        fn preserves_non_task_inline_fields_in_clean_text() {
+            let note = parse("- [ ] Buy milk [store:: Costco] 📅 2025-01-15");
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+
+            assert_eq!(
+                item.text().raw(),
+                "Buy milk [store:: Costco] 📅 2025-01-15"
+            );
+            assert_eq!(item.text().clean(), "Buy milk [store:: Costco]");
+        }
+
+        #[test]
+        fn preserves_non_filtered_tags_in_clean_text() {
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            let item = parse_item_with_filters(
+                "[ ] Buy milk #groceries 📅 2025-01-15 #task",
+                &tag_filters,
+            );
+
+            assert_eq!(
+                item.text().raw(),
+                "Buy milk #groceries 📅 2025-01-15 #task"
+            );
+            assert_eq!(item.text().clean(), "Buy milk #groceries");
+        }
+    }
+
+    #[expect(clippy::panic, reason = "test assertion on enum variant")]
+    fn expect_task(item: &ListItem) -> &TaskListItem {
+        let ListItemType::Task(task) = item.kind() else {
+            panic!("expected task item, got {:?}", item.kind());
+        };
+        task
+    }
+
+    mod priority_extraction {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case("- [ ] Task 🔺", TaskPriority::Highest)]
+        #[case("- [ ] Task 🔺\u{FE0F}", TaskPriority::Highest)]
+        #[case("- [ ] Task ⏫", TaskPriority::High)]
+        #[case("- [ ] Task ⏫\u{FE0F}", TaskPriority::High)]
+        #[case("- [ ] Task 🔼", TaskPriority::Medium)]
+        #[case("- [ ] Task 🔼\u{FE0F}", TaskPriority::Medium)]
+        #[case("- [ ] Task 🔽", TaskPriority::Low)]
+        #[case("- [ ] Task 🔽\u{FE0F}", TaskPriority::Low)]
+        #[case("- [ ] Task ⏬", TaskPriority::Lowest)]
+        #[case("- [ ] Task ⏬\u{FE0F}", TaskPriority::Lowest)]
+        fn extracts_priority_from_emojis(
+            #[case] input: &str,
+            #[case] expected: TaskPriority,
+        ) {
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.priority(), Some(expected));
+            assert_eq!(task_item.text().clean(), "Task");
+        }
+
+        #[test]
+        fn returns_none_when_priority_emoji_is_missing() {
+            let note = parse("- [ ] Plain task without priority");
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.priority(), None);
+        }
+
+        #[test]
+        fn extracts_priority_from_inline_field_when_emoji_absent() {
+            let note = parse("- [ ] Task [priority:: high]");
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.priority(), Some(TaskPriority::High));
+            assert_eq!(task_item.text().clean(), "Task");
+        }
+
+        #[test]
+        fn prefers_earliest_priority_emoji_when_multiple_present() {
+            let note = parse("- [ ] Task ⏫ then 🔽 later");
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.priority(), Some(TaskPriority::High));
+            assert_eq!(task_item.text().clean(), "Task then later");
+        }
+    }
+
+    mod date_extraction {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn extracts_dates_from_emoji_syntax() {
+            let input = "- [ ] Task ➕ 2025-01-01 🛫 2025-01-05 ⏳ 2025-01-10 \
+                         📅 2025-01-15 ✅ 2025-01-20 ❌ 2025-01-25";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+            let dates = task.dates();
+
+            assert_eq!(dates.created, NaiveDate::from_ymd_opt(2025, 1, 1));
+            assert_eq!(dates.start, NaiveDate::from_ymd_opt(2025, 1, 5));
+            assert_eq!(dates.scheduled, NaiveDate::from_ymd_opt(2025, 1, 10));
+            assert_eq!(dates.due, NaiveDate::from_ymd_opt(2025, 1, 15));
+            assert_eq!(dates.done, NaiveDate::from_ymd_opt(2025, 1, 20));
+            assert_eq!(dates.cancelled, NaiveDate::from_ymd_opt(2025, 1, 25));
+            assert_eq!(task_item.text().clean(), "Task");
+        }
+
+        #[test]
+        fn extracts_dates_from_inline_field_syntax() {
+            let input = "- [ ] Task [created:: 2025-02-01] [start:: \
+                         2025-02-05] [scheduled:: 2025-02-10] [due:: \
+                         2025-02-15] [done:: 2025-02-20] [cancelled:: \
+                         2025-02-25]";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+            let dates = task.dates();
+
+            assert_eq!(dates.created, NaiveDate::from_ymd_opt(2025, 2, 1));
+            assert_eq!(dates.start, NaiveDate::from_ymd_opt(2025, 2, 5));
+            assert_eq!(dates.scheduled, NaiveDate::from_ymd_opt(2025, 2, 10));
+            assert_eq!(dates.due, NaiveDate::from_ymd_opt(2025, 2, 15));
+            assert_eq!(dates.done, NaiveDate::from_ymd_opt(2025, 2, 20));
+            assert_eq!(dates.cancelled, NaiveDate::from_ymd_opt(2025, 2, 25));
+            assert_eq!(task_item.text().clean(), "Task");
+        }
+
+        #[test]
+        fn prefers_emoji_date_over_inline_field_when_both_present() {
+            let input = "- [ ] Task 📅 2025-03-01 [due:: 2025-03-15]";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.dates().due, NaiveDate::from_ymd_opt(2025, 3, 1));
+            assert_eq!(task_item.text().clean(), "Task");
+        }
+
+        #[test]
+        fn returns_none_for_invalid_or_missing_date() {
+            let input = "- [ ] Task 📅 2025-02-30 [start:: not-a-date]";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.dates().due, None);
+            assert_eq!(task.dates().start, None);
+        }
+    }
+
+    mod clean_text_stripping {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn strips_marker_tag_and_date_with_configured_tag_filter() {
+            // Worked example 1 with tag filter
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            let item = parse_item_with_filters(
+                "[ ] Buy milk 📅 2025-01-15 #task",
+                &tag_filters,
+            );
+
+            assert_eq!(item.text().raw(), "Buy milk 📅 2025-01-15 #task");
+            assert_eq!(item.text().clean(), "Buy milk");
+        }
+
+        #[test]
+        fn strips_marker_and_date_without_configured_tag_filter() {
+            // Worked example 1 without tag filter
+            let item = parse_item_with_filters(
+                "[ ] Buy milk 📅 2025-01-15 #task",
+                &[],
+            );
+
+            assert_eq!(item.text().raw(), "Buy milk 📅 2025-01-15 #task");
+            assert_eq!(item.text().clean(), "Buy milk #task");
+        }
+
+        #[test]
+        fn strips_priority_and_inline_task_field() {
+            // Worked example 2
+            let note = parse("- [x] Pay rent 🔼 [due:: 2025-02-01]");
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+
+            assert_eq!(item.text().raw(), "Pay rent 🔼 [due:: 2025-02-01]");
+            assert_eq!(item.text().clean(), "Pay rent");
+        }
+
+        #[test]
+        fn strips_in_prescribed_order() {
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            let item = parse_item_with_filters(
+                "[ ] #task Review PR 🔺 📅 2025-04-01 [scheduled:: \
+                 2025-03-25] [custom:: keep-me]",
+                &tag_filters,
+            );
+
+            assert_eq!(item.text().clean(), "Review PR [custom:: keep-me]");
+        }
+    }
+
+    fn parse_item_with_filters(text: &str, tag_filters: &[Tag]) -> ListItem {
+        let mut tracker = ListTracker::default();
+        tracker.start_list(false);
+        tracker.start_item(SourceLine::new(1));
+        tracker.push_text(text, false);
+        tracker.end_item(tag_filters, &TaskStatusMap::default());
+        tracker.end_list();
+        tracker
+            .lists
+            .into_iter()
+            .next()
+            .expect("list present")
+            .items()
+            .first()
+            .cloned()
+            .expect("item present")
     }
 }

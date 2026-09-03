@@ -202,7 +202,8 @@ mod tests {
     use crate::{
         TaskStatus, TaskStatusSymbol, TaskStatusType,
         note::{
-            LinkType, ListItem, ListItemType, NoteFieldValue, TaskListItem,
+            LinkType, ListItem, ListItemType, NoteFieldValue, TaskDates,
+            TaskListItem,
         },
     };
 
@@ -345,6 +346,8 @@ mod tests {
             ListItemType::Task(TaskListItem::new(
                 TaskStatus::new(TaskStatusSymbol::new(symbol), name, kind),
                 true,
+                None,
+                TaskDates::default(),
             ))
         }
 
@@ -368,7 +371,7 @@ mod tests {
             );
 
             let task_text: Vec<&str> =
-                note.tasks().map(ListItem::text).collect();
+                note.tasks().map(ListItem::clean_text).collect();
             assert_eq!(task_text, ["parent task", "child task"]);
         }
 

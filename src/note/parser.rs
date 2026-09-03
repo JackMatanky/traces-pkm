@@ -696,7 +696,7 @@ mod tests {
                 .and_then(|list| list.items().first())
                 .and_then(|item| item.children().first())
                 .and_then(|list| list.items().first())
-                .map(ListItem::text);
+                .map(ListItem::raw_text);
             assert_eq!(grandchild, Some("Grandchild"));
         }
 
@@ -767,7 +767,7 @@ mod tests {
                 .lists()
                 .first()
                 .and_then(|list| list.items().first())
-                .map(ListItem::text);
+                .map(ListItem::raw_text);
             assert_eq!(text, Some("Wrapped\nline"));
         }
 
@@ -874,7 +874,7 @@ mod tests {
             let item_text = lists
                 .first()
                 .and_then(|l| l.items().first())
-                .map(crate::note::lists::ListItem::text)
+                .map(ListItem::raw_text)
                 .unwrap_or_default();
 
             // Assert
@@ -1046,10 +1046,11 @@ mod tests {
             "scheduled",
             "2022-07-24"
         )]
-        #[case::completion(
-            "- [x] testTask ✅2022-07-26",
-            "completion",
-            "2022-07-26"
+        #[case::done("- [x] testTask ✅2022-07-26", "done", "2022-07-26")]
+        #[case::cancelled(
+            "- [x] testTask ❌2022-07-27",
+            "cancelled",
+            "2022-07-27"
         )]
         fn extracts_task_emoji_shorthand_fields_from_task_items_only(
             #[case] input: &str,
@@ -1330,7 +1331,7 @@ mod tests {
             let tasks_collected: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks_collected.len(), 1);
             assert_eq!(
-                tasks_collected.first().map(|t| t.text()),
+                tasks_collected.first().copied().map(ListItem::raw_text),
                 Some("Marked matching #task")
             );
 
@@ -1391,7 +1392,7 @@ mod tests {
             let tasks_collected: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks_collected.len(), 1);
             assert_eq!(
-                tasks_collected.first().map(|t| t.text()),
+                tasks_collected.first().copied().map(ListItem::raw_text),
                 Some("Exact tag #task")
             );
 
