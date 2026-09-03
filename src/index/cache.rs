@@ -14,8 +14,12 @@ use super::{
     delta,
     error::{IndexBuilderError, IndexError, IndexResult},
     inlinks::InlinkMap,
+    store::IndexStore,
 };
-use crate::FileBase;
+use crate::{
+    FileBase, Note,
+    config::{FrontmatterConfig, TaskConfig},
+};
 
 /// Whether a record's previously-persisted Note is still valid, decided by
 /// [`RefreshCache::diff_files`]'s merge-join. Replaces a bare `is_upserted:
@@ -45,7 +49,7 @@ pub(super) enum NoteCacheState {
 pub(super) struct RefreshCache<'a> {
     files: Vec<FileBase>,
     inlinks: InlinkMap,
-    store: &'a super::store::IndexStore,
+    store: &'a IndexStore,
     txn: &'a redb::ReadTransaction,
 }
 
@@ -58,7 +62,7 @@ impl<'a> RefreshCache<'a> {
     /// - [`IndexError::Store`] if the previously persisted `FILES`/`LINKS`
     ///   tables cannot be read.
     pub(super) fn load(
-        store: &'a super::store::IndexStore,
+        store: &'a IndexStore,
         txn: &'a redb::ReadTransaction,
     ) -> IndexResult<Self> {
         let (files, inlinks) = store.read_files_and_links_via(txn)?;
@@ -71,8 +75,8 @@ impl<'a> RefreshCache<'a> {
     }
 
     /// Diffs `current` against the previous scan via [`delta::diff_files`].
-    /// See that function for the merge algorithm and the
-    /// `has_deleted_note` return value's semantics.
+    /// See that function for the merge algorithm and the `has_deleted_note`
+    /// return value's semantics.
     pub(super) fn diff_files(
         &self,
         current: &[FileBase],
@@ -113,11 +117,8 @@ impl<'a> RefreshCache<'a> {
         file: &FileBase,
         state: NoteCacheState,
         root: &Path,
-        (tasks, frontmatter): (
-            &crate::TaskConfig,
-            &crate::config::FrontmatterConfig,
-        ),
-    ) -> Result<(crate::Note, bool), IndexBuilderError> {
+        (tasks, frontmatter): (&TaskConfig, &FrontmatterConfig),
+    ) -> Result<(Note, bool), IndexBuilderError> {
         match state {
             NoteCacheState::Upserted => {
                 self.reparse_and_backdate(file, root, tasks, frontmatter)
@@ -143,7 +144,7 @@ impl<'a> RefreshCache<'a> {
     fn recall_unchanged_note(
         &self,
         file: &FileBase,
-    ) -> Result<crate::Note, IndexBuilderError> {
+    ) -> Result<Note, IndexBuilderError> {
         self.store
             .read_note(self.txn, file.path())
             .map_err(|source| IndexBuilderError::NoteLookup {
@@ -169,9 +170,9 @@ impl<'a> RefreshCache<'a> {
         &self,
         file: &FileBase,
         root: &Path,
-        tasks: &crate::TaskConfig,
-        frontmatter: &crate::config::FrontmatterConfig,
-    ) -> Result<(crate::Note, bool), IndexBuilderError> {
+        tasks: &TaskConfig,
+        frontmatter: &FrontmatterConfig,
+    ) -> Result<(Note, bool), IndexBuilderError> {
         let note = parse_note(root, file, tasks, frontmatter)?;
         let outlinks_changed = match self.store.read_note(self.txn, file.path())
         {
