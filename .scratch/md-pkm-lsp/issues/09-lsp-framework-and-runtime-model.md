@@ -1,7 +1,7 @@
 # LSP framework/transport crate & runtime model
 
 Type: grilling
-Blocked by: 07
+Blocked by: 07, 35
 Status: claimed
 
 ## Question
