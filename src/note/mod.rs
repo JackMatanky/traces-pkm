@@ -21,8 +21,9 @@
 //! # Key Types
 //!
 //! - [`Note`]: parsed record for one Markdown file.
-//! - [`List`], [`ListItem`], [`ListItemType`]: ordered and unordered lists,
-//!   including classified task items, checkboxes, and nested child lists.
+//! - [`List`], [`ListItem`], [`ListItemType`], [`TaskIter`]: ordered and
+//!   unordered lists, including classified task items, checkboxes, nested child
+//!   lists, and depth-first task iterators.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields

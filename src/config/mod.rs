@@ -19,6 +19,7 @@
 //!
 //! - [`ConfigService`] owns the load pipeline and trust administration.
 //! - [`Config`] holds merged settings ready for consumers.
+//! - [`TaskConfig`] holds resolved task status mappings and tag filters.
 //! - [`TrustRequest`] names a workspace root or config file for trust
 //!   operations.
 //!

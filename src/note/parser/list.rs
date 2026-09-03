@@ -7,8 +7,8 @@
 //! marker and classification, gated like `pulldown-cmark`'s own first-pass
 //! `scan_task_list_marker`: the marker is only valid at an item's content
 //! start, so the decision is finalized before any inline content event or block
-//! boundary.
-
+//! boundary. Status-marked items are evaluated against configured tag filters
+//! to classify them into tasks or checkboxes.
 use indexmap::IndexMap;
 
 use super::{

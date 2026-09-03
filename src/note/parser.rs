@@ -21,7 +21,8 @@
 //!   multiple times.
 //! - [`list`](self::list): [`ListTracker`] manages explicit list and list-item
 //!   stacks so nested Markdown never recurses through the call stack, driving
-//!   the item-leading marker state machine and flushing item metadata.
+//!   the item-leading marker state machine, tag filter classification, and
+//!   flushing item metadata.
 //! - [`marker`](self::marker): custom task marker scanner that recognizes
 //!   `[<symbol>]` markers at item-leading positions with
 //!   pulldown-cmark-compatible whitespace rules.

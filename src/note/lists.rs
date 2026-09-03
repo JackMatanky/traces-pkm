@@ -1,13 +1,17 @@
 //! Markdown list, list item, and task-list structures.
 //!
-//! - [`List`]: an ordered or unordered Markdown list.
-//! - [`ListItem`]: a list item with a classified [`ListItemType`], inline
-//!   fields, and child lists.
-//! - [`ListItemType`]: whether a list item is a plain bullet, a checkbox, or a
-//!   Task carrying a resolved [`TaskStatus`].
-//! - [`ListItemPosition`]: a list item's nesting depth, source line, and parent
+//! # Key Types
+//!
+//! - [`List`]: an ordered or unordered Markdown list holding direct child
+//!   items.
+//! - [`ListItem`]: a list item with a classified [`ListItemType`], child lists,
+//!   inline fields, and source positioning.
+//! - [`ListItemType`]: classification of an item as a plain bullet, a checkbox,
+//!   or a Task carrying a resolved [`TaskStatus`].
+//! - [`ListItemPosition`]: a list item's source line, nesting depth, and parent
 //!   line.
-
+//! - [`TaskIter`]: a depth-first iterator yielding task items across top-level
+//!   and nested child lists.
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 

@@ -8,7 +8,7 @@
 //! - [`SchemasConfig`] resolves the `[schemas]` class field and registry path.
 //! - [`FrontmatterConfig`] resolves `[frontmatter]` key names.
 //! - [`DateFieldConfig`] pairs a date frontmatter key with its format.
-
+//! - [`TaskConfig`] resolves `[tasks]` task statuses and tag filters.
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

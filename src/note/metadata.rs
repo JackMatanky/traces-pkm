@@ -1,8 +1,8 @@
-//! Frontmatter and inline-field metadata values.
+//! YAML frontmatter parsing and key-value metadata storage.
 //!
-//! `RawFrontmatter` preserves source YAML. [`Frontmatter`] stores parsed YAML
-//! key-value pairs.
-
+//! [`RawFrontmatter`] preserves unparsed source YAML. [`Frontmatter`] stores
+//! parsed YAML key-value pairs mapping [`FieldKey`] to [`NoteFieldValue`]
+//! values.
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
