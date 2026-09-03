@@ -17,11 +17,11 @@
 //!
 //! Every plan is optimized by [`QueryPlan::run`](QueryPlan::run) prior to
 //! transform execution:
-//! - **Filter Fusion**: Combines adjacent filter steps into a single
+//! - **Filter Fusion**: Combines adjacent filter ops into a single
 //!   short-circuiting `AND` expression
 //!   ([`FilterExpr::and`](super::grammar::FilterExpr::and)).
-//! - **Sort-Limit Fusion**: Rewrites adjacent `Sort` + `Limit(n)` steps into a
-//!   single `TopK` step, trading an `O(n log n)` full sort for an `O(n)`
+//! - **Sort-Limit Fusion**: Rewrites adjacent `Sort` + `Limit(n)` ops into a
+//!   single `TopK` op, trading an `O(n log n)` full sort for an `O(n)`
 //!   quickselect partition
 //!   ([`select_nth_unstable_by`](std::slice::select_nth_unstable_by)).
 use super::{
@@ -49,55 +49,54 @@ use crate::note::NoteFieldValue;
 /// # Optimization Passes
 ///
 /// Prior to applying transforms to row collections, [`Self::run`]
-/// unconditionally runs [`Self::optimize`], executing two algebraic
-/// optimization passes:
+/// unconditionally executes algebraic optimization passes:
 ///
-/// - **Filter Fusion**: Combines adjacent [`QueryTransform::Filter`] steps into
-///   a single short-circuiting logical `AND` expression
+/// - **Filter Fusion**: Combines adjacent [`QueryTransform::Filter`] ops into a
+///   single short-circuiting logical `AND` expression
 ///   ([`FilterExpr::and`](super::grammar::FilterExpr::and)), eliminating
 ///   intermediate vector allocations.
 /// - **Sort-Limit Fusion**: Rewrites adjacent [`QueryTransform::Sort`] and
-///   [`QueryTransform::Limit`] steps into a single [`QueryTransform::TopK`]
+///   [`QueryTransform::Limit`] ops into a single [`QueryTransform::TopK`]
 ///   operation. This trades an `O(n log n)` full sort for an `O(n)` quickselect
 ///   selection via
+///   [`select_nth_unstable_by`](std::slice::select_nth_unstable_by).
 ///
-/// Optimization passes are pure and idempotent: executing `optimize` on an
+/// Optimization passes are pure and idempotent: executing them on an
 /// already optimized plan produces an identical plan with no additional
 /// overhead.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct QueryPlan {
-    steps: Vec<QueryTransform>,
+    ops: Vec<QueryTransform>,
 }
 
 impl QueryPlan {
-    /// Returns `true` if this plan has no pending steps.
-    pub(super) fn is_empty(&self) -> bool {
-        self.steps.is_empty()
-    }
-
-    /// Appends `transform` to this query transform plan.
-    pub(super) fn push(&mut self, transform: QueryTransform) {
-        self.steps.push(transform);
-    }
-
-    /// Fuses this plan via [`Self::optimize`] and applies it to `records` in
-    /// one pass.
+    /// Fuses filter and sort-limit operations, then applies them to `records`
+    /// in one pass.
     ///
     /// This is the sole execution entry point for transformation plans. It is
     /// used by [`QueryService::execute`](super::QueryService::execute) during
     /// pre-fetch execution and by [`QuerySet`](super::QuerySet) during lazy
     /// materialization.
     pub(super) fn run(self, records: Vec<QueryRow>) -> Vec<QueryRow> {
-        self.optimize().apply(records)
+        self.fuse_filters().fuse_sort_limit().apply(records)
     }
 
-    /// Fuses adjacent steps that can run more efficiently combined.
-    ///
-    /// Internal helper called by [`Self::run`]. Outside callers cannot invoke
-    /// transformations without optimization.
-    #[must_use]
-    fn optimize(self) -> Self {
-        self.fuse_filters().fuse_sort_limit()
+    /// Returns `true` if this plan has no pending operations.
+    pub(super) fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
+    /// Appends `transform` to this query transform plan.
+    pub(super) fn push(&mut self, transform: QueryTransform) {
+        self.ops.push(transform);
+    }
+
+    /// Applies every transform in order. Internal to [`Self::run`].
+    fn apply(&self, mut records: Vec<QueryRow>) -> Vec<QueryRow> {
+        for op in &self.ops {
+            records = op.apply(records);
+        }
+        records
     }
 
     /// Merges every run of consecutive `Filter` steps into one, via
@@ -105,21 +104,21 @@ impl QueryPlan {
     /// every other step.
     #[must_use]
     fn fuse_filters(mut self) -> Self {
-        let mut fused = Vec::with_capacity(self.steps.len());
-        let mut steps = self.steps.into_iter().peekable();
-        while let Some(step) = steps.next() {
-            if let QueryTransform::Filter(mut expr) = step {
+        let mut fused = Vec::with_capacity(self.ops.len());
+        let mut items = self.ops.into_iter().peekable();
+        while let Some(item) = items.next() {
+            if let QueryTransform::Filter(mut expr) = item {
                 while let Some(QueryTransform::Filter(next)) =
-                    steps.next_if(|s| matches!(s, QueryTransform::Filter(_)))
+                    items.next_if(|s| matches!(s, QueryTransform::Filter(_)))
                 {
                     expr = expr.and(next);
                 }
                 fused.push(QueryTransform::Filter(expr));
             } else {
-                fused.push(step);
+                fused.push(item);
             }
         }
-        self.steps = fused;
+        self.ops = fused;
         self
     }
 
@@ -129,14 +128,14 @@ impl QueryPlan {
     /// relative order of every other step.
     #[must_use]
     fn fuse_sort_limit(mut self) -> Self {
-        let mut fused = Vec::with_capacity(self.steps.len());
-        let mut steps = self.steps.into_iter().peekable();
-        while let Some(step) = steps.next() {
+        let mut fused = Vec::with_capacity(self.ops.len());
+        let mut items = self.ops.into_iter().peekable();
+        while let Some(item) = items.next() {
             if let QueryTransform::Sort {
                 field,
                 descending,
-            } = &step
-                && let Some(QueryTransform::Limit(n)) = steps.peek()
+            } = &item
+                && let Some(QueryTransform::Limit(n)) = items.peek()
             {
                 let n = *n;
                 fused.push(QueryTransform::TopK {
@@ -144,23 +143,16 @@ impl QueryPlan {
                     descending: *descending,
                     n,
                 });
-                steps.next();
+                items.next();
             } else {
-                fused.push(step);
+                fused.push(item);
             }
         }
-        self.steps = fused;
+        self.ops = fused;
         self
     }
-
-    /// Applies every step in order. Internal to [`Self::run`].
-    fn apply(&self, mut records: Vec<QueryRow>) -> Vec<QueryRow> {
-        for step in &self.steps {
-            records = step.apply(records);
-        }
-        records
-    }
 }
+
 /// One step in a [`QueryPlan`], produced by
 /// [`QueryBuilder`](super::QueryBuilder) and [`QuerySet`](super::QuerySet)
 /// method calls.
@@ -372,14 +364,14 @@ mod tests {
                 QueryTransform::filter("rating < 8").expect("valid filter"),
             );
 
-            let optimized = plan.optimize();
-            assert_eq!(optimized.steps.len(), 1);
+            let optimized = plan.fuse_filters();
+            assert_eq!(optimized.ops.len(), 1);
             #[expect(
                 clippy::indexing_slicing,
-                reason = "test asserts steps slice length == 1"
+                reason = "test asserts ops slice length == 1"
             )]
-            let first_step = &optimized.steps[0];
-            assert!(matches!(first_step, QueryTransform::Filter(_)));
+            let first_op = &optimized.ops[0];
+            assert!(matches!(first_op, QueryTransform::Filter(_)));
         }
 
         #[test]
@@ -390,14 +382,14 @@ mod tests {
             );
             plan.push(QueryTransform::limit(5).expect("valid limit"));
 
-            let optimized = plan.optimize();
-            assert_eq!(optimized.steps.len(), 1);
+            let optimized = plan.fuse_sort_limit();
+            assert_eq!(optimized.ops.len(), 1);
             #[expect(
                 clippy::indexing_slicing,
-                reason = "test asserts steps slice length == 1"
+                reason = "test asserts ops slice length == 1"
             )]
-            let first_step = &optimized.steps[0];
-            assert!(matches!(first_step, QueryTransform::TopK {
+            let first_op = &optimized.ops[0];
+            assert!(matches!(first_op, QueryTransform::TopK {
                 n: 5,
                 descending: true,
                 ..
