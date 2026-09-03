@@ -96,7 +96,7 @@ impl FileEntry {
     /// Returns the parsed [`Note`], or `None` for a non-Markdown file.
     #[inline]
     #[must_use]
-    pub(crate) fn note(&self) -> Option<&Note> {
+    pub fn note(&self) -> Option<&Note> {
         self.note.as_deref().map(|entry| &entry.note)
     }
 

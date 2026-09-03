@@ -102,12 +102,14 @@ impl Tag {
         })
     }
 
+    /// Returns the full tag string, including its leading `#`.
     #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.full
     }
 
+    /// Returns the hierarchical tag segments from root to leaf.
     #[inline]
     #[must_use]
     #[cfg_attr(

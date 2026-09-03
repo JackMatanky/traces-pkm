@@ -663,7 +663,15 @@ mod tests {
     use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
-    use crate::{index::IndexerService, note::parse_markdown};
+    use crate::{
+        index::IndexerService,
+        note::{MarkdownParserInput, parse_markdown},
+    };
+
+    fn parse(path: impl AsRef<Path>, src: &str) -> Note {
+        let input = MarkdownParserInput::for_test(path.as_ref(), src);
+        parse_markdown(&input)
+    }
 
     const TEST_TABLE: TableDefinition<&[u8], &[u8]> =
         TableDefinition::new("test_table");
@@ -828,7 +836,7 @@ mod tests {
             .expect("write note");
             let files =
                 IndexerService::new(temp.path()).scan().expect("scan root");
-            let note = parse_markdown(
+            let note = parse(
                 "note.md",
                 "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
             );
@@ -858,7 +866,7 @@ mod tests {
 
             let notes: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
                 .iter()
-                .map(|p| parse_markdown(*p, ""))
+                .map(|p| parse(*p, ""))
                 .collect();
             let files: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
                 .iter()
@@ -881,10 +889,8 @@ mod tests {
         fn read_all_drops_link_edges_with_no_matching_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let notes: Vec<_> = ["a.md", "target.md"]
-                .iter()
-                .map(|p| parse_markdown(*p, ""))
-                .collect();
+            let notes: Vec<_> =
+                ["a.md", "target.md"].iter().map(|p| parse(*p, "")).collect();
             // The valid edge rides through entry assembly; the orphan
             // edges must reach disk raw, since `write_all` structurally
             // cannot express a link to an unindexed target or source.
@@ -921,10 +927,8 @@ mod tests {
         fn read_all_drops_a_target_whose_sources_are_all_orphaned() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let notes: Vec<_> = ["a.md", "b.md"]
-                .iter()
-                .map(|p| parse_markdown(*p, ""))
-                .collect();
+            let notes: Vec<_> =
+                ["a.md", "b.md"].iter().map(|p| parse(*p, "")).collect();
             // The valid edge rides through entry assembly; the orphan
             // source must reach disk raw.
             write_all_parts(
@@ -951,10 +955,8 @@ mod tests {
         fn read_files_and_links_via_keeps_orphaned_edges_that_read_all_drops() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let notes: Vec<_> = ["a.md", "target.md"]
-                .iter()
-                .map(|p| parse_markdown(*p, ""))
-                .collect();
+            let notes: Vec<_> =
+                ["a.md", "target.md"].iter().map(|p| parse(*p, "")).collect();
             let links = HashMap::from([
                 (PathBuf::from("target.md"), vec![
                     PathBuf::from("a.md"),
@@ -1073,7 +1075,7 @@ mod tests {
                 crate::file::FileFormat::Note,
             );
 
-            let note = parse_markdown(&weird_path, "content");
+            let note = parse(&weird_path, "content");
             let files = vec![file];
             let notes = vec![note];
 
@@ -1106,8 +1108,8 @@ mod tests {
             ];
             files.sort_by(|a, b| a.path().cmp(b.path()));
             let mut notes = vec![
-                parse_markdown(&weird, "link to [[normal]]"),
-                parse_markdown(&normal, "link to [[weird]]"),
+                parse(&weird, "link to [[normal]]"),
+                parse(&normal, "link to [[weird]]"),
             ];
             notes.sort_by(|a, b| a.path().cmp(b.path()));
             let links = HashMap::from([

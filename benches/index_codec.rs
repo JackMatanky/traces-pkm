@@ -96,7 +96,11 @@ fn generate_notes(n: usize) -> Vec<traces_pkm::Note> {
                 i % 10,
                 (i + 1) % n
             );
-            traces_pkm::parse_markdown(&path, &content)
+            let input = traces_pkm::MarkdownParserInput::for_test(
+                std::path::Path::new(&path),
+                &content,
+            );
+            traces_pkm::parse_markdown(&input)
         })
         .collect()
 }

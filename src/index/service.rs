@@ -21,7 +21,11 @@ use super::{
     FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
     entry, error::IndexBuilderError, store::IndexStore,
 };
-use crate::{DirTree, DirTreeError, file::FileBase};
+use crate::{
+    DirTree, DirTreeError,
+    config::{Config, FrontmatterConfig, TaskConfig},
+    file::FileBase,
+};
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
@@ -42,6 +46,8 @@ use crate::{DirTree, DirTreeError, file::FileBase};
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
+    tasks: TaskConfig,
+    frontmatter: FrontmatterConfig,
 }
 
 impl IndexerService {
@@ -51,7 +57,19 @@ impl IndexerService {
     pub fn new<P: Into<PathBuf>>(root: P) -> Self {
         Self {
             root: root.into(),
+            tasks: TaskConfig::default(),
+            frontmatter: FrontmatterConfig::default(),
         }
+    }
+
+    /// Attaches resolved [`Config`] settings for task and frontmatter
+    /// classification.
+    #[inline]
+    #[must_use]
+    pub fn with_config(mut self, config: &Config) -> Self {
+        self.tasks = config.tasks().clone();
+        self.frontmatter = config.frontmatter().clone();
+        self
     }
 
     /// Scans this service's root and builds a [`FileIndex`] in memory.
@@ -63,7 +81,10 @@ impl IndexerService {
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
-        Ok(builder::IndexBuilder::new(files).build(&self.root)?)
+        Ok(builder::IndexBuilder::new(files)
+            .with_tasks(self.tasks.clone())
+            .with_frontmatter(self.frontmatter.clone())
+            .build(&self.root)?)
     }
 
     /// Refreshes the persisted index for this service's root against current
@@ -103,6 +124,8 @@ impl IndexerService {
             let files = self.scan()?;
             builder::IndexBuilder::new(files)
                 .with_cache(cache)
+                .with_tasks(self.tasks.clone())
+                .with_frontmatter(self.frontmatter.clone())
                 .build(&self.root)?
         };
         // read_txn (and cache, which borrows it) drop here, before

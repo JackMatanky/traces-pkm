@@ -230,7 +230,12 @@ fn folder_distance(a: &Path, b: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::note::{LinkType, parse_markdown};
+    use crate::note::{LinkType, MarkdownParserInput, parse_markdown};
+
+    fn parse(path: &str, src: &str) -> Note {
+        let input = MarkdownParserInput::for_test(Path::new(path), src);
+        parse_markdown(&input)
+    }
 
     /// Builds a [`Note`] at `path` whose only outlink is `target`.
     fn note_with_outlink(path: &str, target: &str, kind: LinkType) -> Note {
@@ -238,7 +243,7 @@ mod tests {
             LinkType::Wikilink => format!("[[{target}]]"),
             LinkType::Markdown => format!("[link]({target})"),
         };
-        parse_markdown(path, &src)
+        parse(path, &src)
     }
 
     mod resolve {
@@ -259,7 +264,7 @@ mod tests {
 
         #[test]
         fn resolves_an_exact_root_relative_markdown_path() {
-            let notes = [parse_markdown("notes/other.md", "# Other")];
+            let notes = [parse("notes/other.md", "# Other")];
 
             assert_eq!(
                 resolve(
@@ -273,7 +278,7 @@ mod tests {
 
         #[test]
         fn resolves_a_markdown_path_missing_its_extension() {
-            let notes = [parse_markdown("other.md", "# Other")];
+            let notes = [parse("other.md", "# Other")];
 
             assert_eq!(
                 resolve(&notes, "linking.md", LinkTarget::Path("other")),
@@ -284,8 +289,8 @@ mod tests {
         #[test]
         fn resolves_a_wikilink_by_unique_file_stem() {
             let notes = [
-                parse_markdown("notes/Project Alpha.md", "# Alpha"),
-                parse_markdown("notes/other.md", "# Other"),
+                parse("notes/Project Alpha.md", "# Alpha"),
+                parse("notes/other.md", "# Other"),
             ];
 
             assert_eq!(
@@ -306,8 +311,8 @@ mod tests {
             // back to a whole-index stem search that would otherwise match
             // the unrelated `archive/foo.md`.
             let notes = [
-                parse_markdown("archive/foo.md", "# Archived"),
-                parse_markdown("notes/bar.md", "# Bar"),
+                parse("archive/foo.md", "# Archived"),
+                parse("notes/bar.md", "# Bar"),
             ];
 
             assert_eq!(
@@ -318,7 +323,7 @@ mod tests {
 
         #[test]
         fn resolves_a_path_with_an_anchor_by_its_path_segment() {
-            let notes = [parse_markdown("other.md", "# Other")];
+            let notes = [parse("other.md", "# Other")];
 
             assert_eq!(
                 resolve(
@@ -336,8 +341,8 @@ mod tests {
             // the same folder as `notes/a/note.md`, which is nearer than
             // `notes/b/note.md` (their nearest shared ancestor is `notes`).
             let notes = [
-                parse_markdown("notes/a/note.md", "# Near"),
-                parse_markdown("notes/b/note.md", "# Far"),
+                parse("notes/a/note.md", "# Near"),
+                parse("notes/b/note.md", "# Far"),
             ];
 
             assert_eq!(
@@ -351,10 +356,7 @@ mod tests {
             // "a.md" and "b/a.md" share stem "a"; linking from "a.md" itself
             // makes "a.md" the unique nearest candidate (distance 0, same
             // folder as itself) over "b/a.md" (distance 1).
-            let notes = [
-                parse_markdown("a.md", "# Self"),
-                parse_markdown("b/a.md", "# Other"),
-            ];
+            let notes = [parse("a.md", "# Self"), parse("b/a.md", "# Other")];
 
             assert_eq!(
                 resolve(&notes, "a.md", LinkTarget::Path("a")),
@@ -366,10 +368,7 @@ mod tests {
         fn returns_none_for_an_ambiguous_stem_match_at_equal_distance() {
             // Both candidates are one folder away from the root-level
             // linking Note, so proximity itself cannot break the tie.
-            let notes = [
-                parse_markdown("a/note.md", "# A"),
-                parse_markdown("b/note.md", "# B"),
-            ];
+            let notes = [parse("a/note.md", "# A"), parse("b/note.md", "# B")];
 
             assert_eq!(
                 resolve(&notes, "linking.md", LinkTarget::Path("note")),
@@ -384,9 +383,9 @@ mod tests {
             // 0), so recording the tie and then finding a strictly closer
             // candidate must reset the tie rather than sticking at `None`.
             let notes = [
-                parse_markdown("far/a/note.md", "# Far A"),
-                parse_markdown("far/b/note.md", "# Far B"),
-                parse_markdown("near/note.md", "# Near"),
+                parse("far/a/note.md", "# Far A"),
+                parse("far/b/note.md", "# Far B"),
+                parse("near/note.md", "# Near"),
             ];
 
             assert_eq!(
@@ -397,7 +396,7 @@ mod tests {
 
         #[test]
         fn returns_none_for_a_basename_matching_no_indexed_note() {
-            let notes = [parse_markdown("other.md", "# Other")];
+            let notes = [parse("other.md", "# Other")];
 
             assert_eq!(
                 resolve(&notes, "linking.md", LinkTarget::Path("nonexistent")),
@@ -412,7 +411,7 @@ mod tests {
             // still a bare basename, so tier 3 falls back to a stem match
             // on "report" (`is_basename` doesn't require an extensionless
             // target).
-            let notes = [parse_markdown("notes/report.md", "# Report")];
+            let notes = [parse("notes/report.md", "# Report")];
 
             assert_eq!(
                 resolve(&notes, "linking.md", LinkTarget::Path("report.txt")),
@@ -422,7 +421,7 @@ mod tests {
 
         #[test]
         fn returns_none_for_an_unresolvable_target() {
-            let notes = [parse_markdown("other.md", "# Other")];
+            let notes = [parse("other.md", "# Other")];
 
             assert_eq!(
                 resolve(
@@ -436,7 +435,7 @@ mod tests {
 
         #[test]
         fn returns_none_for_an_anchor_only_target() {
-            let notes = [parse_markdown("other.md", "# Other")];
+            let notes = [parse("other.md", "# Other")];
 
             assert_eq!(
                 resolve(
@@ -465,7 +464,7 @@ mod tests {
         fn maps_a_target_to_the_single_note_linking_to_it() {
             let notes = [
                 note_with_outlink("a.md", "b", LinkType::Wikilink),
-                parse_markdown("b.md", "# B"),
+                parse("b.md", "# B"),
             ];
 
             let inlinks = run(&notes);
@@ -481,7 +480,7 @@ mod tests {
             let notes = [
                 note_with_outlink("a.md", "target", LinkType::Wikilink),
                 note_with_outlink("b.md", "target", LinkType::Wikilink),
-                parse_markdown("target.md", "# Target"),
+                parse("target.md", "# Target"),
             ];
 
             let inlinks = run(&notes);
@@ -494,8 +493,8 @@ mod tests {
 
         #[test]
         fn collapses_duplicate_outlinks_within_one_note_to_one_edge() {
-            let note = parse_markdown("a.md", "[[b]] and [[b]] again");
-            let notes = [note, parse_markdown("b.md", "# B")];
+            let note = parse("a.md", "[[b]] and [[b]] again");
+            let notes = [note, parse("b.md", "# B")];
 
             let inlinks = run(&notes);
 
@@ -522,7 +521,7 @@ mod tests {
 
         #[test]
         fn omits_notes_with_no_inbound_links() {
-            let notes = [parse_markdown("lonely.md", "# Lonely")];
+            let notes = [parse("lonely.md", "# Lonely")];
 
             let inlinks = run(&notes);
 
@@ -550,8 +549,8 @@ mod tests {
                     "note",
                     LinkType::Wikilink,
                 ),
-                parse_markdown("notes/a/note.md", "# Near"),
-                parse_markdown("notes/b/note.md", "# Far"),
+                parse("notes/a/note.md", "# Near"),
+                parse("notes/b/note.md", "# Far"),
             ];
 
             let inlinks = run(&notes);

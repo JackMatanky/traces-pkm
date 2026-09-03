@@ -77,6 +77,8 @@ mod template;
 pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
+pub use config::TaskConfig;
+#[cfg(any(test, feature = "test-utils"))]
 pub use config::{Config, ConfigService, TrustRequest};
 pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
@@ -103,8 +105,10 @@ pub use index::{
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
-#[cfg(any(test, feature = "test-utils"))]
-pub use note::{Note, NoteFieldValue, parse_markdown};
+pub use note::{
+    List, ListItem, ListItemType, MarkdownParserInput, Note, NoteFieldValue,
+    parse_markdown,
+};
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
@@ -113,6 +117,9 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
+pub use tag::Tag;
+#[cfg(any(test, feature = "test-utils"))]
+pub use task::{TaskStatus, TaskStatusSymbol, TaskStatusType};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,

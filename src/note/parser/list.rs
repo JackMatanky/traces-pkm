@@ -21,6 +21,7 @@ use crate::{
     note::{
         List, ListItem, ListItemType, NoteFieldValue, lists::ListItemPosition,
     },
+    tag::Tag,
     task::TaskStatusMap,
 };
 
@@ -117,6 +118,7 @@ impl ListTracker {
         }
         item.fields = item_fields;
         let tags = lexer.extract_tags(&text);
+        item.tags.extend(tags.iter().cloned());
         Some((page_fields, tags))
     }
 
@@ -162,6 +164,7 @@ impl ListTracker {
             text_buffer: String::new(),
             scan_buffer: String::new(),
             fields: IndexMap::new(),
+            tags: Vec::new(),
             children: Vec::new(),
             position: ListItemPosition::new(line, depth, parent),
         });
@@ -170,19 +173,31 @@ impl ListTracker {
     /// Flushes and records the innermost list item.
     ///
     /// The flush decides any pending leading marker (see
-    /// [`Self::resolve_pending_marker`]); a decided marker always resolves to
-    /// [`ListItemType::Task`] — tag-filter reclassification into
-    /// [`ListItemType::Checkbox`] is a later task-system issue. Returns the
-    /// flushed inline fields and tags, if any.
+    /// [`Self::resolve_pending_marker`]); a decided marker resolves to
+    /// [`ListItemType::Task`] if tag filters are empty or any item tag matches
+    /// a configured tag filter, and to [`ListItemType::Checkbox`] otherwise.
+    /// Returns the flushed inline fields and tags, if any.
     pub(super) fn end_item(
         &mut self,
+        tag_filters: &[Tag],
         statuses: &TaskStatusMap,
     ) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
             let item_type = match item_frame.classification {
                 ItemClassificationState::Marked(symbol) => {
-                    ListItemType::Task(statuses.resolve(symbol))
+                    let status = statuses.resolve(symbol);
+                    if tag_filters.is_empty()
+                        || item_frame.tags.iter().any(|tag| {
+                            tag_filters
+                                .iter()
+                                .any(|filter| filter.is_exact_match(tag))
+                        })
+                    {
+                        ListItemType::Task(status)
+                    } else {
+                        ListItemType::Checkbox
+                    }
                 }
                 ItemClassificationState::Plain
                 | ItemClassificationState::Pending => ListItemType::Plain,
@@ -296,8 +311,8 @@ struct ItemFrame {
     /// Kept separate from child items' fields so [`ListItem::fields`] resolves
     /// per-item, not per-list.
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    tags: Vec<Tag>,
     children: Vec<List>,
-    /// This item's source position: line, nesting depth, and parent line.
     position: ListItemPosition,
 }
 
@@ -415,12 +430,23 @@ struct ListFrame {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     use super::*;
-    use crate::{note::parser::parse_markdown, task::TaskStatusType};
-
+    use crate::{
+        note::{
+            Note,
+            parser::{MarkdownParserInput, parse_markdown},
+        },
+        task::TaskStatusType,
+    };
+    fn parse(src: &str) -> Note {
+        let input = MarkdownParserInput::for_test(Path::new("note.md"), src);
+        parse_markdown(&input)
+    }
     #[test]
     fn item_classification_state_accessors() {
         assert!(!ItemClassificationState::Pending.is_marked());
@@ -456,8 +482,8 @@ mod tests {
 
         tracker.inline_code("code");
 
-        tracker.end_item(&TaskStatusMap::default());
-        tracker.end_item(&TaskStatusMap::default());
+        tracker.end_item(&[], &TaskStatusMap::default());
+        tracker.end_item(&[], &TaskStatusMap::default());
         tracker.end_list();
 
         // end_item pops LIFO: item2 is index 0, item1 is index 1
@@ -530,8 +556,7 @@ mod tests {
         tracker.start_item(SourceLine::new(1));
         tracker.push_text("Author:: Jane", false);
 
-        let flushed = tracker.end_item(&TaskStatusMap::default());
-
+        let flushed = tracker.end_item(&[], &TaskStatusMap::default());
         assert!(flushed.is_some(), "end_item must flush scan buffer");
         let (fields, _) = flushed.unwrap();
         let has_author = fields.keys().any(|k| k.is_canonical_match("author"));
@@ -554,7 +579,7 @@ mod tests {
     #[test]
     fn iterates_top_level_task_items() {
         let input = "- [ ] Task 1\n- Plain item\n- [x] Task 2";
-        let note = parse_markdown("note.md", input);
+        let note = parse(input);
 
         let tasks: Vec<&ListItem> = note.tasks().collect();
         assert_eq!(tasks.len(), 2);
@@ -566,7 +591,7 @@ mod tests {
     #[expect(clippy::panic, reason = "test assertion on enum variant")]
     fn iterates_nested_sub_list_task_items() {
         let input = "- Plain parent\n  - [x] Subtask 1";
-        let note = parse_markdown("note.md", input);
+        let note = parse(input);
 
         let tasks: Vec<&ListItem> = note.tasks().collect();
         assert_eq!(tasks.len(), 1);
@@ -590,7 +615,7 @@ mod tests {
         #[case] expected_kind: TaskStatusType,
     ) {
         let input = format!("- [{symbol}] Task text");
-        let note = parse_markdown("note.md", &input);
+        let note = parse(&input);
 
         let tasks: Vec<&ListItem> = note.tasks().collect();
         assert_eq!(tasks.len(), 1, "marker {symbol:?} must become a Task");
@@ -608,7 +633,7 @@ mod tests {
     #[test]
     #[expect(clippy::panic, reason = "test assertion on enum variant")]
     fn preserves_and_classifies_an_unknown_marker_as_an_incomplete_task() {
-        let note = parse_markdown("note.md", "- [?] Mystery task");
+        let note = parse("- [?] Mystery task");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -629,7 +654,7 @@ mod tests {
 
     #[test]
     fn does_not_treat_bracket_text_in_the_item_body_as_a_marker() {
-        let note = parse_markdown("note.md", "- Check [x] later");
+        let note = parse("- Check [x] later");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -643,7 +668,7 @@ mod tests {
         // `- [x]` as an entire item: the line terminator supplies the
         // marker's trailing whitespace, matching pulldown-cmark's
         // ENABLE_TASKLISTS behavior.
-        let note = parse_markdown("note.md", "- [x]");
+        let note = parse("- [x]");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -655,7 +680,7 @@ mod tests {
     fn resolves_a_pending_marker_before_a_nested_list_flush() {
         // `- [x]` + nested list: no whitespace text chunk arrives before
         // the child list starts, but the parent still carries a marker.
-        let note = parse_markdown("note.md", "- [x]\n  - sub");
+        let note = parse("- [x]\n  - sub");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -665,7 +690,7 @@ mod tests {
 
     #[test]
     fn classifies_a_marker_before_a_soft_break_as_a_task() {
-        let note = parse_markdown("note.md", "- [x]\n  continued");
+        let note = parse("- [x]\n  continued");
 
         let tasks: Vec<&ListItem> = note.tasks().collect();
         assert_eq!(tasks.len(), 1);
@@ -676,7 +701,7 @@ mod tests {
     fn keeps_an_item_starting_with_inline_markup_plain() {
         // The emphasis opens the item's content, so `[x]` is not at the
         // item-leading position and must not become a marker.
-        let note = parse_markdown("note.md", "- **[x] Task**");
+        let note = parse("- **[x] Task**");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -687,7 +712,7 @@ mod tests {
 
     #[test]
     fn keeps_an_item_starting_with_inline_code_plain() {
-        let note = parse_markdown("note.md", "- `[x]` Task");
+        let note = parse("- `[x]` Task");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -700,7 +725,7 @@ mod tests {
     fn keeps_a_link_lookalike_plain() {
         // `- [x](y)` is a link whose text abuts the closing bracket —
         // no whitespace after `]`, so no marker.
-        let note = parse_markdown("note.md", "- [x](y) z");
+        let note = parse("- [x](y) z");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -713,7 +738,7 @@ mod tests {
     fn rejects_unicode_whitespace_after_the_marker() {
         // NBSP is ordinary text in Markdown, not the marker's trailing
         // whitespace (ASCII whitespace only, mirroring pulldown-cmark).
-        let note = parse_markdown("note.md", "- [x]\u{00A0}Task");
+        let note = parse("- [x]\u{00A0}Task");
 
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
@@ -724,7 +749,7 @@ mod tests {
 
     #[test]
     fn classifies_a_multibyte_symbol_marker_as_an_incomplete_task() {
-        let note = parse_markdown("note.md", "- [β] Task");
+        let note = parse("- [β] Task");
 
         let tasks: Vec<&ListItem> = note.tasks().collect();
         assert_eq!(tasks.len(), 1);
@@ -734,5 +759,153 @@ mod tests {
             item.item_type(),
             ListItemType::Task(status) if status.kind().completed() == Some(false)
         ));
+    }
+
+    mod tag_filters {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn classifies_marked_item_as_task_when_tag_filters_are_empty() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Task without tag", false);
+            tracker.end_item(&[], &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+        }
+
+        #[test]
+        fn classifies_marked_item_as_task_when_tag_matches_filter() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Task with tag #task", false);
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+        }
+
+        #[test]
+        fn classifies_marked_item_as_checkbox_when_tag_does_not_match_filter() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Checkbox with different tag #other", false);
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.item_type(), &ListItemType::Checkbox);
+        }
+
+        #[test]
+        fn classifies_marked_item_as_checkbox_when_item_has_no_tags_and_filter_is_non_empty()
+         {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Checkbox without tags", false);
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.item_type(), &ListItemType::Checkbox);
+        }
+
+        #[test]
+        fn classifies_marked_item_as_task_when_one_of_multiple_tags_matches_filter()
+         {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text(
+                "[x] Task with multiple tags #other #task #work",
+                false,
+            );
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+        }
+
+        #[test]
+        fn classifies_marked_item_as_task_when_tag_matches_one_of_multiple_filters()
+         {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Task matching second filter #todo", false);
+            let tag_filters =
+                [Tag::parse("#task").unwrap(), Tag::parse("#todo").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+        }
+
+        #[test]
+        fn rejects_prefix_match_for_exact_nested_tag() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker
+                .push_text("[x] Checkbox with nested tag #task/project", false);
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.item_type(), &ListItemType::Checkbox);
+        }
+
+        #[test]
+        fn accepts_exact_nested_tag_match() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Task with nested tag #task/project", false);
+            let tag_filters = [Tag::parse("#task/project").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+        }
+
+        #[test]
+        fn keeps_unmarked_item_plain_even_with_matching_tag() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("Plain item with tag #task", false);
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.item_type(), &ListItemType::Plain);
+        }
     }
 }

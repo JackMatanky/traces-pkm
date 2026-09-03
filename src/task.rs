@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct TaskStatus {
+pub struct TaskStatus {
     symbol: TaskStatusSymbol,
     name: String,
     kind: TaskStatusType,
@@ -203,14 +203,9 @@ impl Default for TaskStatusMap {
     }
 }
 
-/// Shared, lazily built default status map for parsers that run without
-/// resolved configuration.
-pub(crate) static DEFAULT_TASK_STATUSES: std::sync::LazyLock<TaskStatusMap> =
-    std::sync::LazyLock::new(TaskStatusMap::default);
-
 /// The workflow classification of a [`TaskStatus`].
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub(crate) enum TaskStatusType {
+pub enum TaskStatusType {
     /// Not yet started.
     Todo,
     /// Actively being worked on.
@@ -247,13 +242,12 @@ impl TaskStatusType {
 
 /// The marker character inside `[<char>]`, e.g. `' '`, `'x'`, `'/'`, `'-'`.
 ///
-/// Wraps the single character used as the configured lookup key for both
+/// Wraps a single `char` without validation, serving as the lookup key for
 /// standard and custom-scanned task markers. Unknown single-character markers
 /// are still valid symbols; this type carries no validation beyond being a
 /// `char`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub(crate) struct TaskStatusSymbol(char);
-
+pub struct TaskStatusSymbol(char);
 impl TaskStatusSymbol {
     /// Wraps `symbol` as a task status marker character.
     #[inline]

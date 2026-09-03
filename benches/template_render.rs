@@ -83,8 +83,7 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
     write_template(
         &root,
         "table_report.md",
-        "{{ query.from() | where(\"rating\", \">=\", 5) | sort(\"file.name\") \
-         | table(\"file.path\", \"rating\", \"status\") }}",
+        r#"{{ query.from().where("rating >= 5").sort("file.name", false).table(["Path", "Rating", "Status"], ["file.path", "rating", "status"]) }}"#,
     );
     let indexer = IndexerService::new(&root);
     indexer

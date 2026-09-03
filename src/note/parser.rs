@@ -47,22 +47,19 @@ use pulldown_cmark::{
 };
 
 use super::{Frontmatter, Link, LinkType, Note, RawFrontmatter};
-use crate::{
-    ByteOffset, FieldKey,
-    tag::Tag,
-    task::{DEFAULT_TASK_STATUSES, TaskStatusMap},
-};
+use crate::{ByteOffset, FieldKey, tag::Tag, task::TaskStatusMap};
 
 mod inline;
+mod input;
 mod lexer;
 mod line;
 mod list;
 mod marker;
 
+pub use input::MarkdownParserInput;
 use lexer::InlineTokenLexer;
 use line::ByteTracker;
 use list::ListTracker;
-
 /// Parses Markdown source into a [`Note`].
 ///
 /// Recognizes custom task markers, YAML frontmatter blocks, and Obsidian
@@ -78,25 +75,36 @@ use list::ListTracker;
 /// ```rust
 /// # #[cfg(feature = "test-utils")]
 /// # {
-/// use traces_pkm::parse_markdown;
+/// use std::path::Path;
 ///
-/// let note = parse_markdown("note.md", "# Hello\nStatus:: Draft");
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input = MarkdownParserInput::for_test(
+///     Path::new("note.md"),
+///     "# Hello\nStatus:: Draft",
+/// );
+/// let note = parse_markdown(&input);
 /// assert!(note.outlinks().is_empty());
 /// assert_eq!(note.tags().len(), 0);
 /// # }
 /// ```
 #[inline]
 #[must_use]
-pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
+pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     opts.insert(Options::ENABLE_WIKILINKS);
 
-    let mut ctx = ParserContext::new(src);
-    for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
+    let mut ctx = ParserContext::new(
+        input.src(),
+        input.tasks().statuses(),
+        input.tasks().tag_filters(),
+    );
+    for (event, range) in Parser::new_ext(input.src(), opts).into_offset_iter()
+    {
         ctx.handle_event(event, ByteOffset::from(range.start));
     }
-    ctx.into_note(path)
+    ctx.into_note(input.path())
 }
 
 /// The top-level block currently being parsed.
@@ -116,7 +124,7 @@ type FlushedFields =
     Option<(IndexMap<FieldKey, Vec<super::NoteFieldValue>>, Vec<Tag>)>;
 
 /// State accumulated while walking Markdown events for one note.
-struct ParserContext {
+struct ParserContext<'a> {
     frontmatter: Option<Frontmatter>,
     block: BlockContext,
     metadata_buffer: String,
@@ -134,15 +142,21 @@ struct ParserContext {
     /// classify status-marked list items in [`list::ListTracker::end_item`].
     ///
     /// [`TaskStatus`]: crate::task::TaskStatus
-    task_statuses: &'static TaskStatusMap,
+    task_statuses: &'a TaskStatusMap,
+    /// Tag filters that classify status-marked items as Tasks vs Checkboxes.
+    tag_filters: &'a [Tag],
 }
 
-impl ParserContext {
+impl<'a> ParserContext<'a> {
     /// Starts a new context for `source`, precomputing its line-start
     /// offsets.
     #[inline]
     #[must_use]
-    fn new(source: &str) -> Self {
+    fn new(
+        source: &str,
+        task_statuses: &'a TaskStatusMap,
+        tag_filters: &'a [Tag],
+    ) -> Self {
         Self {
             frontmatter: None,
             block: BlockContext::default(),
@@ -154,7 +168,8 @@ impl ParserContext {
             inline_fields: IndexMap::new(),
             tags: Vec::new(),
             line_tracker: ByteTracker::new(source),
-            task_statuses: &DEFAULT_TASK_STATUSES,
+            task_statuses,
+            tag_filters,
         }
     }
 
@@ -366,7 +381,8 @@ impl ParserContext {
 
     /// Flushes and records the innermost list item.
     fn end_item(&mut self) {
-        let flushed = self.list_nesting.end_item(self.task_statuses);
+        let flushed =
+            self.list_nesting.end_item(self.tag_filters, self.task_statuses);
         self.extend_from_flush(flushed);
     }
 
@@ -446,6 +462,22 @@ mod tests {
     };
     use crate::SourceLine;
 
+    fn parse(src: &str) -> Note {
+        let input =
+            MarkdownParserInput::for_test(std::path::Path::new("note.md"), src);
+        parse_markdown(&input)
+    }
+
+    fn parse_with_tasks(src: &str, tasks: &crate::config::TaskConfig) -> Note {
+        let frontmatter = crate::config::FrontmatterConfig::default();
+        let input = MarkdownParserInput::new(
+            std::path::Path::new("note.md"),
+            src,
+            tasks,
+            &frontmatter,
+        );
+        parse_markdown(&input)
+    }
     mod parse {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -455,7 +487,7 @@ mod tests {
         #[test]
         fn returns_empty_note_when_source_is_empty() {
             let input = "";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.path(), std::path::Path::new("note.md"));
             assert_eq!(note.frontmatter(), None);
@@ -468,7 +500,7 @@ mod tests {
         #[test]
         fn returns_none_for_frontmatter_when_absent() {
             let input = "# Header\nNo YAML block.";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.frontmatter(), None);
         }
@@ -476,7 +508,7 @@ mod tests {
         #[test]
         fn extracts_yaml_frontmatter_block_fields() {
             let input = "---\ntitle: My Note\ntags: [rust, pkm]\n---\n# Header";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(2));
             assert_eq!(
@@ -488,7 +520,7 @@ mod tests {
         #[test]
         fn returns_none_for_frontmatter_when_yaml_block_is_empty() {
             let input = "---\n---\n# Header";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.frontmatter(), None);
         }
@@ -496,7 +528,7 @@ mod tests {
         #[test]
         fn returns_empty_frontmatter_when_yaml_block_is_malformed() {
             let input = "---\ninvalid: [yaml: :\n---\n# Header";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(
                 note.frontmatter().map(Frontmatter::is_empty),
@@ -508,7 +540,7 @@ mod tests {
         fn extracts_structured_fields_from_yaml_frontmatter() {
             let input = "---\ntitle: Note Title\nauthor: Alice\ndraft: \
                          true\nrating: 5.0\ndate: 2026-07-29\n---\nBody text.";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let fields: std::collections::BTreeMap<&str, &NoteFieldValue> =
                 note.frontmatter()
@@ -537,8 +569,7 @@ mod tests {
 
         #[test]
         fn extracts_wikilink_values_from_yaml_frontmatter() {
-            let note = parse_markdown(
-                "note.md",
+            let note = parse(
                 "---\nrelated: \"[[Project Alpha|Alpha]]\"\n---\nBody text.",
             );
 
@@ -583,7 +614,7 @@ mod tests {
             #[case] expected_text: &str,
             #[case] expected_kind: LinkType,
         ) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let link = note.outlinks().first().expect("outlink present");
             assert_eq!(link.target(), expected_target);
@@ -595,7 +626,7 @@ mod tests {
         #[expect(clippy::panic, reason = "test assertion on enum variant")]
         fn extracts_task_item_completion_status() {
             let input = "- [ ] Incomplete task\n- [x] Completed task";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let list = note.lists().first().expect("list present");
             let item0 = list.items().first().expect("item 0");
@@ -617,7 +648,7 @@ mod tests {
         #[test]
         fn includes_link_display_text_in_the_containing_item_text() {
             let input = "- [ ] Check [link text](https://example.com) here";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let item = note
                 .lists()
@@ -633,7 +664,7 @@ mod tests {
         #[test]
         fn extracts_nested_child_lists() {
             let input = "- Parent item\n  - Child item";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let parent_list = note.lists().first().expect("parent list");
             let parent_item = parent_list.items().first().expect("parent item");
@@ -648,7 +679,7 @@ mod tests {
         #[test]
         fn extracts_grandchild_lists_beyond_two_levels() {
             let input = "- Parent\n  - Child\n    - Grandchild";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let grandchild = note
                 .lists()
@@ -665,7 +696,7 @@ mod tests {
         #[test]
         fn populates_depth_line_and_parent_down_the_nesting_chain() {
             let input = "- Parent\n  - Child\n    - Grandchild";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let parent = note
                 .lists()
@@ -698,7 +729,7 @@ mod tests {
         #[test]
         fn gives_top_level_siblings_distinct_lines_and_no_parent() {
             let input = "- Parent\n  - Child\n- Sibling";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let list = note.lists().first().expect("list present");
             let sibling = list.items().get(1).expect("sibling item");
@@ -714,7 +745,7 @@ mod tests {
             #[case] input: &str,
             #[case] expected_ordered: bool,
         ) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             let list = note.lists().first().expect("list present");
             assert_eq!(list.is_ordered(), expected_ordered);
@@ -723,7 +754,7 @@ mod tests {
 
         #[test]
         fn preserves_soft_breaks_inside_list_item_text() {
-            let note = parse_markdown("note.md", "- Wrapped\n  line");
+            let note = parse("- Wrapped\n  line");
 
             let text = note
                 .lists()
@@ -739,7 +770,7 @@ mod tests {
             // be mistaken for frontmatter if block context doesn't switch.
             let input = "---\ntitle: Real Frontmatter\n---\n\nSome \
                          text.\n\n```\n---\nfake: value\n```\n\nMore text.";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             // Act — the real frontmatter has 1 field; the fenced content must
             // not appear as additional fields.
@@ -761,7 +792,7 @@ mod tests {
             // so verifying they appear after a code block proves the context
             // reset worked.
             let input = "```\ncode here\n```\n\nStatus:: Draft";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             // Act — the parser extracts inline fields from body text
             let field_count = note.inline_fields().len();
@@ -783,7 +814,7 @@ mod tests {
             // extracted, proving both paragraphs were processed.
             let input = "Status:: Draft\n\n- Item one.\n- Nested \
                          item.\n\nAuthor:: Jane";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             // Act
             let keys: Vec<&str> =
@@ -807,7 +838,7 @@ mod tests {
             // push). We verify indirectly: a field value must be
             // truncated at the newline, not span across the break.
             let input = "Key:: value1  \nmore text";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             // Act
             let (_key, values) =
@@ -829,7 +860,7 @@ mod tests {
             // buffer (for field/tag scanning). The push_code method
             // writes only to text_buffer.
             let input = "- Item with `inline code` here\n";
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             // Act
             let lists = note.lists();
@@ -867,7 +898,7 @@ mod tests {
             #[case] expected_key: &str,
             #[case] expected_value: &str,
         ) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.inline_fields().len(), 1);
             let (key, values) =
@@ -881,9 +912,7 @@ mod tests {
 
         #[test]
         fn extracts_a_field_from_each_of_two_separate_paragraphs() {
-            let note =
-                parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
-
+            let note = parse("Status:: Draft\n\nAuthor:: Jane");
             let keys: Vec<&str> = note
                 .inline_fields()
                 .keys()
@@ -894,7 +923,7 @@ mod tests {
 
         #[test]
         fn extracts_a_bare_field_from_a_list_item_and_keeps_it_in_item_text() {
-            let note = parse_markdown("note.md", "- Status:: Draft");
+            let note = parse("- Status:: Draft");
             assert_eq!(note.inline_fields().len(), 1);
 
             let item = note
@@ -912,8 +941,7 @@ mod tests {
 
         #[test]
         fn scopes_a_list_item_field_to_that_item_and_not_its_siblings() {
-            let note = parse_markdown(
-                "note.md",
+            let note = parse(
                 "- [ ] First task [priority:: high]\n- [ ] Second task \
                  [priority:: low]",
             );
@@ -942,8 +970,6 @@ mod tests {
                 second_priority.1.first().and_then(|v| v.as_str()),
                 Some("low")
             );
-
-            // Both fields still surface on the page-level bag, unscoped,
             // grouped under the same key.
             assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(
@@ -958,11 +984,9 @@ mod tests {
 
         #[test]
         fn scopes_a_task_emoji_shorthand_field_to_its_own_item() {
-            let note = parse_markdown(
-                "note.md",
+            let note = parse(
                 "- [ ] First task 🗓️2026-01-01\n- [ ] Second task 🗓️2026-02-02",
             );
-
             let list = note.lists().first().expect("list present");
             let mut items = list.items().iter();
             let first = items.next().expect("first item present");
@@ -986,7 +1010,7 @@ mod tests {
 
         #[test]
         fn plain_list_items_without_fields_have_no_scoped_fields() {
-            let note = parse_markdown("note.md", "- Plain item with no fields");
+            let note = parse("- Plain item with no fields");
 
             let item = note
                 .lists()
@@ -1024,7 +1048,7 @@ mod tests {
             #[case] expected_key: &str,
             #[case] expected_date: &str,
         ) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.inline_fields().len(), 1);
             let (key, values) =
@@ -1038,10 +1062,7 @@ mod tests {
 
         #[test]
         fn extracts_multiple_task_emoji_shorthand_fields_from_one_task_item() {
-            let note = parse_markdown(
-                "note.md",
-                "- [ ] testTask 🗓2022-07-14 ⏳2022-07-24",
-            );
+            let note = parse("- [ ] testTask 🗓2022-07-14 ⏳2022-07-24");
 
             let fields = note.inline_fields();
             assert_eq!(fields.len(), 2);
@@ -1062,13 +1083,13 @@ mod tests {
 
         #[test]
         fn ignores_task_emoji_shorthand_fields_in_plain_list_items() {
-            let note = parse_markdown("note.md", "- Plain item 🗓2022-07-14");
+            let note = parse("- Plain item 🗓2022-07-14");
 
             assert_eq!(note.inline_fields().len(), 0);
         }
         #[test]
         fn ignores_task_emoji_shorthand_fields_outside_task_items() {
-            let note = parse_markdown("note.md", "testTask 🗓2022-07-14");
+            let note = parse("testTask 🗓2022-07-14");
 
             assert_eq!(note.inline_fields().len(), 0);
         }
@@ -1078,21 +1099,21 @@ mod tests {
         #[case::indented_code_block("Paragraph text.\n\n    Key:: Value\n")]
         #[case::inline_code_span("Text with `Key:: Value` inline.")]
         fn ignores_fields_inside_excluded_code_regions(#[case] input: &str) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.inline_fields().len(), 0);
         }
 
         #[test]
         fn extracts_a_tag_from_body_text() {
-            let note = parse_markdown("note.md", "Filed under #book today.");
+            let note = parse("Filed under #book today.");
 
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[test]
         fn extracts_a_tag_from_a_list_item_and_keeps_it_in_item_text() {
-            let note = parse_markdown("note.md", "- Reading #book now");
+            let note = parse("- Reading #book now");
 
             let item = note
                 .lists()
@@ -1108,7 +1129,7 @@ mod tests {
         #[case::indented_code_block("Paragraph text.\n\n    #book\n")]
         #[case::inline_code_span("Text with `#book` inline.")]
         fn ignores_tags_inside_excluded_code_regions(#[case] input: &str) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.tags().len(), 0);
         }
@@ -1116,9 +1137,7 @@ mod tests {
         #[test]
         fn extracts_a_bare_field_from_a_second_paragraph_within_a_loose_list_item()
          {
-            let note =
-                parse_markdown("note.md", "- Task line\n\n  Status:: Draft\n");
-
+            let note = parse("- Task line\n\n  Status:: Draft\n");
             assert_eq!(note.inline_fields().len(), 1);
             let (key, values) =
                 note.inline_fields().iter().next().expect("field present");
@@ -1128,10 +1147,7 @@ mod tests {
 
         #[test]
         fn orders_parent_item_fields_before_nested_child_item_fields() {
-            let note = parse_markdown(
-                "note.md",
-                "- Status:: Draft\n  - Priority:: High\n",
-            );
+            let note = parse("- Status:: Draft\n  - Priority:: High\n");
 
             let keys: Vec<&str> =
                 note.inline_fields().iter().map(|(k, _)| k.name()).collect();
@@ -1140,8 +1156,7 @@ mod tests {
 
         #[test]
         fn orders_parent_item_fields_before_and_after_nested_child_fields() {
-            let note = parse_markdown(
-                "note.md",
+            let note = parse(
                 "- Status:: Draft\n  - Priority:: High\n\n  Reviewer:: Jane\n",
             );
 
@@ -1153,9 +1168,7 @@ mod tests {
         #[test]
         fn isolates_parent_and_child_item_tags_without_leaking_between_levels()
         {
-            let note =
-                parse_markdown("note.md", "- Parent #alpha\n  - Child #beta\n");
-
+            let note = parse("- Parent #alpha\n  - Child #beta\n");
             assert_eq!(note.tags(), [
                 Tag::parse("#alpha").unwrap(),
                 Tag::parse("#beta").unwrap()
@@ -1171,7 +1184,7 @@ mod tests {
         fn ignores_fields_inside_excluded_code_regions_within_a_list_item(
             #[case] input: &str,
         ) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.inline_fields().len(), 0);
         }
@@ -1183,14 +1196,14 @@ mod tests {
         fn ignores_tags_inside_excluded_code_regions_within_a_list_item(
             #[case] input: &str,
         ) {
-            let note = parse_markdown("note.md", input);
+            let note = parse(input);
 
             assert_eq!(note.tags().len(), 0);
         }
 
         #[test]
         fn extracts_both_a_field_and_a_tag_from_the_same_list_item_text() {
-            let note = parse_markdown("note.md", "- Status:: Draft #urgent");
+            let note = parse("- Status:: Draft #urgent");
 
             let item = note
                 .lists()
@@ -1214,10 +1227,7 @@ mod tests {
         #[test]
         fn preserves_document_order_between_a_body_field_and_a_list_item_field()
         {
-            let note = parse_markdown(
-                "note.md",
-                "Status:: Draft\n\n- Reviewer:: Jane",
-            );
+            let note = parse("Status:: Draft\n\n- Reviewer:: Jane");
 
             let keys: Vec<&str> =
                 note.inline_fields().iter().map(|(k, _)| k.name()).collect();
@@ -1227,10 +1237,7 @@ mod tests {
         #[test]
         fn preserves_document_order_between_a_list_item_field_and_a_body_field()
         {
-            let note = parse_markdown(
-                "note.md",
-                "- Reviewer:: Jane\n\nStatus:: Draft",
-            );
+            let note = parse("- Reviewer:: Jane\n\nStatus:: Draft");
 
             let keys: Vec<&str> =
                 note.inline_fields().iter().map(|(k, _)| k.name()).collect();
@@ -1240,8 +1247,7 @@ mod tests {
         #[test]
         fn keeps_a_field_value_intact_when_it_directly_abuts_excluded_inline_code()
          {
-            let note =
-                parse_markdown("note.md", "Status:: Draft`note` more text");
+            let note = parse("Status:: Draft`note` more text");
 
             assert_eq!(note.inline_fields().len(), 1);
             let (key, values) =
@@ -1252,17 +1258,16 @@ mod tests {
                 Some("Draft more text")
             );
         }
-
         #[test]
         fn extracts_a_tag_from_heading_text() {
-            let note = parse_markdown("note.md", "# Chapter #book\n\nBody.");
+            let note = parse("# Chapter #book\n\nBody.");
 
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
 
         #[test]
         fn extracts_a_bare_field_from_heading_text() {
-            let note = parse_markdown("note.md", "# Status:: Draft");
+            let note = parse("# Status:: Draft");
 
             assert_eq!(note.inline_fields().len(), 1);
             let (key, values) =
@@ -1273,10 +1278,7 @@ mod tests {
 
         #[test]
         fn extracts_a_visible_key_field_from_a_markdown_links_display_text() {
-            let note = parse_markdown(
-                "note.md",
-                "[Status:: Draft](http://example.com)",
-            );
+            let note = parse("[Status:: Draft](http://example.com)");
 
             assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(note.outlinks().len(), 1);
@@ -1292,16 +1294,110 @@ mod tests {
 
         #[test]
         fn extracts_a_visible_key_field_from_link_text_amid_other_prose() {
-            let note = parse_markdown(
-                "note.md",
-                "See [Status:: Draft](http://example.com) here.",
-            );
+            let note = parse("See [Status:: Draft](http://example.com) here.");
 
             assert_eq!(note.inline_fields().len(), 1);
             let (key, values) =
                 note.inline_fields().iter().next().expect("field present");
             assert!(key.is_canonical_match("status"));
             assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
+        }
+    }
+
+    mod tag_filters {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::config::TaskConfig;
+
+        #[test]
+        fn classifies_matching_items_as_tasks_and_non_matching_as_checkboxes() {
+            let tasks =
+                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let input = "- [ ] Marked matching #task\n- [x] Marked \
+                         non-matching #other\n- [ ] Marked without tags\n- \
+                         Plain with #task";
+            let note = parse_with_tasks(input, &tasks);
+
+            let tasks_collected: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks_collected.len(), 1);
+            assert_eq!(
+                tasks_collected.first().map(|t| t.text()),
+                Some("Marked matching #task")
+            );
+
+            let list = note.lists().first().expect("list present");
+            let items = list.items();
+            assert_eq!(items.len(), 4);
+            assert!(matches!(
+                items.first().expect("item 0").item_type(),
+                ListItemType::Task(_)
+            ));
+            assert_eq!(
+                items.get(1).expect("item 1").item_type(),
+                &ListItemType::Checkbox
+            );
+            assert_eq!(
+                items.get(2).expect("item 2").item_type(),
+                &ListItemType::Checkbox
+            );
+            assert_eq!(
+                items.get(3).expect("item 3").item_type(),
+                &ListItemType::Plain
+            );
+        }
+
+        #[test]
+        fn classifies_all_marked_items_as_tasks_when_filters_empty() {
+            let tasks = TaskConfig::default();
+            let input =
+                "- [ ] Todo without tags\n- [x] Done with #other\n- Plain item";
+            let note = parse_with_tasks(input, &tasks);
+
+            let tasks_collected: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks_collected.len(), 2);
+
+            let list = note.lists().first().expect("list present");
+            let items = list.items();
+            assert_eq!(items.len(), 3);
+            assert!(matches!(
+                items.first().expect("item 0").item_type(),
+                ListItemType::Task(_)
+            ));
+            assert!(matches!(
+                items.get(1).expect("item 1").item_type(),
+                ListItemType::Task(_)
+            ));
+            assert_eq!(
+                items.get(2).expect("item 2").item_type(),
+                &ListItemType::Plain
+            );
+        }
+
+        #[test]
+        fn enforces_exact_tag_matching_for_nested_tags() {
+            let tasks =
+                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let input = "- [ ] Nested tag #task/project\n- [ ] Exact tag #task";
+            let note = parse_with_tasks(input, &tasks);
+
+            let tasks_collected: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks_collected.len(), 1);
+            assert_eq!(
+                tasks_collected.first().map(|t| t.text()),
+                Some("Exact tag #task")
+            );
+
+            let list = note.lists().first().expect("list present");
+            let items = list.items();
+            assert_eq!(
+                items.first().expect("item 0").item_type(),
+                &ListItemType::Checkbox
+            );
+            assert!(matches!(
+                items.get(1).expect("item 1").item_type(),
+                ListItemType::Task(_)
+            ));
         }
     }
 }

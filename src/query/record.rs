@@ -119,7 +119,7 @@ impl QueryRecord {
     /// for page-level records.
     #[inline]
     #[must_use]
-    pub(crate) fn task_text(&self) -> Option<&str> {
+    pub fn task_text(&self) -> Option<&str> {
         match &self.kind {
             RowKind::Page => None,
             RowKind::Task(task) => Some(task.text.as_str()),

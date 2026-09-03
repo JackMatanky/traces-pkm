@@ -15,7 +15,11 @@ use super::{
     error::IndexBuilderError,
     inlinks::derive_inlinks,
 };
-use crate::{file::FileBase, note::parse_markdown};
+use crate::{
+    config::{FrontmatterConfig, TaskConfig},
+    file::FileBase,
+    note::{MarkdownParserInput, parse_markdown},
+};
 
 /// Build plan for a [`super::FileIndex`].
 ///
@@ -43,6 +47,8 @@ pub(crate) struct IndexBuilder<'a> {
     /// `Some(cache)` = refresh (reuse `cache`'s previously-persisted state
     /// for unchanged records, parse only changed ones).
     cache: Option<Box<RefreshCache<'a>>>,
+    tasks: TaskConfig,
+    frontmatter: FrontmatterConfig,
 }
 
 impl<'a> IndexBuilder<'a> {
@@ -52,7 +58,28 @@ impl<'a> IndexBuilder<'a> {
         Self {
             files,
             cache: None,
+            tasks: TaskConfig::default(),
+            frontmatter: FrontmatterConfig::default(),
         }
+    }
+
+    /// Attaches resolved [`TaskConfig`] settings for task classification.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_tasks(mut self, tasks: TaskConfig) -> Self {
+        self.tasks = tasks;
+        self
+    }
+
+    /// Attaches resolved [`FrontmatterConfig`] settings.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_frontmatter(
+        mut self,
+        frontmatter: FrontmatterConfig,
+    ) -> Self {
+        self.frontmatter = frontmatter;
+        self
     }
 
     /// Attaches `cache` (already loaded via [`RefreshCache::load`]) to plan
@@ -84,21 +111,31 @@ impl<'a> IndexBuilder<'a> {
         let Self {
             files,
             cache,
+            tasks,
+            frontmatter,
         } = self;
         match cache {
-            None => Self::build_fresh(files, root),
-            Some(cache) => Self::build_with_cache(files, root, *cache),
+            None => Self::build_fresh(files, root, &tasks, &frontmatter),
+            Some(cache) => Self::build_with_cache(
+                files,
+                root,
+                *cache,
+                &tasks,
+                &frontmatter,
+            ),
         }
     }
 
     fn build_fresh(
         files: Vec<FileBase>,
         root: &Path,
+        tasks: &TaskConfig,
+        frontmatter: &FrontmatterConfig,
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let mut entries = Vec::with_capacity(files.len());
         for file in files {
             let note = if file.format() == FileFormat::Note {
-                Some(parse_note(root, &file)?)
+                Some(parse_note(root, &file, tasks, frontmatter)?)
             } else {
                 None
             };
@@ -126,6 +163,8 @@ impl<'a> IndexBuilder<'a> {
         files: Vec<FileBase>,
         root: &Path,
         cache: RefreshCache<'a>,
+        tasks: &TaskConfig,
+        frontmatter: &FrontmatterConfig,
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let (upserted, deleted, mut stale) = cache.diff_files(&files);
         let mut upserted_iter = upserted.iter().peekable();
@@ -141,8 +180,12 @@ impl<'a> IndexBuilder<'a> {
                 NoteCacheState::Fresh
             };
             let note = if file.format() == FileFormat::Note {
-                let (note, outlinks_changed) =
-                    cache.reconcile_note(&file, cache_state, root)?;
+                let (note, outlinks_changed) = cache.reconcile_note(
+                    &file,
+                    cache_state,
+                    root,
+                    (tasks, frontmatter),
+                )?;
                 stale |= outlinks_changed;
                 Some(note)
             } else {
@@ -198,6 +241,8 @@ impl<'a> IndexBuilder<'a> {
 pub(super) fn parse_note(
     root: &Path,
     file: &FileBase,
+    tasks: &TaskConfig,
+    frontmatter: &FrontmatterConfig,
 ) -> Result<crate::note::Note, IndexBuilderError> {
     let full_path = root.join(file.path());
     let content = std::fs::read_to_string(&full_path).map_err(|source| {
@@ -206,7 +251,9 @@ pub(super) fn parse_note(
             source,
         }
     })?;
-    Ok(parse_markdown(file.path(), &content))
+    let input =
+        MarkdownParserInput::new(file.path(), &content, tasks, frontmatter);
+    Ok(parse_markdown(&input))
 }
 
 #[cfg(test)]

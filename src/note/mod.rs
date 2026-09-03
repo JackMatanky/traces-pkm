@@ -39,9 +39,8 @@ mod model;
 mod parser;
 
 pub use links::{Link, LinkTarget, LinkType};
-pub(crate) use lists::ListItemType;
-pub use lists::{List, ListItem};
+pub use lists::{List, ListItem, ListItemType};
 pub(crate) use metadata::RawFrontmatter;
 pub use metadata::{Frontmatter, NoteFieldValue};
 pub use model::Note;
-pub use parser::parse_markdown;
+pub use parser::{MarkdownParserInput, parse_markdown};

@@ -259,13 +259,14 @@ fn refresh_page_query(
     descending: bool,
 ) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index =
-        Arc::new(IndexerService::new(root).refresh().map_err(|source| {
-            CliError::Index {
+    let index = Arc::new(
+        IndexerService::new(root).with_config(config).refresh().map_err(
+            |source| CliError::Index {
                 root: root.to_path_buf(),
                 source,
-            }
-        })?);
+            },
+        )?,
+    );
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut request = QueryRequest::pages(source);
@@ -297,13 +298,14 @@ fn refresh_task_query(
     filters: &[String],
 ) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index =
-        Arc::new(IndexerService::new(root).refresh().map_err(|source| {
-            CliError::Index {
+    let index = Arc::new(
+        IndexerService::new(root).with_config(config).refresh().map_err(
+            |source| CliError::Index {
                 root: root.to_path_buf(),
                 source,
-            }
-        })?);
+            },
+        )?,
+    );
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut request = QueryRequest::tasks(source);

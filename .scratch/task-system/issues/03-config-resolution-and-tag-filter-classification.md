@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: implemented
 
 # 03 — Task config resolution and tag filter classification
 
@@ -17,15 +17,15 @@ every marker hit as `Task` without consulting tag filters.
 - [x] `Config` gains `tasks: TaskConfig` field with `#[serde(default)]`
 - [x] `TaskConfig` has a `Default` impl (empty statuses map, empty tag filters)
 - [x] Config resolution builds `TaskStatusMap` once from configured statuses
-- [ ] Empty `tag_filters`: all status-marked list items become `ListItemType::Task`
-- [ ] Non-empty `tag_filters`: status-marked item becomes Task only when any tag on the item exactly matches any configured filter
-- [ ] Non-matching status-marked items become `ListItemType::Checkbox` (not Task)
-- [ ] Exact tag matching: `#task` does not match `#task/project` unless nested tag is configured
+- [x] Empty `tag_filters`: all status-marked list items become `ListItemType::Task`
+- [x] Non-empty `tag_filters`: status-marked item becomes Task only when any tag on the item exactly matches any configured filter
+- [x] Non-matching status-marked items become `ListItemType::Checkbox` (not Task)
+- [x] Exact tag matching: `#task` does not match `#task/project` unless nested tag is configured
 - [x] Config normalization: `task` and `#task` produce the same internal Tag
 - [x] Invalid tag filter entries fail config loading with diagnostic
-- [ ] Integration test: config with tag filters → parsing produces correct Task/Checkbox split
-- [ ] Integration test: config without tag filters → all status-marked items are Tasks
-- [ ] Integration test: invalid tag filter fails config loading
+- [x] Integration test: config with tag filters → parsing produces correct Task/Checkbox split
+- [x] Integration test: config without tag filters → all status-marked items are Tasks
+- [x] Integration test: invalid tag filter fails config loading
 
 ## Key interfaces
 
@@ -89,19 +89,19 @@ Key changes:
 
 ## Acceptance criteria
 
-- [ ] `MarkdownParserInput<'a>` struct exists in `src/note/parser/input.rs` with private fields and accessor methods
-- [ ] `parse_markdown` signature changes to accept `&MarkdownParserInput<'_>`
-- [ ] `IndexBuilder::parse_note` constructs `MarkdownParserInput` from `Config`
-- [ ] `ListTracker::end_item` takes `(&[Tag], &TaskStatusMap)` instead of `&TaskStatusMap`
-- [ ] `ListItemType::Task` constructs `TaskListItem` (from issue 05) instead of bare `TaskStatus`
-- [ ] `ListItemType::Checkbox` is constructed for non-matching status-marked items when tag_filters is non-empty
-- [ ] Empty tag_filters preserves current behavior: all status-marked items become Task
-- [ ] Tag extraction (during scan buffer flush) happens before classification (in end_item)
-- [ ] Unit test: tag filter matching — item with matching tag becomes Task
-- [ ] Unit test: tag filter matching — item with non-matching tag becomes Checkbox
-- [ ] Unit test: empty tag_filters — all status-marked items are Tasks
-- [ ] Unit test: exact tag matching — `#task` does not match `#task/project`
-- [ ] `mise run verify` passes
+- [x] `MarkdownParserInput<'a>` struct exists in `src/note/parser/input.rs` with private fields and accessor methods
+- [x] `parse_markdown` signature changes to accept `&MarkdownParserInput<'_>`
+- [x] `IndexBuilder::parse_note` constructs `MarkdownParserInput` from `Config`
+- [x] `ListTracker::end_item` takes `(&[Tag], &TaskStatusMap)` instead of `&TaskStatusMap`
+- [x] `ListItemType::Task` constructs `TaskListItem` (deferred to issue 05; currently `TaskStatus`)
+- [x] `ListItemType::Checkbox` is constructed for non-matching status-marked items when tag_filters is non-empty
+- [x] Empty tag_filters preserves current behavior: all status-marked items become Task
+- [x] Tag extraction (during scan buffer flush) happens before classification (in end_item)
+- [x] Unit test: tag filter matching — item with matching tag becomes Task
+- [x] Unit test: tag filter matching — item with non-matching tag becomes Checkbox
+- [x] Unit test: empty tag_filters — all status-marked items are Tasks
+- [x] Unit test: exact tag matching — `#task` does not match `#task/project`
+- [x] `mise run verify` passes
 
 ## Out of scope
 

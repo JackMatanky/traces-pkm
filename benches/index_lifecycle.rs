@@ -43,7 +43,8 @@ use criterion::{
 };
 use tempfile::TempDir;
 use traces_pkm::{
-    FileIndex, IndexerService, Note, derive_inlinks, parse_markdown,
+    FileIndex, IndexerService, MarkdownParserInput, Note, derive_inlinks,
+    parse_markdown,
 };
 
 // ----------------------------------------------------------- //
@@ -129,7 +130,11 @@ fn generate_notes_sparse(n: usize) -> Vec<Note> {
         let path = format!("note-{i}.md");
         let content =
             format!("# Note {i}\n\nLink to [[note-{}]]\n", (i + 1) % n);
-        notes.push(parse_markdown(&path, &content));
+        let input = MarkdownParserInput::for_test(
+            std::path::Path::new(&path),
+            &content,
+        );
+        notes.push(parse_markdown(&input));
     }
     notes.sort_by(|a, b| a.path().cmp(b.path()));
     notes
@@ -146,7 +151,11 @@ fn generate_notes_dense(n: usize) -> Vec<Note> {
             let target = (i + j) % n;
             let _ = writeln!(content, "- Link to [[note-{target}]]");
         }
-        notes.push(parse_markdown(&path, &content));
+        let input = MarkdownParserInput::for_test(
+            std::path::Path::new(&path),
+            &content,
+        );
+        notes.push(parse_markdown(&input));
     }
     notes.sort_by(|a, b| a.path().cmp(b.path()));
     notes
@@ -168,7 +177,11 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
         } else {
             String::from("# Target\n")
         };
-        notes.push(parse_markdown(&path, &content));
+        let input = MarkdownParserInput::for_test(
+            std::path::Path::new(&path),
+            &content,
+        );
+        notes.push(parse_markdown(&input));
     }
     notes.sort_by(|a, b| a.path().cmp(b.path()));
     notes

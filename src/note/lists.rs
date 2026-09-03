@@ -50,7 +50,7 @@ impl List {
     /// Returns the direct child items in this list.
     #[inline]
     #[must_use]
-    pub(crate) fn items(&self) -> &[ListItem] {
+    pub fn items(&self) -> &[ListItem] {
         &self.items
     }
 }
@@ -113,21 +113,21 @@ impl ListItem {
     /// Returns the plain text content.
     #[inline]
     #[must_use]
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         &self.text
     }
 
     /// Returns this item's classification: plain bullet, checkbox, or Task.
     #[inline]
     #[must_use]
-    pub(crate) const fn item_type(&self) -> &ListItemType {
+    pub const fn item_type(&self) -> &ListItemType {
         &self.item_type
     }
 
     /// Returns the nested lists under this item.
     #[inline]
     #[must_use]
-    pub(crate) fn children(&self) -> &[List] {
+    pub fn children(&self) -> &[List] {
         &self.children
     }
 
@@ -239,17 +239,37 @@ impl ListItem {
 /// [`Self::Task`] items carry a resolved [`TaskStatus`] (symbol, name, and
 /// workflow type).
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) enum ListItemType {
+pub enum ListItemType {
     /// A plain bullet with no marker.
     Plain,
     /// A status-marked item that did not match a configured task tag filter.
-    ///
-    /// Reserved for tag-filter reclassification, added in a later
-    /// task-system issue; no production code constructs this variant yet.
     Checkbox,
     /// A status-marked item classified as a Task, carrying its resolved
     /// status.
     Task(TaskStatus),
+}
+
+impl ListItemType {
+    /// Returns `true` if this list item is classified as a Task.
+    #[inline]
+    #[must_use]
+    pub const fn is_task(&self) -> bool {
+        matches!(self, Self::Task(_))
+    }
+
+    /// Returns `true` if this list item is classified as a Checkbox.
+    #[inline]
+    #[must_use]
+    pub const fn is_checkbox(&self) -> bool {
+        matches!(self, Self::Checkbox)
+    }
+
+    /// Returns `true` if this list item is classified as a plain bullet.
+    #[inline]
+    #[must_use]
+    pub const fn is_plain(&self) -> bool {
+        matches!(self, Self::Plain)
+    }
 }
 
 /// A list item's position: its 0-indexed nesting depth, 1-indexed source

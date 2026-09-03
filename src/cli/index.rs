@@ -44,7 +44,7 @@ impl Index {
             root: root.to_path_buf(),
             source,
         };
-        let indexer = IndexerService::new(root);
+        let indexer = IndexerService::new(root).with_config(&config);
         let index = indexer.build().map_err(index_error)?;
         indexer.persist(&index).map_err(index_error)?;
         eprintln!(
