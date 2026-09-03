@@ -344,8 +344,6 @@ mod tests {
     use super::*;
 
     mod optimization {
-        use pretty_assertions::assert_eq;
-
         use super::*;
 
         #[test]
@@ -365,9 +363,9 @@ mod tests {
             );
 
             let optimized = plan.fuse_filters();
-            let [QueryTransform::Filter(_)] = &optimized.ops[..] else {
-                panic!("expected single fused filter op");
-            };
+            assert!(matches!(optimized.ops.as_slice(), [
+                QueryTransform::Filter(_)
+            ]));
         }
 
         #[test]
@@ -379,16 +377,13 @@ mod tests {
             plan.push(QueryTransform::limit(5).expect("valid limit"));
 
             let optimized = plan.fuse_sort_limit();
-            let [
+            assert!(matches!(optimized.ops.as_slice(), [
                 QueryTransform::TopK {
                     n: 5,
                     descending: true,
                     ..
-                },
-            ] = &optimized.ops[..]
-            else {
-                panic!("expected single fused TopK op");
-            };
+                }
+            ]));
         }
     }
 
