@@ -59,7 +59,7 @@ impl QueryService {
             QueryMode::Pages => self.page_records(index, &source),
             QueryMode::Tasks => self.task_records(index, &source),
         };
-        QueryRecordSet::new(plan.execute(records))
+        QueryRecordSet::new(plan.run(records))
     }
 
     fn page_records(

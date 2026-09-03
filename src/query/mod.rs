@@ -51,10 +51,12 @@
 mod error;
 mod format;
 mod grammar;
+mod plan;
 mod record;
 mod request;
 mod service;
 mod sort;
+mod transform;
 mod value;
 
 #[cfg(test)]
@@ -65,11 +67,13 @@ pub(crate) use grammar::{
     ClassExpansionMode, FieldPath, FileClassExpander, FileField, SourceAtom,
     SourceExpr,
 };
+use plan::QueryPlan;
 pub use record::{QueryRecord, QueryRecordSet};
+use request::QueryMode;
 pub use request::QueryRequest;
-use request::{QueryMode, QueryPlan, QueryTransform};
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
+use transform::QueryTransform;
 
 #[cfg(test)]
 mod tests {

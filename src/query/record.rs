@@ -358,14 +358,14 @@ impl QueryRecordSet {
     /// computing and memoizing the result on first access. Every read
     /// (`len`, `get`, `iter`, the minijinja `Object` iteration methods, and
     /// the terminal renderers) goes through this, so a chain of
-    /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::execute`]
+    /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::run`]
     /// at most once, however many times the resulting rows are read.
     fn materialized(&self) -> &Arc<[QueryRecord]> {
         self.cache.get_or_init(|| {
             if self.plan.is_empty() {
                 Arc::clone(&self.records)
             } else {
-                Arc::from(self.plan.clone().execute(self.records.to_vec()))
+                Arc::from(self.plan.clone().run(self.records.to_vec()))
             }
         })
     }

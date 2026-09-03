@@ -167,8 +167,8 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 /// unfused full sort, swept over workspace size.
 ///
 /// `QueryRequest::sort(...).limit(...)` executed through
-/// `QueryService::execute` always passes through `QueryPlan::execute`
-/// (`src/query/service.rs`: `plan.execute(records)`), which fuses an
+/// `QueryService::execute` always passes through `QueryPlan::run`
+/// (`src/query/service.rs`: `plan.run(records)`), which fuses an
 /// adjacent `Sort`+`Limit` into one `TopK` step using
 /// `select_nth_unstable_by` (`O(n)` selection) instead of a full
 /// `sort_by_cached_key` (`O(n log n)`). Since the `QueryRecordSet` CTE
