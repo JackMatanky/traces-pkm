@@ -19,7 +19,8 @@ use super::{
 use crate::{
     FieldKey, SourceLine, Tag, TaskStatusMap,
     note::{
-        List, ListItem, ListItemType, NoteFieldValue, lists::ListItemPosition,
+        List, ListItem, ListItemType, NoteFieldValue, TaskListItem,
+        lists::ListItemPosition,
     },
 };
 
@@ -191,7 +192,12 @@ impl ListTracker {
                             .iter()
                             .any(|tag| tag_filters.contains(tag))
                     {
-                        ListItemType::Task(status)
+                        let fully_complete =
+                            is_descendant_tree_complete(&item_frame.children);
+                        ListItemType::Task(TaskListItem::new(
+                            status,
+                            fully_complete,
+                        ))
                     } else {
                         ListItemType::Checkbox
                     }
@@ -249,6 +255,34 @@ impl ListTracker {
         item.push_scan_char(ch);
         true
     }
+}
+
+/// Returns `true` if every descendant task under `children` is resolved
+/// (done or cancelled), or if there are no descendant tasks.
+///
+/// Plain bullet items ([`ListItemType::Plain`]) and non-task checkboxes
+/// ([`ListItemType::Checkbox`]) are ignored and do not block completion.
+/// Short-circuits on the first incomplete task descendant.
+fn is_descendant_tree_complete(children: &[List]) -> bool {
+    for list in children {
+        for item in list.items() {
+            match item.kind() {
+                ListItemType::Task(task) => {
+                    if task.status().kind().completed() == Some(false)
+                        || !task.is_fully_complete()
+                    {
+                        return false;
+                    }
+                }
+                ListItemType::Plain | ListItemType::Checkbox => {
+                    if !is_descendant_tree_complete(item.children()) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The incremental classification state of an active list item during parsing.
@@ -611,8 +645,8 @@ mod tests {
 
             let item = tasks.first().expect("task present");
             assert!(
-                matches!(item.kind(), ListItemType::Task(status) if
-                    status.kind() == expected_kind),
+                matches!(item.kind(), ListItemType::Task(task) if
+                    task.status().kind() == expected_kind),
                 "marker {symbol:?} must resolve to {expected_kind:?}, got {:?}",
                 item.kind()
             );
@@ -626,7 +660,7 @@ mod tests {
             let list = note.lists().first().expect("list present");
             let item = list.items().first().expect("item present");
             assert_eq!(item.text(), "Mystery task");
-            let ListItemType::Task(status) = item.kind() else {
+            let ListItemType::Task(task) = item.kind() else {
                 panic!(
                     "unknown marker must never be downgraded to a plain \
                      bullet, got {:?}",
@@ -634,7 +668,7 @@ mod tests {
                 );
             };
             assert_eq!(
-                status.kind().completed(),
+                task.status().kind().completed(),
                 Some(false),
                 "unknown markers resolve as incomplete todos"
             );
@@ -745,7 +779,7 @@ mod tests {
             let item = tasks.first().expect("task present");
             assert!(matches!(
                 item.kind(),
-                ListItemType::Task(status) if status.kind().completed() == Some(false)
+                ListItemType::Task(task) if task.status().kind().completed() == Some(false)
             ));
         }
     }
@@ -774,11 +808,10 @@ mod tests {
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);
             assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
-            let ListItemType::Task(status) = tasks.first().unwrap().kind()
-            else {
+            let ListItemType::Task(task) = tasks.first().unwrap().kind() else {
                 panic!("subtask must be a Task");
             };
-            assert_eq!(status.kind().completed(), Some(true));
+            assert_eq!(task.status().kind().completed(), Some(true));
         }
     }
     mod tag_filters {
@@ -926,6 +959,204 @@ mod tests {
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
             assert_eq!(item.kind(), &ListItemType::Plain);
+        }
+    }
+
+    #[expect(clippy::panic, reason = "test assertions on enum variants")]
+    mod fully_complete {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::TaskConfig;
+
+        #[test]
+        fn returns_true_for_leaf_task_with_no_children() {
+            let note = parse("- [ ] Lone task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            let ListItemType::Task(task) = item.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(task.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_true_when_all_child_tasks_are_done() {
+            let note = parse("- [ ] Parent\n  - [x] Child 1\n  - [x] Child 2");
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_true_when_child_task_is_cancelled() {
+            let note = parse("- [ ] Parent\n  - [-] Cancelled child");
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_true_when_child_tasks_are_mixed_done_and_cancelled() {
+            let note = parse(
+                "- [x] Parent\n  - [x] Done child\n  - [-] Cancelled child",
+            );
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_false_when_any_child_task_is_incomplete() {
+            let note = parse(
+                "- [x] Parent\n  - [x] Done child\n  - [ ] Incomplete child",
+            );
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), false);
+        }
+
+        #[test]
+        fn returns_false_when_child_task_is_in_progress() {
+            let note = parse("- [x] Parent\n  - [/] In progress child");
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), false);
+        }
+
+        #[test]
+        fn returns_true_when_only_plain_bullet_children_exist() {
+            let note =
+                parse("- [ ] Parent\n  - Plain child 1\n  - Plain child 2");
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_true_when_only_non_task_checkbox_children_exist() {
+            let tasks =
+                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let frontmatter = crate::config::FrontmatterConfig::default();
+            let input = MarkdownParserInput::new(
+                std::path::Path::new("note.md"),
+                "- [ ] Parent #task\n  - [ ] Checkbox without tag",
+                &tasks,
+                &frontmatter,
+            );
+            let note = parse_markdown(&input);
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_true_when_three_levels_of_nested_tasks_are_all_done() {
+            let note =
+                parse("- [ ] Level 1\n  - [x] Level 2\n    - [x] Level 3");
+
+            let list = note.lists().first().expect("list present");
+            let l1 = list.items().first().expect("l1 present");
+            let ListItemType::Task(t1) = l1.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(t1.is_fully_complete(), true);
+
+            let l2_list = l1.children().first().expect("l2 list present");
+            let l2 = l2_list.items().first().expect("l2 item present");
+            let ListItemType::Task(t2) = l2.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(t2.is_fully_complete(), true);
+
+            let l3_list = l2.children().first().expect("l3 list present");
+            let l3 = l3_list.items().first().expect("l3 item present");
+            let ListItemType::Task(t3) = l3.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(t3.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_false_when_grandchild_task_is_incomplete() {
+            let note =
+                parse("- [x] Level 1\n  - [x] Level 2\n    - [ ] Level 3");
+
+            let list = note.lists().first().expect("list present");
+            let l1 = list.items().first().expect("l1 present");
+            let ListItemType::Task(t1) = l1.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(t1.is_fully_complete(), false);
+
+            let l2_list = l1.children().first().expect("l2 list present");
+            let l2 = l2_list.items().first().expect("l2 item present");
+            let ListItemType::Task(t2) = l2.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(t2.is_fully_complete(), false);
+
+            let l3_list = l2.children().first().expect("l3 list present");
+            let l3 = l3_list.items().first().expect("l3 item present");
+            let ListItemType::Task(t3) = l3.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(t3.is_fully_complete(), true);
+        }
+
+        #[test]
+        fn returns_false_when_incomplete_task_is_nested_under_plain_child() {
+            let note = parse(
+                "- [x] Parent\n  - Plain bullet\n    - [ ] Incomplete subtask",
+            );
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), false);
+        }
+
+        #[test]
+        fn returns_false_when_child_task_has_unknown_marker() {
+            let note = parse("- [x] Parent\n  - [?] Unknown marker child");
+
+            let list = note.lists().first().expect("list present");
+            let parent = list.items().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), false);
         }
     }
 }
