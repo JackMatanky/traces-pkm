@@ -127,7 +127,7 @@ impl ListItem {
     /// Returns the nested lists under this item.
     #[inline]
     #[must_use]
-    pub fn children(&self) -> &[List] {
+    pub(crate) fn children(&self) -> &[List] {
         &self.children
     }
 

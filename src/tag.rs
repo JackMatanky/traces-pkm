@@ -138,14 +138,6 @@ impl Tag {
     /// containment check: `#task` does not exactly match `#task/project`.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by task tag \
-                      filter classification added in a later task-system issue"
-        )
-    )]
     pub fn is_exact_match(&self, other: &Self) -> bool {
         self == other
     }

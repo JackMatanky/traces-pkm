@@ -205,7 +205,7 @@ impl Default for TaskStatusMap {
 
 /// The workflow classification of a [`TaskStatus`].
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub enum TaskStatusType {
+pub(crate) enum TaskStatusType {
     /// Not yet started.
     Todo,
     /// Actively being worked on.
@@ -247,7 +247,8 @@ impl TaskStatusType {
 /// are still valid symbols; this type carries no validation beyond being a
 /// `char`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct TaskStatusSymbol(char);
+pub(crate) struct TaskStatusSymbol(char);
+
 impl TaskStatusSymbol {
     /// Wraps `symbol` as a task status marker character.
     #[inline]

@@ -105,6 +105,7 @@ pub use index::{
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
+#[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     List, ListItem, ListItemType, MarkdownParserInput, Note, NoteFieldValue,
     parse_markdown,
@@ -117,9 +118,8 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
-pub use tag::Tag;
 #[cfg(any(test, feature = "test-utils"))]
-pub use task::{TaskStatus, TaskStatusSymbol, TaskStatusType};
+pub use tag::Tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,

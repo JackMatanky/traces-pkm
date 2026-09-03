@@ -295,11 +295,6 @@ impl ItemClassificationState {
 
 /// An active list item frame on the parser stack.
 struct ItemFrame {
-    /// Classification decision state for the list item. Mirrors
-    /// pulldown-cmark's first-pass gating: the marker is only valid at the
-    /// item's content start, so the decision is finalized before any inline
-    /// content event or block boundary.
-    classification: ItemClassificationState,
     text_buffer: String,
     /// Mirrors `text_buffer` but excludes code text.
     ///
@@ -311,9 +306,18 @@ struct ItemFrame {
     /// Kept separate from child items' fields so [`ListItem::fields`] resolves
     /// per-item, not per-list.
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    /// Tags scanned from this item's own text, used to classify a
+    /// status-marked item as [`ListItemType::Task`] or
+    /// [`ListItemType::Checkbox`] against configured tag filters.
     tags: Vec<Tag>,
     children: Vec<List>,
+    /// This item's source position: line, nesting depth, and parent line.
     position: ListItemPosition,
+    /// Classification decision state for the list item. Mirrors
+    /// pulldown-cmark's first-pass gating: the marker is only valid at the
+    /// item's content start, so the decision is finalized before any inline
+    /// content event or block boundary.
+    classification: ItemClassificationState,
 }
 
 impl ItemFrame {

@@ -970,6 +970,7 @@ mod tests {
                 second_priority.1.first().and_then(|v| v.as_str()),
                 Some("low")
             );
+            // Both fields still surface on the page-level bag, unscoped,
             // grouped under the same key.
             assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(
