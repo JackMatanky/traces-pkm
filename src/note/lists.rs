@@ -113,6 +113,23 @@ impl ListItem {
         }
     }
 
+    /// Attaches inline fields parsed from this item's own text.
+    ///
+    /// [`Note::inline_fields`] also includes these fields for page-level
+    /// queries. This per-item list preserves the field-to-item relationship for
+    /// task and list queries.
+    ///
+    /// [`Note::inline_fields`]: crate::Note::inline_fields
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_fields(
+        mut self,
+        fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    ) -> Self {
+        self.fields = fields;
+        self
+    }
+
     /// Returns the plain text content.
     #[inline]
     #[must_use]
@@ -132,23 +149,6 @@ impl ListItem {
     #[must_use]
     pub(crate) fn children(&self) -> &[List] {
         &self.children
-    }
-
-    /// Attaches inline fields parsed from this item's own text.
-    ///
-    /// [`Note::inline_fields`] also includes these fields for page-level
-    /// queries. This per-item list preserves the field-to-item relationship for
-    /// task and list queries.
-    ///
-    /// [`Note::inline_fields`]: crate::Note::inline_fields
-    #[inline]
-    #[must_use]
-    pub(crate) fn with_fields(
-        mut self,
-        fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    ) -> Self {
-        self.fields = fields;
-        self
     }
 
     /// Returns the inline fields parsed from this item's own text.
@@ -234,46 +234,6 @@ impl ListItem {
     }
 }
 
-/// Task-specific data carried by a [`ListItemType::Task`] item.
-///
-/// Holds the task's resolved [`TaskStatus`] and a precomputed
-/// `is_fully_complete` flag indicating whether every descendant task in this
-/// item's subtree has a complete or cancelled status.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct TaskListItem {
-    status: TaskStatus,
-    fully_complete: bool,
-}
-
-impl TaskListItem {
-    /// Creates a task list item with its resolved status and precomputed
-    /// fully-complete state.
-    #[inline]
-    #[must_use]
-    pub fn new(status: TaskStatus, fully_complete: bool) -> Self {
-        Self {
-            status,
-            fully_complete,
-        }
-    }
-
-    /// Returns the task's resolved status (marker symbol, display name, and
-    /// workflow type).
-    #[inline]
-    #[must_use]
-    pub const fn status(&self) -> &TaskStatus {
-        &self.status
-    }
-
-    /// Returns `true` if all descendant tasks in this item's subtree are
-    /// resolved (done or cancelled), or if this item has no descendant tasks.
-    #[inline]
-    #[must_use]
-    pub const fn is_fully_complete(&self) -> bool {
-        self.fully_complete
-    }
-}
-
 /// How the custom marker scanner classified a Markdown list item.
 ///
 /// [`Self::Plain`] items carry no task data. [`Self::Checkbox`] items are
@@ -314,58 +274,43 @@ impl ListItemType {
     }
 }
 
-/// A list item's position: its 0-indexed nesting depth, 1-indexed source
-/// line, and its immediate parent's 1-indexed line, if nested.
+/// Task-specific data carried by a [`ListItemType::Task`] item.
 ///
-/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
-/// degenerate input, not a real document, so a `usize` counter would spend
-/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
-)]
-pub(super) struct ListItemPosition {
-    depth: u8,
-    line: SourceLine,
-    parent: Option<SourceLine>,
+/// Holds the task's resolved status and a precomputed `is_fully_complete` flag
+/// indicating whether every descendant task in this item's subtree has a
+/// complete or cancelled status.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TaskListItem {
+    status: TaskStatus,
+    fully_complete: bool,
 }
 
-impl ListItemPosition {
-    /// Creates a position from its source line, 0-indexed nesting depth, and
-    /// optional parent line.
+impl TaskListItem {
+    /// Creates a task list item with its resolved status and precomputed
+    /// fully-complete state.
     #[inline]
     #[must_use]
-    pub(super) const fn new(
-        line: SourceLine,
-        depth: u8,
-        parent: Option<SourceLine>,
-    ) -> Self {
+    pub const fn new(status: TaskStatus, fully_complete: bool) -> Self {
         Self {
-            depth,
-            line,
-            parent,
+            status,
+            fully_complete,
         }
     }
 
-    /// Returns the 0-indexed nesting level.
+    /// Returns the task's resolved status (marker symbol, display name, and
+    /// workflow type).
     #[inline]
     #[must_use]
-    pub(super) const fn depth(&self) -> u8 {
-        self.depth
+    pub const fn status(&self) -> &TaskStatus {
+        &self.status
     }
 
-    /// Returns the 1-indexed source line.
+    /// Returns `true` if all descendant tasks in this item's subtree are
+    /// resolved (done or cancelled), or if this item has no descendant tasks.
     #[inline]
     #[must_use]
-    pub(super) const fn line(&self) -> SourceLine {
-        self.line
-    }
-
-    /// Returns the immediate parent item's 1-indexed source line, if this
-    /// item is nested inside another item's child list.
-    #[inline]
-    #[must_use]
-    pub(super) const fn parent(&self) -> Option<SourceLine> {
-        self.parent
+    pub const fn is_fully_complete(&self) -> bool {
+        self.fully_complete
     }
 }
 
@@ -425,6 +370,61 @@ impl<'a> Iterator for TaskIter<'a> {
             }
         }
         None
+    }
+}
+
+/// A list item's position: its 0-indexed nesting depth, 1-indexed source line,
+/// and its immediate parent's 1-indexed line, if nested.
+///
+/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
+/// degenerate input, not a real document, so a `usize` counter would spend
+/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
+)]
+pub(super) struct ListItemPosition {
+    depth: u8,
+    line: SourceLine,
+    parent: Option<SourceLine>,
+}
+
+impl ListItemPosition {
+    /// Creates a position from its source line, 0-indexed nesting depth, and
+    /// optional parent line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        line: SourceLine,
+        depth: u8,
+        parent: Option<SourceLine>,
+    ) -> Self {
+        Self {
+            depth,
+            line,
+            parent,
+        }
+    }
+
+    /// Returns the 0-indexed nesting level.
+    #[inline]
+    #[must_use]
+    pub(super) const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Returns the 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub(super) const fn line(&self) -> SourceLine {
+        self.line
+    }
+
+    /// Returns the immediate parent item's 1-indexed source line, if this
+    /// item is nested inside another item's child list.
+    #[inline]
+    #[must_use]
+    pub(super) const fn parent(&self) -> Option<SourceLine> {
+        self.parent
     }
 }
 
