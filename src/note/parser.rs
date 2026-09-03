@@ -28,6 +28,7 @@
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
 //! specialized handlers and assembles the final [`Note`].
+//!
 //! # Metadata Extraction
 //!
 //! Inline fields and tags are lexed from parser-built plain-text buffers: one
@@ -46,7 +47,9 @@ use pulldown_cmark::{
     TagEnd,
 };
 
-use super::{Frontmatter, Link, LinkType, Note, RawFrontmatter};
+use super::{
+    Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
+};
 use crate::{ByteOffset, FieldKey, tag::Tag, task::TaskStatusMap};
 
 mod inline;
@@ -60,6 +63,7 @@ pub use input::MarkdownParserInput;
 use lexer::InlineTokenLexer;
 use line::ByteTracker;
 use list::ListTracker;
+
 /// Parses Markdown source into a [`Note`].
 ///
 /// Recognizes custom task markers, YAML frontmatter blocks, and Obsidian
@@ -121,7 +125,7 @@ enum BlockContext {
 
 /// Inline fields and tags flushed from a closed list item's scan buffer.
 type FlushedFields =
-    Option<(IndexMap<FieldKey, Vec<super::NoteFieldValue>>, Vec<Tag>)>;
+    Option<(IndexMap<FieldKey, Vec<NoteFieldValue>>, Vec<Tag>)>;
 
 /// State accumulated while walking Markdown events for one note.
 struct ParserContext<'a> {
@@ -133,7 +137,7 @@ struct ParserContext<'a> {
     active_link: Option<ActiveLink>,
     list_nesting: ListTracker,
     body_buffer: String,
-    inline_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
+    inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     tags: Vec<Tag>,
     /// Precomputed line-start offsets for the source being parsed, used to
     /// populate [`ListItem`](super::ListItem)'s `line`/`parent` position
@@ -635,14 +639,14 @@ mod tests {
             let item1 = list.items().get(1).expect("item 1");
 
             assert_eq!(item0.text(), "Incomplete task");
-            let ListItemType::Task(status0) = item0.item_type() else {
-                panic!("item0 must be a Task, got {:?}", item0.item_type());
+            let ListItemType::Task(status0) = item0.kind() else {
+                panic!("item0 must be a Task, got {:?}", item0.kind());
             };
             assert_eq!(status0.kind().completed(), Some(false));
 
             assert_eq!(item1.text(), "Completed task");
-            let ListItemType::Task(status1) = item1.item_type() else {
-                panic!("item1 must be a Task, got {:?}", item1.item_type());
+            let ListItemType::Task(status1) = item1.kind() else {
+                panic!("item1 must be a Task, got {:?}", item1.kind());
             };
             assert_eq!(status1.kind().completed(), Some(true));
         }
@@ -1333,19 +1337,19 @@ mod tests {
             let items = list.items();
             assert_eq!(items.len(), 4);
             assert!(matches!(
-                items.first().expect("item 0").item_type(),
+                items.first().expect("item 0").kind(),
                 ListItemType::Task(_)
             ));
             assert_eq!(
-                items.get(1).expect("item 1").item_type(),
+                items.get(1).expect("item 1").kind(),
                 &ListItemType::Checkbox
             );
             assert_eq!(
-                items.get(2).expect("item 2").item_type(),
+                items.get(2).expect("item 2").kind(),
                 &ListItemType::Checkbox
             );
             assert_eq!(
-                items.get(3).expect("item 3").item_type(),
+                items.get(3).expect("item 3").kind(),
                 &ListItemType::Plain
             );
         }
@@ -1357,22 +1361,21 @@ mod tests {
                 "- [ ] Todo without tags\n- [x] Done with #other\n- Plain item";
             let note = parse_with_tasks(input, &tasks);
 
-            let tasks_collected: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks_collected.len(), 2);
+            assert_eq!(note.tasks().count(), 2);
 
             let list = note.lists().first().expect("list present");
             let items = list.items();
             assert_eq!(items.len(), 3);
             assert!(matches!(
-                items.first().expect("item 0").item_type(),
+                items.first().expect("item 0").kind(),
                 ListItemType::Task(_)
             ));
             assert!(matches!(
-                items.get(1).expect("item 1").item_type(),
+                items.get(1).expect("item 1").kind(),
                 ListItemType::Task(_)
             ));
             assert_eq!(
-                items.get(2).expect("item 2").item_type(),
+                items.get(2).expect("item 2").kind(),
                 &ListItemType::Plain
             );
         }
@@ -1394,11 +1397,11 @@ mod tests {
             let list = note.lists().first().expect("list present");
             let items = list.items();
             assert_eq!(
-                items.first().expect("item 0").item_type(),
+                items.first().expect("item 0").kind(),
                 &ListItemType::Checkbox
             );
             assert!(matches!(
-                items.get(1).expect("item 1").item_type(),
+                items.get(1).expect("item 1").kind(),
                 ListItemType::Task(_)
             ));
         }

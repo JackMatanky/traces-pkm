@@ -91,7 +91,7 @@ impl QueryRecord {
     /// No-ops for a `Plain` or `Checkbox` item; only [`ListItemType::Task`]
     /// items carry a resolved status to promote.
     pub(super) fn with_task_item(mut self, item: &ListItem) -> Self {
-        let ListItemType::Task(status) = item.item_type() else {
+        let ListItemType::Task(status) = item.kind() else {
             return self;
         };
         self.kind = RowKind::Task(TaskRow {

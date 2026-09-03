@@ -32,15 +32,17 @@
 //!   `#projects/active`.
 
 mod cursor;
+mod field;
 mod links;
 mod lists;
 mod metadata;
 mod model;
 mod parser;
 
+pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
-pub use lists::{List, ListItem, ListItemType};
+pub use lists::{List, ListItem, ListItemType, TaskIter};
+pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
-pub use metadata::{Frontmatter, NoteFieldValue};
 pub use model::Note;
 pub use parser::{MarkdownParserInput, parse_markdown};

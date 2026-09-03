@@ -108,7 +108,7 @@ pub(crate) use lexer::{
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     List, ListItem, ListItemType, MarkdownParserInput, Note, NoteFieldValue,
-    parse_markdown,
+    TaskIter, parse_markdown,
 };
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]

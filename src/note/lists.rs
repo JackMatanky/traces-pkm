@@ -11,7 +11,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::metadata::NoteFieldValue;
+use super::field::NoteFieldValue;
 use crate::{FieldKey, SourceLine, task::TaskStatus};
 
 /// An ordered or unordered Markdown list.
@@ -59,7 +59,7 @@ impl List {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: String,
-    item_type: ListItemType,
+    kind: ListItemType,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     position: ListItemPosition,
@@ -77,13 +77,10 @@ impl ListItem {
                       constructor symmetry with with_children"
         )
     )]
-    pub(crate) fn new(
-        text: impl Into<String>,
-        item_type: ListItemType,
-    ) -> Self {
+    pub(crate) fn new(text: impl Into<String>, kind: ListItemType) -> Self {
         Self {
             text: text.into(),
-            item_type,
+            kind,
             children: Vec::new(),
             fields: IndexMap::new(),
             position: ListItemPosition::default(),
@@ -98,12 +95,12 @@ impl ListItem {
     #[must_use]
     pub(crate) fn with_children(
         text: impl Into<String>,
-        item_type: ListItemType,
+        kind: ListItemType,
         children: Vec<List>,
     ) -> Self {
         Self {
             text: text.into(),
-            item_type,
+            kind,
             children,
             fields: IndexMap::new(),
             position: ListItemPosition::default(),
@@ -120,8 +117,8 @@ impl ListItem {
     /// Returns this item's classification: plain bullet, checkbox, or Task.
     #[inline]
     #[must_use]
-    pub const fn item_type(&self) -> &ListItemType {
-        &self.item_type
+    pub const fn kind(&self) -> &ListItemType {
+        &self.kind
     }
 
     /// Returns the nested lists under this item.
@@ -271,6 +268,63 @@ impl ListItemType {
         matches!(self, Self::Plain)
     }
 }
+/// Depth-first iterator over task list items in a [`super::Note`].
+///
+/// Yields items classified as [`ListItemType::Task`], recursing through child
+/// lists in document order.
+///
+/// # Examples
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input =
+///     MarkdownParserInput::for_test(Path::new("note.md"), "- [ ] Task");
+/// let note = parse_markdown(&input);
+/// assert_eq!(note.tasks().count(), 1);
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+pub struct TaskIter<'a> {
+    stack: Vec<std::slice::Iter<'a, ListItem>>,
+}
+
+impl<'a> TaskIter<'a> {
+    /// Starts depth-first iteration from top-level `lists`.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(lists: &'a [List]) -> Self {
+        let mut stack = Vec::with_capacity(lists.len());
+        stack.extend(lists.iter().rev().map(|list| list.items().iter()));
+        Self {
+            stack,
+        }
+    }
+}
+
+impl<'a> Iterator for TaskIter<'a> {
+    type Item = &'a ListItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(items) = self.stack.last_mut() {
+            let Some(item) = items.next() else {
+                self.stack.pop();
+                continue;
+            };
+            self.stack.extend(
+                item.children().iter().rev().map(|list| list.items().iter()),
+            );
+            if matches!(item.kind(), ListItemType::Task(_)) {
+                return Some(item);
+            }
+        }
+        None
+    }
+}
 
 /// A list item's position: its 0-indexed nesting depth, 1-indexed source
 /// line, and its immediate parent's 1-indexed line, if nested.
@@ -346,11 +400,11 @@ mod tests {
     #[case::plain(ListItemType::Plain)]
     #[case::checkbox(ListItemType::Checkbox)]
     #[case::task(done_task())]
-    fn stores_the_given_item_type(#[case] item_type: ListItemType) {
-        let item = ListItem::new("task item", item_type.clone());
+    fn stores_the_given_kind(#[case] kind: ListItemType) {
+        let item = ListItem::new("task item", kind.clone());
 
         assert_eq!(item.text(), "task item");
-        assert_eq!(item.item_type(), &item_type);
+        assert_eq!(item.kind(), &kind);
     }
 
     #[test]

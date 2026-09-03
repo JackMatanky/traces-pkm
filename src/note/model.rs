@@ -6,9 +6,10 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
+    field::NoteFieldValue,
     links::Link,
-    lists::{List, ListItem, ListItemType},
-    metadata::{Frontmatter, NoteFieldValue},
+    lists::{List, TaskIter},
+    metadata::Frontmatter,
 };
 use crate::{FieldKey, FieldKeyRef, tag::Tag};
 
@@ -192,43 +193,6 @@ impl Note {
     }
 }
 
-/// Depth-first iterator over task list items in a [`Note`].
-#[derive(Clone, Debug)]
-pub struct TaskIter<'a> {
-    stack: Vec<std::slice::Iter<'a, ListItem>>,
-}
-
-impl<'a> TaskIter<'a> {
-    /// Starts depth-first iteration from the top-level `lists`.
-    fn new(lists: &'a [List]) -> Self {
-        let mut stack = Vec::with_capacity(lists.len());
-        stack.extend(lists.iter().rev().map(|list| list.items().iter()));
-        Self {
-            stack,
-        }
-    }
-}
-
-impl<'a> Iterator for TaskIter<'a> {
-    type Item = &'a ListItem;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(items) = self.stack.last_mut() {
-            let Some(item) = items.next() else {
-                self.stack.pop();
-                continue;
-            };
-            self.stack.extend(
-                item.children().iter().rev().map(|list| list.items().iter()),
-            );
-            if matches!(item.item_type(), ListItemType::Task(_)) {
-                return Some(item);
-            }
-        }
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -236,7 +200,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        note::{LinkType, NoteFieldValue},
+        note::{LinkType, ListItem, ListItemType, NoteFieldValue},
         task::{TaskStatus, TaskStatusSymbol, TaskStatusType},
     };
 

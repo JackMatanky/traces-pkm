@@ -600,8 +600,7 @@ mod tests {
         let tasks: Vec<&ListItem> = note.tasks().collect();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
-        let ListItemType::Task(status) = tasks.first().unwrap().item_type()
-        else {
+        let ListItemType::Task(status) = tasks.first().unwrap().kind() else {
             panic!("subtask must be a Task");
         };
         assert_eq!(status.kind().completed(), Some(true));
@@ -627,10 +626,10 @@ mod tests {
 
         let item = tasks.first().expect("task present");
         assert!(
-            matches!(item.item_type(), ListItemType::Task(status) if
+            matches!(item.kind(), ListItemType::Task(status) if
                 status.kind() == expected_kind),
             "marker {symbol:?} must resolve to {expected_kind:?}, got {:?}",
-            item.item_type()
+            item.kind()
         );
     }
 
@@ -642,11 +641,11 @@ mod tests {
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
         assert_eq!(item.text(), "Mystery task");
-        let ListItemType::Task(status) = item.item_type() else {
+        let ListItemType::Task(status) = item.kind() else {
             panic!(
                 "unknown marker must never be downgraded to a plain bullet, \
                  got {:?}",
-                item.item_type()
+                item.kind()
             );
         };
         assert_eq!(
@@ -663,7 +662,7 @@ mod tests {
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
         assert_eq!(item.text(), "Check [x] later");
-        assert_eq!(item.item_type(), &ListItemType::Plain);
+        assert_eq!(item.kind(), &ListItemType::Plain);
         assert_eq!(note.tasks().count(), 0);
     }
 
@@ -710,7 +709,7 @@ mod tests {
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
         assert_eq!(item.text(), "[x] Task");
-        assert_eq!(item.item_type(), &ListItemType::Plain);
+        assert_eq!(item.kind(), &ListItemType::Plain);
         assert_eq!(note.tasks().count(), 0);
     }
 
@@ -721,7 +720,7 @@ mod tests {
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
         assert_eq!(item.text(), "[x] Task");
-        assert_eq!(item.item_type(), &ListItemType::Plain);
+        assert_eq!(item.kind(), &ListItemType::Plain);
         assert_eq!(note.tasks().count(), 0);
     }
 
@@ -734,7 +733,7 @@ mod tests {
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
         assert_eq!(item.text(), "x z");
-        assert_eq!(item.item_type(), &ListItemType::Plain);
+        assert_eq!(item.kind(), &ListItemType::Plain);
         assert_eq!(note.tasks().count(), 0);
     }
 
@@ -747,7 +746,7 @@ mod tests {
         let list = note.lists().first().expect("list present");
         let item = list.items().first().expect("item present");
         assert_eq!(item.text(), "[x]\u{00A0}Task");
-        assert_eq!(item.item_type(), &ListItemType::Plain);
+        assert_eq!(item.kind(), &ListItemType::Plain);
         assert_eq!(note.tasks().count(), 0);
     }
 
@@ -760,7 +759,7 @@ mod tests {
         assert_eq!(tasks.first().map(|t| t.text()), Some("Task"));
         let item = tasks.first().expect("task present");
         assert!(matches!(
-            item.item_type(),
+            item.kind(),
             ListItemType::Task(status) if status.kind().completed() == Some(false)
         ));
     }
@@ -781,7 +780,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+            assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
         #[test]
@@ -796,7 +795,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+            assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
         #[test]
@@ -811,7 +810,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert_eq!(item.item_type(), &ListItemType::Checkbox);
+            assert_eq!(item.kind(), &ListItemType::Checkbox);
         }
 
         #[test]
@@ -827,7 +826,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert_eq!(item.item_type(), &ListItemType::Checkbox);
+            assert_eq!(item.kind(), &ListItemType::Checkbox);
         }
 
         #[test]
@@ -846,7 +845,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+            assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
         #[test]
@@ -863,7 +862,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+            assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
         #[test]
@@ -879,7 +878,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert_eq!(item.item_type(), &ListItemType::Checkbox);
+            assert_eq!(item.kind(), &ListItemType::Checkbox);
         }
 
         #[test]
@@ -894,7 +893,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert!(matches!(item.item_type(), ListItemType::Task(_)));
+            assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
         #[test]
@@ -909,7 +908,7 @@ mod tests {
 
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
-            assert_eq!(item.item_type(), &ListItemType::Plain);
+            assert_eq!(item.kind(), &ListItemType::Plain);
         }
     }
 }

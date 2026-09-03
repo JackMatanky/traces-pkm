@@ -62,32 +62,23 @@ fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
     let items = list.items();
     assert_eq!(items.len(), 6);
     assert_eq!(items.first().expect("item 0").text(), "Buy groceries #task");
-    assert!(items.first().expect("item 0").item_type().is_task());
+    assert!(items.first().expect("item 0").kind().is_task());
     assert_eq!(items.get(1).expect("item 1").text(), "Write report #todo");
-    assert!(items.get(1).expect("item 1").item_type().is_task());
+    assert!(items.get(1).expect("item 1").kind().is_task());
     assert_eq!(items.get(2).expect("item 2").text(), "Read book #personal");
-    assert_eq!(
-        items.get(2).expect("item 2").item_type(),
-        &ListItemType::Checkbox
-    );
+    assert_eq!(items.get(2).expect("item 2").kind(), &ListItemType::Checkbox);
     assert_eq!(
         items.get(3).expect("item 3").text(),
         "Plain checkbox without tag"
     );
-    assert_eq!(
-        items.get(3).expect("item 3").item_type(),
-        &ListItemType::Checkbox
-    );
+    assert_eq!(items.get(3).expect("item 3").kind(), &ListItemType::Checkbox);
     assert_eq!(
         items.get(4).expect("item 4").text(),
         "Nested tag item #task/urgent"
     );
-    assert_eq!(
-        items.get(4).expect("item 4").item_type(),
-        &ListItemType::Checkbox
-    );
+    assert_eq!(items.get(4).expect("item 4").kind(), &ListItemType::Checkbox);
     assert_eq!(items.get(5).expect("item 5").text(), "Plain bullet with #task");
-    assert_eq!(items.get(5).expect("item 5").item_type(), &ListItemType::Plain);
+    assert_eq!(items.get(5).expect("item 5").kind(), &ListItemType::Plain);
 }
 
 #[test]
