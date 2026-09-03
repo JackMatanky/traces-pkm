@@ -132,13 +132,9 @@ impl TemplateEngine {
         let service = Arc::new(construction.service);
 
         FileOps::new(Arc::clone(&root)).register(&mut env);
-        QueryOps::page(
-            Arc::clone(&root),
-            Arc::clone(&class_field),
-            Arc::clone(&service),
-        )
-        .register(&mut env);
-        QueryOps::task(Arc::clone(&root), class_field, Arc::clone(&service))
+        QueryOps::page(Arc::clone(&root), &class_field, Arc::clone(&service))
+            .register(&mut env);
+        QueryOps::task(Arc::clone(&root), &class_field, Arc::clone(&service))
             .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         PathOps::new(Arc::clone(&root)).register(&mut env);

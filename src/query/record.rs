@@ -32,7 +32,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    QueryResult, QueryTransform,
+    QueryPlan, QueryResult, QueryTransform,
     format::QueryDisplayFormat,
     grammar::{FieldPath, FileField, TaskField},
     value::{QueryFieldValueRef, QueryListValueRef},
@@ -310,46 +310,108 @@ impl std::fmt::Debug for QueryRecord {
 /// assert!(outcome.is_empty());
 /// ```
 #[must_use]
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Default)]
 pub struct QueryRecordSet {
-    records: Vec<QueryRecord>,
+    records: Arc<[QueryRecord]>,
+    plan: QueryPlan,
+    cache: std::sync::OnceLock<Arc<[QueryRecord]>>,
+}
+
+/// Compares evaluated rows, not the pending plan or cache state — two
+/// record sets that reach the same rows via different transform paths
+/// (e.g. two chained `.filter()` calls vs. one combined filter expression)
+/// must compare equal once both are materialized.
+impl PartialEq for QueryRecordSet {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.materialized() == other.materialized()
+    }
+}
+
+/// Shows the materialized rows, not the pending plan or cache state — a
+/// derived `Debug` would leak `QueryRecordSet`'s internal representation
+/// (the pre-transform `records` and the lazily-populated `cache`, which
+/// duplicate each other's content once materialized), confusing test-failure
+/// diffs. Mirrors [`QueryRecord`]'s own hand-rolled [`std::fmt::Debug`].
+impl std::fmt::Debug for QueryRecordSet {
+    #[inline]
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("QueryRecordSet")
+            .field(&self.materialized())
+            .finish()
+    }
 }
 
 impl QueryRecordSet {
-    /// Wraps `records` into a new [`QueryRecordSet`].
-    pub(super) const fn new(records: Vec<QueryRecord>) -> Self {
+    /// Wraps `records` into a new [`QueryRecordSet`] with no pending
+    /// transforms.
+    pub(super) fn new(records: Vec<QueryRecord>) -> Self {
         Self {
-            records,
+            records: records.into(),
+            plan: QueryPlan::default(),
+            cache: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Returns this record set's rows with every pending transform applied,
+    /// computing and memoizing the result on first access. Every read
+    /// (`len`, `get`, `iter`, the minijinja `Object` iteration methods, and
+    /// the terminal renderers) goes through this, so a chain of
+    /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::execute`]
+    /// at most once, however many times the resulting rows are read.
+    fn materialized(&self) -> &Arc<[QueryRecord]> {
+        self.cache.get_or_init(|| {
+            if self.plan.is_empty() {
+                Arc::clone(&self.records)
+            } else {
+                Arc::from(self.plan.clone().execute(self.records.to_vec()))
+            }
+        })
     }
 
     /// Returns the number of [`QueryRecord`] rows in this record set.
     #[inline]
     #[must_use]
-    pub const fn len(&self) -> usize {
-        self.records.len()
+    pub fn len(&self) -> usize {
+        self.materialized().len()
     }
 
     /// Returns `true` if this record set contains no [`QueryRecord`] rows.
     #[inline]
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.records.is_empty()
+    pub fn is_empty(&self) -> bool {
+        self.materialized().is_empty()
     }
 
-    /// Returns a reference to the [`QueryRecord`] at `index`, or `None` if out
-    /// of bounds.
+    /// Returns a reference to the [`QueryRecord`] at `index`, or `None` if
+    /// out of bounds.
     #[inline]
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&QueryRecord> {
-        self.records.get(index)
+        self.materialized().get(index)
     }
 
     /// Returns an iterator over references to the contained [`QueryRecord`]
     /// rows.
     #[inline]
     pub(crate) fn iter(&self) -> std::slice::Iter<'_, QueryRecord> {
-        self.records.iter()
+        self.materialized().iter()
+    }
+
+    /// Appends `transform` to this record set's pending plan, returning a
+    /// new [`QueryRecordSet`] over the same base rows. Cheap: moves the
+    /// `Arc` (no refcount bump; `self` is consumed) and the short
+    /// transform-step list — nothing is evaluated until [`Self::materialized`]
+    /// runs on read.
+    fn push(self, transform: QueryTransform) -> Self {
+        let mut plan = self.plan;
+        plan.push(transform);
+        Self {
+            records: self.records,
+            plan,
+            cache: std::sync::OnceLock::new(),
+        }
     }
 
     /// Retains only records matching the filter expression.
@@ -359,8 +421,7 @@ impl QueryRecordSet {
     /// - [`QueryError::Request`] if the expression is invalid.
     #[inline]
     pub(crate) fn filter(self, expr: &str) -> QueryResult<Self> {
-        let transform = QueryTransform::filter(expr)?;
-        Ok(self.apply_transform(&transform))
+        Ok(self.push(QueryTransform::filter(expr)?))
     }
 
     /// Filters records matching `expr`, serving as an alias for
@@ -382,7 +443,8 @@ impl QueryRecordSet {
         self.filter(expr)
     }
 
-    /// Sorts records by the field at `path` in ascending or descending order.
+    /// Sorts records by the field at `path` in ascending or descending
+    /// order.
     ///
     /// # Errors
     ///
@@ -394,8 +456,7 @@ impl QueryRecordSet {
         path: &str,
         descending: bool,
     ) -> QueryResult<Self> {
-        let transform = QueryTransform::sort(path, descending)?;
-        Ok(self.apply_transform(&transform))
+        Ok(self.push(QueryTransform::sort(path, descending)?))
     }
 
     /// Truncates the outcome to retain at most `n` leading records.
@@ -406,8 +467,7 @@ impl QueryRecordSet {
     ///   pointer-width limits.
     #[inline]
     pub(crate) fn limit(self, n: i64) -> QueryResult<Self> {
-        let transform = QueryTransform::limit(n)?;
-        Ok(self.apply_transform(&transform))
+        Ok(self.push(QueryTransform::limit(n)?))
     }
 
     /// Groups records by sorting them ascending on the field at `path`.
@@ -418,8 +478,7 @@ impl QueryRecordSet {
     ///   path.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> QueryResult<Self> {
-        let transform = QueryTransform::group_by(path)?;
-        Ok(self.apply_transform(&transform))
+        Ok(self.push(QueryTransform::group_by(path)?))
     }
 
     /// Explodes records containing a list at `path` into one row per list
@@ -430,21 +489,11 @@ impl QueryRecordSet {
     /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
     ///   path.
     pub(crate) fn flatten(self, path: &str) -> QueryResult<Self> {
-        let transform = QueryTransform::flatten(path)?;
-        Ok(self.apply_transform(&transform))
+        Ok(self.push(QueryTransform::flatten(path)?))
     }
 
-    /// Applies one already-parsed transform. Used by [`Self::filter`]/
-    /// [`Self::sort`]/[`Self::limit`]/[`Self::group_by`]/[`Self::flatten`]
-    /// (Minijinja's eager per-call chaining) and, via a whole
-    /// [`super::QueryPlan`], by [`super::QueryService::execute`]. All
-    /// per-step logic lives on [`QueryTransform::apply`].
-    pub(super) fn apply_transform(self, transform: &QueryTransform) -> Self {
-        Self::new(transform.apply(self.records))
-    }
-
-    /// Renders records as a Markdown table matching headers to corresponding
-    /// column field paths.
+    /// Renders records as a Markdown table matching headers to
+    /// corresponding column field paths.
     ///
     /// # Errors
     ///
@@ -460,8 +509,8 @@ impl QueryRecordSet {
         self.format(&QueryDisplayFormat::table(headers, columns))
     }
 
-    /// Renders records as a Markdown bullet list formatting the resolved field
-    /// value at `path`.
+    /// Renders records as a Markdown bullet list formatting the resolved
+    /// field value at `path`.
     ///
     /// # Errors
     ///
@@ -471,7 +520,8 @@ impl QueryRecordSet {
         self.format(&QueryDisplayFormat::list(path))
     }
 
-    /// Renders task-level records as a Markdown task list (`- [ ]` or `- [x]`).
+    /// Renders task-level records as a Markdown task list (`- [ ]`/`- [x]`/
+    /// `- [-]`), used by the template `tasks` namespace.
     ///
     /// # Errors
     ///
@@ -481,40 +531,74 @@ impl QueryRecordSet {
         self.format(&QueryDisplayFormat::task_list())
     }
 
+    /// Renders task-level records as a Markdown task list with each row's
+    /// file path appended in parentheses (`- [x] text (path)`), used by
+    /// `traces task`. See [`Self::task_list`] for the path-free form
+    /// templates use.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
+    ///   fields.
+    pub(crate) fn task_list_with_path(&self) -> QueryResult<String> {
+        self.format(&QueryDisplayFormat::task_list_with_path())
+    }
+
     /// Renders records using the given display format.
     ///
     /// # Errors
     ///
-    /// Returns existing query errors for malformed field paths, table column
-    /// mismatches, or task-list rendering on page rows.
+    /// Returns existing query errors for malformed field paths, table
+    /// column mismatches, or task-list rendering on page rows.
     pub(super) fn format(
         &self,
         format: &QueryDisplayFormat,
     ) -> QueryResult<String> {
-        format.render(&self.records)
+        format.render(self.materialized())
     }
 }
 
-/// Converts the [`QueryRecordSet`] into an iterator over owned [`QueryRecord`]
-/// rows.
+/// Converts the [`QueryRecordSet`] into an iterator over owned
+/// [`QueryRecord`] rows. Flushes any pending plan first, like every other
+/// read; clones each row out of the materialized `Arc<[QueryRecord]>` since
+/// an `Arc<[T]>` has no owned `into_iter`. For a page row this is just an
+/// `Arc<FileIndex>` refcount bump; a task row additionally clones its own
+/// small owned `text: String`, and a `flatten()`-derived row clones
+/// its `flattened` field vec — neither duplicates the underlying `Note`.
 impl IntoIterator for QueryRecordSet {
     type IntoIter = std::vec::IntoIter<Self::Item>;
     type Item = QueryRecord;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.records.into_iter()
+        self.materialized().to_vec().into_iter()
     }
 }
 
 /// Creates an iterator over borrowed [`QueryRecord`] rows from the
-/// [`QueryRecordSet`].
+/// [`QueryRecordSet`], flushing any pending plan first.
 impl<'a> IntoIterator for &'a QueryRecordSet {
     type IntoIter = std::slice::Iter<'a, QueryRecord>;
     type Item = &'a QueryRecord;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.records.iter()
+        self.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QueryRecord;
+
+    #[test]
+    fn query_record_stays_within_its_size_budget() {
+        let size = std::mem::size_of::<QueryRecord>();
+        assert!(
+            size <= 112,
+            "QueryRecord grew to {size} bytes, past its ~96-byte target — \
+             check for an accidentally un-boxed field before raising this \
+             bound"
+        );
     }
 }

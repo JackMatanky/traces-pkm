@@ -349,7 +349,12 @@ impl ClassExpansionMode {
 }
 
 /// Resolves File Class names against the Schema domain.
-pub(crate) trait FileClassExpander {
+///
+/// `Send + Sync` bound required so `Arc<dyn FileClassExpander>` inside
+/// [`super::super::QueryService`] satisfies minijinja's `Object: Send + Sync`
+/// bound once `QueryOps` (`src/template/engine/query.rs`) holds a persistent
+/// `QueryService`.
+pub(crate) trait FileClassExpander: Send + Sync {
     /// Populates `mode`'s match set from `classes` at its requested depth.
     fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
 }
@@ -1024,10 +1029,12 @@ mod tests {
 
         /// Test double for [`FileClassExpander`]: records every call and
         /// resolves each class name to itself, so unresolved (not-yet-a-
-        /// Schema) names are preserved rather than dropped.
+        /// Schema) names are preserved rather than dropped. Uses a `Mutex`
+        /// rather than a `RefCell` so this type satisfies
+        /// [`FileClassExpander`]'s `Send + Sync` supertrait bound.
         #[derive(Default)]
         struct RecordingExpander {
-            calls: std::cell::RefCell<Vec<Vec<String>>>,
+            calls: std::sync::Mutex<Vec<Vec<String>>>,
         }
 
         impl FileClassExpander for RecordingExpander {
@@ -1036,7 +1043,7 @@ mod tests {
                 classes: &[String],
                 mode: &mut ClassExpansionMode,
             ) {
-                self.calls.borrow_mut().push(classes.to_vec());
+                self.calls.lock().expect("lock calls").push(classes.to_vec());
                 mode.set_classes(classes.iter().cloned().collect());
             }
         }
@@ -1049,7 +1056,7 @@ mod tests {
 
             source.resolve_classes(&expander);
 
-            assert_eq!(expander.calls.into_inner(), vec![
+            assert_eq!(expander.calls.into_inner().expect("lock calls"), vec![
                 vec!["thing".to_owned()],
                 vec!["ghost".to_owned()],
             ]);

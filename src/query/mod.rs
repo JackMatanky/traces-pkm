@@ -67,7 +67,7 @@ pub(crate) use grammar::{
 };
 pub use record::{QueryRecord, QueryRecordSet};
 pub use request::QueryRequest;
-use request::{QueryMode, QueryTransform};
+use request::{QueryMode, QueryPlan, QueryTransform};
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
 
@@ -990,6 +990,118 @@ mod tests {
             assert_eq!((&outcome).into_iter().count(), 1);
 
             assert_eq!(outcome.into_iter().count(), 1);
+        }
+    }
+
+    mod cte_chaining {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// Two chained `.filter()` calls and one combined filter expression
+        /// must reach the same rows once both sides are materialized,
+        /// proving `QueryRecordSet`'s manual `PartialEq` compares evaluated
+        /// content, not the (structurally different) pending plan each side
+        /// accumulated.
+        #[test]
+        fn chained_filters_match_one_combined_filter_expression() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let base = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nrating: 1\n---\n"),
+                ("b.md", "---\nrating: 3\n---\n"),
+                ("c.md", "---\nrating: 5\n---\n"),
+                ("d.md", "---\nrating: 7\n---\n"),
+                ("e.md", "---\nrating: 9\n---\n"),
+            ]);
+
+            let chained = base
+                .clone()
+                .filter("rating > 2")
+                .expect("valid filter")
+                .filter("rating < 8")
+                .expect("valid filter");
+            let combined =
+                base.filter("rating > 2 and rating < 8").expect("valid filter");
+
+            assert_eq!(chained, combined);
+        }
+
+        /// Chained `.sort().limit(n)` on a `QueryRecordSet` (the CTE path)
+        /// must match a full sort's first `n` rows, including tie order —
+        /// the same property `request.rs`'s
+        /// `top_k_matches_full_sort_order_for_tied_keys` proves for
+        /// `QueryRequest` (the pre-fetch path) — confirming the deferred
+        /// plan reaches the same `Sort`+`Limit` -> `TopK` fusion.
+        #[test]
+        fn chained_sort_then_limit_matches_full_sort_order_for_tied_keys() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let files: Vec<(String, String)> = (0..200)
+                .map(|i| {
+                    (
+                        format!("note-{i:03}.md"),
+                        format!("---\nrating: {}\n---\n", i % 4),
+                    )
+                })
+                .collect();
+            let file_refs: Vec<(&str, &str)> = files
+                .iter()
+                .map(|(name, content)| (name.as_str(), content.as_str()))
+                .collect();
+            let base = outcome_for_files(temp.path(), &file_refs);
+
+            for n in [5_usize, 50, 100] {
+                let chained = base
+                    .clone()
+                    .sort("rating", false)
+                    .expect("valid sort")
+                    .limit(i64::try_from(n).expect("limit fits i64"))
+                    .expect("valid limit");
+                let chained_paths: Vec<_> = (0..chained.len())
+                    .map(|i| {
+                        chained.get(i).expect("row").file().path().to_path_buf()
+                    })
+                    .collect();
+
+                let full_sorted =
+                    base.clone().sort("rating", false).expect("valid sort");
+                let full_first_n: Vec<_> = (0..n)
+                    .map(|i| {
+                        full_sorted
+                            .get(i)
+                            .expect("row")
+                            .file()
+                            .path()
+                            .to_path_buf()
+                    })
+                    .collect();
+
+                assert_eq!(
+                    chained_paths, full_first_n,
+                    "chained .sort().limit(n={n}) must match a full stable \
+                     sort's first {n} rows, including tie order"
+                );
+            }
+        }
+
+        /// Two branches derived from the same base `QueryRecordSet` must
+        /// each see every base row, and the base itself must be untouched —
+        /// proving `.filter()`/etc. consume-and-return a new value rather
+        /// than mutating shared state.
+        #[test]
+        fn branching_from_the_same_base_does_not_cross_contaminate() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let base = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nrating: 1\n---\n"),
+                ("b.md", "---\nrating: 5\n---\n"),
+                ("c.md", "---\nrating: 9\n---\n"),
+            ]);
+
+            let low = base.clone().filter("rating < 5").expect("valid filter");
+            let high = base.clone().filter("rating > 5").expect("valid filter");
+
+            assert_eq!(base.len(), 3, "branching must not mutate the base");
+            assert_eq!(low.len(), 1);
+            assert_eq!(high.len(), 1);
         }
     }
 }

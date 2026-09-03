@@ -163,30 +163,34 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 //             Benchmarks: Sort Plan Optimization              //
 // ----------------------------------------------------------- //
 
-/// Measures `QueryPlan::optimize()`'s `Sort`+`Limit(n)` → `TopK` fusion against
-/// an unfused full sort, swept over workspace size.
+/// Measures `QueryPlan`'s `Sort`+`Limit(n)` → `TopK` fusion against an
+/// unfused full sort, swept over workspace size.
 ///
 /// `QueryRequest::sort(...).limit(...)` executed through
-/// `QueryService::execute` always passes through `QueryPlan::optimize()`
-/// (`src/query/service.rs`: `plan.optimize().apply(records)`), which rewrites
-/// an adjacent `Sort`+`Limit` into one `TopK` step using
+/// `QueryService::execute` always passes through `QueryPlan::execute`
+/// (`src/query/service.rs`: `plan.execute(records)`), which fuses an
+/// adjacent `Sort`+`Limit` into one `TopK` step using
 /// `select_nth_unstable_by` (`O(n)` selection) instead of a full
-/// `sort_by_cached_key` (`O(n log n)`). The template chain
-/// (`src/template/engine/query.rs`) cannot reach this fusion structurally:
-/// `.sort(...)` materializes and returns a new `QueryRecordSet` *before*
-/// `.limit(...)` is even called, so by the time `.limit` runs, the full sort
-/// already happened. This isolates how much a template's `.sort().limit(k)`
-/// chain pays for that missing lookahead, independent of the per-step clone
-/// measured by `bench_clone_query_record_set`. Swept over the same sizes as
-/// [`bench_sort_by_metadata`] (not a single point) so the fusion's advantage
-/// can be checked against its `O(n)` vs. `O(n log n)` prediction: the ratio
-/// between the two sub-benchmarks should widen as `n` grows, not stay flat.
+/// `sort_by_cached_key` (`O(n log n)`). Since the `QueryRecordSet` CTE
+/// redesign, `.sort(...).limit(...)` chained directly on a `QueryRecordSet`
+/// (the shape the template `tasks`/`query` namespaces use) reaches the same
+/// fusion — deferred into the same `QueryPlan`, flushed once on read — so
+/// this gap is no longer template-specific; it's the general cost of `TopK`
+/// fusion vs. a full sort, still worth guarding against regression. The
+/// chained-`QueryRecordSet` path itself isn't benchmarked here:
+/// `QueryRecordSet::sort`/`limit` are `pub(crate)`, unreachable from this
+/// external bench crate even under `test-utils`; its correctness (not
+/// performance) is proven by
+/// `src/query/mod.rs`'s
+/// `cte_chaining::chained_sort_then_limit_matches_full_sort_order_for_tied_keys`
+/// unit test. Swept over the same sizes as [`bench_sort_by_metadata`] (not a
+/// single point) so the fusion's advantage can be checked against its `O(n)`
+/// vs. `O(n log n)` prediction: the ratio between the two sub-benchmarks
+/// should widen as `n` grows, not stay flat.
 ///
 /// Expected outcomes:
 /// - `topk_limit_10` costs meaningfully less than `full_sort_no_limit` at every
-///   size, confirming the missing fusion — not the per-step clone — is the
-///   larger share of template-vs-CLI sort overhead for small-limit chains, and
-///   the gap between them widens as `n` grows.
+///   size, and the gap widens as `n` grows.
 ///
 /// Unexpected outcomes:
 /// - Costs are comparable, indicating `TopK`'s key-materialization pass (paid

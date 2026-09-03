@@ -10,30 +10,23 @@ use crate::index::{FileIndex, RowIndex};
 
 /// Executes queries over a borrowed [`FileIndex`].
 #[derive(Clone)]
-#[expect(
-    clippy::struct_field_names,
-    reason = "fields refer to the configured file class field and expander"
-)]
-pub struct QueryService<'a> {
+pub struct QueryService {
     class_field: String,
-    class_field_canonical: String,
-    class_expander: Option<&'a dyn FileClassExpander>,
+    class_expander: Option<Arc<dyn FileClassExpander>>,
 }
 
-impl<'a> QueryService<'a> {
+impl QueryService {
     /// Creates a service that reads File Class values from `class_field`.
     #[inline]
     #[must_use]
     pub fn new<S: Into<String>>(class_field: S) -> Self {
         let class_field = class_field.into();
-        let class_field_canonical = crate::FieldKey::try_new(&class_field)
-            .map_or_else(
-                |_| class_field.to_lowercase(),
-                |key| key.canonical().to_owned(),
-            );
+        let class_field = crate::FieldKey::try_new(&class_field).map_or_else(
+            |_| class_field.to_lowercase(),
+            |key| key.canonical().to_owned(),
+        );
         Self {
             class_field,
-            class_field_canonical,
             class_expander: None,
         }
     }
@@ -41,9 +34,9 @@ impl<'a> QueryService<'a> {
     /// Adds a File Class expander used at execution time.
     #[inline]
     #[must_use]
-    pub(crate) fn with_class_expander<R: FileClassExpander + 'a>(
+    pub(crate) fn with_class_expander(
         mut self,
-        expander: &'a R,
+        expander: Arc<dyn FileClassExpander>,
     ) -> Self {
         self.class_expander = Some(expander);
         self
@@ -58,7 +51,7 @@ impl<'a> QueryService<'a> {
     ) -> QueryRecordSet {
         let (mode, mut source, plan) = request.into_parts();
         if source.has_classes()
-            && let Some(expander) = self.class_expander
+            && let Some(expander) = self.class_expander.as_deref()
         {
             source.resolve_classes(expander);
         }
@@ -66,7 +59,7 @@ impl<'a> QueryService<'a> {
             QueryMode::Pages => self.page_records(index, &source),
             QueryMode::Tasks => self.task_records(index, &source),
         };
-        QueryRecordSet::new(plan.optimize().apply(records))
+        QueryRecordSet::new(plan.execute(records))
     }
 
     fn page_records(
@@ -102,10 +95,7 @@ impl<'a> QueryService<'a> {
         (0..index.entries().len())
             .map(RowIndex::new)
             .filter(move |&position| {
-                source.is_match(
-                    index.entry_at(position),
-                    &self.class_field_canonical,
-                )
+                source.is_match(index.entry_at(position), &self.class_field)
             })
             .map(move |position| {
                 QueryRecord::from_row(Arc::clone(index), position)
@@ -113,7 +103,7 @@ impl<'a> QueryService<'a> {
     }
 }
 
-impl std::fmt::Debug for QueryService<'_> {
+impl std::fmt::Debug for QueryService {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueryService")

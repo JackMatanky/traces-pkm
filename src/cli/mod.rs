@@ -332,8 +332,8 @@ fn execute_query_request(
 ) -> Result<QueryRecordSet, CliError> {
     let service = QueryService::new(config.schemas().class_field_name());
     if has_classes {
-        let schema_service = load_schema_service(config)?;
-        Ok(service.with_class_expander(&schema_service).execute(index, request))
+        let schema_service = Arc::new(load_schema_service(config)?);
+        Ok(service.with_class_expander(schema_service).execute(index, request))
     } else {
         Ok(service.execute(index, request))
     }

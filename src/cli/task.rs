@@ -46,30 +46,24 @@ impl Task {
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
-                  mirrors the dry-run precedent in crate::cli::template and \
-                  crate::cli::completions"
+                  mirrors the precedent in crate::cli::list and \
+                  crate::cli::table"
     )]
     pub(super) fn run(&self, service: &ConfigService) -> CliResult {
         let config = super::load_config(service)?;
         let root = config.root();
-        let lines = self.lines(&config)?;
-        let count = lines.len();
-        for line in &lines {
-            println!("{line}");
-        }
+        let (rendered, count) = self.render(&config)?;
+        print!("{rendered}");
         eprintln!("{count} task(s) from {}", root.display());
         Ok(())
     }
 
-    /// Renders matching tasks from `root`'s [`FileIndex`].
+    /// Renders matching tasks from `root`'s [`FileIndex`] as a Markdown task
+    /// list with each row's file path appended, alongside the matched row
+    /// count.
     ///
-    /// Each task becomes one Markdown checkbox line:
-    ///
-    /// - `- [ ] <text> (<path>)` for an incomplete task.
-    /// - `- [x] <text> (<path>)` for a complete task.
-    ///
-    /// Split from [`Self::run`] so tests can assert on rendered content without
-    /// capturing process stdout.
+    /// Split from [`Self::run`] so tests can assert on rendered content
+    /// without capturing process stdout.
     ///
     /// # Errors
     ///
@@ -77,27 +71,18 @@ impl Task {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     ///
     /// [`FileIndex`]: crate::index::FileIndex
-    fn lines(&self, config: &Config) -> Result<Vec<String>, CliError> {
+    fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
+        let root = config.root();
         let outcome = super::refresh_task_query(
             config,
             self.from.as_deref(),
             &self.filter,
         )?;
-        Ok(outcome
-            .iter()
-            .map(|record| {
-                let checkbox = if record.task_completed() == Some(true) {
-                    'x'
-                } else {
-                    ' '
-                };
-                let text = record.task_text().unwrap_or_default();
-                format!(
-                    "- [{checkbox}] {text} ({})",
-                    record.file().path().display()
-                )
-            })
-            .collect())
+        let count = outcome.len();
+        let rendered = outcome
+            .task_list_with_path()
+            .map_err(|source| super::query_error(root, source))?;
+        Ok((rendered, count))
     }
 }
 
@@ -106,7 +91,7 @@ mod tests {
     use super::*;
     use crate::cli::tests::fixtures::{create_trusted_project, service};
 
-    mod lines {
+    mod render {
         use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
@@ -131,12 +116,14 @@ mod tests {
                 filter: vec![],
             };
 
-            let lines = task.lines(&config(temp.path())).expect("valid query");
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
 
-            assert_eq!(lines, [
-                "- [ ] buy milk (todo.md)",
-                "- [x] pay rent (todo.md)",
-            ]);
+            assert_eq!(
+                rendered,
+                "- [ ] buy milk (todo.md)\n- [x] pay rent (todo.md)\n"
+            );
+            assert_eq!(count, 2);
         }
 
         #[test]
@@ -151,9 +138,11 @@ mod tests {
                 filter: vec![],
             };
 
-            let lines = task.lines(&config(temp.path())).expect("valid query");
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
 
-            assert_eq!(lines, ["- [ ] a task (a.md)"]);
+            assert_eq!(rendered, "- [ ] a task (a.md)\n");
+            assert_eq!(count, 1);
         }
 
         #[test]
@@ -172,9 +161,11 @@ mod tests {
                 filter: vec![],
             };
 
-            let lines = task.lines(&config(temp.path())).expect("valid query");
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
 
-            assert_eq!(lines, ["- [ ] project task (projects/a.md)"]);
+            assert_eq!(rendered, "- [ ] project task (projects/a.md)\n");
+            assert_eq!(count, 1);
         }
 
         #[test]
@@ -190,11 +181,37 @@ mod tests {
                 filter: vec!["task.completed == false".to_owned()],
             };
 
-            let lines = task.lines(&config(temp.path())).expect("valid query");
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
 
             // The Note has one matching and one non-matching task: filtering
             // keeps only the matching task row, not every task on the page.
-            assert_eq!(lines, ["- [ ] buy milk (todo.md)"]);
+            assert_eq!(rendered, "- [ ] buy milk (todo.md)\n");
+            assert_eq!(count, 1);
+        }
+
+        #[test]
+        fn renders_a_dash_checkbox_for_a_cancelled_task() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [x] done\n- [ ] pending\n- [-] cancelled\n",
+            )
+            .expect("write note");
+            let task = Task {
+                from: None,
+                filter: vec![],
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(
+                rendered,
+                "- [x] done (todo.md)\n- [ ] pending (todo.md)\n- [-] \
+                 cancelled (todo.md)\n"
+            );
+            assert_eq!(count, 3);
         }
 
         #[test]
@@ -208,7 +225,7 @@ mod tests {
             };
 
             let error = task
-                .lines(&config(temp.path()))
+                .render(&config(temp.path()))
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {

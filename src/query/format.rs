@@ -13,8 +13,20 @@ pub(super) enum QueryDisplayFormat {
     List {
         field: String,
     },
-    /// Markdown task list rendered from task rows.
-    TaskList,
+    /// Markdown task list rendered from task rows, optionally suffixed with
+    /// each row's file path.
+    TaskList {
+        path_style: TaskPathStyle,
+    },
+}
+
+/// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
+#[derive(Copy, Clone, Debug)]
+pub(super) enum TaskPathStyle {
+    /// `- [x] text` — used by the template `tasks` namespace.
+    None,
+    /// `- [x] text (path)` — used by `traces task`.
+    Suffix,
 }
 
 impl QueryDisplayFormat {
@@ -41,10 +53,21 @@ impl QueryDisplayFormat {
         }
     }
 
-    /// Builds a task-list display format.
+    /// Builds a task-list display format with no path suffix.
     #[must_use]
     pub(super) const fn task_list() -> Self {
-        Self::TaskList
+        Self::TaskList {
+            path_style: TaskPathStyle::None,
+        }
+    }
+
+    /// Builds a task-list display format with each row's file path
+    /// appended.
+    #[must_use]
+    pub(super) const fn task_list_with_path() -> Self {
+        Self::TaskList {
+            path_style: TaskPathStyle::Suffix,
+        }
     }
 
     /// Renders `records` according to this display format.
@@ -65,7 +88,9 @@ impl QueryDisplayFormat {
             Self::List {
                 field,
             } => Self::render_list(field, records),
-            Self::TaskList => Self::render_task_list(records),
+            Self::TaskList {
+                path_style,
+            } => Self::render_task_list(records, *path_style),
         }
     }
 
@@ -114,7 +139,12 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    fn render_task_list(records: &[QueryRecord]) -> QueryResult<String> {
+    fn render_task_list(
+        records: &[QueryRecord],
+        path_style: TaskPathStyle,
+    ) -> QueryResult<String> {
+        use std::fmt::Write as _;
+
         let mut out = String::new();
         for record in records {
             let Some(text) = record.task_text() else {
@@ -126,6 +156,13 @@ impl QueryDisplayFormat {
                 None => "- [-] ",
             });
             out.push_str(text);
+            match path_style {
+                TaskPathStyle::Suffix => {
+                    let _ =
+                        write!(out, " ({})", record.file().path().display());
+                }
+                TaskPathStyle::None => {}
+            }
             out.push('\n');
         }
         Ok(out)

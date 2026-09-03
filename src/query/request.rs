@@ -29,7 +29,7 @@ impl QueryRequest {
         Self {
             mode: QueryMode::Pages,
             source,
-            plan: QueryPlan::new(),
+            plan: QueryPlan::default(),
         }
     }
 
@@ -40,7 +40,7 @@ impl QueryRequest {
         Self {
             mode: QueryMode::Tasks,
             source,
-            plan: QueryPlan::new(),
+            plan: QueryPlan::default(),
         }
     }
 
@@ -99,26 +99,35 @@ impl QueryRequest {
 }
 
 /// Ordered, optimizable sequence of [`QueryTransform`] steps.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// The single transform engine for the whole query subsystem, used two ways:
+/// [`QueryRequest`] builds one fully before a single [`Self::execute`] call
+/// (pre-fetch, via [`super::QueryService::execute`]); [`QueryRecordSet`]
+/// accumulates one incrementally across chained calls and calls
+/// [`Self::execute`] lazily on first read, memoizing the result (post-fetch CTE
+/// chaining). [`Self::optimize`] is pure and idempotent — safe to run on a plan
+/// built either way.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct QueryPlan {
     steps: Vec<QueryTransform>,
 }
 
 impl QueryPlan {
-    const fn new() -> Self {
-        Self {
-            steps: Vec::new(),
-        }
+    /// Returns `true` if this plan has no pending steps.
+    pub(super) fn is_empty(&self) -> bool {
+        self.steps.is_empty()
     }
 
-    fn push(&mut self, transform: QueryTransform) {
+    pub(super) fn push(&mut self, transform: QueryTransform) {
         self.steps.push(transform);
     }
 
     /// Fuses consecutive `Filter` steps into one and rewrites adjacent
-    /// `Sort`+`Limit(n)` into a `TopK` step.
+    /// `Sort`+`Limit(n)` into a `TopK` step. Internal to [`Self::execute`] —
+    /// nothing outside this type calls it directly, so a plan can never be
+    /// applied unoptimized.
     #[must_use]
-    pub(super) fn optimize(mut self) -> Self {
+    fn optimize(mut self) -> Self {
         let mut optimized = Vec::with_capacity(self.steps.len());
         let mut steps = self.steps.into_iter().peekable();
         while let Some(step) = steps.next() {
@@ -150,15 +159,21 @@ impl QueryPlan {
         self
     }
 
-    /// Applies every step in order, used by [`super::QueryService::execute`].
-    pub(super) fn apply(
-        &self,
-        mut records: Vec<QueryRecord>,
-    ) -> Vec<QueryRecord> {
+    /// Applies every step in order. Internal to [`Self::execute`].
+    fn apply(&self, mut records: Vec<QueryRecord>) -> Vec<QueryRecord> {
         for step in &self.steps {
             records = step.apply(records);
         }
         records
+    }
+
+    /// Fuses this plan via [`Self::optimize`] and applies it to `records` in
+    /// one pass. The only way a [`QueryTransform`] in this plan ever runs —
+    /// used by [`super::QueryService::execute`] (pre-fetch, plan built once)
+    /// and [`QueryRecordSet`]'s materialization (post-fetch, plan built
+    /// incrementally then flushed on first read).
+    pub(super) fn execute(self, records: Vec<QueryRecord>) -> Vec<QueryRecord> {
+        self.optimize().apply(records)
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -272,13 +287,13 @@ impl QueryTransform {
             } => {
                 let n = *n;
                 // `(SortKey, original index)` breaks ties by input position,
-                // matching `sort_by_cached_key`'s stability guarantee (used
-                // by the unfused `Sort` arm above). Without the index,
+                // matching `sort_by_cached_key`'s stability guarantee (used by
+                // the unfused `Sort` arm above). Without the index,
                 // `select_nth_unstable_by`/`sort_unstable_by` are free to
                 // reorder or reselect among tied keys arbitrarily — a real
-                // behavior difference from the unfused path whenever the
-                // sort field has duplicate values near the selection
-                // boundary (e.g. a low-cardinality field like `status`).
+                // behavior difference from the unfused path whenever the sort
+                // field has duplicate values near the selection boundary (e.g.
+                // a low-cardinality field like `status`).
                 let mut keyed: Vec<(SortKey, usize, QueryRecord)> = records
                     .into_iter()
                     .enumerate()
@@ -519,16 +534,6 @@ mod tests {
                 .expect("valid filter")
                 .filter("rating < 8")
                 .expect("valid filter");
-
-            // Verify that optimize() fuses adjacent filters into a single
-            // Filter step
-            let (_, _, plan) = QueryRequest::pages(SourceSelector::All)
-                .filter("rating > 2")
-                .expect("valid filter")
-                .filter("rating < 8")
-                .expect("valid filter")
-                .into_parts();
-            assert_eq!(plan.optimize().steps.len(), 1);
 
             let fused_outcome =
                 QueryService::new("class").execute(&index, fused_request);

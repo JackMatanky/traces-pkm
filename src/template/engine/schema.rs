@@ -399,11 +399,10 @@ mod tests {
         let service = Arc::new(
             SchemaService::new(directory).expect("valid test schema directory"),
         );
-        let class_field: Arc<str> = Arc::from("class");
         let mut env = Environment::new();
         crate::template::engine::QueryOps::page(
             Arc::clone(&root),
-            class_field,
+            "class",
             Arc::clone(&service),
         )
         .register(&mut env);

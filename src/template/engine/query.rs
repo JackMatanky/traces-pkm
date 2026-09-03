@@ -106,13 +106,9 @@ pub(super) struct QueryOps {
     /// The minijinja global this instance registers as.
     name: &'static str,
     root: Arc<Path>,
-    /// Frontmatter field naming a Note's File Class(es), from `[schemas]
-    /// class_field`. Passed to source matching at execution time.
-    class_field: Arc<str>,
-    /// Shared with `schema.get()` so both namespaces resolve the same,
-    /// already-resolved Schema registry, built once at
-    /// [`super::TemplateEngine::new`].
-    service: Arc<SchemaService>,
+    /// Pre-configured once at construction (see [`Self::page`]/[`Self::task`])
+    /// instead of being rebuilt on every `.from()` call.
+    service: QueryService,
     /// `false` for page-level `query`, `true` for task-level `tasks`.
     is_task: bool,
 }
@@ -121,34 +117,32 @@ impl QueryOps {
     /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
-    pub(super) const fn page(
+    pub(super) fn page(
         root: Arc<Path>,
-        class_field: Arc<str>,
-        service: Arc<SchemaService>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
     ) -> Self {
         Self {
             name: "query",
             root,
-            class_field,
-            service,
+            service: QueryService::new(class_field).with_class_expander(schema),
             is_task: false,
         }
     }
 
-    /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
-    /// is one task item instead of one Note; see the module docs.
+    /// Wraps `root` for task-level dispatch under the `tasks` global. Each
+    /// row is one task item instead of one Note; see the module docs.
     #[inline]
     #[must_use]
-    pub(super) const fn task(
+    pub(super) fn task(
         root: Arc<Path>,
-        class_field: Arc<str>,
-        service: Arc<SchemaService>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
     ) -> Self {
         Self {
             name: "tasks",
             root,
-            class_field,
-            service,
+            service: QueryService::new(class_field).with_class_expander(schema),
             is_task: true,
         }
     }
@@ -196,10 +190,7 @@ impl QueryOps {
         } else {
             QueryRequest::pages(source)
         };
-        let outcome = QueryService::new(&*self.class_field)
-            .with_class_expander(self.service.as_ref())
-            .execute(&index, request);
-        Ok(Value::from_object(outcome))
+        Ok(Value::from_object(self.service.execute(&index, request)))
     }
 }
 
@@ -452,7 +443,7 @@ fn task_list_filter(outcome: &QueryRecordSet) -> TemplateEngineResult<String> {
 }
 
 /// `outcome | count` filter body: the number of records in `outcome`.
-const fn count_filter(outcome: &QueryRecordSet) -> usize {
+fn count_filter(outcome: &QueryRecordSet) -> usize {
     outcome.len()
 }
 
@@ -636,20 +627,12 @@ mod tests {
     /// Builds a `query` [`QueryOps`] for `root` with the default class field
     /// (`class`) and Schema registry directory (`root/.traces/schemas`).
     fn page_ops(root: &Path) -> QueryOps {
-        QueryOps::page(
-            Arc::from(root),
-            Arc::from("class"),
-            schema_service(root),
-        )
+        QueryOps::page(Arc::from(root), "class", schema_service(root))
     }
 
     /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
     fn task_ops(root: &Path) -> QueryOps {
-        QueryOps::task(
-            Arc::from(root),
-            Arc::from("class"),
-            schema_service(root),
-        )
+        QueryOps::task(Arc::from(root), "class", schema_service(root))
     }
 
     /// A minimal [`Environment`] with `query` and `tasks` registered against
@@ -674,16 +657,12 @@ mod tests {
         class_field: &str,
         source: &str,
     ) -> TemplateEngineResult<String> {
-        let field: Arc<str> = Arc::from(class_field);
         let service = schema_service(root);
         let mut env = Environment::new();
-        QueryOps::page(
-            Arc::from(root),
-            Arc::clone(&field),
-            Arc::clone(&service),
-        )
-        .register(&mut env);
-        QueryOps::task(Arc::from(root), field, service).register(&mut env);
+        QueryOps::page(Arc::from(root), class_field, Arc::clone(&service))
+            .register(&mut env);
+        QueryOps::task(Arc::from(root), class_field, service)
+            .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env.render_str(source, minijinja::context!())
     }

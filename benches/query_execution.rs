@@ -35,8 +35,7 @@ use criterion::{
     criterion_main,
 };
 use traces_pkm::{
-    FileIndex, IndexerService, QueryRecord, QueryRequest, QueryService,
-    SourceSelector,
+    FileIndex, IndexerService, QueryRequest, QueryService, SourceSelector,
 };
 
 // ----------------------------------------------------------- //
@@ -290,52 +289,39 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
 
-/// Measures the cost of cloning a full `QueryRecordSet` (as a
-/// `Vec<QueryRecord>`), swept over workspace size.
+/// Measures the cost of cloning a `QueryRecordSet`, swept over workspace
+/// size.
 ///
-/// `src/template/engine/query.rs`'s `Object::call_method` for `QueryRecordSet`
-/// clones the entire outcome (`self.as_ref().clone()`) on every non-terminal
-/// chained call (`.where`/`.filter`/`.sort`/`.limit`/`.group_by`/`.flatten`),
-/// so a template chain of `k` steps over `n` records pays `k` full clones of
-/// (shrinking) size up to `n` — on top of each step's own transform cost, which
-/// `bench_filter_by_metadata_field_count`/`bench_sort_by_metadata` already
-/// measure. This isolates just the clone, the cost a "unified lazy query
-/// engine" redesign (deferring materialization until a terminal call) would
-/// remove. `QueryRecordSet`'s only field is `records: Vec<QueryRecord>` with a
-/// derived `Clone`, so cloning the record set is exactly cloning this `Vec`:
-/// this benchmark reaches it through the public API (`execute` +
-/// `IntoIterator`) without depending on `QueryRecordSet` internals.
-///
-/// `QueryRecord` itself holds `Arc<FileIndex>` (an atomic refcount bump, not a
-/// deep copy) + `RowIndex` (`Copy`) + an overlay `Vec` (empty for fresh page
-/// rows) + a `RowKind` tag — so this also measures how close to "zero-copy"
-/// cloning already is in practice: no `Note` data is duplicated.
+/// `src/template/engine/query.rs`'s `Object::call_method` for
+/// `QueryRecordSet` clones the entire outcome (`self.as_ref().clone()`) on
+/// every non-terminal chained call (`.where`/`.filter`/`.sort`/`.limit`/
+/// `.group_by`/`.flatten`). Since the CTE redesign, `QueryRecordSet::records`
+/// is `Arc<[QueryRecord]>`, so `#[derive(Clone)]` clones an `Arc` pointer
+/// (and a short pending-plan `Vec`), not the row data — this benchmark
+/// confirms that claim directly, rather than through the `Vec<QueryRecord>`
+/// proxy the pre-redesign version used.
 ///
 /// Expected outcomes:
-/// - Cost scales linearly with `n` (a `Vec` clone has no shortcut) and stays
-///   small per element (no `Note` data is cloned, only `Arc` bumps).
+/// - Cost is small and roughly constant across workspace sizes (an `Arc`
+///   refcount bump, not proportional to `n`).
 ///
 /// Unexpected outcomes:
-/// - Cost per element grows with `n` (would indicate allocator contention, not
-///   itself expected for a single-threaded bench) or is large in absolute terms
-///   (would indicate `QueryRecord` carries more owned data than its fields
-///   suggest).
+/// - Cost scales with `n`, indicating `records` is no longer `Arc`-backed, or
+///   `QueryRecordSet::clone` is deep-copying rows somewhere.
 fn bench_clone_query_record_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::execute/clone_record_set");
     for &n in WORKSPACE_SIZES {
         let index = create_page_index(n);
-        let records: Vec<QueryRecord> = QueryService::new("class")
-            .execute(&index, QueryRequest::pages(SourceSelector::All))
-            .into_iter()
-            .collect();
+        let outcome = QueryService::new("class")
+            .execute(&index, QueryRequest::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
-            BenchmarkId::new("vec_clone", n),
-            &records,
-            |b, records| {
-                b.iter(|| black_box(records.clone()));
+            BenchmarkId::new("record_set_clone", n),
+            &outcome,
+            |b, outcome| {
+                b.iter(|| black_box(outcome.clone()));
             },
         );
     }
