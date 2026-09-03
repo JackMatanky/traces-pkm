@@ -71,8 +71,8 @@ impl QueryDisplayFormat {
     ///
     /// # Errors
     ///
-    /// Returns query errors for malformed field paths, table column
-    /// mismatches, or task-list rendering on page rows.
+    /// Returns query errors for malformed field paths, table column mismatches,
+    /// or task-list rendering on page rows.
     pub(super) fn render(&self, records: &[QueryRow]) -> QueryResult<String> {
         match self {
             Self::Table {

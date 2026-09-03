@@ -1,8 +1,9 @@
-//! Declarative query builder for configuring source selection, mode, and
+//! Declarative query builder for source selection, execution mode, and
 //! transform pipelines.
 //!
-//! [`QueryBuilder`] configures an index query before execution by
-//! [`super::QueryService::execute`].
+//! Defines [`QueryBuilder`], which configures index query execution before
+//! passing the request to
+//! [`QueryService::execute`](super::QueryService::execute).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
@@ -14,14 +15,21 @@ pub(super) enum QueryMode {
     Tasks,
 }
 
-/// Declarative query builder for configuring source selection, mode, and
-/// transforms.
+/// Declarative query specification for index queries.
 ///
 /// `QueryBuilder` specifies whether to return page-level rows
 /// ([`pages`](Self::pages)) or task-level rows ([`tasks`](Self::tasks)),
 /// selects candidate files via a [`SourceSelector`], and builds an ordered
 /// sequence of transformation steps ([`filter`](Self::filter),
 /// [`sort`](Self::sort), [`limit`](Self::limit)).
+///
+/// # Execution Lifecycle
+///
+/// Constructing a `QueryBuilder` does not touch the filesystem or execute query
+/// expressions. The builder accumulates transformation steps into an internal
+/// [`QueryPlan`](super::QueryPlan) and passes them to
+/// [`QueryService::execute`](super::QueryService::execute), which evaluates the
+/// plan against a borrowed [`FileIndex`](crate::index::FileIndex).
 ///
 /// # Examples
 ///
@@ -75,12 +83,17 @@ impl QueryBuilder {
 
     /// Appends a filter expression to the query transform plan.
     ///
+    /// Evaluates `expr` against candidate note frontmatter, task metadata,
+    /// tags, and file properties when the query executes.
+    ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::Syntax`] if `expr` is an unparsable boolean
-    ///   filter.
-    /// - [`QueryBuilderError::FieldPath`] if `expr` contains a malformed field
-    ///   path.
+    /// - [`Syntax`] if `expr` cannot be parsed as a valid boolean filter
+    ///   expression.
+    /// - [`FieldPath`] if `expr` references an invalid or malformed field path.
+    ///
+    /// [`Syntax`]: QueryBuilderError::Syntax
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::filter(expr)?);
@@ -89,12 +102,14 @@ impl QueryBuilder {
 
     /// Appends a sort transform for `field` to the query transform plan.
     ///
-    /// Sorts rows in ascending order when `descending` is `false`, or
+    /// Sorts matching rows in ascending order when `descending` is `false`, or
     /// descending order when `descending` is `true`.
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `field` cannot be parsed as a valid field path.
+    ///
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     #[inline]
     pub fn sort(
         mut self,
@@ -108,10 +123,13 @@ impl QueryBuilder {
     /// Appends a limit transform to restrict the outcome to at most `n` leading
     /// records.
     ///
+    /// Retains up to `n` records from the evaluated result set.
+    ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::LimitOutOfRange`] if `n` is negative or exceeds
-    ///   the platform pointer-width limit (`usize::MAX`).
+    /// - [`LimitOutOfRange`] if `n` is negative or exceeds `usize::MAX`.
+    ///
+    /// [`LimitOutOfRange`]: QueryBuilderError::LimitOutOfRange
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),

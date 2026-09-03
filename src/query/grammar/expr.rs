@@ -261,17 +261,17 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     }
 }
 
-/// Parses a complete expression with `not` > `and` > `or` precedence.
+/// Parses a complete boolean expression with `not` > `and` > `or` precedence.
 ///
 /// Accepts a pre-tokenized stream and a domain-specific [`AtomParser`] that
-/// handles atom recognition. Returns a [`BooleanExpr`] tree, or a
-/// [`QueryError::Syntax`] diagnostic when the expression is malformed.
+/// handles atom recognition. Returns a [`BooleanExpr`] tree.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::Syntax`] if the token stream is empty, contains
-/// unexpected tokens, has unbalanced parentheses, or if the domain
-/// [`AtomParser`] rejects a token.
+/// - [`Syntax`] if the token stream is empty, contains unexpected tokens, has
+///   unbalanced parentheses, or if the domain [`AtomParser`] rejects a token.
+///
+/// [`Syntax`]: QueryBuilderError::Syntax
 pub(super) fn parse_boolean_expr<G>(
     input: &str,
     tokens: LexTokenStream<LexedToken<G::Token>>,

@@ -154,8 +154,9 @@ impl QueryRow {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
-    ///   path.
+    /// - [`FieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`FieldPath`]: super::QueryError::FieldPath
     #[inline]
     pub(crate) fn field(&self, path: &str) -> QueryResult<NoteFieldValue> {
         Ok(self.resolve_owned(&FieldPath::parse(path)?))
@@ -398,8 +399,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`](super::QueryError::Request) if `expr` is an
-    ///   invalid filter expression.
+    /// - [`Request`] if `expr` is an invalid filter expression.
+    ///
+    /// [`Request`]: super::QueryError::Request
     #[inline]
     pub(crate) fn filter(self, expr: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::filter(expr)?))
@@ -410,8 +412,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`](super::QueryError::Request) if `expr` is an
-    ///   invalid filter expression.
+    /// - [`Request`] if `expr` is an invalid filter expression.
+    ///
+    /// [`Request`]: super::QueryError::Request
     #[inline]
     #[cfg_attr(
         not(test),
@@ -429,8 +432,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`](super::QueryError::Request) if `path` cannot
-    ///   be parsed as a valid field path.
+    /// - [`Request`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`Request`]: super::QueryError::Request
     #[inline]
     pub(crate) fn sort(
         self,
@@ -444,8 +448,10 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`](super::QueryError::Request) if `n` is negative
-    ///   or exceeds platform pointer-width limits (`usize::MAX`).
+    /// - [`Request`] if `n` is negative or exceeds platform pointer-width
+    ///   limits (`usize::MAX`).
+    ///
+    /// [`Request`]: super::QueryError::Request
     #[inline]
     pub(crate) fn limit(self, n: i64) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::limit(n)?))
@@ -455,8 +461,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`](super::QueryError::Request) if `path` cannot
-    ///   be parsed as a valid field path.
+    /// - [`Request`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`Request`]: super::QueryError::Request
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::group_by(path)?))
@@ -466,8 +473,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`](super::QueryError::Request) if `path` cannot
-    ///   be parsed as a valid field path.
+    /// - [`Request`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`Request`]: super::QueryError::Request
     pub(crate) fn flatten(self, path: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::flatten(path)?))
     }
@@ -477,9 +485,12 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::TableColumnCountMismatch`](super::QueryError::TableColumnCountMismatch) if `headers` and `columns` differ in length.
-    /// - [`QueryError::FieldPath`](super::QueryError::FieldPath) if any field
-    ///   path in `columns` is malformed.
+    /// - [`TableColumnCountMismatch`] if `headers` and `columns` differ in
+    ///   length.
+    /// - [`FieldPath`] if any field path in `columns` is malformed.
+    ///
+    /// [`TableColumnCountMismatch`]: super::QueryError::TableColumnCountMismatch
+    /// [`FieldPath`]: super::QueryError::FieldPath
     pub(crate) fn table(
         &self,
         headers: &[&str],
@@ -493,8 +504,9 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::FieldPath`](super::QueryError::FieldPath) if `path`
-    ///   cannot be parsed as a valid field path.
+    /// - [`FieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`FieldPath`]: super::QueryError::FieldPath
     pub(crate) fn list(&self, path: &str) -> QueryResult<String> {
         self.format(&QueryDisplayFormat::list(path))
     }
@@ -504,12 +516,12 @@ impl QuerySet {
     ///
     /// `path_style` controls whether each row's file path is appended in
     /// parentheses: [`TaskPathStyle::None`] for templates,
-    /// [`TaskPathStyle::Suffix`] for `traces task`. # Errors
+    /// [`TaskPathStyle::Suffix`] for `traces task`.
     ///
-    /// - [`QueryError::TaskListRequiresTaskRows`](super::QueryError::TaskListRequiresTaskRows) if any row is a page-level row rather than a task row.
+    /// - [`TaskListRequiresTaskRows`] if any row is a page-level row rather
+    ///   than a task row.
     ///
-    /// - [`QueryError::TaskListRequiresTaskRows`] if any row is a page-level
-    ///   row rather than a task row.
+    /// [`TaskListRequiresTaskRows`]: super::QueryError::TaskListRequiresTaskRows
     pub(crate) fn task_list(
         &self,
         path_style: TaskPathStyle,
@@ -521,8 +533,15 @@ impl QuerySet {
     ///
     /// # Errors
     ///
-    /// Returns existing query errors for malformed field paths, table
-    /// column mismatches, or task-list rendering on page rows.
+    /// - [`TableColumnCountMismatch`] if table headers and columns differ in
+    ///   length.
+    /// - [`FieldPath`] if a field path cannot be resolved.
+    /// - [`TaskListRequiresTaskRows`] if task-list formatting runs on
+    ///   page-level rows.
+    ///
+    /// [`TableColumnCountMismatch`]: super::QueryError::TableColumnCountMismatch
+    /// [`FieldPath`]: super::QueryError::FieldPath
+    /// [`TaskListRequiresTaskRows`]: super::QueryError::TaskListRequiresTaskRows
     pub(super) fn format(
         &self,
         format: &QueryDisplayFormat,

@@ -29,7 +29,11 @@ impl FilterExpr {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
+    /// - [`Syntax`] if the expression syntax is invalid or malformed.
+    /// - [`FieldPath`] if any field path in the expression is invalid.
+    ///
+    /// [`Syntax`]: QueryBuilderError::Syntax
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
         let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
             input,

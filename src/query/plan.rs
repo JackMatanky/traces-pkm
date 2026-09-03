@@ -12,13 +12,13 @@ use crate::note::NoteFieldValue;
 
 /// Ordered, optimizable sequence of [`QueryTransform`] steps.
 ///
-/// The single transform engine for the whole query subsystem, used two
-/// ways: [`super::QueryBuilder`] builds one fully before a single
-/// [`Self::run`] call (pre-fetch, via [`super::QueryService::execute`]);
-/// [`super::QuerySet`] accumulates one incrementally across chained
-/// calls and calls [`Self::run`] lazily on first read, memoizing the result
-/// (post-fetch CTE chaining). [`Self::optimize`] is pure and idempotent —
-/// safe to run on a plan built either way.
+/// The single transform engine for the whole query subsystem, used two ways:
+/// [`super::QueryBuilder`] builds one fully before a single [`Self::run`] call
+/// (pre-fetch, via [`super::QueryService::execute`]); [`super::QuerySet`]
+/// accumulates one incrementally across chained calls and calls [`Self::run`]
+/// lazily on first read, memoizing the result (post-fetch CTE chaining).
+/// [`Self::optimize`] is pure and idempotent — safe to run on a plan built
+/// either way.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct QueryPlan {
     steps: Vec<QueryTransform>,
@@ -38,8 +38,8 @@ impl QueryPlan {
     /// Fuses this plan via [`Self::optimize`] and applies it to `records` in
     /// one pass. The only way a [`QueryTransform`] in this plan ever runs —
     /// used by [`super::QueryService::execute`] (pre-fetch, plan built once)
-    /// and [`super::QuerySet`]'s materialization (post-fetch, plan
-    /// built incrementally then flushed on first read).
+    /// and [`super::QuerySet`]'s materialization (post-fetch, plan built
+    /// incrementally then flushed on first read).
     pub(super) fn run(self, records: Vec<QueryRow>) -> Vec<QueryRow> {
         self.optimize().apply(records)
     }
@@ -76,9 +76,9 @@ impl QueryPlan {
     }
 
     /// Rewrites every `Sort` step immediately followed by a `Limit(n)` step
-    /// into one `TopK` step, trading a full `sort_by_cached_key`
-    /// (`O(n log n)`) for `select_nth_unstable_by` (`O(n)`). Preserves the
-    /// position and relative order of every other step.
+    /// into one `TopK` step, trading a full `sort_by_cached_key` (`O(n log n)`)
+    /// for `select_nth_unstable_by` (`O(n)`). Preserves the position and
+    /// relative order of every other step.
     #[must_use]
     fn fuse_sort_limit(mut self) -> Self {
         let mut fused = Vec::with_capacity(self.steps.len());
@@ -113,10 +113,10 @@ impl QueryPlan {
         records
     }
 }
-/// One step in a [`QueryPlan`], produced by [`super::QueryBuilder`]'s
-/// builder methods and [`super::QuerySet`]'s chained calls. Never
-/// constructed or held apart from a [`QueryPlan`] — every constructor below
-/// is immediately passed to [`QueryPlan::push`].
+/// One step in a [`QueryPlan`], produced by [`super::QueryBuilder`]'s builder
+/// methods and [`super::QuerySet`]'s chained calls. Never constructed or held
+/// apart from a [`QueryPlan`] — every constructor below is immediately passed
+/// to [`QueryPlan::push`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
@@ -141,10 +141,10 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::Syntax`] if `expr` is an invalid filter
-    ///   expression.
-    /// - [`QueryBuilderError::FieldPath`] if `expr` contains a malformed field
-    ///   path.
+    /// - [`Syntax`] if `expr` is an invalid filter expression.
+    /// - [`FieldPath`] if `expr` contains a malformed field path.
+    ///
+    /// [`Syntax`]: QueryBuilderError::Syntax
     pub(super) fn filter(expr: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Filter(FilterExpr::parse(expr)?))
     }
@@ -153,7 +153,7 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `field` is not a valid field path.
     pub(super) fn sort(
         field: &str,
         descending: bool,
@@ -168,8 +168,9 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::LimitOutOfRange`] if `n` is negative or exceeds
-    ///   `usize::MAX`.
+    /// - [`LimitOutOfRange`] if `n` is negative or exceeds `usize::MAX`.
+    ///
+    /// [`LimitOutOfRange`]: QueryBuilderError::LimitOutOfRange
     pub(super) fn limit(n: i64) -> Result<Self, QueryBuilderError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryBuilderError::LimitOutOfRange {
@@ -183,7 +184,9 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `field` is not a valid field path.
+    ///
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(super) fn group_by(field: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::GroupBy(FieldPath::parse(field)?))
     }
@@ -192,7 +195,9 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `field` is not a valid field path.
+    ///
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(super) fn flatten(field: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Flatten(FieldPath::parse(field)?))
     }
