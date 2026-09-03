@@ -2,33 +2,48 @@ Status: ready-for-agent
 
 # 07 — Note API and LISTS persistence
 
-**What to build:** Expose parsed list items through the Note API and persist them in the FileIndex. `Note.list_items()` returns an iterator over the nested list hierarchy. `Note.tasks()` returns a filtered iterator yielding only Task items. `ListRecord` wraps a project-relative path and the parsed `ListItem` with accessor methods for query-relevant fields. LISTS persistence table in redb stores postcard-encoded records keyed by `(path, line)`.
+**What to build:** Expose parsed list items through the Note API and persist them in the FileIndex. `Note.list_items()` returns a lazy iterator over the nested list hierarchy. `Note.tasks()` continues to return only Task items (already implemented). `ListRecord` wraps a project-relative path and the parsed `ListItem` with accessor methods for query-relevant fields. LISTS persistence table in redb stores postcard-encoded records keyed by `(path, line)`.
 
 **Blocked by:** 02 (needs `ListItemType`), 05 (needs `TaskListItem` with `fully_complete`), 06 (needs priority and dates on `TaskListItem`).
 
 ## Key interfaces
 
-- `ListRecord` accessor methods delegate through `ListItemType` discriminant into `TaskListItem`:
-  - `status_type()` → `task.status().kind()`
-  - `priority()` → `task.priority()`
-  - `due_date()` → `task.dates().due`
-  - `is_fully_complete()` → `task.fully_complete()`
-  - `text()` → `list_item.text()`
-  - `line()` → `list_item.line()`
-  - `depth()` → `list_item.depth()`
-  - `parent_line()` → `list_item.parent()`
+- `ListItemIter<'_>` — lazy depth-first iterator over `&ListItem`, walking nested lists in document order
+- `Note.list_items()` returns `ListItemIter<'_>` — **public** API, yields all item kinds (Plain, Checkbox, Task)
+- `Note.tasks()` returns `TaskIter<'_>` — already implemented, no change
+- `ListRecord` struct wrapping `path: String` and `ListItem`; derives `Serialize`/`Deserialize` for postcard encoding
+- `ListRecord` accessor methods delegate through `ListItemType` discriminant:
+  - `status_type()` → `ListItemType::Task(task)` → `task.status().kind()`
+  - `priority()` → `ListItemType::Task(task)` → `task.priority()`
+  - `due_date()` → `ListItemType::Task(task)` → `task.dates().due`
+  - `is_fully_complete()` → `ListItemType::Task(task)` → `task.is_fully_complete()`
+  - `text()` → `ListItem::text()`
+  - `line()` → `ListItem::line()`
+  - `depth()` → `ListItem::depth()`
+  - `parent_line()` → `ListItem::parent()`
+- Accessor methods return `None` for page-level records or non-Task items
 - Accessor methods are composable — adding fields to `TaskListItem` does not require updating `ListRecord`'s struct layout
+
+## LISTS persistence
+
+- LISTS table defined in redb as `TableDefinition<&[u8], &[u8]>` keyed by `(path, line)` bytes — path as UTF-8 bytes, line as 4-byte big-endian `u32`, concatenated
+- `ListRecord` serializes via postcard as `path` + `ListItem`
+- `ListItem` derives `Serialize`/`Deserialize` and postcard handles `IndexMap` fields — no custom serialization needed
+- Index rebuild writes LISTS table alongside FILES, NOTES, LINKS
+- Index `should_rebuild` includes LISTS in the probe list — detects schema drift alongside existing tables
+- Incremental persistence supports LISTS table — deleted notes must remove their LISTS entries
 
 ## Checklist
 
 ### Note API
 
 - [ ] `Note.list_items()` returns `ListItemIter<'_>` iterator over nested list hierarchy in document order (depth-first, matching parser construction order)
-- [ ] `Note.tasks()` returns filtered iterator yielding only `ListItemType::Task` items
+- [ ] `Note.tasks()` returns filtered iterator yielding only `ListItemType::Task` items (already implemented, verify no regression)
 
 ### ListRecord
 
 - [ ] `ListRecord` struct wrapping `path: String` and `ListItem`
+- [ ] `ListRecord` derives `Serialize`/`Deserialize`
 - [ ] `ListRecord::status_type(&self)` reads from `ListItemType::Task(task)` → `task.status().kind()`
 - [ ] `ListRecord::priority(&self)` reads from `ListItemType::Task(task)` → `task.priority()`
 - [ ] `ListRecord::due_date(&self)` reads from `ListItemType::Task(task)` → `task.dates().due`
@@ -43,10 +58,10 @@ Status: ready-for-agent
 
 - [ ] LISTS table defined in redb as `TableDefinition<&[u8], &[u8]>` keyed by `(path, line)` bytes — path as UTF-8 bytes, line as 4-byte big-endian `u32`, concatenated
 - [ ] `ListRecord` serializes via postcard as `path` + `ListItem`
-- [ ] `ListItem` derives `Serialize`/`Deserialize` and postcard handles `IndexMap` fields — no custom serialization needed
 - [ ] Index rebuild writes LISTS table alongside FILES, NOTES, LINKS
 - [ ] Index `should_rebuild` includes LISTS in probe list
 - [ ] Incremental persistence supports LISTS table
+- [ ] Deleted notes remove their LISTS entries during incremental persistence
 
 ### Tests
 
