@@ -1,5 +1,7 @@
-//! A single query transform step, and the plan that optimizes and runs an
-//! ordered sequence of them.
+//! Query transformation plan optimization and execution engine.
+//!
+//! Defines [`QueryPlan`], which optimizes and executes ordered sequence of
+//! [`QueryTransform`] steps.
 
 use super::{
     QueryBuilderError, QueryRow,
@@ -28,6 +30,7 @@ impl QueryPlan {
         self.steps.is_empty()
     }
 
+    /// Appends `transform` to this query transform plan.
     pub(super) fn push(&mut self, transform: QueryTransform) {
         self.steps.push(transform);
     }
@@ -134,10 +137,23 @@ pub(super) enum QueryTransform {
 }
 
 impl QueryTransform {
+    /// Parses `expr` into a [`QueryTransform::Filter`] step.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryBuilderError::Syntax`] if `expr` is an invalid filter
+    ///   expression.
+    /// - [`QueryBuilderError::FieldPath`] if `expr` contains a malformed field
+    ///   path.
     pub(super) fn filter(expr: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Filter(FilterExpr::parse(expr)?))
     }
 
+    /// Parses `field` into a [`QueryTransform::Sort`] step.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
     pub(super) fn sort(
         field: &str,
         descending: bool,
@@ -148,6 +164,12 @@ impl QueryTransform {
         })
     }
 
+    /// Parses `n` into a [`QueryTransform::Limit`] step.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryBuilderError::LimitOutOfRange`] if `n` is negative or exceeds
+    ///   `usize::MAX`.
     pub(super) fn limit(n: i64) -> Result<Self, QueryBuilderError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryBuilderError::LimitOutOfRange {
@@ -157,10 +179,20 @@ impl QueryTransform {
         Ok(Self::Limit(n))
     }
 
+    /// Parses `field` into a [`QueryTransform::GroupBy`] step.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
     pub(super) fn group_by(field: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::GroupBy(FieldPath::parse(field)?))
     }
 
+    /// Parses `field` into a [`QueryTransform::Flatten`] step.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
     pub(super) fn flatten(field: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Flatten(FieldPath::parse(field)?))
     }

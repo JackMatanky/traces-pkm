@@ -1,8 +1,8 @@
-//! Task query command.
+//! Task query CLI command implementation.
 //!
-//! Handles `traces task` by refreshing the trusted root's [`FileIndex`],
-//! selecting a source scope, applying the optional filter, and printing
-//! matching tasks as Markdown checkbox lines.
+//! Handles `traces task` by refreshing the trusted project root's
+//! [`FileIndex`], selecting task rows via optional source and filter
+//! expressions, and formatting matching tasks as Markdown checkbox lines.
 //!
 //! [`FileIndex`]: crate::index::FileIndex
 

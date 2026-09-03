@@ -1,14 +1,19 @@
-//! Markdown display formats for query result rows.
+//! Markdown display formatting renderers for query result rows.
+//!
+//! Defines [`QueryDisplayFormat`] and [`TaskPathStyle`], which render
+//! [`QueryRow`] collections into Markdown tables, bullet lists, or task list
+//! checkboxes.
 
 use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 
-/// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
+/// Controls whether task list output includes each row's file path.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) enum TaskPathStyle {
-    /// `- [x] text` — used by the template `tasks` namespace.
+    /// `- [x] text` — path omitted (used by template rendering).
     #[default]
     None,
-    /// `- [x] text (path)` — used by `traces task`.
+    /// `- [x] text (path)` — path appended in parentheses (used by `traces
+    /// task`).
     Suffix,
 }
 

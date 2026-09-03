@@ -1,4 +1,8 @@
-//! Query execution over a borrowed [`FileIndex`].
+//! Query service executing [`QueryBuilder`] queries over a borrowed
+//! [`FileIndex`].
+//!
+//! Defines [`QueryService`], which matches notes against candidate source
+//! selectors and applies pre-fetch query plans.
 
 use std::sync::Arc;
 
@@ -8,7 +12,33 @@ use super::{
 };
 use crate::index::{FileIndex, RowIndex};
 
-/// Executes queries over a borrowed [`FileIndex`].
+/// Query execution engine over a borrowed [`FileIndex`].
+///
+/// `QueryService` executes [`QueryBuilder`] specifications against an indexed
+/// repository. It evaluates candidate source expressions, filters page or task
+/// rows, resolves optional File Class hierarchies via an attached
+/// [`FileClassExpander`], and produces a [`QuerySet`].
+///
+/// # Examples
+///
+/// ```rust
+/// use std::sync::Arc;
+///
+/// use traces_pkm::{
+///     IndexerService, QueryBuilder, QueryService, SourceSelector,
+/// };
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let temp = tempfile::tempdir()?;
+/// let index = Arc::new(IndexerService::new(temp.path()).build()?);
+///
+/// let service = QueryService::new("class");
+/// let outcome =
+///     service.execute(&index, QueryBuilder::pages(SourceSelector::All));
+/// assert_eq!(outcome.len(), 0);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct QueryService {
     class_field: String,
@@ -16,7 +46,10 @@ pub struct QueryService {
 }
 
 impl QueryService {
-    /// Creates a service that reads File Class values from `class_field`.
+    /// Creates a query service configured to read File Class values from
+    /// `class_field`.
+    ///
+    /// Canonicalizes `class_field` so matching is case- and key-normalized.
     #[inline]
     #[must_use]
     pub fn new<S: Into<String>>(class_field: S) -> Self {
@@ -31,7 +64,7 @@ impl QueryService {
         }
     }
 
-    /// Adds a File Class expander used at execution time.
+    /// Attaches a [`FileClassExpander`] to resolve class hierarchy expansions.
     #[inline]
     #[must_use]
     pub(crate) fn with_class_expander(
@@ -42,7 +75,11 @@ impl QueryService {
         self
     }
 
-    /// Executes `builder` against `index`.
+    /// Executes `builder` against `index` and returns a [`QuerySet`].
+    ///
+    /// Resolves candidate notes from `index` according to `builder`'s mode and
+    /// source selector, then attaches any pending transformations to the
+    /// returned [`QuerySet`].
     #[inline]
     pub fn execute(
         &self,

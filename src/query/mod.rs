@@ -8,7 +8,7 @@
 //! # Source Expression Language
 //!
 //! A source expression is a boolean combination of **leaves** joined by
-//! **logical operators** and grouped with **parentheses**.
+//! **logical operators** (`and`, `or`, `not`) and grouped with **parentheses**.
 //!
 //! ## Leaves
 //!
@@ -26,7 +26,7 @@
 //! ### File Classes
 //!
 //! File Class leaves match Notes whose frontmatter class field contains the
-//! named class.
+//! named class or a transitive descendant.
 //!
 //! # Main Types
 //!
@@ -39,15 +39,41 @@
 //! - [`QueryRow`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
 //!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QuerySet`] stores result rows and provides chained transformation
-//!   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and terminal
-//!   rendering methods (`table`, `list`, `task_list`).
+//!   methods ([`filter`](QuerySet::filter), [`sort`](QuerySet::sort),
+//!   [`limit`](QuerySet::limit), [`group_by`](QuerySet::group_by),
+//!   [`flatten`](QuerySet::flatten)) and terminal rendering methods
+//!   ([`table`](QuerySet::table), [`list`](QuerySet::list),
+//!   [`task_list`](QuerySet::task_list)).
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
 //!   transformation constraint violations.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use std::sync::Arc;
+//!
+//! use traces_pkm::{
+//!     IndexerService, QueryBuilder, QueryService, SourceSelector,
+//! };
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let temp = tempfile::tempdir()?;
+//! std::fs::write(temp.path().join("a.md"), "---\nrating: 5\n---\n")?;
+//!
+//! let index = Arc::new(IndexerService::new(temp.path()).build()?);
+//! let service = QueryService::new("class");
+//! let builder =
+//!     QueryBuilder::pages(SourceSelector::All).filter("rating >= 5")?;
+//!
+//! let set = service.execute(&index, builder);
+//! assert_eq!(set.len(), 1);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! [`FileBase`]: crate::file::FileBase
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`Note`]: crate::note::Note
-
 mod builder;
 mod error;
 mod format;
@@ -1004,7 +1030,7 @@ mod tests {
 
         /// Two chained `.filter()` calls and one combined filter expression
         /// must reach the same rows once both sides are materialized,
-        /// proving `QueryRecordSet`'s manual `PartialEq` compares evaluated
+        /// proving `QuerySet`'s manual `PartialEq` compares evaluated
         /// content, not the (structurally different) pending plan each side
         /// accumulated.
         #[test]
@@ -1030,11 +1056,11 @@ mod tests {
             assert_eq!(chained, combined);
         }
 
-        /// Chained `.sort().limit(n)` on a `QueryRecordSet` (the CTE path)
+        /// Chained `.sort().limit(n)` on a `QuerySet` (the CTE path)
         /// must match a full sort's first `n` rows, including tie order —
-        /// the same property `request.rs`'s
+        /// the same property `builder.rs`'s
         /// `top_k_matches_full_sort_order_for_tied_keys` proves for
-        /// `QueryRequest` (the pre-fetch path) — confirming the deferred
+        /// `QueryBuilder` (the pre-fetch path) — confirming the deferred
         /// plan reaches the same `Sort`+`Limit` -> `TopK` fusion.
         #[test]
         fn chained_sort_then_limit_matches_full_sort_order_for_tied_keys() {
@@ -1087,7 +1113,7 @@ mod tests {
             }
         }
 
-        /// Two branches derived from the same base `QueryRecordSet` must
+        /// Two branches derived from the same base `QuerySet` must
         /// each see every base row, and the base itself must be untouched —
         /// proving `.filter()`/etc. consume-and-return a new value rather
         /// than mutating shared state.

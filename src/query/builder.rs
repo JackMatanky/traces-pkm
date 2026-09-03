@@ -1,4 +1,8 @@
-//! Declarative query builder: source, mode, and transform plan.
+//! Declarative query builder for configuring source selection, mode, and
+//! transform pipelines.
+//!
+//! [`QueryBuilder`] configures an index query before execution by
+//! [`super::QueryService::execute`].
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
@@ -10,7 +14,28 @@ pub(super) enum QueryMode {
     Tasks,
 }
 
-/// Declarative query builder.
+/// Declarative query builder for configuring source selection, mode, and
+/// transforms.
+///
+/// `QueryBuilder` specifies whether to return page-level rows
+/// ([`pages`](Self::pages)) or task-level rows ([`tasks`](Self::tasks)),
+/// selects candidate files via a [`SourceSelector`], and builds an ordered
+/// sequence of transformation steps ([`filter`](Self::filter),
+/// [`sort`](Self::sort), [`limit`](Self::limit)).
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{QueryBuilder, SourceSelector};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let builder = QueryBuilder::pages(SourceSelector::All)
+///     .filter("rating >= 4")?
+///     .sort("file.name", false)?
+///     .limit(10)?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryBuilder {
     mode: QueryMode,
@@ -19,7 +44,10 @@ pub struct QueryBuilder {
 }
 
 impl QueryBuilder {
-    /// Builds a page-row query request for `source`.
+    /// Builds a page-row query builder for `source`.
+    ///
+    /// Page-level queries evaluate candidate files against `source` and produce
+    /// one [`QueryRow`](super::QueryRow) per matching note.
     #[inline]
     #[must_use]
     pub fn pages(source: SourceSelector) -> Self {
@@ -30,7 +58,11 @@ impl QueryBuilder {
         }
     }
 
-    /// Builds a task-row query request for `source`.
+    /// Builds a task-row query builder for `source`.
+    ///
+    /// Task-level queries evaluate candidate files against `source` and produce
+    /// one [`QueryRow`](super::QueryRow) per task list item in each matching
+    /// note.
     #[inline]
     #[must_use]
     pub fn tasks(source: SourceSelector) -> Self {
@@ -41,21 +73,28 @@ impl QueryBuilder {
         }
     }
 
-    /// Appends a parsed filter transform.
+    /// Appends a filter expression to the query transform plan.
     ///
     /// # Errors
     ///
-    /// Returns `QueryBuilderError` when `expr` is not a valid filter.
+    /// - [`QueryBuilderError::Syntax`] if `expr` is an unparsable boolean
+    ///   filter.
+    /// - [`QueryBuilderError::FieldPath`] if `expr` contains a malformed field
+    ///   path.
     #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::filter(expr)?);
         Ok(self)
     }
 
-    /// Appends a parsed sort transform.
+    /// Appends a sort transform for `field` to the query transform plan.
+    ///
+    /// Sorts rows in ascending order when `descending` is `false`, or
+    /// descending order when `descending` is `true`.
     ///
     /// # Errors
-    /// Returns `QueryBuilderError` when `field` is not a valid field path.
+    ///
+    /// - [`QueryBuilderError::FieldPath`] if `field` is not a valid field path.
     #[inline]
     pub fn sort(
         mut self,
@@ -66,12 +105,13 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    /// Appends a parsed limit transform.
+    /// Appends a limit transform to restrict the outcome to at most `n` leading
+    /// records.
     ///
     /// # Errors
     ///
-    /// Returns `QueryBuilderError` when `n` is negative or too large for this
-    /// platform.
+    /// - [`QueryBuilderError::LimitOutOfRange`] if `n` is negative or exceeds
+    ///   the platform pointer-width limit (`usize::MAX`).
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -87,13 +127,11 @@ impl QueryBuilder {
     }
 
     /// Splits this builder into its mode, source, and transform plan for
-    /// [`super::QueryService::execute`]. The only way anything outside this
-    /// file observes `QueryBuilder`'s fields — they stay private.
+    /// [`super::QueryService::execute`].
     pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
         (self.mode, self.source, self.plan)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path, sync::Arc};

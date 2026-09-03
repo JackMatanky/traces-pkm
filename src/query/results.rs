@@ -1,36 +1,34 @@
 //! Query rows and result set types for query execution.
-
+//!
+//! This module implements [`QueryRow`], which pairs a [`FileBase`] with its
+//! parsed [`Note`] and resolves field paths for template rendering and CLI
+//! output, and [`QuerySet`], a memoized CTE table supporting chained
+//! transformations and terminal rendering.
+//!
+//! # Main Types
+//!
+//! - [`QueryRow`] is the primary query row produced by
+//!   [`super::QueryService::execute`].
+//! - [`QuerySet`] stores result rows and provides chained transformation
+//!   methods ([`filter`](QuerySet::filter), [`sort`](QuerySet::sort),
+//!   [`limit`](QuerySet::limit), [`group_by`](QuerySet::group_by),
+//!   [`flatten`](QuerySet::flatten)) and terminal rendering methods
+//!   ([`table`](QuerySet::table), [`list`](QuerySet::list),
+//!   [`task_list`](QuerySet::task_list)).
+//!
+//! # Examples
+//!
+//! ```rust
+//! use traces_pkm::QuerySet;
+//! let set = QuerySet::default();
+//! assert!(set.is_empty());
+//! assert_eq!(set.len(), 0);
+//! ```
+//!
+//! [`FileBase`]: crate::file::FileBase
+//! [`Note`]: crate::note::Note
 use std::{path::PathBuf, sync::Arc};
 
-/// This module implements [`QueryRow`], which pairs a [`FileBase`] with
-/// its parsed [`Note`] and resolves field paths for template rendering and
-/// CLI output. Each row resolves `file.*`, `task.*`, frontmatter, inline
-/// fields, `tags`, and derived inlinks.
-///
-/// # Main Types
-///
-/// - [`QueryRow`] is the primary query row, produced by
-///   [`super::QueryService::execute`].
-/// - [`QuerySet`] stores result rows and provides chained transformation
-///   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and
-///   terminal rendering methods (`table`, `list`, `task_list`).
-/// - Task rows carry a small overlay with `task.completed` and
-///   `task.text`.
-///
-/// # Examples
-///
-/// ```ignore
-/// use std::sync::Arc;
-///
-/// use traces_pkm::{IndexerService, QueryBuilder, QueryService, SourceSelector};
-///
-/// let index = Arc::new(IndexerService::new(".").build().unwrap());
-/// let rows = QueryService::new("class")
-///     .execute(&index, QueryBuilder::pages(SourceSelector::All));
-/// ```
-///
-/// [`FileBase`]: crate::file::FileBase
-/// [`Note`]: crate::note::Note
 use super::{
     QueryPlan, QueryResult, QueryTransform,
     format::{QueryDisplayFormat, TaskPathStyle},
@@ -58,8 +56,10 @@ struct TaskRow {
 
 /// A query row over one indexed [`FileEntry`].
 ///
-/// Each row resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
-/// and derived inlinks for template rendering and CLI output.
+/// `QueryRow` pairs an indexed file entry with optional task item metadata or
+/// exploded field overrides. It resolves `file.*`, `task.*`, frontmatter,
+/// inline fields, `tags`, and derived inlinks for template rendering and CLI
+/// output.
 #[derive(Clone)]
 pub struct QueryRow {
     index: Arc<FileIndex>,
@@ -101,11 +101,11 @@ impl QueryRow {
         self
     }
 
-    /// Returns task completion state if this is a task-level record, or `None`
-    /// for page-level records or a cancelled task.
+    /// Returns task completion state if this row represents a task item, or
+    /// `None`.
     ///
-    /// `Some(true)` for a done task, `Some(false)` for an incomplete one,
-    /// `None` for a cancelled task or a page-level record.
+    /// Returns `Some(true)` for completed tasks, `Some(false)` for incomplete
+    /// tasks, and `None` for page-level records or cancelled tasks.
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
@@ -126,7 +126,7 @@ impl QueryRow {
         }
     }
 
-    /// Returns general metadata for the indexed file.
+    /// Returns general file metadata for the underlying indexed note.
     #[inline]
     #[must_use]
     pub fn file(&self) -> &FileBase {
@@ -295,19 +295,23 @@ impl std::fmt::Debug for QueryRow {
     }
 }
 
-/// An ordered collection of [`QueryRow`] rows produced by an index query.
+/// An ordered, memoized collection of [`QueryRow`] rows produced by an index
+/// query.
 ///
-/// Page-level outcomes contain one row per Note, while task-level outcomes
-/// contain one row per task item. Transformation methods consume and return
-/// a [`QuerySet`], enabling method chaining.
+/// `QuerySet` acts as a common table expression (CTE) result set:
+/// transformation methods ([`filter`](Self::filter), [`sort`](Self::sort),
+/// [`limit`](Self::limit), [`group_by`](Self::group_by),
+/// [`flatten`](Self::flatten)) append transformations in $O(1)$ time to a
+/// pending plan. Execution occurs lazily on first read ([`len`](Self::len),
+/// [`get`](Self::get), [`iter`](Self::iter), or any terminal renderer),
+/// memoizing the result for all subsequent reads and branch evaluations.
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use traces_pkm::query::QuerySet;
-///
-/// let outcome = QuerySet::default();
-/// assert!(outcome.is_empty());
+/// ```rust
+/// use traces_pkm::QuerySet;
+/// let set = QuerySet::default();
+/// assert!(set.is_empty());
 /// ```
 #[must_use]
 #[derive(Clone, Default)]
@@ -388,22 +392,26 @@ impl QuerySet {
         }
     }
 
-    /// Retains only records matching the filter expression.
+    /// Retains only rows matching the filter expression `expr`.
+    ///
+    /// Appends a filter step to the pending transformation plan.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`] if the expression is invalid.
+    /// - [`QueryError::Request`](super::QueryError::Request) if `expr` is an
+    ///   invalid filter expression.
     #[inline]
     pub(crate) fn filter(self, expr: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::filter(expr)?))
     }
 
-    /// Filters records matching `expr`, serving as an alias for
+    /// Filters rows matching `expr`, serving as a Rust-side alias for
     /// [`Self::filter`].
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`] if the expression is invalid.
+    /// - [`QueryError::Request`](super::QueryError::Request) if `expr` is an
+    ///   invalid filter expression.
     #[inline]
     #[cfg_attr(
         not(test),
@@ -417,13 +425,12 @@ impl QuerySet {
         self.filter(expr)
     }
 
-    /// Sorts records by the field at `path` in ascending or descending
-    /// order.
+    /// Sorts rows by the field at `path` in ascending or descending order.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
-    ///   path.
+    /// - [`QueryError::Request`](super::QueryError::Request) if `path` cannot
+    ///   be parsed as a valid field path.
     #[inline]
     pub(crate) fn sort(
         self,
@@ -433,48 +440,46 @@ impl QuerySet {
         Ok(self.push(QueryTransform::sort(path, descending)?))
     }
 
-    /// Truncates the outcome to retain at most `n` leading records.
+    /// Retains at most `n` leading rows from the result set.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`] if `n` is negative or exceeds platform
-    ///   pointer-width limits.
+    /// - [`QueryError::Request`](super::QueryError::Request) if `n` is negative
+    ///   or exceeds platform pointer-width limits (`usize::MAX`).
     #[inline]
     pub(crate) fn limit(self, n: i64) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::limit(n)?))
     }
 
-    /// Groups records by sorting them ascending on the field at `path`.
+    /// Groups rows by sorting them ascending on the field at `path`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
-    ///   path.
+    /// - [`QueryError::Request`](super::QueryError::Request) if `path` cannot
+    ///   be parsed as a valid field path.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::group_by(path)?))
     }
 
-    /// Explodes records containing a list at `path` into one row per list
-    /// element.
+    /// Explodes rows containing a list at `path` into one row per list element.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
-    ///   path.
+    /// - [`QueryError::Request`](super::QueryError::Request) if `path` cannot
+    ///   be parsed as a valid field path.
     pub(crate) fn flatten(self, path: &str) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::flatten(path)?))
     }
 
-    /// Renders records as a Markdown table matching headers to
-    /// corresponding column field paths.
+    /// Renders rows as a Markdown table matching headers to corresponding
+    /// column field paths.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::TableColumnCountMismatch`] if `headers` and `columns`
-    ///   slices differ in length.
-    /// - [`QueryError::FieldPath`] if any field path string in `columns` is
-    ///   malformed.
+    /// - [`QueryError::TableColumnCountMismatch`](super::QueryError::TableColumnCountMismatch) if `headers` and `columns` differ in length.
+    /// - [`QueryError::FieldPath`](super::QueryError::FieldPath) if any field
+    ///   path in `columns` is malformed.
     pub(crate) fn table(
         &self,
         headers: &[&str],
@@ -483,26 +488,28 @@ impl QuerySet {
         self.format(&QueryDisplayFormat::table(headers, columns))
     }
 
-    /// Renders records as a Markdown bullet list formatting the resolved
-    /// field value at `path`.
+    /// Renders rows as a Markdown bullet list formatting the resolved field
+    /// value at `path`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
-    ///   path.
+    /// - [`QueryError::FieldPath`](super::QueryError::FieldPath) if `path`
+    ///   cannot be parsed as a valid field path.
     pub(crate) fn list(&self, path: &str) -> QueryResult<String> {
         self.format(&QueryDisplayFormat::list(path))
     }
 
-    /// Renders task-level records as a Markdown task list (`- [ ]`/`- [x]`/
-    /// `- [-]`). `path_style` controls whether each row's file path is
-    /// appended in parentheses: [`TaskPathStyle::None`] for the template
-    /// `tasks` namespace, [`TaskPathStyle::Suffix`] for `traces task`.
+    /// Renders task-level rows as a Markdown task list (`- [ ]`/`- [x]`/`-
+    /// [-]`).
     ///
-    /// # Errors
+    /// `path_style` controls whether each row's file path is appended in
+    /// parentheses: [`TaskPathStyle::None`] for templates,
+    /// [`TaskPathStyle::Suffix`] for `traces task`. # Errors
     ///
-    /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
-    ///   fields.
+    /// - [`QueryError::TaskListRequiresTaskRows`](super::QueryError::TaskListRequiresTaskRows) if any row is a page-level row rather than a task row.
+    ///
+    /// - [`QueryError::TaskListRequiresTaskRows`] if any row is a page-level
+    ///   row rather than a task row.
     pub(crate) fn task_list(
         &self,
         path_style: TaskPathStyle,

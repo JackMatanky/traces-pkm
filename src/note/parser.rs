@@ -13,9 +13,9 @@
 //! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
 //!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
 //!   tokens from plain-text scan buffers using [`logos`].
-//! - [`line`]: [`ByteTracker`] precomputes line-start byte offsets for $O(\log
-//!   n)$ byte-to-line translation without scanning the source string multiple
-//!   times.
+//! - [`mod@line`]: [`ByteTracker`] precomputes line-start byte offsets for
+//!   $O(\log n)$ byte-to-line translation without scanning the source string
+//!   multiple times.
 //! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
 //!   nested Markdown never recurses through the call stack, driving the
 //!   item-leading marker state machine and flushing item metadata.

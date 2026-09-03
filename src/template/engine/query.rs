@@ -15,9 +15,8 @@
 //!   descendant.
 //!
 //! Each call reuses the render's cached [`FileIndex`], refreshing it once per
-//! render (see [`cached_refresh`]), and returns a [`QueryRecordSet`] wrapped in
+//! render (see [`cached_refresh`]), and returns a [`QuerySet`] wrapped in
 //! a [`Value`].
-//!
 //! # Row Shape
 //!
 //! `query` returns one row per Note. `tasks` returns one row per task item,
@@ -29,35 +28,33 @@
 //!
 //! Template callers chain `.where(...)`/`.filter(...)`, `.sort(...)`,
 //! `.limit(...)`, `.group_by(...)`, and `.flatten(...)`. The transformation
-//! logic lives on [`QueryRecordSet`] itself; this module only supplies the
+//! logic lives on [`QuerySet`] itself; this module only supplies the
 //! minijinja [`Object`] wiring.
 //!
-//! [`QueryRecordSet::table`], [`QueryRecordSet::list`],
-//! [`QueryRecordSet::task_list`], and `count` (an alias for
-//! [`QueryRecordSet::len`]) are terminal instead: they render final
+//! [`QuerySet::table`], [`QuerySet::list`],
+//! [`QuerySet::task_list`], and `count` (an alias for
+//! [`QuerySet::len`]) are terminal instead: they render final
 //! markdown/scalar output and end a chain rather than continue it. Each is
 //! reachable both as a `call_method` (`outcome.table(["Name"], ["file.name"])`)
 //! and as a pipeline filter, registered once by
 //! [`QueryOps::register_terminal_filters`] (`outcome | table(["Name"],
-//! ["file.name"])`). Both forms call the same [`QueryRecordSet`] method.
-//!
+//! ["file.name"])`). Both forms call the same [`QuerySet`] method.
 //! # Object Wiring
 //!
-//! [`QueryRecordSet`] and [`QueryRecord`] get their [`Object`] impls here
+//! [`QuerySet`] and [`QueryRow`] get their [`Object`] impls here
 //! instead of in [`crate::index`], keeping that module independent from
-//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryRecordSet`], and
-//! [`QueryRecord`] without pulling in rendering concerns.
+//! minijinja so `traces task` can reuse [`FileIndex`], [`QuerySet`], and
+//! [`QueryRow`] without pulling in rendering concerns.
 //!
 //! `record` attributes other than `file` and `task` forward to
-//! [`QueryRecord::field`], the same resolver `.where()` and `.sort()` use.
+//! [`QueryRow::field`], the same resolver `.where()` and `.sort()` use.
 //! `record.file.*` and `record.task.*` use forwarding wrappers ([`FileFields`]
 //! and [`TaskFields`]) instead: minijinja resolves a dotted attribute path one
 //! segment at a time, so the wrappers call
 //! [`FileField::parse`]/[`FileField::resolve`] and
-//! [`QueryRecord::task_completed`]/[`QueryRecord::task_text`] directly,
-//! skipping the string-prefix handling [`QueryRecord::field`] needs once the
+//! [`QueryRow::task_completed`]/[`QueryRow::task_text`] directly,
+//! skipping the string-prefix handling [`QueryRow::field`] needs once the
 //! `file`/`task` segment is already known.
-//!
 //! # Errors
 //!
 //! [`FileIndex::refresh`] and [`QueryError`] failures become
@@ -101,7 +98,7 @@ const INDEX_CACHE_KEY: &str = "query.index_cache";
 
 /// Backs both the `query` and `tasks` minijinja namespace objects: one instance
 /// per namespace, differing only in which global it registers as and which
-/// [`QueryRequest`] mode it executes. See [`Self::page`]/[`Self::task`].
+/// [`QueryBuilder`] mode it executes. See [`Self::page`]/[`Self::task`].
 #[derive(Debug)]
 pub(super) struct QueryOps {
     /// The minijinja global this instance registers as.
@@ -158,10 +155,9 @@ impl QueryOps {
     /// Registers `table`, `list`, `task_list`, and `count` as pipeline filters:
     /// `outcome | table(["Name"], ["file.name"])`, mirroring the call-method
     /// form `outcome.table(["Name"], ["file.name"])` documented on
-    /// [`Object::call_method`] for [`QueryRecordSet`]. Registered once, not per
+    /// [`Object::call_method`] for [`QuerySet`]. Registered once, not per
     /// instance: these filters carry no state and apply to any
-    /// [`QueryRecordSet`] regardless of which namespace produced it.
-    #[inline]
+    /// [`QuerySet`] regardless of which namespace produced it.
     pub(super) fn register_terminal_filters(env: &mut Environment<'static>) {
         env.add_filter("table", table_filter);
         env.add_filter("list", list_filter);
@@ -304,7 +300,7 @@ impl Object for QuerySet {
         Enumerator::Seq(self.len())
     }
 
-    /// Dispatches [`QueryRecordSet`] methods by template name.
+    /// Dispatches [`QuerySet`] methods by template name.
     ///
     /// The terminal methods `table`, `list`, `task_list`, and `count` render
     /// final output and return early, without touching the non-terminal chain
@@ -312,17 +308,17 @@ impl Object for QuerySet {
     ///
     /// - `table(headers, columns)` and `list(path)` render field path strings
     ///   (or, for `table`'s `headers`, display labels), not further
-    ///   [`QueryRecordSet`] arguments.
+    ///   [`QuerySet`] arguments.
     /// - `task_list()` takes no arguments.
-    /// - `count()` takes no arguments and returns [`QueryRecordSet::len`]
-    ///   directly; it cannot fail, unlike the other three.
+    /// - `count()` takes no arguments and returns [`QuerySet::len`] directly;
+    ///   it cannot fail, unlike the other three.
     ///
     /// Every other name falls through to the non-terminal chain: `.where`/
     /// `.filter`, `.sort`, `.limit`, `.group_by`, and `.flatten`. Each of those
     /// calls consumes a clone of the current outcome and wraps the transformed
     /// result in a [`Value`] for further chaining:
     ///
-    /// - `where` and `filter` both call `QueryRecordSet::filter`. The Rust-side
+    /// - `where` and `filter` both call `QuerySet::filter`. The Rust-side
     ///   `r#where` alias exists only for Rust callers.
     /// - `sort` defaults to ascending order when the optional `descending`
     ///   argument is omitted.
@@ -405,7 +401,7 @@ impl Object for QuerySet {
     }
 }
 
-/// `outcome | table(...)` filter body. See [`QueryRecordSet::table`].
+/// `outcome | table(...)` filter body. See [`QuerySet::table`].
 ///
 /// Takes owned `Vec<String>` for `headers`/`columns` rather than borrowed
 /// `Vec<&str>`. Two reasons stack here:
@@ -433,12 +429,12 @@ fn table_filter(
     outcome.table(&headers_slice, &columns_slice).map_err(query_error)
 }
 
-/// `outcome | list(path)` filter body. See [`QueryRecordSet::list`].
+/// `outcome | list(path)` filter body. See [`QuerySet::list`].
 fn list_filter(outcome: &QuerySet, path: &str) -> TemplateEngineResult<String> {
     outcome.list(path).map_err(query_error)
 }
 
-/// `outcome | task_list` filter body. See [`QueryRecordSet::task_list`].
+/// `outcome | task_list` filter body. See [`QuerySet::task_list`].
 fn task_list_filter(outcome: &QuerySet) -> TemplateEngineResult<String> {
     outcome.task_list(TaskPathStyle::default()).map_err(query_error)
 }
@@ -490,7 +486,7 @@ impl Object for QueryRow {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
     /// `"file"` and `"task"` return forwarding wrappers for `record.file.*` and
-    /// `record.task.*`. Every other key resolves through [`QueryRecord`]'s
+    /// `record.task.*`. Every other key resolves through [`QueryRow`]'s
     /// field lookup, the same frontmatter, inline-field, and tag lookup used by
     /// `.where()` and `.sort()`.
     ///
@@ -526,7 +522,7 @@ impl Object for QueryRow {
 /// minijinja resolves a dotted attribute path one segment at a time:
 /// `record.file` must itself resolve to *something* before `.name` can be
 /// looked up on it. Calls the same [`FileField`] accessor pair
-/// [`QueryRecord::field`] uses for its `file.*` branch, skipping that method's
+/// [`QueryRow::field`] uses for its `file.*` branch, skipping that method's
 /// string-based `file.` prefix handling, which doesn't apply here: `key` is
 /// already a single attribute segment, never a dotted path.
 #[derive(Debug)]
@@ -544,13 +540,13 @@ impl Object for FileFields {
 }
 
 /// Forwards `record.task.<field>` to
-/// [`QueryRecord::task_completed`]/[`QueryRecord::task_text`].
+/// [`QueryRow::task_completed`]/[`QueryRow::task_text`].
 ///
 /// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
 /// segment at a time, so `record.task` must itself resolve to something before
 /// `.completed`/`.text` can be looked up.
 ///
-/// On a page-level record (not built by a task [`QueryRequest`]) both
+/// On a page-level record (not built by a task [`QueryBuilder`]) both
 /// accessors resolve to minijinja's `none`, a defined empty value rather than a
 /// missing attribute, matching [`field_value`]'s handling of
 /// [`NoteFieldValue::Null`].
@@ -580,9 +576,9 @@ impl Object for TaskFields {
 /// Converts a resolved [`NoteFieldValue`] into a minijinja [`Value`].
 ///
 /// - [`NoteFieldValue::Null`] becomes minijinja's `none` rather than
-///   `undefined`: [`QueryRecord::field`]'s own docs note that a well-formed
-///   path with no value resolves to `Null`, not an error. That's a defined
-///   empty value, not a missing attribute.
+///   `undefined`: [`QueryRow`]'s own docs note that a well-formed path with no
+///   value resolves to `Null`, not an error. That's a defined empty value, not
+///   a missing attribute.
 /// - [`NoteFieldValue::Link`] renders as its target path; Traces has no
 ///   minijinja-facing link type yet.
 fn field_value(value: NoteFieldValue) -> Value {
