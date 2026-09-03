@@ -114,9 +114,7 @@ pub use note::{
     parse_markdown,
 };
 #[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use note::{
-    ListText, Note, NoteFieldValue, TaskDates, TaskPriority,
-};
+pub(crate) use note::{Note, NoteFieldValue};
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{

@@ -468,6 +468,10 @@ fn compute_clean_text(raw_text: &str, tag_filters: &[Tag]) -> String {
     // 4. Inline task fields: [field:: value] or (field:: value)
     find_inline_task_field_spans(raw_text, &mut remove_spans);
 
+    if remove_spans.is_empty() {
+        return normalize_whitespace(raw_text);
+    }
+
     // Merge overlapping/adjacent removal spans
     remove_spans.sort_unstable_by_key(|&(start, _)| start);
     let mut merged: Vec<(usize, usize)> =
@@ -517,20 +521,20 @@ fn find_tag_filter_spans(
         if ch != '#' || is_word_char {
             continue;
         }
-        if let Some((start, end, tag)) =
+        if let Some((start, end, candidate)) =
             scan_tag_candidate(text, idx, &mut iter)
-            && tag_filters.contains(&tag)
+            && tag_filters.iter().any(|filter| filter.as_str() == candidate)
         {
             spans.push((start, end));
         }
     }
 }
 
-fn scan_tag_candidate(
-    text: &str,
+fn scan_tag_candidate<'a>(
+    text: &'a str,
     start_idx: usize,
     iter: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
-) -> Option<(usize, usize, Tag)> {
+) -> Option<(usize, usize, &'a str)> {
     let (_, next_ch) = iter.peek().copied()?;
     if !next_ch.is_alphabetic() {
         return None;
@@ -544,8 +548,7 @@ fn scan_tag_candidate(
         iter.next();
     }
     let candidate = text.get(start_idx..tag_end)?;
-    let tag = Tag::parse(candidate).ok()?;
-    Some((start_idx, tag_end, tag))
+    Some((start_idx, tag_end, candidate))
 }
 
 fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
@@ -652,16 +655,21 @@ fn scan_inline_task_field(
     open_delim: char,
     close_delim: char,
 ) -> Option<usize> {
-    let close_pos = remainder.find(close_delim)?;
-    let inside = &remainder[..close_pos];
-    let sep_pos = inside.find("::")?;
-    let key = inside[..sep_pos].trim();
-    if !is_task_field_key(key) {
+    let sep_pos = remainder.find("::")?;
+    let key = remainder.get(..sep_pos)?.trim();
+    if key.is_empty()
+        || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
+        || !is_task_field_key(key)
+    {
         return None;
     }
+    let after_sep = remainder.get(sep_pos.saturating_add(2)..)?;
+    let close_pos = after_sep.find(close_delim)?;
     Some(
         match_start
             .saturating_add(open_delim.len_utf8())
+            .saturating_add(sep_pos)
+            .saturating_add(2)
             .saturating_add(close_pos)
             .saturating_add(close_delim.len_utf8()),
     )
