@@ -44,6 +44,18 @@ use crate::{
     task::TaskStatus,
 };
 
+#[derive(Clone, Debug, PartialEq)]
+enum RowKind {
+    Page,
+    Task(TaskRow),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TaskRow {
+    status: TaskStatus,
+    text: String,
+}
+
 /// A query row over one indexed [`FileEntry`].
 ///
 /// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
@@ -56,18 +68,6 @@ pub struct QueryRecord {
     /// [`QueryRecordSet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
     kind: RowKind,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum RowKind {
-    Page,
-    Task(TaskRow),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct TaskRow {
-    status: TaskStatus,
-    text: String,
 }
 
 impl QueryRecord {
@@ -317,32 +317,6 @@ pub struct QueryRecordSet {
     cache: std::sync::OnceLock<Arc<[QueryRecord]>>,
 }
 
-/// Compares evaluated rows, not the pending plan or cache state — two
-/// record sets that reach the same rows via different transform paths
-/// (e.g. two chained `.filter()` calls vs. one combined filter expression)
-/// must compare equal once both are materialized.
-impl PartialEq for QueryRecordSet {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.materialized() == other.materialized()
-    }
-}
-
-/// Shows the materialized rows, not the pending plan or cache state — a
-/// derived `Debug` would leak `QueryRecordSet`'s internal representation
-/// (the pre-transform `records` and the lazily-populated `cache`, which
-/// duplicate each other's content once materialized), confusing test-failure
-/// diffs. Mirrors [`QueryRecord`]'s own hand-rolled [`std::fmt::Debug`].
-impl std::fmt::Debug for QueryRecordSet {
-    #[inline]
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_tuple("QueryRecordSet")
-            .field(&self.materialized())
-            .finish()
-    }
-}
-
 impl QueryRecordSet {
     /// Wraps `records` into a new [`QueryRecordSet`] with no pending
     /// transforms.
@@ -355,11 +329,11 @@ impl QueryRecordSet {
     }
 
     /// Returns this record set's rows with every pending transform applied,
-    /// computing and memoizing the result on first access. Every read
-    /// (`len`, `get`, `iter`, the minijinja `Object` iteration methods, and
-    /// the terminal renderers) goes through this, so a chain of
-    /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::run`]
-    /// at most once, however many times the resulting rows are read.
+    /// computing and memoizing the result on first access. Every read (`len`,
+    /// `get`, `iter`, the minijinja `Object` iteration methods, and the
+    /// terminal renderers) goes through this, so a chain of
+    /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::run`] at
+    /// most once, however many times the resulting rows are read.
     fn materialized(&self) -> &Arc<[QueryRecord]> {
         self.cache.get_or_init(|| {
             if self.plan.is_empty() {
@@ -550,13 +524,39 @@ impl QueryRecordSet {
     }
 }
 
-/// Converts the [`QueryRecordSet`] into an iterator over owned
-/// [`QueryRecord`] rows. Flushes any pending plan first, like every other
-/// read; clones each row out of the materialized `Arc<[QueryRecord]>` since
-/// an `Arc<[T]>` has no owned `into_iter`. For a page row this is just an
-/// `Arc<FileIndex>` refcount bump; a task row additionally clones its own
-/// small owned `text: String`, and a `flatten()`-derived row clones its
-/// `flattened` field vec — neither duplicates the underlying `Note`.
+/// Compares evaluated rows, not the pending plan or cache state — two
+/// record sets that reach the same rows via different transform paths
+/// (e.g. two chained `.filter()` calls vs. one combined filter expression)
+/// must compare equal once both are materialized.
+impl PartialEq for QueryRecordSet {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.materialized() == other.materialized()
+    }
+}
+
+/// Shows the materialized rows, not the pending plan or cache state — a
+/// derived `Debug` would leak `QueryRecordSet`'s internal representation
+/// (the pre-transform `records` and the lazily-populated `cache`, which
+/// duplicate each other's content once materialized), confusing test-failure
+/// diffs. Mirrors [`QueryRecord`]'s own hand-rolled [`std::fmt::Debug`].
+impl std::fmt::Debug for QueryRecordSet {
+    #[inline]
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("QueryRecordSet")
+            .field(&self.materialized())
+            .finish()
+    }
+}
+
+/// Converts the [`QueryRecordSet`] into an iterator over owned [`QueryRecord`]
+/// rows. Flushes any pending plan first, like every other read; clones each row
+/// out of the materialized `Arc<[QueryRecord]>` since an `Arc<[T]>` has no
+/// owned `into_iter`. For a page row this is just an `Arc<FileIndex>` refcount
+/// bump; a task row additionally clones its own small owned `text: String`, and
+/// a `flatten()`-derived row clones its `flattened` field vec — neither
+/// duplicates the underlying `Note`.
 ///
 /// No zero-copy fast path for the sole-owner case: `Arc::try_unwrap`/
 /// `Arc::into_inner` require `T: Sized`, so neither exists for
@@ -564,8 +564,8 @@ impl QueryRecordSet {
 /// Reconstructing a `Box<[T]>` from a sole-owned `Arc<[T]>` needs `unsafe`
 /// pointer surgery with no safe std API for it, and switching the
 /// `records`/`cache` fields to `Arc<Vec<QueryRecord>>` to unlock a safe
-/// `try_unwrap` would add an extra allocation and indirection to every
-/// read (`.len()`/`.get()`/materialization), not just this one call. See
+/// `try_unwrap` would add an extra allocation and indirection to every read
+/// (`.len()`/`.get()`/materialization), not just this one call. See
 /// `benches/query_execution.rs`'s `bench_into_iter_owned` for the measured
 /// per-row cost this clone actually pays.
 impl IntoIterator for QueryRecordSet {

@@ -18,34 +18,96 @@ use crate::LexError;
 /// Convenience alias for query operations that may fail.
 pub type QueryResult<T> = std::result::Result<T, QueryError>;
 
-/// Identifies the query language that rejected an expression.
+/// Top-level error enum for query parsing and transformation.
 ///
-/// Used by [`QuerySyntaxError`] to produce a human-readable message that names
-/// the failing dialect (for example, "invalid filter expression").
+/// Covers all failure modes from expression parsing through field resolution to
+/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
+/// inner [`QuerySyntaxError`] for syntax errors.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use traces_pkm::query::QueryDialect;
+/// use traces_pkm::query::{QueryError, QueryRequestError};
 ///
-/// assert_eq!(QueryDialect::Source.to_string(), "source");
-/// assert_eq!(QueryDialect::Filter.to_string(), "filter");
+/// let error = QueryError::from(QueryRequestError::LimitOutOfRange {
+///     value: -1,
+/// });
+/// assert_eq!(
+///     error.to_string(),
+///     "invalid limit -1; expected a non-negative row count"
+/// );
 /// ```
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum QueryDialect {
-    /// The `--from` source-selection language.
-    Source,
-    /// The `--where` record-filtering language.
-    Filter,
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum QueryError {
+    /// A request builder rejected syntax, field paths, or limits.
+    #[error(transparent)]
+    Request(#[from] QueryRequestError),
+    /// A source or filter expression has invalid syntax.
+    #[error(transparent)]
+    Syntax(#[from] QuerySyntaxError),
+    /// A field path cannot be parsed or names an unknown accessor.
+    #[error(transparent)]
+    FieldPath(#[from] FieldPathError),
+    /// [`super::QueryRecordSet::task_list`] received page-level records
+    #[error(
+        "task_list requires task-level records from the `tasks` namespace; \
+         got page-level records with no task fields"
+    )]
+    TaskListRequiresTaskRows,
+    /// [`super::QueryRecordSet::table`] received `headers` and `columns` slices
+    /// of unequal length.
+    #[error(
+        "table headers ({headers}) and columns ({columns}) must have the same \
+         length"
+    )]
+    TableColumnCountMismatch {
+        /// The number of header titles provided.
+        headers: usize,
+        /// The number of column field paths provided.
+        columns: usize,
+    },
 }
 
-impl fmt::Display for QueryDialect {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// Establishes diagnostic capabilities for `QueryError`.
+impl Diagnostic for QueryError {
+    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
         match self {
-            Self::Source => formatter.write_str("source"),
-            Self::Filter => formatter.write_str("filter"),
+            Self::Syntax(source)
+            | Self::Request(QueryRequestError::Syntax(source)) => Some(source),
+            Self::Request(
+                QueryRequestError::FieldPath(_)
+                | QueryRequestError::LimitOutOfRange {
+                    ..
+                },
+            )
+            | Self::FieldPath(_)
+            | Self::TaskListRequiresTaskRows
+            | Self::TableColumnCountMismatch {
+                ..
+            } => None,
         }
     }
+}
+
+/// Error while building a [`super::QueryRequest`].
+///
+/// Separates request-construction failures from execution/rendering failures
+/// while still embedding into [`QueryError`] for callers that want one query
+/// error type.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum QueryRequestError {
+    /// A source or filter expression has invalid syntax.
+    #[error(transparent)]
+    Syntax(#[from] QuerySyntaxError),
+    /// A field path cannot be parsed or names an unknown accessor.
+    #[error(transparent)]
+    FieldPath(#[from] FieldPathError),
+    /// A query limit was negative or exceeded platform [`usize`] bounds.
+    #[error("invalid limit {value}; expected a non-negative row count")]
+    LimitOutOfRange {
+        /// The rejected limit count.
+        value: i64,
+    },
 }
 
 /// A syntax error in a source or filter expression.
@@ -166,94 +228,32 @@ impl FieldPathError {
     }
 }
 
-/// Error while building a [`super::QueryRequest`].
+/// Identifies the query language that rejected an expression.
 ///
-/// Separates request-construction failures from execution/rendering failures
-/// while still embedding into [`QueryError`] for callers that want one query
-/// error type.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum QueryRequestError {
-    /// A source or filter expression has invalid syntax.
-    #[error(transparent)]
-    Syntax(#[from] QuerySyntaxError),
-    /// A field path cannot be parsed or names an unknown accessor.
-    #[error(transparent)]
-    FieldPath(#[from] FieldPathError),
-    /// A query limit was negative or exceeded platform [`usize`] bounds.
-    #[error("invalid limit {value}; expected a non-negative row count")]
-    LimitOutOfRange {
-        /// The rejected limit count.
-        value: i64,
-    },
-}
-
-/// Top-level error enum for query parsing and transformation.
-///
-/// Covers all failure modes from expression parsing through field resolution to
-/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
-/// inner [`QuerySyntaxError`] for syntax errors.
+/// Used by [`QuerySyntaxError`] to produce a human-readable message that names
+/// the failing dialect (for example, "invalid filter expression").
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use traces_pkm::query::{QueryError, QueryRequestError};
+/// use traces_pkm::query::QueryDialect;
 ///
-/// let error = QueryError::from(QueryRequestError::LimitOutOfRange {
-///     value: -1,
-/// });
-/// assert_eq!(
-///     error.to_string(),
-///     "invalid limit -1; expected a non-negative row count"
-/// );
+/// assert_eq!(QueryDialect::Source.to_string(), "source");
+/// assert_eq!(QueryDialect::Filter.to_string(), "filter");
 /// ```
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum QueryError {
-    /// A request builder rejected syntax, field paths, or limits.
-    #[error(transparent)]
-    Request(#[from] QueryRequestError),
-    /// A source or filter expression has invalid syntax.
-    #[error(transparent)]
-    Syntax(#[from] QuerySyntaxError),
-    /// A field path cannot be parsed or names an unknown accessor.
-    #[error(transparent)]
-    FieldPath(#[from] FieldPathError),
-    /// [`super::QueryRecordSet::task_list`] received page-level records
-    #[error(
-        "task_list requires task-level records from the `tasks` namespace; \
-         got page-level records with no task fields"
-    )]
-    TaskListRequiresTaskRows,
-    /// [`super::QueryRecordSet::table`] received `headers` and `columns` slices
-    /// of unequal length.
-    #[error(
-        "table headers ({headers}) and columns ({columns}) must have the same \
-         length"
-    )]
-    TableColumnCountMismatch {
-        /// The number of header titles provided.
-        headers: usize,
-        /// The number of column field paths provided.
-        columns: usize,
-    },
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum QueryDialect {
+    /// The `--from` source-selection language.
+    Source,
+    /// The `--where` record-filtering language.
+    Filter,
 }
 
-/// Establishes diagnostic capabilities for `QueryError`.
-impl Diagnostic for QueryError {
-    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
+impl fmt::Display for QueryDialect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Syntax(source)
-            | Self::Request(QueryRequestError::Syntax(source)) => Some(source),
-            Self::Request(
-                QueryRequestError::FieldPath(_)
-                | QueryRequestError::LimitOutOfRange {
-                    ..
-                },
-            )
-            | Self::FieldPath(_)
-            | Self::TaskListRequiresTaskRows
-            | Self::TableColumnCountMismatch {
-                ..
-            } => None,
+            Self::Source => formatter.write_str("source"),
+            Self::Filter => formatter.write_str("filter"),
         }
     }
 }

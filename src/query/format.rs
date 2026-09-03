@@ -2,6 +2,16 @@
 
 use super::{QueryError, QueryResult, grammar::FieldPath, record::QueryRecord};
 
+/// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) enum TaskPathStyle {
+    /// `- [x] text` — used by the template `tasks` namespace.
+    #[default]
+    None,
+    /// `- [x] text (path)` — used by `traces task`.
+    Suffix,
+}
+
 /// Markdown display formats supported by query results.
 pub(super) enum QueryDisplayFormat {
     /// Markdown table with display headers and field-path columns.
@@ -18,16 +28,6 @@ pub(super) enum QueryDisplayFormat {
     TaskList {
         path_style: TaskPathStyle,
     },
-}
-
-/// Whether [`QueryDisplayFormat::TaskList`] appends each row's file path.
-#[derive(Copy, Clone, Debug, Default)]
-pub(crate) enum TaskPathStyle {
-    /// `- [x] text` — used by the template `tasks` namespace.
-    #[default]
-    None,
-    /// `- [x] text (path)` — used by `traces task`.
-    Suffix,
 }
 
 impl QueryDisplayFormat {
