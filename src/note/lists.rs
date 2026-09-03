@@ -385,7 +385,6 @@ impl<'a> Iterator for TaskIter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     use super::*;
@@ -399,79 +398,179 @@ mod tests {
         ))
     }
 
-    #[rstest]
-    #[case::plain(ListItemType::Plain)]
-    #[case::checkbox(ListItemType::Checkbox)]
-    #[case::task(done_task())]
-    fn stores_the_given_kind(#[case] kind: ListItemType) {
-        let item = ListItem::new("task item", kind.clone());
+    fn todo_task() -> ListItemType {
+        ListItemType::Task(TaskStatus::new(
+            TaskStatusSymbol::new(' '),
+            "Todo",
+            TaskStatusType::Todo,
+        ))
+    }
+    mod list_item {
+        use super::*;
 
-        assert_eq!(item.text(), "task item");
-        assert_eq!(item.kind(), &kind);
+        mod constructor {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+            #[rstest]
+            #[case::plain(ListItemType::Plain)]
+            #[case::checkbox(ListItemType::Checkbox)]
+            #[case::task(done_task())]
+            fn stores_the_given_kind(#[case] kind: ListItemType) {
+                let item = ListItem::new("task item", kind.clone());
+
+                assert_eq!(item.text(), "task item");
+                assert_eq!(item.kind(), &kind);
+            }
+
+            #[test]
+            fn stores_child_lists_when_constructed_with_children() {
+                let child = List::new(false, vec![ListItem::new(
+                    "child",
+                    ListItemType::Plain,
+                )]);
+                let item = ListItem::with_children(
+                    "parent",
+                    ListItemType::Plain,
+                    vec![child.clone()],
+                );
+
+                assert_eq!(item.children(), [child]);
+            }
+        }
+
+        mod fields {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+            use crate::NoteFieldValue;
+
+            #[test]
+            fn stores_fields_when_attached_with_with_fields() {
+                let key = FieldKey::try_new("priority")
+                    .expect("valid test field key");
+                let mut fields = IndexMap::new();
+                fields.insert(key, vec![NoteFieldValue::String(
+                    "high".to_owned(),
+                )]);
+                let item = ListItem::new("task item", done_task())
+                    .with_fields(fields.clone());
+
+                assert_eq!(item.fields(), &fields);
+            }
+
+            #[test]
+            fn has_no_fields_by_default() {
+                let item = ListItem::new("plain item", ListItemType::Plain);
+
+                assert!(item.fields().is_empty());
+            }
+        }
+
+        mod position {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+            #[test]
+            fn defaults_position_to_zero_and_no_parent() {
+                let item = ListItem::new("item", ListItemType::Plain);
+
+                assert_eq!(item.line(), SourceLine::new(0));
+                assert_eq!(item.depth(), 0);
+                assert_eq!(item.parent(), None);
+            }
+
+            #[test]
+            fn with_position_sets_line_depth_and_parent() {
+                let position = ListItemPosition::new(
+                    SourceLine::new(3),
+                    2,
+                    Some(SourceLine::new(1)),
+                );
+                let item = ListItem::new("item", ListItemType::Plain)
+                    .with_position(position);
+
+                assert_eq!(item.line(), SourceLine::new(3));
+                assert_eq!(item.depth(), 2);
+                assert_eq!(item.parent(), Some(SourceLine::new(1)));
+            }
+        }
     }
 
-    #[test]
-    fn stores_child_lists_when_constructed_with_children() {
-        let child =
-            List::new(false, vec![ListItem::new("child", ListItemType::Plain)]);
-        let item =
-            ListItem::with_children("parent", ListItemType::Plain, vec![
-                child.clone(),
-            ]);
+    mod list {
+        use super::*;
 
-        assert_eq!(item.children(), [child]);
+        mod constructor {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+            #[test]
+            fn stores_ordering_and_items() {
+                let item = ListItem::new("task item", done_task());
+                let list = List::new(true, vec![item.clone()]);
+
+                assert_eq!(list.is_ordered(), true);
+                assert_eq!(list.items(), [item]);
+            }
+        }
     }
 
-    #[test]
-    fn stores_ordering_and_items() {
-        let item = ListItem::new("task item", done_task());
-        let list = List::new(true, vec![item.clone()]);
+    mod task_iter {
+        use super::*;
 
-        assert_eq!(list.is_ordered(), true);
-        assert_eq!(list.items(), [item]);
-    }
+        mod iteration {
+            use pretty_assertions::assert_eq;
 
-    #[test]
-    fn stores_fields_when_attached_with_with_fields() {
-        use crate::NoteFieldValue;
+            use super::*;
+            #[test]
+            fn yields_task_items_depth_first_across_nested_lists() {
+                let subchild_task = ListItem::new("subchild task", done_task());
+                let child_task =
+                    ListItem::with_children("child task", todo_task(), vec![
+                        List::new(false, vec![subchild_task]),
+                    ]);
+                let parent_task =
+                    ListItem::with_children("parent task", todo_task(), vec![
+                        List::new(false, vec![child_task]),
+                    ]);
+                let sibling_task = ListItem::new("sibling task", done_task());
+                let lists = vec![
+                    List::new(false, vec![parent_task]),
+                    List::new(false, vec![sibling_task]),
+                ];
 
-        let key = FieldKey::try_new("priority").expect("valid test field key");
-        let mut fields = IndexMap::new();
-        fields.insert(key, vec![NoteFieldValue::String("high".to_owned())]);
-        let item =
-            ListItem::new("task item", done_task()).with_fields(fields.clone());
+                let iter = TaskIter::new(&lists);
+                let texts: Vec<&str> = iter.map(ListItem::text).collect();
 
-        assert_eq!(item.fields(), &fields);
-    }
+                assert_eq!(texts, [
+                    "parent task",
+                    "child task",
+                    "subchild task",
+                    "sibling task"
+                ]);
+            }
 
-    #[test]
-    fn has_no_fields_by_default() {
-        let item = ListItem::new("plain item", ListItemType::Plain);
+            #[test]
+            fn skips_plain_and_checkbox_items() {
+                let plain = ListItem::new("plain item", ListItemType::Plain);
+                let checkbox =
+                    ListItem::new("checkbox item", ListItemType::Checkbox);
+                let task = ListItem::new("task item", done_task());
+                let lists = vec![List::new(false, vec![plain, checkbox, task])];
 
-        assert!(item.fields().is_empty());
-    }
+                let iter = TaskIter::new(&lists);
+                let texts: Vec<&str> = iter.map(ListItem::text).collect();
 
-    #[test]
-    fn defaults_position_to_zero_and_no_parent() {
-        let item = ListItem::new("item", ListItemType::Plain);
+                assert_eq!(texts, ["task item"]);
+            }
 
-        assert_eq!(item.line(), SourceLine::new(0));
-        assert_eq!(item.depth(), 0);
-        assert_eq!(item.parent(), None);
-    }
+            #[test]
+            fn returns_none_for_empty_lists() {
+                let lists: Vec<List> = Vec::new();
+                let mut iter = TaskIter::new(&lists);
 
-    #[test]
-    fn with_position_sets_line_depth_and_parent() {
-        let position = ListItemPosition::new(
-            SourceLine::new(3),
-            2,
-            Some(SourceLine::new(1)),
-        );
-        let item =
-            ListItem::new("item", ListItemType::Plain).with_position(position);
-
-        assert_eq!(item.line(), SourceLine::new(3));
-        assert_eq!(item.depth(), 2);
-        assert_eq!(item.parent(), Some(SourceLine::new(1)));
+                assert_eq!(iter.next(), None);
+            }
+        }
     }
 }

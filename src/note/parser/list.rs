@@ -433,7 +433,6 @@ struct ListFrame {
 mod tests {
     use std::path::Path;
 
-    use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     use super::*;
@@ -448,319 +447,340 @@ mod tests {
         let input = MarkdownParserInput::for_test(Path::new("note.md"), src);
         parse_markdown(&input)
     }
-    #[test]
-    fn item_classification_state_accessors() {
-        assert!(!ItemClassificationState::Pending.is_marked());
-        assert_eq!(ItemClassificationState::Pending.symbol(), None);
 
-        assert!(!ItemClassificationState::Plain.is_marked());
-        assert_eq!(ItemClassificationState::Plain.symbol(), None);
+    mod tracker_state {
 
-        assert!(ItemClassificationState::Marked('x').is_marked());
-        assert_eq!(ItemClassificationState::Marked('x').symbol(), Some('x'));
-    }
-    #[test]
-    fn is_item_active_returns_true_when_stack_nonempty() {
-        let mut tracker = ListTracker::default();
-        assert!(!tracker.is_item_active());
+        use super::*;
+        #[test]
+        fn is_item_active_returns_true_when_stack_nonempty() {
+            let mut tracker = ListTracker::default();
+            assert!(!tracker.is_item_active());
 
-        tracker.start_list(false);
-        tracker.start_item(SourceLine::new(1));
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
 
-        assert!(
-            tracker.is_item_active(),
-            "is_item_active must return true after start_item"
-        );
-    }
+            assert!(
+                tracker.is_item_active(),
+                "is_item_active must return true after start_item"
+            );
+        }
 
-    #[test]
-    fn inline_code_pushes_to_last_item_not_first() {
-        let mut tracker = ListTracker::default();
-        tracker.start_list(false);
-        tracker.start_item(SourceLine::new(1));
-        tracker.push_text("before ", false);
-        tracker.start_item(SourceLine::new(2));
+        #[test]
+        fn inline_code_pushes_to_last_item_not_first() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("before ", false);
+            tracker.start_item(SourceLine::new(2));
 
-        tracker.inline_code("code");
+            tracker.inline_code("code");
 
-        tracker.end_item(&[], &TaskStatusMap::default());
-        tracker.end_item(&[], &TaskStatusMap::default());
-        tracker.end_list();
+            tracker.end_item(&[], &TaskStatusMap::default());
+            tracker.end_item(&[], &TaskStatusMap::default());
+            tracker.end_list();
 
-        // end_item pops LIFO: item2 is index 0, item1 is index 1
-        let list = tracker.lists.first().expect("list must exist");
-        let items = list.items();
-        let item1_text = items.get(1).expect("item 1 must exist").text();
-        let item2_text = items.first().expect("item 2 must exist").text();
-        assert!(
-            !item1_text.contains("code"),
-            "inline code must not leak to item 1, got: {item1_text:?}"
-        );
-        assert!(
-            item2_text.contains("code"),
-            "inline code must be in item 2, got: {item2_text:?}"
-        );
-    }
+            // end_item pops LIFO: item2 is index 0, item1 is index 1
+            let list = tracker.lists.first().expect("list must exist");
+            let items = list.items();
+            let item1_text = items.get(1).expect("item 1 must exist").text();
+            let item2_text = items.first().expect("item 2 must exist").text();
+            assert!(
+                !item1_text.contains("code"),
+                "inline code must not leak to item 1, got: {item1_text:?}"
+            );
+            assert!(
+                item2_text.contains("code"),
+                "inline code must be in item 2, got: {item2_text:?}"
+            );
+        }
 
-    #[test]
-    fn push_scan_char_returns_false_when_no_item_active() {
-        let mut tracker = ListTracker::default();
-        let result = tracker.push_scan_char('a');
-        assert!(
-            !result,
-            "push_scan_char must return false when no item is active"
-        );
-    }
+        #[test]
+        fn push_scan_char_returns_false_when_no_item_active() {
+            let mut tracker = ListTracker::default();
+            let result = tracker.push_scan_char('a');
+            assert!(
+                !result,
+                "push_scan_char must return false when no item is active"
+            );
+        }
 
-    #[test]
-    fn start_nested_text_block_returns_false_when_no_item() {
-        let mut tracker = ListTracker::default();
-        assert!(
-            !tracker.start_nested_text_block(),
-            "start_nested_text_block must return false with no item"
-        );
-    }
+        #[test]
+        fn start_nested_text_block_returns_false_when_no_item() {
+            let mut tracker = ListTracker::default();
+            assert!(
+                !tracker.start_nested_text_block(),
+                "start_nested_text_block must return false with no item"
+            );
+        }
 
-    #[test]
-    fn start_nested_text_block_returns_true_with_active_item() {
-        let mut tracker = ListTracker::default();
-        tracker.start_list(false);
-        tracker.start_item(SourceLine::new(1));
-        assert!(
-            tracker.start_nested_text_block(),
-            "start_nested_text_block must return true with active item"
-        );
-    }
+        #[test]
+        fn start_nested_text_block_returns_true_with_active_item() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            assert!(
+                tracker.start_nested_text_block(),
+                "start_nested_text_block must return true with active item"
+            );
+        }
 
-    #[test]
-    fn start_list_flushes_active_item_scan_buffer() {
-        let mut tracker = ListTracker::default();
-        tracker.start_list(false);
-        tracker.start_item(SourceLine::new(1));
-        tracker.push_text("Status:: Draft", false);
+        #[test]
+        fn start_list_flushes_active_item_scan_buffer() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("Status:: Draft", false);
 
-        let flushed = tracker.start_list(false);
+            let flushed = tracker.start_list(false);
 
-        assert!(
-            flushed.is_some(),
-            "start_list must flush active item scan buffer"
-        );
-        let (fields, _) = flushed.unwrap();
-        let has_status = fields.keys().any(|k| k.is_canonical_match("status"));
-        assert!(has_status, "flushed fields must contain Status");
-    }
+            assert!(
+                flushed.is_some(),
+                "start_list must flush active item scan buffer"
+            );
+            let (fields, _) = flushed.unwrap();
+            let has_status =
+                fields.keys().any(|k| k.is_canonical_match("status"));
+            assert!(has_status, "flushed fields must contain Status");
+        }
 
-    #[test]
-    fn end_item_flushes_scan_buffer() {
-        let mut tracker = ListTracker::default();
-        tracker.start_list(false);
-        tracker.start_item(SourceLine::new(1));
-        tracker.push_text("Author:: Jane", false);
+        #[test]
+        fn end_item_flushes_scan_buffer() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("Author:: Jane", false);
 
-        let flushed = tracker.end_item(&[], &TaskStatusMap::default());
-        assert!(flushed.is_some(), "end_item must flush scan buffer");
-        let (fields, _) = flushed.unwrap();
-        let has_author = fields.keys().any(|k| k.is_canonical_match("author"));
-        assert!(has_author, "flushed fields must contain Author");
-    }
+            let flushed = tracker.end_item(&[], &TaskStatusMap::default());
+            assert!(flushed.is_some(), "end_item must flush scan buffer");
+            let (fields, _) = flushed.unwrap();
+            let has_author =
+                fields.keys().any(|k| k.is_canonical_match("author"));
+            assert!(has_author, "flushed fields must contain Author");
+        }
 
-    #[test]
-    fn push_text_and_push_break_return_false_when_no_item_active() {
-        let mut tracker = ListTracker::default();
-        assert!(
-            !tracker.push_text("hello", false),
-            "push_text must return false when no item active"
-        );
-        assert!(
-            !tracker.push_break(),
-            "push_break must return false when no item active"
-        );
+        #[test]
+        fn push_text_and_push_break_return_false_when_no_item_active() {
+            let mut tracker = ListTracker::default();
+            assert!(
+                !tracker.push_text("hello", false),
+                "push_text must return false when no item active"
+            );
+            assert!(
+                !tracker.push_break(),
+                "push_break must return false when no item active"
+            );
+        }
     }
 
-    #[test]
-    fn iterates_top_level_task_items() {
-        let input = "- [ ] Task 1\n- Plain item\n- [x] Task 2";
-        let note = parse(input);
+    mod classification {
+        use pretty_assertions::assert_eq;
 
-        let tasks: Vec<&ListItem> = note.tasks().collect();
-        assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks.first().map(|t| t.text()), Some("Task 1"));
-        assert_eq!(tasks.get(1).map(|t| t.text()), Some("Task 2"));
-    }
+        use super::*;
+        #[test]
+        fn item_classification_state_accessors() {
+            assert!(!ItemClassificationState::Pending.is_marked());
+            assert_eq!(ItemClassificationState::Pending.symbol(), None);
 
-    #[test]
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn iterates_nested_sub_list_task_items() {
-        let input = "- Plain parent\n  - [x] Subtask 1";
-        let note = parse(input);
+            assert!(!ItemClassificationState::Plain.is_marked());
+            assert_eq!(ItemClassificationState::Plain.symbol(), None);
 
-        let tasks: Vec<&ListItem> = note.tasks().collect();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
-        let ListItemType::Task(status) = tasks.first().unwrap().kind() else {
-            panic!("subtask must be a Task");
-        };
-        assert_eq!(status.kind().completed(), Some(true));
-    }
+            assert!(ItemClassificationState::Marked('x').is_marked());
+            assert_eq!(
+                ItemClassificationState::Marked('x').symbol(),
+                Some('x')
+            );
+        }
 
-    #[rstest]
-    #[case::space_todo(' ', TaskStatusType::Todo)]
-    #[case::checked_lowercase('x', TaskStatusType::Done)]
-    #[case::checked_uppercase('X', TaskStatusType::Done)]
-    #[case::in_progress('/', TaskStatusType::InProgress)]
-    #[case::cancelled('-', TaskStatusType::Cancelled)]
-    #[case::on_hold('!', TaskStatusType::OnHold)]
-    fn classifies_every_default_marker_as_a_task(
-        #[case] symbol: char,
-        #[case] expected_kind: TaskStatusType,
-    ) {
-        let input = format!("- [{symbol}] Task text");
-        let note = parse(&input);
+        #[rstest]
+        #[case::space_todo(' ', TaskStatusType::Todo)]
+        #[case::checked_lowercase('x', TaskStatusType::Done)]
+        #[case::checked_uppercase('X', TaskStatusType::Done)]
+        #[case::in_progress('/', TaskStatusType::InProgress)]
+        #[case::cancelled('-', TaskStatusType::Cancelled)]
+        #[case::on_hold('!', TaskStatusType::OnHold)]
+        fn classifies_every_default_marker_as_a_task(
+            #[case] symbol: char,
+            #[case] expected_kind: TaskStatusType,
+        ) {
+            let input = format!("- [{symbol}] Task text");
+            let note = parse(&input);
 
-        let tasks: Vec<&ListItem> = note.tasks().collect();
-        assert_eq!(tasks.len(), 1, "marker {symbol:?} must become a Task");
-        assert_eq!(tasks.first().map(|t| t.text()), Some("Task text"));
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1, "marker {symbol:?} must become a Task");
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Task text"));
 
-        let item = tasks.first().expect("task present");
-        assert!(
-            matches!(item.kind(), ListItemType::Task(status) if
-                status.kind() == expected_kind),
-            "marker {symbol:?} must resolve to {expected_kind:?}, got {:?}",
-            item.kind()
-        );
-    }
-
-    #[test]
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn preserves_and_classifies_an_unknown_marker_as_an_incomplete_task() {
-        let note = parse("- [?] Mystery task");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "Mystery task");
-        let ListItemType::Task(status) = item.kind() else {
-            panic!(
-                "unknown marker must never be downgraded to a plain bullet, \
-                 got {:?}",
+            let item = tasks.first().expect("task present");
+            assert!(
+                matches!(item.kind(), ListItemType::Task(status) if
+                    status.kind() == expected_kind),
+                "marker {symbol:?} must resolve to {expected_kind:?}, got {:?}",
                 item.kind()
             );
-        };
-        assert_eq!(
-            status.kind().completed(),
-            Some(false),
-            "unknown markers resolve as incomplete todos"
-        );
+        }
+
+        #[test]
+        #[expect(clippy::panic, reason = "test assertion on enum variant")]
+        fn preserves_and_classifies_an_unknown_marker_as_an_incomplete_task() {
+            let note = parse("- [?] Mystery task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "Mystery task");
+            let ListItemType::Task(status) = item.kind() else {
+                panic!(
+                    "unknown marker must never be downgraded to a plain \
+                     bullet, got {:?}",
+                    item.kind()
+                );
+            };
+            assert_eq!(
+                status.kind().completed(),
+                Some(false),
+                "unknown markers resolve as incomplete todos"
+            );
+        }
+
+        #[test]
+        fn does_not_treat_bracket_text_in_the_item_body_as_a_marker() {
+            let note = parse("- Check [x] later");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "Check [x] later");
+            assert_eq!(item.kind(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn classifies_a_bare_marker_with_no_trailing_text_as_a_task() {
+            // `- [x]` as an entire item: the line terminator supplies the
+            // marker's trailing whitespace, matching pulldown-cmark's
+            // ENABLE_TASKLISTS behavior.
+            let note = parse("- [x]");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "");
+            assert_eq!(note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn resolves_a_pending_marker_before_a_nested_list_flush() {
+            // `- [x]` + nested list: no whitespace text chunk arrives before
+            // the child list starts, but the parent still carries a marker.
+            let note = parse("- [x]\n  - sub");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "");
+            assert_eq!(note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn classifies_a_marker_before_a_soft_break_as_a_task() {
+            let note = parse("- [x]\n  continued");
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks.first().map(|t| t.text()), Some("\ncontinued"));
+        }
+
+        #[test]
+        fn keeps_an_item_starting_with_inline_markup_plain() {
+            // The emphasis opens the item's content, so `[x]` is not at the
+            // item-leading position and must not become a marker.
+            let note = parse("- **[x] Task**");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "[x] Task");
+            assert_eq!(item.kind(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn keeps_an_item_starting_with_inline_code_plain() {
+            let note = parse("- `[x]` Task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "[x] Task");
+            assert_eq!(item.kind(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn keeps_a_link_lookalike_plain() {
+            // `- [x](y)` is a link whose text abuts the closing bracket —
+            // no whitespace after `]`, so no marker.
+            let note = parse("- [x](y) z");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "x z");
+            assert_eq!(item.kind(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn rejects_unicode_whitespace_after_the_marker() {
+            // NBSP is ordinary text in Markdown, not the marker's trailing
+            // whitespace (ASCII whitespace only, mirroring pulldown-cmark).
+            let note = parse("- [x]\u{00A0}Task");
+
+            let list = note.lists().first().expect("list present");
+            let item = list.items().first().expect("item present");
+            assert_eq!(item.text(), "[x]\u{00A0}Task");
+            assert_eq!(item.kind(), &ListItemType::Plain);
+            assert_eq!(note.tasks().count(), 0);
+        }
+
+        #[test]
+        fn classifies_a_multibyte_symbol_marker_as_an_incomplete_task() {
+            let note = parse("- [β] Task");
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Task"));
+            let item = tasks.first().expect("task present");
+            assert!(matches!(
+                item.kind(),
+                ListItemType::Task(status) if status.kind().completed() == Some(false)
+            ));
+        }
     }
 
-    #[test]
-    fn does_not_treat_bracket_text_in_the_item_body_as_a_marker() {
-        let note = parse("- Check [x] later");
+    mod iteration {
+        use pretty_assertions::assert_eq;
 
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "Check [x] later");
-        assert_eq!(item.kind(), &ListItemType::Plain);
-        assert_eq!(note.tasks().count(), 0);
+        use super::*;
+        #[test]
+        fn iterates_top_level_task_items() {
+            let input = "- [ ] Task 1\n- Plain item\n- [x] Task 2";
+            let note = parse(input);
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 2);
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Task 1"));
+            assert_eq!(tasks.get(1).map(|t| t.text()), Some("Task 2"));
+        }
+
+        #[test]
+        #[expect(clippy::panic, reason = "test assertion on enum variant")]
+        fn iterates_nested_sub_list_task_items() {
+            let input = "- Plain parent\n  - [x] Subtask 1";
+            let note = parse(input);
+
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
+            let ListItemType::Task(status) = tasks.first().unwrap().kind()
+            else {
+                panic!("subtask must be a Task");
+            };
+            assert_eq!(status.kind().completed(), Some(true));
+        }
     }
-
-    #[test]
-    fn classifies_a_bare_marker_with_no_trailing_text_as_a_task() {
-        // `- [x]` as an entire item: the line terminator supplies the
-        // marker's trailing whitespace, matching pulldown-cmark's
-        // ENABLE_TASKLISTS behavior.
-        let note = parse("- [x]");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "");
-        assert_eq!(note.tasks().count(), 1);
-    }
-
-    #[test]
-    fn resolves_a_pending_marker_before_a_nested_list_flush() {
-        // `- [x]` + nested list: no whitespace text chunk arrives before
-        // the child list starts, but the parent still carries a marker.
-        let note = parse("- [x]\n  - sub");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "");
-        assert_eq!(note.tasks().count(), 1);
-    }
-
-    #[test]
-    fn classifies_a_marker_before_a_soft_break_as_a_task() {
-        let note = parse("- [x]\n  continued");
-
-        let tasks: Vec<&ListItem> = note.tasks().collect();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks.first().map(|t| t.text()), Some("\ncontinued"));
-    }
-
-    #[test]
-    fn keeps_an_item_starting_with_inline_markup_plain() {
-        // The emphasis opens the item's content, so `[x]` is not at the
-        // item-leading position and must not become a marker.
-        let note = parse("- **[x] Task**");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "[x] Task");
-        assert_eq!(item.kind(), &ListItemType::Plain);
-        assert_eq!(note.tasks().count(), 0);
-    }
-
-    #[test]
-    fn keeps_an_item_starting_with_inline_code_plain() {
-        let note = parse("- `[x]` Task");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "[x] Task");
-        assert_eq!(item.kind(), &ListItemType::Plain);
-        assert_eq!(note.tasks().count(), 0);
-    }
-
-    #[test]
-    fn keeps_a_link_lookalike_plain() {
-        // `- [x](y)` is a link whose text abuts the closing bracket —
-        // no whitespace after `]`, so no marker.
-        let note = parse("- [x](y) z");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "x z");
-        assert_eq!(item.kind(), &ListItemType::Plain);
-        assert_eq!(note.tasks().count(), 0);
-    }
-
-    #[test]
-    fn rejects_unicode_whitespace_after_the_marker() {
-        // NBSP is ordinary text in Markdown, not the marker's trailing
-        // whitespace (ASCII whitespace only, mirroring pulldown-cmark).
-        let note = parse("- [x]\u{00A0}Task");
-
-        let list = note.lists().first().expect("list present");
-        let item = list.items().first().expect("item present");
-        assert_eq!(item.text(), "[x]\u{00A0}Task");
-        assert_eq!(item.kind(), &ListItemType::Plain);
-        assert_eq!(note.tasks().count(), 0);
-    }
-
-    #[test]
-    fn classifies_a_multibyte_symbol_marker_as_an_incomplete_task() {
-        let note = parse("- [β] Task");
-
-        let tasks: Vec<&ListItem> = note.tasks().collect();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks.first().map(|t| t.text()), Some("Task"));
-        let item = tasks.first().expect("task present");
-        assert!(matches!(
-            item.kind(),
-            ListItemType::Task(status) if status.kind().completed() == Some(false)
-        ));
-    }
-
     mod tag_filters {
         use pretty_assertions::assert_eq;
 

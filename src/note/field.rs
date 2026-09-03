@@ -18,10 +18,13 @@ use super::Link;
 /// # Examples
 ///
 /// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
 /// use traces_pkm::NoteFieldValue;
 ///
 /// let val = NoteFieldValue::String("Draft".to_owned());
 /// assert_eq!(val.as_str(), Some("Draft"));
+/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum NoteFieldValue {
@@ -291,6 +294,30 @@ mod tests {
                     )]))
                 )]))
             );
+        }
+    }
+
+    mod accessors {
+        use super::*;
+
+        #[test]
+        fn as_str_returns_inner_str_for_string_date_and_duration() {
+            let str_val = NoteFieldValue::String("text".to_owned());
+            let date_val = NoteFieldValue::Date("2026-09-02".to_owned());
+            let dur_val = NoteFieldValue::Duration("4h".to_owned());
+
+            assert_eq!(str_val.as_str(), Some("text"));
+            assert_eq!(date_val.as_str(), Some("2026-09-02"));
+            assert_eq!(dur_val.as_str(), Some("4h"));
+        }
+
+        #[test]
+        fn as_str_returns_none_for_non_string_variants() {
+            assert_eq!(NoteFieldValue::Null.as_str(), None);
+            assert_eq!(NoteFieldValue::Bool(true).as_str(), None);
+            assert_eq!(NoteFieldValue::Number(42.0).as_str(), None);
+            assert_eq!(NoteFieldValue::List(Vec::new()).as_str(), None);
+            assert_eq!(NoteFieldValue::Object(IndexMap::new()).as_str(), None);
         }
     }
 }

@@ -163,4 +163,53 @@ mod tests {
             assert_eq!(input.frontmatter().title_name(), "title");
         }
     }
+
+    mod accessors {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::Tag;
+
+        #[test]
+        fn path_returns_exact_borrowed_path() {
+            let path = Path::new("deep/folder/note.md");
+            let input = MarkdownParserInput::for_test(path, "text");
+            assert_eq!(input.path(), path);
+        }
+
+        #[test]
+        fn src_returns_exact_borrowed_source_text() {
+            let src = "# Title\nParagraph content";
+            let input =
+                MarkdownParserInput::for_test(Path::new("note.md"), src);
+            assert_eq!(input.src(), src);
+        }
+
+        #[test]
+        fn tasks_returns_referenced_task_config() {
+            let tasks =
+                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let frontmatter = FrontmatterConfig::default();
+            let input = MarkdownParserInput::new(
+                Path::new("note.md"),
+                "src",
+                &tasks,
+                &frontmatter,
+            );
+            assert_eq!(input.tasks().tag_filters().len(), 1);
+        }
+
+        #[test]
+        fn frontmatter_returns_referenced_frontmatter_config() {
+            let tasks = TaskConfig::default();
+            let frontmatter = FrontmatterConfig::default();
+            let input = MarkdownParserInput::new(
+                Path::new("note.md"),
+                "src",
+                &tasks,
+                &frontmatter,
+            );
+            assert_eq!(input.frontmatter().title_name(), "title");
+        }
+    }
 }
