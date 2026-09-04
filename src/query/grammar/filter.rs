@@ -21,6 +21,7 @@ use crate::{
     query::{
         QueryRow,
         error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
+        sort::SortKey,
         value::QueryFieldValueRef,
     },
 };
@@ -165,26 +166,33 @@ impl FilterFunction {
 pub(crate) struct ComparisonExpr {
     field: FieldPath,
     op: CompareOp,
-    value: NoteFieldValue,
+    key: SortKey,
+    literal: NoteFieldValue,
 }
 
 impl ComparisonExpr {
-    pub(super) const fn new(
+    pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
-        value: NoteFieldValue,
+        literal: NoteFieldValue,
     ) -> Self {
+        let key = SortKey::from_owned(&literal);
         Self {
             field,
             op,
-            value,
+            key,
+            literal,
         }
     }
 
     /// Returns whether the given index row satisfies this comparison
     /// expression.
     pub(super) fn is_matching(&self, row: &QueryRow) -> bool {
-        self.op.is_satisfied_by(&row.resolve_ref(&self.field), &self.value)
+        self.op.is_satisfied_by(
+            &row.resolve_ref(&self.field),
+            &self.key,
+            &self.literal,
+        )
     }
 }
 
@@ -212,27 +220,83 @@ impl CompareOp {
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
+        lit_key: &SortKey,
         literal: &NoteFieldValue,
     ) -> bool {
+        let val_key = SortKey::from_value_ref(field);
         match self {
-            Self::Eq => field.is_equal_to_literal(literal),
-            Self::Ne => !field.is_equal_to_literal(literal),
+            Self::Eq => {
+                if val_key == SortKey::Null || *lit_key == SortKey::Null {
+                    field.is_equal_to_literal(literal)
+                } else if std::mem::discriminant(&val_key)
+                    == std::mem::discriminant(lit_key)
+                {
+                    val_key == *lit_key
+                } else {
+                    false
+                }
+            }
+            Self::Ne => {
+                if val_key == SortKey::Null || *lit_key == SortKey::Null {
+                    !field.is_equal_to_literal(literal)
+                } else if std::mem::discriminant(&val_key)
+                    == std::mem::discriminant(lit_key)
+                {
+                    val_key != *lit_key
+                } else {
+                    true
+                }
+            }
             Self::Lt => {
-                field.compare_to_literal(literal)
-                    == Some(std::cmp::Ordering::Less)
+                if val_key == SortKey::Null || *lit_key == SortKey::Null {
+                    false
+                } else if std::mem::discriminant(&val_key)
+                    == std::mem::discriminant(lit_key)
+                {
+                    val_key.total_cmp(lit_key) == std::cmp::Ordering::Less
+                } else {
+                    false
+                }
             }
             Self::Gt => {
-                field.compare_to_literal(literal)
-                    == Some(std::cmp::Ordering::Greater)
+                if val_key == SortKey::Null || *lit_key == SortKey::Null {
+                    false
+                } else if std::mem::discriminant(&val_key)
+                    == std::mem::discriminant(lit_key)
+                {
+                    val_key.total_cmp(lit_key) == std::cmp::Ordering::Greater
+                } else {
+                    false
+                }
             }
-            Self::Le => matches!(
-                field.compare_to_literal(literal),
-                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-            ),
-            Self::Ge => matches!(
-                field.compare_to_literal(literal),
-                Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
-            ),
+            Self::Le => {
+                if val_key == SortKey::Null || *lit_key == SortKey::Null {
+                    false
+                } else if std::mem::discriminant(&val_key)
+                    == std::mem::discriminant(lit_key)
+                {
+                    matches!(
+                        val_key.total_cmp(lit_key),
+                        std::cmp::Ordering::Less | std::cmp::Ordering::Equal
+                    )
+                } else {
+                    false
+                }
+            }
+            Self::Ge => {
+                if val_key == SortKey::Null || *lit_key == SortKey::Null {
+                    false
+                } else if std::mem::discriminant(&val_key)
+                    == std::mem::discriminant(lit_key)
+                {
+                    matches!(
+                        val_key.total_cmp(lit_key),
+                        std::cmp::Ordering::Greater | std::cmp::Ordering::Equal
+                    )
+                } else {
+                    false
+                }
+            }
         }
     }
 }
@@ -688,6 +752,97 @@ mod tests {
             let filtered = outcome.r#where("rating >= 7").expect("valid where");
 
             assert_eq!(names(&filtered), ["high"]);
+        }
+
+        #[test]
+        fn evaluates_duration_comparisons_temporally() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nspent: 1h\n---"),
+                ("b.md", "---\nspent: 30m\n---"),
+            ]);
+            let filtered =
+                outcome.filter("spent > \"30m\"").expect("valid filter");
+            assert_eq!(names(&filtered), ["a"]);
+        }
+
+        #[test]
+        fn evaluates_date_only_literal_at_midnight_utc() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let p1 = temp.path().join("jan1.md");
+            let p2 = temp.path().join("jan2.md");
+            fs::write(&p1, "# Jan 1\n").expect("write jan1.md");
+            fs::write(&p2, "# Jan 2\n").expect("write jan2.md");
+
+            let t1 = std::time::UNIX_EPOCH
+                + std::time::Duration::from_mins(29_454_630);
+            let t2 = std::time::UNIX_EPOCH
+                + std::time::Duration::from_hours(490_928);
+
+            let f1 =
+                fs::File::options().write(true).open(&p1).expect("open p1");
+            f1.set_times(std::fs::FileTimes::new().set_modified(t1))
+                .expect("set mtime p1");
+            drop(f1);
+
+            let f2 =
+                fs::File::options().write(true).open(&p2).expect("open p2");
+            f2.set_times(std::fs::FileTimes::new().set_modified(t2))
+                .expect("set mtime p2");
+            drop(f2);
+
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
+
+            let filtered = outcome
+                .filter(
+                    "file.mtime >= \"2026-01-01\" and file.mtime < \
+                     \"2026-01-02\"",
+                )
+                .expect("valid filter");
+
+            assert_eq!(names(&filtered), ["jan1"]);
+        }
+
+        #[test]
+        fn matches_calendar_days_via_mdate() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let p1 = temp.path().join("jan1.md");
+            let p2 = temp.path().join("jan2.md");
+            fs::write(&p1, "# Jan 1\n").expect("write jan1.md");
+            fs::write(&p2, "# Jan 2\n").expect("write jan2.md");
+
+            let t1 = std::time::UNIX_EPOCH
+                + std::time::Duration::from_mins(29_454_630);
+            let t2 = std::time::UNIX_EPOCH
+                + std::time::Duration::from_hours(490_928);
+
+            let f1 =
+                fs::File::options().write(true).open(&p1).expect("open p1");
+            f1.set_times(std::fs::FileTimes::new().set_modified(t1))
+                .expect("set mtime p1");
+            drop(f1);
+
+            let f2 =
+                fs::File::options().write(true).open(&p2).expect("open p2");
+            f2.set_times(std::fs::FileTimes::new().set_modified(t2))
+                .expect("set mtime p2");
+            drop(f2);
+
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
+
+            let filtered = outcome
+                .filter("file.mdate == \"2026-01-01\"")
+                .expect("valid filter");
+
+            assert_eq!(names(&filtered), ["jan1"]);
         }
 
         #[test]

@@ -76,8 +76,8 @@ use crate::{
     index::{FileIndex, IndexError, IndexerService},
     query::{
         ClassExpansionMode, FieldPath, FileField, QueryBuilder, QueryError,
-        QueryRow, QueryService, QuerySet, SourceAtom, SourceSelector,
-        TaskPathStyle,
+        QueryRow, QueryService, QuerySet, SortDirection, SourceAtom,
+        SourceSelector, TaskPathStyle,
     },
     schema::SchemaService,
 };
@@ -380,8 +380,15 @@ impl Object for QuerySet {
                 outcome.filter(expr)
             }
             "sort" => {
-                let (path, descending): (&str, Option<bool>) = from_args(args)?;
-                outcome.sort(path, descending.unwrap_or(false))
+                let (field, descending): (&str, Option<bool>) =
+                    from_args(args)?;
+                let descending = descending.unwrap_or(true);
+                let direction = if descending {
+                    SortDirection::Descending
+                } else {
+                    SortDirection::Ascending
+                };
+                outcome.sort_field(field, direction)
             }
             "limit" => {
                 let (n,): (i64,) = from_args(args)?;

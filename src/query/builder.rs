@@ -7,14 +7,14 @@
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
+    sort::SortOrder,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum QueryMode {
+pub(crate) enum QueryMode {
     Pages,
     Tasks,
 }
-
 /// Declarative query specification for index queries.
 ///
 /// `QueryBuilder` specifies whether to return page-level rows
@@ -114,6 +114,14 @@ impl QueryBuilder {
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
     #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "public builder method on QueryBuilder; exercised in \
+                      tests and test-utils"
+        )
+    )]
     pub fn sort(
         mut self,
         field: &str,
@@ -121,6 +129,13 @@ impl QueryBuilder {
     ) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::sort(field, descending)?);
         Ok(self)
+    }
+
+    /// Appends a composite sort order transform to the query transform plan.
+    #[inline]
+    pub(crate) fn order(mut self, order: SortOrder) -> Self {
+        self.plan.push(QueryTransform::order(order));
+        self
     }
 
     /// Appends a limit transform to restrict the outcome to at most `n` leading

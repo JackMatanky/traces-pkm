@@ -195,6 +195,139 @@ pub(crate) fn is_iso_date(s: &str) -> bool {
         && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
+/// Converts a duration unit string into seconds.
+fn unit_to_seconds(unit: &str) -> Option<f64> {
+    if unit.eq_ignore_ascii_case("ms")
+        || unit.eq_ignore_ascii_case("millisecond")
+        || unit.eq_ignore_ascii_case("milliseconds")
+    {
+        Some(0.001)
+    } else if unit.eq_ignore_ascii_case("s")
+        || unit.eq_ignore_ascii_case("sec")
+        || unit.eq_ignore_ascii_case("secs")
+        || unit.eq_ignore_ascii_case("second")
+        || unit.eq_ignore_ascii_case("seconds")
+    {
+        Some(1.0)
+    } else if unit.eq_ignore_ascii_case("m")
+        || unit.eq_ignore_ascii_case("min")
+        || unit.eq_ignore_ascii_case("mins")
+        || unit.eq_ignore_ascii_case("minute")
+        || unit.eq_ignore_ascii_case("minutes")
+    {
+        Some(60.0)
+    } else if unit.eq_ignore_ascii_case("h")
+        || unit.eq_ignore_ascii_case("hr")
+        || unit.eq_ignore_ascii_case("hrs")
+        || unit.eq_ignore_ascii_case("hour")
+        || unit.eq_ignore_ascii_case("hours")
+    {
+        Some(3600.0)
+    } else if unit.eq_ignore_ascii_case("d")
+        || unit.eq_ignore_ascii_case("day")
+        || unit.eq_ignore_ascii_case("days")
+    {
+        Some(86_400.0)
+    } else if unit.eq_ignore_ascii_case("w")
+        || unit.eq_ignore_ascii_case("wk")
+        || unit.eq_ignore_ascii_case("wks")
+        || unit.eq_ignore_ascii_case("week")
+        || unit.eq_ignore_ascii_case("weeks")
+    {
+        Some(604_800.0)
+    } else if unit.eq_ignore_ascii_case("mo")
+        || unit.eq_ignore_ascii_case("mos")
+        || unit.eq_ignore_ascii_case("month")
+        || unit.eq_ignore_ascii_case("months")
+    {
+        Some(2_592_000.0)
+    } else if unit.eq_ignore_ascii_case("yr")
+        || unit.eq_ignore_ascii_case("yrs")
+        || unit.eq_ignore_ascii_case("year")
+        || unit.eq_ignore_ascii_case("years")
+    {
+        Some(31_536_000.0)
+    } else {
+        None
+    }
+}
+
+/// Parses a duration spelling into its total duration in seconds.
+///
+/// Supports `<number><unit>` components separated by spaces and/or commas
+/// (for example: `1h`, `30m`, `1h 30m`, `4 yrs, 6 wks`). Returns `None` if
+/// unparseable or empty.
+#[inline]
+#[must_use]
+pub fn duration_seconds(spelling: &str) -> Option<f64> {
+    let bytes = spelling.as_bytes();
+    let len = bytes.len();
+    let mut pos = 0;
+    let mut total = 0.0;
+    let mut parsed_any = false;
+
+    while pos < len {
+        while pos < len
+            && bytes
+                .get(pos)
+                .is_some_and(|&b| b.is_ascii_whitespace() || b == b',')
+        {
+            pos = pos.saturating_add(1);
+        }
+        if pos >= len {
+            break;
+        }
+
+        let num_start = pos;
+        let mut has_decimal = false;
+        while pos < len {
+            if bytes.get(pos).is_some_and(|b| b.is_ascii_digit()) {
+                pos = pos.saturating_add(1);
+            } else if bytes.get(pos) == Some(&b'.') && !has_decimal {
+                has_decimal = true;
+                pos = pos.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+        if num_start == pos {
+            return None;
+        }
+        let num_slice = bytes.get(num_start..pos)?;
+        let num_str = std::str::from_utf8(num_slice).ok()?;
+        let number: f64 = num_str.parse().ok()?;
+        if !number.is_finite() {
+            return None;
+        }
+
+        while pos < len
+            && bytes.get(pos).is_some_and(|b| b.is_ascii_whitespace())
+        {
+            pos = pos.saturating_add(1);
+        }
+        let unit_start = pos;
+        while pos < len
+            && bytes.get(pos).is_some_and(|b| b.is_ascii_alphabetic())
+        {
+            pos = pos.saturating_add(1);
+        }
+        if unit_start == pos {
+            return None;
+        }
+        let unit_slice = bytes.get(unit_start..pos)?;
+        let unit_str = std::str::from_utf8(unit_slice).ok()?;
+        let multiplier = unit_to_seconds(unit_str)?;
+        total += number * multiplier;
+        parsed_any = true;
+    }
+
+    if parsed_any {
+        Some(total)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +501,33 @@ mod tests {
             assert_eq!(NoteFieldValue::Number(42.0).as_str(), None);
             assert_eq!(NoteFieldValue::List(Vec::new()).as_str(), None);
             assert_eq!(NoteFieldValue::Object(IndexMap::new()).as_str(), None);
+        }
+    }
+
+    mod duration_parsing {
+        use super::*;
+
+        #[test]
+        fn parses_single_and_multi_part_durations() {
+            assert_eq!(duration_seconds("1h"), Some(3600.0));
+            assert_eq!(duration_seconds("30m"), Some(1800.0));
+            assert_eq!(duration_seconds("1h 30m"), Some(5400.0));
+            assert_eq!(
+                duration_seconds("4 yrs, 6 wks"),
+                Some(4.0 * 31_536_000.0 + 6.0 * 604_800.0)
+            );
+            assert_eq!(duration_seconds("1.5h"), Some(5400.0));
+            assert_eq!(duration_seconds("10s"), Some(10.0));
+            assert_eq!(duration_seconds("500ms"), Some(0.5));
+        }
+
+        #[test]
+        fn rejects_unparseable_durations() {
+            assert_eq!(duration_seconds(""), None);
+            assert_eq!(duration_seconds("   "), None);
+            assert_eq!(duration_seconds("invalid"), None);
+            assert_eq!(duration_seconds("1h invalid"), None);
+            assert_eq!(duration_seconds("foo 30m"), None);
         }
     }
 }

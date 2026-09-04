@@ -42,7 +42,8 @@ const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("files");
 ///
 /// Key: project-relative path as UTF-8 bytes
 /// Value: serialized [`Note`]
-const NOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("notes");
+pub(super) const NOTES: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("notes");
 
 /// Inbound link multimap table.
 ///
@@ -287,34 +288,6 @@ impl IndexStore {
         Ok((files, links))
     }
 
-    /// Reads exactly one [`Note`] by path, used by
-    /// [`super::cache::RefreshCache::reconcile_note`] to recall an unchanged
-    /// Note.
-    ///
-    /// # Errors
-    ///
-    /// - [`DbError::Redb`] if the table cannot be read.
-    /// - [`DbError::Deserialize`] if the stored bytes are corrupt.
-    pub(super) fn read_note(
-        &self,
-        txn: &ReadTransaction,
-        path: &Path,
-    ) -> IndexResult<Option<Note>> {
-        let table = match txn.open_table(NOTES) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
-            Err(source) => return Err(self.raise_source_error(source).into()),
-        };
-        let key = path.as_os_str().as_encoded_bytes();
-        match table
-            .get(key)
-            .map_err(|source| self.raise_source_error(source))?
-        {
-            None => Ok(None),
-            Some(guard) => Ok(Some(decode_row(path, guard.value())?)),
-        }
-    }
-
     /// Deserializes every `target -> sources` edge from the `links` multimap
     /// table, resolving each stored path's raw bytes through `resolve`.
     ///
@@ -465,19 +438,48 @@ impl IndexStore {
         write_txn
             .delete_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
-        self.write_table(
-            &write_txn,
-            FILES,
-            entries.iter().map(FileEntry::file),
-            FileBase::path,
-        )?;
-        self.write_table(
-            &write_txn,
-            NOTES,
-            entries.iter().filter_map(FileEntry::note),
-            Note::path,
-        )?;
-        self.write_links(&write_txn, LINKS, entries)?;
+        let (tx_files, rx_files) = std::sync::mpsc::channel();
+        let (tx_notes, rx_notes) = std::sync::mpsc::channel();
+        let (tx_links, rx_links) = std::sync::mpsc::channel();
+
+        rayon::scope(|s| {
+            s.spawn(|_| {
+                let _ = tx_files.send(self.write_table(
+                    &write_txn,
+                    FILES,
+                    entries.iter().map(FileEntry::file),
+                    FileBase::path,
+                ));
+            });
+            s.spawn(|_| {
+                let _ = tx_notes.send(self.write_table(
+                    &write_txn,
+                    NOTES,
+                    entries.iter().filter_map(FileEntry::note),
+                    Note::path,
+                ));
+            });
+            s.spawn(|_| {
+                let _ =
+                    tx_links.send(self.write_links(&write_txn, LINKS, entries));
+            });
+        });
+
+        rx_files.recv().map_err(|_| {
+            self.raise_source_error(redb::Error::Corrupted(
+                "worker died".into(),
+            ))
+        })??;
+        rx_notes.recv().map_err(|_| {
+            self.raise_source_error(redb::Error::Corrupted(
+                "worker died".into(),
+            ))
+        })??;
+        rx_links.recv().map_err(|_| {
+            self.raise_source_error(redb::Error::Corrupted(
+                "worker died".into(),
+            ))
+        })??;
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
@@ -644,7 +646,10 @@ impl IndexStore {
     }
 
     /// Wraps a redb error with this store's database path.
-    fn raise_source_error(&self, source: impl Into<redb::Error>) -> DbError {
+    pub(super) fn raise_source_error(
+        &self,
+        source: impl Into<redb::Error>,
+    ) -> DbError {
         DbError::Redb {
             path: self.path.clone(),
             source: Box::new(source.into()),

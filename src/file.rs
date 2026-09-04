@@ -414,6 +414,57 @@ impl Timestamp {
     pub(crate) fn to_time_string(self) -> String {
         self.0.format("%H:%M:%S").to_string()
     }
+
+    /// Returns a new timestamp truncated to the start of the UTC day (midnight,
+    /// 00:00:00).
+    #[inline]
+    #[must_use]
+    pub(crate) fn start_of_day(self) -> Self {
+        let naive = match self.0.date_naive().and_hms_opt(0, 0, 0) {
+            Some(midnight) => midnight,
+            None => self.0.naive_utc(),
+        };
+        Self(naive.and_utc())
+    }
+
+    /// Returns `true` if this timestamp has a non-zero time-of-day component.
+    #[inline]
+    #[must_use]
+    pub(crate) fn has_time_component(self) -> bool {
+        use chrono::Timelike as _;
+        self.0.hour() != 0
+            || self.0.minute() != 0
+            || self.0.second() != 0
+            || self.0.nanosecond() != 0
+    }
+
+    /// Parses an ISO-8601, RFC 3339, or `YYYY-MM-DD` date string into a
+    /// `Timestamp`.
+    ///
+    /// When given a bare date `YYYY-MM-DD`, parses strictly as midnight UTC
+    /// (`00:00:00.000Z`).
+    pub(crate) fn parse_iso(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
+            return Some(Self(dt.with_timezone(&Utc)));
+        }
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S")
+        {
+            return Some(Self(naive.and_utc()));
+        }
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S")
+        {
+            return Some(Self(naive.and_utc()));
+        }
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+        {
+            let midnight = date.and_hms_opt(0, 0, 0)?;
+            return Some(Self(midnight.and_utc()));
+        }
+        None
+    }
 }
 
 impl From<SystemTime> for Timestamp {

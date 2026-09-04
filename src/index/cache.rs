@@ -7,14 +7,21 @@
 //! reparse. Used exclusively by
 //! [`super::builder::IndexBuilder::build_with_cache`].
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+use rayon::prelude::*;
+use redb::ReadableTable as _;
 
 use super::{
     builder::parse_note,
+    codec::path_from_bytes,
     delta,
-    error::{IndexBuilderError, IndexError, IndexResult},
+    error::{IndexBuilderError, IndexResult},
     inlinks::InlinkMap,
-    store::IndexStore,
+    store::{IndexStore, NOTES},
 };
 use crate::{
     FileBase, Note,
@@ -46,14 +53,13 @@ pub(super) enum NoteCacheState {
 /// concurrently with writes, so this never blocks a writer; it does pin the
 /// MVCC snapshot for the duration. [`super::IndexerService::refresh`] scopes
 /// the transaction to end before persisting, so the two never overlap.
-pub(super) struct RefreshCache<'a> {
+pub(super) struct RefreshCache {
     files: Vec<FileBase>,
     inlinks: InlinkMap,
-    store: &'a IndexStore,
-    txn: &'a redb::ReadTransaction,
+    notes: HashMap<PathBuf, Note>,
 }
 
-impl<'a> RefreshCache<'a> {
+impl RefreshCache {
     /// Loads `files`/`inlinks` via `store` through `txn`, the only way to
     /// construct a `RefreshCache`; fields stay private.
     ///
@@ -62,15 +68,25 @@ impl<'a> RefreshCache<'a> {
     /// - [`IndexError::Store`] if the previously persisted `FILES`/`LINKS`
     ///   tables cannot be read.
     pub(super) fn load(
-        store: &'a IndexStore,
-        txn: &'a redb::ReadTransaction,
+        store: &IndexStore,
+        txn: &redb::ReadTransaction,
     ) -> IndexResult<Self> {
         let (files, inlinks) = store.read_files_and_links_via(txn)?;
+        let table = match txn.open_table(NOTES) {
+            Ok(table) => Some(table),
+            Err(redb::TableError::TableDoesNotExist(_)) => None,
+            Err(source) => return Err(store.raise_source_error(source).into()),
+        };
+        let chunks = if let Some(table) = &table {
+            load_raw_chunks(store, table)?
+        } else {
+            Vec::new()
+        };
+        let notes = decode_notes_parallel(chunks);
         Ok(Self {
             files,
             inlinks,
-            store,
-            txn,
+            notes,
         })
     }
 
@@ -113,7 +129,7 @@ impl<'a> RefreshCache<'a> {
     /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
     /// [`IndexBuilder::build_with_cache`]: super::builder::IndexBuilder::build_with_cache
     pub(super) fn reconcile_note(
-        &self,
+        &mut self,
         file: &FileBase,
         state: NoteCacheState,
         root: &Path,
@@ -121,71 +137,24 @@ impl<'a> RefreshCache<'a> {
     ) -> Result<(Note, bool), IndexBuilderError> {
         match state {
             NoteCacheState::Upserted => {
-                self.reparse_and_backdate(file, root, tasks, frontmatter)
+                let note = parse_note(root, file, tasks, frontmatter)?;
+                let outlinks_changed = match self.notes.get(file.path()) {
+                    Some(previous) => {
+                        outlink_targets(&note) != outlink_targets(previous)
+                    }
+                    None => true,
+                };
+                Ok((note, outlinks_changed))
             }
             NoteCacheState::Fresh => {
-                self.recall_unchanged_note(file).map(|note| (note, false))
+                let note = self.notes.remove(file.path()).ok_or_else(|| {
+                    IndexBuilderError::MissingNote {
+                        path: file.path().to_path_buf(),
+                    }
+                })?;
+                Ok((note, false))
             }
         }
-    }
-
-    /// Recalls an unchanged record's previously-persisted Note via point
-    /// lookup, the [`NoteCacheState::Fresh`] branch of
-    /// [`Self::reconcile_note`].
-    ///
-    /// # Errors
-    ///
-    /// - [`IndexBuilderError::NoteLookup`] if the previously-persisted Note
-    ///   cannot be read.
-    /// - [`IndexBuilderError::MissingNote`] if no Note was persisted at
-    ///   `file`'s path (logic-bug guard).
-    ///
-    /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
-    fn recall_unchanged_note(
-        &self,
-        file: &FileBase,
-    ) -> Result<Note, IndexBuilderError> {
-        self.store
-            .read_note(self.txn, file.path())
-            .map_err(|source| IndexBuilderError::NoteLookup {
-                path: file.path().to_path_buf(),
-                source: Box::new(source),
-            })?
-            .ok_or_else(|| IndexBuilderError::MissingNote {
-                path: file.path().to_path_buf(),
-            })
-    }
-
-    /// Reparses an upserted record from disk and backdates it against its
-    /// previously-persisted Note, the [`NoteCacheState::Upserted`] branch of
-    /// [`Self::reconcile_note`].
-    ///
-    /// # Errors
-    ///
-    /// - [`IndexBuilderError::NoteParse`] if `file`'s markdown file cannot be
-    ///   read.
-    ///
-    /// [`Self::reconcile_note`]: RefreshCache::reconcile_note
-    fn reparse_and_backdate(
-        &self,
-        file: &FileBase,
-        root: &Path,
-        tasks: &TaskConfig,
-        frontmatter: &FrontmatterConfig,
-    ) -> Result<(Note, bool), IndexBuilderError> {
-        let note = parse_note(root, file, tasks, frontmatter)?;
-        let outlinks_changed = match self.store.read_note(self.txn, file.path())
-        {
-            Ok(Some(previous)) => {
-                outlink_targets(&note) != outlink_targets(&previous)
-            }
-            Ok(None) => true,
-            Err(source) => {
-                log_backdating_lookup_failure(file.path(), &source);
-                true
-            }
-        };
-        Ok((note, outlinks_changed))
     }
 
     /// Diffs the previous inlink map against a freshly recomputed one via
@@ -204,19 +173,58 @@ impl<'a> RefreshCache<'a> {
     }
 }
 
-/// Logs a backdating point-lookup failure at debug level. Extracted (and marked
-/// cold/never-inline) so [`RefreshCache::reconcile_note`]'s hot path doesn't
-/// pay for `tracing`'s format-argument machinery in its own stack frame; this
-/// error path is rare (a corrupted or undeserializable stored row) and never
-/// propagated as a hard error.
-#[cold]
-#[inline(never)]
-fn log_backdating_lookup_failure(path: &Path, source: &IndexError) {
-    tracing::debug!(
-        path = %path.display(),
-        %source,
-        "failed to load previous note for backdating; assuming outlinks changed"
-    );
+type RawChunkEntry<'a> = (PathBuf, redb::AccessGuard<'a, &'static [u8]>);
+type ChunkBuffer<'a> = Vec<RawChunkEntry<'a>>;
+
+fn load_raw_chunks<'a>(
+    store: &IndexStore,
+    table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
+) -> IndexResult<Vec<ChunkBuffer<'a>>> {
+    let mut chunks = Vec::new();
+    let mut current_chunk = Vec::new();
+    let mut current_bytes = 0usize;
+    for entry in table.iter().map_err(|s| store.raise_source_error(s))? {
+        let (key, value) = entry.map_err(|s| store.raise_source_error(s))?;
+        let path = path_from_bytes(key.value());
+        current_bytes = current_bytes.saturating_add(value.value().len());
+        current_chunk.push((path, value));
+        if current_chunk.len() >= 128 || current_bytes >= 512 * 1024 {
+            chunks.push(std::mem::take(&mut current_chunk));
+            current_bytes = 0;
+        }
+    }
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+    Ok(chunks)
+}
+
+fn decode_notes_parallel(
+    chunks: Vec<ChunkBuffer<'_>>,
+) -> HashMap<PathBuf, Note> {
+    let decoded: Vec<(PathBuf, Note)> = chunks
+        .into_par_iter()
+        .flat_map(|chunk| {
+            chunk
+                .into_par_iter()
+                .filter_map(|(path, guard)| match postcard::from_bytes(guard.value()) {
+                    Ok(note) => Some((path, note)),
+                    Err(source) => {
+                        tracing::debug!(
+                            path = %path.display(),
+                            %source,
+                            "failed to deserialize cached note; treating as missing"
+                        );
+                        None
+                    }
+                })
+        })
+        .collect();
+    let mut notes = HashMap::with_capacity(decoded.len());
+    for (path, note) in decoded {
+        notes.insert(path, note);
+    }
+    notes
 }
 
 /// Deduplicated, sorted outlink targets for backdating comparison. Order-and
@@ -243,10 +251,10 @@ mod tests {
     /// Persists `files`/`inlinks` and loads a [`RefreshCache`] against them,
     /// the only way to construct one outside
     /// [`super::super::builder::IndexBuilder::build_with_cache`].
-    fn load_cache<'a>(
-        store: &'a IndexStore,
-        txn: &'a redb::ReadTransaction,
-    ) -> RefreshCache<'a> {
+    fn load_cache(
+        store: &IndexStore,
+        txn: &redb::ReadTransaction,
+    ) -> RefreshCache {
         RefreshCache::load(store, txn).expect("load cache")
     }
 
@@ -272,10 +280,9 @@ mod tests {
                 InlinkMap::new(),
             );
             store.write_all(&entries).expect("persist");
+            let file = files.first().expect("file");
             let txn = store.begin_read().expect("begin read");
-            let cache = load_cache(&store, &txn);
-            let file = files.first().expect("one record");
-
+            let mut cache = load_cache(&store, &txn);
             let tasks = crate::TaskConfig::default();
             let frontmatter = crate::config::FrontmatterConfig::default();
             let (_, outlinks_changed) = cache
@@ -296,10 +303,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "content").expect("write note");
             let files = IndexerService::new(temp.path()).scan().expect("scan");
+            let file = files.first().expect("file");
             let store = IndexStore::open(temp.path()).expect("open store");
             let txn = store.begin_read().expect("begin read");
-            let cache = load_cache(&store, &txn);
-            let file = files.first().expect("one record");
+            let mut cache = load_cache(&store, &txn);
 
             let tasks = crate::TaskConfig::default();
             let frontmatter = crate::config::FrontmatterConfig::default();

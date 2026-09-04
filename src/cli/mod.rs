@@ -41,7 +41,10 @@ use crate::{
     Config, ConfigService, DialogProvider,
     config::{DiscoveryScope, TrustRequests},
     index::{FileIndex, IndexerService},
-    query::{QueryBuilder, QueryError, QueryService, QuerySet, SourceSelector},
+    query::{
+        FieldPath, QueryBuilder, QueryError, QueryService, QuerySet,
+        SortDirection, SortOrder, SortTerm, SourceSelector,
+    },
     schema::{SchemaService, warn_schema_construction_diagnostics},
 };
 
@@ -249,12 +252,64 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
 /// - [`CliError::Query`] if any filter expression or the sort field path is
 ///   malformed.
+
+/// Parses command-line sort arguments into an optional [`SortOrder`].
+///
+/// Supports repeatable, comma-delimited strings with optional `+` (ascending)
+/// and `-` (descending) prefix modifiers. When no prefix is present, uses
+/// [`SortDirection::Ascending`] if `asc` is true, otherwise
+/// [`SortDirection::Descending`].
+pub(super) fn parse_cli_sort(
+    root: &Path,
+    sorts: &[String],
+    asc: bool,
+    _desc: bool,
+) -> Result<Option<SortOrder>, CliError> {
+    if sorts.is_empty() {
+        return Ok(None);
+    }
+    let default_direction = if asc {
+        SortDirection::Ascending
+    } else {
+        SortDirection::Descending
+    };
+    let mut terms = Vec::new();
+    for token in sorts {
+        for part in token.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let (path_str, direction) =
+                if let Some(stripped) = part.strip_prefix('+') {
+                    (stripped, SortDirection::Ascending)
+                } else if let Some(stripped) = part.strip_prefix('-') {
+                    (stripped, SortDirection::Descending)
+                } else {
+                    (part, default_direction)
+                };
+            let path = FieldPath::parse(path_str).map_err(|error| {
+                query_error(
+                    root,
+                    crate::query::QueryBuilderError::from(error).into(),
+                )
+            })?;
+            terms.push(SortTerm::new(path, direction));
+        }
+    }
+    if terms.is_empty() {
+        return Ok(None);
+    }
+    let order = SortOrder::new(terms)
+        .map_err(|error| query_error(root, error.into()))?;
+    Ok(Some(order))
+}
+
 fn refresh_page_query(
     config: &Config,
     from: Option<&str>,
     filters: &[String],
-    sort: Option<&str>,
-    descending: bool,
+    order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
     let index = Arc::new(
@@ -273,10 +328,8 @@ fn refresh_page_query(
             .filter(expr)
             .map_err(|error| query_error(root, error.into()))?;
     }
-    if let Some(path) = sort {
-        builder = builder
-            .sort(path, descending)
-            .map_err(|error| query_error(root, error.into()))?;
+    if let Some(order) = order {
+        builder = builder.order(order);
     }
     run_query_builder(config, &index, builder, has_classes)
 }
@@ -965,7 +1018,6 @@ mod tests {
 
             let list_outcome = Cli::try_parse_from([
                 "traces", "list", "--from", "#book", "--sort", "rating",
-                "--order", "desc",
             ])
             .expect("parse list argv")
             .run(&service, Arc::new(PresetDialogProvider::new()))

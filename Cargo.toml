@@ -67,7 +67,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4.6.7"
 comfy-table = { version = "7.2.2", default-features = false }
 convert_case = "0.11.0"
-indexmap = { version = "2.14", features = ["serde"] }
+indexmap = { version = "2.14", features = ["rayon", "serde"] }
 inquire = "0.9"
 logos = "0.16"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
@@ -81,6 +81,7 @@ postcard = {
   ]
 }
 pulldown-cmark = "0.13"
+rayon = "1.12.0"
 redb = "4.2"
 regex = "1.13.1"
 serde = { version = "1.0.228", features = ["derive"] }

@@ -60,7 +60,7 @@ mod metadata;
 mod model;
 mod parser;
 
-pub use field::NoteFieldValue;
+pub use field::{NoteFieldValue, duration_seconds};
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
     List, ListItem, ListItemType, ListText, TaskDates, TaskIter, TaskListItem,

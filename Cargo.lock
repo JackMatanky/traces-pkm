@@ -716,6 +716,7 @@ checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "rayon",
  "serde",
  "serde_core",
 ]
@@ -1642,6 +1643,7 @@ dependencies = [
  "postcard",
  "pretty_assertions",
  "pulldown-cmark",
+ "rayon",
  "redb",
  "regex",
  "rstest",

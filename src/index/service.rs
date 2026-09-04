@@ -120,6 +120,7 @@ impl IndexerService {
         let index = {
             let read_txn = store.begin_read()?;
             let cache = cache::RefreshCache::load(&store, &read_txn)?;
+            drop(read_txn);
             let files = self.scan()?;
             builder::IndexBuilder::new(files)
                 .with_cache(cache)
@@ -182,12 +183,10 @@ impl IndexerService {
     pub(super) fn scan(&self) -> Result<Vec<FileBase>, IndexBuilderError> {
         let index_db = self.root.join(INDEX_FILE);
         let mut files = Vec::new();
-        let nodes = DirTree::descendants(&self.root)
-            .filter(|node| {
-                node.file_name() != ".traces"
-                    && crate::env_vars::is_ignored_dir(node.file_name())
-            })
-            .sorted_by(|a, b| a.file_name().cmp(b.file_name()));
+        let nodes = DirTree::descendants(&self.root).filter(|node| {
+            node.file_name() != ".traces"
+                && crate::env_vars::is_ignored_dir(node.file_name())
+        });
         for node in nodes {
             let node = node.map_err(scan_error)?;
             let path = node.path();
@@ -204,6 +203,7 @@ impl IndexerService {
                 )?,
             );
         }
+        files.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
@@ -240,6 +240,93 @@ mod tests {
     ) -> QuerySet {
         QueryService::new("class")
             .run(index, QueryBuilder::pages(source.clone()))
+    }
+
+    #[test]
+    fn preserves_path_sorted_order_for_hyphenated_sibling_folders() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).expect("mkdir notes");
+        fs::write(notes_dir.join("note.md"), "# Note\n")
+            .expect("write note.md");
+        fs::write(temp.path().join("notes-x.md"), "# Sibling\n")
+            .expect("write notes-x.md");
+
+        let index =
+            IndexerService::new(temp.path()).build().expect("build index");
+        let paths: Vec<_> = index
+            .entries()
+            .iter()
+            .map(|e| e.file().path().to_str().unwrap())
+            .collect();
+        assert_eq!(paths, ["notes/note.md", "notes-x.md"]);
+    }
+
+    #[test]
+    fn produces_identical_index_through_parallel_and_serial_rebuilds() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        fs::write(
+            temp.path().join("a.md"),
+            "---\ntag: test\n---\n# Note A\n[[b]]",
+        )
+        .expect("write a");
+        fs::write(
+            temp.path().join("b.md"),
+            "---\ntag: test\n---\n# Note B\n[[c]]",
+        )
+        .expect("write b");
+        fs::write(temp.path().join("c.md"), "# Note C\n").expect("write c");
+
+        let service = IndexerService::new(temp.path());
+        let fresh = service.build().expect("build");
+        service.persist(&fresh).expect("persist");
+        let loaded = service.load().expect("load");
+
+        assert_eq!(fresh.entries().len(), loaded.entries().len());
+        for (f, l) in fresh.entries().iter().zip(loaded.entries()) {
+            assert_eq!(f.file().path(), l.file().path());
+            assert_eq!(f.file().size(), l.file().size());
+            assert_eq!(f.inlinks(), l.inlinks());
+            assert_eq!(
+                f.note().map(Note::outlinks),
+                l.note().map(Note::outlinks)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_deterministic_first_error_on_parallel_parse_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let a_dir = temp.path().join("a");
+        let z_dir = temp.path().join("z");
+        fs::create_dir_all(&a_dir).expect("mkdir a");
+        fs::create_dir_all(&z_dir).expect("mkdir z");
+        let bad_a = a_dir.join("bad.md");
+        let bad_z = z_dir.join("bad.md");
+        fs::write(&bad_a, "# Bad A\n").expect("write bad_a");
+        fs::write(&bad_z, "# Bad Z\n").expect("write bad_z");
+        fs::set_permissions(&bad_a, fs::Permissions::from_mode(0o000))
+            .expect("chmod bad_a");
+        fs::set_permissions(&bad_z, fs::Permissions::from_mode(0o000))
+            .expect("chmod bad_z");
+
+        let result = IndexerService::new(temp.path()).build();
+        let err = result.expect_err("must fail on unreadable file");
+        let IndexError::Builder(IndexBuilderError::NoteParse {
+            path,
+            ..
+        }) = err
+        else {
+            return;
+        };
+        assert_eq!(path, bad_a);
+
+        fs::set_permissions(&bad_a, fs::Permissions::from_mode(0o600))
+            .expect("restore bad_a");
+        fs::set_permissions(&bad_z, fs::Permissions::from_mode(0o600))
+            .expect("restore bad_z");
     }
 
     /// Finds a [`Note`] by project-relative path in `index`.

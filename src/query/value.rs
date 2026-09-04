@@ -5,9 +5,9 @@ use std::{cmp::Ordering, fmt::Write as _, path::PathBuf};
 use super::sort::compare_field_values;
 use crate::{
     Tag,
+    file::Timestamp,
     note::{Link, NoteFieldValue},
 };
-
 /// Borrowed field value resolved from a [`super::QueryRow`].
 pub(super) enum QueryFieldValueRef<'a> {
     Null,
@@ -17,6 +17,7 @@ pub(super) enum QueryFieldValueRef<'a> {
     Link(&'a Link),
     Date(&'a str),
     Duration(&'a str),
+    Timestamp(Timestamp),
     Object(&'a indexmap::IndexMap<String, NoteFieldValue>),
     List(QueryListValueRef<'a>),
     Owned(NoteFieldValue),
@@ -33,6 +34,14 @@ impl QueryFieldValueRef<'_> {
             Self::Date(value) => NoteFieldValue::Date((*value).to_owned()),
             Self::Duration(value) => {
                 NoteFieldValue::Duration((*value).to_owned())
+            }
+            Self::Timestamp(ts) => {
+                let formatted = if ts.has_time_component() {
+                    ts.to_datetime_string()
+                } else {
+                    ts.to_date_string()
+                };
+                NoteFieldValue::Date(formatted)
             }
             Self::Object(value) => NoteFieldValue::Object((*value).clone()),
             Self::List(value) => value.to_owned_value(),
@@ -53,6 +62,13 @@ impl QueryFieldValueRef<'_> {
             }
             Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
                 out.push_str(value);
+            }
+            Self::Timestamp(ts) => {
+                if ts.has_time_component() {
+                    out.push_str(&ts.to_datetime_string());
+                } else {
+                    out.push_str(&ts.to_date_string());
+                }
             }
             Self::Link(link) => out.push_str(link.target()),
             Self::Object(fields) => {
@@ -92,6 +108,13 @@ impl QueryFieldValueRef<'_> {
 
     /// Compares this resolved field against an owned literal to establish
     /// ordering for `<`, `<=`, `>`, `>=` filter comparisons.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "comparator symmetry with is_equal_to_literal"
+        )
+    )]
     pub(super) fn compare_to_literal(
         &self,
         literal: &NoteFieldValue,
@@ -99,9 +122,24 @@ impl QueryFieldValueRef<'_> {
         match (self, literal) {
             (Self::Number(x), NoteFieldValue::Number(y)) => x.partial_cmp(y),
             (Self::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
-            (Self::Date(x), NoteFieldValue::Date(y))
-            | (Self::Duration(x), NoteFieldValue::Duration(y)) => {
-                Some(x.cmp(&y.as_str()))
+            (Self::Timestamp(ts), NoteFieldValue::Date(lit_s)) => {
+                let lit_ts = Timestamp::parse_iso(lit_s)?;
+                Some(ts.cmp(&lit_ts))
+            }
+            (Self::Date(x), NoteFieldValue::Date(y)) => {
+                match (Timestamp::parse_iso(x), Timestamp::parse_iso(y)) {
+                    (Some(tx), Some(ty)) => Some(tx.cmp(&ty)),
+                    _ => Some(x.cmp(&y.as_str())),
+                }
+            }
+            (Self::Duration(x), NoteFieldValue::Duration(y)) => {
+                match (
+                    crate::note::duration_seconds(x),
+                    crate::note::duration_seconds(y),
+                ) {
+                    (Some(sx), Some(sy)) => sx.partial_cmp(&sy),
+                    _ => Some(x.cmp(&y.as_str())),
+                }
             }
             (Self::Object(_), NoteFieldValue::Object(_)) => None,
             (Self::Owned(value), literal) => {
@@ -134,8 +172,39 @@ impl QueryFieldValueRef<'_> {
             Self::Link(value) => {
                 matches!(literal, NoteFieldValue::Link(other) if *value == other)
             }
-            Self::Date(value) | Self::Duration(value) => {
-                literal.as_str() == Some(value)
+            Self::Timestamp(ts) => {
+                if let NoteFieldValue::Date(lit_s) = literal
+                    && let Some(lit_ts) = Timestamp::parse_iso(lit_s)
+                {
+                    return ts == &lit_ts;
+                }
+                false
+            }
+            Self::Date(value) => {
+                if let NoteFieldValue::Date(other) = literal {
+                    match (
+                        Timestamp::parse_iso(value),
+                        Timestamp::parse_iso(other),
+                    ) {
+                        (Some(tx), Some(ty)) => tx == ty,
+                        _ => *value == other,
+                    }
+                } else {
+                    false
+                }
+            }
+            Self::Duration(value) => {
+                if let NoteFieldValue::Duration(other) = literal {
+                    match (
+                        crate::note::duration_seconds(value),
+                        crate::note::duration_seconds(other),
+                    ) {
+                        (Some(sx), Some(sy)) => sx == sy,
+                        _ => *value == other,
+                    }
+                } else {
+                    false
+                }
             }
             Self::Object(value) => {
                 matches!(literal, NoteFieldValue::Object(other) if *value == other)

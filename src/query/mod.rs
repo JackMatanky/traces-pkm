@@ -101,7 +101,7 @@ pub(crate) use grammar::{
 use plan::{QueryPlan, QueryTransform};
 pub use results::{QueryRow, QuerySet};
 pub use service::QueryService;
-pub(crate) use sort::SortOrder;
+pub(crate) use sort::{SortDirection, SortOrder, SortTerm};
 
 #[cfg(test)]
 pub(super) mod test_support {

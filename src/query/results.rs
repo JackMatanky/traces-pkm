@@ -45,6 +45,7 @@ use super::{
     QueryPlan, QueryResult, QueryTransform,
     format::{QueryDisplayFormat, TaskPathStyle},
     grammar::{FieldPath, FileField, TaskField},
+    sort::{SortDirection, SortOrder},
     value::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::{
@@ -254,21 +255,17 @@ impl QueryRow {
             )]
             FileField::Size => QueryFieldValueRef::Number(file.size() as f64),
             FileField::CreatedDateTime => {
-                QueryFieldValueRef::Owned(NoteFieldValue::Date(
-                    file.created_at_or_modified().to_datetime_string(),
-                ))
+                QueryFieldValueRef::Timestamp(file.created_at_or_modified())
             }
-            FileField::CreatedDate => {
-                QueryFieldValueRef::Owned(NoteFieldValue::Date(
-                    file.created_at_or_modified().to_date_string(),
-                ))
+            FileField::CreatedDate => QueryFieldValueRef::Timestamp(
+                file.created_at_or_modified().start_of_day(),
+            ),
+            FileField::ModifiedDateTime => {
+                QueryFieldValueRef::Timestamp(file.modified_at())
             }
-            FileField::ModifiedDateTime => QueryFieldValueRef::Owned(
-                NoteFieldValue::Date(file.modified_at().to_datetime_string()),
-            ),
-            FileField::ModifiedDate => QueryFieldValueRef::Owned(
-                NoteFieldValue::Date(file.modified_at().to_date_string()),
-            ),
+            FileField::ModifiedDate => {
+                QueryFieldValueRef::Timestamp(file.modified_at().start_of_day())
+            }
         }
     }
 
@@ -448,12 +445,52 @@ impl QuerySet {
     ///
     /// [`Builder`]: super::QueryError::Builder
     #[inline]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "public query building method; exercised in tests and \
+                      test-utils"
+        )
+    )]
     pub(crate) fn sort(
         self,
         path: &str,
         descending: bool,
     ) -> QueryResult<Self> {
         Ok(self.push(QueryTransform::sort(path, descending)?))
+    }
+
+    /// Sorts rows by the field at `path` using [`SortDirection`].
+    ///
+    /// # Errors
+    ///
+    /// - [`Builder`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`Builder`]: super::QueryError::Builder
+    #[inline]
+    pub(crate) fn sort_field(
+        self,
+        path: &str,
+        direction: SortDirection,
+    ) -> QueryResult<Self> {
+        let field = FieldPath::parse(path)?;
+        let order = SortOrder::single(field, direction);
+        Ok(self.push(QueryTransform::order(order)))
+    }
+
+    /// Appends a composite sort order transform to this query set.
+    #[inline]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "public query building method; exercised in tests and \
+                      test-utils"
+        )
+    )]
+    pub(crate) fn order(self, order: SortOrder) -> Self {
+        self.push(QueryTransform::order(order))
     }
 
     /// Retains at most `n` leading rows from the result set.

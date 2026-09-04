@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use super::{
     FileFormat,
     cache::{NoteCacheState, RefreshCache},
@@ -42,17 +44,17 @@ use crate::{
 /// [`RefreshCache`]: super::cache::RefreshCache
 /// [`IndexDelta::Full`]: super::delta::IndexDelta::Full
 /// [`IndexDelta::Incremental`]: super::delta::IndexDelta::Incremental
-pub(crate) struct IndexBuilder<'a> {
+pub(crate) struct IndexBuilder {
     files: Vec<FileBase>,
     /// `None` = fresh build (parse all notes).
     /// `Some(cache)` = refresh (reuse `cache`'s previously-persisted state
     /// for unchanged records, parse only changed ones).
-    cache: Option<Box<RefreshCache<'a>>>,
+    cache: Option<Box<RefreshCache>>,
     tasks: TaskConfig,
     frontmatter: FrontmatterConfig,
 }
 
-impl<'a> IndexBuilder<'a> {
+impl IndexBuilder {
     /// Wraps an already-scanned, path-sorted set of records. Parsing is
     /// deferred to [`Self::build`].
     pub(super) fn new(files: Vec<FileBase>) -> Self {
@@ -87,7 +89,7 @@ impl<'a> IndexBuilder<'a> {
     /// reuse of unchanged Notes without loading every persisted Note upfront.
     ///
     /// [`RefreshCache::load`]: super::cache::RefreshCache::load
-    pub(super) fn with_cache(mut self, cache: RefreshCache<'a>) -> Self {
+    pub(super) fn with_cache(mut self, cache: RefreshCache) -> Self {
         self.cache = Some(Box::new(cache));
         self
     }
@@ -133,13 +135,25 @@ impl<'a> IndexBuilder<'a> {
         tasks: &TaskConfig,
         frontmatter: &FrontmatterConfig,
     ) -> Result<super::FileIndex, IndexBuilderError> {
+        let results: Vec<Result<Option<crate::Note>, IndexBuilderError>> =
+            files
+                .par_iter()
+                .map(|file| {
+                    if file.format() == FileFormat::Note {
+                        Ok(Some(parse_note(root, file, tasks, frontmatter)?))
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .collect();
+
+        let mut parsed_notes = Vec::with_capacity(results.len());
+        for res in results {
+            parsed_notes.push(res?);
+        }
+
         let mut entries = Vec::with_capacity(files.len());
-        for file in files {
-            let note = if file.format() == FileFormat::Note {
-                Some(parse_note(root, &file, tasks, frontmatter)?)
-            } else {
-                None
-            };
+        for (file, note) in files.into_iter().zip(parsed_notes) {
             entries.push(entry::FileEntry::new(file, note));
         }
         debug_assert!(
@@ -163,7 +177,7 @@ impl<'a> IndexBuilder<'a> {
     fn build_with_cache(
         files: Vec<FileBase>,
         root: &Path,
-        cache: RefreshCache<'a>,
+        mut cache: RefreshCache,
         tasks: &TaskConfig,
         frontmatter: &FrontmatterConfig,
     ) -> Result<super::FileIndex, IndexBuilderError> {

@@ -13,7 +13,7 @@
 use super::{
     QueryBuilderError, QueryRow,
     grammar::{FieldPath, FilterExpr},
-    sort::SortKey,
+    sort::{SortDirection, SortKey, SortOrder, SortTerm},
 };
 use crate::note::NoteFieldValue;
 
@@ -62,7 +62,7 @@ impl QueryPlan {
     /// pre-fetch execution and by [`QuerySet`](super::QuerySet) during lazy
     /// materialization.
     pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
-        self.fuse_filters().fuse_sort_limit().apply(rows)
+        self.fuse_filters().fuse_sorts().fuse_sort_limit().apply(rows)
     }
 
     /// Returns `true` if this plan has no pending operations.
@@ -106,25 +106,52 @@ impl QueryPlan {
         self
     }
 
+    /// Merges every run of consecutive `Sort` steps into one composite
+    /// `SortOrder` step. Preserves the position and relative order of every
+    /// other step.
+    #[must_use]
+    fn fuse_sorts(mut self) -> Self {
+        let mut fused = Vec::with_capacity(self.ops.len());
+        let mut items = self.ops.into_iter().peekable();
+        while let Some(item) = items.next() {
+            if let QueryTransform::Sort {
+                mut order,
+            } = item
+            {
+                while let Some(QueryTransform::Sort {
+                    order: next,
+                }) =
+                    items.next_if(|s| matches!(s, QueryTransform::Sort { .. }))
+                {
+                    order = order.concat(next);
+                }
+                fused.push(QueryTransform::Sort {
+                    order,
+                });
+            } else {
+                fused.push(item);
+            }
+        }
+        self.ops = fused;
+        self
+    }
+
     /// Rewrites every `Sort` step immediately followed by a `Limit(n)` step
-    /// into one `TopK` step, trading a full `sort_by_cached_key` (`O(n log n)`)
-    /// for `select_nth_unstable_by` (`O(n)`). Preserves the position and
-    /// relative order of every other step.
+    /// into one `TopK` step, trading a full sort for `select_nth_unstable_by`.
+    /// Preserves the position and relative order of every other step.
     #[must_use]
     fn fuse_sort_limit(mut self) -> Self {
         let mut fused = Vec::with_capacity(self.ops.len());
         let mut items = self.ops.into_iter().peekable();
         while let Some(item) = items.next() {
             if let QueryTransform::Sort {
-                field,
-                descending,
+                order,
             } = &item
                 && let Some(QueryTransform::Limit(n)) = items.peek()
             {
                 let n = *n;
                 fused.push(QueryTransform::TopK {
-                    field: field.clone(),
-                    descending: *descending,
+                    order: order.clone(),
                     n,
                 });
                 items.next();
@@ -147,8 +174,7 @@ impl QueryPlan {
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
     Sort {
-        field: FieldPath,
-        descending: bool,
+        order: SortOrder,
     },
     Limit(usize),
     GroupBy(FieldPath),
@@ -156,8 +182,7 @@ pub(super) enum QueryTransform {
     /// Sort-then-limit fused by [`QueryPlan`]'s optimizer. Never constructed
     /// directly by the parse constructors below.
     TopK {
-        field: FieldPath,
-        descending: bool,
+        order: SortOrder,
         n: usize,
     },
 }
@@ -184,10 +209,20 @@ impl QueryTransform {
         field: &str,
         descending: bool,
     ) -> Result<Self, QueryBuilderError> {
+        let direction = if descending {
+            SortDirection::Descending
+        } else {
+            SortDirection::Ascending
+        };
         Ok(Self::Sort {
-            field: FieldPath::parse(field)?,
-            descending,
+            order: SortOrder::single(FieldPath::parse(field)?, direction),
         })
+    }
+
+    pub(super) fn order(order: SortOrder) -> Self {
+        Self::Sort {
+            order,
+        }
     }
 
     /// Parses `n` into a [`QueryTransform::Limit`] step.
@@ -238,14 +273,10 @@ impl QueryTransform {
                 rows
             }
             Self::Sort {
-                field,
-                descending,
+                order,
             } => {
                 let mut rows = rows;
-                rows.sort_by_cached_key(|row| SortKey {
-                    value: row.resolve_owned(field),
-                    descending: *descending,
-                });
+                order.sort_rows(&mut rows);
                 rows
             }
             Self::Limit(n) => {
@@ -255,10 +286,9 @@ impl QueryTransform {
             }
             Self::GroupBy(field) => {
                 let mut rows = rows;
-                rows.sort_by_cached_key(|row| SortKey {
-                    value: row.resolve_owned(field),
-                    descending: false,
-                });
+                let order =
+                    SortOrder::single(field.clone(), SortDirection::Ascending);
+                order.sort_rows(&mut rows);
                 rows
             }
             Self::Flatten(field_path) => {
@@ -281,47 +311,77 @@ impl QueryTransform {
                 out
             }
             Self::TopK {
-                field,
-                descending,
+                order,
                 n,
             } => {
                 let n = *n;
-                // `(SortKey, original index)` breaks ties by input position,
-                // matching `sort_by_cached_key`'s stability guarantee (used by
-                // the unfused `Sort` arm above). Without the index,
-                // `select_nth_unstable_by`/`sort_unstable_by` are free to
-                // reorder or reselect among tied keys arbitrarily (a real
-                // behavior difference from the unfused path whenever the sort
-                // field has duplicate values near the selection boundary, such
-                // as a low-cardinality field like `status`).
-                let mut keyed: Vec<(SortKey, usize, QueryRow)> = rows
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, row)| {
-                        let key = SortKey {
-                            value: row.resolve_owned(field),
-                            descending: *descending,
-                        };
-                        (key, index, row)
-                    })
-                    .collect();
-                let cmp =
-                    |a: &(SortKey, usize, QueryRow),
-                     b: &(SortKey, usize, QueryRow)| {
-                        a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1))
-                    };
-                if n < keyed.len() {
-                    let k = n.saturating_sub(1);
-                    keyed.select_nth_unstable_by(k, cmp);
-                    keyed.truncate(n);
+                if n == 0 || rows.is_empty() {
+                    return Vec::new();
                 }
-                keyed.sort_unstable_by(cmp);
-                keyed.into_iter().map(|(.., row)| row).collect()
+                if n >= rows.len() {
+                    let mut rows = rows;
+                    order.sort_rows(&mut rows);
+                    return rows;
+                }
+                let keys = order.keys_for(&rows);
+                let mut indexed: Vec<(u32, u32)> =
+                    (0..rows.len() as u32).map(|idx| (idx, idx)).collect();
+                let terms = order.terms();
+
+                let cmp =
+                    |&(a_idx, a_input): &(u32, u32),
+                     &(b_idx, b_input): &(u32, u32)| {
+                        let ord = compare_composite_keys(
+                            keys.get(a_idx as usize),
+                            keys.get(b_idx as usize),
+                            terms,
+                        );
+                        ord.then_with(|| a_input.cmp(&b_input))
+                    };
+
+                let k = n.saturating_sub(1);
+                indexed.select_nth_unstable_by(k, cmp);
+                indexed.truncate(n);
+                indexed.sort_unstable_by(cmp);
+
+                let mut opt_rows: Vec<Option<QueryRow>> =
+                    rows.into_iter().map(Some).collect();
+                let mut out = Vec::with_capacity(n);
+                for (row_idx, _) in indexed {
+                    if let Some(row) = opt_rows
+                        .get_mut(row_idx as usize)
+                        .and_then(Option::take)
+                    {
+                        out.push(row);
+                    }
+                }
+                out
             }
         }
     }
 }
 
+/// Compares two strided key slices across a composite sort order.
+fn compare_composite_keys(
+    a_keys: &[SortKey],
+    b_keys: &[SortKey],
+    terms: &[SortTerm],
+) -> std::cmp::Ordering {
+    for (i, term) in terms.iter().enumerate() {
+        let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i)) else {
+            continue;
+        };
+        let ord = a_k.total_cmp(b_k);
+        let ord = match term.direction() {
+            SortDirection::Ascending => ord,
+            SortDirection::Descending => ord.reverse(),
+        };
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +394,61 @@ mod tests {
             let plan = QueryPlan::default();
             assert!(plan.is_empty());
         }
+
+        #[test]
+        fn fuse_sorts_merges_consecutive_sort_operations_into_composite_order()
+        {
+            let mut plan = QueryPlan::default();
+            plan.push(QueryTransform::sort("file.folder", false).unwrap());
+            plan.push(QueryTransform::sort("file.mtime", true).unwrap());
+
+            let fused = plan.fuse_sorts();
+            assert_eq!(fused.ops.len(), 1);
+            let QueryTransform::Sort {
+                order,
+            } = fused.ops.first().expect("expected Sort operation")
+            else {
+                return;
+            };
+            assert_eq!(order.len(), 2);
+            assert_eq!(
+                order.terms().first().map(SortTerm::direction),
+                Some(SortDirection::Ascending)
+            );
+            assert_eq!(
+                order.terms().get(1).map(SortTerm::direction),
+                Some(SortDirection::Descending)
+            );
+        }
+
+        #[test]
+        fn fuse_sort_limit_rewrites_fused_sorts_and_limit_into_composite_topk()
+        {
+            let mut plan = QueryPlan::default();
+            plan.push(QueryTransform::sort("author", false).unwrap());
+            plan.push(QueryTransform::sort("rating", true).unwrap());
+            plan.push(QueryTransform::limit(5).unwrap());
+
+            let fused = plan.fuse_sorts().fuse_sort_limit();
+            assert_eq!(fused.ops.len(), 1);
+            let QueryTransform::TopK {
+                order,
+                n,
+            } = fused.ops.first().expect("expected TopK operation")
+            else {
+                return;
+            };
+            assert_eq!(*n, 5);
+            assert_eq!(order.len(), 2);
+            assert_eq!(
+                order.terms().first().map(SortTerm::direction),
+                Some(SortDirection::Ascending)
+            );
+            assert_eq!(
+                order.terms().get(1).map(SortTerm::direction),
+                Some(SortDirection::Descending)
+            );
+        }
     }
 
     mod execution {
@@ -345,6 +460,59 @@ mod tests {
             let plan = QueryPlan::default();
             let rows = vec![];
             assert_eq!(plan.run(rows), vec![]);
+        }
+
+        #[test]
+        fn chained_sort_matches_single_composite_sort() {
+            use std::fs;
+
+            use crate::{
+                IndexerService, QueryService,
+                query::{QueryBuilder, SourceSelector, sort::SortTerm},
+            };
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            for i in 0..500 {
+                let folder = format!("folder-{}", i % 5);
+                let dir = temp.path().join(&folder);
+                fs::create_dir_all(&dir).expect("mkdir");
+                let note_path = dir.join(format!("note-{i:03}.md"));
+                let rating = (i * 37) % 20;
+                fs::write(&note_path, format!("---\nrating: {rating}\n---\n"))
+                    .expect("write note");
+            }
+
+            let index = std::sync::Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let rows1 = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("file.folder", false)
+                .expect("valid sort")
+                .sort("rating", true)
+                .expect("valid sort");
+
+            let composite = SortOrder::new(vec![
+                SortTerm::new(
+                    FieldPath::parse("file.folder").unwrap(),
+                    SortDirection::Ascending,
+                ),
+                SortTerm::new(
+                    FieldPath::parse("rating").unwrap(),
+                    SortDirection::Descending,
+                ),
+            ])
+            .unwrap();
+
+            let rows2 = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .order(composite);
+
+            let paths1: Vec<_> =
+                rows1.iter().map(|r| r.file().path().to_path_buf()).collect();
+            let paths2: Vec<_> =
+                rows2.iter().map(|r| r.file().path().to_path_buf()).collect();
+            assert_eq!(paths1, paths2);
         }
     }
 }
