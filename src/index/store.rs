@@ -60,7 +60,8 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 /// Stores [`ListRecord`]s for every list item in every Markdown file.
 ///
 /// Key: project-relative path as UTF-8 bytes concatenated with 4-byte
-/// big-endian [`SourceLine`] Value: serialized [`ListRecord`]
+/// big-endian [`SourceLine`]
+/// Value: serialized [`ListRecord`]
 const LISTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("lists");
 
 /// Borrowed mirror of [`ListRecord`] used only to serialize a `LISTS` row
