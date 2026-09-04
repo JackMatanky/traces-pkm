@@ -26,7 +26,8 @@
 //!   child lists.
 //! - [`ListText`], [`TaskDates`], [`TaskPriority`]: Normalized list text,
 //!   extracted task dates, and priority levels.
-//! - [`ListItemIter`]: Depth-first list iterators across list trees.
+//! - [`ListItemIter`]: Depth-first list iterator across list trees, optionally
+//!   filtered to task items.
 //! - [`ListRecord`]: A persisted record of a list item and its source note
 //!   path.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: Outgoing links from Markdown

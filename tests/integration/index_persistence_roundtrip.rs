@@ -8,8 +8,8 @@ use std::fs;
 use chrono::NaiveDate;
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    IndexerService, ListItemType, MarkdownParserInput, SourceLine,
-    TaskPriority, TaskStatusType, parse_markdown,
+    Config, IndexerService, ListItem, ListItemType, SourceLine, Tag,
+    TaskConfig, TaskPriority, TaskStatusType,
 };
 
 /// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
@@ -42,21 +42,39 @@ fn persist_then_load_recovers_the_same_file_count_and_paths() {
     ]);
 }
 
-/// Proves `Note.list_items()` returns all item kinds (Plain, Checkbox, Task)
-/// while `Note.tasks()` returns only Task items.
+/// Proves `Note.list_items()` returns every item kind (Plain, Checkbox,
+/// Task) in document order, while `Note.tasks()` returns only Task items.
+///
+/// Configures a `#task` tag filter so a status-marked item without the tag
+/// classifies as a `Checkbox`, not a `Task` — otherwise every status-marked
+/// item defaults to `Task` and this test could never observe the `Checkbox`
+/// variant.
 #[test]
 fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let markdown = "\
-- [ ] Root task 📅 2025-06-01
-  - [x] Child completed task
+- [ ] Root task #task 📅 2025-06-01
+  - [x] Child completed task #task
 - [ ] Non-task checkbox
 - Plain bullet point
 ";
-    let input = MarkdownParserInput::for_test(
-        std::path::Path::new("todo.md"),
-        markdown,
-    );
-    let note = parse_markdown(&input);
+    fs::write(root.join("todo.md"), markdown).expect("write todo.md");
+
+    let tag_filters = vec![Tag::parse("#task").expect("valid tag")];
+    let tasks_config = TaskConfig::for_test(tag_filters);
+    let config =
+        Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+            .with_tasks(tasks_config);
+    let index = IndexerService::new(root)
+        .with_config(&config)
+        .build()
+        .expect("build index");
+    let note = index
+        .entries()
+        .iter()
+        .find_map(traces_pkm::FileEntry::note)
+        .expect("indexed note");
 
     let all_items: Vec<_> = note.list_items().collect();
     assert_eq!(all_items.len(), 4);
@@ -68,11 +86,17 @@ fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
         all_items.get(1).expect("item 1").kind(),
         ListItemType::Task(_)
     ));
-    // Note: without tag filter config, non-task checkbox markers become Tasks
-    // or Checkboxes depending on classification. Here [ ] is a default Todo
-    // task. Let's verify all kinds are yielded in depth-first order:
+    assert!(matches!(
+        all_items.get(2).expect("item 2").kind(),
+        ListItemType::Checkbox
+    ));
+    assert!(matches!(
+        all_items.get(3).expect("item 3").kind(),
+        ListItemType::Plain
+    ));
+
     let clean_texts: Vec<&str> =
-        note.list_items().map(traces_pkm::ListItem::clean_text).collect();
+        note.list_items().map(ListItem::clean_text).collect();
     assert_eq!(clean_texts, [
         "Root task",
         "Child completed task",
@@ -81,13 +105,8 @@ fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
     ]);
 
     let task_texts: Vec<&str> =
-        note.tasks().map(traces_pkm::ListItem::clean_text).collect();
-    // Plain bullet is excluded from tasks
-    assert_eq!(task_texts, [
-        "Root task",
-        "Child completed task",
-        "Non-task checkbox"
-    ]);
+        note.tasks().map(ListItem::clean_text).collect();
+    assert_eq!(task_texts, ["Root task", "Child completed task"]);
 }
 
 /// Proves a note with tasks persists correct `ListRecord`s in the `LISTS`
@@ -110,47 +129,41 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
     let list_records = indexer.read_lists().expect("read lists table");
     assert_eq!(list_records.len(), 4);
 
-    // Record 0: Root task
-    let rec0 = list_records.first().expect("root task record");
-    assert_eq!(rec0.path(), "tasks.md");
-    assert_eq!(rec0.clean_text(), "Root task");
-    assert_eq!(rec0.status_type(), Some(TaskStatusType::Todo));
-    assert_eq!(rec0.due_date(), NaiveDate::from_ymd_opt(2025, 6, 1));
-    assert_eq!(rec0.priority(), Some(TaskPriority::Highest));
-    assert_eq!(rec0.is_fully_complete(), Some(false));
-    assert_eq!(rec0.line(), SourceLine::new(1));
-    assert_eq!(rec0.depth(), 0);
-    assert_eq!(rec0.parent_line(), None);
+    // (index, clean_text, status_type, depth, line, parent_line)
+    let expected = [
+        (0, "Root task", Some(TaskStatusType::Todo), 0, 1, None),
+        (1, "Subtask", Some(TaskStatusType::Todo), 1, 2, Some(1)),
+        (2, "Grandchild completed", Some(TaskStatusType::Done), 2, 3, Some(2)),
+        (3, "Plain bullet", None, 0, 4, None),
+    ];
+    for (index, clean_text, status_type, depth, line, parent_line) in expected {
+        let record = list_records.get(index).expect("record in bounds");
+        assert_eq!(record.path(), "tasks.md", "record {index} path");
+        assert_eq!(record.clean_text(), clean_text, "record {index} text");
+        assert_eq!(
+            record.status_type(),
+            status_type,
+            "record {index} status_type"
+        );
+        assert_eq!(record.depth(), depth, "record {index} depth");
+        assert_eq!(record.line(), SourceLine::new(line), "record {index} line");
+        assert_eq!(
+            record.parent_line(),
+            parent_line.map(SourceLine::new),
+            "record {index} parent_line"
+        );
+    }
 
-    // Record 1: Subtask
-    let rec1 = list_records.get(1).expect("subtask record");
-    assert_eq!(rec1.path(), "tasks.md");
-    assert_eq!(rec1.clean_text(), "Subtask");
-    assert_eq!(rec1.status_type(), Some(TaskStatusType::Todo));
-    assert_eq!(rec1.depth(), 1);
-    assert_eq!(rec1.line(), SourceLine::new(2));
-    assert_eq!(rec1.parent_line(), Some(SourceLine::new(1)));
+    // Task-only fields: present on the root task, absent on the plain bullet.
+    let root = list_records.first().expect("root task record");
+    assert_eq!(root.due_date(), NaiveDate::from_ymd_opt(2025, 6, 1));
+    assert_eq!(root.priority(), Some(TaskPriority::Highest));
+    assert_eq!(root.is_fully_complete(), Some(false));
 
-    // Record 2: Grandchild completed
-    let rec2 = list_records.get(2).expect("grandchild record");
-    assert_eq!(rec2.path(), "tasks.md");
-    assert_eq!(rec2.clean_text(), "Grandchild completed");
-    assert_eq!(rec2.status_type(), Some(TaskStatusType::Done));
-    assert_eq!(rec2.depth(), 2);
-    assert_eq!(rec2.line(), SourceLine::new(3));
-    assert_eq!(rec2.parent_line(), Some(SourceLine::new(2)));
-
-    // Record 3: Plain bullet
-    let rec3 = list_records.get(3).expect("plain bullet record");
-    assert_eq!(rec3.path(), "tasks.md");
-    assert_eq!(rec3.clean_text(), "Plain bullet");
-    assert_eq!(rec3.status_type(), None);
-    assert_eq!(rec3.priority(), None);
-    assert_eq!(rec3.due_date(), None);
-    assert_eq!(rec3.is_fully_complete(), None);
-    assert_eq!(rec3.depth(), 0);
-    assert_eq!(rec3.line(), SourceLine::new(4));
-    assert_eq!(rec3.parent_line(), None);
+    let plain = list_records.get(3).expect("plain bullet record");
+    assert_eq!(plain.due_date(), None);
+    assert_eq!(plain.priority(), None);
+    assert_eq!(plain.is_fully_complete(), None);
 }
 
 /// Proves index persistence round-trip preserves all LISTS-derived fields

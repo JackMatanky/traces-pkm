@@ -22,7 +22,8 @@
 //! - [`ListText`]: Dual-representation text container maintaining both raw
 //!   source and clean display text.
 //! - [`ListItemIter`]: A depth-first iterator yielding all list items across
-//!   top-level and nested child lists in document order.
+//!   top-level and nested child lists in document order, optionally filtered to
+//!   [`ListItemType::Task`] items.
 //!
 //! # Examples
 //!
@@ -1160,8 +1161,12 @@ impl PartialEq<ListText> for &str {
     }
 }
 
-/// A depth-first iterator yielding all list items across top-level and nested
-/// child lists in document order.
+/// A depth-first iterator over top-level and nested child lists in document
+/// order, yielding either every item ([`Note::list_items`]) or only items
+/// classified as [`ListItemType::Task`] ([`Note::tasks`]).
+///
+/// [`Note::list_items`]: super::Note::list_items
+/// [`Note::tasks`]: super::Note::tasks
 ///
 /// # Examples
 ///
@@ -1183,17 +1188,39 @@ impl PartialEq<ListText> for &str {
 #[derive(Clone, Debug)]
 pub struct ListItemIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
+    tasks_only: bool,
 }
 
 impl<'a> ListItemIter<'a> {
-    /// Starts depth-first iteration from top-level `lists`.
+    /// Starts depth-first iteration over every item in top-level `lists`.
     #[inline]
     #[must_use]
     pub(crate) fn new(lists: &'a [List]) -> Self {
+        Self::with_stack(lists, false)
+    }
+
+    /// Starts depth-first iteration over top-level `lists`, yielding only
+    /// items classified as [`ListItemType::Task`].
+    ///
+    /// Filters at yield time rather than traversal time: descending into a
+    /// non-task item's children is unaffected, so nested tasks under a plain
+    /// bullet or checkbox are still reached.
+    #[inline]
+    #[must_use]
+    pub(crate) fn tasks(lists: &'a [List]) -> Self {
+        Self::with_stack(lists, true)
+    }
+
+    /// Builds the shared traversal stack for [`Self::new`] and
+    /// [`Self::tasks`].
+    #[inline]
+    #[must_use]
+    fn with_stack(lists: &'a [List], tasks_only: bool) -> Self {
         let mut stack = Vec::with_capacity(lists.len());
         stack.extend(lists.iter().rev().map(|list| list.items().iter()));
         Self {
             stack,
+            tasks_only,
         }
     }
 }
@@ -1211,7 +1238,10 @@ impl<'a> Iterator for ListItemIter<'a> {
             self.stack.extend(
                 item.children().iter().rev().map(|list| list.items().iter()),
             );
-            return Some(item);
+            if !self.tasks_only || matches!(item.kind(), ListItemType::Task(_))
+            {
+                return Some(item);
+            }
         }
         None
     }
@@ -1229,6 +1259,7 @@ impl std::iter::FusedIterator for ListItemIter<'_> {}
 /// table in redb keyed by `(path, line)`.
 ///
 /// # Examples
+///
 /// ```rust
 /// # #[cfg(feature = "test-utils")]
 /// # {
@@ -1255,26 +1286,11 @@ impl ListRecord {
     /// `item`.
     #[inline]
     #[must_use]
-    pub fn new(path: impl Into<String>, item: ListItem) -> Self {
+    pub fn new<P: Into<String>>(path: P, item: ListItem) -> Self {
         Self {
             path: path.into(),
             item,
         }
-    }
-
-    /// Consumes the record, returning the inner [`ListItem`].
-    #[inline]
-    #[must_use]
-    pub fn into_item(self) -> ListItem {
-        self.item
-    }
-
-    /// Consumes the record, returning the project-relative path and
-    /// [`ListItem`].
-    #[inline]
-    #[must_use]
-    pub fn into_parts(self) -> (String, ListItem) {
-        (self.path, self.item)
     }
 
     /// Returns the project-relative path of the note containing this list item.
@@ -1621,6 +1637,27 @@ mod tests {
                 "grandchild plain",
                 "sibling item"
             ]);
+        }
+
+        #[test]
+        fn tasks_yields_only_task_items_depth_first_across_nested_lists() {
+            let subchild_task = ListItem::new("subchild task", done_task());
+            let child_checkbox = ListItem::with_children(
+                "child checkbox",
+                ListItemType::Checkbox,
+                vec![List::new(false, vec![subchild_task])],
+            );
+            let parent_task =
+                ListItem::with_children("parent task", todo_task(), vec![
+                    List::new(false, vec![child_checkbox]),
+                ]);
+            let plain = ListItem::new("plain item", ListItemType::Plain);
+            let lists = vec![List::new(false, vec![parent_task, plain])];
+
+            let iter = ListItemIter::tasks(&lists);
+            let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
+
+            assert_eq!(texts, ["parent task", "subchild task"]);
         }
 
         #[test]

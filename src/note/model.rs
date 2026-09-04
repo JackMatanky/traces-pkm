@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     field::NoteFieldValue,
     links::Link,
-    lists::{List, ListItem, ListItemIter, ListItemType},
+    lists::{List, ListItemIter},
     metadata::Frontmatter,
 };
 use crate::{FieldKey, FieldKeyRef, Tag};
@@ -339,9 +339,8 @@ impl Note {
     /// ```
     #[inline]
     #[must_use]
-    pub fn tasks(&self) -> impl Iterator<Item = &ListItem> {
-        self.list_items()
-            .filter(|item| matches!(item.kind(), ListItemType::Task(_)))
+    pub fn tasks(&self) -> ListItemIter<'_> {
+        ListItemIter::tasks(&self.lists)
     }
 }
 

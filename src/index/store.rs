@@ -1,7 +1,8 @@
-//! Redb persistence for [`FileBase`], [`Note`], and derived inlink records.
+//! Redb persistence for [`FileBase`], [`Note`], [`ListRecord`], and derived
+//! inlink records.
 //!
 //! [`IndexStore`] owns one redb connection and adapts it to the file-index
-//! schema (`FILES`, `NOTES`, `LINKS` tables). Callers use
+//! schema (`FILES`, `NOTES`, `LINKS`, `LISTS` tables). Callers use
 //! [`super::IndexerService`] methods instead of interacting with tables
 //! directly.
 
@@ -26,7 +27,7 @@ use super::{
     error::{DbError, DbResult, IndexResult},
     inlinks::InlinkMap,
 };
-use crate::{FileBase, ListRecord, Note, SourceLine};
+use crate::{FileBase, ListItem, ListRecord, Note, SourceLine};
 
 /// File metadata table.
 ///
@@ -62,15 +63,18 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 /// big-endian [`SourceLine`] Value: serialized [`ListRecord`]
 const LISTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("lists");
 
-/// Constructs the `LISTS` table key by concatenating `path`'s UTF-8 bytes
-/// and `line` as a 4-byte big-endian integer.
-#[inline]
-#[must_use]
-pub(super) fn list_key(path: &str, line: SourceLine) -> Vec<u8> {
-    let mut key = Vec::with_capacity(path.len().saturating_add(4));
-    key.extend_from_slice(path.as_bytes());
-    key.extend_from_slice(&line.get().to_be_bytes());
-    key
+/// Borrowed mirror of [`ListRecord`] used only to serialize a `LISTS` row
+/// without cloning the source [`Note`]'s path or [`ListItem`].
+///
+/// Field order and types match [`ListRecord`] exactly, so postcard's
+/// positional encoding is byte-for-byte identical between the two; writers
+/// use this borrowed view, [`IndexStore::read_lists`] and
+/// [`IndexStore::read_lists_for_path`] deserialize the bytes back as an
+/// owned [`ListRecord`].
+#[derive(Serialize)]
+struct ListRecordRef<'a> {
+    path: &'a str,
+    item: &'a ListItem,
 }
 
 /// Persisted snapshot of [`FileBase`]s, [`Note`]s (sorted by path), and
@@ -106,6 +110,39 @@ pub(super) struct IndexStore {
 }
 
 impl IndexStore {
+    /// Constructs a `LISTS` table key by concatenating `path`'s UTF-8 bytes
+    /// and `line` as a 4-byte big-endian integer.
+    #[inline]
+    #[must_use]
+    fn list_key(path: &str, line: SourceLine) -> Vec<u8> {
+        let mut key = Vec::with_capacity(path.len().saturating_add(4));
+        key.extend_from_slice(path.as_bytes());
+        key.extend_from_slice(&u32::from(line).to_be_bytes());
+        key
+    }
+
+    /// Returns the inclusive `(start, end)` `LISTS` key bounds spanning
+    /// every possible line for `path`.
+    #[inline]
+    #[must_use]
+    fn list_key_bounds(path: &str) -> (Vec<u8>, Vec<u8>) {
+        (
+            Self::list_key(path, SourceLine::new(0)),
+            Self::list_key(path, SourceLine::new(u32::MAX)),
+        )
+    }
+
+    /// True if `key_bytes` is a `LISTS` key belonging to `path` — the range
+    /// bounds from [`Self::list_key_bounds`] can also match a longer
+    /// sibling path, so callers must still check this per key.
+    #[inline]
+    #[must_use]
+    fn list_key_matches_path(key_bytes: &[u8], path: &str) -> bool {
+        let path_bytes = path.as_bytes();
+        key_bytes.len() == path_bytes.len().saturating_add(4)
+            && key_bytes.starts_with(path_bytes)
+    }
+
     /// Opens the index database under `root`, creating it if absent.
     ///
     /// Recovers by wipe-and-recreate if the existing file is corrupted or
@@ -167,12 +204,12 @@ impl IndexStore {
         }
     }
 
-    /// True if `FILES`/`NOTES`/`LINKS` show schema drift or per-table
-    /// structural corruption against this process's compiled-in table
-    /// definitions.
+    /// True if `FILES`/`NOTES`/`LINKS`/`LISTS` show schema drift or
+    /// per-table structural corruption against this process's compiled-in
+    /// table definitions.
     ///
     /// A fresh, still-tableless database (first-ever open) reports
-    /// `TableDoesNotExist` for all three, which is not a rebuild trigger.
+    /// `TableDoesNotExist` for all four, which is not a rebuild trigger.
     fn should_rebuild(db: &redb::Database, path: &Path) -> DbResult<bool> {
         let read_txn = db.begin_read().map_err(|source| DbError::Redb {
             path: path.to_path_buf(),
@@ -323,10 +360,7 @@ impl IndexStore {
             }
             Err(source) => return Err(self.raise_source_error(source)),
         };
-        let path_bytes = path.as_bytes();
-        let start = list_key(path, SourceLine::new(0));
-        let end = list_key(path, SourceLine::new(u32::MAX));
-        let expected_len = path_bytes.len().saturating_add(4);
+        let (start, end) = Self::list_key_bounds(path);
         let mut items = Vec::new();
         for entry in table
             .range(start.as_slice()..=end.as_slice())
@@ -335,8 +369,7 @@ impl IndexStore {
             let (key, value) =
                 entry.map_err(|source| self.raise_source_error(source))?;
             let k_bytes = key.value();
-            if k_bytes.len() == expected_len && k_bytes.starts_with(path_bytes)
-            {
+            if Self::list_key_matches_path(k_bytes, path) {
                 let path_obj = Path::new(path);
                 items.push(decode_row(path_obj, value.value())?);
             }
@@ -568,10 +601,7 @@ impl IndexStore {
         table: &mut redb::Table<'_, &[u8], &[u8]>,
         path: &str,
     ) -> IndexResult<()> {
-        let path_bytes = path.as_bytes();
-        let start = list_key(path, SourceLine::new(0));
-        let end = list_key(path, SourceLine::new(u32::MAX));
-        let expected_len = path_bytes.len().saturating_add(4);
+        let (start, end) = Self::list_key_bounds(path);
         let mut keys_to_remove = Vec::new();
         for entry in table
             .range(start.as_slice()..=end.as_slice())
@@ -580,8 +610,7 @@ impl IndexStore {
             let (k, _) =
                 entry.map_err(|source| self.raise_source_error(source))?;
             let k_bytes = k.value();
-            if k_bytes.len() == expected_len && k_bytes.starts_with(path_bytes)
-            {
+            if Self::list_key_matches_path(k_bytes, path) {
                 keys_to_remove.push(k_bytes.to_vec());
             }
         }
@@ -595,15 +624,25 @@ impl IndexStore {
     }
 
     /// Writes every list item from `note` into `LISTS`.
+    ///
+    /// Serializes each item through a borrowed [`ListRecordRef`] view rather
+    /// than an owned [`ListRecord`], avoiding a path-string and deep
+    /// [`ListItem`] clone per row: [`ListRecordRef`] and [`ListRecord`] have
+    /// identical field order and types, so postcard's positional encoding is
+    /// byte-for-byte identical and [`decode_row`] transparently reads either
+    /// back as an owned [`ListRecord`].
     fn write_lists_for_note(
         &self,
         table: &mut redb::Table<'_, &[u8], &[u8]>,
         note: &Note,
     ) -> IndexResult<()> {
-        let path_str = note.path().to_string_lossy().into_owned();
+        let path_str = note.path().to_string_lossy();
         for item in note.list_items() {
-            let key = list_key(&path_str, item.line());
-            let record = ListRecord::new(path_str.clone(), item.clone());
+            let key = Self::list_key(&path_str, item.line());
+            let record = ListRecordRef {
+                path: &path_str,
+                item,
+            };
             let bytes = encode_row(note.path(), &record)?;
             table
                 .insert(key.as_slice(), bytes.as_slice())
@@ -612,8 +651,8 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Atomically replaces every stored [`FileBase`], [`Note`], and derived
-    /// inlink edge.
+    /// Atomically replaces every stored [`FileBase`], [`Note`], [`ListRecord`],
+    /// and derived inlink edge.
     ///
     /// # Errors
     ///
@@ -713,8 +752,9 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Deletes `deleted` paths from `FILES`/`NOTES`, then upserts each
-    /// `upserted` path's current [`FileBase`] and [`Note`] (if present).
+    /// Deletes `deleted` paths from `FILES`/`NOTES`/`LISTS`, then upserts each
+    /// `upserted` path's current [`FileBase`], [`Note`] (if present), and
+    /// list items.
     fn upsert_files_and_notes(
         &self,
         write_txn: &WriteTransaction,
