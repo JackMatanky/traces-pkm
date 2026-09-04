@@ -60,8 +60,14 @@ fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
 
     let all_items: Vec<_> = note.list_items().collect();
     assert_eq!(all_items.len(), 4);
-    assert!(matches!(all_items[0].kind(), ListItemType::Task(_)));
-    assert!(matches!(all_items[1].kind(), ListItemType::Task(_)));
+    assert!(matches!(
+        all_items.first().expect("item 0").kind(),
+        ListItemType::Task(_)
+    ));
+    assert!(matches!(
+        all_items.get(1).expect("item 1").kind(),
+        ListItemType::Task(_)
+    ));
     // Note: without tag filter config, non-task checkbox markers become Tasks
     // or Checkboxes depending on classification. Here [ ] is a default Todo
     // task. Let's verify all kinds are yielded in depth-first order:
@@ -105,42 +111,46 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
     assert_eq!(list_records.len(), 4);
 
     // Record 0: Root task
-    assert_eq!(list_records[0].path(), "tasks.md");
-    assert_eq!(list_records[0].clean_text(), "Root task");
-    assert_eq!(list_records[0].status_type(), Some(TaskStatusType::Todo));
-    assert_eq!(list_records[0].due_date(), NaiveDate::from_ymd_opt(2025, 6, 1));
-    assert_eq!(list_records[0].priority(), Some(TaskPriority::Highest));
-    assert_eq!(list_records[0].is_fully_complete(), Some(false));
-    assert_eq!(list_records[0].line(), SourceLine::new(1));
-    assert_eq!(list_records[0].depth(), 0);
-    assert_eq!(list_records[0].parent_line(), None);
+    let rec0 = list_records.first().expect("root task record");
+    assert_eq!(rec0.path(), "tasks.md");
+    assert_eq!(rec0.clean_text(), "Root task");
+    assert_eq!(rec0.status_type(), Some(TaskStatusType::Todo));
+    assert_eq!(rec0.due_date(), NaiveDate::from_ymd_opt(2025, 6, 1));
+    assert_eq!(rec0.priority(), Some(TaskPriority::Highest));
+    assert_eq!(rec0.is_fully_complete(), Some(false));
+    assert_eq!(rec0.line(), SourceLine::new(1));
+    assert_eq!(rec0.depth(), 0);
+    assert_eq!(rec0.parent_line(), None);
 
     // Record 1: Subtask
-    assert_eq!(list_records[1].path(), "tasks.md");
-    assert_eq!(list_records[1].clean_text(), "Subtask");
-    assert_eq!(list_records[1].status_type(), Some(TaskStatusType::Todo));
-    assert_eq!(list_records[1].depth(), 1);
-    assert_eq!(list_records[1].line(), SourceLine::new(2));
-    assert_eq!(list_records[1].parent_line(), Some(SourceLine::new(1)));
+    let rec1 = list_records.get(1).expect("subtask record");
+    assert_eq!(rec1.path(), "tasks.md");
+    assert_eq!(rec1.clean_text(), "Subtask");
+    assert_eq!(rec1.status_type(), Some(TaskStatusType::Todo));
+    assert_eq!(rec1.depth(), 1);
+    assert_eq!(rec1.line(), SourceLine::new(2));
+    assert_eq!(rec1.parent_line(), Some(SourceLine::new(1)));
 
     // Record 2: Grandchild completed
-    assert_eq!(list_records[2].path(), "tasks.md");
-    assert_eq!(list_records[2].clean_text(), "Grandchild completed");
-    assert_eq!(list_records[2].status_type(), Some(TaskStatusType::Done));
-    assert_eq!(list_records[2].depth(), 2);
-    assert_eq!(list_records[2].line(), SourceLine::new(3));
-    assert_eq!(list_records[2].parent_line(), Some(SourceLine::new(2)));
+    let rec2 = list_records.get(2).expect("grandchild record");
+    assert_eq!(rec2.path(), "tasks.md");
+    assert_eq!(rec2.clean_text(), "Grandchild completed");
+    assert_eq!(rec2.status_type(), Some(TaskStatusType::Done));
+    assert_eq!(rec2.depth(), 2);
+    assert_eq!(rec2.line(), SourceLine::new(3));
+    assert_eq!(rec2.parent_line(), Some(SourceLine::new(2)));
 
     // Record 3: Plain bullet
-    assert_eq!(list_records[3].path(), "tasks.md");
-    assert_eq!(list_records[3].clean_text(), "Plain bullet");
-    assert_eq!(list_records[3].status_type(), None);
-    assert_eq!(list_records[3].priority(), None);
-    assert_eq!(list_records[3].due_date(), None);
-    assert_eq!(list_records[3].is_fully_complete(), None);
-    assert_eq!(list_records[3].depth(), 0);
-    assert_eq!(list_records[3].line(), SourceLine::new(4));
-    assert_eq!(list_records[3].parent_line(), None);
+    let rec3 = list_records.get(3).expect("plain bullet record");
+    assert_eq!(rec3.path(), "tasks.md");
+    assert_eq!(rec3.clean_text(), "Plain bullet");
+    assert_eq!(rec3.status_type(), None);
+    assert_eq!(rec3.priority(), None);
+    assert_eq!(rec3.due_date(), None);
+    assert_eq!(rec3.is_fully_complete(), None);
+    assert_eq!(rec3.depth(), 0);
+    assert_eq!(rec3.line(), SourceLine::new(4));
+    assert_eq!(rec3.parent_line(), None);
 }
 
 /// Proves index persistence round-trip preserves all LISTS-derived fields
@@ -164,7 +174,7 @@ fn index_persistence_roundtrip_includes_lists_derived_fields() {
     let records = indexer2.read_lists().expect("read lists from fresh service");
     assert_eq!(records.len(), 2);
 
-    let task_rec = &records[0];
+    let task_rec = records.first().expect("task record");
     assert_eq!(task_rec.path(), "items.md");
     assert_eq!(task_rec.clean_text(), "Completed task");
     assert_eq!(task_rec.raw_text(), "Completed task 📅 2025-12-31 🔽");
@@ -175,7 +185,7 @@ fn index_persistence_roundtrip_includes_lists_derived_fields() {
     assert_eq!(task_rec.line(), SourceLine::new(1));
     assert_eq!(task_rec.depth(), 0);
 
-    let plain_rec = &records[1];
+    let plain_rec = records.get(1).expect("plain record");
     assert_eq!(plain_rec.path(), "items.md");
     assert_eq!(plain_rec.clean_text(), "Plain item");
     assert_eq!(plain_rec.status_type(), None);

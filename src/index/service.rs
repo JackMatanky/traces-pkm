@@ -176,7 +176,14 @@ impl IndexerService {
     /// # Errors
     ///
     /// - [`IndexError::Db`] if the database cannot be opened or read.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    #[inline]
     pub fn read_lists(&self) -> IndexResult<Vec<ListRecord>> {
         let store = IndexStore::open(&self.root)?;
         Ok(store.read_all_lists()?)

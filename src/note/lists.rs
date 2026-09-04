@@ -1217,6 +1217,8 @@ impl<'a> Iterator for ListItemIter<'a> {
     }
 }
 
+impl std::iter::FusedIterator for ListItemIter<'_> {}
+
 /// A persisted record of a single list item and its source note path.
 ///
 /// Wraps a project-relative `path` and the parsed [`ListItem`]. Exposes
@@ -1253,11 +1255,26 @@ impl ListRecord {
     /// `item`.
     #[inline]
     #[must_use]
-    pub fn new(path: String, item: ListItem) -> Self {
+    pub fn new(path: impl Into<String>, item: ListItem) -> Self {
         Self {
-            path,
+            path: path.into(),
             item,
         }
+    }
+
+    /// Consumes the record, returning the inner [`ListItem`].
+    #[inline]
+    #[must_use]
+    pub fn into_item(self) -> ListItem {
+        self.item
+    }
+
+    /// Consumes the record, returning the project-relative path and
+    /// [`ListItem`].
+    #[inline]
+    #[must_use]
+    pub fn into_parts(self) -> (String, ListItem) {
+        (self.path, self.item)
     }
 
     /// Returns the project-relative path of the note containing this list item.
@@ -1277,7 +1294,7 @@ impl ListRecord {
     /// Returns the task's status type, or [`None`] if this is not a Task item.
     #[inline]
     #[must_use]
-    pub fn status_type(&self) -> Option<TaskStatusType> {
+    pub const fn status_type(&self) -> Option<TaskStatusType> {
         match self.item.kind() {
             ListItemType::Task(task) => Some(task.status().kind()),
             ListItemType::Plain | ListItemType::Checkbox => None,
@@ -1288,7 +1305,7 @@ impl ListRecord {
     /// has no priority.
     #[inline]
     #[must_use]
-    pub fn priority(&self) -> Option<TaskPriority> {
+    pub const fn priority(&self) -> Option<TaskPriority> {
         match self.item.kind() {
             ListItemType::Task(task) => task.priority(),
             ListItemType::Plain | ListItemType::Checkbox => None,
@@ -1299,7 +1316,7 @@ impl ListRecord {
     /// has no due date.
     #[inline]
     #[must_use]
-    pub fn due_date(&self) -> Option<NaiveDate> {
+    pub const fn due_date(&self) -> Option<NaiveDate> {
         match self.item.kind() {
             ListItemType::Task(task) => task.dates().due,
             ListItemType::Plain | ListItemType::Checkbox => None,
@@ -1310,7 +1327,7 @@ impl ListRecord {
     /// resolved, or [`None`] if this is not a Task item.
     #[inline]
     #[must_use]
-    pub fn is_fully_complete(&self) -> Option<bool> {
+    pub const fn is_fully_complete(&self) -> Option<bool> {
         match self.item.kind() {
             ListItemType::Task(task) => Some(task.is_fully_complete()),
             ListItemType::Plain | ListItemType::Checkbox => None,
@@ -1323,7 +1340,7 @@ impl ListRecord {
     /// Alias for [`Self::is_fully_complete`].
     #[inline]
     #[must_use]
-    pub fn fully_complete(&self) -> Option<bool> {
+    pub const fn fully_complete(&self) -> Option<bool> {
         self.is_fully_complete()
     }
 

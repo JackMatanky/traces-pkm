@@ -60,15 +60,14 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 ///
 /// Key: project-relative path as UTF-8 bytes concatenated with 4-byte
 /// big-endian [`SourceLine`] Value: serialized [`ListRecord`]
-pub(crate) const LISTS: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("lists");
+const LISTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("lists");
 
 /// Constructs the `LISTS` table key by concatenating `path`'s UTF-8 bytes
 /// and `line` as a 4-byte big-endian integer.
 #[inline]
 #[must_use]
-pub(crate) fn list_key(path: &str, line: SourceLine) -> Vec<u8> {
-    let mut key = Vec::with_capacity(path.len() + 4);
+pub(super) fn list_key(path: &str, line: SourceLine) -> Vec<u8> {
+    let mut key = Vec::with_capacity(path.len().saturating_add(4));
     key.extend_from_slice(path.as_bytes());
     key.extend_from_slice(&line.get().to_be_bytes());
     key
@@ -269,7 +268,7 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the table cannot be read.
     /// - [`DbError::Deserialize`] if stored bytes are corrupt.
-    pub(crate) fn read_lists(
+    pub(super) fn read_lists(
         &self,
         txn: &ReadTransaction,
     ) -> DbResult<Vec<ListRecord>> {
@@ -283,11 +282,11 @@ impl IndexStore {
                     let (key, value) = entry
                         .map_err(|source| self.raise_source_error(source))?;
                     let key_bytes = key.value();
-                    let path_bytes = if key_bytes.len() >= 4 {
-                        &key_bytes[..key_bytes.len() - 4]
-                    } else {
-                        key_bytes
-                    };
+                    let path_bytes = key_bytes
+                        .len()
+                        .checked_sub(4)
+                        .and_then(|prefix_len| key_bytes.get(..prefix_len))
+                        .unwrap_or(key_bytes);
                     let path = path_from_bytes(path_bytes);
                     items.push(decode_row(&path, value.value())?);
                 }
@@ -298,9 +297,62 @@ impl IndexStore {
         }
     }
 
+    /// Reads all [`ListRecord`]s currently stored in the `LISTS` table for
+    /// `path`.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be read.
+    /// - [`DbError::Deserialize`] if stored bytes are corrupt.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    pub(super) fn read_lists_for_path(
+        &self,
+        txn: &ReadTransaction,
+        path: &str,
+    ) -> DbResult<Vec<ListRecord>> {
+        let table = match txn.open_table(LISTS) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Ok(Vec::new());
+            }
+            Err(source) => return Err(self.raise_source_error(source)),
+        };
+        let path_bytes = path.as_bytes();
+        let start = list_key(path, SourceLine::new(0));
+        let end = list_key(path, SourceLine::new(u32::MAX));
+        let expected_len = path_bytes.len().saturating_add(4);
+        let mut items = Vec::new();
+        for entry in table
+            .range(start.as_slice()..=end.as_slice())
+            .map_err(|source| self.raise_source_error(source))?
+        {
+            let (key, value) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            let k_bytes = key.value();
+            if k_bytes.len() == expected_len && k_bytes.starts_with(path_bytes)
+            {
+                let path_obj = Path::new(path);
+                items.push(decode_row(path_obj, value.value())?);
+            }
+        }
+        Ok(items)
+    }
+
     /// Reads all persisted [`ListRecord`]s from `LISTS`.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) fn read_all_lists(&self) -> DbResult<Vec<ListRecord>> {
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    pub(super) fn read_all_lists(&self) -> DbResult<Vec<ListRecord>> {
         let txn = self.begin_read()?;
         self.read_lists(&txn)
     }
@@ -517,23 +569,22 @@ impl IndexStore {
         path: &str,
     ) -> IndexResult<()> {
         let path_bytes = path.as_bytes();
-        let start = [path_bytes, &[0x00, 0x00, 0x00, 0x00]].concat();
-        let end = [path_bytes, &[0xFF, 0xFF, 0xFF, 0xFF]].concat();
-        let keys_to_remove: Vec<Vec<u8>> = table
+        let start = list_key(path, SourceLine::new(0));
+        let end = list_key(path, SourceLine::new(u32::MAX));
+        let expected_len = path_bytes.len().saturating_add(4);
+        let mut keys_to_remove = Vec::new();
+        for entry in table
             .range(start.as_slice()..=end.as_slice())
             .map_err(|source| self.raise_source_error(source))?
-            .filter_map(|res| {
-                let (k, _) = res.ok()?;
-                let k_bytes = k.value();
-                if k_bytes.len() == path_bytes.len() + 4
-                    && k_bytes.starts_with(path_bytes)
-                {
-                    Some(k_bytes.to_vec())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        {
+            let (k, _) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            let k_bytes = k.value();
+            if k_bytes.len() == expected_len && k_bytes.starts_with(path_bytes)
+            {
+                keys_to_remove.push(k_bytes.to_vec());
+            }
+        }
 
         for key in keys_to_remove {
             table
@@ -549,10 +600,10 @@ impl IndexStore {
         table: &mut redb::Table<'_, &[u8], &[u8]>,
         note: &Note,
     ) -> IndexResult<()> {
-        let path_str = note.path().to_string_lossy();
+        let path_str = note.path().to_string_lossy().into_owned();
         for item in note.list_items() {
             let key = list_key(&path_str, item.line());
-            let record = ListRecord::new(path_str.to_string(), item.clone());
+            let record = ListRecord::new(path_str.clone(), item.clone());
             let bytes = encode_row(note.path(), &record)?;
             table
                 .insert(key.as_slice(), bytes.as_slice())
@@ -1006,26 +1057,54 @@ mod tests {
 
             let lists = store.read_all_lists().expect("read lists");
             assert_eq!(lists.len(), 3);
-            assert_eq!(lists[0].path(), "note.md");
-            assert_eq!(lists[0].clean_text(), "Todo task");
-            assert_eq!(lists[0].status_type(), Some(TaskStatusType::Todo));
-            assert_eq!(
-                lists[0].due_date(),
-                NaiveDate::from_ymd_opt(2025, 1, 15)
-            );
-            assert_eq!(lists[0].line(), SourceLine::new(1));
-            assert_eq!(lists[0].depth(), 0);
+            let rec0 = lists.first().expect("first item");
+            assert_eq!(rec0.path(), "note.md");
+            assert_eq!(rec0.clean_text(), "Todo task");
+            assert_eq!(rec0.status_type(), Some(TaskStatusType::Todo));
+            assert_eq!(rec0.due_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
+            assert_eq!(rec0.line(), SourceLine::new(1));
+            assert_eq!(rec0.depth(), 0);
 
-            assert_eq!(lists[1].clean_text(), "Plain bullet");
-            assert_eq!(lists[1].status_type(), None);
-            assert_eq!(lists[1].line(), SourceLine::new(2));
-            assert_eq!(lists[1].depth(), 0);
+            let rec1 = lists.get(1).expect("second item");
+            assert_eq!(rec1.clean_text(), "Plain bullet");
+            assert_eq!(rec1.status_type(), None);
+            assert_eq!(rec1.line(), SourceLine::new(2));
+            assert_eq!(rec1.depth(), 0);
 
-            assert_eq!(lists[2].clean_text(), "Child task");
-            assert_eq!(lists[2].status_type(), Some(TaskStatusType::Done));
-            assert_eq!(lists[2].line(), SourceLine::new(3));
-            assert_eq!(lists[2].depth(), 1);
-            assert_eq!(lists[2].parent_line(), Some(SourceLine::new(2)));
+            let rec2 = lists.get(2).expect("third item");
+            assert_eq!(rec2.clean_text(), "Child task");
+            assert_eq!(rec2.status_type(), Some(TaskStatusType::Done));
+            assert_eq!(rec2.line(), SourceLine::new(3));
+            assert_eq!(rec2.depth(), 1);
+            assert_eq!(rec2.parent_line(), Some(SourceLine::new(2)));
+        }
+
+        #[test]
+        fn read_lists_for_path_returns_only_matching_note_items() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let note_a = parse("a.md", "- [ ] Task in A");
+            let note_b = parse("b.md", "- [ ] Task in B\n- Plain in B");
+            let files = note_files(&["a.md", "b.md"]);
+            write_all_parts(&store, &files, &[note_a, note_b], &HashMap::new())
+                .expect("persist");
+
+            let txn = store.begin_read().expect("begin read");
+            let a_lists =
+                store.read_lists_for_path(&txn, "a.md").expect("read a lists");
+            let a_item = a_lists.first().expect("first a item");
+            assert_eq!(a_item.clean_text(), "Task in A");
+
+            let b_lists =
+                store.read_lists_for_path(&txn, "b.md").expect("read b lists");
+            assert_eq!(b_lists.len(), 2);
+            let b_first = b_lists.first().expect("first b item");
+            let b_second = b_lists.get(1).expect("second b item");
+            assert_eq!(b_first.clean_text(), "Task in B");
+            assert_eq!(b_second.clean_text(), "Plain in B");
+            let c_lists =
+                store.read_lists_for_path(&txn, "c.md").expect("read c lists");
+            assert!(c_lists.is_empty());
         }
 
         #[test]
@@ -1058,21 +1137,20 @@ mod tests {
             service.persist(&refreshed).expect("persist incremental");
 
             let updated_lists = service.read_lists().expect("read lists");
-            assert_eq!(updated_lists.len(), 2);
-            assert_eq!(updated_lists[0].path(), "b.md");
-            assert_eq!(updated_lists[0].clean_text(), "B updated 1");
+            let updated_first =
+                updated_lists.first().expect("first updated item");
+            assert_eq!(updated_first.path(), "b.md");
+            assert_eq!(updated_first.clean_text(), "B updated 1");
+            assert_eq!(updated_first.status_type(), Some(TaskStatusType::Done));
+            let updated_second =
+                updated_lists.get(1).expect("second updated item");
+            assert_eq!(updated_second.path(), "b.md");
+            assert_eq!(updated_second.clean_text(), "B updated 2");
             assert_eq!(
-                updated_lists[0].status_type(),
-                Some(TaskStatusType::Done)
-            );
-            assert_eq!(updated_lists[1].path(), "b.md");
-            assert_eq!(updated_lists[1].clean_text(), "B updated 2");
-            assert_eq!(
-                updated_lists[1].status_type(),
+                updated_second.status_type(),
                 Some(TaskStatusType::Todo)
             );
         }
-
         #[test]
         fn write_all_then_read_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
