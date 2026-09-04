@@ -23,7 +23,7 @@ use super::{
 };
 use crate::{
     Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
-    file::FileBase,
+    file::FileBase, note::ListRecord,
 };
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
@@ -169,6 +169,17 @@ impl IndexerService {
             entry::assemble_entries(files, notes, inlinks),
             IndexDelta::Full,
         ))
+    }
+
+    /// Reads all persisted [`ListRecord`]s from the `LISTS` table.
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexError::Db`] if the database cannot be opened or read.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn read_lists(&self) -> IndexResult<Vec<ListRecord>> {
+        let store = IndexStore::open(&self.root)?;
+        Ok(store.read_all_lists()?)
     }
 
     /// Recursively scans this service's root for regular files, skipping `.git`

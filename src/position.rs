@@ -26,14 +26,21 @@ use serde::{Deserialize, Serialize};
     Deserialize,
     Serialize,
 )]
-pub(crate) struct SourceLine(u32);
+pub struct SourceLine(u32);
 
 impl SourceLine {
     /// Wraps `line` as a 1-indexed source line number.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(line: u32) -> Self {
+    pub const fn new(line: u32) -> Self {
         Self(line)
+    }
+
+    /// Returns the 1-indexed line number as a `u32`.
+    #[inline]
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
     }
 }
 

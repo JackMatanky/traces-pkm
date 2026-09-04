@@ -21,8 +21,8 @@
 //!   scheduled, start, due, done, cancelled).
 //! - [`ListText`]: Dual-representation text container maintaining both raw
 //!   source and clean display text.
-//! - [`TaskIter`]: A depth-first iterator yielding task items across top-level
-//!   and nested child lists in document order.
+//! - [`ListItemIter`]: A depth-first iterator yielding all list items across
+//!   top-level and nested child lists in document order.
 //!
 //! # Examples
 //!
@@ -46,7 +46,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, TaskStatus};
+use crate::{FieldKey, SourceLine, TaskStatus, TaskStatusType};
 /// An ordered or unordered Markdown list.
 ///
 /// Holds direct child [`ListItem`] elements and a flag indicating whether the
@@ -375,32 +375,14 @@ impl ListItem {
     /// Returns the item's 0-indexed nesting level.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
-    pub(crate) const fn depth(&self) -> u8 {
+    pub const fn depth(&self) -> u8 {
         self.position.depth()
     }
 
     /// Returns the item's 1-indexed source line.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
-    pub(crate) const fn line(&self) -> SourceLine {
+    pub const fn line(&self) -> SourceLine {
         self.position.line()
     }
 
@@ -408,16 +390,7 @@ impl ListItem {
     /// this item is nested inside another list item.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
-    pub(crate) const fn parent(&self) -> Option<SourceLine> {
+    pub const fn parent(&self) -> Option<SourceLine> {
         self.position.parent()
     }
 }
@@ -1187,10 +1160,8 @@ impl PartialEq<ListText> for &str {
     }
 }
 
-/// Depth-first iterator over task list items in a [`super::Note`].
-///
-/// Yields items classified as [`ListItemType::Task`], recursing through child
-/// lists in document order.
+/// A depth-first iterator yielding all list items across top-level and nested
+/// child lists in document order.
 ///
 /// # Examples
 ///
@@ -1201,22 +1172,24 @@ impl PartialEq<ListText> for &str {
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
 ///
-/// let input =
-///     MarkdownParserInput::for_test(Path::new("note.md"), "- [ ] Task");
+/// let input = MarkdownParserInput::for_test(
+///     Path::new("note.md"),
+///     "- Item 1\n  - Item 1.1\n- Item 2",
+/// );
 /// let note = parse_markdown(&input);
-/// assert_eq!(note.tasks().count(), 1);
+/// assert_eq!(note.list_items().count(), 3);
 /// # }
 /// ```
 #[derive(Clone, Debug)]
-pub struct TaskIter<'a> {
+pub struct ListItemIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
 }
 
-impl<'a> TaskIter<'a> {
+impl<'a> ListItemIter<'a> {
     /// Starts depth-first iteration from top-level `lists`.
     #[inline]
     #[must_use]
-    pub(super) fn new(lists: &'a [List]) -> Self {
+    pub(crate) fn new(lists: &'a [List]) -> Self {
         let mut stack = Vec::with_capacity(lists.len());
         stack.extend(lists.iter().rev().map(|list| list.items().iter()));
         Self {
@@ -1225,7 +1198,7 @@ impl<'a> TaskIter<'a> {
     }
 }
 
-impl<'a> Iterator for TaskIter<'a> {
+impl<'a> Iterator for ListItemIter<'a> {
     type Item = &'a ListItem;
 
     #[inline]
@@ -1238,11 +1211,163 @@ impl<'a> Iterator for TaskIter<'a> {
             self.stack.extend(
                 item.children().iter().rev().map(|list| list.items().iter()),
             );
-            if matches!(item.kind(), ListItemType::Task(_)) {
-                return Some(item);
-            }
+            return Some(item);
         }
         None
+    }
+}
+
+/// A persisted record of a single list item and its source note path.
+///
+/// Wraps a project-relative `path` and the parsed [`ListItem`]. Exposes
+/// accessor methods that delegate into the [`ListItemType`] discriminant,
+/// keeping the persistence shape composable while providing flat field access.
+///
+/// Serializes via postcard as `path` + `ListItem`. Stored in the `LISTS`
+/// table in redb keyed by `(path, line)`.
+///
+/// # Examples
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{ListRecord, MarkdownParserInput, parse_markdown};
+///
+/// let input = MarkdownParserInput::for_test(Path::new("note.md"), "- bullet");
+/// let note = parse_markdown(&input);
+/// let item = note.list_items().next().unwrap().clone();
+/// let record = ListRecord::new("notes/a.md".to_string(), item);
+/// assert_eq!(record.path(), "notes/a.md");
+/// assert_eq!(record.status_type(), None);
+/// # }
+/// ```
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct ListRecord {
+    path: String,
+    item: ListItem,
+}
+
+impl ListRecord {
+    /// Creates a new `ListRecord` wrapping a project-relative `path` and
+    /// `item`.
+    #[inline]
+    #[must_use]
+    pub fn new(path: String, item: ListItem) -> Self {
+        Self {
+            path,
+            item,
+        }
+    }
+
+    /// Returns the project-relative path of the note containing this list item.
+    #[inline]
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Returns the underlying [`ListItem`].
+    #[inline]
+    #[must_use]
+    pub const fn item(&self) -> &ListItem {
+        &self.item
+    }
+
+    /// Returns the task's status type, or [`None`] if this is not a Task item.
+    #[inline]
+    #[must_use]
+    pub fn status_type(&self) -> Option<TaskStatusType> {
+        match self.item.kind() {
+            ListItemType::Task(task) => Some(task.status().kind()),
+            ListItemType::Plain | ListItemType::Checkbox => None,
+        }
+    }
+
+    /// Returns the task's priority, or [`None`] if this is not a Task item or
+    /// has no priority.
+    #[inline]
+    #[must_use]
+    pub fn priority(&self) -> Option<TaskPriority> {
+        match self.item.kind() {
+            ListItemType::Task(task) => task.priority(),
+            ListItemType::Plain | ListItemType::Checkbox => None,
+        }
+    }
+
+    /// Returns the task's due date, or [`None`] if this is not a Task item or
+    /// has no due date.
+    #[inline]
+    #[must_use]
+    pub fn due_date(&self) -> Option<NaiveDate> {
+        match self.item.kind() {
+            ListItemType::Task(task) => task.dates().due,
+            ListItemType::Plain | ListItemType::Checkbox => None,
+        }
+    }
+
+    /// Returns `true` if this task item and its entire task subtree are
+    /// resolved, or [`None`] if this is not a Task item.
+    #[inline]
+    #[must_use]
+    pub fn is_fully_complete(&self) -> Option<bool> {
+        match self.item.kind() {
+            ListItemType::Task(task) => Some(task.is_fully_complete()),
+            ListItemType::Plain | ListItemType::Checkbox => None,
+        }
+    }
+
+    /// Returns `true` if this task item and its entire task subtree are
+    /// resolved, or [`None`] if this is not a Task item.
+    ///
+    /// Alias for [`Self::is_fully_complete`].
+    #[inline]
+    #[must_use]
+    pub fn fully_complete(&self) -> Option<bool> {
+        self.is_fully_complete()
+    }
+
+    /// Returns the list item's text container.
+    #[inline]
+    #[must_use]
+    pub fn text(&self) -> &ListText {
+        self.item.text()
+    }
+
+    /// Returns the raw text with only the leading marker prefix stripped.
+    #[inline]
+    #[must_use]
+    pub fn raw_text(&self) -> &str {
+        self.item.raw_text()
+    }
+
+    /// Returns the normalized clean text with task metadata stripped.
+    #[inline]
+    #[must_use]
+    pub fn clean_text(&self) -> &str {
+        self.item.clean_text()
+    }
+
+    /// Returns the list item's 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub const fn line(&self) -> SourceLine {
+        self.item.line()
+    }
+
+    /// Returns the list item's 0-indexed nesting depth.
+    #[inline]
+    #[must_use]
+    pub const fn depth(&self) -> u8 {
+        self.item.depth()
+    }
+
+    /// Returns the immediate parent list item's 1-indexed source line, if
+    /// nested.
+    #[inline]
+    #[must_use]
+    pub const fn parent_line(&self) -> Option<SourceLine> {
+        self.item.parent()
     }
 }
 
@@ -1446,62 +1571,174 @@ mod tests {
         }
     }
 
-    mod task {
+    mod list_item_iter {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
-        mod iteration {
-            use pretty_assertions::assert_eq;
-
-            use super::*;
-            #[test]
-            fn yields_task_items_depth_first_across_nested_lists() {
-                let subchild_task = ListItem::new("subchild task", done_task());
-                let child_task =
-                    ListItem::with_children("child task", todo_task(), vec![
-                        List::new(false, vec![subchild_task]),
-                    ]);
-                let parent_task =
-                    ListItem::with_children("parent task", todo_task(), vec![
-                        List::new(false, vec![child_task]),
-                    ]);
-                let sibling_task = ListItem::new("sibling task", done_task());
-                let lists = vec![
-                    List::new(false, vec![parent_task]),
-                    List::new(false, vec![sibling_task]),
-                ];
-
-                let iter = TaskIter::new(&lists);
-                let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
-
-                assert_eq!(texts, [
-                    "parent task",
-                    "child task",
-                    "subchild task",
-                    "sibling task"
+        #[test]
+        fn yields_all_items_depth_first_across_nested_lists() {
+            let grandchild_plain =
+                ListItem::new("grandchild plain", ListItemType::Plain);
+            let child_checkbox = ListItem::with_children(
+                "child checkbox",
+                ListItemType::Checkbox,
+                vec![List::new(false, vec![grandchild_plain])],
+            );
+            let parent_task =
+                ListItem::with_children("parent task", todo_task(), vec![
+                    List::new(false, vec![child_checkbox]),
                 ]);
-            }
+            let sibling = ListItem::new("sibling item", done_task());
+            let lists = vec![
+                List::new(false, vec![parent_task]),
+                List::new(false, vec![sibling]),
+            ];
 
-            #[test]
-            fn skips_plain_and_checkbox_items() {
-                let plain = ListItem::new("plain item", ListItemType::Plain);
-                let checkbox =
-                    ListItem::new("checkbox item", ListItemType::Checkbox);
-                let task = ListItem::new("task item", done_task());
-                let lists = vec![List::new(false, vec![plain, checkbox, task])];
+            let iter = ListItemIter::new(&lists);
+            let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
 
-                let iter = TaskIter::new(&lists);
-                let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
+            assert_eq!(texts, [
+                "parent task",
+                "child checkbox",
+                "grandchild plain",
+                "sibling item"
+            ]);
+        }
 
-                assert_eq!(texts, ["task item"]);
-            }
+        #[test]
+        fn returns_none_for_empty_lists() {
+            let lists: Vec<List> = Vec::new();
+            let mut iter = ListItemIter::new(&lists);
 
-            #[test]
-            fn returns_none_for_empty_lists() {
-                let lists: Vec<List> = Vec::new();
-                let mut iter = TaskIter::new(&lists);
+            assert_eq!(iter.next(), None);
+        }
+    }
 
-                assert_eq!(iter.next(), None);
-            }
+    mod list_record {
+        use chrono::NaiveDate;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn stores_path_and_item() {
+            let item = ListItem::new("plain item", ListItemType::Plain);
+            let record =
+                ListRecord::new("notes/todo.md".to_owned(), item.clone());
+
+            assert_eq!(record.path(), "notes/todo.md");
+            assert_eq!(record.item(), &item);
+        }
+
+        #[test]
+        fn accessors_delegate_for_task_item() {
+            let status = TaskStatus::new(
+                TaskStatusSymbol::new(' '),
+                "Todo",
+                TaskStatusType::Todo,
+            );
+            let dates = TaskDates::new(
+                None,
+                None,
+                None,
+                NaiveDate::from_ymd_opt(2025, 1, 15),
+                None,
+                None,
+            );
+            let task_item = TaskListItem::new(
+                dates,
+                Some(TaskPriority::High),
+                status,
+                false,
+            );
+            let position = ListItemPosition::new(
+                SourceLine::new(5),
+                1,
+                Some(SourceLine::new(2)),
+            );
+            let item = ListItem::new("my task", ListItemType::Task(task_item))
+                .with_position(position);
+            let record =
+                ListRecord::new("notes/task.md".to_owned(), item.clone());
+
+            assert_eq!(record.status_type(), Some(TaskStatusType::Todo));
+            assert_eq!(record.priority(), Some(TaskPriority::High));
+            assert_eq!(record.due_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
+            assert_eq!(record.is_fully_complete(), Some(false));
+            assert_eq!(record.fully_complete(), Some(false));
+            assert_eq!(record.text(), item.text());
+            assert_eq!(record.line(), SourceLine::new(5));
+            assert_eq!(record.depth(), 1);
+            assert_eq!(record.parent_line(), Some(SourceLine::new(2)));
+        }
+
+        #[test]
+        fn task_accessors_return_none_for_plain_and_checkbox_items() {
+            let position = ListItemPosition::new(SourceLine::new(10), 0, None);
+            let plain_item = ListItem::new("bullet", ListItemType::Plain)
+                .with_position(position);
+            let record = ListRecord::new(
+                "notes/plain.md".to_owned(),
+                plain_item.clone(),
+            );
+
+            assert_eq!(record.status_type(), None);
+            assert_eq!(record.priority(), None);
+            assert_eq!(record.due_date(), None);
+            assert_eq!(record.is_fully_complete(), None);
+            assert_eq!(record.fully_complete(), None);
+            assert_eq!(record.text(), plain_item.text());
+            assert_eq!(record.line(), SourceLine::new(10));
+            assert_eq!(record.depth(), 0);
+            assert_eq!(record.parent_line(), None);
+
+            let checkbox_item = ListItem::new("check", ListItemType::Checkbox);
+            let record_check =
+                ListRecord::new("notes/check.md".to_owned(), checkbox_item);
+            assert_eq!(record_check.status_type(), None);
+            assert_eq!(record_check.priority(), None);
+            assert_eq!(record_check.due_date(), None);
+            assert_eq!(record_check.is_fully_complete(), None);
+        }
+
+        #[test]
+        fn postcard_roundtrip() {
+            let status = TaskStatus::new(
+                TaskStatusSymbol::new('x'),
+                "Done",
+                TaskStatusType::Done,
+            );
+            let dates = TaskDates::new(
+                None,
+                None,
+                None,
+                NaiveDate::from_ymd_opt(2025, 1, 15),
+                Some(NaiveDate::from_ymd_opt(2025, 1, 14).unwrap()),
+                None,
+            );
+            let task_item = TaskListItem::new(
+                dates,
+                Some(TaskPriority::Medium),
+                status,
+                true,
+            );
+            let position = ListItemPosition::new(
+                SourceLine::new(42),
+                2,
+                Some(SourceLine::new(10)),
+            );
+            let item =
+                ListItem::new("postcard task", ListItemType::Task(task_item))
+                    .with_position(position);
+            let record = ListRecord::new("path/to/note.md".to_owned(), item);
+
+            let bytes =
+                postcard::to_allocvec(&record).expect("serialize list record");
+            let decoded: ListRecord =
+                postcard::from_bytes(&bytes).expect("deserialize list record");
+
+            assert_eq!(decoded, record);
         }
     }
 
