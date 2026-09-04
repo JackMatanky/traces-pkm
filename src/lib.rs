@@ -102,15 +102,16 @@ pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileEntry, FileIndex, IndexerService, derive_inlinks, path as path_codec,
+    FileEntry, FileIndex, IndexerService, ListEntry, derive_inlinks,
+    path as path_codec,
 };
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
 pub use note::{
-    List, ListItem, ListItemIter, ListItemType, ListRecord, ListText,
-    MarkdownParserInput, Note, NoteFieldValue, TaskDates, TaskListItem,
-    TaskPriority, parse_markdown,
+    List, ListItem, ListItemIter, ListItemType, ListText, MarkdownParserInput,
+    Note, NoteFieldValue, TaskDates, TaskListItem, TaskPriority,
+    parse_markdown,
 };
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;

@@ -1,4 +1,4 @@
-//! Redb persistence for [`FileBase`], [`Note`], [`ListRecord`], and derived
+//! Redb persistence for [`FileBase`], [`Note`], [`ListEntry`], and derived
 //! inlink records.
 //!
 //! [`IndexStore`] owns one redb connection and adapts it to the file-index
@@ -23,11 +23,11 @@ use super::{
     FileIndex, INDEX_FILE,
     codec::{decode_row, encode_row, path_from_bytes},
     delta::{IncrementalDelta, IndexDelta},
-    entry::FileEntry,
+    entry::{FileEntry, ListEntry, ListEntryRef},
     error::{DbError, DbResult, IndexResult},
     inlinks::InlinkMap,
 };
-use crate::{FileBase, ListItem, ListRecord, Note, SourceLine};
+use crate::{FileBase, Note, SourceLine};
 
 /// File metadata table.
 ///
@@ -57,26 +57,12 @@ const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
 
 /// Parsed list items table.
 ///
-/// Stores [`ListRecord`]s for every list item in every Markdown file.
+/// Stores [`ListEntry`]s for every list item in every Markdown file.
 ///
 /// Key: project-relative path as UTF-8 bytes concatenated with 4-byte
 /// big-endian [`SourceLine`]
-/// Value: serialized [`ListRecord`]
+/// Value: serialized [`ListEntry`]
 const LISTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("lists");
-
-/// Borrowed mirror of [`ListRecord`] used only to serialize a `LISTS` row
-/// without cloning the source [`Note`]'s path or [`ListItem`].
-///
-/// Field order and types match [`ListRecord`] exactly, so postcard's
-/// positional encoding is byte-for-byte identical between the two; writers
-/// use this borrowed view, [`IndexStore::read_lists`] and
-/// [`IndexStore::read_lists_for_path`] deserialize the bytes back as an
-/// owned [`ListRecord`].
-#[derive(Serialize)]
-struct ListRecordRef<'a> {
-    path: &'a str,
-    item: &'a ListItem,
-}
 
 /// Persisted snapshot of [`FileBase`]s, [`Note`]s (sorted by path), and
 /// inbound link edges (target-keyed, unordered).
@@ -300,7 +286,7 @@ impl IndexStore {
         Ok(items)
     }
 
-    /// Reads all [`ListRecord`]s currently stored in the `LISTS` table.
+    /// Reads all [`ListEntry`]s currently stored in the `LISTS` table.
     ///
     /// # Errors
     ///
@@ -309,7 +295,7 @@ impl IndexStore {
     pub(super) fn read_lists(
         &self,
         txn: &ReadTransaction,
-    ) -> DbResult<Vec<ListRecord>> {
+    ) -> DbResult<Vec<ListEntry>> {
         match txn.open_table(LISTS) {
             Ok(table) => {
                 let mut items = Vec::new();
@@ -335,7 +321,7 @@ impl IndexStore {
         }
     }
 
-    /// Reads all [`ListRecord`]s currently stored in the `LISTS` table for
+    /// Reads all [`ListEntry`]s currently stored in the `LISTS` table for
     /// `path`.
     ///
     /// # Errors
@@ -353,7 +339,7 @@ impl IndexStore {
         &self,
         txn: &ReadTransaction,
         path: &str,
-    ) -> DbResult<Vec<ListRecord>> {
+    ) -> DbResult<Vec<ListEntry>> {
         let table = match txn.open_table(LISTS) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => {
@@ -378,7 +364,7 @@ impl IndexStore {
         Ok(items)
     }
 
-    /// Reads all persisted [`ListRecord`]s from `LISTS`.
+    /// Reads all persisted [`ListEntry`]s from `LISTS`.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -386,7 +372,7 @@ impl IndexStore {
             reason = "consumed by task queries added in issue 08"
         )
     )]
-    pub(super) fn read_all_lists(&self) -> DbResult<Vec<ListRecord>> {
+    pub(super) fn read_all_lists(&self) -> DbResult<Vec<ListEntry>> {
         let txn = self.begin_read()?;
         self.read_lists(&txn)
     }
@@ -626,12 +612,14 @@ impl IndexStore {
 
     /// Writes every list item from `note` into `LISTS`.
     ///
-    /// Serializes each item through a borrowed [`ListRecordRef`] view rather
-    /// than an owned [`ListRecord`], avoiding a path-string and deep
-    /// [`ListItem`] clone per row: [`ListRecordRef`] and [`ListRecord`] have
-    /// identical field order and types, so postcard's positional encoding is
+    /// Each item's descendant lists are cleared via
+    /// [`ListItem::without_children`] before serializing, into a local
+    /// value [`ListEntryRef`] then borrows: a `LISTS` row is one list item,
+    /// not its subtree, and each descendant is written as its own,
+    /// independent row. [`ListEntryRef`] and [`ListEntry`] have identical
+    /// field order and types, so postcard's positional encoding is
     /// byte-for-byte identical and [`decode_row`] transparently reads either
-    /// back as an owned [`ListRecord`].
+    /// back as an owned [`ListEntry`].
     fn write_lists_for_note(
         &self,
         table: &mut redb::Table<'_, &[u8], &[u8]>,
@@ -640,11 +628,12 @@ impl IndexStore {
         let path_str = note.path().to_string_lossy();
         for item in note.list_items() {
             let key = Self::list_key(&path_str, item.line());
-            let record = ListRecordRef {
+            let leaf = item.without_children();
+            let entry = ListEntryRef {
                 path: &path_str,
-                item,
+                item: &leaf,
             };
-            let bytes = encode_row(note.path(), &record)?;
+            let bytes = encode_row(note.path(), &entry)?;
             table
                 .insert(key.as_slice(), bytes.as_slice())
                 .map_err(|source| self.raise_source_error(source))?;
@@ -652,7 +641,7 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Atomically replaces every stored [`FileBase`], [`Note`], [`ListRecord`],
+    /// Atomically replaces every stored [`FileBase`], [`Note`], [`ListEntry`],
     /// and derived inlink edge.
     ///
     /// # Errors

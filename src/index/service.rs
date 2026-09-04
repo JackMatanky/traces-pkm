@@ -18,12 +18,15 @@
 use std::path::PathBuf;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
-    entry, error::IndexBuilderError, store::IndexStore,
+    FileIndex, INDEX_FILE, IndexResult, builder, cache,
+    delta::IndexDelta,
+    entry::{self, ListEntry},
+    error::IndexBuilderError,
+    store::IndexStore,
 };
 use crate::{
     Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
-    file::FileBase, note::ListRecord,
+    file::FileBase,
 };
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
@@ -171,7 +174,7 @@ impl IndexerService {
         ))
     }
 
-    /// Reads all persisted [`ListRecord`]s from the `LISTS` table.
+    /// Reads all persisted [`ListEntry`]s from the `LISTS` table.
     ///
     /// # Errors
     ///
@@ -184,7 +187,7 @@ impl IndexerService {
             reason = "consumed by task queries added in issue 08"
         )
     )]
-    pub fn read_lists(&self) -> IndexResult<Vec<ListRecord>> {
+    pub fn read_lists(&self) -> IndexResult<Vec<ListEntry>> {
         let store = IndexStore::open(&self.root)?;
         Ok(store.read_all_lists()?)
     }

@@ -47,7 +47,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, Tag, TaskStatus, TaskStatusType};
+use crate::{FieldKey, SourceLine, Tag, TaskStatus};
 /// An ordered or unordered Markdown list.
 ///
 /// Holds direct child [`ListItem`] elements and a flag indicating whether the
@@ -402,6 +402,25 @@ impl ListItem {
     )]
     pub(crate) fn fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
         &self.fields
+    }
+
+    /// Returns a clone of this item with its descendant lists cleared.
+    ///
+    /// Used when persisting a list item independently of its subtree: each
+    /// descendant is its own persisted row, addressable by its own line
+    /// number, so nesting a copy of every descendant inside every ancestor's
+    /// persisted value would duplicate that data once per ancestor.
+    #[inline]
+    #[must_use]
+    pub(crate) fn without_children(&self) -> Self {
+        Self {
+            text: self.text.clone(),
+            kind: self.kind.clone(),
+            children: Vec::new(),
+            fields: self.fields.clone(),
+            tags: self.tags.clone(),
+            position: self.position,
+        }
     }
 
     /// Attaches the source position (depth, line, parent line) computed by
@@ -1321,151 +1340,6 @@ impl<'a> Iterator for ListItemIter<'a> {
 
 impl std::iter::FusedIterator for ListItemIter<'_> {}
 
-/// A persisted record of a single list item and its source note path.
-///
-/// Wraps a project-relative `path` and the parsed [`ListItem`]. Exposes
-/// accessor methods that delegate into the [`ListItemType`] discriminant,
-/// keeping the persistence shape composable while providing flat field access.
-///
-/// Serializes via postcard as `path` + `ListItem`. Stored in the `LISTS`
-/// table in redb keyed by `(path, line)`.
-///
-/// # Examples
-///
-/// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
-/// use std::path::Path;
-///
-/// use traces_pkm::{ListRecord, MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(Path::new("note.md"), "- bullet");
-/// let note = parse_markdown(&input);
-/// let item = note.list_items().next().unwrap().clone();
-/// let record = ListRecord::new("notes/a.md".to_string(), item);
-/// assert_eq!(record.path(), "notes/a.md");
-/// assert_eq!(record.status_type(), None);
-/// # }
-/// ```
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ListRecord {
-    path: String,
-    item: ListItem,
-}
-
-impl ListRecord {
-    /// Creates a new `ListRecord` wrapping a project-relative `path` and
-    /// `item`.
-    #[inline]
-    #[must_use]
-    pub fn new<P: Into<String>>(path: P, item: ListItem) -> Self {
-        Self {
-            path: path.into(),
-            item,
-        }
-    }
-
-    /// Returns the project-relative path of the note containing this list item.
-    #[inline]
-    #[must_use]
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    /// Returns the task's status type, or [`None`] if this is not a Task item.
-    #[inline]
-    #[must_use]
-    pub const fn status_type(&self) -> Option<TaskStatusType> {
-        match self.item.kind() {
-            ListItemType::Task(task) => Some(task.status().kind()),
-            ListItemType::Plain | ListItemType::Checkbox => None,
-        }
-    }
-
-    /// Returns the task's priority, or [`None`] if this is not a Task item or
-    /// has no priority.
-    #[inline]
-    #[must_use]
-    pub const fn priority(&self) -> Option<TaskPriority> {
-        match self.item.kind() {
-            ListItemType::Task(task) => task.priority(),
-            ListItemType::Plain | ListItemType::Checkbox => None,
-        }
-    }
-
-    /// Returns the task's due date, or [`None`] if this is not a Task item or
-    /// has no due date.
-    #[inline]
-    #[must_use]
-    pub const fn due_date(&self) -> Option<NaiveDate> {
-        match self.item.kind() {
-            ListItemType::Task(task) => task.dates().due,
-            ListItemType::Plain | ListItemType::Checkbox => None,
-        }
-    }
-
-    /// Returns `true` if this task item and its entire task subtree are
-    /// resolved, or [`None`] if this is not a Task item.
-    #[inline]
-    #[must_use]
-    pub const fn is_fully_complete(&self) -> Option<bool> {
-        match self.item.kind() {
-            ListItemType::Task(task) => Some(task.is_fully_complete()),
-            ListItemType::Plain | ListItemType::Checkbox => None,
-        }
-    }
-
-    /// Returns the list item's text container.
-    #[inline]
-    #[must_use]
-    pub fn text(&self) -> &ListText {
-        self.item.text()
-    }
-
-    /// Returns the raw text with only the leading marker prefix stripped.
-    #[inline]
-    #[must_use]
-    pub fn raw_text(&self) -> &str {
-        self.item.raw_text()
-    }
-
-    /// Returns the normalized clean text with task metadata stripped.
-    #[inline]
-    #[must_use]
-    pub fn clean_text(&self) -> &str {
-        self.item.clean_text()
-    }
-
-    /// Returns the list item's own tags, scanned from its text.
-    #[inline]
-    #[must_use]
-    pub fn tags(&self) -> &[Tag] {
-        self.item.tags()
-    }
-
-    /// Returns the list item's 1-indexed source line.
-    #[inline]
-    #[must_use]
-    pub const fn line(&self) -> SourceLine {
-        self.item.line()
-    }
-
-    /// Returns the list item's 0-indexed nesting depth.
-    #[inline]
-    #[must_use]
-    pub const fn depth(&self) -> u8 {
-        self.item.depth()
-    }
-
-    /// Returns the immediate parent list item's 1-indexed source line, if
-    /// nested.
-    #[inline]
-    #[must_use]
-    pub const fn parent_line(&self) -> Option<SourceLine> {
-        self.item.parent()
-    }
-}
-
 /// A list item's position: its 0-indexed nesting depth, 1-indexed source line,
 /// and its immediate parent's 1-indexed line, if nested.
 ///
@@ -1750,131 +1624,6 @@ mod tests {
             let mut iter = ListItemIter::new(&lists);
 
             assert_eq!(iter.next(), None);
-        }
-    }
-
-    mod list_record {
-        use chrono::NaiveDate;
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn stores_path_and_delegates_text_to_item() {
-            let item = ListItem::new("plain item", ListItemType::Plain);
-            let record =
-                ListRecord::new("notes/todo.md".to_owned(), item.clone());
-
-            assert_eq!(record.path(), "notes/todo.md");
-            assert_eq!(record.text(), item.text());
-        }
-
-        #[test]
-        fn accessors_delegate_for_task_item() {
-            let status = TaskStatus::new(
-                TaskStatusSymbol::new(' '),
-                "Todo",
-                TaskStatusType::Todo,
-            );
-            let dates = TaskDates::new(
-                None,
-                None,
-                None,
-                NaiveDate::from_ymd_opt(2025, 1, 15),
-                None,
-                None,
-            );
-            let task_item = TaskListItem::new(
-                dates,
-                Some(TaskPriority::High),
-                status,
-                false,
-            );
-            let position = ListItemPosition::new(
-                SourceLine::new(5),
-                1,
-                Some(SourceLine::new(2)),
-            );
-            let item = ListItem::new("my task", ListItemType::Task(task_item))
-                .with_position(position);
-            let record =
-                ListRecord::new("notes/task.md".to_owned(), item.clone());
-
-            assert_eq!(record.status_type(), Some(TaskStatusType::Todo));
-            assert_eq!(record.priority(), Some(TaskPriority::High));
-            assert_eq!(record.due_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
-            assert_eq!(record.is_fully_complete(), Some(false));
-            assert_eq!(record.text(), item.text());
-            assert_eq!(record.line(), SourceLine::new(5));
-            assert_eq!(record.depth(), 1);
-            assert_eq!(record.parent_line(), Some(SourceLine::new(2)));
-        }
-
-        #[test]
-        fn task_accessors_return_none_for_plain_and_checkbox_items() {
-            let position = ListItemPosition::new(SourceLine::new(10), 0, None);
-            let plain_item = ListItem::new("bullet", ListItemType::Plain)
-                .with_position(position);
-            let record = ListRecord::new(
-                "notes/plain.md".to_owned(),
-                plain_item.clone(),
-            );
-
-            assert_eq!(record.status_type(), None);
-            assert_eq!(record.priority(), None);
-            assert_eq!(record.due_date(), None);
-            assert_eq!(record.is_fully_complete(), None);
-            assert_eq!(record.text(), plain_item.text());
-            assert_eq!(record.line(), SourceLine::new(10));
-            assert_eq!(record.depth(), 0);
-            assert_eq!(record.parent_line(), None);
-
-            let checkbox_item = ListItem::new("check", ListItemType::Checkbox);
-            let record_check =
-                ListRecord::new("notes/check.md".to_owned(), checkbox_item);
-            assert_eq!(record_check.status_type(), None);
-            assert_eq!(record_check.priority(), None);
-            assert_eq!(record_check.due_date(), None);
-            assert_eq!(record_check.is_fully_complete(), None);
-        }
-
-        #[test]
-        fn postcard_roundtrip() {
-            let status = TaskStatus::new(
-                TaskStatusSymbol::new('x'),
-                "Done",
-                TaskStatusType::Done,
-            );
-            let dates = TaskDates::new(
-                None,
-                None,
-                None,
-                NaiveDate::from_ymd_opt(2025, 1, 15),
-                Some(NaiveDate::from_ymd_opt(2025, 1, 14).unwrap()),
-                None,
-            );
-            let task_item = TaskListItem::new(
-                dates,
-                Some(TaskPriority::Medium),
-                status,
-                true,
-            );
-            let position = ListItemPosition::new(
-                SourceLine::new(42),
-                2,
-                Some(SourceLine::new(10)),
-            );
-            let item =
-                ListItem::new("postcard task", ListItemType::Task(task_item))
-                    .with_position(position);
-            let record = ListRecord::new("path/to/note.md".to_owned(), item);
-
-            let bytes =
-                postcard::to_allocvec(&record).expect("serialize list record");
-            let decoded: ListRecord =
-                postcard::from_bytes(&bytes).expect("deserialize list record");
-
-            assert_eq!(decoded, record);
         }
     }
 

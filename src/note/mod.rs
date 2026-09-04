@@ -28,8 +28,6 @@
 //!   extracted task dates, and priority levels.
 //! - [`ListItemIter`]: Depth-first list iterator across list trees, optionally
 //!   filtered to task items.
-//! - [`ListRecord`]: A persisted record of a list item and its source note
-//!   path.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: Outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
@@ -66,8 +64,8 @@ mod parser;
 pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
-    List, ListItem, ListItemIter, ListItemType, ListRecord, ListText,
-    TaskDates, TaskListItem, TaskPriority,
+    List, ListItem, ListItemIter, ListItemType, ListText, TaskDates,
+    TaskListItem, TaskPriority,
 };
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;

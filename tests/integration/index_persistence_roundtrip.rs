@@ -109,7 +109,7 @@ fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
     assert_eq!(task_texts, ["Root task", "Child completed task"]);
 }
 
-/// Proves a note with tasks persists correct `ListRecord`s in the `LISTS`
+/// Proves a note with tasks persists correct `ListEntry`s in the `LISTS`
 /// table.
 #[test]
 fn note_with_tasks_persists_correct_records_in_lists_table() {
