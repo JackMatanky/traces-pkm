@@ -6,7 +6,7 @@ Status: implemented
 
 # 07 — Note API and LISTS persistence
 
-**What to build:** Expose parsed list items through the Note API and persist them in the FileIndex. `Note.list_items()` returns a lazy iterator over the nested list hierarchy. `Note.tasks()` composes from `ListItemIter` with a filter, replacing the redundant `TaskIter`. `ListRecord` wraps a project-relative path and the parsed `ListItem` with accessor methods for query-relevant fields. LISTS persistence table in redb stores postcard-encoded records keyed by `(path, line)`.
+**What to build:** Expose parsed list items through the Note API and persist them in the FileIndex. `Note.list_items()` returns a lazy iterator over the nested list hierarchy. `Note.tasks()` composes from `ListItemIter` with a filter, replacing the redundant `TaskIter`. `ListEntry` (`index/entry.rs`) wraps a project-relative path and the parsed `ListItem` with accessor methods for query-relevant fields. LISTS persistence table in redb stores postcard-encoded records keyed by `(path, line)`.
 
 **Blocked by:** 02 (needs `ListItemType`), 05 (needs `TaskListItem` with `fully_complete`), 06 (needs priority and dates on `TaskListItem`).
 
@@ -26,12 +26,12 @@ Status: implemented
   - `depth()` → `ListItem::depth()`
   - `parent_line()` → `ListItem::parent()`
 - Accessor methods return `None` for page-level records or non-Task items
-- Accessor methods are composable — adding fields to `TaskListItem` does not require updating `ListRecord`'s struct layout
+- Accessor methods are composable — adding fields to `TaskListItem` does not require updating `ListEntry`'s struct layout
 
 ## LISTS persistence
 
 - LISTS table defined in redb as `TableDefinition<&[u8], &[u8]>` keyed by `(path, line)` bytes — path as UTF-8 bytes, line as 4-byte big-endian `u32`, concatenated
-- `ListRecord` serializes via postcard as `path` + `ListItem`
+- `ListEntry` serializes via postcard as `path` + `ListItem`
 - `ListItem` derives `Serialize`/`Deserialize` and postcard handles `IndexMap` fields — no custom serialization needed
 - Index rebuild writes LISTS table alongside FILES, NOTES, LINKS
 - Index `should_rebuild` includes LISTS in the probe list — detects schema drift alongside existing tables
@@ -103,17 +103,17 @@ Status: implemented
 1. **`ListItemIter` unifies `TaskIter` and the new unfiltered walker behind one seam.**
    Both `Note::list_items()` and `Note::tasks()` return the identical `ListItemIter<'_>` type per the ticket's explicit requirement ("The single traversal type for all list iteration"). Internally, a private `tasks_only: bool` field — set via two `pub(crate)` constructors, `new` (unfiltered) and `tasks` (filtered) — selects filter-at-yield-time behavior in one shared `next()` implementation, so descending into a non-task item's children is unaffected and nested tasks under a plain bullet are still reached. Neither constructor is reachable outside the crate; external callers only ever obtain an iterator through `Note`.
 
-2. **`ListRecordRef` eliminates a clone-per-row on every persist.**
-   `write_lists_for_note` serializes through a borrowed `ListRecordRef<'a> { path: &'a str, item: &'a ListItem }` rather than constructing an owned `ListRecord` (which would require cloning the note's path string and deep-cloning every `ListItem`, including its nested `IndexMap` fields and child lists). Field order and types are identical between `ListRecordRef` and `ListRecord`, so postcard's positional encoding is byte-for-byte compatible; `decode_row` on read transparently reconstructs an owned `ListRecord` from the same bytes. Profiled via a temporary `mise bench` fixture patch (not committed): with a 5-task-per-note fixture, `FileIndex::persist/1000` scaled proportionally to row count once this clone was removed, with no separate clone-driven overhead on top of the expected per-row serialization cost.
+2. **`ListEntryRef` eliminates a clone-per-row on every persist.**
+   `write_lists_for_note` serializes through a borrowed `ListEntryRef<'a> { path: &'a str, item: &'a ListItem }` (built from a local `item.without_children()` value) rather than constructing an owned `ListEntry` directly from the live tree node — the same principle as the original `ListRecordRef` optimization, refined in round 4 to also exclude the item's descendant lists from the borrow. Field order and types are identical between `ListEntryRef` and `ListEntry`, so postcard's positional encoding is byte-for-byte compatible; `decode_row` on read transparently reconstructs an owned `ListEntry` from the same bytes.
 
-3. **`ListRecord`'s interface deliberately hides `ListItemType` entirely.**
-   Every accessor (`status_type`, `priority`, `due_date`, `is_fully_complete`) pattern-matches `ListItemType` internally and returns `None` for `Plain`/`Checkbox` items or task-less fields — callers never see the enum. Two speculative additions from an earlier pass were removed after review: `ListRecord::item(&self) -> &ListItem` (a raw escape hatch that let callers bypass every accessor and pattern-match `ListItemType` directly, undermining the ticket's explicit composability goal — "adding fields to `TaskListItem` does not require updating `ListRecord`'s struct layout") and `ListRecord::fully_complete()` (a verbatim duplicate alias of `is_fully_complete()` with no caller outside its own test). Neither had a real caller; both failed the deletion test.
+3. **`ListEntry`'s interface deliberately hides `ListItemType` entirely.**
+   Every accessor (`status_type`, `priority`, `due_date`, `is_fully_complete`) delegates through `ListItemType::as_task()` and returns `None` for `Plain`/`Checkbox` items or task-less fields — callers never see the enum. Two speculative additions from an earlier pass were removed after review: `ListRecord::item(&self) -> &ListItem` (a raw escape hatch that let callers bypass every accessor and pattern-match `ListItemType` directly, undermining the ticket's explicit composability goal — "adding fields to `TaskListItem` does not require updating `ListEntry`'s struct layout") and `ListRecord::fully_complete()` (a verbatim duplicate alias of `is_fully_complete()` with no caller outside its own test). Neither had a real caller; both failed the deletion test.
 
 4. **`(path, line)` key encoding is a private `IndexStore` concern.**
-   `list_key`, `list_key_bounds`, and `list_key_matches_path` are private associated functions on `IndexStore`, shared by `read_lists_for_path`, `remove_lists_for_path`, and `write_lists_for_note` — the byte-concatenation scheme (UTF-8 path bytes + 4-byte big-endian `SourceLine`) and the range-scan/prefix-match logic exist in exactly one place. `ListItem::depth()`/`line()`/`parent()` are `pub(crate)` (not `pub`): their only callers are `ListRecord`'s same-module accessors and `IndexStore::write_lists_for_note`, both crate-internal, so no caller needs — or gets — the wider visibility.
+   `list_key`, `list_key_bounds`, and `list_key_matches_path` are private associated functions on `IndexStore`, shared by `read_lists_for_path`, `remove_lists_for_path`, and `write_lists_for_note` — the byte-concatenation scheme (UTF-8 path bytes + 4-byte big-endian `SourceLine`) and the range-scan/prefix-match logic exist in exactly one place. `ListItem::depth()`/`line()`/`parent()` are `pub(crate)` (not `pub`): their only callers are `ListEntry`'s accessors (now in `index/entry.rs`) and `IndexStore::write_lists_for_note`, both crate-internal, so no caller needs — or gets — the wider visibility.
 
 5. **LISTS keys are UTF-8-only by construction, unlike FILES/NOTES/LINKS.**
-   FILES/NOTES/LINKS key on `path.as_os_str().as_encoded_bytes()` (raw OS-native bytes, losslessly recoverable even for non-Unicode paths). LISTS keys instead use `note.path().to_string_lossy()`, matching the ticket's explicit "path as UTF-8 bytes" schema. This is a deliberate, ticket-mandated simplification versus the other tables' lossless handling: a project with non-UTF-8 file paths would have those paths' `ListRecord.path` field lossy-mangled (replacement characters), and two such paths differing only in their non-UTF-8 segments could theoretically collide after lossy conversion. Flagged here as a known, scoped edge case rather than silently fixed, since correcting it would mean changing the ticket's specified key encoding.
+   FILES/NOTES/LINKS key on `path.as_os_str().as_encoded_bytes()` (raw OS-native bytes, losslessly recoverable even for non-Unicode paths). LISTS keys instead use `note.path().to_string_lossy()`, matching the ticket's explicit "path as UTF-8 bytes" schema. This is a deliberate, ticket-mandated simplification versus the other tables' lossless handling: a project with non-UTF-8 file paths would have those paths' `ListEntry.path` field lossy-mangled (replacement characters), and two such paths differing only in their non-UTF-8 segments could theoretically collide after lossy conversion. Flagged here as a known, scoped edge case rather than silently fixed, since correcting it would mean changing the ticket's specified key encoding.
 
 ### Verification command output
 
