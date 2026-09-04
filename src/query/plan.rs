@@ -10,10 +10,12 @@
 //! partition where possible.
 //!
 //! [`QueryTransform`] is the individual step type a [`QueryPlan`] holds.
+#[cfg(test)]
+use super::sort::SortTerm;
 use super::{
     QueryBuilderError, QueryRow,
     grammar::{FieldPath, FilterExpr},
-    sort::{SortDirection, SortKey, SortOrder, SortTerm},
+    sort::{SortDirection, SortOrder},
 };
 use crate::note::NoteFieldValue;
 
@@ -326,17 +328,13 @@ impl QueryTransform {
                 let keys = order.keys_for(&rows);
                 let mut indexed: Vec<(usize, usize)> =
                     (0..rows.len()).map(|idx| (idx, idx)).collect();
-                let terms = order.terms();
 
                 let cmp =
                     |&(a_idx, a_input): &(usize, usize),
                      &(b_idx, b_input): &(usize, usize)| {
-                        let ord = compare_composite_keys(
-                            keys.get(a_idx),
-                            keys.get(b_idx),
-                            terms,
-                        );
-                        ord.then_with(|| a_input.cmp(&b_input))
+                        order
+                            .compare_keys(keys.get(a_idx), keys.get(b_idx))
+                            .then_with(|| a_input.cmp(&b_input))
                     };
 
                 let k = n.saturating_sub(1);
@@ -360,27 +358,6 @@ impl QueryTransform {
     }
 }
 
-/// Compares two strided key slices across a composite sort order.
-fn compare_composite_keys(
-    a_keys: &[SortKey],
-    b_keys: &[SortKey],
-    terms: &[SortTerm],
-) -> std::cmp::Ordering {
-    for (i, term) in terms.iter().enumerate() {
-        let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i)) else {
-            continue;
-        };
-        let ord = a_k.total_cmp(b_k);
-        let ord = match term.direction() {
-            SortDirection::Ascending => ord,
-            SortDirection::Descending => ord.reverse(),
-        };
-        if ord != std::cmp::Ordering::Equal {
-            return ord;
-        }
-    }
-    std::cmp::Ordering::Equal
-}
 #[cfg(test)]
 mod tests {
     use super::*;

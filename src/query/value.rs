@@ -36,12 +36,7 @@ impl QueryFieldValueRef<'_> {
                 NoteFieldValue::Duration((*value).to_owned())
             }
             Self::Timestamp(ts) => {
-                let formatted = if ts.has_time_component() {
-                    ts.to_datetime_string()
-                } else {
-                    ts.to_date_string()
-                };
-                NoteFieldValue::Date(formatted)
+                NoteFieldValue::Date(ts.to_conditional_string())
             }
             Self::Object(value) => NoteFieldValue::Object((*value).clone()),
             Self::List(value) => value.to_owned_value(),
@@ -63,13 +58,7 @@ impl QueryFieldValueRef<'_> {
             Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
                 out.push_str(value);
             }
-            Self::Timestamp(ts) => {
-                if ts.has_time_component() {
-                    out.push_str(&ts.to_datetime_string());
-                } else {
-                    out.push_str(&ts.to_date_string());
-                }
-            }
+            Self::Timestamp(ts) => ts.append_conditional(out),
             Self::Link(link) => out.push_str(link.target()),
             Self::Object(fields) => {
                 for (idx, (key, field)) in fields.iter().enumerate() {
@@ -103,52 +92,6 @@ impl QueryFieldValueRef<'_> {
             }
             Self::Owned(value) => value.as_str(),
             _ => None,
-        }
-    }
-
-    /// Compares this resolved field against an owned literal to establish
-    /// ordering for `<`, `<=`, `>`, `>=` filter comparisons.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "comparator symmetry with is_equal_to_literal"
-        )
-    )]
-    pub(super) fn compare_to_literal(
-        &self,
-        literal: &NoteFieldValue,
-    ) -> Option<Ordering> {
-        match (self, literal) {
-            (Self::Number(x), NoteFieldValue::Number(y)) => x.partial_cmp(y),
-            (Self::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
-            (Self::Timestamp(ts), NoteFieldValue::Date(lit_s)) => {
-                let lit_ts = Timestamp::parse_iso(lit_s)?;
-                Some(ts.cmp(&lit_ts))
-            }
-            (Self::Date(x), NoteFieldValue::Date(y)) => {
-                match (Timestamp::parse_iso(x), Timestamp::parse_iso(y)) {
-                    (Some(tx), Some(ty)) => Some(tx.cmp(&ty)),
-                    _ => Some(x.cmp(&y.as_str())),
-                }
-            }
-            (Self::Duration(x), NoteFieldValue::Duration(y)) => {
-                match (
-                    crate::note::duration_seconds(x),
-                    crate::note::duration_seconds(y),
-                ) {
-                    (Some(sx), Some(sy)) => sx.partial_cmp(&sy),
-                    _ => Some(x.cmp(&y.as_str())),
-                }
-            }
-            (Self::Object(_), NoteFieldValue::Object(_)) => None,
-            (Self::Owned(value), literal) => {
-                compare_field_values(value, literal)
-            }
-            _ => match (self.as_str(), literal.as_str()) {
-                (Some(x), Some(y)) => Some(x.cmp(y)),
-                _ => None,
-            },
         }
     }
 
@@ -401,50 +344,10 @@ fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::Ordering;
-
     use super::*;
 
     mod comparison {
-        use pretty_assertions::assert_eq;
-
         use super::*;
-        #[test]
-        fn returns_greater_when_comparing_larger_number_to_literal() {
-            assert_eq!(
-                QueryFieldValueRef::Number(5.0)
-                    .compare_to_literal(&NoteFieldValue::Number(3.0)),
-                Some(Ordering::Greater)
-            );
-        }
-
-        #[test]
-        fn returns_less_when_comparing_smaller_string_to_literal() {
-            assert_eq!(
-                QueryFieldValueRef::Text("abc")
-                    .compare_to_literal(&NoteFieldValue::String("abd".into())),
-                Some(Ordering::Less)
-            );
-        }
-
-        #[test]
-        fn returns_none_when_comparing_incompatible_types() {
-            assert_eq!(
-                QueryFieldValueRef::Bool(true)
-                    .compare_to_literal(&NoteFieldValue::Number(1.0)),
-                None
-            );
-        }
-
-        #[test]
-        fn returns_equal_when_comparing_owned_value_to_matching_literal() {
-            assert_eq!(
-                QueryFieldValueRef::Owned(NoteFieldValue::Number(5.0))
-                    .compare_to_literal(&NoteFieldValue::Number(5.0)),
-                Some(Ordering::Equal)
-            );
-        }
-
         #[test]
         fn returns_true_when_comparing_null_to_null_literal() {
             assert!(

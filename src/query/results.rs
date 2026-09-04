@@ -417,6 +417,7 @@ impl QuerySet {
     }
 
     /// Filters rows matching `expr`, serving as a Rust-side alias for
+    /// [`Self::filter`]. Test-only: no production caller needs an alias for
     /// [`Self::filter`].
     ///
     /// # Errors
@@ -425,19 +426,15 @@ impl QuerySet {
     ///
     /// [`Builder`]: super::QueryError::Builder
     #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; Rust-side alias for \
-                      direct callers of this crate's Rust API"
-        )
-    )]
+    #[cfg(test)]
     pub(super) fn r#where(self, expr: &str) -> QueryResult<Self> {
         self.filter(expr)
     }
 
     /// Sorts rows by the field at `path` in ascending or descending order.
+    /// Test-only: the template engine's `"sort"` verb and [`Self::sort_field`]
+    /// cover every production caller; this boolean-direction form only
+    /// remains as a lower-ceremony test helper.
     ///
     /// # Errors
     ///
@@ -445,14 +442,7 @@ impl QuerySet {
     ///
     /// [`Builder`]: super::QueryError::Builder
     #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "public query building method; exercised in tests and \
-                      test-utils"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn sort(
         self,
         path: &str,
@@ -479,16 +469,12 @@ impl QuerySet {
         Ok(self.push(QueryTransform::order(order)))
     }
 
-    /// Appends a composite sort order transform to this query set.
+    /// Appends a composite sort order transform to this query set. Test-only:
+    /// [`QueryBuilder::order`](super::QueryBuilder::order) is the production
+    /// counterpart for the pre-fetch path; nothing drives composite orders
+    /// through the post-fetch [`QuerySet`] chain yet.
     #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "public query building method; exercised in tests and \
-                      test-utils"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn order(self, order: SortOrder) -> Self {
         self.push(QueryTransform::order(order))
     }

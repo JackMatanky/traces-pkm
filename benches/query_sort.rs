@@ -57,7 +57,8 @@ fn create_page_index(n: usize) -> Arc<FileIndex> {
     Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
 }
 
-/// Replica of `sort_key_cmp`'s Number-vs-Number match arm, extracted to keep
+/// Replica of `SortKey::total_cmp`'s Number-vs-Number match arm, extracted to
+/// keep
 /// [`bench_sort_note_field_value_replica`]'s closure nesting within clippy's
 /// `excessive_nesting` threshold.
 fn replica_cmp(
@@ -120,8 +121,9 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 
 /// Measures sort-only cost by frontmatter metadata, swept over workspace size.
 ///
-/// Isolated from [`bench_run_pages_by_metadata`]'s combined measurement so
-/// a regression in `sort_by_cached_key`'s comparison or permutation cost is
+/// Isolated from the `TopK` fusion benchmarks below (which measure a
+/// `Sort`+`Limit` pipeline, not a bare sort) so
+/// a regression in `SortOrder::sort_rows`'s comparison or permutation cost is
 /// distinguishable from a regression in filter evaluation or field resolution.
 /// The size sweep (not a single point) exists so the result can be fit as
 /// `A·n + B·n·log₂(n)`: the linear term isolates per-row key
@@ -172,11 +174,11 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 /// (`src/query/service.rs`: `plan.run(records)`), which fuses an
 /// adjacent `Sort`+`Limit` into one `TopK` step using
 /// `select_nth_unstable_by` (`O(n)` selection) instead of a full
-/// `sort_by_cached_key` (`O(n log n)`). Since the `QuerySet` CTE
-/// redesign, `.sort(...).limit(...)` chained directly on a `QuerySet`
-/// (the shape the template `tasks`/`query` namespaces use) reaches the same
-/// fusion (deferred into the same `QueryPlan`, flushed once on read), so
-/// this gap is no longer template-specific; it's the general cost of `TopK`
+/// permutation sort via `SortOrder::sort_rows` (`O(n log n)`). Since the
+/// `QuerySet` CTE redesign, `.sort(...).limit(...)` chained directly on a
+/// `QuerySet` (the shape the template `tasks`/`query` namespaces use) reaches
+/// the same fusion (deferred into the same `QueryPlan`, flushed once on read),
+/// so this gap is no longer template-specific; it's the general cost of `TopK`
 /// fusion vs. a full sort, still worth guarding against regression. The
 /// chained-`QuerySet` path itself isn't benchmarked here:
 /// `QuerySet::sort`/`limit` are `pub(crate)`, unreachable from this
@@ -351,12 +353,13 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
 }
 
 /// Measures comparator dispatch cost on `NoteFieldValue` values with a replica
-/// of `sort_key_cmp`'s shape, swept over workspace size.
+/// of `SortKey::total_cmp`'s shape, swept over workspace size.
 ///
-/// The production comparator is `pub(super)` in `src/query/sort.rs` and
-/// unreachable from an external bench, so this replicates the exact arm
-/// structure the Number-vs-Number path exercises (enum `match` on both
-/// operands, then `f64::total_cmp`, with the `descending` branch) against real
+/// The production comparator, `SortKey::total_cmp`, is `pub(crate)` in
+/// `src/query/sort.rs` and unreachable from an external bench crate, so this
+/// replicates the exact arm structure the Number-vs-Number path exercises
+/// (enum `match` on both operands, then `f64::total_cmp`, with the
+/// `descending` branch) against real
 /// `NoteFieldValue` values. It measures what a comparator of this shape costs,
 /// not the production function itself; conclusions must treat it as a
 /// shape-equivalent upper bound on dispatch cost. Swept over the same sizes as

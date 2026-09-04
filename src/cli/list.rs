@@ -8,7 +8,10 @@
 
 use clap::Args;
 
-use super::error::{CliError, CliResult};
+use super::{
+    SortArgs,
+    error::{CliError, CliResult},
+};
 use crate::{Config, ConfigService};
 
 /// Field path rendered for each `traces list` bullet.
@@ -28,19 +31,9 @@ pub(super) struct List {
     /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
     filter: Vec<String>,
-    /// Field path to sort by. Repeatable; multiple `--sort` flags or
-    /// comma-separated values compose as composite sort terms. Defaults to
-    /// descending order unless overridden by prefix `+` or the `--asc`
-    /// flag.
-    #[arg(long, value_delimiter = ',', num_args = 1..)]
-    sort: Vec<String>,
-    /// Sort in ascending order. Conflicts with `--desc`. Requires `--sort`.
-    #[arg(long, conflicts_with = "desc", requires = "sort")]
-    asc: bool,
-    /// Sort in descending order (the default). Conflicts with `--asc`.
-    /// Requires `--sort`.
-    #[arg(long, conflicts_with = "asc", requires = "sort")]
-    desc: bool,
+    /// Sort configuration. See [`SortArgs`].
+    #[command(flatten)]
+    sort: SortArgs,
 }
 
 impl List {
@@ -89,8 +82,7 @@ impl List {
     /// [`FileIndex`]: crate::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
-        let order =
-            super::parse_cli_sort(root, &self.sort, self.asc, self.desc)?;
+        let order = self.sort.resolve(root)?;
         let outcome = super::refresh_page_query(
             config,
             self.from.as_deref(),
@@ -132,9 +124,7 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let (rendered, count) =
@@ -154,9 +144,11 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec![],
-                sort: vec!["rating".to_owned()],
-                asc: true,
-                desc: false,
+                sort: SortArgs {
+                    sort: vec!["rating".to_owned()],
+                    asc: true,
+                    desc: false,
+                },
             };
 
             let (rendered, count) =
@@ -176,9 +168,11 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec![],
-                sort: vec!["rating".to_owned()],
-                asc: false,
-                desc: false,
+                sort: SortArgs {
+                    sort: vec!["rating".to_owned()],
+                    asc: false,
+                    desc: false,
+                },
             };
 
             let (rendered, count) =
@@ -195,9 +189,11 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec![],
-                sort: vec!["file..bad".to_owned()],
-                asc: false,
-                desc: false,
+                sort: SortArgs {
+                    sort: vec!["file..bad".to_owned()],
+                    asc: false,
+                    desc: false,
+                },
             };
 
             let error = list
@@ -220,9 +216,7 @@ mod tests {
             let list = List {
                 from: Some("#projects".to_owned()),
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let (rendered, count) =
@@ -242,9 +236,7 @@ mod tests {
             let list = List {
                 from: Some("projects/".to_owned()),
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let (rendered, count) =
@@ -281,9 +273,7 @@ mod tests {
                         .to_owned(),
                 ),
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let (rendered, count) =
@@ -300,9 +290,7 @@ mod tests {
             let list = List {
                 from: Some("#book and".to_owned()),
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let error =
@@ -324,9 +312,7 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec!["rating > 5".to_owned()],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let (rendered, count) =
@@ -348,9 +334,7 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec!["rating > 2".to_owned(), "rating < 9".to_owned()],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let (rendered, count) =
@@ -367,9 +351,7 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec!["not a valid expression".to_owned()],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let error = list
@@ -407,9 +389,7 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             let error = list
@@ -464,9 +444,9 @@ mod tests {
 
             assert_eq!(list.from.as_deref(), Some("#tag"));
             assert_eq!(list.filter, vec!["rating > 5".to_owned()]);
-            assert_eq!(list.sort, vec!["rating".to_owned()]);
-            assert!(list.desc);
-            assert!(!list.asc);
+            assert_eq!(list.sort.sort, vec!["rating".to_owned()]);
+            assert!(list.sort.desc);
+            assert!(!list.sort.asc);
         }
 
         #[test]
@@ -498,92 +478,9 @@ mod tests {
 
             assert_eq!(list.from, None);
             assert_eq!(list.filter, Vec::<String>::new());
-            assert_eq!(list.sort, Vec::<String>::new());
-            assert!(!list.asc);
-            assert!(!list.desc);
-        }
-
-        #[test]
-        fn parses_default_descending_sort_without_flags() {
-            let cli =
-                Cli::try_parse_from(["traces", "list", "--sort", "file.mtime"])
-                    .expect("parse list argv");
-            let list = list_args(&cli);
-            assert_eq!(list.sort, vec!["file.mtime".to_owned()]);
-            assert!(!list.asc);
-            assert!(!list.desc);
-            let order = crate::cli::parse_cli_sort(
-                std::path::Path::new(""),
-                &list.sort,
-                list.asc,
-                list.desc,
-            )
-            .expect("valid sort")
-            .expect("some sort");
-            assert_eq!(
-                order.terms().first().expect("first term").direction(),
-                crate::query::SortDirection::Descending
-            );
-        }
-
-        #[test]
-        fn parses_global_asc_flag_reversing_all_sort_fields() {
-            let cli = Cli::try_parse_from([
-                "traces",
-                "list",
-                "--sort",
-                "file.folder,file.name",
-                "--asc",
-            ])
-            .expect("parse list argv");
-            let list = list_args(&cli);
-            let order = crate::cli::parse_cli_sort(
-                std::path::Path::new(""),
-                &list.sort,
-                list.asc,
-                list.desc,
-            )
-            .expect("valid sort")
-            .expect("some sort");
-            assert_eq!(order.len(), 2);
-            assert_eq!(
-                order.terms().first().expect("first term").direction(),
-                crate::query::SortDirection::Ascending
-            );
-            assert_eq!(
-                order.terms().get(1).expect("second term").direction(),
-                crate::query::SortDirection::Ascending
-            );
-        }
-
-        #[test]
-        fn parses_prefix_modifiers_overriding_global_flags() {
-            let cli = Cli::try_parse_from([
-                "traces",
-                "list",
-                "--sort",
-                "+file.folder,-file.mtime",
-                "--asc",
-            ])
-            .expect("parse list argv");
-            let list = list_args(&cli);
-            let order = crate::cli::parse_cli_sort(
-                std::path::Path::new(""),
-                &list.sort,
-                list.asc,
-                list.desc,
-            )
-            .expect("valid sort")
-            .expect("some sort");
-            assert_eq!(order.len(), 2);
-            assert_eq!(
-                order.terms().first().expect("first term").direction(),
-                crate::query::SortDirection::Ascending
-            );
-            assert_eq!(
-                order.terms().get(1).expect("second term").direction(),
-                crate::query::SortDirection::Descending
-            );
+            assert_eq!(list.sort.sort, Vec::<String>::new());
+            assert!(!list.sort.asc);
+            assert!(!list.sort.desc);
         }
 
         #[test]
@@ -623,9 +520,7 @@ mod tests {
             let list = List {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
             };
 
             list.run(&service).expect("run list command");

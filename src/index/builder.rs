@@ -129,6 +129,19 @@ impl IndexBuilder {
         }
     }
 
+    /// Parses every note in parallel via Rayon, then reports the first parse
+    /// failure by *scan* index (lowest path first), not by whichever thread
+    /// happens to finish first.
+    ///
+    /// This is why `results` is collected into a `Vec` before scanning it
+    /// serially for the first `Err`, rather than collecting directly into a
+    /// `Result<Vec<_>, _>`: `rayon`'s parallel `FromParallelIterator` for
+    /// `Result` short-circuits on whichever error a worker thread reports
+    /// first, which is not guaranteed to be the lowest-index one. `par_iter`
+    /// preserves input order in the collected `Vec` regardless of
+    /// completion order, so the later serial scan is what makes the
+    /// lowest-scan-index error deterministic. Do not "simplify" this to
+    /// `.collect::<Result<Vec<_>, _>>()`.
     fn build_fresh(
         files: Vec<FileBase>,
         root: &Path,

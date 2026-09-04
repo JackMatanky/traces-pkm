@@ -8,7 +8,7 @@
 
 use clap::Args;
 
-use super::error::CliError;
+use super::{SortArgs, error::CliError};
 use crate::{Config, ConfigService};
 
 /// Arguments for `traces table`.
@@ -25,19 +25,9 @@ pub(super) struct Table {
     /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
     filter: Vec<String>,
-    /// Field path to sort by. Repeatable; multiple `--sort` flags or
-    /// comma-separated values compose as composite sort terms. Defaults to
-    /// descending order unless overridden by prefix `+` or the `--asc`
-    /// flag.
-    #[arg(long, value_delimiter = ',', num_args = 1..)]
-    sort: Vec<String>,
-    /// Sort in ascending order. Conflicts with `--desc`. Requires `--sort`.
-    #[arg(long, conflicts_with = "desc", requires = "sort")]
-    asc: bool,
-    /// Sort in descending order (the default). Conflicts with `--asc`.
-    /// Requires `--sort`.
-    #[arg(long, conflicts_with = "asc", requires = "sort")]
-    desc: bool,
+    /// Sort configuration. See [`SortArgs`].
+    #[command(flatten)]
+    sort: SortArgs,
     /// Field path to render as a table column, e.g. `file.name`. Repeat for
     /// multiple columns; each path also becomes its column's header.
     #[arg(long = "column", required = true)]
@@ -92,8 +82,7 @@ impl Table {
     /// [`FileIndex`]: crate::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
-        let order =
-            super::parse_cli_sort(root, &self.sort, self.asc, self.desc)?;
+        let order = self.sort.resolve(root)?;
         let outcome = super::refresh_page_query(
             config,
             self.from.as_deref(),
@@ -141,9 +130,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -167,9 +154,11 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec!["rating".to_owned()],
-                asc: true,
-                desc: false,
+                sort: SortArgs {
+                    sort: vec!["rating".to_owned()],
+                    asc: true,
+                    desc: false,
+                },
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -193,9 +182,11 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec!["rating".to_owned()],
-                asc: false,
-                desc: false,
+                sort: SortArgs {
+                    sort: vec!["rating".to_owned()],
+                    asc: false,
+                    desc: false,
+                },
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -216,9 +207,11 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec!["file..bad".to_owned()],
-                asc: false,
-                desc: false,
+                sort: SortArgs {
+                    sort: vec!["file..bad".to_owned()],
+                    asc: false,
+                    desc: false,
+                },
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -240,9 +233,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned(), "rating".to_owned()],
             };
 
@@ -265,9 +256,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["a|b".to_owned()],
             };
 
@@ -288,9 +277,7 @@ mod tests {
             let table = Table {
                 from: Some("#projects".to_owned()),
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -314,9 +301,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec!["rating > 5".to_owned()],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -337,9 +322,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec!["not a valid expression".to_owned()],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -360,9 +343,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file..bad".to_owned()],
             };
 
@@ -401,9 +382,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -463,9 +442,9 @@ mod tests {
 
             assert_eq!(table.from.as_deref(), Some("#tag"));
             assert_eq!(table.filter, vec!["rating > 5".to_owned()]);
-            assert_eq!(table.sort, vec!["rating".to_owned()]);
-            assert!(table.desc);
-            assert!(!table.asc);
+            assert_eq!(table.sort.sort, vec!["rating".to_owned()]);
+            assert!(table.sort.desc);
+            assert!(!table.sort.asc);
             assert_eq!(table.columns, ["file.path", "rating"]);
         }
 
@@ -505,99 +484,9 @@ mod tests {
 
             assert_eq!(table.from, None);
             assert_eq!(table.filter, Vec::<String>::new());
-            assert_eq!(table.sort, Vec::<String>::new());
-            assert!(!table.asc);
-            assert!(!table.desc);
-        }
-
-        #[test]
-        fn parses_default_descending_sort_without_flags() {
-            let cli = Cli::try_parse_from([
-                "traces",
-                "table",
-                "--column",
-                "file.path",
-                "--sort",
-                "file.mtime",
-            ])
-            .expect("parse table argv");
-            let table = table_args(&cli);
-            let order = crate::cli::parse_cli_sort(
-                std::path::Path::new(""),
-                &table.sort,
-                table.asc,
-                table.desc,
-            )
-            .expect("valid sort")
-            .expect("some sort");
-            assert_eq!(
-                order.terms().first().expect("first term").direction(),
-                crate::query::SortDirection::Descending
-            );
-        }
-
-        #[test]
-        fn parses_global_asc_flag_reversing_all_sort_fields() {
-            let cli = Cli::try_parse_from([
-                "traces",
-                "table",
-                "--column",
-                "file.path",
-                "--sort",
-                "file.folder,file.name",
-                "--asc",
-            ])
-            .expect("parse table argv");
-            let table = table_args(&cli);
-            let order = crate::cli::parse_cli_sort(
-                std::path::Path::new(""),
-                &table.sort,
-                table.asc,
-                table.desc,
-            )
-            .expect("valid sort")
-            .expect("some sort");
-            assert_eq!(order.len(), 2);
-            assert_eq!(
-                order.terms().first().expect("first term").direction(),
-                crate::query::SortDirection::Ascending
-            );
-            assert_eq!(
-                order.terms().get(1).expect("second term").direction(),
-                crate::query::SortDirection::Ascending
-            );
-        }
-
-        #[test]
-        fn parses_prefix_modifiers_overriding_global_flags() {
-            let cli = Cli::try_parse_from([
-                "traces",
-                "table",
-                "--column",
-                "file.path",
-                "--sort",
-                "+file.folder,-file.mtime",
-                "--asc",
-            ])
-            .expect("parse table argv");
-            let table = table_args(&cli);
-            let order = crate::cli::parse_cli_sort(
-                std::path::Path::new(""),
-                &table.sort,
-                table.asc,
-                table.desc,
-            )
-            .expect("valid sort")
-            .expect("some sort");
-            assert_eq!(order.len(), 2);
-            assert_eq!(
-                order.terms().first().expect("first term").direction(),
-                crate::query::SortDirection::Ascending
-            );
-            assert_eq!(
-                order.terms().get(1).expect("second term").direction(),
-                crate::query::SortDirection::Descending
-            );
+            assert_eq!(table.sort.sort, Vec::<String>::new());
+            assert!(!table.sort.asc);
+            assert!(!table.sort.desc);
         }
 
         #[test]
@@ -650,9 +539,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 
@@ -674,9 +561,7 @@ mod tests {
             let table = Table {
                 from: None,
                 filter: vec![],
-                sort: vec![],
-                asc: false,
-                desc: false,
+                sort: SortArgs::default(),
                 columns: vec!["file.path".to_owned()],
             };
 

@@ -438,6 +438,37 @@ impl Timestamp {
             || self.0.nanosecond() != 0
     }
 
+    /// Formats this timestamp into `out`, using [`Self::to_datetime_string`]'s
+    /// form when it has a non-zero time-of-day component (see
+    /// [`Self::has_time_component`]), or [`Self::to_date_string`]'s bare-date
+    /// form otherwise. Writes directly into `out` with no intermediate
+    /// `String` allocation, unlike calling either formatter and pushing its
+    /// result.
+    #[inline]
+    pub(crate) fn append_conditional(self, out: &mut String) {
+        use std::fmt::Write as _;
+        if self.has_time_component() {
+            let _ = write!(out, "{}", self.0.format("%Y-%m-%dT%H:%M:%S"));
+        } else {
+            let _ = write!(out, "{}", self.0.format("%Y-%m-%d"));
+        }
+    }
+
+    /// Formats this timestamp as an owned [`String`], using
+    /// [`Self::to_datetime_string`]'s form when it has a non-zero
+    /// time-of-day component, or [`Self::to_date_string`]'s bare-date form
+    /// otherwise. Prefer [`Self::append_conditional`] when writing into an
+    /// existing buffer.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_conditional_string(self) -> String {
+        if self.has_time_component() {
+            self.to_datetime_string()
+        } else {
+            self.to_date_string()
+        }
+    }
+
     /// Parses an ISO-8601, RFC 3339, or `YYYY-MM-DD` date string into a
     /// `Timestamp`.
     ///

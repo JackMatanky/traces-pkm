@@ -13,11 +13,9 @@ use std::{
 };
 
 use rayon::prelude::*;
-use redb::ReadableTable as _;
 
 use super::{
     builder::parse_note,
-    codec::path_from_bytes,
     delta,
     error::{IndexBuilderError, IndexResult},
     inlinks::InlinkMap,
@@ -78,7 +76,7 @@ impl RefreshCache {
             Err(source) => return Err(store.raise_source_error(source).into()),
         };
         let chunks = if let Some(table) = &table {
-            load_raw_chunks(store, table)?
+            store.read_notes_chunked(table)?
         } else {
             Vec::new()
         };
@@ -173,44 +171,8 @@ impl RefreshCache {
     }
 }
 
-type RawChunkEntry<'a> = (PathBuf, redb::AccessGuard<'a, &'static [u8]>);
-type ChunkBuffer<'a> = Vec<RawChunkEntry<'a>>;
-type ChunkRange<'a> = redb::Range<'a, &'static [u8], &'static [u8]>;
-
-fn open_chunk_iter<'a>(
-    store: &IndexStore,
-    table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
-) -> IndexResult<Box<ChunkRange<'a>>> {
-    let range = table.iter().map_err(|s| store.raise_source_error(s))?;
-    Ok(Box::new(range))
-}
-
-fn load_raw_chunks<'a>(
-    store: &IndexStore,
-    table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
-) -> IndexResult<Vec<ChunkBuffer<'a>>> {
-    let mut chunks = Vec::new();
-    let mut current_chunk = Vec::new();
-    let mut current_bytes = 0usize;
-    let iter = open_chunk_iter(store, table)?;
-    for entry in iter {
-        let (key, value) = entry.map_err(|s| store.raise_source_error(s))?;
-        let path = path_from_bytes(key.value());
-        current_bytes = current_bytes.saturating_add(value.value().len());
-        current_chunk.push((path, value));
-        if current_chunk.len() >= 128 || current_bytes >= 512 * 1024 {
-            chunks.push(std::mem::take(&mut current_chunk));
-            current_bytes = 0;
-        }
-    }
-    if !current_chunk.is_empty() {
-        chunks.push(current_chunk);
-    }
-    Ok(chunks)
-}
-
 fn decode_notes_parallel(
-    chunks: Vec<ChunkBuffer<'_>>,
+    chunks: Vec<super::store::ChunkBuffer<'_>>,
 ) -> HashMap<PathBuf, Note> {
     let decoded: Vec<(PathBuf, Note)> = chunks
         .into_par_iter()

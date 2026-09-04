@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 
+#[cfg(test)]
 use logos::Logos;
 use miette::SourceSpan;
 
@@ -11,7 +12,9 @@ use super::{
     grammar::FieldPath,
     value::QueryFieldValueRef,
 };
-use crate::{LexTokenStream, LexedToken, NoteFieldValue, file::Timestamp};
+#[cfg(test)]
+use crate::{LexTokenStream, LexedToken};
+use crate::{NoteFieldValue, file::Timestamp};
 
 /// Sort direction for sorting operations.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -28,25 +31,6 @@ impl SortDirection {
     #[must_use]
     pub(crate) const fn is_descending(self) -> bool {
         matches!(self, Self::Descending)
-    }
-
-    /// Returns `true` if this direction is [`Self::Ascending`].
-    #[inline]
-    #[must_use]
-    #[expect(dead_code, reason = "accessor symmetry with is_descending")]
-    pub(crate) const fn is_ascending(self) -> bool {
-        matches!(self, Self::Ascending)
-    }
-
-    /// Inverts this sort direction.
-    #[inline]
-    #[must_use]
-    #[expect(dead_code, reason = "direction inversion helper for callers")]
-    pub(crate) const fn reverse(self) -> Self {
-        match self {
-            Self::Ascending => Self::Descending,
-            Self::Descending => Self::Ascending,
-        }
     }
 }
 
@@ -71,10 +55,7 @@ impl SortTerm {
     /// Returns the field path for this term.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "term path accessor for tests and callers")
-    )]
+    #[cfg(test)]
     pub(crate) fn path(&self) -> &FieldPath {
         &self.path
     }
@@ -87,7 +68,10 @@ impl SortTerm {
     }
 }
 
-/// Lexical tokens parsed from a sort clause.
+/// Lexical tokens parsed from a sort clause. Test-only: production callers
+/// build [`SortOrder`] via [`SortTerm`]s directly; [`SortOrder::parse`]'s
+/// string grammar is exercised only by this module's own tests.
+#[cfg(test)]
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum SortToken {
@@ -151,6 +135,7 @@ impl SortOrder {
     /// Returns the slice of sort terms.
     #[inline]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn terms(&self) -> &[SortTerm] {
         &self.terms
     }
@@ -158,10 +143,7 @@ impl SortOrder {
     /// Returns the number of sort terms.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "collection inspection symmetry")
-    )]
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
@@ -169,18 +151,15 @@ impl SortOrder {
     /// Returns the number of sort terms.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "collection inspection symmetry")
-    )]
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.terms.len()
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "sort clause parser for query expressions")
-    )]
+    /// Parses a comma-separated sort clause string, e.g. `"file.folder asc,
+    /// file.mtime desc"`. Test-only: see [`SortToken`] for why no production
+    /// caller reaches this string grammar.
+    #[cfg(test)]
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -303,6 +282,35 @@ impl SortOrder {
         }
     }
 
+    /// Compares two rows' precomputed key slices (as produced by
+    /// [`Self::keys_for`]) across every term in this composite order,
+    /// applying each term's [`SortDirection`] and short-circuiting on the
+    /// first non-equal term. Shared by [`Self::sort_rows`]'s full permutation
+    /// sort and [`super::plan::QueryTransform::TopK`]'s quickselect so both
+    /// execution paths apply identical ordering semantics.
+    #[must_use]
+    pub(crate) fn compare_keys(
+        &self,
+        a_keys: &[SortKey],
+        b_keys: &[SortKey],
+    ) -> Ordering {
+        for (i, term) in self.terms.iter().enumerate() {
+            let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i)) else {
+                continue;
+            };
+            let ord = a_k.total_cmp(b_k);
+            let ord = if term.direction().is_descending() {
+                ord.reverse()
+            } else {
+                ord
+            };
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        }
+        Ordering::Equal
+    }
+
     /// Permutes `rows` in place according to this composite sort order.
     pub(crate) fn sort_rows(&self, rows: &mut [QueryRow]) {
         if rows.len() <= 1 || self.terms.is_empty() {
@@ -312,24 +320,8 @@ impl SortOrder {
         let mut perm: Vec<usize> = (0..rows.len()).collect();
 
         perm.sort_by(|&a_idx, &b_idx| {
-            let a_keys = keys.get(a_idx);
-            let b_keys = keys.get(b_idx);
-            for (i, term) in self.terms.iter().enumerate() {
-                let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i))
-                else {
-                    continue;
-                };
-                let ord = a_k.total_cmp(b_k);
-                let ord = if term.direction().is_descending() {
-                    ord.reverse()
-                } else {
-                    ord
-                };
-                if ord != Ordering::Equal {
-                    return ord;
-                }
-            }
-            a_idx.cmp(&b_idx)
+            self.compare_keys(keys.get(a_idx), keys.get(b_idx))
+                .then_with(|| a_idx.cmp(&b_idx))
         });
 
         let mut dest_perm = vec![0usize; perm.len()];

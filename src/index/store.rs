@@ -75,6 +75,13 @@ type LinkEntry<'a> = Result<
 /// dropped.
 type ResolvedLink = Option<(PathBuf, Vec<PathBuf>)>;
 
+/// One `NOTES` table raw iterator entry: a path key paired with its
+/// undecoded postcard-bytes `AccessGuard`, chunked by
+/// [`IndexStore::read_notes_chunked`] for parallel decoding.
+type RawChunkEntry<'a> = (PathBuf, redb::AccessGuard<'a, &'static [u8]>);
+pub(super) type ChunkBuffer<'a> = Vec<RawChunkEntry<'a>>;
+type ChunkRange<'a> = redb::Range<'a, &'static [u8], &'static [u8]>;
+
 /// Redb-backed handle to one project root's index database.
 ///
 /// Created by [`Self::open`]. Callers interact through [`IndexerService`]
@@ -254,6 +261,52 @@ impl IndexStore {
             items.push(decode_row(&path, value.value())?);
         }
         Ok(items)
+    }
+
+    /// Opens `table`'s raw byte-range iterator, boxed in its own small frame
+    /// so [`Self::read_notes_chunked`]'s larger chunking-loop frame never
+    /// also carries this `Range`'s temporary construction cost.
+    fn open_notes_range<'a>(
+        &self,
+        table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
+    ) -> DbResult<Box<ChunkRange<'a>>> {
+        let range =
+            table.iter().map_err(|source| self.raise_source_error(source))?;
+        Ok(Box::new(range))
+    }
+
+    /// Reads `table`'s raw postcard-encoded rows in adaptively sized chunks
+    /// (at most 128 rows or 512 `KiB` of bytes per chunk), leaving decoding to
+    /// the caller. Used by [`super::cache::RefreshCache::load`] to hand
+    /// chunks to Rayon workers for parallel `postcard` deserialization
+    /// instead of decoding serially on this thread.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be read.
+    pub(super) fn read_notes_chunked<'a>(
+        &self,
+        table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
+    ) -> DbResult<Vec<ChunkBuffer<'a>>> {
+        let mut chunks = Vec::new();
+        let mut current_chunk = Vec::new();
+        let mut current_bytes = 0usize;
+        let iter = self.open_notes_range(table)?;
+        for entry in iter {
+            let (key, value) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            let path = path_from_bytes(key.value());
+            current_bytes = current_bytes.saturating_add(value.value().len());
+            current_chunk.push((path, value));
+            if current_chunk.len() >= 128 || current_bytes >= 512 * 1024 {
+                chunks.push(std::mem::take(&mut current_chunk));
+                current_bytes = 0;
+            }
+        }
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+        Ok(chunks)
     }
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
