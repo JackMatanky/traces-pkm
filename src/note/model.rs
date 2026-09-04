@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     field::NoteFieldValue,
     links::Link,
-    lists::{List, TaskIter},
+    lists::{List, ListItemIter},
     metadata::Frontmatter,
 };
 use crate::{FieldKey, FieldKeyRef, Tag};
@@ -292,6 +292,32 @@ impl Note {
         &self.tags
     }
 
+    /// Iterates over all list items across all nesting depths in document
+    /// order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("tasks.md"),
+    ///     "- [ ] Top level task\n  - [x] Subtask\n- Plain bullet",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// assert_eq!(note.list_items().count(), 3);
+    /// # }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn list_items(&self) -> ListItemIter<'_> {
+        ListItemIter::new(&self.lists)
+    }
+
     /// Iterates over task list items across all nesting depths.
     ///
     /// # Examples
@@ -313,8 +339,8 @@ impl Note {
     /// ```
     #[inline]
     #[must_use]
-    pub fn tasks(&self) -> TaskIter<'_> {
-        TaskIter::new(&self.lists)
+    pub fn tasks(&self) -> ListItemIter<'_> {
+        ListItemIter::tasks(&self.lists)
     }
 }
 
@@ -331,6 +357,15 @@ mod tests {
             TaskListItem,
         },
     };
+
+    fn task(name: &str, symbol: char, kind: TaskStatusType) -> ListItemType {
+        ListItemType::Task(TaskListItem::new(
+            TaskDates::default(),
+            None,
+            TaskStatus::new(TaskStatusSymbol::new(symbol), name, kind),
+            true,
+        ))
+    }
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -463,19 +498,6 @@ mod tests {
 
         use super::*;
 
-        fn task(
-            name: &str,
-            symbol: char,
-            kind: TaskStatusType,
-        ) -> ListItemType {
-            ListItemType::Task(TaskListItem::new(
-                TaskDates::default(),
-                None,
-                TaskStatus::new(TaskStatusSymbol::new(symbol), name, kind),
-                true,
-            ))
-        }
-
         #[test]
         fn yields_task_items_from_top_level_and_nested_lists_in_order() {
             let child_task = ListItem::new(
@@ -513,6 +535,50 @@ mod tests {
             );
 
             assert_eq!(note.tasks().count(), 0);
+        }
+    }
+
+    mod list_items {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn yields_all_items_including_plain_and_checkbox_and_tasks_in_order() {
+            let grandchild_plain =
+                ListItem::new("grandchild plain", ListItemType::Plain);
+            let child_checkbox = ListItem::with_children(
+                "child checkbox",
+                ListItemType::Checkbox,
+                vec![List::new(false, vec![grandchild_plain])],
+            );
+            let parent_task = ListItem::with_children(
+                "parent task",
+                task("Todo", ' ', TaskStatusType::Todo),
+                vec![List::new(false, vec![child_checkbox])],
+            );
+            let sibling_task = ListItem::new(
+                "sibling task",
+                task("Done", 'x', TaskStatusType::Done),
+            );
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                vec![
+                    List::new(false, vec![parent_task]),
+                    List::new(false, vec![sibling_task]),
+                ],
+                Vec::new(),
+            );
+
+            let texts: Vec<&str> =
+                note.list_items().map(ListItem::clean_text).collect();
+            assert_eq!(texts, [
+                "parent task",
+                "child checkbox",
+                "grandchild plain",
+                "sibling task"
+            ]);
         }
     }
 }

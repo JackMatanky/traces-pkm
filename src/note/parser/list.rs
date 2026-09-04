@@ -220,6 +220,7 @@ impl ListTracker {
             let item =
                 ListItem::with_children(text, item_type, item_frame.children)
                     .with_fields(item_frame.fields)
+                    .with_tags(item_frame.tags)
                     .with_position(item_frame.position);
             if let Some(list_frame) = self.list_stack.last_mut() {
                 list_frame.items.push(item);
@@ -1304,6 +1305,26 @@ mod tests {
             let list = tracker.lists.first().expect("list present");
             let item = list.items().first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
+        }
+
+        #[test]
+        fn item_tags_survive_classification_as_queryable_data() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1));
+            tracker.push_text("[x] Task #task #project", false);
+            let tag_filters = [Tag::parse("#task").unwrap()];
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_list();
+
+            let list = tracker.lists.first().expect("list present");
+            let item = list.items().first().expect("item present");
+            // Classification used only #task to decide Task vs Checkbox, but
+            // both tags the item actually carries remain queryable.
+            assert_eq!(item.tags(), [
+                Tag::parse("#task").unwrap(),
+                Tag::parse("#project").unwrap(),
+            ]);
         }
 
         #[test]

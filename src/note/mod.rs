@@ -26,7 +26,8 @@
 //!   child lists.
 //! - [`ListText`], [`TaskDates`], [`TaskPriority`]: Normalized list text,
 //!   extracted task dates, and priority levels.
-//! - [`TaskIter`]: Depth-first task iterators across list trees.
+//! - [`ListItemIter`]: Depth-first list iterator across list trees, optionally
+//!   filtered to task items.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: Outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
@@ -63,8 +64,8 @@ mod parser;
 pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
-    List, ListItem, ListItemType, ListText, TaskDates, TaskIter, TaskListItem,
-    TaskPriority,
+    List, ListItem, ListItemIter, ListItemType, ListText, TaskDates,
+    TaskListItem, TaskPriority,
 };
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;

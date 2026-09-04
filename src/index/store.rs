@@ -1,7 +1,8 @@
-//! Redb persistence for [`FileBase`], [`Note`], and derived inlink records.
+//! Redb persistence for [`FileBase`], [`Note`], [`ListEntry`], and derived
+//! inlink records.
 //!
 //! [`IndexStore`] owns one redb connection and adapts it to the file-index
-//! schema (`FILES`, `NOTES`, `LINKS` tables). Callers use
+//! schema (`FILES`, `NOTES`, `LINKS`, `LISTS` tables). Callers use
 //! [`super::IndexerService`] methods instead of interacting with tables
 //! directly.
 
@@ -22,11 +23,11 @@ use super::{
     FileIndex, INDEX_FILE,
     codec::{decode_row, encode_row, path_from_bytes},
     delta::{IncrementalDelta, IndexDelta},
-    entry::FileEntry,
+    entry::{FileEntry, ListEntry, ListEntryRef},
     error::{DbError, DbResult, IndexResult},
     inlinks::InlinkMap,
 };
-use crate::{FileBase, Note};
+use crate::{FileBase, Note, SourceLine};
 
 /// File metadata table.
 ///
@@ -53,6 +54,15 @@ const NOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("notes");
 /// Value: one source note path per entry
 const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("links");
+
+/// Parsed list items table.
+///
+/// Stores [`ListEntry`]s for every list item in every Markdown file.
+///
+/// Key: project-relative path as UTF-8 bytes concatenated with 4-byte
+/// big-endian [`SourceLine`]
+/// Value: serialized [`ListEntry`]
+const LISTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("lists");
 
 /// Persisted snapshot of [`FileBase`]s, [`Note`]s (sorted by path), and
 /// inbound link edges (target-keyed, unordered).
@@ -87,6 +97,39 @@ pub(super) struct IndexStore {
 }
 
 impl IndexStore {
+    /// Constructs a `LISTS` table key by concatenating `path`'s UTF-8 bytes
+    /// and `line` as a 4-byte big-endian integer.
+    #[inline]
+    #[must_use]
+    fn list_key(path: &str, line: SourceLine) -> Vec<u8> {
+        let mut key = Vec::with_capacity(path.len().saturating_add(4));
+        key.extend_from_slice(path.as_bytes());
+        key.extend_from_slice(&u32::from(line).to_be_bytes());
+        key
+    }
+
+    /// Returns the inclusive `(start, end)` `LISTS` key bounds spanning
+    /// every possible line for `path`.
+    #[inline]
+    #[must_use]
+    fn list_key_bounds(path: &str) -> (Vec<u8>, Vec<u8>) {
+        (
+            Self::list_key(path, SourceLine::new(0)),
+            Self::list_key(path, SourceLine::new(u32::MAX)),
+        )
+    }
+
+    /// True if `key_bytes` is a `LISTS` key belonging to `path` — the range
+    /// bounds from [`Self::list_key_bounds`] can also match a longer
+    /// sibling path, so callers must still check this per key.
+    #[inline]
+    #[must_use]
+    fn list_key_matches_path(key_bytes: &[u8], path: &str) -> bool {
+        let path_bytes = path.as_bytes();
+        key_bytes.len() == path_bytes.len().saturating_add(4)
+            && key_bytes.starts_with(path_bytes)
+    }
+
     /// Opens the index database under `root`, creating it if absent.
     ///
     /// Recovers by wipe-and-recreate if the existing file is corrupted or
@@ -148,12 +191,12 @@ impl IndexStore {
         }
     }
 
-    /// True if `FILES`/`NOTES`/`LINKS` show schema drift or per-table
-    /// structural corruption against this process's compiled-in table
-    /// definitions.
+    /// True if `FILES`/`NOTES`/`LINKS`/`LISTS` show schema drift or
+    /// per-table structural corruption against this process's compiled-in
+    /// table definitions.
     ///
     /// A fresh, still-tableless database (first-ever open) reports
-    /// `TableDoesNotExist` for all three, which is not a rebuild trigger.
+    /// `TableDoesNotExist` for all four, which is not a rebuild trigger.
     fn should_rebuild(db: &redb::Database, path: &Path) -> DbResult<bool> {
         let read_txn = db.begin_read().map_err(|source| DbError::Redb {
             path: path.to_path_buf(),
@@ -163,6 +206,7 @@ impl IndexStore {
             read_txn.open_table(FILES).err(),
             read_txn.open_table(NOTES).err(),
             read_txn.open_multimap_table(LINKS).err(),
+            read_txn.open_table(LISTS).err(),
         ] {
             let Some(error) = probe else {
                 continue;
@@ -240,6 +284,97 @@ impl IndexStore {
         };
         items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
         Ok(items)
+    }
+
+    /// Reads all [`ListEntry`]s currently stored in the `LISTS` table.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be read.
+    /// - [`DbError::Deserialize`] if stored bytes are corrupt.
+    pub(super) fn read_lists(
+        &self,
+        txn: &ReadTransaction,
+    ) -> DbResult<Vec<ListEntry>> {
+        match txn.open_table(LISTS) {
+            Ok(table) => {
+                let mut items = Vec::new();
+                for entry in table
+                    .iter()
+                    .map_err(|source| self.raise_source_error(source))?
+                {
+                    let (key, value) = entry
+                        .map_err(|source| self.raise_source_error(source))?;
+                    let key_bytes = key.value();
+                    let path_bytes = key_bytes
+                        .len()
+                        .checked_sub(4)
+                        .and_then(|prefix_len| key_bytes.get(..prefix_len))
+                        .unwrap_or(key_bytes);
+                    let path = path_from_bytes(path_bytes);
+                    items.push(decode_row(&path, value.value())?);
+                }
+                Ok(items)
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(Vec::new()),
+            Err(source) => Err(self.raise_source_error(source)),
+        }
+    }
+
+    /// Reads all [`ListEntry`]s currently stored in the `LISTS` table for
+    /// `path`.
+    ///
+    /// # Errors
+    ///
+    /// - [`DbError::Redb`] if the table cannot be read.
+    /// - [`DbError::Deserialize`] if stored bytes are corrupt.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    pub(super) fn read_lists_for_path(
+        &self,
+        txn: &ReadTransaction,
+        path: &str,
+    ) -> DbResult<Vec<ListEntry>> {
+        let table = match txn.open_table(LISTS) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Ok(Vec::new());
+            }
+            Err(source) => return Err(self.raise_source_error(source)),
+        };
+        let (start, end) = Self::list_key_bounds(path);
+        let mut items = Vec::new();
+        for entry in table
+            .range(start.as_slice()..=end.as_slice())
+            .map_err(|source| self.raise_source_error(source))?
+        {
+            let (key, value) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            let k_bytes = key.value();
+            if Self::list_key_matches_path(k_bytes, path) {
+                let path_obj = Path::new(path);
+                items.push(decode_row(path_obj, value.value())?);
+            }
+        }
+        Ok(items)
+    }
+
+    /// Reads all persisted [`ListEntry`]s from `LISTS`.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    pub(super) fn read_all_lists(&self) -> DbResult<Vec<ListEntry>> {
+        let txn = self.begin_read()?;
+        self.read_lists(&txn)
     }
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
@@ -447,8 +582,67 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Atomically replaces every stored [`FileBase`], [`Note`], and derived
-    /// inlink edge.
+    /// Removes every `LISTS` entry belonging to `path`.
+    fn remove_lists_for_path(
+        &self,
+        table: &mut redb::Table<'_, &[u8], &[u8]>,
+        path: &str,
+    ) -> IndexResult<()> {
+        let (start, end) = Self::list_key_bounds(path);
+        let mut keys_to_remove = Vec::new();
+        for entry in table
+            .range(start.as_slice()..=end.as_slice())
+            .map_err(|source| self.raise_source_error(source))?
+        {
+            let (k, _) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            let k_bytes = k.value();
+            if Self::list_key_matches_path(k_bytes, path) {
+                keys_to_remove.push(k_bytes.to_vec());
+            }
+        }
+
+        for key in keys_to_remove {
+            table
+                .remove(key.as_slice())
+                .map_err(|source| self.raise_source_error(source))?;
+        }
+        Ok(())
+    }
+
+    /// Writes every list item from `note` into `LISTS`.
+    ///
+    /// Each item's descendant lists are cleared via
+    /// [`ListItem::without_children`] before serializing, into a local
+    /// value [`ListEntryRef`] then borrows: a `LISTS` row is one list item,
+    /// not its subtree, and each descendant is written as its own,
+    /// independent row. [`ListEntryRef`] and [`ListEntry`] have identical
+    /// field order and types, so postcard's positional encoding is
+    /// byte-for-byte identical and [`decode_row`] transparently reads either
+    /// back as an owned [`ListEntry`].
+    fn write_lists_for_note(
+        &self,
+        table: &mut redb::Table<'_, &[u8], &[u8]>,
+        note: &Note,
+    ) -> IndexResult<()> {
+        let path_str = note.path().to_string_lossy();
+        for item in note.list_items() {
+            let key = Self::list_key(&path_str, item.line());
+            let leaf = item.without_children();
+            let entry = ListEntryRef {
+                path: &path_str,
+                item: &leaf,
+            };
+            let bytes = encode_row(note.path(), &entry)?;
+            table
+                .insert(key.as_slice(), bytes.as_slice())
+                .map_err(|source| self.raise_source_error(source))?;
+        }
+        Ok(())
+    }
+
+    /// Atomically replaces every stored [`FileBase`], [`Note`], [`ListEntry`],
+    /// and derived inlink edge.
     ///
     /// # Errors
     ///
@@ -465,6 +659,9 @@ impl IndexStore {
         write_txn
             .delete_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
+        write_txn
+            .delete_table(LISTS)
+            .map_err(|source| self.raise_source_error(source))?;
         self.write_table(
             &write_txn,
             FILES,
@@ -478,6 +675,14 @@ impl IndexStore {
             Note::path,
         )?;
         self.write_links(&write_txn, LINKS, entries)?;
+        {
+            let mut lists_table = write_txn
+                .open_table(LISTS)
+                .map_err(|source| self.raise_source_error(source))?;
+            for note in entries.iter().filter_map(FileEntry::note) {
+                self.write_lists_for_note(&mut lists_table, note)?;
+            }
+        }
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
@@ -537,8 +742,9 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Deletes `deleted` paths from `FILES`/`NOTES`, then upserts each
-    /// `upserted` path's current [`FileBase`] and [`Note`] (if present).
+    /// Deletes `deleted` paths from `FILES`/`NOTES`/`LISTS`, then upserts each
+    /// `upserted` path's current [`FileBase`], [`Note`] (if present), and
+    /// list items.
     fn upsert_files_and_notes(
         &self,
         write_txn: &WriteTransaction,
@@ -552,6 +758,9 @@ impl IndexStore {
         let mut notes_table = write_txn
             .open_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
+        let mut lists_table = write_txn
+            .open_table(LISTS)
+            .map_err(|source| self.raise_source_error(source))?;
         for path in deleted {
             let key = path.as_os_str().as_encoded_bytes();
             files
@@ -560,6 +769,10 @@ impl IndexStore {
             notes_table
                 .remove(key)
                 .map_err(|source| self.raise_source_error(source))?;
+            self.remove_lists_for_path(
+                &mut lists_table,
+                &path.to_string_lossy(),
+            )?;
         }
         for path in upserted {
             if let Some(entry) = index
@@ -569,8 +782,13 @@ impl IndexStore {
                 .and_then(|idx| index.entries().get(idx))
             {
                 self.upsert_row(&mut files, path, entry.file())?;
+                self.remove_lists_for_path(
+                    &mut lists_table,
+                    &path.to_string_lossy(),
+                )?;
                 if let Some(note) = entry.note() {
                     self.upsert_row(&mut notes_table, path, note)?;
+                    self.write_lists_for_note(&mut lists_table, note)?;
                 }
             }
         }
@@ -789,9 +1007,11 @@ mod tests {
     }
 
     mod persistence {
+        use chrono::NaiveDate;
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::TaskStatusType;
         fn non_unicode_path() -> PathBuf {
             #[cfg(unix)]
             {
@@ -852,6 +1072,115 @@ mod tests {
             assert_eq!(loaded_notes, notes);
         }
 
+        #[test]
+        fn write_all_persists_lists_table() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let note = parse(
+                "note.md",
+                "- [ ] Todo task 📅 2025-01-15\n- Plain bullet\n  - [x] Child \
+                 task",
+            );
+            let files = note_files(&["note.md"]);
+            write_all_parts(&store, &files, &[note], &HashMap::new())
+                .expect("persist");
+
+            let lists = store.read_all_lists().expect("read lists");
+            assert_eq!(lists.len(), 3);
+            let rec0 = lists.first().expect("first item");
+            assert_eq!(rec0.path(), "note.md");
+            assert_eq!(rec0.clean_text(), "Todo task");
+            assert_eq!(rec0.status_type(), Some(TaskStatusType::Todo));
+            assert_eq!(rec0.due_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
+            assert_eq!(rec0.line(), SourceLine::new(1));
+            assert_eq!(rec0.depth(), 0);
+
+            let rec1 = lists.get(1).expect("second item");
+            assert_eq!(rec1.clean_text(), "Plain bullet");
+            assert_eq!(rec1.status_type(), None);
+            assert_eq!(rec1.line(), SourceLine::new(2));
+            assert_eq!(rec1.depth(), 0);
+
+            let rec2 = lists.get(2).expect("third item");
+            assert_eq!(rec2.clean_text(), "Child task");
+            assert_eq!(rec2.status_type(), Some(TaskStatusType::Done));
+            assert_eq!(rec2.line(), SourceLine::new(3));
+            assert_eq!(rec2.depth(), 1);
+            assert_eq!(rec2.parent_line(), Some(SourceLine::new(2)));
+        }
+
+        #[test]
+        fn read_lists_for_path_returns_only_matching_note_items() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let note_a = parse("a.md", "- [ ] Task in A");
+            let note_b = parse("b.md", "- [ ] Task in B\n- Plain in B");
+            let files = note_files(&["a.md", "b.md"]);
+            write_all_parts(&store, &files, &[note_a, note_b], &HashMap::new())
+                .expect("persist");
+
+            let txn = store.begin_read().expect("begin read");
+            let a_lists =
+                store.read_lists_for_path(&txn, "a.md").expect("read a lists");
+            let a_item = a_lists.first().expect("first a item");
+            assert_eq!(a_item.clean_text(), "Task in A");
+
+            let b_lists =
+                store.read_lists_for_path(&txn, "b.md").expect("read b lists");
+            assert_eq!(b_lists.len(), 2);
+            let b_first = b_lists.first().expect("first b item");
+            let b_second = b_lists.get(1).expect("second b item");
+            assert_eq!(b_first.clean_text(), "Task in B");
+            assert_eq!(b_second.clean_text(), "Plain in B");
+            let c_lists =
+                store.read_lists_for_path(&txn, "c.md").expect("read c lists");
+            assert!(c_lists.is_empty());
+        }
+
+        #[test]
+        fn incremental_persistence_updates_and_deletes_lists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let service = IndexerService::new(temp.path());
+
+            fs::write(
+                temp.path().join("a.md"),
+                "- [ ] A task 1\n- [ ] A task 2",
+            )
+            .expect("write a.md");
+            fs::write(temp.path().join("b.md"), "- [ ] B task 1")
+                .expect("write b.md");
+
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist initial index");
+
+            let initial_lists = service.read_lists().expect("read lists");
+            assert_eq!(initial_lists.len(), 3);
+
+            fs::remove_file(temp.path().join("a.md")).expect("remove a.md");
+            fs::write(
+                temp.path().join("b.md"),
+                "- [x] B updated 1\n- [ ] B updated 2",
+            )
+            .expect("modify b.md");
+
+            let refreshed = service.refresh().expect("refresh index");
+            service.persist(&refreshed).expect("persist incremental");
+
+            let updated_lists = service.read_lists().expect("read lists");
+            let updated_first =
+                updated_lists.first().expect("first updated item");
+            assert_eq!(updated_first.path(), "b.md");
+            assert_eq!(updated_first.clean_text(), "B updated 1");
+            assert_eq!(updated_first.status_type(), Some(TaskStatusType::Done));
+            let updated_second =
+                updated_lists.get(1).expect("second updated item");
+            assert_eq!(updated_second.path(), "b.md");
+            assert_eq!(updated_second.clean_text(), "B updated 2");
+            assert_eq!(
+                updated_second.status_type(),
+                Some(TaskStatusType::Todo)
+            );
+        }
         #[test]
         fn write_all_then_read_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1218,6 +1547,43 @@ mod tests {
                 {
                     let mut table = write_txn
                         .open_table(OLD_FILES)
+                        .expect("open old table");
+                    table
+                        .insert("old.md", [1u8, 2, 3].as_slice())
+                        .expect("insert old row");
+                }
+                write_txn.commit().expect("commit old schema");
+            }
+
+            let store = IndexStore::open(root)
+                .expect("open recovers from schema mismatch");
+            let (files, notes, links) =
+                store.read_all().expect("load after recovery");
+
+            assert!(files.is_empty());
+            assert!(notes.is_empty());
+            assert!(links.is_empty());
+        }
+
+        #[test]
+        fn recovers_by_rebuilding_when_the_lists_table_has_the_old_str_key_schema()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let db_path = root.join(INDEX_FILE);
+            fs::create_dir_all(
+                db_path.parent().expect("index file path has a parent"),
+            )
+            .expect("create .traces dir");
+            {
+                const OLD_LISTS: TableDefinition<&str, &[u8]> =
+                    TableDefinition::new("lists");
+                let db =
+                    redb::Database::create(&db_path).expect("create raw db");
+                let write_txn = db.begin_write().expect("begin write");
+                {
+                    let mut table = write_txn
+                        .open_table(OLD_LISTS)
                         .expect("open old table");
                     table
                         .insert("old.md", [1u8, 2, 3].as_slice())

@@ -18,8 +18,11 @@
 use std::path::PathBuf;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
-    entry, error::IndexBuilderError, store::IndexStore,
+    FileIndex, INDEX_FILE, IndexResult, builder, cache,
+    delta::IndexDelta,
+    entry::{self, ListEntry},
+    error::IndexBuilderError,
+    store::IndexStore,
 };
 use crate::{
     Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
@@ -169,6 +172,24 @@ impl IndexerService {
             entry::assemble_entries(files, notes, inlinks),
             IndexDelta::Full,
         ))
+    }
+
+    /// Reads all persisted [`ListEntry`]s from the `LISTS` table.
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexError::Db`] if the database cannot be opened or read.
+    #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    pub fn read_lists(&self) -> IndexResult<Vec<ListEntry>> {
+        let store = IndexStore::open(&self.root)?;
+        Ok(store.read_all_lists()?)
     }
 
     /// Recursively scans this service's root for regular files, skipping `.git`
