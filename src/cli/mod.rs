@@ -242,23 +242,16 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
     })
 }
 
-/// Refreshes `root`'s [`FileIndex`] and returns page-level records selected by
-/// `from`, filtered by `filters` (composed as AND) and optionally sorted.
-///
-/// Shared by [`list::List`] and [`table::Table`].
-///
-/// # Errors
-///
-/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
-/// - [`CliError::Query`] if any filter expression or the sort field path is
-///   malformed.
-
 /// Parses command-line sort arguments into an optional [`SortOrder`].
 ///
 /// Supports repeatable, comma-delimited strings with optional `+` (ascending)
 /// and `-` (descending) prefix modifiers. When no prefix is present, uses
 /// [`SortDirection::Ascending`] if `asc` is true, otherwise
 /// [`SortDirection::Descending`].
+///
+/// # Errors
+///
+/// Returns [`CliError::Query`] if any sort field path is malformed.
 pub(super) fn parse_cli_sort(
     root: &Path,
     sorts: &[String],
@@ -305,6 +298,16 @@ pub(super) fn parse_cli_sort(
     Ok(Some(order))
 }
 
+/// Refreshes `root`'s [`FileIndex`] and returns page-level records selected by
+/// `from`, filtered by `filters` (composed as AND) and optionally sorted.
+///
+/// Shared by [`list::List`] and [`table::Table`].
+///
+/// # Errors
+///
+/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// - [`CliError::Query`] if any filter expression or the sort field path is
+///   malformed.
 fn refresh_page_query(
     config: &Config,
     from: Option<&str>,

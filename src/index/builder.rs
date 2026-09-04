@@ -5,7 +5,7 @@
 //! use [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
 //! directly; this module is not part of the public API.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
@@ -181,33 +181,15 @@ impl IndexBuilder {
         tasks: &TaskConfig,
         frontmatter: &FrontmatterConfig,
     ) -> Result<super::FileIndex, IndexBuilderError> {
-        let (upserted, deleted, mut stale) = cache.diff_files(&files);
-        let mut upserted_iter = upserted.iter().peekable();
-        let mut entries = Vec::with_capacity(files.len());
-
-        for file in files {
-            let cache_state = if upserted_iter
-                .next_if(|p| p.as_path() == file.path())
-                .is_some()
-            {
-                NoteCacheState::Upserted
-            } else {
-                NoteCacheState::Fresh
-            };
-            let note = if file.format() == FileFormat::Note {
-                let (note, outlinks_changed) = cache.reconcile_note(
-                    &file,
-                    cache_state,
-                    root,
-                    (tasks, frontmatter),
-                )?;
-                stale |= outlinks_changed;
-                Some(note)
-            } else {
-                None
-            };
-            entries.push(entry::FileEntry::new(file, note));
-        }
+        let (upserted, deleted, stale) = cache.diff_files(&files);
+        let (mut entries, outlinks_changed) = Self::reconcile_all_entries(
+            files,
+            &mut cache,
+            &upserted,
+            root,
+            (tasks, frontmatter),
+        )?;
+        let stale = stale || outlinks_changed;
 
         debug_assert!(
             entries.windows(2).all(|pair| {
@@ -244,6 +226,39 @@ impl IndexBuilder {
             links_deleted,
         }));
         Ok(super::FileIndex::new(entries.into_boxed_slice(), delta))
+    }
+
+    fn reconcile_all_entries(
+        files: Vec<FileBase>,
+        cache: &mut RefreshCache,
+        upserted: &[PathBuf],
+        root: &Path,
+        configs: (&TaskConfig, &FrontmatterConfig),
+    ) -> Result<(Vec<entry::FileEntry>, bool), IndexBuilderError> {
+        let mut upserted_iter = upserted.iter().peekable();
+        let mut entries = Vec::with_capacity(files.len());
+        let mut any_outlinks_changed = false;
+
+        for file in files {
+            let cache_state = if upserted_iter
+                .next_if(|p| p.as_path() == file.path())
+                .is_some()
+            {
+                NoteCacheState::Upserted
+            } else {
+                NoteCacheState::Fresh
+            };
+            let note = if file.format() == FileFormat::Note {
+                let (note, outlinks_changed) =
+                    cache.reconcile_note(&file, cache_state, root, configs)?;
+                any_outlinks_changed |= outlinks_changed;
+                Some(note)
+            } else {
+                None
+            };
+            entries.push(entry::FileEntry::new(file, note));
+        }
+        Ok((entries, any_outlinks_changed))
     }
 }
 

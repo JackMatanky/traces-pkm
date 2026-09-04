@@ -116,7 +116,6 @@ impl Template {
     ///   cancelled.
     /// - [`CliError::TemplateInstantiate`] if resolving, rendering, or writing
     ///   fails.
-    #[inline]
     pub(super) fn run(
         self,
         service: &ConfigService,
@@ -127,11 +126,19 @@ impl Template {
             Self::list_templates(&config);
             return Ok(());
         }
+        self.execute(&config, provider)
+    }
+
+    fn execute(
+        self,
+        config: &Config,
+        provider: Arc<dyn DialogProvider>,
+    ) -> CliResult {
         let effective_provider = self.resolve_provider(provider);
-        let input = self.resolve_name(&config, effective_provider.as_ref())?;
+        let input = self.resolve_name(config, effective_provider.as_ref())?;
         let name = input.as_ref().to_path_buf();
         let template_service =
-            TemplateService::new(&config, Arc::clone(&effective_provider))
+            TemplateService::new(config, Arc::clone(&effective_provider))
                 .map_err(|source| CliError::TemplateInstantiate {
                     name: name.clone(),
                     source,

@@ -324,16 +324,16 @@ impl QueryTransform {
                     return rows;
                 }
                 let keys = order.keys_for(&rows);
-                let mut indexed: Vec<(u32, u32)> =
-                    (0..rows.len() as u32).map(|idx| (idx, idx)).collect();
+                let mut indexed: Vec<(usize, usize)> =
+                    (0..rows.len()).map(|idx| (idx, idx)).collect();
                 let terms = order.terms();
 
                 let cmp =
-                    |&(a_idx, a_input): &(u32, u32),
-                     &(b_idx, b_input): &(u32, u32)| {
+                    |&(a_idx, a_input): &(usize, usize),
+                     &(b_idx, b_input): &(usize, usize)| {
                         let ord = compare_composite_keys(
-                            keys.get(a_idx as usize),
-                            keys.get(b_idx as usize),
+                            keys.get(a_idx),
+                            keys.get(b_idx),
                             terms,
                         );
                         ord.then_with(|| a_input.cmp(&b_input))
@@ -348,9 +348,8 @@ impl QueryTransform {
                     rows.into_iter().map(Some).collect();
                 let mut out = Vec::with_capacity(n);
                 for (row_idx, _) in indexed {
-                    if let Some(row) = opt_rows
-                        .get_mut(row_idx as usize)
-                        .and_then(Option::take)
+                    if let Some(row) =
+                        opt_rows.get_mut(row_idx).and_then(Option::take)
                     {
                         out.push(row);
                     }

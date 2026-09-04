@@ -18,8 +18,11 @@
 use std::path::PathBuf;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexResult, builder, cache, delta::IndexDelta,
-    entry, error::IndexBuilderError, store::IndexStore,
+    FileIndex, INDEX_FILE, IndexResult, builder, cache,
+    delta::IndexDelta,
+    entry,
+    error::{IndexBuilderError, IndexError},
+    store::IndexStore,
 };
 use crate::{
     Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
@@ -117,23 +120,27 @@ impl IndexerService {
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
         let store = IndexStore::open(&self.root)?;
-        let index = {
-            let read_txn = store.begin_read()?;
-            let cache = cache::RefreshCache::load(&store, &read_txn)?;
-            drop(read_txn);
-            let files = self.scan()?;
-            builder::IndexBuilder::new(files)
-                .with_cache(cache)
-                .with_tasks(self.tasks.clone())
-                .with_frontmatter(self.frontmatter.clone())
-                .build(&self.root)?
-        };
-        // read_txn (and cache, which borrows it) drop here, before
-        // persist_index opens a write transaction
+        let index = self.build_refreshed_index(&store)?;
         if let Err(source) = store.persist_index(&index) {
             tracing::warn!(%source, "failed to persist refreshed index");
         }
         Ok(index)
+    }
+
+    fn build_refreshed_index(
+        &self,
+        store: &IndexStore,
+    ) -> IndexResult<FileIndex> {
+        let read_txn = store.begin_read()?;
+        let cache = cache::RefreshCache::load(store, &read_txn)?;
+        drop(read_txn);
+        let files = self.scan()?;
+        builder::IndexBuilder::new(files)
+            .with_cache(cache)
+            .with_tasks(self.tasks.clone())
+            .with_frontmatter(self.frontmatter.clone())
+            .build(&self.root)
+            .map_err(IndexError::from)
     }
 
     /// Persists `index` to this service's root, replacing any existing index.

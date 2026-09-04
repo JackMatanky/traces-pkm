@@ -175,6 +175,15 @@ impl RefreshCache {
 
 type RawChunkEntry<'a> = (PathBuf, redb::AccessGuard<'a, &'static [u8]>);
 type ChunkBuffer<'a> = Vec<RawChunkEntry<'a>>;
+type ChunkRange<'a> = redb::Range<'a, &'static [u8], &'static [u8]>;
+
+fn open_chunk_iter<'a>(
+    store: &IndexStore,
+    table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
+) -> IndexResult<Box<ChunkRange<'a>>> {
+    let range = table.iter().map_err(|s| store.raise_source_error(s))?;
+    Ok(Box::new(range))
+}
 
 fn load_raw_chunks<'a>(
     store: &IndexStore,
@@ -183,7 +192,8 @@ fn load_raw_chunks<'a>(
     let mut chunks = Vec::new();
     let mut current_chunk = Vec::new();
     let mut current_bytes = 0usize;
-    for entry in table.iter().map_err(|s| store.raise_source_error(s))? {
+    let iter = open_chunk_iter(store, table)?;
+    for entry in iter {
         let (key, value) = entry.map_err(|s| store.raise_source_error(s))?;
         let path = path_from_bytes(key.value());
         current_bytes = current_bytes.saturating_add(value.value().len());

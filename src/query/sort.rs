@@ -214,7 +214,7 @@ impl SortOrder {
                 SortToken::Ident(name) => (name.as_str(), next_span),
                 SortToken::Asc => ("asc", next_span),
                 SortToken::Desc => ("desc", next_span),
-                _ => {
+                SortToken::Comma => {
                     return Err(QueryBuilderError::Syntax(
                         QuerySyntaxError::new(
                             QueryDialect::Sort,
@@ -290,7 +290,7 @@ impl SortOrder {
     /// [`SortKeys`] buffer.
     pub(crate) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
         let stride = self.terms.len();
-        let mut flat = Vec::with_capacity(rows.len() * stride);
+        let mut flat = Vec::with_capacity(rows.len().saturating_mul(stride));
         for row in rows {
             for term in &self.terms {
                 let val_ref = row.resolve_ref(&term.path);
@@ -309,11 +309,11 @@ impl SortOrder {
             return;
         }
         let keys = self.keys_for(rows);
-        let mut perm: Vec<u32> = (0..rows.len() as u32).collect();
+        let mut perm: Vec<usize> = (0..rows.len()).collect();
 
         perm.sort_by(|&a_idx, &b_idx| {
-            let a_keys = keys.get(a_idx as usize);
-            let b_keys = keys.get(b_idx as usize);
+            let a_keys = keys.get(a_idx);
+            let b_keys = keys.get(b_idx);
             for (i, term) in self.terms.iter().enumerate() {
                 let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i))
                 else {
@@ -332,18 +332,17 @@ impl SortOrder {
             a_idx.cmp(&b_idx)
         });
 
-        let mut dest_perm = vec![0u32; perm.len()];
+        let mut dest_perm = vec![0usize; perm.len()];
         for (dest, &src) in perm.iter().enumerate() {
-            if let Some(slot) = dest_perm.get_mut(src as usize) {
-                *slot = dest as u32;
+            if let Some(slot) = dest_perm.get_mut(src) {
+                *slot = dest;
             }
         }
         for i in 0..rows.len() {
-            while dest_perm.get(i).copied() != Some(i as u32) {
+            while dest_perm.get(i).copied() != Some(i) {
                 let Some(&d) = dest_perm.get(i) else {
                     break;
                 };
-                let d = d as usize;
                 rows.swap(i, d);
                 dest_perm.swap(i, d);
             }
@@ -421,7 +420,9 @@ impl SortKey {
     /// Extracts a `SortKey` from an owned note field value.
     pub(crate) fn from_owned(owned: &NoteFieldValue) -> Self {
         match owned {
-            NoteFieldValue::Null => Self::Null,
+            NoteFieldValue::Null
+            | NoteFieldValue::List(_)
+            | NoteFieldValue::Object(_) => Self::Null,
             NoteFieldValue::Bool(b) => Self::Bool(*b),
             NoteFieldValue::Number(n) => Self::Number(*n),
             NoteFieldValue::Date(s) => {
@@ -448,7 +449,6 @@ impl SortKey {
                 }
             }
             NoteFieldValue::Link(link) => Self::Text(link.target().into()),
-            NoteFieldValue::List(_) | NoteFieldValue::Object(_) => Self::Null,
         }
     }
 
@@ -459,9 +459,9 @@ impl SortKey {
             (Self::Null, _) => Ordering::Less,
             (_, Self::Null) => Ordering::Greater,
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
-            (Self::Number(a), Self::Number(b)) => a.total_cmp(b),
+            (Self::Number(a), Self::Number(b))
+            | (Self::Duration(a), Self::Duration(b)) => a.total_cmp(b),
             (Self::Date(a), Self::Date(b)) => a.cmp(b),
-            (Self::Duration(a), Self::Duration(b)) => a.total_cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
             _ => Ordering::Equal,
         }

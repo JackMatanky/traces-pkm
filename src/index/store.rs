@@ -222,24 +222,37 @@ impl IndexStore {
         table: TableDefinition<&[u8], &[u8]>,
         path_of: impl Fn(&T) -> &Path,
     ) -> DbResult<Vec<T>> {
-        let mut items: Vec<T> = match txn.open_table(table) {
-            Ok(table) => {
-                let mut items = Vec::new();
-                for entry in table
-                    .iter()
-                    .map_err(|source| self.raise_source_error(source))?
-                {
-                    let (key, value) = entry
-                        .map_err(|source| self.raise_source_error(source))?;
-                    let path = path_from_bytes(key.value());
-                    items.push(decode_row(&path, value.value())?);
-                }
-                items
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Vec::new(),
-            Err(source) => return Err(self.raise_source_error(source)),
-        };
+        let mut items = self.read_table_raw(txn, table)?;
         items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
+        Ok(items)
+    }
+
+    fn read_table_raw<T: DeserializeOwned>(
+        &self,
+        txn: &ReadTransaction,
+        table: TableDefinition<&[u8], &[u8]>,
+    ) -> DbResult<Vec<T>> {
+        match txn.open_table(table) {
+            Ok(table) => self.decode_table_rows(&table),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(Vec::new()),
+            Err(source) => Err(self.raise_source_error(source)),
+        }
+    }
+
+    fn decode_table_rows<T: DeserializeOwned>(
+        &self,
+        table: &redb::ReadOnlyTable<&[u8], &[u8]>,
+    ) -> DbResult<Vec<T>> {
+        let mut items = Vec::new();
+        let iter = Box::new(
+            table.iter().map_err(|source| self.raise_source_error(source))?,
+        );
+        for entry in iter {
+            let (key, value) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            let path = path_from_bytes(key.value());
+            items.push(decode_row(&path, value.value())?);
+        }
         Ok(items)
     }
 
@@ -312,12 +325,21 @@ impl IndexStore {
             }
             Err(source) => return Err(self.raise_source_error(source)),
         };
+        self.collect_multimap_links(&table, &resolve)
+    }
+
+    fn collect_multimap_links(
+        &self,
+        table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
+        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
+    ) -> DbResult<HashMap<PathBuf, Vec<PathBuf>>> {
         let mut links = HashMap::new();
-        for entry in
-            table.iter().map_err(|source| self.raise_source_error(source))?
-        {
+        let iter = Box::new(
+            table.iter().map_err(|source| self.raise_source_error(source))?,
+        );
+        for entry in iter {
             if let Some((target, sources)) =
-                self.process_link_entry(entry, &resolve)?
+                self.process_link_entry(entry, resolve)?
             {
                 links.insert(target, sources);
             }
@@ -428,16 +450,28 @@ impl IndexStore {
     /// - [`DbError::Redb`] if the transaction fails.
     /// - [`DbError::Serialize`] if a record cannot be encoded.
     pub(super) fn write_all(&self, entries: &[FileEntry]) -> IndexResult<()> {
-        let write_txn = self.begin_write()?;
-        write_txn
-            .delete_table(FILES)
+        let write_txn = self.prepare_write_txn()?;
+        self.write_all_parallel(&write_txn, entries)?;
+        write_txn.commit().map_err(|source| self.raise_source_error(source))?;
+        Ok(())
+    }
+
+    fn prepare_write_txn(&self) -> DbResult<Box<WriteTransaction>> {
+        let txn = Box::new(self.begin_write()?);
+        txn.delete_table(FILES)
             .map_err(|source| self.raise_source_error(source))?;
-        write_txn
-            .delete_table(NOTES)
+        txn.delete_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
-        write_txn
-            .delete_multimap_table(LINKS)
+        txn.delete_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
+        Ok(txn)
+    }
+
+    fn write_all_parallel(
+        &self,
+        write_txn: &WriteTransaction,
+        entries: &[FileEntry],
+    ) -> IndexResult<()> {
         let (tx_files, rx_files) = std::sync::mpsc::channel();
         let (tx_notes, rx_notes) = std::sync::mpsc::channel();
         let (tx_links, rx_links) = std::sync::mpsc::channel();
@@ -445,7 +479,7 @@ impl IndexStore {
         rayon::scope(|s| {
             s.spawn(|_| {
                 let _ = tx_files.send(self.write_table(
-                    &write_txn,
+                    write_txn,
                     FILES,
                     entries.iter().map(FileEntry::file),
                     FileBase::path,
@@ -453,7 +487,7 @@ impl IndexStore {
             });
             s.spawn(|_| {
                 let _ = tx_notes.send(self.write_table(
-                    &write_txn,
+                    write_txn,
                     NOTES,
                     entries.iter().filter_map(FileEntry::note),
                     Note::path,
@@ -461,7 +495,7 @@ impl IndexStore {
             });
             s.spawn(|_| {
                 let _ =
-                    tx_links.send(self.write_links(&write_txn, LINKS, entries));
+                    tx_links.send(self.write_links(write_txn, LINKS, entries));
             });
         });
 
@@ -480,7 +514,6 @@ impl IndexStore {
                 "worker died".into(),
             ))
         })??;
-        write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
 
@@ -516,26 +549,39 @@ impl IndexStore {
         if delta.is_empty() {
             return Ok(());
         }
-        let IncrementalDelta {
-            upserted,
-            deleted,
-            links_upserted,
-            links_deleted,
-        } = delta.as_ref();
-        let mut write_txn = self.begin_write()?;
-        write_txn
-            .set_durability(redb::Durability::None)
+        let write_txn = self.prepare_incremental_txn()?;
+        self.apply_incremental_updates(&write_txn, index, delta.as_ref())?;
+        write_txn.commit().map_err(|source| self.raise_source_error(source))?;
+        Ok(())
+    }
+
+    fn prepare_incremental_txn(&self) -> DbResult<Box<WriteTransaction>> {
+        let mut txn = Box::new(self.begin_write()?);
+        txn.set_durability(redb::Durability::None)
             .map_err(|source| self.raise_source_error(source))?;
-        self.upsert_files_and_notes(&write_txn, index, upserted, deleted)?;
-        if let Some(links_upserted) = links_upserted {
+        Ok(txn)
+    }
+
+    fn apply_incremental_updates(
+        &self,
+        write_txn: &WriteTransaction,
+        index: &FileIndex,
+        delta: &IncrementalDelta,
+    ) -> IndexResult<()> {
+        self.upsert_files_and_notes(
+            write_txn,
+            index,
+            &delta.upserted,
+            &delta.deleted,
+        )?;
+        if let Some(links_upserted) = &delta.links_upserted {
             self.upsert_links(
-                &write_txn,
+                write_txn,
                 index,
                 links_upserted,
-                links_deleted,
+                &delta.links_deleted,
             )?;
         }
-        write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
 
@@ -548,21 +594,42 @@ impl IndexStore {
         upserted: &[PathBuf],
         deleted: &[PathBuf],
     ) -> IndexResult<()> {
-        let mut files = write_txn
-            .open_table(FILES)
-            .map_err(|source| self.raise_source_error(source))?;
-        let mut notes_table = write_txn
-            .open_table(NOTES)
-            .map_err(|source| self.raise_source_error(source))?;
+        let mut files = Box::new(
+            write_txn
+                .open_table(FILES)
+                .map_err(|source| self.raise_source_error(source))?,
+        );
+        let mut notes_table = Box::new(
+            write_txn
+                .open_table(NOTES)
+                .map_err(|source| self.raise_source_error(source))?,
+        );
+        Self::delete_paths(&mut files, &mut notes_table, deleted)
+            .map_err(|s| self.raise_source_error(s))?;
+        self.upsert_paths(&mut files, &mut notes_table, index, upserted)?;
+        Ok(())
+    }
+
+    fn delete_paths(
+        files: &mut redb::Table<&[u8], &[u8]>,
+        notes_table: &mut redb::Table<&[u8], &[u8]>,
+        deleted: &[PathBuf],
+    ) -> Result<(), redb::StorageError> {
         for path in deleted {
             let key = path.as_os_str().as_encoded_bytes();
-            files
-                .remove(key)
-                .map_err(|source| self.raise_source_error(source))?;
-            notes_table
-                .remove(key)
-                .map_err(|source| self.raise_source_error(source))?;
+            files.remove(key)?;
+            notes_table.remove(key)?;
         }
+        Ok(())
+    }
+
+    fn upsert_paths(
+        &self,
+        files: &mut redb::Table<&[u8], &[u8]>,
+        notes_table: &mut redb::Table<&[u8], &[u8]>,
+        index: &FileIndex,
+        upserted: &[PathBuf],
+    ) -> IndexResult<()> {
         for path in upserted {
             if let Some(entry) = index
                 .entries()
@@ -570,9 +637,9 @@ impl IndexStore {
                 .ok()
                 .and_then(|idx| index.entries().get(idx))
             {
-                self.upsert_row(&mut files, path, entry.file())?;
+                self.upsert_row(files, path, entry.file())?;
                 if let Some(note) = entry.note() {
-                    self.upsert_row(&mut notes_table, path, note)?;
+                    self.upsert_row(notes_table, path, note)?;
                 }
             }
         }

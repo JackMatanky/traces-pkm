@@ -281,7 +281,7 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
         let num_start = pos;
         let mut has_decimal = false;
         while pos < len {
-            if bytes.get(pos).is_some_and(|b| b.is_ascii_digit()) {
+            if bytes.get(pos).is_some_and(u8::is_ascii_digit) {
                 pos = pos.saturating_add(1);
             } else if bytes.get(pos) == Some(&b'.') && !has_decimal {
                 has_decimal = true;
@@ -300,15 +300,11 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
             return None;
         }
 
-        while pos < len
-            && bytes.get(pos).is_some_and(|b| b.is_ascii_whitespace())
-        {
+        while pos < len && bytes.get(pos).is_some_and(u8::is_ascii_whitespace) {
             pos = pos.saturating_add(1);
         }
         let unit_start = pos;
-        while pos < len
-            && bytes.get(pos).is_some_and(|b| b.is_ascii_alphabetic())
-        {
+        while pos < len && bytes.get(pos).is_some_and(u8::is_ascii_alphabetic) {
             pos = pos.saturating_add(1);
         }
         if unit_start == pos {
