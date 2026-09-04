@@ -481,7 +481,7 @@ impl AtomParser for FilterGrammar {
 }
 
 /// Lexical tokens parsed from a filter expression.
-#[derive(Logos, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
     #[token("(")]

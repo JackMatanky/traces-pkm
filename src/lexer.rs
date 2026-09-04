@@ -484,7 +484,7 @@ mod tests {
 
         use super::*;
 
-        #[derive(Logos, Debug, Clone, PartialEq)]
+        #[derive(Clone, Debug, PartialEq, Logos)]
         #[logos(skip r"[ \t\n]+")]
         enum T {
             #[token("a")]
@@ -528,7 +528,7 @@ mod tests {
 
         use super::*;
 
-        #[derive(Logos, Debug, Clone, PartialEq)]
+        #[derive(Clone, Debug, PartialEq, Logos)]
         #[logos(skip r"[ \t\n]+")]
         enum T {
             #[regex("[0-9]+", |lex| lex.slice().parse::<i32>().ok())]
@@ -585,7 +585,7 @@ mod tests {
 
         use super::*;
 
-        #[derive(Logos, Debug, Clone, PartialEq)]
+        #[derive(Clone, Debug, PartialEq, Logos)]
         #[logos(skip r"[ \t\n]+")]
         enum T {
             #[token("a")]
@@ -691,7 +691,7 @@ mod tests {
     mod delimited {
         use super::*;
 
-        #[derive(Logos, Debug, PartialEq)]
+        #[derive(Debug, PartialEq, Logos)]
         enum SimpleToken {
             #[token("(")]
             LParen,

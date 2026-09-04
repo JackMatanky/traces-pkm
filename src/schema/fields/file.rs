@@ -112,7 +112,7 @@ impl SchemaFileField {
 ///
 /// Returned by
 /// [`SchemaFieldDef::file_filter`](super::SchemaFieldDef::file_filter).
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub(crate) struct SchemaFileFieldRef<'a> {
     pub(crate) folders: &'a [String],
     pub(crate) ext: Option<&'a str>,

@@ -610,7 +610,7 @@ impl AtomParser for SourceGrammar {
 }
 
 /// Lexical tokens for the page source expression language.
-#[derive(Logos, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum SourceToken {
     #[token("(")]

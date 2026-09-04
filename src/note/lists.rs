@@ -698,10 +698,10 @@ impl TaskListItem {
     Clone,
     Debug,
     Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
     Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
     Deserialize,
     Serialize,
 )]
@@ -844,7 +844,7 @@ impl std::str::FromStr for TaskPriority {
 /// assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
 /// ```
 #[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize,
+    Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
 )]
 pub struct TaskDates {
     /// Date when the task was created (`➕` or `[created::]`).
@@ -1045,7 +1045,7 @@ impl TaskDates {
 /// assert_eq!(text.clean(), "Buy milk");
 /// ```
 #[derive(
-    Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize,
+    Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
 )]
 pub struct ListText {
     /// Source text minus the leading `[<char>] ` marker prefix only.

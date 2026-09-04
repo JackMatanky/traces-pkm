@@ -165,7 +165,7 @@ impl Object for DateOps {
 }
 
 /// Whether the input carried only a date or a date plus time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum DatePrecision {
     Date,
     DateTime,
@@ -224,7 +224,7 @@ impl ParsedDate {
 /// Date/time unit parsed from a `unit="..."` kwarg.
 ///
 /// Used by [`date_add`], [`date_sub`], and [`date_diff`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum DateTimeUnit {
     Years,
     Months,

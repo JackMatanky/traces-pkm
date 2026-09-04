@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// Filesystem fact selected by a path I/O test.
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 enum PathQuery {
     Exists,
     IsFile,

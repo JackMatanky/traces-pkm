@@ -196,7 +196,7 @@ impl FileBase {
 ///
 /// Wraps the text returned by [`Path::file_name`]. For `todo.md`, stores
 /// `todo.md`. For `.gitignore`, stores `.gitignore`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FileName(String);
 
 impl FileName {
@@ -210,11 +210,6 @@ impl FileName {
         Path::new(&self.0).extension().and_then(|ext| ext.to_str())
     }
 }
-
-/// Reports that a path has no final component.
-#[derive(Debug, Error)]
-#[error("path has no file name")]
-pub(crate) struct MissingFileName;
 
 impl TryFrom<&Path> for FileName {
     type Error = MissingFileName;
@@ -232,12 +227,17 @@ impl TryFrom<&Path> for FileName {
     }
 }
 
+/// Reports that a path has no final component.
+#[derive(Debug, Error)]
+#[error("path has no file name")]
+pub(crate) struct MissingFileName;
+
 /// Owned file name with any extension stripped.
 ///
 /// Uses [`Path::file_stem`] on [`FileName`]'s stored text. For `todo.md`,
 /// stores `todo`. Dotfiles such as `.gitignore` keep their full text as the
 /// stem.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct BaseName(String);
 
 impl BaseName {
@@ -265,7 +265,7 @@ impl From<&FileName> for BaseName {
 /// Use this instead of [`BaseName`] when a comparison or hash lookup can
 /// borrow directly from a [`Path`]. Dotfile behavior matches
 /// [`Path::file_stem`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BaseNameRef<'a>(&'a str);
 
 impl<'a> BaseNameRef<'a> {

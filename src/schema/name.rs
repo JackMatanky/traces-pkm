@@ -16,7 +16,7 @@ use crate::BaseNameRef;
 pub(crate) struct SchemaName(String);
 
 /// Why a [`SchemaName`] could not be constructed.
-#[derive(Debug, Error, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Error)]
 #[error("Schema name must not be empty")]
 pub(crate) struct EmptySchemaName;
 

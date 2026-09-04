@@ -32,7 +32,7 @@ use crate::{
 ///
 /// [`RefreshCache::diff_files`]: RefreshCache::diff_files
 /// [`RefreshCache::reconcile_note`]: RefreshCache::reconcile_note
-#[derive(Clone, Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub(super) enum NoteCacheState {
     /// New or metadata-changed since the last persist; the cached Note (if any)
     /// is outdated; reparse from disk and backdate against its outlinks.

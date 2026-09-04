@@ -16,77 +16,6 @@ use super::{
 use crate::{LexTokenStream, LexedToken};
 use crate::{NoteFieldValue, file::Timestamp};
 
-/// Sort direction for sorting operations.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum SortDirection {
-    /// Ascending order.
-    Ascending,
-    /// Descending order.
-    Descending,
-}
-
-impl SortDirection {
-    /// Returns `true` if this direction is [`Self::Descending`].
-    #[inline]
-    #[must_use]
-    pub(crate) const fn is_descending(self) -> bool {
-        matches!(self, Self::Descending)
-    }
-}
-
-/// A single field path and direction in a composite [`SortOrder`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SortTerm {
-    path: FieldPath,
-    direction: SortDirection,
-}
-
-impl SortTerm {
-    /// Constructs a new sort term.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(path: FieldPath, direction: SortDirection) -> Self {
-        Self {
-            path,
-            direction,
-        }
-    }
-
-    /// Returns the field path for this term.
-    #[inline]
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn path(&self) -> &FieldPath {
-        &self.path
-    }
-
-    /// Returns the sort direction for this term.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn direction(&self) -> SortDirection {
-        self.direction
-    }
-}
-
-/// Lexical tokens parsed from a sort clause. Test-only: production callers
-/// build [`SortOrder`] via [`SortTerm`]s directly; [`SortOrder::parse`]'s
-/// string grammar is exercised only by this module's own tests.
-#[cfg(test)]
-#[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(skip r"[ \t\n\r\f]+")]
-enum SortToken {
-    #[token(",")]
-    Comma,
-    #[token("asc", ignore(case))]
-    #[token("ascending", ignore(case))]
-    Asc,
-    #[token("desc", ignore(case))]
-    #[token("descending", ignore(case))]
-    Desc,
-    #[regex(r#"[^\s,]+"#, |lex| lex.slice().to_owned())]
-    Ident(String),
-}
-
 /// A composite ordering clause composed of one or more [`SortTerm`] items.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SortOrder {
@@ -129,6 +58,82 @@ impl SortOrder {
         terms.extend(other.terms);
         Self {
             terms: terms.into_boxed_slice(),
+        }
+    }
+
+    /// Evaluates each term's field path against each row into a flat
+    /// [`SortKeys`] buffer.
+    pub(crate) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
+        let stride = self.terms.len();
+        let mut flat = Vec::with_capacity(rows.len().saturating_mul(stride));
+        for row in rows {
+            for term in &self.terms {
+                let val_ref = row.resolve_ref(&term.path);
+                flat.push(SortKey::from_value_ref(&val_ref));
+            }
+        }
+        SortKeys {
+            flat,
+            stride,
+        }
+    }
+
+    /// Compares two rows' precomputed key slices (as produced by
+    /// [`Self::keys_for`]) across every term in this composite order,
+    /// applying each term's [`SortDirection`] and short-circuiting on the
+    /// first non-equal term. Shared by [`Self::sort_rows`]'s full permutation
+    /// sort and [`super::plan::QueryTransform::TopK`]'s quickselect so both
+    /// execution paths apply identical ordering semantics.
+    #[must_use]
+    pub(crate) fn compare_keys(
+        &self,
+        a_keys: &[SortKey],
+        b_keys: &[SortKey],
+    ) -> Ordering {
+        for (i, term) in self.terms.iter().enumerate() {
+            let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i)) else {
+                continue;
+            };
+            let ord = a_k.total_cmp(b_k);
+            let ord = if term.direction().is_descending() {
+                ord.reverse()
+            } else {
+                ord
+            };
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        }
+        Ordering::Equal
+    }
+
+    /// Permutes `rows` in place according to this composite sort order.
+    pub(crate) fn sort_rows(&self, rows: &mut [QueryRow]) {
+        if rows.len() <= 1 || self.terms.is_empty() {
+            return;
+        }
+        let keys = self.keys_for(rows);
+        let mut perm: Vec<usize> = (0..rows.len()).collect();
+
+        perm.sort_by(|&a_idx, &b_idx| {
+            self.compare_keys(keys.get(a_idx), keys.get(b_idx))
+                .then_with(|| a_idx.cmp(&b_idx))
+        });
+
+        let mut dest_perm = vec![0usize; perm.len()];
+        for (dest, &src) in perm.iter().enumerate() {
+            if let Some(slot) = dest_perm.get_mut(src) {
+                *slot = dest;
+            }
+        }
+        for i in 0..rows.len() {
+            while dest_perm.get(i).copied() != Some(i) {
+                let Some(&d) = dest_perm.get(i) else {
+                    break;
+                };
+                rows.swap(i, d);
+                dest_perm.swap(i, d);
+            }
         }
     }
 
@@ -264,82 +269,77 @@ impl SortOrder {
 
         Self::new(terms)
     }
+}
 
-    /// Evaluates each term's field path against each row into a flat
-    /// [`SortKeys`] buffer.
-    pub(crate) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
-        let stride = self.terms.len();
-        let mut flat = Vec::with_capacity(rows.len().saturating_mul(stride));
-        for row in rows {
-            for term in &self.terms {
-                let val_ref = row.resolve_ref(&term.path);
-                flat.push(SortKey::from_value_ref(&val_ref));
-            }
-        }
-        SortKeys {
-            flat,
-            stride,
-        }
-    }
+/// A single field path and direction in a composite [`SortOrder`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SortTerm {
+    path: FieldPath,
+    direction: SortDirection,
+}
 
-    /// Compares two rows' precomputed key slices (as produced by
-    /// [`Self::keys_for`]) across every term in this composite order,
-    /// applying each term's [`SortDirection`] and short-circuiting on the
-    /// first non-equal term. Shared by [`Self::sort_rows`]'s full permutation
-    /// sort and [`super::plan::QueryTransform::TopK`]'s quickselect so both
-    /// execution paths apply identical ordering semantics.
+impl SortTerm {
+    /// Constructs a new sort term.
+    #[inline]
     #[must_use]
-    pub(crate) fn compare_keys(
-        &self,
-        a_keys: &[SortKey],
-        b_keys: &[SortKey],
-    ) -> Ordering {
-        for (i, term) in self.terms.iter().enumerate() {
-            let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i)) else {
-                continue;
-            };
-            let ord = a_k.total_cmp(b_k);
-            let ord = if term.direction().is_descending() {
-                ord.reverse()
-            } else {
-                ord
-            };
-            if ord != Ordering::Equal {
-                return ord;
-            }
-        }
-        Ordering::Equal
-    }
-
-    /// Permutes `rows` in place according to this composite sort order.
-    pub(crate) fn sort_rows(&self, rows: &mut [QueryRow]) {
-        if rows.len() <= 1 || self.terms.is_empty() {
-            return;
-        }
-        let keys = self.keys_for(rows);
-        let mut perm: Vec<usize> = (0..rows.len()).collect();
-
-        perm.sort_by(|&a_idx, &b_idx| {
-            self.compare_keys(keys.get(a_idx), keys.get(b_idx))
-                .then_with(|| a_idx.cmp(&b_idx))
-        });
-
-        let mut dest_perm = vec![0usize; perm.len()];
-        for (dest, &src) in perm.iter().enumerate() {
-            if let Some(slot) = dest_perm.get_mut(src) {
-                *slot = dest;
-            }
-        }
-        for i in 0..rows.len() {
-            while dest_perm.get(i).copied() != Some(i) {
-                let Some(&d) = dest_perm.get(i) else {
-                    break;
-                };
-                rows.swap(i, d);
-                dest_perm.swap(i, d);
-            }
+    pub(crate) const fn new(path: FieldPath, direction: SortDirection) -> Self {
+        Self {
+            path,
+            direction,
         }
     }
+
+    /// Returns the field path for this term.
+    #[inline]
+    #[must_use]
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> &FieldPath {
+        &self.path
+    }
+
+    /// Returns the sort direction for this term.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn direction(&self) -> SortDirection {
+        self.direction
+    }
+}
+
+/// Sort direction for sorting operations.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SortDirection {
+    /// Ascending order.
+    Ascending,
+    /// Descending order.
+    Descending,
+}
+
+impl SortDirection {
+    /// Returns `true` if this direction is [`Self::Descending`].
+    #[inline]
+    #[must_use]
+    pub(crate) const fn is_descending(self) -> bool {
+        matches!(self, Self::Descending)
+    }
+}
+
+/// Lexical tokens parsed from a sort clause. Test-only: production callers
+/// build [`SortOrder`] via [`SortTerm`]s directly; [`SortOrder::parse`]'s
+/// string grammar is exercised only by this module's own tests.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Logos)]
+#[logos(skip r"[ \t\n\r\f]+")]
+enum SortToken {
+    #[token(",")]
+    Comma,
+    #[token("asc", ignore(case))]
+    #[token("ascending", ignore(case))]
+    Asc,
+    #[token("desc", ignore(case))]
+    #[token("descending", ignore(case))]
+    Desc,
+    #[regex(r#"[^\s,]+"#, |lex| lex.slice().to_owned())]
+    Ident(String),
 }
 
 /// Precomputed flat strided buffer of sort keys across rows.

@@ -228,7 +228,7 @@ impl std::fmt::Display for RawSchemaFieldType {
 }
 
 /// The raw DTO matching the root shape of a values file.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchemaSelectFieldValues {
     pub(crate) entries: Option<Vec<RawSchemaSelectFieldEntry>>,
@@ -236,7 +236,7 @@ pub(crate) struct RawSchemaSelectFieldValues {
 
 /// A raw entry DTO in a values file, constrained to bare strings or structured
 /// objects.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum RawSchemaSelectFieldEntry {
     Bare(String),

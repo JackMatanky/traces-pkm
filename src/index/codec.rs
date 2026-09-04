@@ -167,7 +167,7 @@ mod tests {
         use super::super::encode_row;
         use crate::index::error::DbError;
 
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        #[derive(Debug, PartialEq, Deserialize, Serialize)]
         struct Dummy {
             value: String,
         }
@@ -214,7 +214,7 @@ mod tests {
         use super::super::decode_row;
         use crate::index::error::DbError;
 
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        #[derive(Debug, PartialEq, Deserialize, Serialize)]
         struct Dummy {
             value: String,
         }
@@ -271,7 +271,7 @@ mod tests {
 
         use super::super::path;
 
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        #[derive(Debug, PartialEq, Deserialize, Serialize)]
         struct PathWrapper {
             #[serde(with = "path")]
             path: PathBuf,

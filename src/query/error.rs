@@ -37,7 +37,7 @@ pub type QueryResult<T> = std::result::Result<T, QueryError>;
 ///     "invalid limit -1; expected a non-negative row count"
 /// );
 /// ```
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum QueryError {
     /// A query builder rejected syntax, field paths, or limits.
     #[error(transparent)]
@@ -94,7 +94,7 @@ impl Diagnostic for QueryError {
 /// Separates builder-construction failures from execution/rendering failures
 /// while still embedding into [`QueryError`] for callers that want one query
 /// error type.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum QueryBuilderError {
     /// A source or filter expression has invalid syntax.
     #[error(transparent)]
@@ -131,7 +131,7 @@ pub enum QueryBuilderError {
 ///     "expected atom",
 /// );
 /// ```
-#[derive(Clone, Debug, Diagnostic, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Diagnostic, Error)]
 #[error("invalid {dialect} expression")]
 pub struct QuerySyntaxError {
     /// The query language that rejected the expression.
@@ -194,7 +194,7 @@ impl QuerySyntaxError {
 /// # use traces_pkm::query::error::FieldPathError;
 /// let error = FieldPathError::new("file.nmae", Some("file.name"));
 /// ```
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 #[error(
     "invalid field path {path:?}; expected `file.<field>` (path, name, \
      folder, size, ctime, cdate, mtime, mdate), `task.<field>` \

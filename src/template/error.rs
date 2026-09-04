@@ -156,7 +156,7 @@ pub enum TemplateError {
 /// [`minijinja::Error::kind`] and the retained source chain instead of parsing
 /// display text, so new custom functions don't need to update string-matching
 /// logic in the CLI diagnostic layer.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,
