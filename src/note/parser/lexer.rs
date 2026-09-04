@@ -17,7 +17,7 @@ use logos::{Filter, Lexer, Logos};
 use super::inline::parse_inline_value;
 use crate::{
     DelimiterType, FieldKey, Tag,
-    note::{NoteFieldValue, metadata::is_iso_date},
+    note::{NoteFieldValue, field::is_iso_date},
 };
 
 /// Extracts inline fields and tags from a parser scan buffer.
@@ -25,7 +25,7 @@ use crate::{
 /// `has_marker` controls whether [`Self::extract_fields`] recognizes task
 /// emoji shorthand fields (dates, priority); [`Self::extract_tags`] is
 /// unconditional on it. Both methods return flat token lists in encounter
-/// order — the caller aggregates them into an `IndexMap`.
+/// order; the caller aggregates them into an `IndexMap`.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct InlineTokenLexer {
     has_marker: bool,
@@ -146,12 +146,15 @@ enum FieldToken {
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
     #[token("[", |lex| wrapped_field_callback(lex, DelimiterType::Bracket))]
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
+    #[token("\u{1F4C5}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
+    #[token("\u{1F4C5}", |lex| task_field_callback(lex, "due"))]
     #[token("\u{1F5D3}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
     #[token("\u{1F5D3}", |lex| task_field_callback(lex, "due"))]
     #[token("\u{2795}", |lex| task_field_callback(lex, "created"))]
     #[token("\u{1F6EB}", |lex| task_field_callback(lex, "start"))]
     #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
-    #[token("\u{2705}", |lex| task_field_callback(lex, "completion"))]
+    #[token("\u{2705}", |lex| task_field_callback(lex, "done"))]
+    #[token("\u{274C}", |lex| task_field_callback(lex, "cancelled"))]
     Field((FieldKey, NoteFieldValue)),
     #[regex(r"[\s\S]", priority = 0)]
     Ignored,
@@ -240,11 +243,17 @@ fn task_field_callback(
         return Filter::Skip;
     }
     let remainder = lex.remainder();
-    let ws_end = remainder
+    let var_len = if remainder.starts_with('\u{FE0F}') {
+        '\u{FE0F}'.len_utf8()
+    } else {
+        0
+    };
+    let after_var = remainder.get(var_len..).unwrap_or_default();
+    let ws_end = after_var
         .char_indices()
         .find(|&(_, ch)| !matches!(ch, ' ' | '\t'))
-        .map_or(remainder.len(), |(offset, _)| offset);
-    let after_ws = remainder.get(ws_end..).unwrap_or_default();
+        .map_or(after_var.len(), |(offset, _)| offset);
+    let after_ws = after_var.get(ws_end..).unwrap_or_default();
     let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
         return Filter::Skip;
     };
@@ -254,7 +263,7 @@ fn task_field_callback(
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
+    lex.bump(var_len.saturating_add(ws_end).saturating_add(ISO_DATE_LEN));
     Filter::Emit((key, NoteFieldValue::Date(candidate.to_owned())))
 }
 

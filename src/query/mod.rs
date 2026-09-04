@@ -50,6 +50,8 @@
 //! # Examples
 //!
 //! ```rust
+//! # #[cfg(feature = "test-utils")]
+//! # {
 //! use std::sync::Arc;
 //!
 //! use traces_pkm::{
@@ -68,6 +70,7 @@
 //! let set = service.run(&index, builder);
 //! assert_eq!(set.len(), 1);
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!

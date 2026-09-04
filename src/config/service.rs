@@ -140,9 +140,10 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::LocalConfigAbsent`] when no local config exists in
-    ///   any ancestor directory.
-    /// - [`DiscoveryError::PathInaccessible`] when a path cannot be accessed.
+    /// - [`super::error::DiscoveryError::LocalConfigAbsent`] when no local
+    ///   config exists in any ancestor directory.
+    /// - [`super::error::DiscoveryError::PathInaccessible`] when a path cannot
+    ///   be accessed.
     #[inline]
     fn discover(cwd: &Path) -> DiscoveryResult<DiscoveryOutcome> {
         let ctx = DiscoveryContext::new(
@@ -220,12 +221,13 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::PathInaccessible`] when the path cannot be
-    ///   inspected.
-    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is
-    ///   [`DiscoveryScope::Full`], which trust resolution does not support.
-    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid.
-    /// - [`DiscoveryError::LocalConfigAbsent`] when
+    /// - [`super::error::DiscoveryError::PathInaccessible`] when the path
+    ///   cannot be inspected.
+    /// - [`super::error::DiscoveryError::UnsupportedTrustScope`] when `scope`
+    ///   is [`DiscoveryScope::Full`], which trust resolution does not support.
+    /// - [`super::error::DiscoveryError::ConfigFile`] when a config-file anchor
+    ///   is invalid.
+    /// - [`super::error::DiscoveryError::LocalConfigAbsent`] when
     ///   [`DiscoveryScope::LocalSubtree`] discovery has no local root to walk
     ///   from.
     #[inline]

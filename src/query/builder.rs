@@ -34,6 +34,8 @@ pub(super) enum QueryMode {
 /// # Examples
 ///
 /// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
 /// use traces_pkm::{QueryBuilder, SourceSelector};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,6 +44,7 @@ pub(super) enum QueryMode {
 ///     .sort("file.name", false)?
 ///     .limit(10)?;
 /// # Ok(())
+/// # }
 /// # }
 /// ```
 #[derive(Clone, Debug, PartialEq)]

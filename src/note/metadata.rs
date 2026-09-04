@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use yaml_serde as serde_yaml;
 
-pub(crate) use super::field::is_iso_date;
 use super::field::{NoteFieldValue, yaml_payload_key_to_string};
 use crate::{FieldKey, FieldKeyRef};
 

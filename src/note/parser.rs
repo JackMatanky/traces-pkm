@@ -7,25 +7,24 @@
 //!
 //! The parser is organized into six specialized submodules:
 //!
-//! - [`inline`](self::inline): [`inline::parse_inline_value`] parses raw inline
-//!   field value text into strongly typed
-//!   [`NoteFieldValue`](super::NoteFieldValue) records (comma lists, quoted
+//! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
+//!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
 //!   strings, durations, wikilinks, booleans, dates, numbers, tags).
-//! - [`input`](self::input): [`MarkdownParserInput`] encapsulates borrowed
-//!   path, source text, and configuration references for parsing.
-//! - [`lexer`](self::lexer): [`InlineTokenLexer`] extracts `Key:: Value`,
-//!   `[Key:: Value]`, and `(Key:: Value)` inline fields, task emoji shorthands,
-//!   and `#tag` tokens from plain-text scan buffers using [`logos`].
+//! - [`input`]: [`MarkdownParserInput`] encapsulates borrowed path, source
+//!   text, and configuration references for parsing.
+//! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
+//!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
+//!   tokens from plain-text scan buffers using [`logos`].
 //! - [`mod@line`]: [`ByteTracker`] precomputes line-start byte offsets for
 //!   $O(\log n)$ byte-to-line translation without scanning the source string
 //!   multiple times.
-//! - [`list`](self::list): [`ListTracker`] manages explicit list and list-item
-//!   stacks so nested Markdown never recurses through the call stack, driving
-//!   the item-leading marker state machine, tag filter classification, and
-//!   flushing item metadata.
-//! - [`marker`](self::marker): custom task marker scanner that recognizes
-//!   `[<symbol>]` markers at item-leading positions with
-//!   pulldown-cmark-compatible whitespace rules.
+//! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
+//!   nested Markdown never recurses through the call stack, driving the
+//!   item-leading marker state machine, tag filter classification, and flushing
+//!   item metadata.
+//! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
+//!   markers at item-leading positions with pulldown-cmark-compatible
+//!   whitespace rules.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
 //! specialized handlers and assembles the final [`Note`].
@@ -227,7 +226,7 @@ impl<'a> ParserContext<'a> {
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
             // Inline markup occupying an item's leading slot means the task
-            // marker is not at the content start — mirroring pulldown-cmark,
+            // marker is not at the content start, mirroring pulldown-cmark,
             // which scans for the marker before parsing any inline content.
             // `- **[x] Task**` and `` - `[x]` Task `` stay plain.
             Event::Start(
@@ -696,7 +695,7 @@ mod tests {
                 .and_then(|list| list.items().first())
                 .and_then(|item| item.children().first())
                 .and_then(|list| list.items().first())
-                .map(ListItem::text);
+                .map(ListItem::raw_text);
             assert_eq!(grandchild, Some("Grandchild"));
         }
 
@@ -767,7 +766,7 @@ mod tests {
                 .lists()
                 .first()
                 .and_then(|list| list.items().first())
-                .map(ListItem::text);
+                .map(ListItem::raw_text);
             assert_eq!(text, Some("Wrapped\nline"));
         }
 
@@ -874,7 +873,7 @@ mod tests {
             let item_text = lists
                 .first()
                 .and_then(|l| l.items().first())
-                .map(crate::note::lists::ListItem::text)
+                .map(ListItem::raw_text)
                 .unwrap_or_default();
 
             // Assert
@@ -1046,10 +1045,11 @@ mod tests {
             "scheduled",
             "2022-07-24"
         )]
-        #[case::completion(
-            "- [x] testTask ✅2022-07-26",
-            "completion",
-            "2022-07-26"
+        #[case::done("- [x] testTask ✅2022-07-26", "done", "2022-07-26")]
+        #[case::cancelled(
+            "- [x] testTask ❌2022-07-27",
+            "cancelled",
+            "2022-07-27"
         )]
         fn extracts_task_emoji_shorthand_fields_from_task_items_only(
             #[case] input: &str,
@@ -1330,7 +1330,7 @@ mod tests {
             let tasks_collected: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks_collected.len(), 1);
             assert_eq!(
-                tasks_collected.first().map(|t| t.text()),
+                tasks_collected.first().copied().map(ListItem::raw_text),
                 Some("Marked matching #task")
             );
 
@@ -1391,7 +1391,7 @@ mod tests {
             let tasks_collected: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks_collected.len(), 1);
             assert_eq!(
-                tasks_collected.first().map(|t| t.text()),
+                tasks_collected.first().copied().map(ListItem::raw_text),
                 Some("Exact tag #task")
             );
 

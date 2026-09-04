@@ -1,6 +1,8 @@
-//! Implements [`query::FileClassExpander`] for [`schema::SchemaService`] —
-//! the only place in the crate referencing both `schema` and `query` for
-//! File Class expansion. Neither module depends on the other; this module
+//! Implements [`crate::query::FileClassExpander`] for
+//! [`crate::schema::SchemaService`].
+//!
+//! This is the only place in the crate referencing both `schema` and `query`
+//! for File Class expansion. Neither module depends on the other; this module
 //! wires them together.
 
 use indexmap::IndexSet;

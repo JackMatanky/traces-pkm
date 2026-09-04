@@ -104,11 +104,12 @@ impl PathOps {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] via [`confine_error`] if a relative `path`
-///   traverses outside `root`, through `..` or a symlink escape.
-/// - [`ErrorKind::InvalidOperation`] via [`inspect_error`] if reading the
-///   resolved target's metadata fails for any reason other than "not found",
-///   such as permission denied or a broken symlink loop.
+/// - [`ErrorKind::InvalidOperation`] via [`super::error::confine_error`] if a
+///   relative `path` traverses outside `root`, through `..` or a symlink
+///   escape.
+/// - [`ErrorKind::InvalidOperation`] via [`super::error::invalid_operation`] if
+///   reading the resolved target's metadata fails for any reason other than
+///   "not found", such as permission denied or a broken symlink loop.
 ///
 /// [`ErrorKind::InvalidOperation`]: minijinja::ErrorKind::InvalidOperation
 fn inspect(

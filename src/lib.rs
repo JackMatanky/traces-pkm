@@ -1,4 +1,4 @@
-//! Process Obsidian-style markdown notes with frontmatter, inline fields,
+//! Process Obsidian-style Markdown notes with frontmatter, inline fields,
 //! wikilinks, and task lists.
 //!
 //! # Modules
@@ -107,13 +107,11 @@ pub use index::{
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
-#[cfg(any(test, feature = "test-utils"))]
 pub use note::{
-    List, ListItem, ListItemType, MarkdownParserInput, Note, NoteFieldValue,
-    TaskIter, TaskListItem, parse_markdown,
+    List, ListItem, ListItemType, ListText, MarkdownParserInput, Note,
+    NoteFieldValue, TaskDates, TaskIter, TaskListItem, TaskPriority,
+    parse_markdown,
 };
-#[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use note::{Note, NoteFieldValue};
 pub(crate) use position::{ByteOffset, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
@@ -125,10 +123,9 @@ pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
 pub use tag::{Tag, TagError};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use tag::{Tag, TagError};
-pub(crate) use task::{TaskStatus, TaskStatusMap};
-#[cfg(test)]
-pub(crate) use task::{TaskStatusSymbol, TaskStatusType};
+pub use task::{TaskStatus, TaskStatusMap, TaskStatusSymbol, TaskStatusType};
 #[cfg(not(any(test, feature = "test-utils")))]
+#[expect(unused_imports, reason = "crate re-export")]
 pub(crate) use template::TemplateService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{

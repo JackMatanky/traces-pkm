@@ -22,6 +22,8 @@ use crate::index::{FileIndex, RowIndex};
 /// # Examples
 ///
 /// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
 /// use std::sync::Arc;
 ///
 /// use traces_pkm::{
@@ -36,6 +38,7 @@ use crate::index::{FileIndex, RowIndex};
 /// let outcome = service.run(&index, QueryBuilder::pages(SourceSelector::All));
 /// assert_eq!(outcome.len(), 0);
 /// # Ok(())
+/// # }
 /// # }
 /// ```
 #[derive(Clone)]

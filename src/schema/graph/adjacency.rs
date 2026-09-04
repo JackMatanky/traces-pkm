@@ -211,7 +211,7 @@ impl<'a> SchemaAdjacency<'a> {
     /// Computes a topological rank vector from `topo_order`.
     ///
     /// Nodes not present in `topo_order` receive rank `u32::MAX`. Used by
-    /// both [`SchemaGraph::hierarchy`] and
+    /// both [`super::SchemaGraph::hierarchy`] and
     /// [`SchemaGraphBuilder::build`](super::builder::SchemaGraphBuilder::build).
     pub(super) fn compute_topo_rank(
         &self,

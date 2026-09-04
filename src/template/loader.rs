@@ -133,8 +133,8 @@ impl TemplateLoader {
     /// Searches `dir` itself, or `dir`'s subdirectory named by `path`'s parent
     /// component, for files sharing `path`'s file stem: `None` for no matches,
     /// the sole match for exactly one. Like [`Self::find_path_in`], a symlink
-    /// never counts as a match because [`DirNode::file_type`] reports the
-    /// link's own type, not its target's.
+    /// never counts as a match because [`crate::dirtree::DirNode::file_type`]
+    /// reports the link's own type, not its target's.
     ///
     /// # Errors
     ///
@@ -258,7 +258,8 @@ impl TemplateLoader {
     /// Collects the file stems of every top-level `.md` file directly inside
     /// `dir`.
     ///
-    /// A symlink entry does not count, matching the [`DirNode::file_type`]
+    /// A symlink entry does not count, matching the
+    /// [`crate::dirtree::DirNode::file_type`]
     /// check in [`Self::find_name_in`]. Returns empty when `dir` is `None`,
     /// does not exist, or cannot be read: listing failures shrink the
     /// candidate list, deliberately — there is no `Result` here to report

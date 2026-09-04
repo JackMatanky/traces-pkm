@@ -234,7 +234,7 @@ impl SchemaFieldType {
 /// [`parser::SchemaFieldParser`] to name a field's kind in diagnostics without
 /// carrying its resolved options.
 ///
-/// [`SchemaFieldParserError`]: super::error::SchemaFieldParserError
+/// [`SchemaFieldParserError`]: error::SchemaFieldParserError
 /// [`SchemaWarning`]: super::error::SchemaWarning
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaFieldTypeTag {

@@ -65,8 +65,8 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::Read`] when `path` cannot be read or its
-    /// content cannot be parsed as TOML.
+    /// - [`ConfigFileError::Read`] when `path` cannot be read or its content
+    ///   cannot be parsed as TOML.
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let content = std::fs::read_to_string(path).map_err(|source| {
             use serde::de::Error as _;
@@ -86,8 +86,7 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::Read`] when `content` cannot be parsed as
-    /// TOML.
+    /// - [`ConfigFileError::Read`] when `content` cannot be parsed as TOML.
     fn from_content(
         path: &Path,
         content: &str,
@@ -171,8 +170,8 @@ impl LocalConfigFile<Discovered> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::UnsupportedLocalConfigFile`] when `path` does
-    /// not end with `.traces/config.toml` or has no parent `.traces` directory.
+    /// - [`ConfigFileError::UnsupportedLocalConfigFile`] when `path` does not
+    ///   end with `.traces/config.toml` or has no parent `.traces` directory.
     #[inline]
     pub(crate) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         let Some(traces_dir) = path.parent() else {
@@ -212,8 +211,8 @@ impl GlobalConfigFile<Discovered> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path` is
-    /// not named `config.toml` or has no parent directory.
+    /// - [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path` is not
+    ///   named `config.toml` or has no parent directory.
     #[inline]
     pub(super) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         if path.file_name() != Some("config.toml".as_ref()) {
@@ -248,8 +247,8 @@ impl LocalConfigFile<Tracked> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::TrustCheckFailed`] when the underlying state
-    /// store fails.
+    /// - [`ConfigFileError::TrustCheckFailed`] when the underlying state store
+    ///   fails.
     pub(crate) fn verify_trust(
         self,
         state: &ConfigStateStore,
