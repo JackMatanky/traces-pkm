@@ -36,8 +36,16 @@ the pending Query Plan, built before execution.
 #### Query Plan
 
 The ordered transform sequence a query applies to rows, fused where possible
-(adjacent filters, Sort followed by Limit) and executed lazily on first read.
+(adjacent filters, adjacent sorts, and Sort followed by Limit) and executed
+lazily on first read.
 *Avoid*: plan steps, ops list
+
+#### Sort Order
+
+The ordered sequence of field paths and directions defining a query's sorting
+criteria, defaulting to descending order. Adjacent Sort operations in a Query
+Plan fuse into a single composite Sort Order.
+*Avoid*: sort spec, sort criteria, sort clause, order by string
 
 #### Query Row
 

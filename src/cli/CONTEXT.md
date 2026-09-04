@@ -37,6 +37,14 @@ Commands executing read queries against indexed notes: bullet lists (`list`),
 tabular views (`table`), and task checklists (`task`).
 *Avoid*: search commands, DQL commands
 
+#### Query Sort Arguments
+
+The CLI flags configuring query ordering on `list` and `table` commands:
+repeatable, comma-delimited `--sort` accepting field paths with optional `+`
+(ascending) or `-` (descending) prefixes, and mutually exclusive `--asc` and
+`--desc` direction switches.
+*Avoid*: order flag, order by, sort option, order clause
+
 ### Interaction & Outcomes
 
 #### Template Browser
