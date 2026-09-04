@@ -46,24 +46,24 @@ Status: implemented
 - [x] Remove `TaskIter` struct and its `Iterator` impl from `src/note/lists.rs`
 - [x] Remove `TaskIter` references from `src/note/model.rs` (`Note::tasks()` return type and doc)
 
-### ListRecord
+### ListEntry (relocated to `index/entry.rs` in round 4 — see review history)
 
-- [x] `ListRecord` struct wrapping `path: String` and `ListItem`
-- [x] `ListRecord` derives `Serialize`/`Deserialize`
-- [x] `ListRecord::status_type(&self)` reads from `ListItemType::Task(task)` → `task.status().kind()`
-- [x] `ListRecord::priority(&self)` reads from `ListItemType::Task(task)` → `task.priority()`
-- [x] `ListRecord::due_date(&self)` reads from `ListItemType::Task(task)` → `task.dates().due`
-- [x] `ListRecord::is_fully_complete(&self)` reads from `ListItemType::Task(task)` → `task.is_fully_complete()`
-- [x] `ListRecord::text(&self)` delegates to `ListItem::text()`
-- [x] `ListRecord::line(&self)` delegates to `ListItem::line()`
-- [x] `ListRecord::depth(&self)` delegates to `ListItem::depth()`
-- [x] `ListRecord::parent_line(&self)` delegates to `ListItem::parent()`
-- [x] Accessor methods return `None` for page-level records or non-Task items
+- [x] `ListEntry` struct wrapping `path: String` and `ListItem`
+- [x] `ListEntry` derives `Serialize`/`Deserialize`
+- [x] `ListEntry::status_type(&self)` reads from `ListItemType::Task(task)` → `task.status().kind()`
+- [x] `ListEntry::priority(&self)` reads from `ListItemType::Task(task)` → `task.priority()`
+- [x] `ListEntry::due_date(&self)` reads from `ListItemType::Task(task)` → `task.dates().due`
+- [x] `ListEntry::is_fully_complete(&self)` reads from `ListItemType::Task(task)` → `task.is_fully_complete()`
+- [x] `ListEntry::text(&self)` delegates to `ListItem::text()`
+- [x] `ListEntry::line(&self)` delegates to `ListItem::line()`
+- [x] `ListEntry::depth(&self)` delegates to `ListItem::depth()`
+- [x] `ListEntry::parent_line(&self)` delegates to `ListItem::parent()`
+- [x] Accessor methods return `None` for non-Task items
 
 ### LISTS persistence
 
 - [x] LISTS table defined in redb as `TableDefinition<&[u8], &[u8]>` keyed by `(path, line)` bytes — path as UTF-8 bytes, line as 4-byte big-endian `u32`, concatenated
-- [x] `ListRecord` serializes via postcard as `path` + `ListItem`
+- [x] `ListEntry` serializes via postcard as `path` + `ListItem`
 - [x] Index rebuild writes LISTS table alongside FILES, NOTES, LINKS
 - [x] Index `should_rebuild` includes LISTS in probe list
 - [x] Incremental persistence supports LISTS table
@@ -88,14 +88,15 @@ Status: implemented
 
 | File | Purpose |
 |---|---|
-| `src/note/lists.rs` | `ListItemIter<'a>` (replaces `TaskIter`; unified depth-first walker with a private `tasks_only: bool` flag, filtered at yield time via two constructors `new`/`tasks`); `ListRecord` struct (`path: String`, `item: ListItem`) with accessors `path()`, `status_type()`, `priority()`, `due_date()`, `is_fully_complete()`, `text()`, `raw_text()`, `clean_text()`, `line()`, `depth()`, `parent_line()`, all delegating through the `ListItemType` discriminant. |
+| `src/note/lists.rs` | `ListItemIter<'a>` (replaces `TaskIter`; unified depth-first walker with a private `tasks_only: bool` flag, filtered at yield time via two constructors `new`/`tasks`); `ListItem::without_children()` (round 4: returns a clone with descendant lists cleared, for persisting one flat row per item); `ListItem::tags()`, `ListItemType::as_task()` (round 4, independent additions). |
 | `src/note/model.rs` | `Note::list_items() -> ListItemIter<'_>` (new, public); `Note::tasks()` changed to return `ListItemIter<'_>` (was `TaskIter<'_>`). |
-| `src/note/mod.rs`, `src/lib.rs` | Public re-exports: `ListItemIter`, `ListRecord` added; `TaskIter` removed. `SourceLine` promoted from `pub(crate)` to `pub` (required for `ListRecord::line()`/`parent_line()` return values to be usable outside the crate). |
+| `src/note/mod.rs`, `src/lib.rs` | Public re-exports: `ListItemIter` unconditional; `TaskIter` removed. `SourceLine` promoted from `pub(crate)` to `pub` (required for `ListEntry::line()`/`parent_line()` return values to be usable outside the crate). |
 | `src/position.rs` | `SourceLine` and `SourceLine::new` promoted to `pub` alongside the re-export change. |
-| `src/index/store.rs` | `LISTS: TableDefinition<&[u8], &[u8]>` table constant (private); `ListRecordRef<'a>` borrowed serialization view (private, field-order-identical to `ListRecord` for byte-identical postcard encoding); `IndexStore::list_key`/`list_key_bounds`/`list_key_matches_path` private associated functions for the `(path, line)` key scheme; `read_lists`, `read_lists_for_path`, `read_all_lists` (`pub(super)`); `write_lists_for_note`, `remove_lists_for_path` (private); `should_rebuild` probes LISTS; `write_all` and `upsert_files_and_notes` write/delete LISTS rows alongside FILES/NOTES/LINKS. |
-| `src/index/service.rs` | `IndexerService::read_lists() -> IndexResult<Vec<ListRecord>>` (public, thin wrapper over `IndexStore::read_all_lists`). |
+| `src/index/entry.rs` (round 4: relocated here from `note/lists.rs`, see review history) | `ListEntry` struct wrapping `path: String` and `ListItem` — mirrors how `NoteEntry` wraps `Note` — with accessors `path()`, `status_type()`, `priority()`, `due_date()`, `is_fully_complete()`, `text()`, `raw_text()`, `clean_text()`, `tags()`, `line()`, `depth()`, `parent_line()` delegating through the `ListItemType` discriminant; `pub` only under `test`/`test-utils` (matching `FileEntry`'s visibility), `pub(crate)` otherwise. `ListEntryRef<'a>` borrowed mirror (relocated from `index/store.rs`, formerly `ListRecordRef`) for zero-clone writes, borrowing a local `without_children()`-derived item. |
+| `src/index/store.rs` | `LISTS: TableDefinition<&[u8], &[u8]>` table constant (private); `IndexStore::list_key`/`list_key_bounds`/`list_key_matches_path` private associated functions for the `(path, line)` key scheme; `read_lists`, `read_lists_for_path`, `read_all_lists` (`pub(super)`, return `Vec<ListEntry>`); `write_lists_for_note`, `remove_lists_for_path` (private); `should_rebuild` probes LISTS; `write_all` and `upsert_files_and_notes` write/delete LISTS rows alongside FILES/NOTES/LINKS. |
+| `src/index/service.rs` | `IndexerService::read_lists() -> IndexResult<Vec<ListEntry>>` (public, thin wrapper over `IndexStore::read_all_lists`). |
 | `src/index/codec.rs` | `path_from_bytes` doc updated to list the LISTS table readers as consumers and note the lossy-decode fallback never triggers there (LISTS keys are UTF-8 by construction via `write_lists_for_note`'s `to_string_lossy()`). |
-| `tests/integration/index_persistence_roundtrip.rs` | Three new integration tests: item-kind/task-filter coverage (tag-filtered fixture so `Checkbox` is actually observed, not just `Task`), LISTS-table record correctness (table-driven), and full build→persist→fresh-service LISTS round trip. |
+| `tests/integration/index_persistence_roundtrip.rs` | Three integration tests: item-kind/task-filter coverage (tag-filtered fixture so `Checkbox` is actually observed, not just `Task`), LISTS-table record correctness (table-driven), and full build→persist→fresh-service LISTS round trip. |
 
 ### Key design and algorithmic decisions
 
