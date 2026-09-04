@@ -81,7 +81,7 @@ postcard = {
   ]
 }
 pulldown-cmark = "0.13"
-redb = "4.1"
+redb = "4.2"
 regex = "1.13.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.151"
