@@ -550,7 +550,6 @@ fn query_help(source: &QueryError) -> Box<dyn Display + 'static> {
             QueryDialect::Filter => {
                 "check the `--where` filter expression syntax"
             }
-            QueryDialect::Sort => "check the `--sort` expression syntax",
         },
         QueryError::Builder(QueryBuilderError::FieldPath(_))
         | QueryError::FieldPath(_) => "check every referenced field path",

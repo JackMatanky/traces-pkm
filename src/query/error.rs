@@ -247,8 +247,6 @@ pub enum QueryDialect {
     Source,
     /// The `--where` record-filtering language.
     Filter,
-    /// The `--sort` ordering language.
-    Sort,
 }
 
 impl fmt::Display for QueryDialect {
@@ -256,7 +254,6 @@ impl fmt::Display for QueryDialect {
         match self {
             Self::Source => formatter.write_str("source"),
             Self::Filter => formatter.write_str("filter"),
-            Self::Sort => formatter.write_str("sort"),
         }
     }
 }

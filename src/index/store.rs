@@ -263,9 +263,9 @@ impl IndexStore {
         Ok(items)
     }
 
-    /// Opens `table`'s raw byte-range iterator, boxed in its own small frame
-    /// so [`Self::read_notes_chunked`]'s larger chunking-loop frame never
-    /// also carries this `Range`'s temporary construction cost.
+    /// Opens `table`'s raw byte-range iterator, boxed in its own small frame so
+    /// [`Self::read_notes_chunked`]'s larger chunking-loop frame never also
+    /// carries this `Range`'s temporary construction cost.
     fn open_notes_range<'a>(
         &self,
         table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
@@ -275,11 +275,11 @@ impl IndexStore {
         Ok(Box::new(range))
     }
 
-    /// Reads `table`'s raw postcard-encoded rows in adaptively sized chunks
-    /// (at most 128 rows or 512 `KiB` of bytes per chunk), leaving decoding to
-    /// the caller. Used by [`super::cache::RefreshCache::load`] to hand
-    /// chunks to Rayon workers for parallel `postcard` deserialization
-    /// instead of decoding serially on this thread.
+    /// Reads `table`'s raw postcard-encoded rows in adaptively sized chunks (at
+    /// most 128 rows or 512 `KiB` of bytes per chunk), leaving decoding to the
+    /// caller. Used by [`super::cache::RefreshCache::load`] to hand chunks to
+    /// Rayon workers for parallel `postcard` deserialization instead of
+    /// decoding serially on this thread.
     ///
     /// # Errors
     ///
@@ -335,10 +335,10 @@ impl IndexStore {
     }
 
     /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge,
-    /// without loading the `NOTES` table.
-    ///
-    /// Used by [`super::IndexerService::refresh`] for lazy per-note recall via
-    /// [`Self::read_note`].
+    /// without loading the `NOTES` table. Used by
+    /// [`super::cache::RefreshCache::load`], which separately bulk-loads and
+    /// parallel-decodes every persisted Note via [`Self::read_notes_chunked`]
+    /// rather than recalling notes one at a time.
     ///
     /// # Errors
     ///

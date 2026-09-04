@@ -42,8 +42,8 @@ use crate::{
     config::{DiscoveryScope, TrustRequests},
     index::{FileIndex, IndexerService},
     query::{
-        FieldPath, QueryBuilder, QueryError, QueryService, QuerySet,
-        SortDirection, SortOrder, SortTerm, SourceSelector,
+        QueryBuilder, QueryError, QueryService, QuerySet, SortDirection,
+        SortOrder, SourceSelector,
     },
     schema::{SchemaService, warn_schema_construction_diagnostics},
 };
@@ -245,16 +245,15 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 /// Shared `--sort`/`--asc`/`--desc` CLI arguments for [`list::List`] and
 /// [`table::Table`].
 ///
-/// Flattened into both subcommands via `#[command(flatten)]` so the sort
-/// flags, their clap validation (`--asc`/`--desc` conflict with each other
-/// and require `--sort`), and their parsing all come from one definition
-/// instead of two copies.
+/// Flattened into both subcommands via `#[command(flatten)]` so the sort flags,
+/// their clap validation (`--asc`/`--desc` conflict with each other and require
+/// `--sort`), and their parsing all come from one definition instead of two
+/// copies.
 #[derive(Debug, Default, clap::Args)]
 struct SortArgs {
     /// Field path to sort by. Repeatable; multiple `--sort` flags or
     /// comma-separated values compose as composite sort terms. Defaults to
-    /// descending order unless overridden by prefix `+` or the `--asc`
-    /// flag.
+    /// descending order unless overridden by prefix `+` or the `--asc` flag.
     #[arg(long, value_delimiter = ',', num_args = 1..)]
     sort: Vec<String>,
     /// Sort in ascending order. Conflicts with `--desc`. Requires `--sort`.
@@ -267,12 +266,11 @@ struct SortArgs {
 }
 
 impl SortArgs {
-    /// Resolves these arguments into an optional composite [`SortOrder`].
+    /// Resolves these arguments into an optional composite [`SortOrder`] via
+    /// [`SortOrder::parse`].
     ///
-    /// Supports repeatable, comma-delimited strings with optional `+`
-    /// (ascending) and `-` (descending) prefix modifiers. When no prefix is
-    /// present, uses [`SortDirection::Ascending`] if `--asc` was given,
-    /// otherwise [`SortDirection::Descending`].
+    /// `--asc`/`--desc` select the default direction for segments with no
+    /// `+`/`-` prefix; descending is the default when neither flag is given.
     ///
     /// # Errors
     ///
@@ -284,38 +282,10 @@ impl SortArgs {
         let default_direction = if self.asc {
             SortDirection::Ascending
         } else {
-            SortDirection::Descending
+            SortDirection::default()
         };
-        let mut terms = Vec::new();
-        for token in &self.sort {
-            for part in token.split(',') {
-                let part = part.trim();
-                if part.is_empty() {
-                    continue;
-                }
-                let (path_str, direction) =
-                    if let Some(stripped) = part.strip_prefix('+') {
-                        (stripped, SortDirection::Ascending)
-                    } else if let Some(stripped) = part.strip_prefix('-') {
-                        (stripped, SortDirection::Descending)
-                    } else {
-                        (part, default_direction)
-                    };
-                let path = FieldPath::parse(path_str).map_err(|error| {
-                    query_error(
-                        root,
-                        crate::query::QueryBuilderError::from(error).into(),
-                    )
-                })?;
-                terms.push(SortTerm::new(path, direction));
-            }
-        }
-        if terms.is_empty() {
-            return Ok(None);
-        }
-        let order = SortOrder::new(terms)
-            .map_err(|error| query_error(root, error.into()))?;
-        Ok(Some(order))
+        SortOrder::parse(&self.sort.join(","), default_direction)
+            .map_err(|error| query_error(root, error.into()))
     }
 }
 
@@ -374,6 +344,13 @@ mod sort_args_tests {
             order.terms().get(1).expect("term").direction(),
             SortDirection::Descending
         );
+    }
+
+    #[test]
+    fn blank_segments_from_trailing_comma_are_skipped() {
+        let order =
+            resolve(&["file.folder,"], false, false).expect("some sort");
+        assert_eq!(order.len(), 1);
     }
 
     #[test]

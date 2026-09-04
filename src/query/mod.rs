@@ -39,11 +39,11 @@
 //! - [`QueryRow`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
 //!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QuerySet`] stores result rows and provides chained transformation
-//!   methods ([`filter`](QuerySet::filter), [`sort`](QuerySet::sort),
-//!   [`limit`](QuerySet::limit), [`group_by`](QuerySet::group_by),
-//!   [`flatten`](QuerySet::flatten)) and terminal rendering methods
-//!   ([`table`](QuerySet::table), [`list`](QuerySet::list),
-//!   [`task_list`](QuerySet::task_list)).
+//!   methods ([`filter`](QuerySet::filter),
+//!   [`sort_field`](QuerySet::sort_field), [`limit`](QuerySet::limit),
+//!   [`group_by`](QuerySet::group_by), [`flatten`](QuerySet::flatten)) and
+//!   terminal rendering methods ([`table`](QuerySet::table),
+//!   [`list`](QuerySet::list), [`task_list`](QuerySet::task_list)).
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
 //!   transformation constraint violations.
 //!
@@ -101,7 +101,7 @@ pub(crate) use grammar::{
 use plan::{QueryPlan, QueryTransform};
 pub use results::{QueryRow, QuerySet};
 pub use service::QueryService;
-pub(crate) use sort::{SortDirection, SortOrder, SortTerm};
+pub(crate) use sort::{SortDirection, SortOrder};
 
 #[cfg(test)]
 pub(super) mod test_support {
@@ -110,8 +110,8 @@ pub(super) mod test_support {
     use super::*;
     use crate::index::IndexerService;
 
-    /// Builds a [`QuerySet`] over every Markdown Note in `files`
-    /// written under `temp`.
+    /// Builds a [`QuerySet`] over every Markdown Note in `files` written under
+    /// `temp`.
     pub(super) fn outcome_for_files(
         temp: &Path,
         files: &[(&str, &str)],
@@ -125,8 +125,8 @@ pub(super) mod test_support {
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
-    /// Builds a single-record [`QuerySet`] from a single Markdown
-    /// Note's content.
+    /// Builds a single-record [`QuerySet`] from a single Markdown Note's
+    /// content.
     pub(super) fn outcome_for(temp: &Path, content: &str) -> QuerySet {
         outcome_for_files(temp, &[("note.md", content)])
     }

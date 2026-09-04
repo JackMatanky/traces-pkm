@@ -5,10 +5,15 @@
 //!
 //! ### Data Flow Diagram
 //!
+//! `QuerySet::sort` pushes a `QueryTransform::Sort` step onto the pending
+//! `QueryPlan`. `QueryPlan::run` rewrites a `Sort` immediately followed by a
+//! `Limit` into one `QueryTransform::TopK` step (`O(n)` quickselect instead
+//! of `O(n log n)` full sort):
+//!
 //! ```text
-//! [QuerySet] ──(QuerySet::sort)──► [PendingSort]
-//!                  │
-//!                  └──(.limit)───────► [QuerySet (TopK)]
+//! [QuerySet] ──(.sort)──► [QueryTransform::Sort]
+//!                              │
+//!                              └──(.limit)──► [QueryTransform::TopK]
 //! ```
 //!
 //! ### Profiling Integration

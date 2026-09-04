@@ -1,3 +1,10 @@
+//! Merges local and global config layers into one resolved [`Config`].
+//!
+//! [`ConfigBuilder`] applies local-over-global precedence field by field,
+//! resolving relative paths (such as template directories) against each layer's
+//! own config file root before the layers are merged, so a global config's
+//! relative paths never resolve against the local project root by mistake.
+
 use std::path::{Path, PathBuf};
 
 use super::{

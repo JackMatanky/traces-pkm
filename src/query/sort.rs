@@ -2,18 +2,10 @@
 
 use std::cmp::Ordering;
 
-#[cfg(test)]
-use logos::Logos;
-use miette::SourceSpan;
-
 use super::{
-    QueryRow,
-    error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
-    grammar::FieldPath,
+    QueryRow, error::QueryBuilderError, grammar::FieldPath,
     value::QueryFieldValueRef,
 };
-#[cfg(test)]
-use crate::{LexTokenStream, LexedToken};
 use crate::{NoteFieldValue, file::Timestamp};
 
 /// A composite ordering clause composed of one or more [`SortTerm`] items.
@@ -23,25 +15,6 @@ pub(crate) struct SortOrder {
 }
 
 impl SortOrder {
-    /// Constructs a `SortOrder` from a non-empty list of terms.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryBuilderError::Syntax`] if `terms` is empty.
-    pub(crate) fn new(terms: Vec<SortTerm>) -> Result<Self, QueryBuilderError> {
-        if terms.is_empty() {
-            return Err(QueryBuilderError::Syntax(QuerySyntaxError::new(
-                QueryDialect::Sort,
-                "",
-                SourceSpan::from((0, 0)),
-                "at least one sort term",
-            )));
-        }
-        Ok(Self {
-            terms: terms.into_boxed_slice(),
-        })
-    }
-
     /// Constructs a single-term `SortOrder`.
     #[inline]
     #[must_use]
@@ -79,10 +52,10 @@ impl SortOrder {
     }
 
     /// Compares two rows' precomputed key slices (as produced by
-    /// [`Self::keys_for`]) across every term in this composite order,
-    /// applying each term's [`SortDirection`] and short-circuiting on the
-    /// first non-equal term. Shared by [`Self::sort_rows`]'s full permutation
-    /// sort and [`super::plan::QueryTransform::TopK`]'s quickselect so both
+    /// [`Self::keys_for`]) across every term in this composite order, applying
+    /// each term's [`SortDirection`] and short-circuiting on the first
+    /// non-equal term. Shared by [`Self::sort_rows`]'s full permutation sort
+    /// and [`super::plan::QueryTransform::TopK`]'s quickselect so both
     /// execution paths apply identical ordering semantics.
     #[must_use]
     pub(crate) fn compare_keys(
@@ -161,113 +134,48 @@ impl SortOrder {
         self.terms.len()
     }
 
-    /// Parses a comma-separated sort clause string, e.g. `"file.folder asc,
-    /// file.mtime desc"`. Test-only: see [`SortToken`] for why no production
-    /// caller reaches this string grammar.
-    #[cfg(test)]
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            return Err(QueryBuilderError::Syntax(QuerySyntaxError::new(
-                QueryDialect::Sort,
-                input,
-                SourceSpan::from((0, input.len())),
-                "at least one sort term",
-            )));
-        }
-
-        let mut tokens =
-            LexTokenStream::<LexedToken<SortToken>>::tokenize(input).map_err(
-                |e| QuerySyntaxError::from_lex(QueryDialect::Sort, input, e),
-            )?;
-
+    /// Parses a comma-separated sort clause into a composite `SortOrder`.
+    ///
+    /// Each comma-separated segment may carry a `+` (ascending) or `-`
+    /// (descending) prefix; an unprefixed segment uses `default_direction`.
+    /// Blank segments, such as those produced by a leading, trailing, or
+    /// doubled comma, are skipped rather than rejected. This is the grammar
+    /// behind the CLI's `--sort` flag, where `default_direction` comes from
+    /// the `--asc`/`--desc` flags.
+    ///
+    /// Returns `Ok(None)` if `input` yields no terms once blank segments are
+    /// skipped.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryBuilderError::FieldPath`] if any segment, after stripping its
+    ///   `+`/`-` prefix, is not a valid field path.
+    pub(crate) fn parse(
+        input: &str,
+        default_direction: SortDirection,
+    ) -> Result<Option<Self>, QueryBuilderError> {
         let mut terms = Vec::new();
-
-        while tokens.peek().is_some() {
-            let next_span = tokens.next_span(input);
-            let field_tok = tokens.next().ok_or_else(|| {
-                QuerySyntaxError::new(
-                    QueryDialect::Sort,
-                    input,
-                    next_span,
-                    "a field path",
-                )
-            })?;
-
-            let (field_str, field_span) = match field_tok.value() {
-                SortToken::Ident(name) => (name.as_str(), next_span),
-                SortToken::Asc => ("asc", next_span),
-                SortToken::Desc => ("desc", next_span),
-                SortToken::Comma => {
-                    return Err(QueryBuilderError::Syntax(
-                        QuerySyntaxError::new(
-                            QueryDialect::Sort,
-                            input,
-                            next_span,
-                            "a field path",
-                        ),
-                    ));
-                }
-            };
-
-            let field_path = FieldPath::parse(field_str).map_err(|_err| {
-                QuerySyntaxError::new(
-                    QueryDialect::Sort,
-                    input,
-                    field_span,
-                    "a valid field path",
-                )
-            })?;
-
-            // Optional direction
-            let direction = if let Some(peeked) = tokens.peek() {
-                match peeked.value() {
-                    SortToken::Asc => {
-                        tokens.next();
-                        SortDirection::Ascending
-                    }
-                    SortToken::Desc => {
-                        tokens.next();
-                        SortDirection::Descending
-                    }
-                    _ => SortDirection::Descending,
-                }
-            } else {
-                SortDirection::Descending
-            };
-
-            terms.push(SortTerm::new(field_path, direction));
-
-            let Some(next_tok) = tokens.next() else {
+        for part in input.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
                 continue;
-            };
-            let span = next_tok.span();
-            match next_tok.into_value() {
-                SortToken::Comma if tokens.peek().is_none() => {
-                    return Err(QueryBuilderError::Syntax(
-                        QuerySyntaxError::new(
-                            QueryDialect::Sort,
-                            input,
-                            span,
-                            "a sort term after comma",
-                        ),
-                    ));
-                }
-                SortToken::Comma => {}
-                _ => {
-                    return Err(QueryBuilderError::Syntax(
-                        QuerySyntaxError::new(
-                            QueryDialect::Sort,
-                            input,
-                            span,
-                            "a comma or end of input",
-                        ),
-                    ));
-                }
             }
+            let (path_str, direction) =
+                if let Some(stripped) = part.strip_prefix('+') {
+                    (stripped, SortDirection::Ascending)
+                } else if let Some(stripped) = part.strip_prefix('-') {
+                    (stripped, SortDirection::Descending)
+                } else {
+                    (part, default_direction)
+                };
+            terms.push(SortTerm::new(FieldPath::parse(path_str)?, direction));
         }
-
-        Self::new(terms)
+        if terms.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            terms: terms.into_boxed_slice(),
+        }))
     }
 }
 
@@ -305,12 +213,15 @@ impl SortTerm {
     }
 }
 
-/// Sort direction for sorting operations.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+/// Sort direction for sorting operations. Defaults to [`Self::Descending`],
+/// matching every unprefixed/unflagged sort term across the CLI and template
+/// callers.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum SortDirection {
     /// Ascending order.
     Ascending,
-    /// Descending order.
+    /// Descending order (the default).
+    #[default]
     Descending,
 }
 
@@ -321,25 +232,6 @@ impl SortDirection {
     pub(crate) const fn is_descending(self) -> bool {
         matches!(self, Self::Descending)
     }
-}
-
-/// Lexical tokens parsed from a sort clause. Test-only: production callers
-/// build [`SortOrder`] via [`SortTerm`]s directly; [`SortOrder::parse`]'s
-/// string grammar is exercised only by this module's own tests.
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Logos)]
-#[logos(skip r"[ \t\n\r\f]+")]
-enum SortToken {
-    #[token(",")]
-    Comma,
-    #[token("asc", ignore(case))]
-    #[token("ascending", ignore(case))]
-    Asc,
-    #[token("desc", ignore(case))]
-    #[token("descending", ignore(case))]
-    Desc,
-    #[regex(r#"[^\s,]+"#, |lex| lex.slice().to_owned())]
-    Ident(String),
 }
 
 /// Precomputed flat strided buffer of sort keys across rows.
@@ -636,7 +528,10 @@ mod tests {
 
         #[test]
         fn parses_default_descending() {
-            let order = SortOrder::parse("file.mtime").expect("valid parse");
+            let order =
+                SortOrder::parse("file.mtime", SortDirection::Descending)
+                    .expect("valid parse")
+                    .expect("some terms");
             assert!(!order.is_empty());
             assert_eq!(order.len(), 1);
             let term = order.terms().first().expect("term");
@@ -645,9 +540,28 @@ mod tests {
         }
 
         #[test]
-        fn parses_comma_separated_with_directions() {
-            let order = SortOrder::parse("file.folder asc, file.mtime desc")
-                .expect("valid parse");
+        fn unprefixed_segments_use_the_default_direction() {
+            let order =
+                SortOrder::parse("title, rating", SortDirection::Ascending)
+                    .expect("valid parse")
+                    .expect("some terms");
+            assert_eq!(order.len(), 2);
+            assert!(
+                order
+                    .terms()
+                    .iter()
+                    .all(|term| term.direction() == SortDirection::Ascending)
+            );
+        }
+
+        #[test]
+        fn prefix_modifiers_override_the_default_direction() {
+            let order = SortOrder::parse(
+                "+file.folder, -file.mtime",
+                SortDirection::Descending,
+            )
+            .expect("valid parse")
+            .expect("some terms");
             assert_eq!(order.len(), 2);
             assert_eq!(
                 order.terms().first().expect("term").direction(),
@@ -660,26 +574,41 @@ mod tests {
         }
 
         #[test]
-        fn parses_case_insensitive_keywords() {
-            let order = SortOrder::parse("title ascending, rating DESCENDING")
-                .expect("valid parse");
+        fn skips_blank_segments_from_doubled_or_trailing_commas() {
+            let order = SortOrder::parse(
+                "file.folder,, file.mtime,",
+                SortDirection::Descending,
+            )
+            .expect("valid parse")
+            .expect("some terms");
             assert_eq!(order.len(), 2);
+        }
+
+        #[test]
+        fn returns_none_for_blank_input() {
             assert_eq!(
-                order.terms().first().expect("term").direction(),
-                SortDirection::Ascending
+                SortOrder::parse("", SortDirection::Descending)
+                    .expect("valid parse"),
+                None
             );
             assert_eq!(
-                order.terms().get(1).expect("term").direction(),
-                SortDirection::Descending
+                SortOrder::parse("   ", SortDirection::Descending)
+                    .expect("valid parse"),
+                None
+            );
+            assert_eq!(
+                SortOrder::parse(",,", SortDirection::Descending)
+                    .expect("valid parse"),
+                None
             );
         }
 
         #[test]
-        fn rejects_empty_or_malformed_syntax() {
-            assert!(SortOrder::parse("").is_err());
-            assert!(SortOrder::parse("   ").is_err());
-            assert!(SortOrder::parse("file.folder,").is_err());
-            assert!(SortOrder::parse("file..bad").is_err());
+        fn rejects_malformed_field_path() {
+            assert!(
+                SortOrder::parse("file..bad", SortDirection::Descending)
+                    .is_err()
+            );
         }
     }
 

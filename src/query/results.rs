@@ -9,7 +9,7 @@
 //! [`QuerySet`] acts as a branchable, memoized common table expression (CTE)
 //! table:
 //! - **`O(1)` Appends**: Chained transform calls ([`filter`](QuerySet::filter),
-//!   [`sort`](QuerySet::sort), [`limit`](QuerySet::limit),
+//!   [`sort_field`](QuerySet::sort_field), [`limit`](QuerySet::limit),
 //!   [`group_by`](QuerySet::group_by), [`flatten`](QuerySet::flatten)) append
 //!   steps to an internal [`QueryPlan`](super::QueryPlan) in `O(1)` time.
 //! - **Lazy Materialization**: Computes transformations lazily on first access
@@ -25,6 +25,7 @@
 //!   metadata.
 //! - [`QuerySet`] - Lazily evaluated result set with chained transform methods
 //!   and terminal renderers.
+//!
 //! # Examples
 //!
 //! ```rust
@@ -309,8 +310,9 @@ impl std::fmt::Debug for QueryRow {
 /// query.
 ///
 /// `QuerySet` acts as a common table expression (CTE) result set:
-/// transformation methods ([`filter`](Self::filter), [`sort`](Self::sort),
-/// [`flatten`](Self::flatten)) append transformations in `O(1)` time to a
+/// transformation methods ([`filter`](Self::filter),
+/// [`sort_field`](Self::sort_field), [`flatten`](Self::flatten)) append
+/// transformations in `O(1)` time to a
 /// pending plan. Execution occurs lazily on first read ([`len`](Self::len),
 /// [`get`](Self::get), [`iter`](Self::iter), or any terminal renderer),
 /// memoizing the result for all subsequent reads and branch evaluations.
@@ -553,6 +555,8 @@ impl QuerySet {
     /// parentheses: [`TaskPathStyle::None`] for templates,
     /// [`TaskPathStyle::Suffix`] for `traces task`.
     ///
+    /// # Errors
+    ///
     /// - [`TaskListRequiresTaskRows`] if any row is a page-level row rather
     ///   than a task row.
     ///
@@ -608,8 +612,8 @@ impl std::fmt::Debug for QuerySet {
     }
 }
 
-/// Converts the [`QuerySet`] into an iterator over owned [`QueryRow`]
-/// rows. Flushes any pending plan first, like every other read.
+/// Converts the [`QuerySet`] into an iterator over owned [`QueryRow`] rows.
+/// Flushes any pending plan first, like every other read.
 ///
 /// Reclaims the materialized rows without cloning when this is the only
 /// surviving reference to them (the common case: a chain like

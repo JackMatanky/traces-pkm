@@ -5,9 +5,9 @@
 //! single pre-fetch [`QueryPlan::run`] call; [`QuerySet`](super::QuerySet)
 //! accumulates one incrementally across chained calls and runs it lazily on
 //! first read. Either way, [`QueryPlan::run`] fuses adjacent `Filter` steps
-//! into one and rewrites `Sort` followed by `Limit` into a single `TopK`
-//! step, trading an `O(n log n)` full sort for an `O(n)` quickselect
-//! partition where possible.
+//! into one and rewrites `Sort` followed by `Limit` into a single `TopK` step,
+//! trading an `O(n log n)` full sort for an `O(n)` quickselect partition where
+//! possible.
 //!
 //! [`QueryTransform`] is the individual step type a [`QueryPlan`] holds.
 #[cfg(test)]
@@ -56,12 +56,12 @@ pub(super) struct QueryPlan {
 }
 
 impl QueryPlan {
-    /// Fuses filter and sort-limit operations, then applies them to `rows`
-    /// in one pass.
+    /// Fuses filter and sort-limit operations, then applies them to `rows` in
+    /// one pass.
     ///
     /// This is the sole execution entry point for transformation plans. It is
-    /// used by [`QueryService::run`](super::QueryService::run) during
-    /// pre-fetch execution and by [`QuerySet`](super::QuerySet) during lazy
+    /// used by [`QueryService::run`](super::QueryService::run) during pre-fetch
+    /// execution and by [`QuerySet`](super::QuerySet) during lazy
     /// materialization.
     pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         self.fuse_filters().fuse_sorts().fuse_sort_limit().apply(rows)
@@ -265,8 +265,7 @@ impl QueryTransform {
         Ok(Self::Flatten(FieldPath::parse(field)?))
     }
 
-    /// Applies this single transform to `rows`, returning the transformed
-    /// vec.
+    /// Applies this single transform to `rows`, returning the transformed vec.
     pub(super) fn apply(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         match self {
             Self::Filter(expr) => {
@@ -444,7 +443,7 @@ mod tests {
 
             use crate::{
                 IndexerService, QueryService,
-                query::{QueryBuilder, SourceSelector, sort::SortTerm},
+                query::{QueryBuilder, SourceSelector},
             };
 
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -468,17 +467,12 @@ mod tests {
                 .sort("rating", true)
                 .expect("valid sort");
 
-            let composite = SortOrder::new(vec![
-                SortTerm::new(
-                    FieldPath::parse("file.folder").unwrap(),
-                    SortDirection::Ascending,
-                ),
-                SortTerm::new(
-                    FieldPath::parse("rating").unwrap(),
-                    SortDirection::Descending,
-                ),
-            ])
-            .unwrap();
+            let composite = SortOrder::parse(
+                "+file.folder,-rating",
+                SortDirection::Descending,
+            )
+            .expect("valid parse")
+            .expect("some terms");
 
             let rows2 = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All))

@@ -63,8 +63,8 @@ impl RefreshCache {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the previously persisted `FILES`/`LINKS`
-    ///   tables cannot be read.
+    /// - [`IndexError::Store`](super::error::IndexError::Store) if the
+    ///   previously persisted `FILES`/`LINKS` tables cannot be read.
     pub(super) fn load(
         store: &IndexStore,
         txn: &redb::ReadTransaction,
