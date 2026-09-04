@@ -376,14 +376,14 @@ impl ListItem {
     /// Returns the item's 0-indexed nesting level.
     #[inline]
     #[must_use]
-    pub const fn depth(&self) -> u8 {
+    pub(crate) const fn depth(&self) -> u8 {
         self.position.depth()
     }
 
     /// Returns the item's 1-indexed source line.
     #[inline]
     #[must_use]
-    pub const fn line(&self) -> SourceLine {
+    pub(crate) const fn line(&self) -> SourceLine {
         self.position.line()
     }
 
@@ -391,7 +391,7 @@ impl ListItem {
     /// this item is nested inside another list item.
     #[inline]
     #[must_use]
-    pub const fn parent(&self) -> Option<SourceLine> {
+    pub(crate) const fn parent(&self) -> Option<SourceLine> {
         self.position.parent()
     }
 }
@@ -1300,13 +1300,6 @@ impl ListRecord {
         &self.path
     }
 
-    /// Returns the underlying [`ListItem`].
-    #[inline]
-    #[must_use]
-    pub const fn item(&self) -> &ListItem {
-        &self.item
-    }
-
     /// Returns the task's status type, or [`None`] if this is not a Task item.
     #[inline]
     #[must_use]
@@ -1348,16 +1341,6 @@ impl ListRecord {
             ListItemType::Task(task) => Some(task.is_fully_complete()),
             ListItemType::Plain | ListItemType::Checkbox => None,
         }
-    }
-
-    /// Returns `true` if this task item and its entire task subtree are
-    /// resolved, or [`None`] if this is not a Task item.
-    ///
-    /// Alias for [`Self::is_fully_complete`].
-    #[inline]
-    #[must_use]
-    pub const fn fully_complete(&self) -> Option<bool> {
-        self.is_fully_complete()
     }
 
     /// Returns the list item's text container.
@@ -1676,13 +1659,13 @@ mod tests {
         use super::*;
 
         #[test]
-        fn stores_path_and_item() {
+        fn stores_path_and_delegates_text_to_item() {
             let item = ListItem::new("plain item", ListItemType::Plain);
             let record =
                 ListRecord::new("notes/todo.md".to_owned(), item.clone());
 
             assert_eq!(record.path(), "notes/todo.md");
-            assert_eq!(record.item(), &item);
+            assert_eq!(record.text(), item.text());
         }
 
         #[test]
@@ -1720,7 +1703,6 @@ mod tests {
             assert_eq!(record.priority(), Some(TaskPriority::High));
             assert_eq!(record.due_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
             assert_eq!(record.is_fully_complete(), Some(false));
-            assert_eq!(record.fully_complete(), Some(false));
             assert_eq!(record.text(), item.text());
             assert_eq!(record.line(), SourceLine::new(5));
             assert_eq!(record.depth(), 1);
@@ -1741,7 +1723,6 @@ mod tests {
             assert_eq!(record.priority(), None);
             assert_eq!(record.due_date(), None);
             assert_eq!(record.is_fully_complete(), None);
-            assert_eq!(record.fully_complete(), None);
             assert_eq!(record.text(), plain_item.text());
             assert_eq!(record.line(), SourceLine::new(10));
             assert_eq!(record.depth(), 0);

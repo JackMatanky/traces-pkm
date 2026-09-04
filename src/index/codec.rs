@@ -44,14 +44,21 @@ pub(super) fn decode_row<T: DeserializeOwned>(
 ///
 /// The lossy fallback affects only refresh-diff link paths;
 /// [`IndexStore::read_all`] resolves stored link bytes against loaded notes for
-/// byte-exact query output.
+/// byte-exact query output. `LISTS` keys are always valid UTF-8 by
+/// construction (see [`IndexStore::write_lists_for_note`]), so the fallback
+/// never triggers for [`IndexStore::read_lists`] or
+/// [`IndexStore::read_lists_for_path`].
 ///
-/// Used by [`IndexStore::read_table`]'s deserialization-error path and
-/// [`IndexStore::read_files_and_links_via`]'s link reconstruction.
+/// Used by [`IndexStore::read_table`]'s deserialization-error path,
+/// [`IndexStore::read_files_and_links_via`]'s link reconstruction, and the
+/// `LISTS` table readers.
 ///
 /// [`IndexStore::read_all`]: super::store::IndexStore::read_all
 /// [`IndexStore::read_table`]: super::store::IndexStore::read_table
 /// [`IndexStore::read_files_and_links_via`]: super::store::IndexStore::read_files_and_links_via
+/// [`IndexStore::read_lists`]: super::store::IndexStore::read_lists
+/// [`IndexStore::read_lists_for_path`]: super::store::IndexStore::read_lists_for_path
+/// [`IndexStore::write_lists_for_note`]: super::store::IndexStore::write_lists_for_note
 pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
         |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),
