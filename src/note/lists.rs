@@ -47,7 +47,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, TaskStatus, TaskStatusType};
+use crate::{FieldKey, SourceLine, Tag, TaskStatus, TaskStatusType};
 /// An ordered or unordered Markdown list.
 ///
 /// Holds direct child [`ListItem`] elements and a flag indicating whether the
@@ -130,12 +130,12 @@ impl List {
         &self.items
     }
 }
-/// A Markdown list item with a classified [`ListItemType`], child lists, and
-/// inline fields.
+/// A Markdown list item with a classified [`ListItemType`], child lists,
+/// inline fields, and item-level tags.
 ///
 /// Stores both raw and normalized text representations via [`ListText`], nested
-/// child [`List`] structures, extracted Dataview-style inline fields, and
-/// source line positioning information.
+/// child [`List`] structures, extracted Dataview-style inline fields, tags
+/// scanned from the item's own text, and source line positioning information.
 ///
 /// # Examples
 ///
@@ -162,6 +162,7 @@ pub struct ListItem {
     kind: ListItemType,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    tags: Vec<Tag>,
     position: ListItemPosition,
 }
 
@@ -183,6 +184,7 @@ impl ListItem {
             kind,
             children: Vec::new(),
             fields: IndexMap::new(),
+            tags: Vec::new(),
             position: ListItemPosition::default(),
         }
     }
@@ -203,6 +205,7 @@ impl ListItem {
             kind,
             children,
             fields: IndexMap::new(),
+            tags: Vec::new(),
             position: ListItemPosition::default(),
         }
     }
@@ -222,6 +225,49 @@ impl ListItem {
     ) -> Self {
         self.fields = fields;
         self
+    }
+
+    /// Attaches tags scanned from this item's own text.
+    ///
+    /// Uses the same tag-token lexer that scans note body text
+    /// ([`InlineTokenLexer::extract_tags`]); these are the same tags already
+    /// consulted for task tag filter classification, re-surfaced here as
+    /// queryable data rather than discarded after classification decides.
+    ///
+    /// [`InlineTokenLexer::extract_tags`]: super::parser::lexer::InlineTokenLexer::extract_tags
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_tags(mut self, tags: Vec<Tag>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// Returns this item's own tags, scanned from its text.
+    ///
+    /// Does not include tags from child items or inherited Note-level tags.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("note.md"),
+    ///     "- [ ] Task #project",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// let item = &note.lists()[0].items()[0];
+    /// assert_eq!(item.tags().len(), 1);
+    /// # }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
     }
 
     /// Returns the plain or normalized text representation holding both raw
@@ -457,6 +503,32 @@ impl ListItemType {
     #[must_use]
     pub const fn is_task(&self) -> bool {
         matches!(self, Self::Task(_))
+    }
+
+    /// Returns this item's [`TaskListItem`] data, or [`None`] if this list
+    /// item is not classified as a Task.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{ListItemType, TaskDates, TaskListItem, TaskStatus};
+    ///
+    /// let kind = ListItemType::Task(TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     None,
+    ///     TaskStatus::default(),
+    ///     false,
+    /// ));
+    /// assert!(kind.as_task().is_some());
+    /// assert!(ListItemType::Plain.as_task().is_none());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn as_task(&self) -> Option<&TaskListItem> {
+        match self {
+            Self::Task(task) => Some(task),
+            Self::Plain | Self::Checkbox => None,
+        }
     }
 
     /// Returns `true` if this list item is classified as a Checkbox.
@@ -1364,6 +1436,13 @@ impl ListRecord {
         self.item.clean_text()
     }
 
+    /// Returns the list item's own tags, scanned from its text.
+    #[inline]
+    #[must_use]
+    pub fn tags(&self) -> &[Tag] {
+        self.item.tags()
+    }
+
     /// Returns the list item's 1-indexed source line.
     #[inline]
     #[must_use]
@@ -1536,6 +1615,28 @@ mod tests {
                 let item = ListItem::new("plain item", ListItemType::Plain);
 
                 assert!(item.fields().is_empty());
+            }
+        }
+
+        mod tags {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn stores_tags_when_attached_with_with_tags() {
+                let tags = vec![Tag::parse("#project").expect("valid tag")];
+                let item = ListItem::new("task item", done_task())
+                    .with_tags(tags.clone());
+
+                assert_eq!(item.tags(), tags.as_slice());
+            }
+
+            #[test]
+            fn has_no_tags_by_default() {
+                let item = ListItem::new("plain item", ListItemType::Plain);
+
+                assert!(item.tags().is_empty());
             }
         }
 
