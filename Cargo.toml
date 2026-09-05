@@ -38,6 +38,10 @@ name = "index_lifecycle"
 
 [[bench]]
 harness = false
+name = "index_inlinks"
+
+[[bench]]
+harness = false
 name = "query_execution"
 
 [[bench]]

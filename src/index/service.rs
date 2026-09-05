@@ -24,7 +24,7 @@ use super::{
     delta::{IndexDelta, InlinkDelta},
     entry::{self, ListEntry},
     error::IndexBuilderError,
-    inlinks::{InlinkGraph, InlinkMap},
+    inlinks::InlinkMap,
     store::IndexStore,
 };
 use crate::{
@@ -141,7 +141,7 @@ impl IndexerService {
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
         let notes = self.parse_notes(&files)?;
-        let inlinks = InlinkGraph::compile(&notes, &files);
+        let inlinks = InlinkMap::new(&notes, &files);
         Ok(FileIndex::assemble(files, notes, inlinks))
     }
 
@@ -220,8 +220,7 @@ impl IndexerService {
             delta,
             &modified_notes,
         )?;
-        let current_links =
-            InlinkGraph::compile(&all_notes, &ctx.current_files);
+        let current_links = InlinkMap::new(&all_notes, &ctx.current_files);
         let inlink_delta = InlinkDelta::compute(&current_links, ctx.prev_links);
 
         if let Err(source) =
@@ -1234,11 +1233,10 @@ mod tests {
 
             let store = IndexStore::open(temp.path()).expect("open store");
             let (_, _, links) = store.read_all().expect("read all");
-            assert_eq!(
-                links.get(Path::new("new-target.md")),
-                Some(&vec![PathBuf::from("linker.md")])
-            );
-            assert!(!links.contains_key(Path::new("old-target.md")));
+            assert_eq!(links.inlinks_of(Path::new("new-target.md")), [
+                PathBuf::from("linker.md")
+            ]);
+            assert!(!links.contains_target(Path::new("old-target.md")));
         }
 
         #[test]

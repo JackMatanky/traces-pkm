@@ -92,7 +92,7 @@ type LinkEntry<'a> = Result<
 /// One resolved `LINKS` row: a target path and its surviving source paths, or
 /// `None` when the target resolved to no loaded note or all its sources
 /// dropped.
-type ResolvedLink = Option<(PathBuf, Vec<PathBuf>)>;
+type ResolvedLink = Option<(PathBuf, Box<[PathBuf]>)>;
 
 /// A pair of raw key and value bytes from a multimap table.
 type MultimapPair = (Vec<u8>, Vec<u8>);
@@ -778,11 +778,11 @@ impl IndexStore {
         txn: &ReadTransaction,
         table: MultimapTableDefinition<&[u8], &[u8]>,
         resolve: impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<HashMap<PathBuf, Vec<PathBuf>>> {
+    ) -> DbResult<InlinkMap> {
         let table = match txn.open_multimap_table(table) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(HashMap::new());
+                return Ok(InlinkMap::default());
             }
             Err(source) => return Err(self.raise_source_error(source)),
         };
@@ -793,7 +793,7 @@ impl IndexStore {
         &self,
         table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
         resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<HashMap<PathBuf, Vec<PathBuf>>> {
+    ) -> DbResult<InlinkMap> {
         let mut links = HashMap::new();
         let iter = Box::new(
             table.iter().map_err(|source| self.raise_source_error(source))?,
@@ -805,7 +805,7 @@ impl IndexStore {
                 links.insert(target, sources);
             }
         }
-        Ok(links)
+        Ok(InlinkMap::from_raw(links))
     }
 
     /// Extracts one `target -> sources` row from a `LINKS` multimap iterator
@@ -834,7 +834,7 @@ impl IndexStore {
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
         resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<Vec<PathBuf>> {
+    ) -> DbResult<Box<[PathBuf]>> {
         let mut values = Vec::new();
         for source in sources {
             let source =
@@ -843,7 +843,7 @@ impl IndexStore {
                 values.push(path);
             }
         }
-        Ok(values)
+        Ok(values.into_boxed_slice())
     }
 
     /// Serializes `items` into `table`, keyed by `path_of`.
@@ -1554,11 +1554,21 @@ mod tests {
     /// `FileEntry` rows first. Test-side mirror of the old three-argument
     /// `write_all`; `files` and `notes` must both be path-sorted and every
     /// `links` target must name a Note in `notes`.
+    fn test_inlinks(entries: &[(PathBuf, &[PathBuf])]) -> InlinkMap {
+        let mut map = HashMap::new();
+        for (target, sources) in entries {
+            let mut sorted = sources.to_vec();
+            sorted.sort();
+            map.insert(target.clone(), sorted.into_boxed_slice());
+        }
+        InlinkMap::from_raw(map)
+    }
+
     fn write_all_parts(
         store: &IndexStore,
         files: &[FileBase],
         notes: &[Note],
-        links: &HashMap<PathBuf, Vec<PathBuf>>,
+        links: &InlinkMap,
     ) -> IndexResult<()> {
         let entries = crate::index::entry::assemble_entries(
             files.to_vec(),
@@ -1701,7 +1711,7 @@ mod tests {
             let notes = vec![note];
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            write_all_parts(&store, &files, &notes, &HashMap::new())
+            write_all_parts(&store, &files, &notes, &InlinkMap::default())
                 .expect("persist records");
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -1720,7 +1730,7 @@ mod tests {
                  task",
             );
             let files = note_files(&["note.md"]);
-            write_all_parts(&store, &files, &[note], &HashMap::new())
+            write_all_parts(&store, &files, &[note], &InlinkMap::default())
                 .expect("persist");
 
             let lists = store.read_all_lists().expect("read lists");
@@ -1754,8 +1764,13 @@ mod tests {
             let note_a = parse("a.md", "- [ ] Task in A");
             let note_b = parse("b.md", "- [ ] Task in B\n- Plain in B");
             let files = note_files(&["a.md", "b.md"]);
-            write_all_parts(&store, &files, &[note_a, note_b], &HashMap::new())
-                .expect("persist");
+            write_all_parts(
+                &store,
+                &files,
+                &[note_a, note_b],
+                &InlinkMap::default(),
+            )
+            .expect("persist");
 
             let txn = store.begin_read().expect("begin read");
             let a_lists =
@@ -1823,12 +1838,12 @@ mod tests {
         fn write_all_then_read_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let links = HashMap::from([
-                (PathBuf::from("target.md"), vec![
+            let links = test_inlinks(&[
+                (PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                     PathBuf::from("b.md"),
                 ]),
-                (PathBuf::from("other.md"), vec![PathBuf::from("a.md")]),
+                (PathBuf::from("other.md"), &[PathBuf::from("a.md")]),
             ]);
 
             let notes: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
@@ -1865,7 +1880,7 @@ mod tests {
                 &store,
                 &note_files(&["a.md", "target.md"]),
                 &notes,
-                &HashMap::from([(PathBuf::from("target.md"), vec![
+                &test_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])]),
             )
@@ -1884,7 +1899,7 @@ mod tests {
 
             assert_eq!(
                 loaded_links,
-                HashMap::from([(PathBuf::from("target.md"), vec![
+                test_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])])
             );
@@ -1902,7 +1917,7 @@ mod tests {
                 &store,
                 &note_files(&["a.md", "b.md"]),
                 &notes,
-                &HashMap::from([(PathBuf::from("b.md"), vec![PathBuf::from(
+                &test_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
                     "a.md",
                 )])]),
             )
@@ -1912,9 +1927,9 @@ mod tests {
 
             assert_eq!(
                 loaded_links,
-                HashMap::from([(PathBuf::from("b.md"), vec![PathBuf::from(
+                test_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
                     "a.md"
-                ),])])
+                )])])
             );
         }
 
@@ -1924,18 +1939,18 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
             let notes: Vec<_> =
                 ["a.md", "target.md"].iter().map(|p| parse(*p, "")).collect();
-            let links = HashMap::from([
-                (PathBuf::from("target.md"), vec![
+            let links = test_inlinks(&[
+                (PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                     PathBuf::from("ghost.md"),
                 ]),
-                (PathBuf::from("ghost-target.md"), vec![PathBuf::from("a.md")]),
+                (PathBuf::from("ghost-target.md"), &[PathBuf::from("a.md")]),
             ]);
             write_all_parts(
                 &store,
                 &note_files(&["a.md", "target.md"]),
                 &notes,
-                &HashMap::from([(PathBuf::from("target.md"), vec![
+                &test_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])]),
             )
@@ -1967,7 +1982,7 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
             write_raw_link(&store, Path::new("target.md"), Path::new("a.md"));
 
-            write_all_parts(&store, &[], &[], &HashMap::new())
+            write_all_parts(&store, &[], &[], &InlinkMap::default())
                 .expect("persist empty links");
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
@@ -1982,7 +1997,7 @@ mod tests {
             let stale =
                 IndexerService::new(temp.path()).scan().expect("scan stale");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_all_parts(&store, &stale, &[], &HashMap::new())
+            write_all_parts(&store, &stale, &[], &InlinkMap::default())
                 .expect("persist stale");
             fs::remove_file(temp.path().join("stale.md"))
                 .expect("remove stale");
@@ -1991,7 +2006,7 @@ mod tests {
             let fresh =
                 IndexerService::new(temp.path()).scan().expect("scan fresh");
 
-            write_all_parts(&store, &fresh, &[], &HashMap::new())
+            write_all_parts(&store, &fresh, &[], &InlinkMap::default())
                 .expect("persist fresh");
             let (loaded_records, _loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -2004,7 +2019,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            write_all_parts(&store, &[], &[], &HashMap::new())
+            write_all_parts(&store, &[], &[], &InlinkMap::default())
                 .expect("persist an empty record set");
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -2022,7 +2037,7 @@ mod tests {
                 IndexerService::new(temp.path()).scan().expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            write_all_parts(&store, &files, &[], &HashMap::new())
+            write_all_parts(&store, &files, &[], &InlinkMap::default())
                 .expect("persist records");
             let (loaded_records, ..) = store.read_all().expect("load records");
 
@@ -2046,7 +2061,7 @@ mod tests {
             let files = vec![file];
             let notes = vec![note];
 
-            write_all_parts(&store, &files, &notes, &HashMap::new())
+            write_all_parts(&store, &files, &notes, &InlinkMap::default())
                 .expect("persist records");
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
@@ -2079,9 +2094,9 @@ mod tests {
                 parse(&normal, "link to [[weird]]"),
             ];
             notes.sort_by(|a, b| a.path().cmp(b.path()));
-            let links = HashMap::from([
-                (weird.clone(), vec![normal.clone()]),
-                (normal.clone(), vec![weird.clone()]),
+            let links = test_inlinks(&[
+                (weird.clone(), std::slice::from_ref(&normal)),
+                (normal.clone(), std::slice::from_ref(&weird)),
             ]);
             write_all_parts(&store, &files, &notes, &links).expect("persist");
             drop(store);
@@ -2124,7 +2139,7 @@ mod tests {
             let files =
                 IndexerService::new(temp.path()).scan().expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_all_parts(&store, &files, &[], &HashMap::new())
+            write_all_parts(&store, &files, &[], &InlinkMap::default())
                 .expect("persist records");
 
             let (loaded_records, ..) = store.read_all().expect("load records");
@@ -2336,7 +2351,7 @@ mod tests {
             let files =
                 IndexerService::new(temp.path()).scan().expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_all_parts(&store, &files, &[], &HashMap::new())
+            write_all_parts(&store, &files, &[], &InlinkMap::default())
                 .expect("persist records");
 
             let read_txn = store.db.begin_read().expect("begin read txn");

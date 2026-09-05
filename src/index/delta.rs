@@ -92,28 +92,35 @@ pub(super) struct InlinkDelta {
 impl InlinkDelta {
     /// Computes added and removed `(target, source)` inlink edges between
     /// `current_links` and `persisted_links`.
+    #[inline]
+    #[must_use]
     pub(super) fn compute(
         current_links: &InlinkMap,
         persisted_links: &InlinkMap,
     ) -> Self {
         let mut upserted = Vec::new();
-        for (target, sources) in current_links {
-            let prev_sources = persisted_links.get(target);
-            for source in sources {
-                if prev_sources.is_none_or(|ps| !ps.contains(source)) {
-                    upserted.push((target.clone(), source.clone()));
-                }
-            }
-        }
         let mut deleted = Vec::new();
-        for (target, sources) in persisted_links {
-            let cur_sources = current_links.get(target);
-            for source in sources {
-                if cur_sources.is_none_or(|cs| !cs.contains(source)) {
-                    deleted.push((target.clone(), source.clone()));
-                }
-            }
+
+        for (target, cur_sources) in current_links.iter() {
+            let prev_sources = persisted_links.inlinks_of(target);
+            diff_sorted_sources(
+                target,
+                cur_sources,
+                prev_sources,
+                &mut upserted,
+            );
         }
+
+        for (target, prev_sources) in persisted_links.iter() {
+            let cur_sources = current_links.inlinks_of(target);
+            diff_sorted_sources(
+                target,
+                prev_sources,
+                cur_sources,
+                &mut deleted,
+            );
+        }
+
         Self {
             upserted: upserted.into_boxed_slice(),
             deleted: deleted.into_boxed_slice(),
@@ -127,18 +134,48 @@ impl InlinkDelta {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
 
-    /// Returns the added or modified inbound link edges.
     #[inline]
     #[must_use]
     pub(super) fn upserted(&self) -> &[(PathBuf, PathBuf)] {
         &self.upserted
     }
 
-    /// Returns the deleted inbound link edges.
     #[inline]
     #[must_use]
     pub(super) fn deleted(&self) -> &[(PathBuf, PathBuf)] {
         &self.deleted
+    }
+}
+
+fn diff_sorted_sources(
+    target: &std::path::Path,
+    left: &[PathBuf],
+    right: &[PathBuf],
+    diff: &mut Vec<(PathBuf, PathBuf)>,
+) {
+    let mut left_iter = left.iter().peekable();
+    let mut right_iter = right.iter().peekable();
+    loop {
+        match (left_iter.peek(), right_iter.peek()) {
+            (Some(&l), Some(&r)) => match l.cmp(r) {
+                std::cmp::Ordering::Less => {
+                    diff.push((target.to_path_buf(), l.clone()));
+                    left_iter.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    right_iter.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    left_iter.next();
+                    right_iter.next();
+                }
+            },
+            (Some(&l), None) => {
+                diff.push((target.to_path_buf(), l.clone()));
+                left_iter.next();
+            }
+            (None, _) => break,
+        }
     }
 }
 
@@ -217,8 +254,6 @@ mod tests {
     }
 
     mod inlink_delta {
-        use std::collections::HashMap;
-
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -229,16 +264,26 @@ mod tests {
             assert!(delta.is_empty());
         }
 
+        fn make_inlinks(entries: &[(PathBuf, &[PathBuf])]) -> InlinkMap {
+            let mut map = std::collections::HashMap::new();
+            for (target, sources) in entries {
+                let mut sorted = sources.to_vec();
+                sorted.sort();
+                map.insert(target.clone(), sorted.into_boxed_slice());
+            }
+            InlinkMap::from_raw(map)
+        }
+
         #[test]
         fn detects_added_and_removed_inlinks() {
-            let previous: InlinkMap = HashMap::from([(
-                PathBuf::from("a.md"),
-                vec![PathBuf::from("x.md")],
-            )]);
-            let current: InlinkMap = HashMap::from([(
-                PathBuf::from("b.md"),
-                vec![PathBuf::from("x.md")],
-            )]);
+            let previous =
+                make_inlinks(&[(PathBuf::from("a.md"), &[PathBuf::from(
+                    "x.md",
+                )])]);
+            let current =
+                make_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
+                    "x.md",
+                )])]);
 
             let delta = InlinkDelta::compute(&current, &previous);
 
@@ -254,16 +299,14 @@ mod tests {
 
         #[test]
         fn ignores_source_order_differences() {
-            let previous: InlinkMap =
-                HashMap::from([(PathBuf::from("a.md"), vec![
-                    PathBuf::from("x.md"),
-                    PathBuf::from("y.md"),
-                ])]);
-            let current: InlinkMap =
-                HashMap::from([(PathBuf::from("a.md"), vec![
-                    PathBuf::from("y.md"),
-                    PathBuf::from("x.md"),
-                ])]);
+            let previous = make_inlinks(&[(PathBuf::from("a.md"), &[
+                PathBuf::from("x.md"),
+                PathBuf::from("y.md"),
+            ])]);
+            let current = make_inlinks(&[(PathBuf::from("a.md"), &[
+                PathBuf::from("y.md"),
+                PathBuf::from("x.md"),
+            ])]);
 
             let delta = InlinkDelta::compute(&current, &previous);
 

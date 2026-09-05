@@ -147,8 +147,8 @@ pub(crate) enum FieldPath {
     /// Accesses project-relative paths of Notes linking to this Note as a
     /// [`crate::NoteFieldValue::List`].
     ///
-    /// Derived dynamically by `derive_inlinks` rather than stored directly on
-    /// the Note.
+    /// Derived dynamically by [`crate::InlinkMap`] rather than stored directly
+    /// on the Note.
     Inlinks,
 }
 

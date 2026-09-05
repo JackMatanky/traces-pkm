@@ -1,8 +1,7 @@
 //! Performance benchmark suite for the index lifecycle pipeline.
 //!
 //! Exposes and monitors the execution cost of indexing operations driven by
-//! `IndexerService` (build, refresh, and persist) and the underlying link graph
-//! compiler (`derive_inlinks`).
+//! `IndexerService` (build, refresh, and persist).
 //!
 //! This suite serves as a key guardian against performance regressions in the
 //! write path of the personal knowledge base index. Because PKM queries must
@@ -12,9 +11,9 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [Files on Disk] ──(Scan)──► [FileBase / Notes] ──(derive_inlinks)──► [InlinkMap]
-//!                                                                          │
-//! [redb database] ◄──(Persist)─────────────────────────────────────────────┘
+//! [Files on Disk] ──(Scan)──► [FileBase / Notes] ──(Index)──► [FileIndex]
+//!                                                                  │
+//! [redb database] ◄──(Persist)─────────────────────────────────────┘
 //! ```
 //!
 //! ### Profiling Integration
@@ -35,24 +34,21 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use std::{fmt::Write as _, hint::black_box};
+use std::hint::black_box;
 
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, criterion_group,
     criterion_main,
 };
 use tempfile::TempDir;
-use traces_pkm::{
-    FileIndex, IndexerService, MarkdownParserInput, Note, derive_inlinks,
-    parse_markdown,
-};
+use traces_pkm::{FileIndex, IndexerService};
 
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
 const BUILD_SIZES: &[usize] = &[10, 100, 1_000, 20_000];
-const WORKSPACE_SIZES: &[usize] = &[100, 1_000, 20_000];
+const WORKSPACE_SIZES: &[usize] = &[100, 1_000, 10_000, 20_000];
 
 /// Creates a temporary project containing `n` synthetic notes.
 ///
@@ -121,72 +117,6 @@ fn setup_unpersisted_project(n: usize) -> (TempDir, IndexerService, FileIndex) {
     let index = indexer.build().expect("build index");
     (temp, indexer, index)
 }
-
-/// Generates a [`Vec`] of `n` notes in-memory where each note links to the next
-/// note, creating a sparse link graph.
-fn generate_notes_sparse(n: usize) -> Vec<Note> {
-    let mut notes = Vec::with_capacity(n);
-    for i in 0..n {
-        let path = format!("note-{i}.md");
-        let content =
-            format!("# Note {i}\n\nLink to [[note-{}]]\n", (i + 1) % n);
-        let input = MarkdownParserInput::for_test(
-            std::path::Path::new(&path),
-            &content,
-        );
-        notes.push(parse_markdown(&input));
-    }
-    notes.sort_by(|a, b| a.path().cmp(b.path()));
-    notes
-}
-
-/// Generates a [`Vec`] of `n` notes in-memory where each note links to 20 other
-/// notes, creating a highly dense link graph.
-fn generate_notes_dense(n: usize) -> Vec<Note> {
-    let mut notes = Vec::with_capacity(n);
-    for i in 0..n {
-        let path = format!("note-{i}.md");
-        let mut content = format!("# Note {i}\n\n");
-        for j in 0..20 {
-            let target = (i + j) % n;
-            let _ = writeln!(content, "- Link to [[note-{target}]]");
-        }
-        let input = MarkdownParserInput::for_test(
-            std::path::Path::new(&path),
-            &content,
-        );
-        notes.push(parse_markdown(&input));
-    }
-    notes.sort_by(|a, b| a.path().cmp(b.path()));
-    notes
-}
-
-/// Generates a [`Vec`] of `n` notes in-memory containing same-stem collisions
-/// across multiple directories, where every other note links to the ambiguous
-/// stem.
-fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
-    let mut notes = Vec::with_capacity(n);
-    for i in 0..n {
-        let path = if i % 10 == 0 {
-            format!("folder_{}/target.md", i / 10)
-        } else {
-            format!("note-{i}.md")
-        };
-        let content = if i % 10 != 0 {
-            String::from("# Note\n\nLink to [[target]]\n")
-        } else {
-            String::from("# Target\n")
-        };
-        let input = MarkdownParserInput::for_test(
-            std::path::Path::new(&path),
-            &content,
-        );
-        notes.push(parse_markdown(&input));
-    }
-    notes.sort_by(|a, b| a.path().cmp(b.path()));
-    notes
-}
-
 /// Loads multiple project indexes concurrently, one thread per project.
 ///
 /// Used by [`bench_concurrent_operations`] to simulate multi-vault tooling
@@ -275,8 +205,8 @@ fn bench_file_index_refresh(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        if n >= 20_000 {
-            // 20,000-file builds do real per-iteration disk I/O; bound total
+        if n >= 10_000 {
+            // 10,000+ note builds do real per-iteration disk I/O; bound total
             // suite runtime with criterion's minimum valid sample size (10)
             // instead of the default 100.
             group.sample_size(10);
@@ -405,66 +335,6 @@ fn bench_index_persist(c: &mut Criterion) {
     }
     group.finish();
 }
-
-// ----------------------------------------------------------- //
-//                   Benchmarks: Link Graph                    //
-// ----------------------------------------------------------- //
-
-/// Measures isolated link graph resolution and compilation in-memory.
-///
-/// Isolates the CPU complexity of parsing and building the inlink map from disk
-/// and database overhead. Evaluates path resolution, stem index lookups, and
-/// proximity-based tie-breaking.
-///
-/// Expected outcomes:
-/// - Linear or near-linear scaling for sparse and dense graphs.
-/// - High ambiguity graphs show minor degradation due to directory crawling but
-///   remain within stable limits.
-///
-/// Unexpected outcomes:
-/// - O(n^2) scaling under tie-breaking search, indicating folder distance
-///   calculation is too hot or allocating redundant paths.
-fn bench_derive_inlinks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("derive_inlinks");
-    for &n in WORKSPACE_SIZES {
-        group.throughput(Throughput::Elements(
-            u64::try_from(n).expect("note count fits u64"),
-        ));
-
-        group.bench_with_input(BenchmarkId::new("sparse", n), &n, |b, &n| {
-            let notes = generate_notes_sparse(n);
-            let refs: Vec<&Note> = notes.iter().collect();
-            b.iter(|| {
-                let inlinks = derive_inlinks(black_box(&refs));
-                black_box(inlinks);
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("dense", n), &n, |b, &n| {
-            let notes = generate_notes_dense(n);
-            let refs: Vec<&Note> = notes.iter().collect();
-            b.iter(|| {
-                let inlinks = derive_inlinks(black_box(&refs));
-                black_box(inlinks);
-            });
-        });
-
-        group.bench_with_input(
-            BenchmarkId::new("ambiguous", n),
-            &n,
-            |b, &n| {
-                let notes = generate_notes_ambiguous(n);
-                let refs: Vec<&Note> = notes.iter().collect();
-                b.iter(|| {
-                    let inlinks = derive_inlinks(black_box(&refs));
-                    black_box(inlinks);
-                });
-            },
-        );
-    }
-    group.finish();
-}
-
 // ----------------------------------------------------------- //
 //              Benchmarks: Concurrent Operations              //
 // ----------------------------------------------------------- //
@@ -511,7 +381,6 @@ criterion_group!(
     bench_file_index_build,
     bench_file_index_refresh,
     bench_index_persist,
-    bench_derive_inlinks,
     bench_concurrent_operations
 );
 criterion_main!(benches);

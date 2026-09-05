@@ -124,8 +124,8 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileEntry, FileIndex, IndexerService, ListEntry, SyncReport,
-    derive_inlinks, path as path_codec,
+    FileEntry, FileIndex, IndexerService, InlinkMap, ListEntry, SyncReport,
+    path as path_codec,
 };
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use index::{IndexerService, SyncReport};

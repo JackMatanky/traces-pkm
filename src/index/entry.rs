@@ -313,12 +313,12 @@ pub(super) fn redistribute_inlinks(
     entries: &mut [FileEntry],
     inlinks: InlinkMap,
 ) {
-    for (target, sources) in inlinks {
+    for (target, sources) in inlinks.into_entries() {
         if let Ok(index) =
             entries.binary_search_by(|entry| entry.file().path().cmp(&target))
             && let Some(entry) = entries.get_mut(index)
         {
-            entry.set_inlinks(sources.into_boxed_slice());
+            entry.set_inlinks(sources);
         }
     }
 }

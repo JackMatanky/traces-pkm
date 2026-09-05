@@ -99,7 +99,7 @@ impl FileBase {
     }
 
     /// Builds a [`FileBase`] with custom fields for test fixtures.
-    #[cfg_attr(not(test), expect(dead_code, reason = "test fixture helper"))]
+    #[inline]
     pub(crate) fn new_test(
         path: PathBuf,
         folder: PathBuf,
@@ -116,6 +116,15 @@ impl FileBase {
             modified_at: Timestamp::now(),
             size: 10,
         }
+    }
+
+    /// Builds a [`FileBase`] for a Markdown note with custom paths for test
+    /// fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn new_note_test(path: PathBuf, folder: PathBuf) -> Self {
+        Self::new_test(path, folder, FileFormat::Note)
     }
 
     /// Returns the file's path, relative to the project root.
@@ -341,14 +350,6 @@ impl Timestamp {
     /// Returns the current UTC timestamp.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Timestamp \
-                      constructor symmetry with Utc::now"
-        )
-    )]
     pub(crate) fn now() -> Self {
         Self(Utc::now())
     }
