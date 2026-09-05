@@ -5,7 +5,7 @@
 //! own config file root before the layers are merged, so a global config's
 //! relative paths never resolve against the local project root by mistake.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::{
     error::ConfigBuilderError,
@@ -14,7 +14,7 @@ use super::{
         Config, FrontmatterConfig, SchemasConfig, TaskConfig, TemplateConfig,
     },
     raw::{
-        RawConfig, RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
+        RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
         RawTaskConfig,
     },
 };
@@ -55,101 +55,96 @@ impl ConfigBuilder {
     /// or `TaskConfig` field validation fails (e.g. invalid field key,
     /// escaping subdirectory, or invalid `tag_filters` entry).
     pub(crate) fn build(self) -> Result<Config, ConfigBuilderError> {
-        let local_raw = self.local.raw();
-        let global_raw = self.global.as_ref().map(GlobalConfigFile::raw);
-
-        let templates = resolve_templates(
-            local_raw,
-            self.global.as_ref(),
-            self.local.root(),
-            global_raw,
-            &self.root,
-        );
-        let schemas = resolve_schemas(local_raw, global_raw)?;
-        let frontmatter = resolve_frontmatter(local_raw, global_raw)?;
-        let tasks = resolve_tasks(local_raw, global_raw)?;
+        let templates = self.resolve_templates();
+        let schemas = self.resolve_schemas()?;
+        let frontmatter = self.resolve_frontmatter()?;
+        let tasks = self.resolve_tasks()?;
 
         Ok(Config::new(self.root, templates, schemas, frontmatter, tasks))
     }
-}
 
-fn resolve_templates(
-    local_raw: &RawConfig,
-    global: Option<&GlobalConfigFile<Parsed>>,
-    local_root: &Path,
-    global_raw: Option<&RawConfig>,
-    root: &Path,
-) -> TemplateConfig {
-    let local_template_dir =
-        local_raw.templates.directory.as_ref().map(|dir| local_root.join(dir));
+    fn resolve_templates(&self) -> TemplateConfig {
+        let local_raw = self.local.raw();
+        let global_raw = self.global.as_ref().map(GlobalConfigFile::raw);
 
-    let global_template_dir = global.and_then(|g| {
-        g.raw().templates.directory.as_ref().map(|dir| g.root().join(dir))
-    });
+        let local_template_dir = local_raw
+            .templates
+            .directory
+            .as_ref()
+            .map(|dir| self.local.root().join(dir));
 
-    let output_dir = merge_optional(
-        local_raw.templates.output_dir.as_ref(),
-        global_raw.and_then(|g| g.templates.output_dir.as_ref()),
-    )
-    .unwrap_or_else(|| root.to_path_buf());
+        let global_template_dir = self.global.as_ref().and_then(|g| {
+            g.raw().templates.directory.as_ref().map(|dir| g.root().join(dir))
+        });
 
-    TemplateConfig::new(local_template_dir, global_template_dir, output_dir)
-}
+        let output_dir = merge_optional(
+            local_raw.templates.output_dir.as_ref(),
+            global_raw.and_then(|g| g.templates.output_dir.as_ref()),
+        )
+        .unwrap_or_else(|| self.root.clone());
 
-fn resolve_schemas(
-    local_raw: &RawConfig,
-    global_raw: Option<&RawConfig>,
-) -> Result<SchemasConfig, ConfigBuilderError> {
-    let raw_schemas = RawSchemasConfig {
-        class_field: merge_optional(
-            local_raw.schemas.class_field.as_ref(),
-            global_raw.and_then(|g| g.schemas.class_field.as_ref()),
-        ),
-        directory: merge_optional(
-            local_raw.schemas.directory.as_ref(),
-            global_raw.and_then(|g| g.schemas.directory.as_ref()),
-        ),
-    };
-    Ok(SchemasConfig::try_from(raw_schemas)?)
-}
+        TemplateConfig::new(local_template_dir, global_template_dir, output_dir)
+    }
 
-fn resolve_frontmatter(
-    local_raw: &RawConfig,
-    global_raw: Option<&RawConfig>,
-) -> Result<FrontmatterConfig, ConfigBuilderError> {
-    let raw_frontmatter = RawFrontmatterConfig {
-        title: merge_optional(
-            local_raw.frontmatter.title.as_ref(),
-            global_raw.and_then(|g| g.frontmatter.title.as_ref()),
-        ),
-        aliases: merge_optional(
-            local_raw.frontmatter.aliases.as_ref(),
-            global_raw.and_then(|g| g.frontmatter.aliases.as_ref()),
-        ),
-        date_created: merge_date_field(
-            local_raw.frontmatter.date_created.as_ref(),
-            global_raw.and_then(|g| g.frontmatter.date_created.as_ref()),
-        ),
-        date_modified: merge_date_field(
-            local_raw.frontmatter.date_modified.as_ref(),
-            global_raw.and_then(|g| g.frontmatter.date_modified.as_ref()),
-        ),
-    };
-    Ok(FrontmatterConfig::try_from(raw_frontmatter)?)
-}
+    fn resolve_schemas(&self) -> Result<SchemasConfig, ConfigBuilderError> {
+        let local_raw = self.local.raw();
+        let global_raw = self.global.as_ref().map(GlobalConfigFile::raw);
 
-fn resolve_tasks(
-    local_raw: &RawConfig,
-    global_raw: Option<&RawConfig>,
-) -> Result<TaskConfig, ConfigBuilderError> {
-    let raw_tasks = RawTaskConfig {
-        tag_filters: if local_raw.tasks.tag_filters.is_empty() {
-            global_raw.map(|g| g.tasks.tag_filters.clone()).unwrap_or_default()
-        } else {
-            local_raw.tasks.tag_filters.clone()
-        },
-    };
-    Ok(TaskConfig::try_from(raw_tasks)?)
+        let raw_schemas = RawSchemasConfig {
+            class_field: merge_optional(
+                local_raw.schemas.class_field.as_ref(),
+                global_raw.and_then(|g| g.schemas.class_field.as_ref()),
+            ),
+            directory: merge_optional(
+                local_raw.schemas.directory.as_ref(),
+                global_raw.and_then(|g| g.schemas.directory.as_ref()),
+            ),
+        };
+        Ok(SchemasConfig::try_from(raw_schemas)?)
+    }
+
+    fn resolve_frontmatter(
+        &self,
+    ) -> Result<FrontmatterConfig, ConfigBuilderError> {
+        let local_raw = self.local.raw();
+        let global_raw = self.global.as_ref().map(GlobalConfigFile::raw);
+
+        let raw_frontmatter = RawFrontmatterConfig {
+            title: merge_optional(
+                local_raw.frontmatter.title.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.title.as_ref()),
+            ),
+            aliases: merge_optional(
+                local_raw.frontmatter.aliases.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.aliases.as_ref()),
+            ),
+            date_created: merge_date_field(
+                local_raw.frontmatter.date_created.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.date_created.as_ref()),
+            ),
+            date_modified: merge_date_field(
+                local_raw.frontmatter.date_modified.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.date_modified.as_ref()),
+            ),
+        };
+        Ok(FrontmatterConfig::try_from(raw_frontmatter)?)
+    }
+
+    fn resolve_tasks(&self) -> Result<TaskConfig, ConfigBuilderError> {
+        let local_raw = self.local.raw();
+        let global_raw = self.global.as_ref().map(GlobalConfigFile::raw);
+
+        let raw_tasks = RawTaskConfig {
+            tag_filters: if local_raw.tasks.tag_filters.is_empty() {
+                global_raw
+                    .map(|g| g.tasks.tag_filters.clone())
+                    .unwrap_or_default()
+            } else {
+                local_raw.tasks.tag_filters.clone()
+            },
+        };
+        Ok(TaskConfig::try_from(raw_tasks)?)
+    }
 }
 
 fn merge_optional<T: Clone>(
