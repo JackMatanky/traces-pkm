@@ -4,20 +4,26 @@
 //! [`InlinkMap`], isolating in-memory graph resolution from disk I/O and
 //! database transactions.
 //!
-//! ### Evaluated Operations
-//! - Graph compilation across graph topologies:
-//!   - `sparse`: Chain topology (each note links to its successor).
-//!   - `dense`: Hub topology (each note links to 20 distinct targets).
-//!   - `ambiguous`: Same-stem file collisions across directories testing folder
-//!     proximity.
-//!   - `attachments`: Links targeting non-note media files (images, PDFs).
-//! - Direct slice lookups via [`InlinkMap::inlinks_of`] and
-//!   [`InlinkMap::contains_target`].
+//! Backlinks are derived dynamically during index compilation and refresh.
+//! Because every internal wikilink and Markdown link traverses resolution,
+//! regressions in this compiler directly degrade vault indexing speed.
+//!
+//! ### Data Flow Diagram
+//!
+//! ```text
+//! [Parsed Notes + Files] ──(InlinkMap::new)──► [InlinkMap] ──(.inlinks_of)──► [Box<[PathBuf]>]
+//! ```
 //!
 //! ### Profiling Integration
+//!
+//! To profile inlink graph CPU bottlenecks:
 //! ```bash
 //! cargo flamegraph --bench index_inlinks -- --bench "InlinkMap::new/dense/1000"
 //! ```
+//!
+//! Run via `mise run bench`, not bare `cargo bench`: this crate's
+//! `test-utils`-gated public surface is only reachable with `--features
+//! test-utils`.
 
 #![expect(
     clippy::expect_used,
@@ -35,11 +41,14 @@ use traces_pkm::{
     FileBase, InlinkMap, MarkdownParserInput, Note, parse_markdown,
 };
 
-const WORKSPACE_SIZES: &[usize] = &[100, 1_000, 10_000, 20_000];
+// ----------------------------------------------------------- //
+//                     Fixtures & Helpers                      //
+// ----------------------------------------------------------- //
 
-// ----------------------------------------------------------- //
-//                     Fixtures & Generators                   //
-// ----------------------------------------------------------- //
+/// Note counts spanning a realistic personal vault (100) up to `IndexStore`'s
+/// established stress ceiling (20,000), matching the sweep convention used by
+/// `benches/index_lifecycle.rs`.
+const WORKSPACE_SIZES: &[usize] = &[100, 1_000, 10_000, 20_000];
 
 fn files_for_notes(notes: &[Note]) -> Vec<FileBase> {
     let mut files: Vec<FileBase> = notes
@@ -124,7 +133,7 @@ fn generate_notes_ambiguous(n: usize) -> Vec<Note> {
 /// Generates `n` notes that link to attachment files (images and PDFs).
 fn generate_notes_with_attachments(n: usize) -> (Vec<Note>, Vec<FileBase>) {
     let mut notes = Vec::with_capacity(n);
-    let mut files = Vec::with_capacity(n + 20);
+    let mut files = Vec::with_capacity(n.saturating_add(20));
 
     for i in 0..n {
         let path = format!("note-{i}.md");
@@ -165,6 +174,20 @@ fn generate_notes_with_attachments(n: usize) -> (Vec<Note>, Vec<FileBase>) {
 //               Benchmarks: InlinkMap Compilation             //
 // ----------------------------------------------------------- //
 
+/// Measures in-memory link graph compilation across varying graph densities and
+/// topologies.
+///
+/// Evaluates path resolution, stem index lookups, proximity tie-breaking, and
+/// attachment edge resolution in isolation from disk and database serialization
+/// overhead.
+///
+/// Expected outcomes:
+/// - Linear or near-linear scaling for sparse, dense, and attachment graphs.
+/// - Stable scaling under stem ambiguity without combinatorial degradation.
+///
+/// Unexpected outcomes:
+/// - Super-linear scaling under dense or ambiguous graphs, indicating redundant
+///   allocations or pathological tie-breaking loops.
 fn bench_inlink_map_new(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::new");
     for &n in WORKSPACE_SIZES {
@@ -172,8 +195,8 @@ fn bench_inlink_map_new(c: &mut Criterion) {
             u64::try_from(n).expect("note count fits u64"),
         ));
         if n >= 10_000 {
-            // 10,000+ note dense graphs have 200,000+ links; bound total
-            // suite runtime with criterion's minimum sample size (10).
+            // 10,000+ note dense graphs have 200,000+ links; bound total suite
+            // runtime with criterion's minimum sample size (10).
             group.sample_size(10);
         }
 
@@ -231,6 +254,21 @@ fn bench_inlink_map_new(c: &mut Criterion) {
 //               Benchmarks: InlinkMap Accessors               //
 // ----------------------------------------------------------- //
 
+/// Measures point-lookup and iteration performance over an assembled inlink
+/// graph.
+///
+/// Evaluates direct slice returns via [`InlinkMap::inlinks_of`], target
+/// presence tests via [`InlinkMap::contains_target`], and whole-graph traversal
+/// via [`InlinkMap::iter`].
+///
+/// Expected outcomes:
+/// - Sub-microsecond (tens of nanoseconds) latency for point lookups with zero
+///   heap allocation.
+/// - Linear scaling with total edge count during whole-graph iteration.
+///
+/// Unexpected outcomes:
+/// - Microsecond or higher point-lookup latencies, indicating unexpected
+///   hashing overhead or heap allocations.
 fn bench_inlink_map_accessors(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::accessors");
     let n = 1_000;
