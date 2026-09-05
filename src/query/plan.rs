@@ -275,22 +275,16 @@ impl QueryTransform {
             }
             Self::Sort {
                 order,
-            } => {
-                let mut rows = rows;
-                order.sort_rows(&mut rows);
-                rows
-            }
+            } => order.sort_rows(rows),
             Self::Limit(n) => {
                 let mut rows = rows;
                 rows.truncate(*n);
                 rows
             }
             Self::GroupBy(field) => {
-                let mut rows = rows;
                 let order =
                     SortOrder::single(field.clone(), SortDirection::Ascending);
-                order.sort_rows(&mut rows);
-                rows
+                order.sort_rows(rows)
             }
             Self::Flatten(field_path) => {
                 let mut out = Vec::with_capacity(rows.len());
@@ -320,9 +314,7 @@ impl QueryTransform {
                     return Vec::new();
                 }
                 if n >= rows.len() {
-                    let mut rows = rows;
-                    order.sort_rows(&mut rows);
-                    return rows;
+                    return order.sort_rows(rows);
                 }
                 let keys = order.keys_for(&rows);
                 let mut indexed: Vec<(usize, usize)> =

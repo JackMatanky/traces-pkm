@@ -304,6 +304,18 @@ mod sort_args_tests {
         args.resolve(Path::new("")).expect("valid sort")
     }
 
+    /// Parses `input` the same way [`SortOrder::parse`] does, for asserting
+    /// [`SortArgs::resolve`]'s output against the real grammar rather than
+    /// decomposing its internal terms.
+    fn expect_parse(
+        input: &str,
+        default_direction: SortDirection,
+    ) -> SortOrder {
+        SortOrder::parse(input, default_direction)
+            .expect("valid parse")
+            .expect("some terms")
+    }
+
     #[test]
     fn returns_none_when_no_sort_fields_given() {
         assert_eq!(resolve(&[], false, false), None);
@@ -313,8 +325,8 @@ mod sort_args_tests {
     fn defaults_to_descending_without_flags() {
         let order = resolve(&["file.mtime"], false, false).expect("some sort");
         assert_eq!(
-            order.terms().first().expect("term").direction(),
-            SortDirection::Descending
+            order,
+            expect_parse("file.mtime", SortDirection::Descending)
         );
     }
 
@@ -322,12 +334,9 @@ mod sort_args_tests {
     fn asc_flag_reverses_every_unprefixed_field() {
         let order = resolve(&["file.folder", "file.name"], true, false)
             .expect("some sort");
-        assert_eq!(order.len(), 2);
-        assert!(
-            order
-                .terms()
-                .iter()
-                .all(|term| term.direction() == SortDirection::Ascending)
+        assert_eq!(
+            order,
+            expect_parse("file.folder,file.name", SortDirection::Ascending)
         );
     }
 
@@ -335,14 +344,9 @@ mod sort_args_tests {
     fn prefix_modifiers_override_the_asc_flag() {
         let order = resolve(&["+file.folder", "-file.mtime"], true, false)
             .expect("some sort");
-        assert_eq!(order.len(), 2);
         assert_eq!(
-            order.terms().first().expect("term").direction(),
-            SortDirection::Ascending
-        );
-        assert_eq!(
-            order.terms().get(1).expect("term").direction(),
-            SortDirection::Descending
+            order,
+            expect_parse("+file.folder,-file.mtime", SortDirection::Ascending)
         );
     }
 
@@ -350,7 +354,10 @@ mod sort_args_tests {
     fn blank_segments_from_trailing_comma_are_skipped() {
         let order =
             resolve(&["file.folder,"], false, false).expect("some sort");
-        assert_eq!(order.len(), 1);
+        assert_eq!(
+            order,
+            expect_parse("file.folder", SortDirection::default())
+        );
     }
 
     #[test]

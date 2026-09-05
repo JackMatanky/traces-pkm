@@ -174,7 +174,7 @@ impl RefreshCache {
 fn decode_notes_parallel(
     chunks: Vec<super::store::ChunkBuffer<'_>>,
 ) -> HashMap<PathBuf, Note> {
-    let decoded: Vec<(PathBuf, Note)> = chunks
+    chunks
         .into_par_iter()
         .flat_map(|chunk| {
             chunk
@@ -191,12 +191,7 @@ fn decode_notes_parallel(
                     }
                 })
         })
-        .collect();
-    let mut notes = HashMap::with_capacity(decoded.len());
-    for (path, note) in decoded {
-        notes.insert(path, note);
-    }
-    notes
+        .collect()
 }
 
 /// Deduplicated, sorted outlink targets for backdating comparison. Order-and

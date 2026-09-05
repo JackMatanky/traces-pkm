@@ -18,7 +18,7 @@ impl SortOrder {
     /// Constructs a single-term `SortOrder`.
     #[inline]
     #[must_use]
-    pub(crate) fn single(path: FieldPath, direction: SortDirection) -> Self {
+    pub(super) fn single(path: FieldPath, direction: SortDirection) -> Self {
         Self {
             terms: Box::new([SortTerm::new(path, direction)]),
         }
@@ -26,7 +26,7 @@ impl SortOrder {
 
     /// Concatenates two sort order clauses together.
     #[must_use]
-    pub(crate) fn concat(self, other: Self) -> Self {
+    pub(super) fn concat(self, other: Self) -> Self {
         let mut terms = self.terms.into_vec();
         terms.extend(other.terms);
         Self {
@@ -36,7 +36,7 @@ impl SortOrder {
 
     /// Evaluates each term's field path against each row into a flat
     /// [`SortKeys`] buffer.
-    pub(crate) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
+    pub(super) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
         let stride = self.terms.len();
         let mut flat = Vec::with_capacity(rows.len().saturating_mul(stride));
         for row in rows {
@@ -58,7 +58,7 @@ impl SortOrder {
     /// and [`super::plan::QueryTransform::TopK`]'s quickselect so both
     /// execution paths apply identical ordering semantics.
     #[must_use]
-    pub(crate) fn compare_keys(
+    pub(super) fn compare_keys(
         &self,
         a_keys: &[SortKey],
         b_keys: &[SortKey],
@@ -80,41 +80,33 @@ impl SortOrder {
         Ordering::Equal
     }
 
-    /// Permutes `rows` in place according to this composite sort order.
-    pub(crate) fn sort_rows(&self, rows: &mut [QueryRow]) {
+    /// Sorts `rows` according to this composite sort order, returning the
+    /// reordered vec. A stable sort over the identity permutation, so ties
+    /// keep their original relative order with no explicit tiebreak needed.
+    #[must_use]
+    pub(super) fn sort_rows(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         if rows.len() <= 1 || self.terms.is_empty() {
-            return;
+            return rows;
         }
-        let keys = self.keys_for(rows);
-        let mut perm: Vec<usize> = (0..rows.len()).collect();
-
-        perm.sort_by(|&a_idx, &b_idx| {
+        let keys = self.keys_for(&rows);
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        order.sort_by(|&a_idx, &b_idx| {
             self.compare_keys(keys.get(a_idx), keys.get(b_idx))
-                .then_with(|| a_idx.cmp(&b_idx))
         });
 
-        let mut dest_perm = vec![0usize; perm.len()];
-        for (dest, &src) in perm.iter().enumerate() {
-            if let Some(slot) = dest_perm.get_mut(src) {
-                *slot = dest;
-            }
-        }
-        for i in 0..rows.len() {
-            while dest_perm.get(i).copied() != Some(i) {
-                let Some(&d) = dest_perm.get(i) else {
-                    break;
-                };
-                rows.swap(i, d);
-                dest_perm.swap(i, d);
-            }
-        }
+        let mut opt_rows: Vec<Option<QueryRow>> =
+            rows.into_iter().map(Some).collect();
+        order
+            .into_iter()
+            .filter_map(|idx| opt_rows.get_mut(idx).and_then(Option::take))
+            .collect()
     }
 
     /// Returns the slice of sort terms.
     #[inline]
     #[must_use]
     #[cfg(test)]
-    pub(crate) fn terms(&self) -> &[SortTerm] {
+    pub(super) fn terms(&self) -> &[SortTerm] {
         &self.terms
     }
 
@@ -122,7 +114,7 @@ impl SortOrder {
     #[inline]
     #[must_use]
     #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
 
@@ -130,7 +122,7 @@ impl SortOrder {
     #[inline]
     #[must_use]
     #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.terms.len()
     }
 
@@ -181,7 +173,7 @@ impl SortOrder {
 
 /// A single field path and direction in a composite [`SortOrder`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SortTerm {
+pub(super) struct SortTerm {
     path: FieldPath,
     direction: SortDirection,
 }
@@ -190,7 +182,7 @@ impl SortTerm {
     /// Constructs a new sort term.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(path: FieldPath, direction: SortDirection) -> Self {
+    const fn new(path: FieldPath, direction: SortDirection) -> Self {
         Self {
             path,
             direction,
@@ -201,14 +193,14 @@ impl SortTerm {
     #[inline]
     #[must_use]
     #[cfg(test)]
-    pub(crate) fn path(&self) -> &FieldPath {
+    fn path(&self) -> &FieldPath {
         &self.path
     }
 
     /// Returns the sort direction for this term.
     #[inline]
     #[must_use]
-    pub(crate) const fn direction(&self) -> SortDirection {
+    pub(super) const fn direction(&self) -> SortDirection {
         self.direction
     }
 }
@@ -229,13 +221,13 @@ impl SortDirection {
     /// Returns `true` if this direction is [`Self::Descending`].
     #[inline]
     #[must_use]
-    pub(crate) const fn is_descending(self) -> bool {
+    const fn is_descending(self) -> bool {
         matches!(self, Self::Descending)
     }
 }
 
 /// Precomputed flat strided buffer of sort keys across rows.
-pub(crate) struct SortKeys {
+pub(super) struct SortKeys {
     flat: Vec<SortKey>,
     stride: usize,
 }
@@ -244,7 +236,7 @@ impl SortKeys {
     /// Returns the sort keys for the row at `row_idx`.
     #[inline]
     #[must_use]
-    pub(crate) fn get(&self, row_idx: usize) -> &[SortKey] {
+    pub(super) fn get(&self, row_idx: usize) -> &[SortKey] {
         let start = row_idx.saturating_mul(self.stride);
         let end = start.saturating_add(self.stride);
         self.flat.get(start..end).unwrap_or(&[])
@@ -253,7 +245,7 @@ impl SortKeys {
 
 /// A compact, native sort scalar for row comparisons.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum SortKey {
+pub(super) enum SortKey {
     Null,
     Bool(bool),
     Number(f64),
@@ -302,7 +294,7 @@ impl SortKey {
     }
 
     /// Extracts a `SortKey` from an owned note field value.
-    pub(crate) fn from_owned(owned: &NoteFieldValue) -> Self {
+    pub(super) fn from_owned(owned: &NoteFieldValue) -> Self {
         match owned {
             NoteFieldValue::Null
             | NoteFieldValue::List(_)
@@ -337,7 +329,7 @@ impl SortKey {
     }
 
     /// Compares two sort keys establishing a total ordering.
-    pub(crate) fn total_cmp(&self, other: &Self) -> Ordering {
+    pub(super) fn total_cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::Null, Self::Null) => Ordering::Equal,
             (Self::Null, _) => Ordering::Less,

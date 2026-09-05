@@ -288,6 +288,12 @@ impl IndexStore {
         &self,
         table: &'a redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
     ) -> DbResult<Vec<ChunkBuffer<'a>>> {
+        /// Maximum rows per chunk handed to a single Rayon decode task.
+        const MAX_CHUNK_ROWS: usize = 128;
+        /// Maximum encoded bytes per chunk handed to a single Rayon decode
+        /// task.
+        const MAX_CHUNK_BYTES: usize = 512 * 1024;
+
         let mut chunks = Vec::new();
         let mut current_chunk = Vec::new();
         let mut current_bytes = 0usize;
@@ -298,7 +304,9 @@ impl IndexStore {
             let path = path_from_bytes(key.value());
             current_bytes = current_bytes.saturating_add(value.value().len());
             current_chunk.push((path, value));
-            if current_chunk.len() >= 128 || current_bytes >= 512 * 1024 {
+            if current_chunk.len() >= MAX_CHUNK_ROWS
+                || current_bytes >= MAX_CHUNK_BYTES
+            {
                 chunks.push(std::mem::take(&mut current_chunk));
                 current_bytes = 0;
             }

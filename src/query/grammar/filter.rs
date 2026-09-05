@@ -224,79 +224,28 @@ impl CompareOp {
         literal: &NoteFieldValue,
     ) -> bool {
         let val_key = SortKey::from_value_ref(field);
+        let comparable = val_key != SortKey::Null
+            && *lit_key != SortKey::Null
+            && std::mem::discriminant(&val_key)
+                == std::mem::discriminant(lit_key);
         match self {
-            Self::Eq => {
-                if val_key == SortKey::Null || *lit_key == SortKey::Null {
-                    field.is_equal_to_literal(literal)
-                } else if std::mem::discriminant(&val_key)
-                    == std::mem::discriminant(lit_key)
-                {
-                    val_key == *lit_key
-                } else {
-                    false
-                }
-            }
-            Self::Ne => {
-                if val_key == SortKey::Null || *lit_key == SortKey::Null {
-                    !field.is_equal_to_literal(literal)
-                } else if std::mem::discriminant(&val_key)
-                    == std::mem::discriminant(lit_key)
-                {
-                    val_key != *lit_key
-                } else {
-                    true
-                }
-            }
-            Self::Lt => {
-                if val_key == SortKey::Null || *lit_key == SortKey::Null {
-                    false
-                } else if std::mem::discriminant(&val_key)
-                    == std::mem::discriminant(lit_key)
-                {
-                    val_key.total_cmp(lit_key) == std::cmp::Ordering::Less
-                } else {
-                    false
-                }
-            }
+            Self::Eq if !comparable => field.is_equal_to_literal(literal),
+            Self::Eq => val_key == *lit_key,
+            Self::Ne if !comparable => !field.is_equal_to_literal(literal),
+            Self::Ne => val_key != *lit_key,
+            _ if !comparable => false,
+            Self::Lt => val_key.total_cmp(lit_key) == std::cmp::Ordering::Less,
             Self::Gt => {
-                if val_key == SortKey::Null || *lit_key == SortKey::Null {
-                    false
-                } else if std::mem::discriminant(&val_key)
-                    == std::mem::discriminant(lit_key)
-                {
-                    val_key.total_cmp(lit_key) == std::cmp::Ordering::Greater
-                } else {
-                    false
-                }
+                val_key.total_cmp(lit_key) == std::cmp::Ordering::Greater
             }
-            Self::Le => {
-                if val_key == SortKey::Null || *lit_key == SortKey::Null {
-                    false
-                } else if std::mem::discriminant(&val_key)
-                    == std::mem::discriminant(lit_key)
-                {
-                    matches!(
-                        val_key.total_cmp(lit_key),
-                        std::cmp::Ordering::Less | std::cmp::Ordering::Equal
-                    )
-                } else {
-                    false
-                }
-            }
-            Self::Ge => {
-                if val_key == SortKey::Null || *lit_key == SortKey::Null {
-                    false
-                } else if std::mem::discriminant(&val_key)
-                    == std::mem::discriminant(lit_key)
-                {
-                    matches!(
-                        val_key.total_cmp(lit_key),
-                        std::cmp::Ordering::Greater | std::cmp::Ordering::Equal
-                    )
-                } else {
-                    false
-                }
-            }
+            Self::Le => matches!(
+                val_key.total_cmp(lit_key),
+                std::cmp::Ordering::Less | std::cmp::Ordering::Equal
+            ),
+            Self::Ge => matches!(
+                val_key.total_cmp(lit_key),
+                std::cmp::Ordering::Greater | std::cmp::Ordering::Equal
+            ),
         }
     }
 }
