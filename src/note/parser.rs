@@ -77,8 +77,6 @@ use list::ListTracker;
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -90,7 +88,6 @@ use list::ListTracker;
 /// let note = parse_markdown(&input);
 /// assert!(note.outlinks().is_empty());
 /// assert_eq!(note.tags().len(), 0);
-/// # }
 /// ```
 #[inline]
 #[must_use]

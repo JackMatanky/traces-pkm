@@ -102,8 +102,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -112,7 +110,6 @@ impl Note {
     ///     MarkdownParserInput::for_test(Path::new("docs/spec.md"), "# Spec");
     /// let note = parse_markdown(&input);
     /// assert_eq!(note.path(), Path::new("docs/spec.md"));
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -125,8 +122,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -137,7 +132,6 @@ impl Note {
     /// );
     /// let note = parse_markdown(&input);
     /// assert!(note.frontmatter().is_some());
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -153,8 +147,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -165,7 +157,6 @@ impl Note {
     /// );
     /// let note = parse_markdown(&input);
     /// assert_eq!(note.lists().len(), 1);
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -186,8 +177,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -198,7 +187,6 @@ impl Note {
     /// );
     /// let note = parse_markdown(&input);
     /// assert_eq!(note.outlinks().len(), 1);
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -278,8 +266,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -290,7 +276,6 @@ impl Note {
     /// );
     /// let note = parse_markdown(&input);
     /// assert_eq!(note.tags().len(), 1);
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -304,8 +289,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -316,7 +299,6 @@ impl Note {
     /// );
     /// let note = parse_markdown(&input);
     /// assert_eq!(note.list_items().count(), 3);
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -329,8 +311,6 @@ impl Note {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -341,7 +321,6 @@ impl Note {
     /// );
     /// let note = parse_markdown(&input);
     /// assert_eq!(note.tasks().count(), 2);
-    /// # }
     /// ```
     #[inline]
     #[must_use]

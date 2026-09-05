@@ -32,26 +32,50 @@
 //!   field definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
-//!
 //! # Key Types
-//!
-//! Available with the `test-utils` feature:
-//!
-//! - `Config`, `ConfigService`, `TrustRequest` - project configuration and
-//!   trust verification.
-//! - `Note`, `Frontmatter`, `NoteFieldValue`, `Link` - parsed note data
-//!   structures.
-//! - `FileIndex`, `QueryBuilder`, `QuerySet` - persistent index and query
-//!   execution.
-//! - `TemplateService`, `CommitPolicy`, `WriteMode` - template rendering and
-//!   write operations.
-//! - `Blake3FileHash`, `Blake3PathHash` - BLAKE3 hashing primitives.
 //!
 //! Always available:
 //!
-//! - [`DialogProvider`], [`PresetDialogProvider`], [`TerminalDialogProvider`] -
-//!   interactive and preset dialog prompts.
-
+//! - [`Note`], [`ListItem`], [`ListItemIter`], [`TaskListItem`]: Parsed note
+//!   and task records.
+//! - [`Tag`], [`TagError`]: Validated Markdown tags.
+//! - [`SourceLine`]: Strongly-typed 1-indexed source line numbers.
+//! - [`TaskStatus`], [`TaskStatusMap`], [`TaskStatusType`]: Task status symbols
+//!   and lookup tables.
+//! - [`FileBase`]: Filesystem metadata for indexed files.
+//! - [`DialogProvider`], [`PresetDialogProvider`], [`TerminalDialogProvider`]:
+//!   Interactive and preset dialog prompts.
+//! - [`parse_markdown`], [`MarkdownParserInput`]: Note parsing entry points.
+//!
+//! Available with the `test-utils` feature:
+//!
+//! - `Config`, `ConfigService`, `TrustRequest`: Project configuration and trust
+//!   verification.
+//! - `FileIndex`, `IndexerService`: Persistent index engine and services.
+//! - `QueryBuilder`, `QuerySet`, `QueryService`: Query planning and execution.
+//! - `Schema`, `SchemaService`: Schema registry and inheritance graph.
+//! - `TemplateService`, `CommitPolicy`, `WriteMode`: Template rendering and
+//!   file writes.
+//! - `Blake3FileHash`, `Blake3PathHash`: BLAKE3 hashing primitives.
+//!
+//! # Examples
+//!
+//! Parse a Markdown note and extract its structured tasks:
+//!
+//! ```rust
+//! use std::path::Path;
+//!
+//! use traces_pkm::{MarkdownParserInput, Tag, parse_markdown};
+//!
+//! let markdown = "# Project Plan\n\n- [ ] Implement query engine 📅 \
+//!                 2026-09-01 #work\n- [x] Initial design #work\n";
+//!
+//! let input = MarkdownParserInput::for_test(Path::new("plan.md"), markdown);
+//! let note = parse_markdown(&input);
+//!
+//! assert_eq!(note.tasks().count(), 2);
+//! assert!(note.tags().iter().any(|t| t.as_str() == "#work"));
+//! ```
 mod config;
 mod delimiter;
 mod dialog;

@@ -26,13 +26,10 @@ use super::Link;
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use traces_pkm::NoteFieldValue;
 ///
 /// let val = NoteFieldValue::String("Draft".to_owned());
 /// assert_eq!(val.as_str(), Some("Draft"));
-/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum NoteFieldValue {

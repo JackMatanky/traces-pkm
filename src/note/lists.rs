@@ -56,8 +56,6 @@ use crate::{FieldKey, SourceLine, Tag, TaskStatus};
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -68,7 +66,6 @@ use crate::{FieldKey, SourceLine, Tag, TaskStatus};
 /// );
 /// let note = parse_markdown(&input);
 /// assert_eq!(note.lists().len(), 1);
-/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct List {
@@ -112,8 +109,6 @@ impl List {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -125,7 +120,6 @@ impl List {
     /// let note = parse_markdown(&input);
     /// let list = &note.lists()[0];
     /// assert_eq!(list.items().len(), 2);
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -143,8 +137,6 @@ impl List {
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -157,7 +149,6 @@ impl List {
 /// let item = &note.lists()[0].items()[0];
 /// assert!(item.kind().is_task());
 /// assert_eq!(item.clean_text(), "Action item");
-/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
@@ -255,8 +246,6 @@ impl ListItem {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -268,7 +257,6 @@ impl ListItem {
     /// let note = parse_markdown(&input);
     /// let item = &note.lists()[0].items()[0];
     /// assert_eq!(item.tags().len(), 1);
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -282,8 +270,6 @@ impl ListItem {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -296,7 +282,6 @@ impl ListItem {
     /// let item = &note.lists()[0].items()[0];
     /// assert_eq!(item.text().raw(), "Task 📅 2025-01-15");
     /// assert_eq!(item.text().clean(), "Task");
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -311,8 +296,6 @@ impl ListItem {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -324,7 +307,6 @@ impl ListItem {
     /// let note = parse_markdown(&input);
     /// let item = &note.lists()[0].items()[0];
     /// assert_eq!(item.raw_text(), "Task 📅 2025-01-15");
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -340,8 +322,6 @@ impl ListItem {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -353,7 +333,6 @@ impl ListItem {
     /// let note = parse_markdown(&input);
     /// let item = &note.lists()[0].items()[0];
     /// assert_eq!(item.clean_text(), "Task");
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -366,8 +345,6 @@ impl ListItem {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "test-utils")]
-    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -377,7 +354,6 @@ impl ListItem {
     /// let note = parse_markdown(&input);
     /// let item = &note.lists()[0].items()[0];
     /// assert!(item.kind().is_task());
-    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -482,8 +458,6 @@ impl ListItem {
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -495,7 +469,6 @@ impl ListItem {
 /// let note = parse_markdown(&input);
 /// assert!(note.lists()[0].items()[0].kind().is_plain());
 /// assert!(note.lists()[0].items()[1].kind().is_task());
-/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum ListItemType {
@@ -1268,8 +1241,6 @@ impl PartialEq<ListText> for &str {
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -1280,7 +1251,6 @@ impl PartialEq<ListText> for &str {
 /// );
 /// let note = parse_markdown(&input);
 /// assert_eq!(note.list_items().count(), 3);
-/// # }
 /// ```
 #[derive(Clone, Debug)]
 pub struct ListItemIter<'a> {
