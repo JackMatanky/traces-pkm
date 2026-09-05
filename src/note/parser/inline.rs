@@ -91,7 +91,7 @@ impl<'a> InlineValueParser<'a> {
         }
         let sub_parser = Self::new(trimmed);
         if let Some(values) = sub_parser.parse_comma_list() {
-            return NoteFieldValue::List(values);
+            return NoteFieldValue::List(values.into_boxed_slice());
         }
         if let Some((value, end)) = sub_parser.parse_atom_at(0)
             && sub_parser.skip_whitespace(end) == sub_parser.source.len()

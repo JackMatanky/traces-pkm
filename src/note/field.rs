@@ -51,7 +51,7 @@ pub enum NoteFieldValue {
     /// A link parsed from wikilink or Markdown link syntax.
     Link(Link),
     /// Ordered list value.
-    List(Vec<Self>),
+    List(Box<[Self]>),
     /// Keyed object value stored in a deterministically ordered map.
     Object(IndexMap<String, Self>),
 }
@@ -416,10 +416,13 @@ mod tests {
                     ),
                     (
                         "list".to_owned(),
-                        NoteFieldValue::List(vec![
-                            NoteFieldValue::Number(1.0),
-                            NoteFieldValue::Number(2.0)
-                        ]),
+                        NoteFieldValue::List(
+                            vec![
+                                NoteFieldValue::Number(1.0),
+                                NoteFieldValue::Number(2.0),
+                            ]
+                            .into(),
+                        ),
                     ),
                     ("null_val".to_owned(), NoteFieldValue::Null),
                     ("num".to_owned(), NoteFieldValue::Number(42.5)),
@@ -495,7 +498,7 @@ mod tests {
             assert_eq!(NoteFieldValue::Null.as_str(), None);
             assert_eq!(NoteFieldValue::Bool(true).as_str(), None);
             assert_eq!(NoteFieldValue::Number(42.0).as_str(), None);
-            assert_eq!(NoteFieldValue::List(Vec::new()).as_str(), None);
+            assert_eq!(NoteFieldValue::List(Box::default()).as_str(), None);
             assert_eq!(NoteFieldValue::Object(IndexMap::new()).as_str(), None);
         }
     }

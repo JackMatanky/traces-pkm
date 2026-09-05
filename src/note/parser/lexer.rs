@@ -479,35 +479,44 @@ mod tests {
         #[rstest]
         #[case::trailing_comma(
             "[links:: [[test]],]",
-            NoteFieldValue::List(vec![NoteFieldValue::Link(Link::new(
-                "test",
-                "test",
-                LinkType::Wikilink
-            ))])
+            NoteFieldValue::List(
+                vec![NoteFieldValue::Link(Link::new(
+                    "test",
+                    "test",
+                    LinkType::Wikilink,
+                ))]
+                .into(),
+            )
         )]
         #[case::links(
             "[links:: [[test]], [[test2]]]",
-            NoteFieldValue::List(vec![
-                NoteFieldValue::Link(Link::new(
-                    "test",
-                    "test",
-                    LinkType::Wikilink
-                )),
-                NoteFieldValue::Link(Link::new(
-                    "test2",
-                    "test2",
-                    LinkType::Wikilink
-                )),
-            ])
+            NoteFieldValue::List(
+                vec![
+                    NoteFieldValue::Link(Link::new(
+                        "test",
+                        "test",
+                        LinkType::Wikilink,
+                    )),
+                    NoteFieldValue::Link(Link::new(
+                        "test2",
+                        "test2",
+                        LinkType::Wikilink,
+                    )),
+                ]
+                .into(),
+            )
         )]
         #[case::mixed_atoms(
             r#"[values:: 1, 2, 3, "hello"]"#,
-            NoteFieldValue::List(vec![
-                NoteFieldValue::Number(1.0),
-                NoteFieldValue::Number(2.0),
-                NoteFieldValue::Number(3.0),
-                NoteFieldValue::String("hello".to_owned()),
-            ])
+            NoteFieldValue::List(
+                vec![
+                    NoteFieldValue::Number(1.0),
+                    NoteFieldValue::Number(2.0),
+                    NoteFieldValue::Number(3.0),
+                    NoteFieldValue::String("hello".to_owned()),
+                ]
+                .into(),
+            )
         )]
         fn parses_dataview_comma_lists(
             #[case] input: &str,

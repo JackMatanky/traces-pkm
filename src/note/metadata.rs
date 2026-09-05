@@ -106,7 +106,7 @@ impl Frontmatter {
     ) -> impl Iterator<Item = &NoteFieldValue> {
         let value = self.get(key);
         let list = match value {
-            Some(NoteFieldValue::List(items)) => items.as_slice(),
+            Some(NoteFieldValue::List(items)) => items.as_ref(),
             _ => &[],
         };
         let scalar = match value {

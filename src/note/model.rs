@@ -42,10 +42,10 @@ pub struct Note {
     #[serde(with = "crate::index::path")]
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
-    lists: Vec<List>,
-    outlinks: Vec<Link>,
-    inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    tags: Vec<Tag>,
+    lists: Box<[List]>,
+    outlinks: Box<[Link]>,
+    inline_fields: IndexMap<FieldKey, Box<[NoteFieldValue]>>,
+    tags: Box<[Tag]>,
 }
 
 impl Note {
@@ -56,19 +56,23 @@ impl Note {
     /// [`Self::with_tags`].
     #[inline]
     #[must_use]
-    pub fn new<P: Into<PathBuf>>(
+    pub(crate) fn new<
+        P: Into<PathBuf>,
+        L: Into<Box<[List]>>,
+        O: Into<Box<[Link]>>,
+    >(
         path: P,
         frontmatter: Option<Frontmatter>,
-        lists: Vec<List>,
-        outlinks: Vec<Link>,
+        lists: L,
+        outlinks: O,
     ) -> Self {
         Self {
             path: path.into(),
             frontmatter,
-            lists,
-            outlinks,
+            lists: lists.into(),
+            outlinks: outlinks.into(),
             inline_fields: IndexMap::new(),
-            tags: Vec::new(),
+            tags: Box::default(),
         }
     }
 
@@ -79,15 +83,20 @@ impl Note {
         mut self,
         inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     ) -> Self {
-        self.inline_fields = inline_fields;
+        self.inline_fields.clear();
+        self.inline_fields.extend(
+            inline_fields
+                .into_iter()
+                .map(|(key, values)| (key, values.into_boxed_slice())),
+        );
         self
     }
 
     /// Attaches `tags` and returns the updated [`Note`].
     #[inline]
     #[must_use]
-    pub fn with_tags(mut self, tags: Vec<Tag>) -> Self {
-        self.tags = tags;
+    pub(crate) fn with_tags<T: Into<Box<[Tag]>>>(mut self, tags: T) -> Self {
+        self.tags = tags.into();
         self
     }
 
@@ -215,7 +224,7 @@ impl Note {
     )]
     pub(crate) fn inline_fields(
         &self,
-    ) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
+    ) -> &IndexMap<FieldKey, Box<[NoteFieldValue]>> {
         &self.inline_fields
     }
 
@@ -415,15 +424,21 @@ mod tests {
             let key =
                 FieldKey::try_new("Status").expect("valid test field key");
             let mut fields = IndexMap::new();
-            fields
-                .insert(key, vec![NoteFieldValue::String("Draft".to_owned())]);
+            fields.insert(key.clone(), vec![NoteFieldValue::String(
+                "Draft".to_owned(),
+            )]);
 
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
-                .with_inline_fields(fields.clone());
+                .with_inline_fields(fields);
 
-            assert_eq!(note.inline_fields(), &fields);
+            let mut expected = IndexMap::new();
+            expected.insert(
+                key,
+                vec![NoteFieldValue::String("Draft".to_owned())]
+                    .into_boxed_slice(),
+            );
+            assert_eq!(note.inline_fields(), &expected);
         }
-
         #[test]
         fn with_tags_attaches_the_given_tags() {
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
@@ -579,6 +594,59 @@ mod tests {
                 "grandchild plain",
                 "sibling task"
             ]);
+        }
+    }
+
+    mod serialization {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn preserves_populated_collections_across_postcard_roundtrip() {
+            let key = FieldKey::try_new("status").expect("valid field key");
+            let mut fm_fields = IndexMap::new();
+            fm_fields.insert(
+                key.clone(),
+                NoteFieldValue::String("active".to_owned()),
+            );
+            let frontmatter = Frontmatter::new(fm_fields);
+
+            let item_field_key =
+                FieldKey::try_new("priority").expect("valid field key");
+            let mut item_fields = IndexMap::new();
+            item_fields.insert(item_field_key, vec![NoteFieldValue::String(
+                "high".to_owned(),
+            )]);
+            let child = ListItem::new("child item", ListItemType::Plain);
+            let item =
+                ListItem::with_children("item", ListItemType::Plain, vec![
+                    List::new(false, vec![child]),
+                ])
+                .with_fields(item_fields)
+                .with_tags(vec![Tag::parse("#task").expect("valid item tag")]);
+
+            let list = List::new(false, vec![item]);
+            let outlink = Link::new("target", "text", LinkType::Wikilink);
+
+            let mut inline_fields = IndexMap::new();
+            inline_fields.insert(key, vec![NoteFieldValue::List(
+                vec![NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)]
+                    .into(),
+            )]);
+
+            let note =
+                Note::new("notes/a.md", Some(frontmatter), vec![list], vec![
+                    outlink,
+                ])
+                .with_inline_fields(inline_fields)
+                .with_tags(vec![Tag::parse("#book").expect("valid test tag")]);
+
+            let bytes = postcard::to_allocvec(&note).expect("encode note");
+            let decoded: Note =
+                postcard::from_bytes(&bytes).expect("decode note");
+
+            assert_eq!(decoded, note);
         }
     }
 }

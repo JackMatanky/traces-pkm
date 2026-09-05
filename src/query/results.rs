@@ -883,10 +883,13 @@ mod tests {
 
             assert_eq!(
                 row.field("tags"),
-                Ok(NoteFieldValue::List(vec![
-                    NoteFieldValue::String("#book".to_owned()),
-                    NoteFieldValue::String("#read".to_owned()),
-                ]))
+                Ok(NoteFieldValue::List(
+                    vec![
+                        NoteFieldValue::String("#book".to_owned()),
+                        NoteFieldValue::String("#read".to_owned()),
+                    ]
+                    .into(),
+                ))
             );
         }
 
@@ -905,10 +908,13 @@ mod tests {
 
             assert_eq!(
                 row.field("inlinks"),
-                Ok(NoteFieldValue::List(vec![
-                    NoteFieldValue::String("a.md".to_owned()),
-                    NoteFieldValue::String("b.md".to_owned()),
-                ]))
+                Ok(NoteFieldValue::List(
+                    vec![
+                        NoteFieldValue::String("a.md".to_owned()),
+                        NoteFieldValue::String("b.md".to_owned()),
+                    ]
+                    .into(),
+                ))
             );
         }
 
@@ -918,7 +924,10 @@ mod tests {
             let outcome = outcome_for(temp.path(), "No inbound links here.");
             let row = outcome.get(0).expect("row");
 
-            assert_eq!(row.field("inlinks"), Ok(NoteFieldValue::List(vec![])));
+            assert_eq!(
+                row.field("inlinks"),
+                Ok(NoteFieldValue::List(Box::default()))
+            );
         }
 
         #[test]

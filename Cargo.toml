@@ -56,6 +56,10 @@ name = "note_parsing"
 harness = false
 name = "template_render"
 
+[[bench]]
+harness = false
+name = "memory_footprint"
+
 # ------------------------------------------------------------- #
 #                         Dependencies                          #
 # ------------------------------------------------------------- #
@@ -98,6 +102,7 @@ yaml_serde = { package = "yaml_serde", version = "0.10" }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 pretty_assertions = "1.4.1"
 rstest = "0.24"
+stats_alloc = "0.1.10"
 tempfile = "3.27.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 

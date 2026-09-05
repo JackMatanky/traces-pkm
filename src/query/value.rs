@@ -220,7 +220,7 @@ impl QueryListValueRef<'_> {
 
     fn to_owned_value(&self) -> NoteFieldValue {
         match self {
-            Self::Values(values) => NoteFieldValue::List((*values).to_vec()),
+            Self::Values(values) => NoteFieldValue::List((*values).into()),
             Self::Tags(tags) => NoteFieldValue::List(
                 tags.iter()
                     .map(|tag| NoteFieldValue::String(tag.as_str().to_owned()))
@@ -419,9 +419,9 @@ mod tests {
 
         #[test]
         fn returns_true_when_owned_list_ref_contains_matching_element() {
-            let list = QueryFieldValueRef::Owned(NoteFieldValue::List(vec![
-                NoteFieldValue::String("a".into()),
-            ]));
+            let list = QueryFieldValueRef::Owned(NoteFieldValue::List(
+                vec![NoteFieldValue::String("a".into())].into(),
+            ));
             assert!(list.is_containing(&NoteFieldValue::String("a".into())));
         }
     }

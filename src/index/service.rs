@@ -805,10 +805,13 @@ mod tests {
                 .collect();
             assert_eq!(values, [
                 &NoteFieldValue::Duration("7 hours".to_owned()),
-                &NoteFieldValue::List(vec![
-                    NoteFieldValue::Number(1.0),
-                    NoteFieldValue::Number(2.0)
-                ])
+                &NoteFieldValue::List(
+                    vec![
+                        NoteFieldValue::Number(1.0),
+                        NoteFieldValue::Number(2.0),
+                    ]
+                    .into(),
+                ),
             ]);
         }
 

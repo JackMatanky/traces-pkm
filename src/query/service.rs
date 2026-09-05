@@ -609,9 +609,12 @@ mod tests {
 
             assert_eq!(
                 row.field("tags"),
-                Ok(crate::NoteFieldValue::List(vec![
-                    crate::NoteFieldValue::String("#projects".to_owned())
-                ]))
+                Ok(crate::NoteFieldValue::List(
+                    vec![
+                        crate::NoteFieldValue::String("#projects".to_owned(),)
+                    ]
+                    .into(),
+                ))
             );
         }
 

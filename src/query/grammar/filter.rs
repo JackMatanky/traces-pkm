@@ -991,8 +991,9 @@ mod tests {
             let borrowed =
                 QueryFieldValueRef::List(QueryListValueRef::Values(&items))
                     .is_containing(&target);
-            let owned = QueryFieldValueRef::Owned(NoteFieldValue::List(items))
-                .is_containing(&target);
+            let owned =
+                QueryFieldValueRef::Owned(NoteFieldValue::List(items.into()))
+                    .is_containing(&target);
 
             assert_eq!(borrowed, owned);
             assert!(borrowed, "#book must match #book/fiction by tag prefix");

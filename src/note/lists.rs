@@ -73,17 +73,20 @@ use crate::{FieldKey, SourceLine, Tag, TaskStatus};
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct List {
     is_ordered: bool,
-    items: Vec<ListItem>,
+    items: Box<[ListItem]>,
 }
 
 impl List {
     /// Creates a list from its ordering flag and direct child items.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
+    pub(crate) fn new<I: Into<Box<[ListItem]>>>(
+        is_ordered: bool,
+        items: I,
+    ) -> Self {
         Self {
             is_ordered,
-            items,
+            items: items.into(),
         }
     }
 
@@ -160,9 +163,9 @@ impl List {
 pub struct ListItem {
     text: ListText,
     kind: ListItemType,
-    children: Vec<List>,
-    fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    tags: Vec<Tag>,
+    children: Box<[List]>,
+    fields: IndexMap<FieldKey, Box<[NoteFieldValue]>>,
+    tags: Box<[Tag]>,
     position: ListItemPosition,
 }
 
@@ -182,9 +185,9 @@ impl ListItem {
         Self {
             text: text.into(),
             kind,
-            children: Vec::new(),
+            children: Box::default(),
             fields: IndexMap::new(),
-            tags: Vec::new(),
+            tags: Box::default(),
             position: ListItemPosition::default(),
         }
     }
@@ -195,17 +198,17 @@ impl ListItem {
     /// item's own text with [`Self::with_fields`].
     #[inline]
     #[must_use]
-    pub(crate) fn with_children(
-        text: impl Into<ListText>,
+    pub(crate) fn with_children<T: Into<ListText>, C: Into<Box<[List]>>>(
+        text: T,
         kind: ListItemType,
-        children: Vec<List>,
+        children: C,
     ) -> Self {
         Self {
             text: text.into(),
             kind,
-            children,
+            children: children.into(),
             fields: IndexMap::new(),
-            tags: Vec::new(),
+            tags: Box::default(),
             position: ListItemPosition::default(),
         }
     }
@@ -223,7 +226,12 @@ impl ListItem {
         mut self,
         fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     ) -> Self {
-        self.fields = fields;
+        self.fields.clear();
+        self.fields.extend(
+            fields
+                .into_iter()
+                .map(|(key, values)| (key, values.into_boxed_slice())),
+        );
         self
     }
 
@@ -235,8 +243,8 @@ impl ListItem {
     /// classification decides.
     #[inline]
     #[must_use]
-    pub(crate) fn with_tags(mut self, tags: Vec<Tag>) -> Self {
-        self.tags = tags;
+    pub(crate) fn with_tags<T: Into<Box<[Tag]>>>(mut self, tags: T) -> Self {
+        self.tags = tags.into();
         self
     }
 
@@ -398,7 +406,7 @@ impl ListItem {
                       accessor symmetry with its fields"
         )
     )]
-    pub(crate) fn fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
+    pub(crate) fn fields(&self) -> &IndexMap<FieldKey, Box<[NoteFieldValue]>> {
         &self.fields
     }
 
@@ -414,7 +422,7 @@ impl ListItem {
         Self {
             text: self.text.clone(),
             kind: self.kind.clone(),
-            children: Vec::new(),
+            children: Box::default(),
             fields: self.fields.clone(),
             tags: self.tags.clone(),
             position: self.position,
@@ -1473,15 +1481,20 @@ mod tests {
                 let key = FieldKey::try_new("priority")
                     .expect("valid test field key");
                 let mut fields = IndexMap::new();
-                fields.insert(key, vec![NoteFieldValue::String(
+                fields.insert(key.clone(), vec![NoteFieldValue::String(
                     "high".to_owned(),
                 )]);
-                let item = ListItem::new("task item", done_task())
-                    .with_fields(fields.clone());
+                let item =
+                    ListItem::new("task item", done_task()).with_fields(fields);
 
-                assert_eq!(item.fields(), &fields);
+                let mut expected = IndexMap::new();
+                expected.insert(
+                    key,
+                    vec![NoteFieldValue::String("high".to_owned())]
+                        .into_boxed_slice(),
+                );
+                assert_eq!(item.fields(), &expected);
             }
-
             #[test]
             fn has_no_fields_by_default() {
                 let item = ListItem::new("plain item", ListItemType::Plain);

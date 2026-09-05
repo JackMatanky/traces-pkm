@@ -289,12 +289,13 @@ impl QueryTransform {
             Self::Flatten(field_path) => {
                 let mut out = Vec::with_capacity(rows.len());
                 for row in rows {
-                    let NoteFieldValue::List(mut items) =
+                    let NoteFieldValue::List(items) =
                         row.resolve_owned(field_path)
                     else {
                         out.push(row);
                         continue;
                     };
+                    let mut items = items.into_vec();
                     let Some(last) = items.pop() else {
                         continue;
                     };
