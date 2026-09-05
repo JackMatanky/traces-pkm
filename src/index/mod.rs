@@ -51,6 +51,8 @@ mod store;
 pub(crate) use codec::path;
 #[cfg(any(test, feature = "test-utils"))]
 pub use codec::path;
+#[cfg(any(test, feature = "test-utils"))]
+pub use entry::ListEntry;
 pub(crate) use entry::RowIndex;
 pub use entry::{FileEntry, FileIndex};
 #[cfg(test)]

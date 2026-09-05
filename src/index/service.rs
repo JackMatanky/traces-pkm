@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use super::{
     FileIndex, INDEX_FILE, IndexResult, builder, cache,
     delta::IndexDelta,
-    entry,
+    entry::{self, ListEntry},
     error::{IndexBuilderError, IndexError},
     store::IndexStore,
 };
@@ -177,6 +177,24 @@ impl IndexerService {
             entry::assemble_entries(files, notes, inlinks),
             IndexDelta::Full,
         ))
+    }
+
+    /// Reads all persisted [`ListEntry`]s from the `LISTS` table.
+    ///
+    /// # Errors
+    ///
+    /// - [`IndexError::Store`] if the database cannot be opened or read.
+    #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "consumed by task queries added in issue 08"
+        )
+    )]
+    pub fn read_lists(&self) -> IndexResult<Vec<ListEntry>> {
+        let store = IndexStore::open(&self.root)?;
+        Ok(store.read_all_lists()?)
     }
 
     /// Recursively scans this service's root for regular files, skipping `.git`

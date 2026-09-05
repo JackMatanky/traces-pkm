@@ -21,8 +21,9 @@
 //!   scheduled, start, due, done, cancelled).
 //! - [`ListText`]: Dual-representation text container maintaining both raw
 //!   source and clean display text.
-//! - [`TaskIter`]: A depth-first iterator yielding task items across top-level
-//!   and nested child lists in document order.
+//! - [`ListItemIter`]: A depth-first iterator yielding all list items across
+//!   top-level and nested child lists in document order, optionally filtered to
+//!   [`ListItemType::Task`] items.
 //!
 //! # Examples
 //!
@@ -46,7 +47,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, TaskStatus};
+use crate::{FieldKey, SourceLine, Tag, TaskStatus};
 /// An ordered or unordered Markdown list.
 ///
 /// Holds direct child [`ListItem`] elements and a flag indicating whether the
@@ -129,12 +130,12 @@ impl List {
         &self.items
     }
 }
-/// A Markdown list item with a classified [`ListItemType`], child lists, and
-/// inline fields.
+/// A Markdown list item with a classified [`ListItemType`], child lists,
+/// inline fields, and item-level tags.
 ///
 /// Stores both raw and normalized text representations via [`ListText`], nested
-/// child [`List`] structures, extracted Dataview-style inline fields, and
-/// source line positioning information.
+/// child [`List`] structures, extracted Dataview-style inline fields, tags
+/// scanned from the item's own text, and source line positioning information.
 ///
 /// # Examples
 ///
@@ -161,6 +162,7 @@ pub struct ListItem {
     kind: ListItemType,
     children: Vec<List>,
     fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    tags: Vec<Tag>,
     position: ListItemPosition,
 }
 
@@ -182,6 +184,7 @@ impl ListItem {
             kind,
             children: Vec::new(),
             fields: IndexMap::new(),
+            tags: Vec::new(),
             position: ListItemPosition::default(),
         }
     }
@@ -202,6 +205,7 @@ impl ListItem {
             kind,
             children,
             fields: IndexMap::new(),
+            tags: Vec::new(),
             position: ListItemPosition::default(),
         }
     }
@@ -221,6 +225,47 @@ impl ListItem {
     ) -> Self {
         self.fields = fields;
         self
+    }
+
+    /// Attaches tags scanned from this item's own text.
+    ///
+    /// Uses the same tag-token lexer that scans note body text; these are the
+    /// same tags already consulted for task tag filter classification,
+    /// re-surfaced here as queryable data rather than discarded after
+    /// classification decides.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_tags(mut self, tags: Vec<Tag>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// Returns this item's own tags, scanned from its text.
+    ///
+    /// Does not include tags from child items or inherited Note-level tags.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
+    ///
+    /// let input = MarkdownParserInput::for_test(
+    ///     Path::new("note.md"),
+    ///     "- [ ] Task #project",
+    /// );
+    /// let note = parse_markdown(&input);
+    /// let item = &note.lists()[0].items()[0];
+    /// assert_eq!(item.tags().len(), 1);
+    /// # }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
     }
 
     /// Returns the plain or normalized text representation holding both raw
@@ -357,6 +402,25 @@ impl ListItem {
         &self.fields
     }
 
+    /// Returns a clone of this item with its descendant lists cleared.
+    ///
+    /// Used when persisting a list item independently of its subtree: each
+    /// descendant is its own persisted row, addressable by its own line
+    /// number, so nesting a copy of every descendant inside every ancestor's
+    /// persisted value would duplicate that data once per ancestor.
+    #[inline]
+    #[must_use]
+    pub(crate) fn without_children(&self) -> Self {
+        Self {
+            text: self.text.clone(),
+            kind: self.kind.clone(),
+            children: Vec::new(),
+            fields: self.fields.clone(),
+            tags: self.tags.clone(),
+            position: self.position,
+        }
+    }
+
     /// Attaches the source position (depth, line, parent line) computed by
     /// the parser from Markdown byte offsets.
     ///
@@ -375,15 +439,6 @@ impl ListItem {
     /// Returns the item's 0-indexed nesting level.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
     pub(crate) const fn depth(&self) -> u8 {
         self.position.depth()
     }
@@ -391,15 +446,6 @@ impl ListItem {
     /// Returns the item's 1-indexed source line.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
     pub(crate) const fn line(&self) -> SourceLine {
         self.position.line()
     }
@@ -408,15 +454,6 @@ impl ListItem {
     /// this item is nested inside another list item.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; consumed by LISTS \
-                      persistence and task queries added in a later \
-                      task-system issue"
-        )
-    )]
     pub(crate) const fn parent(&self) -> Option<SourceLine> {
         self.position.parent()
     }
@@ -483,6 +520,32 @@ impl ListItemType {
     #[must_use]
     pub const fn is_task(&self) -> bool {
         matches!(self, Self::Task(_))
+    }
+
+    /// Returns this item's [`TaskListItem`] data, or [`None`] if this list
+    /// item is not classified as a Task.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{ListItemType, TaskDates, TaskListItem, TaskStatus};
+    ///
+    /// let kind = ListItemType::Task(TaskListItem::new(
+    ///     TaskDates::default(),
+    ///     None,
+    ///     TaskStatus::default(),
+    ///     false,
+    /// ));
+    /// assert!(kind.as_task().is_some());
+    /// assert!(ListItemType::Plain.as_task().is_none());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn as_task(&self) -> Option<&TaskListItem> {
+        match self {
+            Self::Task(task) => Some(task),
+            Self::Plain | Self::Checkbox => None,
+        }
     }
 
     /// Returns `true` if this list item is classified as a Checkbox.
@@ -1187,10 +1250,12 @@ impl PartialEq<ListText> for &str {
     }
 }
 
-/// Depth-first iterator over task list items in a [`super::Note`].
+/// A depth-first iterator over top-level and nested child lists in document
+/// order, yielding either every item ([`Note::list_items`]) or only items
+/// classified as [`ListItemType::Task`] ([`Note::tasks`]).
 ///
-/// Yields items classified as [`ListItemType::Task`], recursing through child
-/// lists in document order.
+/// [`Note::list_items`]: super::Note::list_items
+/// [`Note::tasks`]: super::Note::tasks
 ///
 /// # Examples
 ///
@@ -1201,31 +1266,55 @@ impl PartialEq<ListText> for &str {
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
 ///
-/// let input =
-///     MarkdownParserInput::for_test(Path::new("note.md"), "- [ ] Task");
+/// let input = MarkdownParserInput::for_test(
+///     Path::new("note.md"),
+///     "- Item 1\n  - Item 1.1\n- Item 2",
+/// );
 /// let note = parse_markdown(&input);
-/// assert_eq!(note.tasks().count(), 1);
+/// assert_eq!(note.list_items().count(), 3);
 /// # }
 /// ```
 #[derive(Clone, Debug)]
-pub struct TaskIter<'a> {
+pub struct ListItemIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
+    tasks_only: bool,
 }
 
-impl<'a> TaskIter<'a> {
-    /// Starts depth-first iteration from top-level `lists`.
+impl<'a> ListItemIter<'a> {
+    /// Starts depth-first iteration over every item in top-level `lists`.
     #[inline]
     #[must_use]
-    pub(super) fn new(lists: &'a [List]) -> Self {
+    pub(crate) fn new(lists: &'a [List]) -> Self {
+        Self::with_stack(lists, false)
+    }
+
+    /// Starts depth-first iteration over top-level `lists`, yielding only
+    /// items classified as [`ListItemType::Task`].
+    ///
+    /// Filters at yield time rather than traversal time: descending into a
+    /// non-task item's children is unaffected, so nested tasks under a plain
+    /// bullet or checkbox are still reached.
+    #[inline]
+    #[must_use]
+    pub(crate) fn tasks(lists: &'a [List]) -> Self {
+        Self::with_stack(lists, true)
+    }
+
+    /// Builds the shared traversal stack for [`Self::new`] and
+    /// [`Self::tasks`].
+    #[inline]
+    #[must_use]
+    fn with_stack(lists: &'a [List], tasks_only: bool) -> Self {
         let mut stack = Vec::with_capacity(lists.len());
         stack.extend(lists.iter().rev().map(|list| list.items().iter()));
         Self {
             stack,
+            tasks_only,
         }
     }
 }
 
-impl<'a> Iterator for TaskIter<'a> {
+impl<'a> Iterator for ListItemIter<'a> {
     type Item = &'a ListItem;
 
     #[inline]
@@ -1238,13 +1327,16 @@ impl<'a> Iterator for TaskIter<'a> {
             self.stack.extend(
                 item.children().iter().rev().map(|list| list.items().iter()),
             );
-            if matches!(item.kind(), ListItemType::Task(_)) {
+            if !self.tasks_only || matches!(item.kind(), ListItemType::Task(_))
+            {
                 return Some(item);
             }
         }
         None
     }
 }
+
+impl std::iter::FusedIterator for ListItemIter<'_> {}
 
 /// A list item's position: its 0-indexed nesting depth, 1-indexed source line,
 /// and its immediate parent's 1-indexed line, if nested.
@@ -1398,6 +1490,28 @@ mod tests {
             }
         }
 
+        mod tags {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn stores_tags_when_attached_with_with_tags() {
+                let tags = vec![Tag::parse("#project").expect("valid tag")];
+                let item = ListItem::new("task item", done_task())
+                    .with_tags(tags.clone());
+
+                assert_eq!(item.tags(), tags.as_slice());
+            }
+
+            #[test]
+            fn has_no_tags_by_default() {
+                let item = ListItem::new("plain item", ListItemType::Plain);
+
+                assert!(item.tags().is_empty());
+            }
+        }
+
         mod position {
             use pretty_assertions::assert_eq;
 
@@ -1446,62 +1560,68 @@ mod tests {
         }
     }
 
-    mod task {
+    mod list_item_iter {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
-        mod iteration {
-            use pretty_assertions::assert_eq;
-
-            use super::*;
-            #[test]
-            fn yields_task_items_depth_first_across_nested_lists() {
-                let subchild_task = ListItem::new("subchild task", done_task());
-                let child_task =
-                    ListItem::with_children("child task", todo_task(), vec![
-                        List::new(false, vec![subchild_task]),
-                    ]);
-                let parent_task =
-                    ListItem::with_children("parent task", todo_task(), vec![
-                        List::new(false, vec![child_task]),
-                    ]);
-                let sibling_task = ListItem::new("sibling task", done_task());
-                let lists = vec![
-                    List::new(false, vec![parent_task]),
-                    List::new(false, vec![sibling_task]),
-                ];
-
-                let iter = TaskIter::new(&lists);
-                let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
-
-                assert_eq!(texts, [
-                    "parent task",
-                    "child task",
-                    "subchild task",
-                    "sibling task"
+        #[test]
+        fn yields_all_items_depth_first_across_nested_lists() {
+            let grandchild_plain =
+                ListItem::new("grandchild plain", ListItemType::Plain);
+            let child_checkbox = ListItem::with_children(
+                "child checkbox",
+                ListItemType::Checkbox,
+                vec![List::new(false, vec![grandchild_plain])],
+            );
+            let parent_task =
+                ListItem::with_children("parent task", todo_task(), vec![
+                    List::new(false, vec![child_checkbox]),
                 ]);
-            }
+            let sibling = ListItem::new("sibling item", done_task());
+            let lists = vec![
+                List::new(false, vec![parent_task]),
+                List::new(false, vec![sibling]),
+            ];
 
-            #[test]
-            fn skips_plain_and_checkbox_items() {
-                let plain = ListItem::new("plain item", ListItemType::Plain);
-                let checkbox =
-                    ListItem::new("checkbox item", ListItemType::Checkbox);
-                let task = ListItem::new("task item", done_task());
-                let lists = vec![List::new(false, vec![plain, checkbox, task])];
+            let iter = ListItemIter::new(&lists);
+            let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
 
-                let iter = TaskIter::new(&lists);
-                let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
+            assert_eq!(texts, [
+                "parent task",
+                "child checkbox",
+                "grandchild plain",
+                "sibling item"
+            ]);
+        }
 
-                assert_eq!(texts, ["task item"]);
-            }
+        #[test]
+        fn tasks_yields_only_task_items_depth_first_across_nested_lists() {
+            let subchild_task = ListItem::new("subchild task", done_task());
+            let child_checkbox = ListItem::with_children(
+                "child checkbox",
+                ListItemType::Checkbox,
+                vec![List::new(false, vec![subchild_task])],
+            );
+            let parent_task =
+                ListItem::with_children("parent task", todo_task(), vec![
+                    List::new(false, vec![child_checkbox]),
+                ]);
+            let plain = ListItem::new("plain item", ListItemType::Plain);
+            let lists = vec![List::new(false, vec![parent_task, plain])];
 
-            #[test]
-            fn returns_none_for_empty_lists() {
-                let lists: Vec<List> = Vec::new();
-                let mut iter = TaskIter::new(&lists);
+            let iter = ListItemIter::tasks(&lists);
+            let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
 
-                assert_eq!(iter.next(), None);
-            }
+            assert_eq!(texts, ["parent task", "subchild task"]);
+        }
+
+        #[test]
+        fn returns_none_for_empty_lists() {
+            let lists: Vec<List> = Vec::new();
+            let mut iter = ListItemIter::new(&lists);
+
+            assert_eq!(iter.next(), None);
         }
     }
 
