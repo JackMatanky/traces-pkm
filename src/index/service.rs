@@ -183,8 +183,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Store`] if the database cannot be opened or read.
-    #[inline]
+    /// Returns `IndexError` if the database cannot be opened or read.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -192,6 +191,7 @@ impl IndexerService {
             reason = "consumed by task queries added in issue 08"
         )
     )]
+    #[inline]
     pub fn read_lists(&self) -> IndexResult<Vec<ListEntry>> {
         let store = IndexStore::open(&self.root)?;
         Ok(store.read_all_lists()?)
@@ -512,7 +512,7 @@ mod tests {
 
         #[test]
         fn orders_sibling_files_and_directories_by_relative_path() {
-            // Arrange — `b.txt` sorts AFTER anything inside `b` under
+            // Arrange: `b.txt` sorts AFTER anything inside `b` under
             // component-wise path comparison (`b` < `b.txt`), which matches
             // the walk's name-ordered depth-first traversal.
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -947,7 +947,7 @@ mod tests {
             // Act
             let refreshed = indexer.refresh().expect("refresh index");
 
-            // Assert: the delta names only the changed path — proves the
+            // Assert: the delta names only the changed path; proves the
             // refresh plans a row-level write, not a full rewrite.
             let delta = incremental_paths(refreshed.delta())
                 .expect("refresh after a persisted build must be incremental");
@@ -974,7 +974,7 @@ mod tests {
             let loaded = indexer.load().expect("load index");
 
             // Assert: the two untouched notes persisted byte-identical to
-            // their original write — the incremental write path never
+            // their original write; the incremental write path never
             // touched their rows.
             assert_eq!(find_note(&loaded, "a.md"), Some(&original_a));
             assert_eq!(find_note(&loaded, "c.md"), Some(&original_c));
@@ -1430,7 +1430,7 @@ mod tests {
             // link starts ambiguous (two Notes named `foo`) and later
             // becomes resolvable purely because a *different* Note is
             // deleted. `refresh`'s per-file staleness check would mark
-            // `a.md` "unchanged, reused" and skip re-parsing it — proving
+            // `a.md` "unchanged, reused" and skip re-parsing it; this proves
             // inlinks must come from a full recompute over every indexed
             // Note (deleting a Note always forces one, per
             // `RefreshCache::diff_files`), not a patch limited to the

@@ -294,7 +294,7 @@ impl<'a> SchemaBuilder<'a> {
     }
 
     /// Rejects a field map where two entries canonicalize to the same
-    /// [`FieldKey`](crate::FieldKey) (case-folded,
+    /// [`FieldKey`] (case-folded,
     /// hyphen/underscore-normalized form); ambiguous field identities would
     /// make note-vs-schema field matching unreliable.
     ///

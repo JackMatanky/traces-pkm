@@ -17,7 +17,7 @@ use crate::index::{FileIndex, RowIndex};
 /// `QueryService` executes [`QueryBuilder`] specifications against an indexed
 /// repository. It evaluates candidate source expressions, filters page or task
 /// rows, resolves optional File Class hierarchies via an attached
-/// [`FileClassExpander`], and produces a [`QuerySet`].
+/// `FileClassExpander`, and produces a [`QuerySet`].
 ///
 /// # Examples
 ///

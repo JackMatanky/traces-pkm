@@ -772,13 +772,13 @@ mod tests {
 
         #[test]
         fn parses_code_block_without_leaking_content_as_metadata() {
-            // Arrange — fenced code block contains YAML-like content that could
+            // Arrange: fenced code block contains YAML-like content that could
             // be mistaken for frontmatter if block context doesn't switch.
             let input = "---\ntitle: Real Frontmatter\n---\n\nSome \
                          text.\n\n```\n---\nfake: value\n```\n\nMore text.";
             let note = parse(input);
 
-            // Act — the real frontmatter has 1 field; the fenced content must
+            // Act: the real frontmatter has 1 field; the fenced content must
             // not appear as additional fields.
             let field_count =
                 note.frontmatter().map_or(0, |fm| fm.fields().len());
@@ -792,7 +792,7 @@ mod tests {
 
         #[test]
         fn treats_text_after_closing_fence_as_body() {
-            // Arrange — text after a fenced code block must be treated as body
+            // Arrange: text after a fenced code block must be treated as body
             // text, not as code block content (end_code_block
             // resets BlockContext). Inline fields are extracted from body text,
             // so verifying they appear after a code block proves the context
@@ -800,7 +800,7 @@ mod tests {
             let input = "```\ncode here\n```\n\nStatus:: Draft";
             let note = parse(input);
 
-            // Act — the parser extracts inline fields from body text
+            // Act: the parser extracts inline fields from body text
             let field_count = note.inline_fields().len();
 
             // Assert
@@ -812,7 +812,7 @@ mod tests {
 
         #[test]
         fn preserves_body_through_nested_list_text_blocks() {
-            // Arrange — a paragraph followed by a nested list with text,
+            // Arrange: a paragraph followed by a nested list with text,
             // followed by another paragraph. The
             // body_buffer.clear() in start_text_block must NOT fire
             // for nested text blocks (L215 mutant inverts the guard).
@@ -826,7 +826,7 @@ mod tests {
             let keys: Vec<&str> =
                 note.inline_fields().iter().map(|(k, _)| k.name()).collect();
 
-            // Assert — both paragraph fields must be extracted
+            // Assert: both paragraph fields must be extracted
             assert!(
                 keys.contains(&"Status"),
                 "first paragraph field must be extracted, got: {keys:?}"
@@ -839,7 +839,7 @@ mod tests {
 
         #[test]
         fn emits_breaks_in_body_text() {
-            // Arrange — hard breaks (two trailing spaces) in body text must
+            // Arrange: hard breaks (two trailing spaces) in body text must
             // produce newlines in the body buffer (L317 mutant removes the
             // push). We verify indirectly: a field value must be
             // truncated at the newline, not span across the break.
@@ -850,7 +850,7 @@ mod tests {
             let (_key, values) =
                 note.inline_fields().iter().next().expect("field present");
 
-            // Assert — field value must stop at the hard break
+            // Assert: field value must stop at the hard break
             assert_eq!(
                 values.first().and_then(|v| v.as_str()),
                 Some("value1"),
@@ -861,7 +861,7 @@ mod tests {
 
         #[test]
         fn preserves_inline_code_in_list_item_text() {
-            // Arrange — inline code inside a list item must appear in the
+            // Arrange: inline code inside a list item must appear in the
             // item's display text (text_buffer) but NOT in the scan
             // buffer (for field/tag scanning). The push_code method
             // writes only to text_buffer.

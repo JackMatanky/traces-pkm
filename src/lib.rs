@@ -121,10 +121,7 @@ pub use query::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
-#[cfg(any(test, feature = "test-utils"))]
 pub use tag::{Tag, TagError};
-#[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use tag::{Tag, TagError};
 pub use task::{TaskStatus, TaskStatusMap, TaskStatusSymbol, TaskStatusType};
 #[cfg(not(any(test, feature = "test-utils")))]
 #[expect(unused_imports, reason = "crate re-export")]
@@ -209,8 +206,7 @@ mod test_support {
             .expect("trust project config");
         config_path
     }
-
-    /// Writes a markdown note at `root.join(rel_path)`, creating parent
+    /// Writes a Markdown note at `root.join(rel_path)`, creating parent
     /// directories as needed.
     ///
     /// # Panics

@@ -413,7 +413,7 @@ fn global_from_default_path()
 /// including `dir` itself.
 ///
 /// Walks the whole tree unpruned: a config may sit anywhere, so every directory
-/// is probed. Errors — including a vanished root — propagate as
+/// is probed. Errors (including a vanished root) propagate as
 /// [`DiscoveryError::PathInaccessible`]; unlike the Schema registry and
 /// Template loaders there is no degrade-to-empty policy here.
 fn collect_descendant_configs(

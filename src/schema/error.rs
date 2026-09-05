@@ -127,9 +127,8 @@ pub(crate) enum SchemaWarning {
     /// value is used as-is.
     ///
     /// `message` is exactly what a hard failure for this same attribute
-    /// would report — `SchemaFieldParserError`'s `Display` (a private
-    /// `fields::error` type this doc comment can't link to) — rather than a
-    /// second, hand-mirrored wording per
+    /// would report (`SchemaFieldParserError`'s `Display`, a private
+    /// `fields::error` type), rather than a second, hand-mirrored wording per
     /// failure kind: five variants used to restate
     /// `SchemaFieldParserError`'s five variants field-for-field just to
     /// change "field ... has no attribute" into "$ref override ... has no

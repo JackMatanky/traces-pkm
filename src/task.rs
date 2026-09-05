@@ -70,9 +70,9 @@ impl Default for TaskStatus {
 
 /// A [`TaskStatus`] lookup table, built once at config resolution.
 ///
-/// display name, and by workflow type. Default statuses are always present;
-/// [`Self::insert`] lets configuration add new statuses or override a default
-/// one that shares its symbol.
+/// Provides lookup by marker symbol, display name, and workflow type. Default
+/// statuses are always present; configuration can add new statuses or override
+/// default ones that share a symbol.
 #[derive(Clone, Debug)]
 pub struct TaskStatusMap {
     symbols: HashMap<TaskStatusSymbol, TaskStatus>,

@@ -134,7 +134,7 @@ impl IndexStore {
         )
     }
 
-    /// True if `key_bytes` is a `LISTS` key belonging to `path` — the range
+    /// True if `key_bytes` is a `LISTS` key belonging to `path`: the range
     /// bounds from [`Self::list_key_bounds`] can also match a longer
     /// sibling path, so callers must still check this per key.
     #[inline]
@@ -1525,7 +1525,7 @@ mod tests {
             );
 
             // The refresh path reconstructs without correlating, so every
-            // persisted edge survives — proving the orphans are on disk and
+            // persisted edge survives, proving the orphans are on disk and
             // that only read_all's correlation drops them.
             let txn = store.begin_read().expect("read txn");
             let (_, reconstructed) =
@@ -1849,8 +1849,8 @@ mod tests {
             // Corrupted)` `create_db` already catches. Exercising this
             // through a real `IndexStore::open` call would require
             // hand-crafting a redb file corrupted at exactly one table's
-            // B-tree while leaving the container header/checksums valid —
-            // infeasible to construct reliably without redb's own
+            // B-tree while leaving the container header/checksums valid;
+            // this is infeasible to construct reliably without redb's own
             // on-disk-format internals, so the predicate is proven
             // directly here instead.
             let error = redb::TableError::Storage(

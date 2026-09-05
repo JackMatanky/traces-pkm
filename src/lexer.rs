@@ -135,9 +135,9 @@ impl<T> LexTokenStream<LexedToken<T>> {
     }
 
     /// Consumes the next token, applies `f`, and returns the mapped result.
-    ///
-    /// The next token must exist and `f` must return `Some`. Otherwise
-    /// returns a [`LexError`] with diagnostic context.
+    /// The next token must exist and `f` must return `Some`. Otherwise,
+    /// [`Self::expect_map`] returns `None` and leaves the stream
+    /// untouched.
     ///
     /// # Errors
     ///
@@ -328,7 +328,7 @@ impl LexError {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// assert_eq!(lexical_unquote(r#""hello \"world\"""#), r#"hello "world""#);
 /// assert_eq!(lexical_unquote(r"'single \'quote\''"), "single 'quote'");
 /// assert_eq!(lexical_unquote(r"plain\ text"), "plain text");
@@ -353,7 +353,7 @@ pub(crate) fn lexical_unquote(raw: &str) -> String {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// assert_eq!(lexical_backslash_unescape(r#"hello \"world\""#), "hello \"world\"");
 /// assert_eq!(lexical_backslash_unescape(r#"back\\slash"#), "back\\slash");
 /// assert_eq!(lexical_backslash_unescape("trailing\\"), "trailing\\");

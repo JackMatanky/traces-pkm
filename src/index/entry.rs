@@ -136,18 +136,18 @@ impl NoteEntry {
 /// A persisted record of a single list item and its source note path.
 ///
 /// Wraps a project-relative `path` and the parsed [`ListItem`], mirroring
-/// how [`NoteEntry`] wraps [`Note`]. Exposes accessor methods that delegate
+/// how note entries wrap [`Note`]. Exposes accessor methods that delegate
 /// into the [`crate::ListItemType`] discriminant, keeping the persistence
 /// shape composable: adding a field to [`crate::TaskListItem`] does not
 /// require updating `ListEntry`'s struct layout.
 ///
 /// `item`'s descendant lists are always empty
-/// ([`ListItem::without_children`]): a `ListEntry` is one row per list item,
+/// (`ListItem::without_children`): a `ListEntry` is one row per list item,
 /// not per subtree, and each descendant is persisted as its own,
 /// independent `ListEntry`, addressable by its own `(path, line)` key.
 /// Nesting a copy of every descendant inside every ancestor's row would
 /// duplicate that data once per ancestor, growing storage quadratically with
-/// nesting depth for deeply nested lists — unlike [`NoteEntry`], which wraps
+/// nesting depth for deeply nested lists, unlike note entries that wrap
 /// one [`Note`] once regardless of how deep its lists nest.
 ///
 /// Stored in the `LISTS` table in redb, keyed by `(path, line)`.
@@ -267,11 +267,10 @@ impl ListEntry {
 /// Borrowed mirror of [`ListEntry`] used to serialize a `LISTS` row without
 /// cloning the source [`Note`]'s path.
 ///
-/// `item` still borrows the live tree node directly — callers MUST pass an
+/// `item` still borrows the live tree node directly; callers MUST pass an
 /// item whose descendant lists are already cleared (see
-/// [`ListItem::without_children`]), typically a local variable holding that
+/// `ListItem::without_children`), typically a local variable holding that
 /// derived value, never the original tree node. Field order and types match
-/// [`ListEntry`] exactly, so postcard's positional encoding is byte-for-byte
 /// identical between the two; [`super::store::IndexStore::read_lists`] and
 /// [`super::store::IndexStore::read_lists_for_path`] deserialize the bytes
 /// back as an owned [`ListEntry`].
@@ -354,7 +353,7 @@ mod tests {
         fn entry_size_stays_under_target() {
             assert!(
                 std::mem::size_of::<FileEntry>() <= 128,
-                "FileEntry grew past its ~120-byte target — Note must stay \
+                "FileEntry grew past its ~120-byte target: Note must stay \
                  boxed (its own shell is 240 bytes); check for an \
                  accidentally un-boxed field before raising this bound"
             );

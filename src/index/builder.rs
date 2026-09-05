@@ -762,7 +762,7 @@ mod tests {
             .build(temp.path())
             .expect("build");
 
-            // Both notes must still be present and unchanged — proves the
+            // Both notes must still be present and unchanged; proves the
             // upserted pointer was consumed for m.png (a non-Note) and did
             // not misalign against a.md/z.md.
             assert_eq!(

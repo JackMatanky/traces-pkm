@@ -320,7 +320,7 @@ impl Object for QuerySet {
     ///
     /// - `where` and `filter` both call `QuerySet::filter`. The Rust-side
     ///   `r#where` alias exists only for Rust callers.
-    /// - `sort` defaults to [`SortDirection::default`] (descending) when the
+    /// - `sort` defaults to `SortDirection::default` (descending) when the
     ///   optional `descending` argument is omitted.
     ///
     /// # Errors

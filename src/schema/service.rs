@@ -18,11 +18,6 @@ use super::{
 };
 use crate::{BaseNameRef, DirTree, DirTreeError};
 
-/// Schema loading, resolution, and hierarchy/class query facade.
-///
-/// Resolves every Schema once at construction (`SchemaService::new`); every
-/// query method reads the already-resolved Schemas directly, with no separate
-/// registry type or re-resolution.
 /// An error encountered while loading or resolving schemas.
 #[derive(Debug, Error)]
 #[error(transparent)]
@@ -74,19 +69,12 @@ impl SchemaService {
     /// The `extends` DAG is linearized and each Schema's fields are merged from
     /// its parents. A missing directory resolves to an empty registry.
     /// Per-Schema [`SchemaError`]s exclude that Schema from the result; its
-    /// dependents still resolve without its fields ([`ParentFailedToResolve`]).
+    /// dependents still resolve without its fields (`ParentFailedToResolve`).
     ///
     /// # Errors
     ///
-    /// - [`ReadDirectory`] if the registry directory exists but cannot be
-    ///   listed.
-    /// - [`File`] if a `.toml` file cannot be read or fails to parse.
-    /// - [`Cycle`] if the `extends` DAG contains a cycle.
-    ///
-    /// [`ReadDirectory`]: SchemaError::ReadDirectory
-    /// [`File`]: SchemaError::File
-    /// [`Cycle`]: SchemaError::Cycle
-    /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
+    /// Returns an error if the registry directory cannot be read, a schema file
+    /// fails to parse, or the `extends` DAG contains a cycle.
     pub(crate) fn load_verbose(
         directory: &Path,
     ) -> SchemaResult<SchemaConstruction> {

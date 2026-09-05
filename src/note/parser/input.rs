@@ -4,32 +4,25 @@
 //! Markdown source text alongside resolved [`TaskConfig`] and
 //! [`FrontmatterConfig`] settings. By borrowing all components, parsing
 //! operates without heap allocations or cloning configuration tables.
-//!
-//! # Examples
-//!
-//! ```rust
-//! # #[cfg(feature = "test-utils")]
-//! # {
-//! use std::path::Path;
-//!
-//! use traces_pkm::{MarkdownParserInput, parse_markdown};
-//!
-//! let input =
-//!     MarkdownParserInput::for_test(Path::new("todo.md"), "- [ ] Task");
-//! let note = parse_markdown(&input);
-//! assert_eq!(note.tasks().count(), 1);
-//! # }
-//! ```
-
+/// # Examples
+///
+/// ```rust
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let input =
+///     MarkdownParserInput::for_test(Path::new("todo.md"), "- [ ] Task");
+/// let note = parse_markdown(&input);
+/// assert_eq!(note.tasks().count(), 1);
+/// ```
 use std::path::Path;
 
 use crate::config::{FrontmatterConfig, TaskConfig};
 
-#[cfg(any(test, feature = "test-utils"))]
 static DEFAULT_TASK_CONFIG: std::sync::LazyLock<TaskConfig> =
     std::sync::LazyLock::new(TaskConfig::default);
 
-#[cfg(any(test, feature = "test-utils"))]
 static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
     std::sync::LazyLock::new(FrontmatterConfig::default);
 
@@ -41,8 +34,6 @@ static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -51,7 +42,6 @@ static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
 ///     MarkdownParserInput::for_test(Path::new("todo.md"), "- [ ] Task");
 /// let note = parse_markdown(&input);
 /// assert_eq!(note.tasks().count(), 1);
-/// # }
 /// ```
 #[derive(Clone, Debug)]
 pub struct MarkdownParserInput<'a> {
@@ -84,7 +74,6 @@ impl<'a> MarkdownParserInput<'a> {
     }
 
     /// Creates a parser input with default configuration for test fixtures.
-    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
     pub fn for_test(path: &'a Path, src: &'a str) -> Self {

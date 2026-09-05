@@ -11,7 +11,7 @@
 //! - **`O(1)` Appends**: Chained transform calls ([`filter`](QuerySet::filter),
 //!   [`sort_field`](QuerySet::sort_field), [`limit`](QuerySet::limit),
 //!   [`group_by`](QuerySet::group_by), [`flatten`](QuerySet::flatten)) append
-//!   steps to an internal [`QueryPlan`](super::QueryPlan) in `O(1)` time.
+//!   steps to an internal [`QueryPlan`] in `O(1)` time.
 //! - **Lazy Materialization**: Computes transformations lazily on first access
 //!   ([`len`](QuerySet::len), [`get`](QuerySet::get), [`iter`](QuerySet::iter),
 //!   or terminal renderers), memoizing the resulting rows.
@@ -310,8 +310,7 @@ impl std::fmt::Debug for QueryRow {
 /// query.
 ///
 /// `QuerySet` acts as a common table expression (CTE) result set:
-/// transformation methods ([`filter`](Self::filter),
-/// [`sort_field`](Self::sort_field), [`flatten`](Self::flatten)) append
+/// transformation methods (`filter`, `sort_field`, `flatten`) append
 /// transformations in `O(1)` time to a
 /// pending plan. Execution occurs lazily on first read ([`len`](Self::len),
 /// [`get`](Self::get), [`iter`](Self::iter), or any terminal renderer),

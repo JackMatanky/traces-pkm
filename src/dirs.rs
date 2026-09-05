@@ -7,7 +7,7 @@
 //! - [`TRUSTED_CONFIGS`] - Store for paths marked trusted by workspace config
 //!
 //! State stores live under `$TRACES_STATE_DIR` when that variable is set and
-//! non-empty. Otherwise they live under the platform state directory with the
+//! non-empty. Otherwise, they live under the platform state directory with the
 //! application name appended.
 
 use std::{
@@ -63,8 +63,7 @@ static HOME: LazyLock<PathBuf> =
 
 /// User home directory on Windows.
 ///
-/// - Override: `%USERPROFILE%`  (then `%HOMEDRIVE%``%HOMEPATH%`)
-/// - Default: `C:\`
+/// - Override: `%USERPROFILE%` (then `%HOMEDRIVE%``%HOMEPATH%`)
 #[cfg(all(not(test), windows))]
 static HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("USERPROFILE")

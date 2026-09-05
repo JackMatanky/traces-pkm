@@ -683,7 +683,7 @@ mod tests {
         fn file_field_reaches_a_non_markdown_file_with_no_note() {
             // The acceptance case this refactor exists for: a `file` field
             // matches non-Markdown files (no parsed Note at all), and
-            // `.field()` selects it without executing any query itself —
+            // `.field()` selects it without executing any query itself;
             // only `query.from(...)` does, via the shared resolution path.
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
@@ -936,7 +936,7 @@ mod tests {
             // Proves the "descendants" branch threads the render-cached
             // `SchemaService`/registry into each returned bound `Schema`
             // (via `bind_related`'s own `cached_service`/`cached_schema_set`
-            // calls, not a fresh/empty one) — the service-level
+            // calls, not a fresh/empty one): the service-level
             // `descendants` test already proves the underlying data is
             // transitively correct; this proves the render-facing chain
             // (`.descendants().descendants()`) the module docs promise
@@ -983,7 +983,7 @@ mod tests {
             // on either, so no existing test proves minijinja actually
             // attaches them to a `schema.*` error. `.name()`/`.line()` are
             // populated unconditionally (verified: still `Some` with
-            // `set_debug(false)`, in both debug and release profiles) —
+            // `set_debug(false)`, in both debug and release profiles);
             // only the byte-accurate column info `crate::cli::error` needs
             // requires `set_debug(true)`. Calling it here anyway mirrors
             // `TemplateEngine::new`'s production wiring exactly, so this
@@ -1120,7 +1120,7 @@ mod tests {
         fn a_broken_sibling_schema_still_breaks_construction() {
             // Directory-wide load failure is documented, not hidden:
             // resolution happens once at construction, so one malformed
-            // sibling Schema fails the whole registry — and therefore every
+            // sibling Schema fails the whole registry, and therefore every
             // render, regardless of whether the template ever reaches into
             // `schema` (see the `register` module below).
             let temp = tempfile::tempdir().expect("create temp dir");

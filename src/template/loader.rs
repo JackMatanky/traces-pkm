@@ -262,7 +262,7 @@ impl TemplateLoader {
     /// [`crate::dirtree::DirNode::file_type`]
     /// check in [`Self::find_name_in`]. Returns empty when `dir` is `None`,
     /// does not exist, or cannot be read: listing failures shrink the
-    /// candidate list, deliberately — there is no `Result` here to report
+    /// candidate list, deliberately; there is no `Result` here to report
     /// one in, so the discard is stated explicitly rather than hidden in a
     /// `filter_map(Result::ok)`. This never recurses into subdirectories.
     fn stems_in(dir: Option<&Path>) -> Vec<String> {
@@ -755,7 +755,7 @@ mod tests {
         #[test]
         fn finds_a_global_template_when_local_is_absent() {
             // A project with no local template directory configured at
-            // all — not merely an empty one — must still resolve
+            // all (not merely an empty one) must still resolve
             // against the global directory.
             let temp = tempfile::tempdir().expect("create temp dir");
             let global_dir = temp.path().join("global-templates");

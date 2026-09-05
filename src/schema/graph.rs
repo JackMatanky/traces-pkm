@@ -75,7 +75,7 @@ impl<'a> SchemaGraph<'a> {
     /// filtered by `keep`.
     ///
     /// `keep(candidate, ancestor)` decides whether `candidate` still counts as
-    /// a child/descendant of `ancestor` — callers use this to drop links a
+    /// a child/descendant of `ancestor`; callers use this to drop links a
     /// failed parent resolution invalidated. Descendant closure is computed
     /// once, then converted straight into the owned sets the caller stores.
     pub(super) fn hierarchy<'b>(
@@ -475,7 +475,7 @@ mod tests {
             // `IndexSet`'s `PartialEq` compares as a set and ignores
             // order (`self.len() == other.len() && self.is_subset(other)`),
             // so this asserts against a `Vec` collected in iteration
-            // order — an `assert_eq!` against another `IndexSet` here
+            // order: an `assert_eq!` against another `IndexSet` here
             // would silently pass even if the sort were removed.
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));

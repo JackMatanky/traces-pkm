@@ -22,8 +22,6 @@ use crate::{FieldKey, FieldKeyRef, Tag};
 /// # Examples
 ///
 /// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
 /// use std::path::Path;
 ///
 /// use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -35,7 +33,6 @@ use crate::{FieldKey, FieldKeyRef, Tag};
 /// let note = parse_markdown(&input);
 /// assert_eq!(note.path(), Path::new("note.md"));
 /// assert_eq!(note.tasks().count(), 1);
-/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {

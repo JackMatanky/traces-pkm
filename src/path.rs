@@ -322,8 +322,8 @@ mod tests {
             symlink(&outside, root.join("link")).expect("create symlink");
 
             // `link/new/note.md` doesn't exist yet, but its existing
-            // ancestor (`link`) is a symlink escaping `root` — the write
-            // path this closes the gap for.
+            // ancestor (`link`) is a symlink escaping `root`, which is the
+            // write path this check guards against.
             let error =
                 RootConfinedPath::parse(&root, Path::new("link/new/note.md"))
                     .expect_err("escaping symlink ancestor is rejected");

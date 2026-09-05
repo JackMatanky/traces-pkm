@@ -493,7 +493,7 @@ fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
         | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
             ..
         } => Box::new(
-            "this is an internal error — config discovery produced output the \
+            "this is an internal error: config discovery produced output the \
              builder could not consume; please file a bug report",
         ),
         ConfigBuilderError::Untrusted {
@@ -533,7 +533,7 @@ fn init_config_write_help(
         ConfigScaffoldError::Serialize {
             ..
         } => Box::new(
-            "this is an internal error — the collected template and output \
+            "this is an internal error: the collected template and output \
              directories could not be serialised to TOML",
         ),
     }
@@ -668,7 +668,7 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
         TemplateError::OutputPathEscapesRoot {
             ..
         } => Box::new(
-            "pass a path within the project — absolute paths and \"..\" \
+            "pass a path within the project: absolute paths and \"..\" \
              segments are not allowed",
         ),
         TemplateError::OutputPathUnverifiable {
@@ -885,7 +885,7 @@ mod tests {
             assert_eq!(
                 error.help().map(|help| help.to_string()),
                 Some(
-                    "this is an internal error — config discovery produced \
+                    "this is an internal error: config discovery produced \
                      output the builder could not consume; please file a bug \
                      report"
                         .to_owned()
@@ -1129,7 +1129,7 @@ mod tests {
             assert_eq!(
                 error.help().map(|help| help.to_string()),
                 Some(
-                    "pass a path within the project — absolute paths and \
+                    "pass a path within the project: absolute paths and \
                      \"..\" segments are not allowed"
                         .to_owned()
                 )
@@ -1354,7 +1354,7 @@ mod tests {
             assert_eq!(
                 error.help().map(|help| help.to_string()),
                 Some(
-                    "this is an internal error — the collected template and \
+                    "this is an internal error: the collected template and \
                      output directories could not be serialised to TOML"
                         .to_owned()
                 )

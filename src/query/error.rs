@@ -26,7 +26,7 @@ pub type QueryResult<T> = std::result::Result<T, QueryError>;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// use traces_pkm::query::{QueryBuilderError, QueryError};
 ///
 /// let error = QueryError::from(QueryBuilderError::LimitOutOfRange {
@@ -121,9 +121,7 @@ pub enum QueryBuilderError {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// # use miette::SourceSpan;
-/// # use traces_pkm::query::error::{QueryDialect, QuerySyntaxError};
+/// ```text
 /// let error = QuerySyntaxError::new(
 ///     QueryDialect::Source,
 ///     "input",
@@ -190,8 +188,7 @@ impl QuerySyntaxError {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// # use traces_pkm::query::error::FieldPathError;
+/// ```text
 /// let error = FieldPathError::new("file.nmae", Some("file.name"));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -216,8 +213,7 @@ impl FieldPathError {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// # use traces_pkm::query::error::FieldPathError;
+    /// ```text
     /// let error = FieldPathError::new("file.nmae", Some("file.name"));
     /// ```
     pub(in crate::query) fn new(path: &str, suggestion: Option<&str>) -> Self {
@@ -235,7 +231,7 @@ impl FieldPathError {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// use traces_pkm::query::QueryDialect;
 ///
 /// assert_eq!(QueryDialect::Source.to_string(), "source");

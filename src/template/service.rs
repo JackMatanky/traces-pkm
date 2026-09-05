@@ -451,7 +451,7 @@ mod tests {
         #[test]
         fn normalizes_extension_input_but_keeps_directory() {
             // "notes/daily" and "notes/daily.md" must resolve to the exact
-            // same output — the with/without-extension forms are
+            // same output: the with/without-extension forms are
             // normalized to one output, but the subdirectory itself is
             // never flattened away (see `default_output_path`'s docs).
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1104,7 +1104,7 @@ mod tests {
         #[test]
         fn ui_select_and_multi_select_honor_a_custom_attribute() {
             // `default`'s exact fallback content is unit-tested directly
-            // against `label_items` (see `ui.rs`) — nothing about it
+            // against `label_items` (see `ui.rs`); nothing about it
             // is observable through a render, since it only affects the
             // label text passed to the provider, not the recovered item.
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1150,8 +1150,8 @@ mod tests {
         #[test]
         fn dry_run_still_uses_the_injected_provider_for_ui_calls() {
             // `WriteMode` decides whether the render gets written, never
-            // whether its `ui.*` calls prompt — see `TemplateService::new`'s
-            // docs. Proves the reverse of what a naive "dry-run means no
+            // whether its `ui.*` calls prompt (see `TemplateService::new`'s
+            // docs). Proves the reverse of what a naive "dry-run means no
             // interaction" reading would suggest: a `PresetDialogProvider`
             // with real queued answers still supplies them during a dry
             // run, so `--dry-run` can preview a template whose output

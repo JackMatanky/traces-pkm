@@ -141,8 +141,7 @@ impl FileBase {
         &self.folder
     }
 
-    /// Returns whether this file is a markdown note or another regular file.
-    #[inline]
+    /// Returns whether this file is a Markdown note or another regular file.
     #[must_use]
     pub(crate) const fn format(&self) -> FileFormat {
         self.format
@@ -304,7 +303,7 @@ pub(crate) enum FileFormat {
     ///
     /// [`Note`]: crate::Note
     Note,
-    /// Regular non-markdown file.
+    /// Regular non-Markdown file.
     Other,
 }
 

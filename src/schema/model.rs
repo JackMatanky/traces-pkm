@@ -315,7 +315,7 @@ mod tests {
             // Defensive: Schema resolution already rejects two fields sharing
             // a canonical form within one Schema (`SchemaError::
             // AmbiguousFieldName`), so this never happens for a real
-            // resolved Schema — this test only proves `suggest_field` itself
+            // resolved Schema: this test only proves `suggest_field` itself
             // degrades safely if it ever did.
             let schema = schema_with_fields(&["due date", "Due-Date"]);
 

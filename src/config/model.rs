@@ -735,7 +735,7 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
 
     /// # Errors
     ///
-    /// - [`ConfigFileError::InvalidTagFilter`] when a `tag_filters` entry does
+    /// - `ConfigFileError::InvalidTagFilter` when a `tag_filters` entry does
     ///   not normalize into a valid [`Tag`].
     #[inline]
     fn try_from(raw: RawTaskConfig) -> Result<Self, Self::Error> {

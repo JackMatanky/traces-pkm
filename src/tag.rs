@@ -14,8 +14,8 @@ use thiserror::Error;
 ///
 /// # Examples
 ///
-/// ```ignore
-/// # use crate::Tag;
+/// ```
+/// # use traces_pkm::Tag;
 /// let tag = Tag::parse("#projects/active").unwrap();
 /// assert_eq!(tag.as_str(), "#projects/active");
 /// assert!(tag.is_contained_in("#projects"));
@@ -57,10 +57,17 @@ impl Tag {
     /// The input must start with `#` followed by `[a-zA-Z]`, then
     /// `[a-zA-Z0-9_/]*`. Hierarchical segments are pre-computed at construction
     /// time for efficient containment checks.
-    ///
     /// # Errors
     ///
     /// Returns [`TagError`] if the input does not match the tag format.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use traces_pkm::Tag;
+    /// let tag = Tag::parse("#rust/pkm").unwrap();
+    /// assert_eq!(tag.as_str(), "#rust/pkm");
+    /// ```
     #[inline]
     pub fn parse(input: &str) -> Result<Self, TagError> {
         let rest = input.strip_prefix('#').ok_or(TagError::MissingHash)?;

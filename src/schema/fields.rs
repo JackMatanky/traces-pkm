@@ -224,10 +224,10 @@ impl SchemaFieldType {
 }
 
 /// Which of the six field kinds a [`SchemaFieldType`] or
-/// [`RawSchemaFieldType`][super::RawSchemaFieldType] is, without either's
+/// [`RawSchemaFieldType`] is, without either's
 /// payload.
 ///
-/// Constructible from a [`RawSchemaFieldType`][super::RawSchemaFieldType] (via
+/// Constructible from a [`RawSchemaFieldType`] (via
 /// [`From`]) or projected from an already-resolved [`SchemaFieldType`] (via
 /// [`SchemaFieldType::kind`]), never the reverse. Used by
 /// [`SchemaFieldParserError`], [`SchemaWarning`], and

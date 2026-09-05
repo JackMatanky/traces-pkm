@@ -123,7 +123,7 @@ impl TemplateEngine {
         let class_field = config.class_field_arc();
         // Resolved once here and shared with `QueryOps` (below) so
         // `query`/`tasks` `.from()` and `schema.get()` read the identical,
-        // already-resolved `SchemaService` for this engine's whole lifetime —
+        // already-resolved `SchemaService` for this engine's whole lifetime:
         // no render-scoped re-resolution or caching.
         let schema_directory = config.resolved_schema_directory()?;
         let construction = SchemaService::load_verbose(&schema_directory)?;

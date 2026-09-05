@@ -13,7 +13,7 @@
 //! outside touch is [`SchemaFieldBuilderError`] wrapping into
 //! [`SchemaError::FieldBuilder`](super::super::error::SchemaError::FieldBuilder)
 //! and [`SchemaFieldParserError`] converting into
-//! [`SchemaWarning`](super::super::error::SchemaWarning) for a degraded bare
+//! [`SchemaWarning`] for a degraded bare
 //! `$ref` override.
 
 use thiserror::Error;
@@ -28,7 +28,7 @@ use crate::{path::PathError, schema::error::SchemaWarning};
 /// - [`Self::RefFieldNotFound`]
 ///
 /// Hard failures for `Direct` fields and `$ref` with a `type` override,
-/// degraded to [`SchemaWarning`][super::super::error::SchemaWarning] for bare
+/// degraded to [`SchemaWarning`] for bare
 /// `$ref` overrides:
 /// - [`Self::Parser`]
 #[derive(Debug, Error)]
@@ -63,7 +63,7 @@ pub(crate) enum SchemaFieldBuilderError {
 
 /// One per-key validation failure from parsing a field type's `options`.
 ///
-/// Every field type pushes through this one vocabulary — `select`'s
+/// Every field type pushes through this one vocabulary: `select`'s
 /// [`Self::SelectValue`] wraps [`SchemaSelectFieldValueError`] the same way
 /// `number`'s [`Self::NumberConstraint`]/[`Self::NumberRange`] are flat
 /// siblings here, not a second parser-error hierarchy.
@@ -71,8 +71,7 @@ pub(crate) enum SchemaFieldBuilderError {
 /// Converts into:
 /// - [`SchemaFieldBuilderError::Parser`] (hard failure) for `Direct` fields and
 ///   `$ref` with a `type` override.
-/// - [`SchemaWarning`][super::super::error::SchemaWarning] (degraded) for bare
-///   `$ref` overrides.
+/// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFieldParserError {
     /// An attribute key was not claimed by any typed extractor.
@@ -129,7 +128,7 @@ pub(crate) enum SchemaFieldParserError {
 /// Reuses [`SchemaSelectFieldEntryError::ShapeMismatch`] for every "this must
 /// be {expected}, got {value}" failure (a file's `path`, a selector name, a
 /// selected entry value, an `order` value) instead of a bespoke variant per
-/// selector — the shape is always the same, only the description of what was
+/// selector: the shape is always the same, only the description of what was
 /// checked varies.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaSelectFieldValueError {
@@ -137,7 +136,7 @@ pub(crate) enum SchemaSelectFieldValueError {
     #[error("values file subtable is missing required attribute \"path\"")]
     MissingPath,
     /// An entry has a shape or selector problem, whether declared inline in
-    /// the field's own `values` list or loaded from an external file —
+    /// the field's own `values` list or loaded from an external file;
     /// `path` names which (`None` for inline).
     #[error(
         "{}",
@@ -163,7 +162,7 @@ pub(crate) enum SchemaSelectFieldValueError {
 
 /// One entry's shape or selector failure.
 /// [`SchemaSelectFieldValueError::Entry`] carries whether the entry was inline
-/// or loaded from a file — this type doesn't need to know.
+/// or loaded from a file: this type doesn't need to know.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaSelectFieldEntryError {
     /// A selector's or entry key's value has the wrong shape.

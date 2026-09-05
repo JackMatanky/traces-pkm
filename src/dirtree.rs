@@ -76,8 +76,7 @@ impl DirTreeError {
     ///
     /// Every variant carries the same `{path, source}` shape, so callers can
     /// convert any error into their own domain type in one line:
-    ///
-    /// ```ignore
+    /// ```text
     /// let (path, source) = error.into_parts();
     /// MyError::Io { path, source }
     /// ```
@@ -403,7 +402,7 @@ mod tests {
 
         #[test]
         fn sorted_by_orders_immediate_entries() {
-            // Arrange — created deliberately out of lexicographic order.
+            // Arrange: created deliberately out of lexicographic order.
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             write(root, "z.md");
@@ -416,7 +415,7 @@ mod tests {
                 .map(|node| node.file_name().to_string_lossy().into_owned())
                 .collect();
 
-            // Assert — yielded already ordered; nothing sorted after the walk.
+            // Assert: yielded already ordered; nothing sorted after the walk.
             assert_eq!(names, vec!["a.md", "z.md"]);
         }
 
@@ -449,7 +448,7 @@ mod tests {
                 .collect();
             names.sort();
 
-            // Assert — .git directory removed, note.md and remaining entries
+            // Assert: .git directory removed, note.md and remaining entries
             // kept.
             assert_eq!(names, vec!["note.md"]);
         }
@@ -481,7 +480,7 @@ mod tests {
                 .collect();
             relatives.sort();
 
-            // Assert — the root itself is yielded (empty relative path),
+            // Assert: the root itself is yielded (empty relative path),
             // matching what index scanning and subtree discovery rely on.
             assert_eq!(relatives, vec!["", "a.md", "b", "b/one.md"]);
         }
@@ -519,7 +518,7 @@ mod tests {
                 .collect();
             names.sort();
 
-            // Assert — pruned subtree absent entirely, surviving entry kept.
+            // Assert: pruned subtree absent entirely, surviving entry kept.
             assert_eq!(names.len(), 2);
             assert!(names.contains(&"note.md".to_owned()));
             assert!(!names.contains(&"HEAD".to_owned()));
@@ -540,7 +539,7 @@ mod tests {
                 .collect();
             names.sort();
 
-            // Assert — the predicate only prunes directories; a file named
+            // Assert: the predicate only prunes directories; a file named
             // `.git` passes through untouched (alongside the walk root).
             assert_eq!(names.len(), 2);
             assert!(names.contains(&".git".to_owned()));
@@ -568,7 +567,7 @@ mod tests {
                 })
                 .collect();
 
-            // Assert — depth-first with siblings name-ordered per directory;
+            // Assert: depth-first with siblings name-ordered per directory;
             // the root itself still comes first.
             assert_eq!(relatives, vec![
                 "",
@@ -601,7 +600,7 @@ mod tests {
                 })
                 .collect();
 
-            // Assert — pruned subtree absent AND surviving siblings ordered.
+            // Assert: pruned subtree absent AND surviving siblings ordered.
             assert_eq!(relatives, vec!["", "b", "b/note.md"]);
         }
     }
@@ -641,7 +640,7 @@ mod tests {
             // Act
             let collected: Vec<_> = DirTree::children(root).collect();
 
-            // Assert — stat on the root still succeeds (parent grants it),
+            // Assert: stat on the root still succeeds (parent grants it),
             // so this is an access failure, not absence.
             assert_eq!(collected.len(), 1);
             let error = collected
@@ -660,7 +659,7 @@ mod tests {
         fn children_yields_an_unreadable_subdirectory_without_error() {
             use std::os::unix::fs::PermissionsExt;
 
-            // Arrange — walkdir opens child directories eagerly even under
+            // Arrange: walkdir opens child directories eagerly even under
             // max_depth(1), but a failed open is stored in the child's dir
             // list and popped before it can be polled, so flat listings
             // yield the locked directory as a plain entry with no error.
@@ -694,7 +693,7 @@ mod tests {
         fn descendants_reports_an_unreadable_subdirectory_naming_it() {
             use std::os::unix::fs::PermissionsExt;
 
-            // Arrange — unlike `children`, an unlimited-depth walk polls the
+            // Arrange: unlike `children`, an unlimited-depth walk polls the
             // stored open-failure and surfaces it.
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();

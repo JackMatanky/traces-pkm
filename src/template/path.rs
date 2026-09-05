@@ -269,7 +269,7 @@ mod tests {
             // "./daily.md" splits into [CurDir, Normal("daily.md")]: a
             // leading CurDir component doesn't itself count toward
             // `has_normal_component`, but doesn't disqualify the path
-            // either — the trailing Normal component still does. This
+            // either: the trailing Normal component still does. This
             // is the exact case `has_normal_component` exists to allow
             // (vs. a bare "." with no Normal component at all).
             let path = validated("./daily.md");
@@ -280,7 +280,7 @@ mod tests {
         #[test]
         fn rejects_an_absolute_path() {
             // A syntactically absolute path is rejected before any I/O
-            // happens — parse() never reads the filesystem, so this
+            // happens: parse() never reads the filesystem, so this
             // never touches whatever real file may or may not exist at
             // this well-known path.
             let error = TemplatePathInput::parse(Path::new("/etc/passwd"))

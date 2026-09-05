@@ -38,8 +38,6 @@
 //! # Examples
 //!
 //! ```rust
-//! # #[cfg(feature = "test-utils")]
-//! # {
 //! use std::path::Path;
 //!
 //! use traces_pkm::{MarkdownParserInput, parse_markdown};
@@ -50,7 +48,6 @@
 //! );
 //! let note = parse_markdown(&input);
 //! assert_eq!(note.tasks().count(), 1);
-//! # }
 //! ```
 
 mod cursor;

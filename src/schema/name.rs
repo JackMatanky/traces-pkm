@@ -66,8 +66,8 @@ impl SchemaName {
     /// instead: [`Self::global`] for the reserved name, or the
     /// `From<`[`BaseNameRef`]`>` impl below for a Schema file's stem, both of
     /// which are non-empty by construction and never reach this check. This
-    /// method exists for the one remaining case — a `$ref` schema segment
-    /// parsed from user-authored TOML text — where the input is genuinely
+    /// method exists for the one remaining case (a `$ref` schema segment
+    /// parsed from user-authored TOML text) where the input is genuinely
     /// untrusted.
     ///
     /// # Errors

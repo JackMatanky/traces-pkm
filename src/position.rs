@@ -1,9 +1,9 @@
 //! Source-position primitives shared across text-parsing domains.
 //!
-//! [`SourceLine`] and [`ByteOffset`] are distinct newtypes so a byte offset
-//! can never be mistaken for a line number at compile time. Domain-specific
-//! parsers (Markdown notes, config files, templates) convert between the two
-//! with their own local tracking strategy; only the vocabulary lives here.
+//! [`SourceLine`] and `ByteOffset` are distinct newtypes so a byte offset can
+//! never be mistaken for a line number at compile time. Domain-specific parsers
+//! (Markdown notes, config files, templates) convert between the two with their
+//! own local tracking strategy; only the vocabulary lives here.
 
 use std::fmt;
 
@@ -11,8 +11,18 @@ use serde::{Deserialize, Serialize};
 
 /// A 1-indexed source line number.
 ///
-/// Distinct from [`ByteOffset`] so a byte offset can never be passed where a
-/// line number is expected, or vice versa.
+/// Distinct from `ByteOffset` so a byte offset can never be passed where a line
+/// number is expected, or vice versa.
+///
+/// # Examples
+///
+/// ```
+/// use traces_pkm::SourceLine;
+///
+/// let line = SourceLine::new(42);
+/// assert_eq!(u32::from(line), 42);
+/// assert_eq!(line.to_string(), "42");
+/// ```
 #[derive(
     Copy,
     Clone,
@@ -30,6 +40,15 @@ pub struct SourceLine(u32);
 
 impl SourceLine {
     /// Wraps `line` as a 1-indexed source line number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use traces_pkm::SourceLine;
+    ///
+    /// let line = SourceLine::new(1);
+    /// assert_eq!(u32::from(line), 1);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn new(line: u32) -> Self {

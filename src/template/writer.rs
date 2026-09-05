@@ -246,8 +246,8 @@ impl<'a> TemplateWriteTarget<'a> {
         loop {
             let default_display = current_path.display().to_string();
             let chosen = match provider.text(
-                "Output path already exists — enter a path relative to \
-                 project root:",
+                "Output path already exists: enter a path relative to project \
+                 root:",
                 Some(&default_display),
             ) {
                 Ok(chosen) => chosen,
@@ -429,7 +429,7 @@ mod tests {
             .expect("leading . is safe");
 
             // The leading "./" resolves through the existing `root/.`
-            // ancestor and is normalized away by canonicalization — the
+            // ancestor and is normalized away by canonicalization: the
             // confined path has no trailing dot component left in it.
             assert_eq!(target, root.join("notes/daily.md"));
         }
@@ -489,7 +489,7 @@ mod tests {
             // The write-side gap this closes: `-o`/`file.write_to()`
             // resolving through a symlink planted inside `root` used to
             // pass this lexical-only check and could write outside
-            // `root` — see the module docs.
+            // `root` (see the module docs).
             let error = TemplateWriteTarget::confine(
                 &root,
                 Path::new("link/secret.md"),

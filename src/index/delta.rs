@@ -201,7 +201,7 @@ mod tests {
         #[test]
         fn is_true_when_links_upserted_is_an_empty_vec_not_none() {
             // `Some(vec![])` ("recomputed, nothing changed") must count as
-            // empty alongside `None` ("never recomputed") — the two are
+            // empty alongside `None` ("never recomputed"); the two are
             // different reasons for the same "nothing to write" outcome.
             let delta = delta(vec![], vec![], Some(vec![]), vec![]);
 

@@ -39,11 +39,10 @@
 //! - [`QueryRow`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
 //!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QuerySet`] stores result rows and provides chained transformation
-//!   methods ([`filter`](QuerySet::filter),
-//!   [`sort_field`](QuerySet::sort_field), [`limit`](QuerySet::limit),
-//!   [`group_by`](QuerySet::group_by), [`flatten`](QuerySet::flatten)) and
-//!   terminal rendering methods ([`table`](QuerySet::table),
-//!   [`list`](QuerySet::list), [`task_list`](QuerySet::task_list)).
+//!   methods (`filter`, `sort_field`, [`limit`](QuerySet::limit),
+//!   [`group_by`](QuerySet::group_by), `flatten`) and terminal rendering
+//!   methods ([`table`](QuerySet::table), [`list`](QuerySet::list),
+//!   [`task_list`](QuerySet::task_list)).
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
 //!   transformation constraint violations.
 //!

@@ -27,7 +27,7 @@ pub(crate) enum QueryMode {
 ///
 /// Constructing a `QueryBuilder` does not touch the filesystem or execute query
 /// expressions. The builder accumulates transformation steps into an internal
-/// [`QueryPlan`](super::QueryPlan) and passes them to
+/// `QueryPlan` and passes them to
 /// [`QueryService::run`](super::QueryService::run), which evaluates the
 /// plan against a borrowed [`FileIndex`](crate::index::FileIndex).
 ///
@@ -91,12 +91,10 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - [`Syntax`] if `expr` cannot be parsed as a valid boolean filter
-    ///   expression.
-    /// - [`FieldPath`] if `expr` references an invalid or malformed field path.
-    ///
-    /// [`Syntax`]: QueryBuilderError::Syntax
-    /// [`FieldPath`]: QueryBuilderError::FieldPath
+    /// - `QueryBuilderError::Syntax` if `expr` cannot be parsed as a valid
+    ///   boolean filter expression.
+    /// - `QueryBuilderError::FieldPath` if `expr` references an invalid or
+    ///   malformed field path.
     #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
         self.plan.push(QueryTransform::filter(expr)?);
@@ -110,9 +108,8 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` cannot be parsed as a valid field path.
-    ///
-    /// [`FieldPath`]: QueryBuilderError::FieldPath
+    /// - `QueryBuilderError::FieldPath` if `field` cannot be parsed as a valid
+    ///   field path.
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -145,9 +142,8 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - [`LimitOutOfRange`] if `n` is negative or exceeds `usize::MAX`.
-    ///
-    /// [`LimitOutOfRange`]: QueryBuilderError::LimitOutOfRange
+    /// - `QueryBuilderError::LimitOutOfRange` if `n` is negative or exceeds
+    ///   `usize::MAX`.
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
