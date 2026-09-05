@@ -23,7 +23,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::{
     FileIndex, INDEX_FILE,
     codec::{decode_row, encode_row, path_from_bytes},
-    delta::{FileDiff, InlinkDelta},
+    delta::{IndexDelta, InlinkDelta},
     entry::{FileEntry, ListEntry, ListEntryRef},
     error::{DbError, DbResult, IndexError, IndexResult},
     inlinks::InlinkMap,
@@ -1158,19 +1158,19 @@ impl IndexStore {
     /// Transaction failure or serialization failure.
     pub(super) fn persist_incremental(
         &self,
-        diff: &FileDiff,
+        delta: &IndexDelta,
         modified_notes: &[Note],
         inlink_delta: &InlinkDelta,
     ) -> IndexResult<()> {
-        if diff.is_empty()
+        if delta.is_empty()
             && modified_notes.is_empty()
             && inlink_delta.is_empty()
         {
             return Ok(());
         }
         let write_txn = self.prepare_incremental_txn()?;
-        self.apply_diff_deletions(&write_txn, &diff.deleted)?;
-        self.apply_diff_upserts(&write_txn, &diff.upserted)?;
+        self.apply_diff_deletions(&write_txn, delta.deleted())?;
+        self.apply_diff_upserts(&write_txn, delta.upserted())?;
         self.apply_modified_notes(&write_txn, modified_notes)?;
         self.apply_inlink_delta(&write_txn, inlink_delta)?;
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
@@ -1383,14 +1383,14 @@ impl IndexStore {
         let mut links_table = write_txn
             .open_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
-        for (target, src) in &inlink_delta.deleted {
+        for (target, src) in inlink_delta.deleted() {
             let target_key = target.as_os_str().as_encoded_bytes();
             let source_key = src.as_os_str().as_encoded_bytes();
             links_table
                 .remove(target_key, source_key)
                 .map_err(|err| self.raise_source_error(err))?;
         }
-        for (target, src) in &inlink_delta.upserted {
+        for (target, src) in inlink_delta.upserted() {
             let target_key = target.as_os_str().as_encoded_bytes();
             let source_key = src.as_os_str().as_encoded_bytes();
             links_table

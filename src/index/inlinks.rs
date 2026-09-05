@@ -82,6 +82,7 @@ pub fn derive_inlinks(notes: &[&Note]) -> InlinkMap {
         })
         .collect()
 }
+
 /// Index of [`Note`]s and their file stems, used during link resolution.
 struct LinkResolver<'a, 'b> {
     files: &'b [&'a Path],

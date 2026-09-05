@@ -21,7 +21,7 @@ use rayon::prelude::*;
 
 use super::{
     FileIndex, INDEX_FILE, IndexResult,
-    delta::{FileDiff, InlinkDelta},
+    delta::{IndexDelta, InlinkDelta},
     entry::{self, ListEntry},
     error::IndexBuilderError,
     inlinks::{InlinkGraph, InlinkMap},
@@ -36,12 +36,47 @@ use crate::{
 /// Diagnostic summary of an incremental synchronization.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct SyncReport {
-    /// Number of files inserted or updated.
-    pub upserted: usize,
-    /// Number of files deleted from the index.
-    pub deleted: usize,
-    /// Number of inbound link edges updated.
-    pub links_modified: usize,
+    upserted: usize,
+    deleted: usize,
+    links_modified: usize,
+}
+
+impl SyncReport {
+    /// Creates a new [`SyncReport`].
+    #[inline]
+    #[must_use]
+    pub const fn new(
+        upserted: usize,
+        deleted: usize,
+        links_modified: usize,
+    ) -> Self {
+        Self {
+            upserted,
+            deleted,
+            links_modified,
+        }
+    }
+
+    /// Returns the number of files inserted or updated.
+    #[inline]
+    #[must_use]
+    pub const fn upserted(self) -> usize {
+        self.upserted
+    }
+
+    /// Returns the number of files deleted from the index.
+    #[inline]
+    #[must_use]
+    pub const fn deleted(self) -> usize {
+        self.deleted
+    }
+
+    /// Returns the number of inbound link edges updated.
+    #[inline]
+    #[must_use]
+    pub const fn links_modified(self) -> usize {
+        self.links_modified
+    }
 }
 
 struct RefreshContext<'a> {
@@ -156,9 +191,9 @@ impl IndexerService {
         let store = IndexStore::open(&self.root)?;
         let current_files = self.scan()?;
         let (persisted_files, prev_links) = store.read_files_and_links()?;
-        let file_diff = FileDiff::compute(&current_files, &persisted_files);
+        let delta = IndexDelta::compute(&current_files, &persisted_files);
 
-        if file_diff.is_empty() {
+        if delta.is_empty() {
             let (files, notes, inlinks) = store.read_all()?;
             let index = FileIndex::assemble(files, notes, inlinks);
             return Ok((index, SyncReport::default()));
@@ -170,41 +205,39 @@ impl IndexerService {
             persisted_files: &persisted_files,
             prev_links: &prev_links,
         };
-        self.apply_refresh(ctx, &file_diff)
+        self.apply_refresh(ctx, &delta)
     }
 
     fn apply_refresh(
         &self,
         ctx: RefreshContext<'_>,
-        file_diff: &FileDiff,
+        delta: &IndexDelta,
     ) -> IndexResult<(FileIndex, SyncReport)> {
-        let modified_notes = self.parse_notes(&file_diff.upserted)?;
+        let modified_notes = self.parse_notes(delta.upserted())?;
         let all_notes = Self::merge_refreshed_notes(
             ctx.store,
             ctx.persisted_files,
-            file_diff,
+            delta,
             &modified_notes,
         )?;
         let current_links =
             InlinkGraph::compile(&all_notes, &ctx.current_files);
         let inlink_delta = InlinkDelta::compute(&current_links, ctx.prev_links);
 
-        if let Err(source) = ctx.store.persist_incremental(
-            file_diff,
-            &modified_notes,
-            &inlink_delta,
-        ) {
+        if let Err(source) =
+            ctx.store.persist_incremental(delta, &modified_notes, &inlink_delta)
+        {
             tracing::warn!(%source, "failed to persist refreshed index");
         }
 
-        let report = SyncReport {
-            upserted: file_diff.upserted.len(),
-            deleted: file_diff.deleted.len(),
-            links_modified: inlink_delta
-                .upserted
+        let report = SyncReport::new(
+            delta.upserted().len(),
+            delta.deleted().len(),
+            inlink_delta
+                .upserted()
                 .len()
-                .saturating_add(inlink_delta.deleted.len()),
-        };
+                .saturating_add(inlink_delta.deleted().len()),
+        );
         let index =
             FileIndex::assemble(ctx.current_files, all_notes, current_links);
         Ok((index, report))
@@ -213,7 +246,7 @@ impl IndexerService {
     fn merge_refreshed_notes(
         store: &IndexStore,
         persisted_files: &[FileBase],
-        file_diff: &FileDiff,
+        delta: &IndexDelta,
         modified_notes: &[crate::Note],
     ) -> IndexResult<Vec<crate::Note>> {
         let note_paths: Vec<&Path> = persisted_files
@@ -222,7 +255,7 @@ impl IndexerService {
             .map(FileBase::path)
             .collect();
         let mut all_notes = store.read_notes_batch(note_paths)?;
-        for del in &file_diff.deleted {
+        for del in delta.deleted() {
             all_notes.retain(|n| n.path() != del.path());
         }
         for new_note in modified_notes {

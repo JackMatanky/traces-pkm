@@ -3,18 +3,17 @@
 
 use std::path::PathBuf;
 
-use super::{FileFormat, inlinks::InlinkMap};
+use super::inlinks::InlinkMap;
 use crate::FileBase;
 
 /// Computed difference between disk files and persisted index metadata.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct FileDiff {
-    pub(super) upserted: Box<[FileBase]>,
-    pub(super) deleted: Box<[FileBase]>,
-    pub(super) has_deleted_note: bool,
+pub(super) struct IndexDelta {
+    upserted: Box<[FileBase]>,
+    deleted: Box<[FileBase]>,
 }
 
-impl FileDiff {
+impl IndexDelta {
     /// Computes file additions, modifications, and deletions between `current`
     /// disk files and `persisted` index metadata.
     pub(super) fn compute(
@@ -23,7 +22,6 @@ impl FileDiff {
     ) -> Self {
         let mut upserted = Vec::new();
         let mut deleted = Vec::new();
-        let mut has_deleted_note = false;
         let mut cur = current.iter().peekable();
         let mut prev = persisted.iter().peekable();
         loop {
@@ -34,9 +32,6 @@ impl FileDiff {
                         cur.next();
                     }
                     std::cmp::Ordering::Greater => {
-                        if p.format() == FileFormat::Note {
-                            has_deleted_note = true;
-                        }
                         deleted.push((*p).clone());
                         prev.next();
                     }
@@ -53,9 +48,6 @@ impl FileDiff {
                     cur.next();
                 }
                 (None, Some(p)) => {
-                    if p.format() == FileFormat::Note {
-                        has_deleted_note = true;
-                    }
                     deleted.push((*p).clone());
                     prev.next();
                 }
@@ -65,7 +57,6 @@ impl FileDiff {
         Self {
             upserted: upserted.into_boxed_slice(),
             deleted: deleted.into_boxed_slice(),
-            has_deleted_note,
         }
     }
 
@@ -75,13 +66,27 @@ impl FileDiff {
     pub(super) fn is_empty(&self) -> bool {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
+
+    /// Returns the added or modified files.
+    #[inline]
+    #[must_use]
+    pub(super) fn upserted(&self) -> &[FileBase] {
+        &self.upserted
+    }
+
+    /// Returns the deleted files.
+    #[inline]
+    #[must_use]
+    pub(super) fn deleted(&self) -> &[FileBase] {
+        &self.deleted
+    }
 }
 
 /// Computed difference in inbound link edges.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct InlinkDelta {
-    pub(super) upserted: Box<[(PathBuf, PathBuf)]>,
-    pub(super) deleted: Box<[(PathBuf, PathBuf)]>,
+    upserted: Box<[(PathBuf, PathBuf)]>,
+    deleted: Box<[(PathBuf, PathBuf)]>,
 }
 
 impl InlinkDelta {
@@ -121,6 +126,20 @@ impl InlinkDelta {
     pub(super) fn is_empty(&self) -> bool {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
+
+    /// Returns the added or modified inbound link edges.
+    #[inline]
+    #[must_use]
+    pub(super) fn upserted(&self) -> &[(PathBuf, PathBuf)] {
+        &self.upserted
+    }
+
+    /// Returns the deleted inbound link edges.
+    #[inline]
+    #[must_use]
+    pub(super) fn deleted(&self) -> &[(PathBuf, PathBuf)] {
+        &self.deleted
+    }
 }
 
 #[cfg(test)]
@@ -137,7 +156,7 @@ mod tests {
 
         #[test]
         fn returns_true_when_diff_is_empty() {
-            let diff = FileDiff::default();
+            let diff = IndexDelta::default();
             assert!(diff.is_empty());
         }
 
@@ -151,12 +170,11 @@ mod tests {
             let current =
                 IndexerService::new(temp.path()).scan().expect("scan");
 
-            let diff = FileDiff::compute(&current, &previous);
+            let diff = IndexDelta::compute(&current, &previous);
 
             let deleted_paths: Vec<_> =
-                diff.deleted.iter().map(FileBase::path).collect();
+                diff.deleted().iter().map(FileBase::path).collect();
             assert_eq!(deleted_paths, [std::path::Path::new("a.md")]);
-            assert!(diff.has_deleted_note);
         }
 
         #[test]
@@ -171,12 +189,11 @@ mod tests {
             let current =
                 IndexerService::new(temp.path()).scan().expect("scan");
 
-            let diff = FileDiff::compute(&current, &previous);
+            let diff = IndexDelta::compute(&current, &previous);
 
             let deleted_paths: Vec<_> =
-                diff.deleted.iter().map(FileBase::path).collect();
+                diff.deleted().iter().map(FileBase::path).collect();
             assert_eq!(deleted_paths, [std::path::Path::new("image.png")]);
-            assert!(!diff.has_deleted_note);
         }
 
         #[test]
@@ -190,13 +207,12 @@ mod tests {
             let current =
                 IndexerService::new(temp.path()).scan().expect("scan");
 
-            let diff = FileDiff::compute(&current, &previous);
+            let diff = IndexDelta::compute(&current, &previous);
 
             let upserted_paths: Vec<_> =
-                diff.upserted.iter().map(FileBase::path).collect();
+                diff.upserted().iter().map(FileBase::path).collect();
             assert_eq!(upserted_paths, [std::path::Path::new("a.md")]);
-            assert!(diff.deleted.is_empty());
-            assert!(!diff.has_deleted_note);
+            assert!(diff.deleted().is_empty());
         }
     }
 
@@ -226,11 +242,11 @@ mod tests {
 
             let delta = InlinkDelta::compute(&current, &previous);
 
-            assert_eq!(delta.upserted.as_ref(), &[(
+            assert_eq!(delta.upserted(), &[(
                 PathBuf::from("b.md"),
                 PathBuf::from("x.md")
             )]);
-            assert_eq!(delta.deleted.as_ref(), &[(
+            assert_eq!(delta.deleted(), &[(
                 PathBuf::from("a.md"),
                 PathBuf::from("x.md")
             )]);

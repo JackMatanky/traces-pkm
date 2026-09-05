@@ -56,10 +56,8 @@ pub(crate) use error::IndexBuilderError;
 pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::derive_inlinks;
-pub use service::IndexerService;
+pub use service::{IndexerService, SyncReport};
 pub(crate) use store::IndexStore;
-
-pub(crate) use crate::file::FileFormat;
 
 /// Project-relative path to the index database.
 ///
