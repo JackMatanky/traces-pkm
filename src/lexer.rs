@@ -324,15 +324,10 @@ impl LexError {
 /// Strips matching single (`'...'`) or double (`"..."`) quotes from `raw` and
 /// unescapes backslash sequences via [`lexical_backslash_unescape`].
 ///
-/// If `raw` is not enclosed in matching quotes, returns `raw` unescaped.
-///
-/// # Examples
-///
-/// ```text
-/// assert_eq!(lexical_unquote(r#""hello \"world\"""#), r#"hello "world""#);
-/// assert_eq!(lexical_unquote(r"'single \'quote\''"), "single 'quote'");
-/// assert_eq!(lexical_unquote(r"plain\ text"), "plain text");
-/// ```
+/// If `raw` is enclosed in matching quotes (such as `"hello \"world\""` or
+/// `'single \'quote\''`), the outer quotes are stripped and internal escape
+/// sequences are unescaped. Unquoted strings (such as `plain\ text`) are
+/// unescaped without stripping characters.
 #[must_use]
 pub(crate) fn lexical_unquote(raw: &str) -> String {
     if (raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2)
@@ -348,16 +343,8 @@ pub(crate) fn lexical_unquote(raw: &str) -> String {
 /// Strips backslash escapes from `input`, returning the unescaped string.
 ///
 /// A backslash followed by any character consumes both and emits the second
-/// character verbatim. A trailing backslash (with nothing after it) is kept
-/// as-is.
-///
-/// # Examples
-///
-/// ```text
-/// assert_eq!(lexical_backslash_unescape(r#"hello \"world\""#), "hello \"world\"");
-/// assert_eq!(lexical_backslash_unescape(r#"back\\slash"#), "back\\slash");
-/// assert_eq!(lexical_backslash_unescape("trailing\\"), "trailing\\");
-/// ```
+/// character verbatim (for example, `\"` becomes `"`, and `\\` becomes `\`).
+/// A trailing backslash with no subsequent character is retained verbatim.
 #[must_use]
 fn lexical_backslash_unescape(input: &str) -> String {
     let mut output = String::with_capacity(input.len());

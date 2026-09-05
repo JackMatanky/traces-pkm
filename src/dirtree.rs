@@ -74,12 +74,10 @@ pub(crate) enum DirTreeError {
 impl DirTreeError {
     /// Splits the error into its resolved path and I/O source.
     ///
-    /// Every variant carries the same `{path, source}` shape, so callers can
-    /// convert any error into their own domain type in one line:
-    /// ```text
-    /// let (path, source) = error.into_parts();
-    /// MyError::Io { path, source }
-    /// ```
+    /// Every variant carries the same `{path, source}` shape, allowing callers
+    /// to decompose any error variant into its constituent path and underlying
+    /// [`std::io::Error`] via tuple destructuring:
+    /// `let (path, source) = error.into_parts();`.
     pub(crate) fn into_parts(self) -> (PathBuf, io::Error) {
         match self {
             Self::MissingRoot {
