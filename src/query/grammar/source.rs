@@ -100,6 +100,19 @@ impl SourceSelector {
 pub struct SourceExpr(BooleanExpr<SourceAtom>);
 
 impl SourceExpr {
+    /// Returns the inner [`BooleanExpr`].
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "part of storage query acceleration surface"
+        )
+    )]
+    pub(crate) fn expr(&self) -> &BooleanExpr<SourceAtom> {
+        &self.0
+    }
+
     /// Parses `input` as a source expression.
     ///
     /// # Errors
@@ -289,7 +302,7 @@ impl GlobPattern {
 
     /// Returns whether `path` matches this glob.
     #[must_use]
-    fn is_match(&self, path: &Path) -> bool {
+    pub(crate) fn is_match(&self, path: &Path) -> bool {
         self.regex.is_match(&path.to_string_lossy())
     }
 }
@@ -420,8 +433,8 @@ impl SourceGrammar {
     /// # Errors
     ///
     /// Returns a [`QueryError::Syntax`] diagnostic if the function form is
-    /// malformed, the class name is empty, an unknown expansion mode is
-    /// given, or both an argument and a method modifier are present.
+    /// malformed, the class name is empty, an unknown expansion mode is given,
+    /// or both an argument and a method modifier are present.
     fn parse_class_function(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<SourceToken>>,

@@ -125,9 +125,22 @@ fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
 /// Wraps walkdir's entry so callers never touch walkdir types. Accessors
 /// delegate to the underlying [`walkdir::DirEntry`] and report failures through
 /// the same [`DirTreeError`] as iteration.
+#[repr(transparent)]
 #[derive(Clone, Debug)]
 pub(crate) struct DirNode(DirEntry);
 
+/// Borrowed view of a directory node for zero-clone comparisons.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct DirNodeRef<'a>(&'a DirEntry);
+
+impl<'a> DirNodeRef<'a> {
+    /// Returns the node's final path component.
+    #[inline]
+    #[must_use]
+    pub(crate) fn file_name(self) -> &'a OsStr {
+        self.0.file_name()
+    }
+}
 impl DirNode {
     /// Adapts one raw walkdir item into this module's interface.
     ///
@@ -187,6 +200,22 @@ impl DirNode {
 /// [`walkdir::FilterEntry`] can apply it to raw entries.
 type PrunePredicate = Box<dyn FnMut(&DirEntry) -> bool>;
 
+enum InnerIter {
+    Plain(walkdir::IntoIter),
+    Filtered(walkdir::FilterEntry<walkdir::IntoIter, PrunePredicate>),
+}
+
+impl Iterator for InnerIter {
+    type Item = walkdir::Result<DirEntry>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Plain(iter) => iter.next(),
+            Self::Filtered(iter) => iter.next(),
+        }
+    }
+}
 /// Iterator over a directory tree with classified, path-contextualized errors.
 ///
 /// Created by [`DirTree::children`] (flat, one level) or
@@ -201,7 +230,7 @@ pub(crate) struct DirTree {
     builder: Option<WalkDir>,
     root: PathBuf,
     prune: Option<PrunePredicate>,
-    inner: Option<Box<dyn Iterator<Item = walkdir::Result<DirEntry>>>>,
+    inner: Option<InnerIter>,
 }
 
 impl DirTree {
@@ -280,18 +309,18 @@ impl DirTree {
     /// comparison) and must be [`Send`] + [`Sync`].
     ///
     /// Has no effect once iteration has begun.
-    #[must_use]
     pub(crate) fn sorted_by<F>(mut self, mut compare: F) -> Self
     where
-        F: FnMut(&DirNode, &DirNode) -> std::cmp::Ordering
+        F: FnMut(&DirNodeRef<'_>, &DirNodeRef<'_>) -> std::cmp::Ordering
             + Send
             + Sync
             + 'static,
     {
         if let Some(pending) = self.builder.take() {
-            self.builder = Some(pending.sort_by(move |a, b| {
-                compare(&DirNode(a.clone()), &DirNode(b.clone()))
-            }));
+            self.builder =
+                Some(pending.sort_by(move |a, b| {
+                    compare(&DirNodeRef(a), &DirNodeRef(b))
+                }));
         }
         self
     }
@@ -301,25 +330,25 @@ impl DirTree {
     /// The builder is consumed on the first call; subsequent calls return the
     /// same boxed iterator. If a [`filter`](Self::filter) predicate was
     /// configured, it is applied here.
-    fn start(&mut self) -> &mut dyn Iterator<Item = walkdir::Result<DirEntry>> {
+    fn start(&mut self) -> &mut InnerIter {
         let Self {
             builder,
             prune,
             inner,
             ..
         } = self;
-        inner
-            .get_or_insert_with(|| {
-                let iter = builder.take().map_or_else(
-                    || WalkDir::new("").into_iter(),
-                    WalkDir::into_iter,
-                );
-                match prune.take() {
-                    Some(predicate) => Box::new(iter.filter_entry(predicate)),
-                    None => Box::new(iter),
+        inner.get_or_insert_with(|| {
+            let iter = builder.take().map_or_else(
+                || WalkDir::new("").into_iter(),
+                WalkDir::into_iter,
+            );
+            match prune.take() {
+                Some(predicate) => {
+                    InnerIter::Filtered(iter.filter_entry(predicate))
                 }
-            })
-            .as_mut()
+                None => InnerIter::Plain(iter),
+            }
+        })
     }
 }
 
@@ -347,7 +376,6 @@ mod tests {
         fs::write(&path, "content").expect("write fixture file");
         path
     }
-
     mod children {
         use pretty_assertions::assert_eq;
 

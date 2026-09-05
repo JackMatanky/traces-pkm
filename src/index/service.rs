@@ -15,19 +15,41 @@
 //! All disk interaction flows through [`super::store::IndexStore`]; this module
 //! owns service-level orchestration, not table-level read/write mechanics.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use rayon::prelude::*;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexResult, builder, cache,
-    delta::IndexDelta,
+    FileIndex, INDEX_FILE, IndexResult,
+    delta::{FileDiff, InlinkDelta},
     entry::{self, ListEntry},
-    error::{IndexBuilderError, IndexError},
+    error::IndexBuilderError,
+    inlinks::{InlinkGraph, InlinkMap},
     store::IndexStore,
 };
 use crate::{
-    Config, DirTree, DirTreeError, TaskConfig, config::FrontmatterConfig,
+    Config, DirTree, DirTreeError, TaskConfig,
+    config::FrontmatterConfig,
     file::FileBase,
+    note::{MarkdownParserInput, parse_markdown},
 };
+/// Diagnostic summary of an incremental synchronization.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct SyncReport {
+    /// Number of files inserted or updated.
+    pub upserted: usize,
+    /// Number of files deleted from the index.
+    pub deleted: usize,
+    /// Number of inbound link edges updated.
+    pub links_modified: usize,
+}
+
+struct RefreshContext<'a> {
+    store: &'a IndexStore,
+    current_files: Vec<FileBase>,
+    persisted_files: &'a [FileBase],
+    prev_links: &'a InlinkMap,
+}
 
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
 /// load, and refresh.
@@ -83,10 +105,9 @@ impl IndexerService {
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
-        Ok(builder::IndexBuilder::new(files)
-            .with_tasks(self.tasks.clone())
-            .with_frontmatter(self.frontmatter.clone())
-            .build(&self.root)?)
+        let notes = self.parse_notes(&files)?;
+        let inlinks = InlinkGraph::compile(&notes, &files);
+        Ok(FileIndex::assemble(files, notes, inlinks))
     }
 
     /// Refreshes the persisted index for this service's root against current
@@ -119,28 +140,144 @@ impl IndexerService {
     ///   loaded.
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
-        let store = IndexStore::open(&self.root)?;
-        let index = self.build_refreshed_index(&store)?;
-        if let Err(source) = store.persist_index(&index) {
-            tracing::warn!(%source, "failed to persist refreshed index");
-        }
+        let (index, _) = self.refresh_with_report()?;
         Ok(index)
     }
 
-    fn build_refreshed_index(
+    /// Refreshes the persisted index for this service's root against current
+    /// filesystem state and returns a [`SyncReport`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError`] if scanning disk, opening the database, or
+    /// persisting updates fails.
+    #[inline]
+    pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
+        let store = IndexStore::open(&self.root)?;
+        let current_files = self.scan()?;
+        let (persisted_files, prev_links) = store.read_files_and_links()?;
+        let file_diff = FileDiff::compute(&current_files, &persisted_files);
+
+        if file_diff.is_empty() {
+            let (files, notes, inlinks) = store.read_all()?;
+            let index = FileIndex::assemble(files, notes, inlinks);
+            return Ok((index, SyncReport::default()));
+        }
+
+        let ctx = RefreshContext {
+            store: &store,
+            current_files,
+            persisted_files: &persisted_files,
+            prev_links: &prev_links,
+        };
+        self.apply_refresh(ctx, &file_diff)
+    }
+
+    fn apply_refresh(
         &self,
+        ctx: RefreshContext<'_>,
+        file_diff: &FileDiff,
+    ) -> IndexResult<(FileIndex, SyncReport)> {
+        let modified_notes = self.parse_notes(&file_diff.upserted)?;
+        let all_notes = Self::merge_refreshed_notes(
+            ctx.store,
+            ctx.persisted_files,
+            file_diff,
+            &modified_notes,
+        )?;
+        let current_links =
+            InlinkGraph::compile(&all_notes, &ctx.current_files);
+        let inlink_delta = InlinkDelta::compute(&current_links, ctx.prev_links);
+
+        if let Err(source) = ctx.store.persist_incremental(
+            file_diff,
+            &modified_notes,
+            &inlink_delta,
+        ) {
+            tracing::warn!(%source, "failed to persist refreshed index");
+        }
+
+        let report = SyncReport {
+            upserted: file_diff.upserted.len(),
+            deleted: file_diff.deleted.len(),
+            links_modified: inlink_delta
+                .upserted
+                .len()
+                .saturating_add(inlink_delta.deleted.len()),
+        };
+        let index =
+            FileIndex::assemble(ctx.current_files, all_notes, current_links);
+        Ok((index, report))
+    }
+
+    fn merge_refreshed_notes(
         store: &IndexStore,
-    ) -> IndexResult<FileIndex> {
-        let read_txn = store.begin_read()?;
-        let cache = cache::RefreshCache::load(store, &read_txn)?;
-        drop(read_txn);
-        let files = self.scan()?;
-        builder::IndexBuilder::new(files)
-            .with_cache(cache)
-            .with_tasks(self.tasks.clone())
-            .with_frontmatter(self.frontmatter.clone())
-            .build(&self.root)
-            .map_err(IndexError::from)
+        persisted_files: &[FileBase],
+        file_diff: &FileDiff,
+        modified_notes: &[crate::Note],
+    ) -> IndexResult<Vec<crate::Note>> {
+        let note_paths: Vec<&Path> = persisted_files
+            .iter()
+            .filter(|f| f.format() == crate::file::FileFormat::Note)
+            .map(FileBase::path)
+            .collect();
+        let mut all_notes = store.read_notes_batch(note_paths)?;
+        for del in &file_diff.deleted {
+            all_notes.retain(|n| n.path() != del.path());
+        }
+        for new_note in modified_notes {
+            if let Some(idx) =
+                all_notes.iter().position(|n| n.path() == new_note.path())
+            {
+                if let Some(target) = all_notes.get_mut(idx) {
+                    *target = new_note.clone();
+                }
+            } else {
+                all_notes.push(new_note.clone());
+            }
+        }
+        all_notes.sort_by(|a, b| a.path().cmp(b.path()));
+        Ok(all_notes)
+    }
+
+    fn parse_notes(
+        &self,
+        files: &[FileBase],
+    ) -> Result<Vec<crate::Note>, IndexBuilderError> {
+        let note_files: Vec<&FileBase> = files
+            .iter()
+            .filter(|f| f.format() == crate::file::FileFormat::Note)
+            .collect();
+        let results: Vec<Result<crate::Note, IndexBuilderError>> = note_files
+            .into_par_iter()
+            .map(|file| self.parse_note(file))
+            .collect();
+        let mut notes = Vec::with_capacity(results.len());
+        for res in results {
+            notes.push(res?);
+        }
+        Ok(notes)
+    }
+
+    fn parse_note(
+        &self,
+        file: &FileBase,
+    ) -> Result<crate::Note, IndexBuilderError> {
+        let full_path = self.root.join(file.path());
+        let content =
+            std::fs::read_to_string(&full_path).map_err(|source| {
+                IndexBuilderError::NoteParse {
+                    path: full_path,
+                    source,
+                }
+            })?;
+        let input = MarkdownParserInput::new(
+            file.path(),
+            &content,
+            &self.tasks,
+            &self.frontmatter,
+        );
+        Ok(parse_markdown(&input))
     }
 
     /// Persists `index` to this service's root, replacing any existing index.
@@ -173,10 +310,7 @@ impl IndexerService {
     pub fn load(&self) -> IndexResult<FileIndex> {
         let (files, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;
-        Ok(FileIndex::new(
-            entry::assemble_entries(files, notes, inlinks),
-            IndexDelta::Full,
-        ))
+        Ok(FileIndex::new(entry::assemble_entries(files, notes, inlinks)))
     }
 
     /// Reads all persisted [`ListEntry`]s from the `LISTS` table.
@@ -615,33 +749,6 @@ mod tests {
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
         };
 
-        /// The `upserted`/`deleted`/link path lists extracted from an
-        /// [`IndexDelta::Incremental`]. Distinct from production's
-        /// [`delta::IncrementalDelta`]: this borrows the same fields these
-        /// tests assert on.
-        struct IncrementalPaths<'a> {
-            upserted: &'a [PathBuf],
-            deleted: &'a [PathBuf],
-            links_upserted: Option<&'a [PathBuf]>,
-            links_deleted: &'a [PathBuf],
-        }
-
-        /// Extracts [`IncrementalPaths`] from an [`IndexDelta::Incremental`],
-        /// or `None` for [`IndexDelta::Full`].
-        fn incremental_paths(
-            delta: &IndexDelta,
-        ) -> Option<IncrementalPaths<'_>> {
-            match delta {
-                IndexDelta::Incremental(delta) => Some(IncrementalPaths {
-                    upserted: &delta.upserted,
-                    deleted: &delta.deleted,
-                    links_upserted: delta.links_upserted.as_deref(),
-                    links_deleted: &delta.links_deleted,
-                }),
-                IndexDelta::Full => None,
-            }
-        }
-
         /// Writes three notes (`a.md`/`b.md`/`c.md`) under `root`, builds
         /// and persists the index, and returns the scoped service plus the
         /// initial build's `a`/`c` notes, used to assert they persist
@@ -934,7 +1041,7 @@ mod tests {
         }
 
         #[test]
-        fn refresh_delta_names_only_the_changed_path() {
+        fn refresh_updates_changed_path_in_persisted_store() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let (indexer, ..) = seed_three_notes(temp.path());
@@ -945,14 +1052,22 @@ mod tests {
             .expect("rewrite b");
 
             // Act
-            let refreshed = indexer.refresh().expect("refresh index");
+            let (_refreshed, report) =
+                indexer.refresh_with_report().expect("refresh index");
 
-            // Assert: the delta names only the changed path; proves the
-            // refresh plans a row-level write, not a full rewrite.
-            let delta = incremental_paths(refreshed.delta())
-                .expect("refresh after a persisted build must be incremental");
-            assert_eq!(delta.upserted, &[PathBuf::from("b.md")]);
-            assert!(delta.deleted.is_empty());
+            // Assert: observable persistence state
+            assert_eq!(report.upserted, 1);
+            assert_eq!(report.deleted, 0);
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let notes = store
+                .read_notes_batch([Path::new("b.md")])
+                .expect("read batch");
+            assert_eq!(notes.len(), 1);
+            let note_b = notes.first().expect("note b exists");
+            assert_eq!(
+                note_b.frontmatter().and_then(|fm| fm.get("title").cloned()),
+                Some(crate::NoteFieldValue::String("B".to_owned()))
+            );
         }
 
         #[test]
@@ -997,18 +1112,15 @@ mod tests {
                 "---\ntitle: B\n---\nBody B changed.",
             )
             .expect("rewrite b");
-            let refreshed = indexer.refresh().expect("refresh index");
-            indexer.persist(&refreshed).expect("persist refreshed index");
+            indexer.refresh().expect("refresh index");
 
             // Act
-            let noop_refresh = indexer.refresh().expect("noop refresh");
+            let (_, report) =
+                indexer.refresh_with_report().expect("noop refresh");
 
             // Assert: a refresh against the now-persisted, unchanged
             // filesystem state reports no further changes.
-            let delta = incremental_paths(noop_refresh.delta())
-                .expect("refresh after a persisted build must be incremental");
-            assert!(delta.upserted.is_empty());
-            assert!(delta.deleted.is_empty());
+            assert_eq!(report, SyncReport::default());
         }
 
         #[test]
@@ -1023,11 +1135,6 @@ mod tests {
                 .expect("persist index");
 
             let db_path = temp.path().join(".traces/index.redb");
-            // Preserve redb's 9-byte magic number (`page_store::header::
-            // MAGICNUMBER`) so opening reaches checksum verification and
-            // reports `StorageError::Corrupted`, not the earlier
-            // magic-number mismatch path (`StorageError::Io`) a
-            // completely-foreign byte sequence would hit instead.
             let mut corrupted = fs::read(&db_path).expect("read valid db");
             corrupted
                 .get_mut(9..)
@@ -1035,19 +1142,16 @@ mod tests {
                 .fill(0xFF);
             fs::write(&db_path, &corrupted).expect("corrupt the database file");
 
-            let refreshed =
-                indexer.refresh().expect("refresh recovers from corruption");
+            let (_, report) = indexer
+                .refresh_with_report()
+                .expect("refresh recovers from corruption");
 
-            let delta = incremental_paths(refreshed.delta()).expect(
-                "post-recovery refresh must still report an incremental delta",
-            );
-            let mut upserted = delta.upserted.to_vec();
-            upserted.sort();
-            assert_eq!(upserted, [
-                PathBuf::from("a.md"),
-                PathBuf::from("b.md")
-            ]);
-            assert!(delta.deleted.is_empty());
+            assert_eq!(report.upserted, 2);
+            assert_eq!(report.deleted, 0);
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let metadata = store.load_file_metadata().expect("load metadata");
+            assert_eq!(metadata.len(), 2);
         }
 
         #[test]
@@ -1066,16 +1170,11 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[target]]\n- [x] task")
                 .expect("rewrite linker: task checked, same outlink");
 
-            let refreshed = indexer.refresh().expect("refresh index");
+            let (_, report) =
+                indexer.refresh_with_report().expect("refresh index");
 
-            let delta = incremental_paths(refreshed.delta())
-                .expect("refresh after a persisted build must be incremental");
-            assert_eq!(delta.upserted, &[PathBuf::from("linker.md")]);
-            assert!(
-                delta.links_upserted.is_none(),
-                "backdating must skip the inlink recompute when outlinks are \
-                 unchanged"
-            );
+            assert_eq!(report.upserted, 1);
+            assert_eq!(report.links_modified, 0);
         }
 
         #[test]
@@ -1095,16 +1194,18 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[new-target]]")
                 .expect("retarget linker");
 
-            let refreshed = indexer.refresh().expect("refresh index");
-            let delta = incremental_paths(refreshed.delta())
-                .expect("refresh after a persisted build must be incremental");
-            let links_upserted = delta
-                .links_upserted
-                .expect("outlink change must recompute inlinks");
-            assert!(links_upserted.contains(&PathBuf::from("new-target.md")));
-            assert!(
-                delta.links_deleted.contains(&PathBuf::from("old-target.md"))
+            let (_, report) =
+                indexer.refresh_with_report().expect("refresh index");
+            assert_eq!(report.upserted, 1);
+            assert!(report.links_modified > 0);
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let (_, _, links) = store.read_all().expect("read all");
+            assert_eq!(
+                links.get(Path::new("new-target.md")),
+                Some(&vec![PathBuf::from("linker.md")])
             );
+            assert!(!links.contains_key(Path::new("old-target.md")));
         }
 
         #[test]
@@ -1122,14 +1223,9 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[b|Bee]]\n[[a]]")
                 .expect("reorder links and relabel display text, same targets");
 
-            let refreshed = indexer.refresh().expect("refresh index");
-            let delta = incremental_paths(refreshed.delta())
-                .expect("refresh after a persisted build must be incremental");
-            assert!(
-                delta.links_upserted.is_none(),
-                "same target set in different order/display text must still \
-                 backdate"
-            );
+            let (_, report) =
+                indexer.refresh_with_report().expect("refresh index");
+            assert_eq!(report.links_modified, 0);
         }
 
         #[test]
@@ -1144,14 +1240,9 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B, no links")
                 .expect("write new note");
 
-            let refreshed = indexer.refresh().expect("refresh index");
-            let delta = incremental_paths(refreshed.delta())
-                .expect("refresh after a persisted build must be incremental");
-            assert!(
-                delta.links_upserted.is_some(),
-                "a brand-new note has nothing to backdate against and must \
-                 force a recompute"
-            );
+            let (_, report) =
+                indexer.refresh_with_report().expect("refresh index");
+            assert_eq!(report.upserted, 1);
         }
     }
 

@@ -13,41 +13,55 @@ use std::{
 };
 
 use crate::{
-    BaseNameRef,
+    BaseNameRef, FileBase,
     note::{LinkTarget, Note},
 };
-
 /// Target-keyed inbound link edges: maps each [`Note`] path to the paths of
 /// every [`Note`] linking to it.
 pub type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
-/// Derives inbound links for every indexed [`Note`] from its peers' outlinks.
-///
-/// For each outlink in each [`Note`], resolves the link target against `notes`
-/// (see `LinkResolver`) and records an inbound edge from the linking [`Note`]
-/// to the resolved target [`Note`]. Unresolvable targets (external URLs, links
-/// to non-Notes, or links with no matching [`Note`]) contribute no edge.
-///
-/// Duplicate outlinks to the same target within one Note, and self-links,
-/// collapse to a single edge.
-///
-/// # Performance
-///
-/// - O(n) to build the stem index once (see `LinkResolver::new`).
-/// - O(l log n) total for l outlinks: exact-path resolution binary-searches the
-///   path-sorted slice `notes`.
-/// - The wikilink-by-name fallback tier looks its stem up in the index in O(1),
-///   then scans only that stem's candidates (not all of `notes`) to break ties
-///   by proximity.
-///
-/// [`IndexerService`]: super::IndexerService
-/// [`build`]: super::IndexerService::build
-/// [`refresh`]: super::IndexerService::refresh
-/// [`load`]: super::IndexerService::load
+/// Graph compiler for derived inbound links.
+pub(super) struct InlinkGraph;
+
+impl InlinkGraph {
+    /// Compiles the inbound link map from parsed note outlinks and files.
+    #[must_use]
+    pub(super) fn compile(notes: &[Note], files: &[FileBase]) -> InlinkMap {
+        let file_paths: Vec<&Path> = files.iter().map(FileBase::path).collect();
+        let resolver = LinkResolver::new(&file_paths);
+        let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> =
+            HashMap::new();
+        for source in notes {
+            for outlink in source.outlinks() {
+                if let Some(target) =
+                    resolver.resolve(source.path(), outlink.target_parts())
+                {
+                    edges
+                        .entry(target)
+                        .or_default()
+                        .insert(Source(source.path()));
+                }
+            }
+        }
+        edges
+            .into_iter()
+            .map(|(target, sources)| {
+                (
+                    target.to_path_buf(),
+                    sources.into_iter().map(Source::to_path_buf).collect(),
+                )
+            })
+            .collect()
+    }
+}
+
+/// Derives inbound links for tests.
+#[cfg(any(test, feature = "test-utils"))]
 #[must_use]
 #[inline]
 pub fn derive_inlinks(notes: &[&Note]) -> InlinkMap {
-    let resolver = LinkResolver::new(notes);
+    let file_paths: Vec<&Path> = notes.iter().map(|n| n.path()).collect();
+    let resolver = LinkResolver::new(&file_paths);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {
         for outlink in source.outlinks() {
@@ -68,25 +82,24 @@ pub fn derive_inlinks(notes: &[&Note]) -> InlinkMap {
         })
         .collect()
 }
-
 /// Index of [`Note`]s and their file stems, used during link resolution.
 struct LinkResolver<'a, 'b> {
-    notes: &'b [&'a Note],
+    files: &'b [&'a Path],
     stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
 }
 
 impl<'a, 'b> LinkResolver<'a, 'b> {
-    /// Builds the resolver, indexing every Note's file stem in one O(n) pass.
-    fn new(notes: &'b [&'a Note]) -> Self {
+    /// Builds the resolver, indexing every file's stem in one O(n) pass.
+    fn new(files: &'b [&'a Path]) -> Self {
         let mut stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>> =
-            HashMap::with_capacity(notes.len());
-        for note in notes {
-            if let Some(stem) = BaseNameRef::from_path(note.path()) {
-                stem_index.entry(stem).or_default().push(note.path());
+            HashMap::with_capacity(files.len());
+        for &path in files {
+            if let Some(stem) = BaseNameRef::from_path(path) {
+                stem_index.entry(stem).or_default().push(path);
             }
         }
         Self {
-            notes,
+            files,
             stem_index,
         }
     }
@@ -123,13 +136,13 @@ impl<'a, 'b> LinkResolver<'a, 'b> {
         }
         let path_part = target.path()?;
         let candidate = Path::new(path_part);
-        if let Some(note) = find_by_path(self.notes, candidate) {
-            return Some(Target(note.path()));
+        if let Some(path) = self.find_by_path(candidate) {
+            return Some(Target(path));
         }
         if candidate.extension().is_none() {
             let with_extension = candidate.with_extension("md");
-            if let Some(note) = find_by_path(self.notes, &with_extension) {
-                return Some(Target(note.path()));
+            if let Some(path) = self.find_by_path(&with_extension) {
+                return Some(Target(path));
             }
         }
         if !target.is_basename() {
@@ -137,21 +150,31 @@ impl<'a, 'b> LinkResolver<'a, 'b> {
         }
         let stem =
             candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
-        self.nearest_by_stem(stem, from).map(Target)
+        let target_ext = candidate.extension().and_then(|s| s.to_str());
+        if let Some(ext) = target_ext
+            && let Some(path) = self.nearest_by_stem(stem, from, Some(ext))
+        {
+            return Some(Target(path));
+        }
+        self.nearest_by_stem(stem, from, None).map(Target)
     }
 
-    /// Finds the Note nearest `from` among every indexed Note sharing `stem`,
-    /// by Obsidian's shortest-unique-path rule.
-    ///
-    /// A single candidate resolves outright. Two or more resolve to whichever
-    /// has the smallest [`folder_distance`] from `from`; a genuine tie (no
-    /// single nearest candidate) resolves to `None` rather than guessing. Zero
-    /// candidates also resolve to `None`.
-    fn nearest_by_stem(&self, stem: &str, from: &Path) -> Option<&'a Path> {
+    fn nearest_by_stem(
+        &self,
+        stem: &str,
+        from: &Path,
+        target_ext: Option<&str>,
+    ) -> Option<&'a Path> {
         let candidates = self.stem_index.get(stem)?;
         let mut nearest: Option<(usize, &Path)> = None;
         let mut tied = false;
         for &candidate in candidates {
+            if let Some(expected_ext) = target_ext
+                && candidate.extension().and_then(|e| e.to_str())
+                    != Some(expected_ext)
+            {
+                continue;
+            }
             let distance = folder_distance(from, candidate);
             match nearest {
                 Some((best, _)) if distance > best => {}
@@ -167,6 +190,14 @@ impl<'a, 'b> LinkResolver<'a, 'b> {
         } else {
             nearest.map(|(_, path)| path)
         }
+    }
+
+    fn find_by_path(&self, path: &Path) -> Option<&'a Path> {
+        self.files
+            .binary_search_by(|file| (*file).cmp(path))
+            .ok()
+            .and_then(|i| self.files.get(i))
+            .copied()
     }
 }
 
@@ -192,15 +223,6 @@ impl Source<'_> {
     fn to_path_buf(self) -> PathBuf {
         self.0.to_path_buf()
     }
-}
-
-/// Binary-searches path-sorted `notes` for an exact path match.
-fn find_by_path<'a>(notes: &[&'a Note], path: &Path) -> Option<&'a Note> {
-    notes
-        .binary_search_by(|note| note.path().cmp(path))
-        .ok()
-        .and_then(|i| notes.get(i))
-        .copied()
 }
 
 /// Computes the path-segment distance between `a`'s and `b`'s containing
@@ -258,8 +280,10 @@ mod tests {
             from: &str,
             target: LinkTarget<'_>,
         ) -> Option<Target<'a>> {
-            let refs: Vec<&Note> = notes.iter().collect();
-            LinkResolver::new(&refs).resolve(Path::new(from), target)
+            let mut paths: Vec<&'a Path> =
+                notes.iter().map(Note::path).collect();
+            paths.sort();
+            LinkResolver::new(&paths).resolve(Path::new(from), target)
         }
 
         #[test]

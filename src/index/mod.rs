@@ -35,10 +35,6 @@
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
-//! [`builder::IndexBuilder`]: mod@builder
-
-mod builder;
-mod cache;
 mod codec;
 mod delta;
 mod entry;
@@ -61,6 +57,7 @@ pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::derive_inlinks;
 pub use service::IndexerService;
+pub(crate) use store::IndexStore;
 
 pub(crate) use crate::file::FileFormat;
 

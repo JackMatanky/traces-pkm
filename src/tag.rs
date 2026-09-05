@@ -7,25 +7,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A validated Markdown tag, including its leading `#`.
-///
-/// Constructed via [`Tag::parse`], which validates the format and pre-computes
-/// hierarchical segments for efficient nesting checks.
-///
-/// # Examples
-///
-/// ```
-/// # use traces_pkm::Tag;
-/// let tag = Tag::parse("#projects/active").unwrap();
-/// assert_eq!(tag.as_str(), "#projects/active");
-/// assert!(tag.is_contained_in("#projects"));
-/// ```
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct Tag {
-    full: String,
-    segments: Vec<String>,
-}
-
 /// Errors returned by [`Tag::parse`].
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum TagError {
@@ -51,12 +32,30 @@ pub enum TagError {
     },
 }
 
+/// A validated Markdown tag, including its leading `#`.
+///
+/// Constructed via [`Tag::parse`], which validates the format and pre-computes
+/// hierarchical segments for efficient nesting checks.
+///
+/// # Examples
+///
+/// ```
+/// # use traces_pkm::Tag;
+/// let tag = Tag::parse("#projects/active").unwrap();
+/// assert_eq!(tag.as_str(), "#projects/active");
+/// assert!(tag.is_contained_in("#projects"));
+/// ```
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Deserialize, Serialize,
+)]
+pub struct Tag(Box<str>);
+
 impl Tag {
     /// Parses and validates a tag string.
     ///
     /// The input must start with `#` followed by `[a-zA-Z]`, then
-    /// `[a-zA-Z0-9_/]*`. Hierarchical segments are pre-computed at construction
-    /// time for efficient containment checks.
+    /// `[a-zA-Z0-9_/]*`.
+    ///
     /// # Errors
     ///
     /// Returns [`TagError`] if the input does not match the tag format.
@@ -96,53 +95,54 @@ impl Tag {
                 });
             }
         }
-        let full = input[..=end].to_string();
-        let segments: Vec<String> = full
-            .split('/')
-            .scan(String::new(), |acc, part| {
-                if acc.is_empty() {
-                    *acc = String::from(part);
-                } else {
-                    acc.push('/');
-                    acc.push_str(part);
-                }
-                Some(acc.clone())
-            })
-            .collect();
-        Ok(Self {
-            full,
-            segments,
-        })
+        let full = &input[..=end];
+        Ok(Self(full.into()))
     }
 
     /// Returns the full tag string, including its leading `#`.
     #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.full
+        &self.0
     }
 
-    /// Returns the hierarchical tag segments from root to leaf.
+    /// Yields ancestor segments on demand from root to leaf.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::Tag;
+    ///
+    /// let tag = Tag::parse("#a/b/c").expect("valid tag");
+    /// let segments: Vec<_> = tag.segments().collect();
+    /// assert_eq!(segments, ["#a", "#a/b", "#a/b/c"]);
+    /// ```
     #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Tag accessor \
-                      symmetry with its fields"
-        )
-    )]
-    pub fn segments(&self) -> &[String] {
-        &self.segments
+    pub fn segments(&self) -> impl Iterator<Item = &str> {
+        self.0
+            .match_indices('/')
+            .map(|(idx, _)| &self.0[..idx])
+            .chain(std::iter::once(self.0.as_ref()))
     }
 
-    /// Returns `true` if this tag is contained in `prefix`, matching either
-    /// an identical tag or a nested child below it at a `/` boundary.
+    /// Returns `true` if `self` equals `prefix` or is a hierarchical sub-tag.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::Tag;
+    ///
+    /// let tag = Tag::parse("#projects/active").expect("valid tag");
+    /// assert!(tag.is_contained_in("#projects"));
+    /// assert!(tag.is_contained_in("#projects/active"));
+    /// assert!(!tag.is_contained_in("#project"));
+    /// ```
     #[inline]
     #[must_use]
     pub fn is_contained_in(&self, prefix: &str) -> bool {
-        self.segments.iter().any(|seg| seg == prefix)
+        self.0.starts_with(prefix)
+            && (self.0.len() == prefix.len()
+                || self.0.as_bytes().get(prefix.len()) == Some(&b'/'))
     }
 
     /// Returns `true` if `self` and `other` are the exact same tag.
@@ -158,35 +158,67 @@ impl Tag {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     mod parse {
-        use super::*;
+        use pretty_assertions::assert_eq;
 
+        use super::*;
         #[test]
         fn accepts_simple_tag() {
             let tag = Tag::parse("#book").unwrap();
             assert_eq!(tag.as_str(), "#book");
-            assert_eq!(tag.segments(), &["#book"]);
+            assert_eq!(tag.segments().collect::<Vec<_>>(), ["#book"]);
+        }
+
+        #[test]
+        fn accepts_single_letter_tag() {
+            let tag = Tag::parse("#a").unwrap();
+            assert_eq!(tag.as_str(), "#a");
+            assert_eq!(tag.segments().collect::<Vec<_>>(), ["#a"]);
         }
 
         #[test]
         fn accepts_nested_tag() {
             let tag = Tag::parse("#projects/active").unwrap();
             assert_eq!(tag.as_str(), "#projects/active");
-            assert_eq!(tag.segments(), &["#projects", "#projects/active"]);
+            assert_eq!(tag.segments().collect::<Vec<_>>(), [
+                "#projects",
+                "#projects/active"
+            ]);
         }
 
         #[test]
         fn accepts_deeply_nested_tag() {
             let tag = Tag::parse("#a/b/c").unwrap();
-            assert_eq!(tag.segments(), &["#a", "#a/b", "#a/b/c"]);
+            assert_eq!(tag.segments().collect::<Vec<_>>(), [
+                "#a", "#a/b", "#a/b/c"
+            ]);
+        }
+
+        #[test]
+        fn accepts_five_segments_tag() {
+            let tag = Tag::parse("#a/b/c/d/e").unwrap();
+            assert_eq!(tag.segments().collect::<Vec<_>>(), [
+                "#a",
+                "#a/b",
+                "#a/b/c",
+                "#a/b/c/d",
+                "#a/b/c/d/e"
+            ]);
         }
 
         #[test]
         fn accepts_underscores_and_hyphens() {
             let tag = Tag::parse("#my-tag/project_a").unwrap();
             assert_eq!(tag.as_str(), "#my-tag/project_a");
+        }
+
+        #[test]
+        fn rejects_empty_hash_only() {
+            let err = Tag::parse("#").unwrap_err();
+            assert_eq!(err, TagError::MissingHash);
         }
 
         #[test]
@@ -235,31 +267,31 @@ mod tests {
         use super::*;
 
         #[test]
-        fn tag_matches_itself() {
+        fn returns_true_when_tag_matches_itself() {
             let tag = Tag::parse("#projects/active").unwrap();
             assert!(tag.is_contained_in("#projects/active"));
         }
 
         #[test]
-        fn tag_matches_parent() {
+        fn returns_true_when_tag_matches_parent() {
             let tag = Tag::parse("#projects/active").unwrap();
             assert!(tag.is_contained_in("#projects"));
         }
 
         #[test]
-        fn tag_matches_grandparent() {
+        fn returns_true_when_tag_matches_grandparent() {
             let tag = Tag::parse("#a/b/c").unwrap();
             assert!(tag.is_contained_in("#a"));
         }
 
         #[test]
-        fn tag_rejects_non_matching_prefix() {
+        fn returns_false_when_prefix_does_not_match() {
             let tag = Tag::parse("#projects").unwrap();
             assert!(!tag.is_contained_in("#project"));
         }
 
         #[test]
-        fn tag_rejects_child_as_prefix() {
+        fn returns_false_when_child_is_used_as_prefix() {
             let tag = Tag::parse("#projects").unwrap();
             assert!(!tag.is_contained_in("#projects/active"));
         }
@@ -269,14 +301,14 @@ mod tests {
         use super::*;
 
         #[test]
-        fn matches_the_identical_tag() {
+        fn returns_true_for_identical_tag() {
             let a = Tag::parse("#task").unwrap();
             let b = Tag::parse("#task").unwrap();
             assert!(a.is_exact_match(&b));
         }
 
         #[test]
-        fn rejects_a_nested_child_tag() {
+        fn returns_false_for_nested_child_tag() {
             let parent = Tag::parse("#task").unwrap();
             let child = Tag::parse("#task/project").unwrap();
             assert!(!parent.is_exact_match(&child));
@@ -284,7 +316,7 @@ mod tests {
         }
 
         #[test]
-        fn rejects_an_unrelated_tag() {
+        fn returns_false_for_unrelated_tag() {
             let a = Tag::parse("#task").unwrap();
             let b = Tag::parse("#todo").unwrap();
             assert!(!a.is_exact_match(&b));
@@ -292,18 +324,26 @@ mod tests {
     }
 
     mod segments {
-        use super::*;
+        use pretty_assertions::assert_eq;
 
+        use super::*;
         #[test]
-        fn simple_tag_has_one_segment() {
+        fn yields_one_segment_for_simple_tag() {
             let tag = Tag::parse("#book").unwrap();
-            assert_eq!(tag.segments().len(), 1);
+            assert_eq!(tag.segments().count(), 1);
         }
 
         #[test]
-        fn nested_tag_has_two_segments() {
+        fn yields_two_segments_for_nested_tag() {
             let tag = Tag::parse("#a/b").unwrap();
-            assert_eq!(tag.segments().len(), 2);
+            assert_eq!(tag.segments().count(), 2);
+        }
+
+        #[test]
+        fn yields_all_ancestor_segments_in_order() {
+            let tag = Tag::parse("#a/b/c").unwrap();
+            let segments: Vec<&str> = tag.segments().collect();
+            assert_eq!(segments, ["#a", "#a/b", "#a/b/c"]);
         }
     }
 }

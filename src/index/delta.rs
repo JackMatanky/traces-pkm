@@ -1,237 +1,145 @@
 //! Diffing algorithms for incremental refresh: two-pointer merges over
 //! path-sorted [`FileBase`] and [`InlinkMap`] state.
-//!
-//! [`super::cache::RefreshCache`] wraps these free functions against its held
-//! previous state. Keeping them separate enables unit testing against plain
-//! `(current, previous)` values without an
-//! [`IndexStore`][super::store::IndexStore] fixture.
-//!
-//! [`IncrementalDelta`]: struct@IncrementalDelta
 
 use std::path::PathBuf;
 
 use super::{FileFormat, inlinks::InlinkMap};
 use crate::FileBase;
 
-/// Per-path persistence plan produced by
-/// [`super::builder::IndexBuilder::build`].
-///
-/// [`super::store::IndexStore::persist_index`] reads this to choose between
-/// a full rewrite ([`Full`]) or row-level incremental write ([`Incremental`]).
-///
-/// `Full` and `Incremental` are not interchangeable even when an incremental
-/// diff is empty. `Full` unconditionally wipes all tables before rewriting;
-/// `Incremental` only deletes paths its diff names. A `Full`-built index
-/// retagged `Incremental` against fabricated empty state would silently orphan
-/// deleted rows.
-///
-/// [`Full`]: IndexDelta::Full
-/// [`Incremental`]: IndexDelta::Incremental
-#[derive(Clone, Debug)]
-pub(crate) enum IndexDelta {
-    /// Produced by a fresh build: no previous state exists to diff against.
-    Full,
-    /// Produced by a refresh that reused a previous index.
-    Incremental(Box<IncrementalDelta>),
+/// Computed difference between disk files and persisted index metadata.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct FileDiff {
+    pub(super) upserted: Box<[FileBase]>,
+    pub(super) deleted: Box<[FileBase]>,
+    pub(super) has_deleted_note: bool,
 }
 
-/// The changed-path plan behind [`IndexDelta::Incremental`].
-///
-/// Each field names the paths that changed since the last persist:
-///
-/// - `upserted` and `deleted` cover [`crate::FileBase`] and [`crate::Note`]
-///   rows.
-/// - `links_upserted` and `links_deleted` cover the
-///   [`super::inlinks::InlinkMap`] multimap table.
-///
-/// [`IndexStore::persist_incremental`] reads these fields to patch only the
-/// changed rows instead of rewriting the entire database.
-///
-/// [`RefreshCache`]: super::cache::RefreshCache
-/// [`IndexStore::persist_incremental`]: super::store::IndexStore::persist_incremental
-#[derive(Clone, Debug)]
-pub(crate) struct IncrementalDelta {
-    /// Paths whose `FileBase` (and `Note`, if applicable) must be upserted
-    /// into `FILES`/`NOTES`, added or metadata-changed since the last
-    /// persist.
-    pub(crate) upserted: Vec<PathBuf>,
-    /// Paths removed since the last persist, must be deleted from
-    /// `FILES`/`NOTES`.
-    pub(crate) deleted: Vec<PathBuf>,
-    /// Target paths in `LINKS` whose source set is new or changed; `None` when
-    /// inlinks were reused unchanged (nothing to write).
-    pub(crate) links_upserted: Option<Vec<PathBuf>>,
-    /// Target paths removed from `LINKS`, always present alongside
-    /// `links_upserted` (both `None`/both populated; empty `Vec` is a valid
-    /// "no removals" case, distinct from `None`'s "inlinks unchanged,
-    /// nothing computed").
-    pub(crate) links_deleted: Vec<PathBuf>,
-}
-
-impl IncrementalDelta {
-    /// True if this delta names no changes. Callers short-circuit to avoid
-    /// opening an empty write transaction.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.upserted.is_empty()
-            && self.deleted.is_empty()
-            && self.links_deleted.is_empty()
-            && self.links_upserted.as_ref().is_none_or(Vec::is_empty)
-    }
-}
-
-/// Diffs two path-sorted `FileBase` slices, returning new or changed paths
-/// (`upserted`), removed paths (`deleted`), and whether any deleted entry was a
-/// Note. See [`super::cache::RefreshCache::reconcile_note`] for upserted-Note
-/// staleness handling.
-pub(super) fn diff_files(
-    current: &[FileBase],
-    previous: &[FileBase],
-) -> (Vec<PathBuf>, Vec<PathBuf>, bool) {
-    let mut upserted = Vec::new();
-    let mut deleted = Vec::new();
-    let mut has_deleted_note = false;
-    let mut cur = current.iter().peekable();
-    let mut prev = previous.iter().peekable();
-    loop {
-        match (cur.peek(), prev.peek()) {
-            (Some(c), Some(p)) => match c.path().cmp(p.path()) {
-                std::cmp::Ordering::Less => {
-                    upserted.push(c.path().to_path_buf());
+impl FileDiff {
+    /// Computes file additions, modifications, and deletions between `current`
+    /// disk files and `persisted` index metadata.
+    pub(super) fn compute(
+        current: &[FileBase],
+        persisted: &[FileBase],
+    ) -> Self {
+        let mut upserted = Vec::new();
+        let mut deleted = Vec::new();
+        let mut has_deleted_note = false;
+        let mut cur = current.iter().peekable();
+        let mut prev = persisted.iter().peekable();
+        loop {
+            match (cur.peek(), prev.peek()) {
+                (Some(c), Some(p)) => match c.path().cmp(p.path()) {
+                    std::cmp::Ordering::Less => {
+                        upserted.push((*c).clone());
+                        cur.next();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        if p.format() == FileFormat::Note {
+                            has_deleted_note = true;
+                        }
+                        deleted.push((*p).clone());
+                        prev.next();
+                    }
+                    std::cmp::Ordering::Equal => {
+                        if *c != *p {
+                            upserted.push((*c).clone());
+                        }
+                        cur.next();
+                        prev.next();
+                    }
+                },
+                (Some(c), None) => {
+                    upserted.push((*c).clone());
                     cur.next();
                 }
-                std::cmp::Ordering::Greater => {
+                (None, Some(p)) => {
                     if p.format() == FileFormat::Note {
                         has_deleted_note = true;
                     }
-                    deleted.push(p.path().to_path_buf());
+                    deleted.push((*p).clone());
                     prev.next();
                 }
-                std::cmp::Ordering::Equal => {
-                    if *c != *p {
-                        upserted.push(c.path().to_path_buf());
-                    }
-                    cur.next();
-                    prev.next();
-                }
-            },
-            (Some(c), None) => {
-                upserted.push(c.path().to_path_buf());
-                cur.next();
+                (None, None) => break,
             }
-            (None, Some(p)) => {
-                if p.format() == FileFormat::Note {
-                    has_deleted_note = true;
-                }
-                deleted.push(p.path().to_path_buf());
-                prev.next();
-            }
-            (None, None) => break,
+        }
+        Self {
+            upserted: upserted.into_boxed_slice(),
+            deleted: deleted.into_boxed_slice(),
+            has_deleted_note,
         }
     }
-    (upserted, deleted, has_deleted_note)
+
+    /// Returns `true` if no files were added, modified, or deleted.
+    #[inline]
+    #[must_use]
+    pub(super) fn is_empty(&self) -> bool {
+        self.upserted.is_empty() && self.deleted.is_empty()
+    }
 }
 
-/// Diffs two target-keyed inlink maps by source-set membership (order
-/// independent; [`derive_inlinks`](super::inlinks::derive_inlinks)'s output and
-/// a redb-loaded map are not guaranteed to list one target's sources in the
-/// same order even when the set is identical). Returns target paths whose
-/// source set is new or changed (`upserted`) and target paths removed entirely
-/// (`deleted`).
-pub(super) fn diff_inlinks(
-    previous: &InlinkMap,
-    current: &InlinkMap,
-) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let mut upserted = Vec::new();
-    for (target, sources) in current {
-        let changed = match previous.get(target) {
-            Some(prev_sources) => {
-                let mut prev_sorted: Vec<_> = prev_sources.iter().collect();
-                let mut cur_sorted: Vec<_> = sources.iter().collect();
-                prev_sorted.sort_unstable();
-                cur_sorted.sort_unstable();
-                prev_sorted != cur_sorted
+/// Computed difference in inbound link edges.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct InlinkDelta {
+    pub(super) upserted: Box<[(PathBuf, PathBuf)]>,
+    pub(super) deleted: Box<[(PathBuf, PathBuf)]>,
+}
+
+impl InlinkDelta {
+    /// Computes added and removed `(target, source)` inlink edges between
+    /// `current_links` and `persisted_links`.
+    pub(super) fn compute(
+        current_links: &InlinkMap,
+        persisted_links: &InlinkMap,
+    ) -> Self {
+        let mut upserted = Vec::new();
+        for (target, sources) in current_links {
+            let prev_sources = persisted_links.get(target);
+            for source in sources {
+                if prev_sources.is_none_or(|ps| !ps.contains(source)) {
+                    upserted.push((target.clone(), source.clone()));
+                }
             }
-            None => true,
-        };
-        if changed {
-            upserted.push(target.clone());
+        }
+        let mut deleted = Vec::new();
+        for (target, sources) in persisted_links {
+            let cur_sources = current_links.get(target);
+            for source in sources {
+                if cur_sources.is_none_or(|cs| !cs.contains(source)) {
+                    deleted.push((target.clone(), source.clone()));
+                }
+            }
+        }
+        Self {
+            upserted: upserted.into_boxed_slice(),
+            deleted: deleted.into_boxed_slice(),
         }
     }
-    let deleted = previous
-        .keys()
-        .filter(|target| !current.contains_key(*target))
-        .cloned()
-        .collect();
-    (upserted, deleted)
+
+    /// Returns `true` if no inbound link edges were added or removed.
+    #[inline]
+    #[must_use]
+    pub(super) fn is_empty(&self) -> bool {
+        self.upserted.is_empty() && self.deleted.is_empty()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    mod is_empty {
-        use rstest::rstest;
-
-        use super::*;
-
-        /// Builds an [`IncrementalDelta`] with all-empty fields except the one
-        /// under test, so each case isolates exactly one field's contribution
-        /// to [`IncrementalDelta::is_empty`].
-        fn delta(
-            upserted: Vec<PathBuf>,
-            deleted: Vec<PathBuf>,
-            links_upserted: Option<Vec<PathBuf>>,
-            links_deleted: Vec<PathBuf>,
-        ) -> IncrementalDelta {
-            IncrementalDelta {
-                upserted,
-                deleted,
-                links_upserted,
-                links_deleted,
-            }
-        }
-
-        #[test]
-        fn is_true_when_every_field_is_empty_or_none() {
-            let delta = delta(vec![], vec![], None, vec![]);
-
-            assert!(delta.is_empty());
-        }
-
-        #[test]
-        fn is_true_when_links_upserted_is_an_empty_vec_not_none() {
-            // `Some(vec![])` ("recomputed, nothing changed") must count as
-            // empty alongside `None` ("never recomputed"); the two are
-            // different reasons for the same "nothing to write" outcome.
-            let delta = delta(vec![], vec![], Some(vec![]), vec![]);
-
-            assert!(delta.is_empty());
-        }
-
-        #[rstest]
-        #[case::upserted(delta(vec![PathBuf::from("a.md")], vec![], None, vec![]))]
-        #[case::deleted(delta(vec![], vec![PathBuf::from("a.md")], None, vec![]))]
-        #[case::links_deleted(delta(vec![], vec![], None, vec![PathBuf::from("a.md")]))]
-        #[case::links_upserted_nonempty(delta(
-            vec![],
-            vec![],
-            Some(vec![PathBuf::from("a.md")]),
-            vec![]
-        ))]
-        fn is_false_when_any_field_names_a_change(
-            #[case] delta: IncrementalDelta,
-        ) {
-            assert!(!delta.is_empty());
-        }
-    }
-
-    mod diff_files {
+    mod file_diff {
         use std::fs;
 
         use pretty_assertions::assert_eq;
 
         use super::*;
         use crate::IndexerService;
+
+        #[test]
+        fn returns_true_when_diff_is_empty() {
+            let diff = FileDiff::default();
+            assert!(diff.is_empty());
+        }
 
         #[test]
         fn deleted_note_sets_has_deleted_note() {
@@ -243,11 +151,12 @@ mod tests {
             let current =
                 IndexerService::new(temp.path()).scan().expect("scan");
 
-            let (_, deleted, has_deleted_note) =
-                diff_files(&current, &previous);
+            let diff = FileDiff::compute(&current, &previous);
 
-            assert_eq!(deleted, [PathBuf::from("a.md")]);
-            assert!(has_deleted_note);
+            let deleted_paths: Vec<_> =
+                diff.deleted.iter().map(FileBase::path).collect();
+            assert_eq!(deleted_paths, [std::path::Path::new("a.md")]);
+            assert!(diff.has_deleted_note);
         }
 
         #[test]
@@ -262,11 +171,12 @@ mod tests {
             let current =
                 IndexerService::new(temp.path()).scan().expect("scan");
 
-            let (_, deleted, has_deleted_note) =
-                diff_files(&current, &previous);
+            let diff = FileDiff::compute(&current, &previous);
 
-            assert_eq!(deleted, [PathBuf::from("image.png")]);
-            assert!(!has_deleted_note);
+            let deleted_paths: Vec<_> =
+                diff.deleted.iter().map(FileBase::path).collect();
+            assert_eq!(deleted_paths, [std::path::Path::new("image.png")]);
+            assert!(!diff.has_deleted_note);
         }
 
         #[test]
@@ -280,20 +190,17 @@ mod tests {
             let current =
                 IndexerService::new(temp.path()).scan().expect("scan");
 
-            let (upserted, deleted, has_deleted_note) =
-                diff_files(&current, &previous);
+            let diff = FileDiff::compute(&current, &previous);
 
-            assert_eq!(upserted, [PathBuf::from("a.md")]);
-            assert!(deleted.is_empty());
-            assert!(
-                !has_deleted_note,
-                "upserted-Note staleness is decided elsewhere (backdating), \
-                 not by diff_files"
-            );
+            let upserted_paths: Vec<_> =
+                diff.upserted.iter().map(FileBase::path).collect();
+            assert_eq!(upserted_paths, [std::path::Path::new("a.md")]);
+            assert!(diff.deleted.is_empty());
+            assert!(!diff.has_deleted_note);
         }
     }
 
-    mod diff_inlinks {
+    mod inlink_delta {
         use std::collections::HashMap;
 
         use pretty_assertions::assert_eq;
@@ -301,7 +208,13 @@ mod tests {
         use super::*;
 
         #[test]
-        fn detects_new_and_removed_targets() {
+        fn returns_true_when_delta_is_empty() {
+            let delta = InlinkDelta::default();
+            assert!(delta.is_empty());
+        }
+
+        #[test]
+        fn detects_added_and_removed_inlinks() {
             let previous: InlinkMap = HashMap::from([(
                 PathBuf::from("a.md"),
                 vec![PathBuf::from("x.md")],
@@ -311,10 +224,16 @@ mod tests {
                 vec![PathBuf::from("x.md")],
             )]);
 
-            let (upserted, deleted) = diff_inlinks(&previous, &current);
+            let delta = InlinkDelta::compute(&current, &previous);
 
-            assert_eq!(upserted, [PathBuf::from("b.md")]);
-            assert_eq!(deleted, [PathBuf::from("a.md")]);
+            assert_eq!(delta.upserted.as_ref(), &[(
+                PathBuf::from("b.md"),
+                PathBuf::from("x.md")
+            )]);
+            assert_eq!(delta.deleted.as_ref(), &[(
+                PathBuf::from("a.md"),
+                PathBuf::from("x.md")
+            )]);
         }
 
         #[test]
@@ -330,10 +249,9 @@ mod tests {
                     PathBuf::from("x.md"),
                 ])]);
 
-            let (upserted, deleted) = diff_inlinks(&previous, &current);
+            let delta = InlinkDelta::compute(&current, &previous);
 
-            assert!(upserted.is_empty());
-            assert!(deleted.is_empty());
+            assert!(delta.is_empty());
         }
     }
 }

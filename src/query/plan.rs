@@ -334,14 +334,10 @@ impl QueryTransform {
                 indexed.truncate(n);
                 indexed.sort_unstable_by(cmp);
 
-                let mut opt_rows: Vec<Option<QueryRow>> =
-                    rows.into_iter().map(Some).collect();
                 let mut out = Vec::with_capacity(n);
                 for (row_idx, _) in indexed {
-                    if let Some(row) =
-                        opt_rows.get_mut(row_idx).and_then(Option::take)
-                    {
-                        out.push(row);
+                    if let Some(row) = rows.get(row_idx) {
+                        out.push(row.clone());
                     }
                 }
                 out

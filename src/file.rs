@@ -99,7 +99,7 @@ impl FileBase {
     }
 
     /// Builds a [`FileBase`] with custom fields for test fixtures.
-    #[cfg(test)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "test fixture helper"))]
     pub(crate) fn new_test(
         path: PathBuf,
         folder: PathBuf,

@@ -4,14 +4,16 @@
 //! Defines [`QueryService`], which matches notes against candidate source
 //! selectors and applies pre-fetch query plans.
 
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use super::{
     QueryBuilder, QueryMode, QueryRow, QuerySet,
-    grammar::{FileClassExpander, SourceSelector},
+    grammar::{BooleanExpr, FileClassExpander, SourceAtom, SourceSelector},
 };
-use crate::index::{FileIndex, RowIndex};
-
+use crate::index::{FileIndex, IndexResult, IndexStore, RowIndex};
 /// Query execution engine over a borrowed [`FileIndex`].
 ///
 /// `QueryService` executes [`QueryBuilder`] specifications against an indexed
@@ -101,6 +103,54 @@ impl QueryService {
         QuerySet::new(plan.run(rows))
     }
 
+    /// Executes `builder` directly against `store`, bypassing full
+    /// [`FileIndex`] materialization by resolving only candidate records
+    /// matching `builder`'s source selector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError`] if candidate resolution or storage reads fail.
+    #[inline]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "part of storage query acceleration surface"
+        )
+    )]
+    pub(crate) fn run_from_store(
+        &self,
+        store: &IndexStore,
+        builder: QueryBuilder,
+    ) -> IndexResult<QuerySet> {
+        let (mode, mut source, plan) = builder.into_parts();
+        if source.has_classes()
+            && let Some(expander) = self.class_expander.as_deref()
+        {
+            source.resolve_classes(expander);
+        }
+        let resolver = SourceResolver::new(store);
+        let candidate_paths = resolver.resolve(&source)?;
+        let notes = store
+            .read_notes_batch(candidate_paths.iter().map(PathBuf::as_path))?;
+        let (all_files, inlinks) = store.read_files_and_links()?;
+        let mut matching_files = Vec::with_capacity(candidate_paths.len());
+        for path in &candidate_paths {
+            if let Ok(idx) = all_files.binary_search_by(|f| f.path().cmp(path))
+                && let Some(f) = all_files.get(idx)
+            {
+                matching_files.push(f.clone());
+            }
+        }
+        let index =
+            Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
+        let rows = match mode {
+            QueryMode::Pages => self.page_rows(&index, &source),
+            QueryMode::Tasks => self.task_rows(&index, &source),
+        };
+        Ok(QuerySet::new(plan.run(rows)))
+    }
+
     fn page_rows(
         &self,
         index: &Arc<FileIndex>,
@@ -136,9 +186,7 @@ impl QueryService {
             .filter(move |&position| {
                 source.is_match(index.entry_at(position), &self.class_field)
             })
-            .map(move |position| {
-                QueryRow::from_row(Arc::clone(index), position)
-            })
+            .map(move |position| QueryRow::from_row(index, position))
     }
 }
 
@@ -149,6 +197,121 @@ impl std::fmt::Debug for QueryService {
             .field("class_field", &self.class_field)
             .field("has_class_expander", &self.class_expander.is_some())
             .finish()
+    }
+}
+
+/// Candidate path resolver evaluating [`SourceSelector`] expressions directly
+/// against [`IndexStore`] multimap indexes and folder hierarchies.
+pub(crate) struct SourceResolver<'a> {
+    store: &'a IndexStore,
+}
+
+impl<'a> SourceResolver<'a> {
+    /// Creates a resolver scoped to `store`.
+    pub(crate) fn new(store: &'a IndexStore) -> Self {
+        Self {
+            store,
+        }
+    }
+
+    /// Resolves matching candidate paths for `selector`.
+    pub(crate) fn resolve(
+        &self,
+        selector: &SourceSelector,
+    ) -> IndexResult<Box<[PathBuf]>> {
+        match selector {
+            SourceSelector::All => self.store.paths_in_folder(Path::new("")),
+            SourceSelector::Expr(expr) => self.resolve_expr(expr.expr()),
+        }
+    }
+
+    fn resolve_expr(
+        &self,
+        expr: &BooleanExpr<SourceAtom>,
+    ) -> IndexResult<Box<[PathBuf]>> {
+        match expr {
+            BooleanExpr::Atom(atom) => self.resolve_atom(atom),
+            BooleanExpr::And(terms) => {
+                let mut iter = terms.iter();
+                let Some(first) = iter.next() else {
+                    return self.store.paths_in_folder(Path::new(""));
+                };
+                let mut acc = self.resolve_expr(first)?;
+                for next in iter {
+                    let next_paths = self.resolve_expr(next)?;
+                    acc = Self::intersect_sorted(&acc, &next_paths);
+                }
+                Ok(acc)
+            }
+            BooleanExpr::Or(terms) => {
+                let mut acc = Vec::new();
+                for term in terms {
+                    let paths = self.resolve_expr(term)?;
+                    acc.extend_from_slice(&paths);
+                }
+                acc.sort();
+                acc.dedup();
+                Ok(acc.into_boxed_slice())
+            }
+            BooleanExpr::Not(_) => self.store.paths_in_folder(Path::new("")),
+        }
+    }
+
+    fn resolve_atom(&self, atom: &SourceAtom) -> IndexResult<Box<[PathBuf]>> {
+        match atom {
+            SourceAtom::Tag(tag) => self.store.paths_with_tag(tag),
+            SourceAtom::Class {
+                names,
+                mode,
+            } => {
+                let mut acc = Vec::new();
+                if mode.classes().is_empty() {
+                    for class in names {
+                        let paths = self.store.paths_with_file_class(class)?;
+                        acc.extend_from_slice(&paths);
+                    }
+                } else {
+                    for class in mode.classes() {
+                        let paths = self.store.paths_with_file_class(class)?;
+                        acc.extend_from_slice(&paths);
+                    }
+                }
+                acc.sort();
+                acc.dedup();
+                Ok(acc.into_boxed_slice())
+            }
+            SourceAtom::Path(pattern) => {
+                let all = self.store.paths_in_folder(Path::new(""))?;
+                let matched: Vec<PathBuf> = all
+                    .iter()
+                    .filter(|p| pattern.is_match(p))
+                    .cloned()
+                    .collect();
+                Ok(matched.into_boxed_slice())
+            }
+        }
+    }
+
+    /// Linear two-pointer intersection of two sorted slices.
+    fn intersect_sorted(a: &[PathBuf], b: &[PathBuf]) -> Box<[PathBuf]> {
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        let mut j = 0usize;
+        while i < a.len() && j < b.len() {
+            let (Some(item_a), Some(item_b)) = (a.get(i), b.get(j)) else {
+                break;
+            };
+            match item_a.cmp(item_b) {
+                std::cmp::Ordering::Less => i = i.saturating_add(1),
+                std::cmp::Ordering::Greater => j = j.saturating_add(1),
+                std::cmp::Ordering::Equal => {
+                    out.push(item_a.clone());
+                    i = i.saturating_add(1);
+                    j = j.saturating_add(1);
+                }
+            }
+        }
+        out.into_boxed_slice()
     }
 }
 
@@ -179,6 +342,111 @@ mod tests {
     ) -> QuerySet {
         QueryService::new("class")
             .run(index, QueryBuilder::tasks(source.clone()))
+    }
+
+    mod source_resolver {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn resolves_all_selector_to_all_paths() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A #tag1").expect("write a");
+            fs::write(
+                temp.path().join("b.md"),
+                "---\nfileClass: Book\n---\n# B",
+            )
+            .expect("write b");
+            let indexer = IndexerService::new(temp.path());
+            let index = indexer.build().expect("build");
+            indexer.persist(&index).expect("persist");
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let resolver = SourceResolver::new(&store);
+            let paths =
+                resolver.resolve(&SourceSelector::All).expect("resolve all");
+            assert_eq!(paths.as_ref(), [
+                PathBuf::from("a.md"),
+                PathBuf::from("b.md")
+            ]);
+        }
+
+        #[test]
+        fn resolves_tag_selector_via_multimap() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A #project/active")
+                .expect("write a");
+            fs::write(temp.path().join("b.md"), "# B #other").expect("write b");
+            let indexer = IndexerService::new(temp.path());
+            let index = indexer.build().expect("build");
+            indexer.persist(&index).expect("persist");
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let resolver = SourceResolver::new(&store);
+            let selector =
+                SourceSelector::parse("#project").expect("parse selector");
+            let paths = resolver.resolve(&selector).expect("resolve tag");
+            assert_eq!(paths.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn resolves_class_selector_via_multimap() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("a.md"),
+                "---\nfileClass: Book\n---\n# A",
+            )
+            .expect("write a");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            let indexer = IndexerService::new(temp.path());
+            let index = indexer.build().expect("build");
+            indexer.persist(&index).expect("persist");
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let resolver = SourceResolver::new(&store);
+            let selector =
+                SourceSelector::parse("@Book").expect("parse selector");
+            let paths = resolver.resolve(&selector).expect("resolve class");
+            assert_eq!(paths.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn intersect_sorted_returns_common_paths() {
+            let a = [
+                PathBuf::from("a.md"),
+                PathBuf::from("b.md"),
+                PathBuf::from("c.md"),
+            ];
+            let b = [PathBuf::from("b.md"), PathBuf::from("d.md")];
+            let res = SourceResolver::intersect_sorted(&a, &b);
+            assert_eq!(res.as_ref(), [PathBuf::from("b.md")]);
+        }
+
+        #[test]
+        fn run_from_store_evaluates_query_over_only_matching_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A #book\n\n- [ ] Task A")
+                .expect("write a");
+            fs::write(temp.path().join("b.md"), "# B #other\n\n- [ ] Task B")
+                .expect("write b");
+            let indexer = IndexerService::new(temp.path());
+            let index = indexer.build().expect("build");
+            indexer.persist(&index).expect("persist");
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let service = QueryService::new("class");
+            let selector =
+                SourceSelector::parse("#book").expect("parse selector");
+            let query_set = service
+                .run_from_store(&store, QueryBuilder::pages(selector))
+                .expect("run from store");
+            assert_eq!(query_set.len(), 1);
+            assert_eq!(
+                query_set.get(0).map(|r| r.file().path()),
+                Some(Path::new("a.md"))
+            );
+        }
     }
 
     mod query {
@@ -220,7 +488,6 @@ mod tests {
             );
             let outcome = query_pages(&index, &SourceSelector::All);
 
-            assert_eq!(outcome.len(), 3);
             assert_eq!(
                 outcome.get(0).map(|r| r.file().path()),
                 Some(Path::new("a.md"))

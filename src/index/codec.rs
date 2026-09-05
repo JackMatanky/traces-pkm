@@ -44,10 +44,9 @@ pub(super) fn decode_row<T: DeserializeOwned>(
 ///
 /// The lossy fallback affects only refresh-diff link paths;
 /// [`IndexStore::read_all`] resolves stored link bytes against loaded notes for
-/// byte-exact query output. `LISTS` keys are always valid UTF-8 by
-/// construction (see [`IndexStore::write_lists_for_note`]), so the fallback
-/// never triggers for [`IndexStore::read_lists`] or
-/// [`IndexStore::read_lists_for_path`].
+/// byte-exact query output. `LISTS` keys are always valid UTF-8 by construction
+/// (see [`IndexStore::write_lists_for_note`]), so the fallback never triggers
+/// for [`IndexStore::read_lists`] or [`IndexStore::read_lists_for_path`].
 ///
 /// Used by [`IndexStore::read_table`]'s deserialization-error path,
 /// [`IndexStore::read_files_and_links_via`]'s link reconstruction, and the

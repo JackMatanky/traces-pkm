@@ -19,6 +19,7 @@ mod field;
 mod filter;
 mod source;
 
+pub(crate) use expr::BooleanExpr;
 pub(crate) use field::{FieldPath, FileField, TaskField};
 pub(crate) use filter::FilterExpr;
 pub use source::SourceSelector;

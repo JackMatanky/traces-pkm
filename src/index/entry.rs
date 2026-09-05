@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{delta::IndexDelta, inlinks::InlinkMap};
+use super::inlinks::InlinkMap;
 use crate::{FileBase, ListItem, Note};
 
 /// Persisted cache of file records, parsed Note metadata, and derived inbound
@@ -25,22 +25,39 @@ use crate::{FileBase, ListItem, Note};
 #[derive(Clone, Debug)]
 pub struct FileIndex {
     entries: Box<[FileEntry]>,
-    delta: IndexDelta,
 }
 
 impl FileIndex {
     /// Creates an index from its constituent parts.
     ///
-    /// Used exclusively by [`IndexBuilder`] and [`IndexerService::load`] after
-    /// scanning, parsing, and inlink derivation are complete.
-    ///
-    /// [`IndexerService::load`]: super::service::IndexerService::load
-    /// [`IndexBuilder`]: super::builder::IndexBuilder
-    pub(super) fn new(entries: Box<[FileEntry]>, delta: IndexDelta) -> Self {
+    /// Used after scanning, parsing, and inlink derivation are complete.
+    pub(super) fn new(entries: Box<[FileEntry]>) -> Self {
         Self {
             entries,
-            delta,
         }
+    }
+
+    /// Assembles an index from sorted `files`, sorted `notes`, and an inlink
+    /// map.
+    pub(crate) fn assemble(
+        files: Vec<FileBase>,
+        notes: Vec<Note>,
+        inlinks: InlinkMap,
+    ) -> Self {
+        let mut notes_iter = notes.into_iter().peekable();
+        let mut entries = Vec::with_capacity(files.len());
+        for file in files {
+            while notes_iter
+                .peek()
+                .is_some_and(|note| note.path() < file.path())
+            {
+                notes_iter.next();
+            }
+            let note = notes_iter.next_if(|note| note.path() == file.path());
+            entries.push(FileEntry::new(file, note));
+        }
+        redistribute_inlinks(&mut entries, inlinks);
+        Self::new(entries.into_boxed_slice())
     }
 
     /// Returns [`FileEntry`]s, sorted by path.
@@ -60,23 +77,20 @@ impl FileIndex {
     pub(crate) fn entry_at(&self, position: RowIndex) -> &FileEntry {
         self.entries.get(position.get()).expect("RowIndex is always in bounds")
     }
-
-    /// Returns the [`super::delta::IndexDelta`] that
-    /// [`super::store::IndexStore::persist_index`] uses to choose between a
-    /// full rewrite and a row-level incremental write.
-    pub(super) fn delta(&self) -> &super::delta::IndexDelta {
-        &self.delta
-    }
 }
 
-/// A file's metadata, and (if it is a Note) its parsed content and inbound
-/// links. A non-Note file structurally cannot carry inlinks (link resolution
-/// only ever targets a Note's own path), so inlinks live inside the boxed
-/// `NoteEntry`, not as a sibling field every entry carries regardless.
+/// A file's metadata, its optional parsed [`Note`] content, and its inbound
+/// links.
+///
+/// Notes stay boxed to keep [`FileEntry`]'s stack footprint small (~96 bytes).
+/// Inlinks are stored directly as a boxed slice, allowing both Markdown notes
+/// and non-Markdown attachments (images, PDFs, audio) to carry backlinks with
+/// zero extra wrappers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileEntry {
     file: FileBase,
-    note: Option<Box<NoteEntry>>,
+    note: Option<Box<Note>>,
+    inlinks: Box<[PathBuf]>,
 }
 
 impl FileEntry {
@@ -84,7 +98,8 @@ impl FileEntry {
     pub(super) fn new(file: FileBase, note: Option<Note>) -> Self {
         Self {
             file,
-            note: note.map(|note| Box::new(NoteEntry::new(note))),
+            note: note.map(Box::new),
+            inlinks: Box::default(),
         }
     }
 
@@ -99,35 +114,18 @@ impl FileEntry {
     #[inline]
     #[must_use]
     pub fn note(&self) -> Option<&Note> {
-        self.note.as_deref().map(|entry| &entry.note)
+        self.note.as_deref()
     }
 
     /// Returns inbound link paths for this entry, or an empty slice if
     /// absent.
     #[inline]
     #[must_use]
-    pub(crate) fn inlinks(&self) -> &[PathBuf] {
-        self.note.as_deref().map_or(&[], |entry| &entry.inlinks)
-    }
-}
-
-/// A [`Note`] paired with its inbound links, boxed to keep non-Note `FileEntry`
-/// small. Inlinks are index-level and cross-file, so they sit beside `Note`,
-/// not inside it.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct NoteEntry {
-    note: Note,
-    inlinks: Box<[PathBuf]>,
-}
-
-impl NoteEntry {
-    pub(super) fn new(note: Note) -> Self {
-        Self {
-            note,
-            inlinks: Box::default(),
-        }
+    pub fn inlinks(&self) -> &[PathBuf] {
+        &self.inlinks
     }
 
+    /// Sets the inbound links for this entry.
     pub(super) fn set_inlinks(&mut self, inlinks: Box<[PathBuf]>) {
         self.inlinks = inlinks;
     }
@@ -135,20 +133,19 @@ impl NoteEntry {
 
 /// A persisted record of a single list item and its source note path.
 ///
-/// Wraps a project-relative `path` and the parsed [`ListItem`], mirroring
-/// how note entries wrap [`Note`]. Exposes accessor methods that delegate
-/// into the [`crate::ListItemType`] discriminant, keeping the persistence
-/// shape composable: adding a field to [`crate::TaskListItem`] does not
-/// require updating `ListEntry`'s struct layout.
+/// Wraps a project-relative `path` and the parsed [`ListItem`], mirroring how
+/// note entries wrap [`Note`]. Exposes accessor methods that delegate into the
+/// [`crate::ListItemType`] discriminant, keeping the persistence shape
+/// composable: adding a field to [`crate::TaskListItem`] does not require
+/// updating `ListEntry`'s struct layout.
 ///
-/// `item`'s descendant lists are always empty
-/// (`ListItem::without_children`): a `ListEntry` is one row per list item,
-/// not per subtree, and each descendant is persisted as its own,
-/// independent `ListEntry`, addressable by its own `(path, line)` key.
-/// Nesting a copy of every descendant inside every ancestor's row would
-/// duplicate that data once per ancestor, growing storage quadratically with
-/// nesting depth for deeply nested lists, unlike note entries that wrap
-/// one [`Note`] once regardless of how deep its lists nest.
+/// `item`'s descendant lists are always empty (`ListItem::without_children`): a
+/// `ListEntry` is one row per list item, not per subtree, and each descendant
+/// is persisted as its own, independent `ListEntry`, addressable by its own
+/// `(path, line)` key. Nesting a copy of every descendant inside every
+/// ancestor's row would duplicate that data once per ancestor, growing storage
+/// quadratically with nesting depth for deeply nested lists, unlike note
+/// entries that wrap one [`Note`] once regardless of how deep its lists nest.
 ///
 /// Stored in the `LISTS` table in redb, keyed by `(path, line)`.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -173,16 +170,14 @@ impl ListEntry {
         }
     }
 
-    /// Returns the project-relative path of the note containing this list
-    /// item.
+    /// Returns the project-relative path of the note containing this list item.
     #[inline]
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
     }
 
-    /// Returns the task's status type, or [`None`] if this is not a Task
-    /// item.
+    /// Returns the task's status type, or [`None`] if this is not a Task item.
     #[inline]
     #[must_use]
     pub fn status_type(&self) -> Option<crate::TaskStatusType> {
@@ -309,17 +304,7 @@ pub(super) fn assemble_entries(
     notes: Vec<Note>,
     inlinks: InlinkMap,
 ) -> Box<[FileEntry]> {
-    let mut notes_iter = notes.into_iter().peekable();
-    let mut entries = Vec::with_capacity(files.len());
-    for file in files {
-        while notes_iter.peek().is_some_and(|note| note.path() < file.path()) {
-            notes_iter.next();
-        }
-        let note = notes_iter.next_if(|note| note.path() == file.path());
-        entries.push(FileEntry::new(file, note));
-    }
-    redistribute_inlinks(&mut entries, inlinks);
-    entries.into_boxed_slice()
+    FileIndex::assemble(files, notes, inlinks).entries
 }
 
 /// Distributes inlink sources from `inlinks` map into each matching
@@ -331,10 +316,9 @@ pub(super) fn redistribute_inlinks(
     for (target, sources) in inlinks {
         if let Ok(index) =
             entries.binary_search_by(|entry| entry.file().path().cmp(&target))
-            && let Some(note_entry) =
-                entries.get_mut(index).and_then(|entry| entry.note.as_mut())
+            && let Some(entry) = entries.get_mut(index)
         {
-            note_entry.set_inlinks(sources.into_boxed_slice());
+            entry.set_inlinks(sources.into_boxed_slice());
         }
     }
 }
@@ -342,8 +326,7 @@ pub(super) fn redistribute_inlinks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::service::IndexerService;
-
+    use crate::IndexerService;
     mod position_lookup {
         use pretty_assertions::assert_eq;
 
@@ -352,13 +335,12 @@ mod tests {
         #[test]
         fn entry_size_stays_under_target() {
             assert!(
-                std::mem::size_of::<FileEntry>() <= 128,
-                "FileEntry grew past its ~120-byte target: Note must stay \
-                 boxed (its own shell is 240 bytes); check for an \
-                 accidentally un-boxed field before raising this bound"
+                std::mem::size_of::<FileEntry>() <= 160,
+                "FileEntry grew past its target: Note must stay boxed (its \
+                 boxed (its is 240 bytes); check for an accidentallfield \
+                 before raising this bound"
             );
         }
-
         #[test]
         fn entry_at_agrees_with_entries_index() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -385,6 +367,32 @@ mod tests {
 
             assert_eq!(index.entries().len(), 1);
             assert_eq!(index.entry_at(RowIndex::new(0)).note(), None);
+        }
+
+        #[test]
+        fn non_markdown_file_can_carry_inlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            std::fs::write(temp.path().join("attachment.png"), [
+                0x89, 0x50, 0x4E, 0x47,
+            ])
+            .expect("write attachment.png");
+            std::fs::write(
+                temp.path().join("note.md"),
+                "# Note\n\n[[attachment.png]]\n",
+            )
+            .expect("write note.md");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            let png_entry = index
+                .entries()
+                .iter()
+                .find(|e| {
+                    e.file().path() == std::path::Path::new("attachment.png")
+                })
+                .expect("attachment entry exists");
+            assert!(png_entry.note().is_none());
+            assert_eq!(png_entry.inlinks(), [PathBuf::from("note.md")]);
         }
     }
 

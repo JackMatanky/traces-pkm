@@ -76,8 +76,7 @@ struct TaskRow {
 /// output.
 #[derive(Clone)]
 pub struct QueryRow {
-    index: Arc<FileIndex>,
-    position: RowIndex,
+    entry: Arc<FileEntry>,
     /// Overrides field resolution for exploded rows produced by
     /// [`QuerySet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
@@ -85,19 +84,23 @@ pub struct QueryRow {
 }
 
 impl QueryRow {
-    /// Constructs a new [`QueryRow`] at `position` in `index`.
-    pub(super) fn from_row(index: Arc<FileIndex>, position: RowIndex) -> Self {
+    /// Constructs a new [`QueryRow`] from an entry.
+    pub(super) fn from_entry(entry: Arc<FileEntry>) -> Self {
         Self {
-            index,
-            position,
+            entry,
             flattened: Vec::new(),
             kind: RowKind::Page,
         }
     }
 
+    /// Constructs a new [`QueryRow`] at `position` in `index`.
+    pub(super) fn from_row(index: &Arc<FileIndex>, position: RowIndex) -> Self {
+        Self::from_entry(Arc::new(index.entry_at(position).clone()))
+    }
+
     /// Resolves this row's indexed [`FileEntry`].
     fn entry(&self) -> &FileEntry {
-        self.index.entry_at(self.position)
+        &self.entry
     }
 
     /// Promotes this row to task level.
@@ -129,8 +132,8 @@ impl QueryRow {
         }
     }
 
-    /// Returns the task item's text if this is a task-level row, or `None`
-    /// for page-level rows.
+    /// Returns the task item's text if this is a task-level row, or `None` for
+    /// page-level rows.
     #[inline]
     #[must_use]
     pub fn task_text(&self) -> Option<&str> {
@@ -298,7 +301,6 @@ impl std::fmt::Debug for QueryRow {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("QueryRow")
-            .field("position", &self.position)
             .field("entry", self.entry())
             .field("flattened", &self.flattened)
             .field("kind", &self.kind)
@@ -311,10 +313,10 @@ impl std::fmt::Debug for QueryRow {
 ///
 /// `QuerySet` acts as a common table expression (CTE) result set:
 /// transformation methods (`filter`, `sort_field`, `flatten`) append
-/// transformations in `O(1)` time to a
-/// pending plan. Execution occurs lazily on first read ([`len`](Self::len),
-/// [`get`](Self::get), [`iter`](Self::iter), or any terminal renderer),
-/// memoizing the result for all subsequent reads and branch evaluations.
+/// transformations in `O(1)` time to a pending plan. Execution occurs lazily on
+/// first read ([`len`](Self::len), [`get`](Self::get), [`iter`](Self::iter), or
+/// any terminal renderer), memoizing the result for all subsequent reads and
+/// branch evaluations.
 ///
 /// # Examples
 ///
@@ -382,8 +384,7 @@ impl QuerySet {
         self.rows().get(index)
     }
 
-    /// Returns an iterator over references to the contained [`QueryRow`]
-    /// rows.
+    /// Returns an iterator over references to the contained [`QueryRow`] rows.
     #[inline]
     pub fn iter(&self) -> std::slice::Iter<'_, QueryRow> {
         self.rows().iter()
