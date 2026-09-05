@@ -371,7 +371,7 @@ declare -a bench_files=()
 if [[ -n "${usage_mod:-}" ]]; then
   case "${usage_mod}" in
     hash)     bench_files=(hash) ;;
-    index)    bench_files=(index_codec index_lifecycle) ;;
+    index)    bench_files=(index_codec index_inlinks index_lifecycle) ;;
     note)     bench_files=(note_parsing) ;;
     query)    bench_files=(query_execution query_parsing query_sort) ;;
     template) bench_files=(template_render) ;;
