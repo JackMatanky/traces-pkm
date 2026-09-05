@@ -344,23 +344,6 @@ impl SortKey {
     }
 }
 
-/// Compares two resolved [`NoteFieldValue`] instances of the same comparable
-/// kind.
-pub(super) fn compare_field_values(
-    a: &NoteFieldValue,
-    b: &NoteFieldValue,
-) -> Option<Ordering> {
-    match (a, b) {
-        (NoteFieldValue::Number(x), NoteFieldValue::Number(y)) => {
-            x.partial_cmp(y)
-        }
-        (NoteFieldValue::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
-        _ => match (a.as_str(), b.as_str()) {
-            (Some(x), Some(y)) => Some(x.cmp(y)),
-            _ => None,
-        },
-    }
-}
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path, sync::Arc};
@@ -600,24 +583,6 @@ mod tests {
             assert!(
                 SortOrder::parse("file..bad", SortDirection::Descending)
                     .is_err()
-            );
-        }
-    }
-
-    mod compare_field_values {
-        use pretty_assertions::assert_eq;
-
-        use super::super::compare_field_values;
-        use crate::NoteFieldValue;
-
-        #[test]
-        fn orders_false_before_true() {
-            let a = NoteFieldValue::Bool(false);
-            let b = NoteFieldValue::Bool(true);
-
-            assert_eq!(
-                compare_field_values(&a, &b),
-                Some(std::cmp::Ordering::Less)
             );
         }
     }

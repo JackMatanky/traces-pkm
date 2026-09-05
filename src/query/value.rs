@@ -1,8 +1,7 @@
 //! Zero-copy resolved field value types for query resolution.
 
-use std::{cmp::Ordering, fmt::Write as _, path::PathBuf};
+use std::{fmt::Write as _, path::PathBuf};
 
-use super::sort::compare_field_values;
 use crate::{
     Tag,
     file::Timestamp,
@@ -248,11 +247,12 @@ impl QueryListValueRef<'_> {
 /// Returns whether two resolved [`NoteFieldValue`] instances represent equal
 /// values under filter comparison (`==` and `!=`).
 ///
-/// Returns `true` when structural equality (`a == b`) holds, or when
-/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
-/// text normalization allows string literals to match date or duration fields.
+/// Returns `true` when structural equality (`a == b`) holds, or when both
+/// values stringify (via [`NoteFieldValue::as_str`], which covers `String`,
+/// `Date`, and `Duration`) to the same text. This cross-kind text
+/// normalization allows string literals to match date or duration fields.
 fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
-    a == b || compare_field_values(a, b) == Some(Ordering::Equal)
+    a == b || matches!((a.as_str(), b.as_str()), (Some(x), Some(y)) if x == y)
 }
 
 fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
