@@ -43,11 +43,18 @@ use traces_pkm::{
     write_note, write_template,
 };
 
+#[allow(
+    dead_code,
+    reason = "shared benchmark common helpers are compiled into each bench \
+              target; this target uses only the quick size sweep"
+)]
+mod common;
+
+use common::quick_file_counts;
+
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
-
-const WORKSPACE_SIZES: &[usize] = &[100, 1_000];
 
 /// Builds a temporary project fixture populated with `n` synthetic notes,
 /// an indexed database, and test templates.
@@ -119,7 +126,7 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
 
-    for &n in WORKSPACE_SIZES {
+    for n in quick_file_counts() {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));

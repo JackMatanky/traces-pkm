@@ -33,12 +33,24 @@ use std::hint::black_box;
 use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use traces_pkm::{MarkdownParserInput, parse_markdown};
+use traces_pkm::Note;
+
+#[allow(
+    dead_code,
+    reason = "shared benchmark common helpers are compiled into each bench \
+              target; this target uses only parser input fixtures"
+)]
+mod common;
+
+use common::{
+    FRONTMATTER_FIELD_COUNTS, LIST_ITEM_COUNTS,
+    content::{frontmatter_fields_source, list_items_source},
+    notes::parse_note,
+};
 
 #[inline]
-fn bench_parse(path: &std::path::Path, src: &str) -> traces_pkm::Note {
-    let input = MarkdownParserInput::for_test(path, src);
-    parse_markdown(&input)
+fn bench_parse(path: &std::path::Path, src: &str) -> Note {
+    parse_note(path, src)
 }
 
 // ----------------------------------------------------------- //
@@ -138,26 +150,6 @@ fn dense_wikilinks_only() -> String {
     source
 }
 
-fn dense_tasks_only() -> String {
-    use std::fmt::Write as _;
-
-    let mut source = String::from("# Task List\n\n");
-    for i in 0..50 {
-        let _ = writeln!(source, "- [ ] Task item {i} to be processed");
-    }
-    source
-}
-
-fn list_items_source(n: usize) -> String {
-    use std::fmt::Write as _;
-
-    let mut source = String::from("# List Items\n\n");
-    for i in 0..n {
-        let _ = writeln!(source, "- [ ] Item {i} for processing");
-    }
-    source
-}
-
 fn nested_items_source(total_items: usize, max_depth: u8) -> String {
     use std::fmt::Write as _;
 
@@ -182,17 +174,6 @@ fn line_density_source(target_bytes: usize, line_length: usize) -> String {
         source.push_str(&chunk);
         source.push('\n');
     }
-    source
-}
-
-fn frontmatter_fields_source(field_count: usize) -> String {
-    use std::fmt::Write as _;
-
-    let mut source = String::from("---\n");
-    for i in 0..field_count {
-        let _ = writeln!(source, "field_{i}: \"value_{i}\"");
-    }
-    source.push_str("---\n\n# Body\nSimple note.\n");
     source
 }
 
@@ -313,7 +294,7 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
         ("prose_code", prose_with_code_blocks()),
         ("dense_frontmatter", dense_frontmatter()),
         ("dense_wikilinks", dense_wikilinks_only()),
-        ("dense_tasks", dense_tasks_only()),
+        ("dense_tasks", list_items_source(50)),
     ];
 
     for (label, source) in workloads {
@@ -334,7 +315,7 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures parsing cost scaled by list item count `[10, 100, 1_000, 5_000]`.
+/// Measures parsing cost scaled by [`LIST_ITEM_COUNTS`].
 ///
 /// Isolates per-item position-tracking overhead (`ByteTracker::byte_to_line`,
 /// `ListItemPosition` construction) from prose/frontmatter bulk.
@@ -342,7 +323,7 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::list_item_scaling");
     let path = std::path::Path::new("note.md");
 
-    for count in [10_usize, 100, 1_000, 5_000] {
+    for &count in LIST_ITEM_COUNTS {
         let source = list_items_source(count);
         group.throughput(Throughput::Elements(
             u64::try_from(count).expect("count fits u64"),
@@ -416,9 +397,9 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
 }
 
 /// Measures task-marker overhead against an identical plain-bullet list, and
-/// across marker resolutions: plain bullets skip the scanner entirely, `- [
-/// ]` hits the todo entry, mixed symbols cycle `TaskStatusMap` hits plus
-/// the unknown-symbol todo fallback, and emoji/inline-field tasks add the
+/// across marker resolutions: plain bullets skip the scanner entirely, `- [ ]`
+/// hits the todo entry, mixed symbols cycle `TaskStatusMap` hits plus the
+/// unknown-symbol todo fallback, and emoji/inline-field tasks add the
 /// `has_marker` lexer pass.
 ///
 /// Expected outcomes:
@@ -452,7 +433,7 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
 
     let workloads = [
         ("plain_bullets", plain_bullets),
-        ("plain_tasks", dense_tasks_only()),
+        ("plain_tasks", list_items_source(count)),
         ("mixed_markers", marker_variety_source(count)),
         ("task_metadata", task_metadata_source(count)),
     ];
@@ -475,8 +456,7 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures task-marker parsing cost scaled by marker count `[10, 100, 1_000,
-/// 5_000]`.
+/// Measures task-marker parsing cost scaled by [`LIST_ITEM_COUNTS`].
 ///
 /// Isolates the per-item leading-marker scan (per-chunk classification until
 /// the marker decides) from prose/frontmatter bulk.
@@ -487,7 +467,7 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::task_marker_scaling");
     let path = std::path::Path::new("note.md");
 
-    for count in [10_usize, 100, 1_000, 5_000] {
+    for &count in LIST_ITEM_COUNTS {
         let source = marker_variety_source(count);
         group.throughput(Throughput::Elements(
             u64::try_from(count).expect("count fits u64"),
@@ -506,8 +486,8 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures YAML frontmatter parsing cost scaled by field count `[5, 20, 50,
-/// 200]`.
+/// Measures YAML frontmatter parsing cost scaled by
+/// [`FRONTMATTER_FIELD_COUNTS`].
 ///
 /// Isolates YAML field parsing from body text processing.
 fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
@@ -515,7 +495,7 @@ fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
         c.benchmark_group("parse_markdown::frontmatter_field_scaling");
     let path = std::path::Path::new("note.md");
 
-    for count in [5_usize, 20, 50, 200] {
+    for &count in FRONTMATTER_FIELD_COUNTS {
         let source = frontmatter_fields_source(count);
         group.throughput(Throughput::Elements(
             u64::try_from(count).expect("count fits u64"),

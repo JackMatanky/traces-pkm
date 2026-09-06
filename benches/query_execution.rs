@@ -1,7 +1,7 @@
 //! Performance benchmark suite for query execution.
 //!
-//! Exposes and monitors the CPU cost of [`QueryService::run`] over
-//! pre-built page and task indexes.
+//! Exposes and monitors the CPU cost of [`QueryService::run`] over pre-built
+//! page and task indexes.
 //!
 //! ### Data Flow Diagram
 //!
@@ -28,69 +28,34 @@
     reason = "bench fixture/harness code; a failed .expect() here means the \
               fixture itself is broken and should panic immediately"
 )]
-use std::{hint::black_box, sync::Arc};
+use std::hint::black_box;
 
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, criterion_group,
     criterion_main,
 };
-use traces_pkm::{
-    FileIndex, IndexerService, QueryBuilder, QueryService, SourceSelector,
+use traces_pkm::{QueryBuilder, QueryService, SourceSelector};
+
+#[allow(
+    dead_code,
+    reason = "shared benchmark common helpers are compiled into each bench \
+              target; this target uses only query index fixtures"
+)]
+mod common;
+
+use common::{
+    WORKSPACE_FILE_COUNTS,
+    content::{
+        ProjectShape, metadata_lookup_note_source, task_triplet_note_source,
+    },
+    project::{build_index_arc, build_index_arc_from_note_source},
 };
 
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
-const WORKSPACE_SIZES: &[usize] = &[100, 1_000, 10_000, 20_000];
-const FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
-
-fn create_page_index(n: usize) -> Arc<FileIndex> {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    for i in 0..n {
-        std::fs::write(
-            temp.path().join(format!("note-{i}.md")),
-            format!("---\nrating: {}\n---\n", i % 100),
-        )
-        .expect("write fixture note");
-    }
-    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
-}
-
-fn create_task_index(n: usize) -> Arc<FileIndex> {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    for i in 0..n {
-        std::fs::write(
-            temp.path().join(format!("note-{i}.md")),
-            "- [ ] first\n- [x] second\n- [ ] third\n",
-        )
-        .expect("write fixture note");
-    }
-    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
-}
-
-/// Builds an index where each note has `fields` distinct frontmatter keys
-/// before a trailing `rating` key, isolating whether metadata field lookup
-/// scales with the number of fields per note (an O(K) linear scan) or stays
-/// flat (an O(1) hash lookup). `rating` is always written last, the worst
-/// case for a linear scan and irrelevant to a hash lookup, so this benchmark
-/// is maximally sensitive to a regression back toward scanning.
-fn create_index_with_field_count(n: usize, fields: usize) -> Arc<FileIndex> {
-    use std::fmt::Write as _;
-
-    let temp = tempfile::tempdir().expect("create temp dir");
-    for i in 0..n {
-        let mut frontmatter = String::from("---\n");
-        for f in 0..fields {
-            let _ = writeln!(frontmatter, "field_{f}: \"value\"");
-        }
-        let _ = writeln!(frontmatter, "rating: {}", i % 100);
-        frontmatter.push_str("---\n");
-        std::fs::write(temp.path().join(format!("note-{i}.md")), frontmatter)
-            .expect("write fixture note");
-    }
-    Arc::new(IndexerService::new(temp.path()).build().expect("build index"))
-}
+const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
 
 // ----------------------------------------------------------- //
 //                Benchmarks: General Execution                //
@@ -100,8 +65,8 @@ fn create_index_with_field_count(n: usize, fields: usize) -> Arc<FileIndex> {
 ///
 /// Every `traces query` invocation pays this path, and regressions here
 /// directly degrade CLI responsiveness, so isolating page queries catches
-/// regressions in filter logic or row materialization that a correctness
-/// test would miss.
+/// regressions in filter logic or row materialization that a correctness test
+/// would miss.
 ///
 /// Expected outcomes:
 /// - Constant-time execution regardless of index size (all notes match).
@@ -111,8 +76,8 @@ fn create_index_with_field_count(n: usize, fields: usize) -> Arc<FileIndex> {
 ///   redundant allocation per row.
 fn bench_run_pages(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
-    for &n in WORKSPACE_SIZES {
-        let index = create_page_index(n);
+    for &n in WORKSPACE_FILE_COUNTS {
+        let index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -145,8 +110,10 @@ fn bench_run_pages(c: &mut Criterion) {
 ///   task parsing overhead or redundant regex evaluation.
 fn bench_run_tasks(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
-    for &n in WORKSPACE_SIZES {
-        let index = create_task_index(n);
+    for &n in WORKSPACE_FILE_COUNTS {
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            task_triplet_note_source(i)
+        });
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64").saturating_mul(3),
         ));
@@ -193,8 +160,8 @@ fn bench_run_tasks(c: &mut Criterion) {
 ///   path introduces overhead not present in either half alone.
 fn bench_run_pages_by_metadata(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
-    for &n in WORKSPACE_SIZES {
-        let index = create_page_index(n);
+    for &n in WORKSPACE_FILE_COUNTS {
+        let index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -226,8 +193,8 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
 //                 Benchmarks: Isolated Filter                 //
 // ----------------------------------------------------------- //
 
-/// Measures filter-only cost by frontmatter field count per note, isolated
-/// from sorting, at a fixed 20,000-note workspace size.
+/// Measures filter-only cost by frontmatter field count per note, isolated from
+/// sorting, at a fixed 20,000-note workspace size.
 ///
 /// `FieldPath::parse` (the crate-internal query field-path parser)
 /// canonicalizes a query's metadata field name once at parse time, not per row:
@@ -255,8 +222,10 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("QueryService::run/filter_by_field_count");
     let n = 20_000_usize;
-    for &fields in FIELD_COUNTS {
-        let index = create_index_with_field_count(n, fields);
+    for &fields in QUERY_METADATA_FIELD_COUNTS {
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            metadata_lookup_note_source(i, fields)
+        });
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -307,8 +276,8 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 ///   `QuerySet::clone` is deep-copying rows somewhere.
 fn bench_clone_query_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/clone_query_set");
-    for &n in WORKSPACE_SIZES {
-        let index = create_page_index(n);
+    for &n in WORKSPACE_FILE_COUNTS {
+        let index = build_index_arc(n, ProjectShape::Plain);
         let outcome = QueryService::new("class")
             .run(&index, QueryBuilder::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
@@ -348,8 +317,8 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///   `.into_iter()` runs.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/into_iter_owned");
-    for &n in WORKSPACE_SIZES {
-        let page_index = create_page_index(n);
+    for &n in WORKSPACE_FILE_COUNTS {
+        let page_index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -370,7 +339,9 @@ fn bench_into_iter_owned(c: &mut Criterion) {
             },
         );
 
-        let task_index = create_task_index(n);
+        let task_index = build_index_arc_from_note_source(n, |i, _| {
+            task_triplet_note_source(i)
+        });
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64").saturating_mul(3),
         ));
