@@ -215,6 +215,13 @@ fn write_attachment_files(root: &Path) {
 /// benchmarks. The [`IndexerService`] points at the returned [`TempDir`], so
 /// the guard must remain alive for every measured operation.
 ///
+/// **Criterion trap**: never consume this tuple by value inside a
+/// `b.iter_batched` routine without returning it. If `routine` destructures
+/// `(TempDir, IndexerService)` and drops the `TempDir` internally, that drop
+/// (recursively deleting every fixture file) runs *inside* the timed call.
+/// Use `b.iter_batched_ref` so the routine only ever borrows `&mut (TempDir,
+/// IndexerService)`, deferring the drop to after the batch is timed.
+///
 /// # Panics
 ///
 /// Panics if the temporary project cannot be created, indexed, or persisted.
@@ -234,6 +241,9 @@ pub(crate) fn setup_persisted_project(
 /// Use this when the measured operation is the first persistence write. Keep
 /// the [`TempDir`] alive with the returned [`IndexerService`] and
 /// [`FileIndex`].
+///
+/// **Criterion trap**: same as [`setup_persisted_project`] — use
+/// `b.iter_batched_ref`, never consume this tuple by value inside `routine`.
 ///
 /// # Panics
 ///

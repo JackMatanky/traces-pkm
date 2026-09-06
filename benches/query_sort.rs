@@ -147,15 +147,12 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::new("sort_only", n), &n, |b, _| {
             b.iter_batched(
-                || index.clone(),
-                |index| {
-                    QueryService::new("class").run(
-                        &index,
-                        QueryBuilder::pages(SourceSelector::All)
-                            .sort("rating", false)
-                            .expect("valid sort"),
-                    )
+                || {
+                    QueryBuilder::pages(SourceSelector::All)
+                        .sort("rating", false)
+                        .expect("valid sort")
                 },
+                |query| QueryService::new("class").run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -211,15 +208,12 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
             &n,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        QueryService::new("class").run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All)
-                                .sort("rating", false)
-                                .expect("valid sort"),
-                        )
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .sort("rating", false)
+                            .expect("valid sort")
                     },
+                    |query| QueryService::new("class").run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -229,17 +223,14 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
             &n,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        QueryService::new("class").run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All)
-                                .sort("rating", false)
-                                .expect("valid sort")
-                                .limit(10)
-                                .expect("valid limit"),
-                        )
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .sort("rating", false)
+                            .expect("valid sort")
+                            .limit(10)
+                            .expect("valid limit")
                     },
+                    |query| QueryService::new("class").run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -293,12 +284,12 @@ fn bench_permute_query_rows(c: &mut Criterion) {
             BenchmarkId::new("fisher_yates_shuffle", n),
             &n,
             |b, _| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || base.clone(),
-                    |mut records| {
+                    |records| {
                         let mut state = 0x853c_49e6_748f_ea9b_u64;
-                        lcg_shuffle(&mut records, &mut state);
-                        black_box(records);
+                        lcg_shuffle(records, &mut state);
+                        black_box(&*records);
                     },
                     BatchSize::LargeInput,
                 );
@@ -337,11 +328,11 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
             BenchmarkId::new("total_cmp_sort", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || shuffled_ratings(n),
-                    |mut keys| {
+                    |keys| {
                         keys.sort_by(f64::total_cmp);
-                        black_box(keys);
+                        black_box(&*keys);
                     },
                     BatchSize::SmallInput,
                 );
@@ -382,18 +373,18 @@ fn bench_sort_note_field_value_replica(c: &mut Criterion) {
             BenchmarkId::new("enum_dispatch_replica", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         shuffled_ratings(n)
                             .into_iter()
                             .map(NoteFieldValue::Number)
                             .collect::<Vec<_>>()
                     },
-                    |mut keys| {
+                    |keys| {
                         keys.sort_by(|lhs, rhs| {
                             replica_cmp(lhs, rhs, descending)
                         });
-                        black_box(keys);
+                        black_box(&*keys);
                     },
                     BatchSize::SmallInput,
                 );

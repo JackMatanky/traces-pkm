@@ -43,7 +43,8 @@ use criterion::{
 };
 use tempfile::TempDir;
 use traces_pkm::{
-    FileIndex, IndexerService, QueryBuilder, QueryService, SourceSelector,
+    FileIndex, IndexerService, QueryBuilder, QueryService, QuerySet,
+    SourceSelector, SyncReport,
 };
 
 #[allow(
@@ -88,7 +89,7 @@ fn observe_index(index: &FileIndex) {
     black_box((entries.len(), note_count, inlink_count));
 }
 
-fn observe_refresh(indexer: &IndexerService) {
+fn observe_refresh(indexer: &IndexerService) -> (FileIndex, SyncReport) {
     let (index, report) = indexer.refresh_with_report().expect("refresh index");
     let entries = index.entries();
     let inlink_count: usize =
@@ -100,22 +101,25 @@ fn observe_refresh(indexer: &IndexerService) {
         report.deleted(),
         report.links_modified(),
     ));
+    (index, report)
 }
 
 fn observe_sync_and_run(
     service: &QueryService,
     indexer: &IndexerService,
     source: SourceSelector,
-) {
+) -> QuerySet {
     let outcome = service
         .sync_and_run(indexer, QueryBuilder::pages(source))
         .expect("sync_and_run succeeds");
     black_box(outcome.len());
+    outcome
 }
 
-fn observe_load(indexer: &IndexerService) {
+fn observe_load(indexer: &IndexerService) -> FileIndex {
     let index = indexer.load().expect("load index");
     observe_index(&index);
+    index
 }
 
 /// Loads multiple project indexes concurrently, one thread per project.
@@ -124,12 +128,17 @@ fn observe_load(indexer: &IndexerService) {
 /// (batch importers, multi-project LSP workspaces). redb enforces at most one
 /// open [`redb::Database`] handle per file *per process*, so this benchmark
 /// spawns one thread per project rather than sharing across threads.
-fn load_concurrently(projects: &[(TempDir, IndexerService)]) {
+fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
     std::thread::scope(|scope| {
-        for (_, indexer) in projects {
-            scope.spawn(move || observe_load(indexer));
-        }
-    });
+        let handles: Vec<_> = projects
+            .iter()
+            .map(|(_, indexer)| scope.spawn(move || observe_load(indexer)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread panicked"))
+            .collect()
+    })
 }
 
 // ----------------------------------------------------------- //
@@ -170,6 +179,7 @@ fn bench_file_index_build(c: &mut Criterion) {
                         .expect("build index");
                     observe_index(&index);
                     black_box(temp.path());
+                    index
                 },
                 BatchSize::LargeInput,
             );
@@ -210,6 +220,7 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
                                 .expect("build index");
                             observe_index(&index);
                             black_box(temp.path());
+                            index
                         },
                         BatchSize::LargeInput,
                     );
@@ -388,9 +399,18 @@ fn bench_sync_and_run(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, &n| {
             b.iter_batched_ref(
-                || setup_persisted_project(n, ProjectShape::Tagged),
-                |(_temp, indexer)| {
-                    observe_sync_and_run(&service, indexer, one_match());
+                || {
+                    (
+                        setup_persisted_project(n, ProjectShape::Tagged),
+                        Some(one_match()),
+                    )
+                },
+                |((_temp, indexer), source)| {
+                    observe_sync_and_run(
+                        &service,
+                        indexer,
+                        source.take().expect("source set by setup"),
+                    )
                 },
                 BatchSize::LargeInput,
             );
@@ -415,10 +435,14 @@ fn bench_sync_and_run(c: &mut Criterion) {
                             n,
                             &content,
                         );
-                        (temp, indexer)
+                        ((temp, indexer), Some(one_match()))
                     },
-                    |(_temp, indexer)| {
-                        observe_sync_and_run(&service, indexer, one_match());
+                    |((_temp, indexer), source)| {
+                        observe_sync_and_run(
+                            &service,
+                            indexer,
+                            source.take().expect("source set by setup"),
+                        )
                     },
                     BatchSize::LargeInput,
                 );
@@ -650,7 +674,7 @@ fn bench_index_load(c: &mut Criterion) {
             group.sample_size(10);
         }
         group.bench_with_input(BenchmarkId::new("plain", n), &n, |b, _| {
-            b.iter(|| observe_load(black_box(&indexer)));
+            b.iter_with_large_drop(|| observe_load(black_box(&indexer)));
         });
     }
 
@@ -666,7 +690,9 @@ fn bench_index_load(c: &mut Criterion) {
                 BenchmarkId::new(shape.name(), n),
                 &n,
                 |b, _| {
-                    b.iter(|| observe_load(black_box(&indexer)));
+                    b.iter_with_large_drop(|| {
+                        observe_load(black_box(&indexer))
+                    });
                 },
             );
         }
@@ -695,9 +721,10 @@ fn bench_read_lists(c: &mut Criterion) {
             u64::try_from(list_rows).expect("list row count fits u64"),
         ));
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| {
+            b.iter_with_large_drop(|| {
                 let lists = indexer.read_lists().expect("read lists");
                 black_box(lists.len());
+                black_box(lists)
             });
         });
     }
@@ -732,7 +759,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                 projects
             },
             |projects: &mut Vec<(TempDir, IndexerService)>| {
-                load_concurrently(projects);
+                load_concurrently(projects)
             },
             BatchSize::LargeInput,
         );

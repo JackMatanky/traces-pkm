@@ -18,7 +18,7 @@
 
 use std::{alloc::System, hint::black_box, path::Path, time::Duration};
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use traces_pkm::{
     IndexerService, MarkdownParserInput, QueryBuilder, QueryService,
@@ -112,8 +112,8 @@ fn bench_file_index_footprint(c: &mut Criterion) {
         // reasonable
         if n <= 1_000 {
             group.bench_function(format!("build_{n}"), |b| {
-                b.iter(|| {
-                    black_box(indexer.build().expect("build index"));
+                b.iter_with_large_drop(|| {
+                    black_box(indexer.build().expect("build index"))
                 });
             });
         }
@@ -159,10 +159,11 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
     for &n in WORKSPACE_FILE_COUNTS {
         let (temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
 
+        let query = QueryBuilder::pages(one_match());
         let region = Region::new(GLOBAL);
         let outcome = black_box(
             service
-                .sync_and_run(&indexer, QueryBuilder::pages(one_match()))
+                .sync_and_run(&indexer, query)
                 .expect("sync_and_run succeeds"),
         );
         let sync_stats = region.change();
@@ -186,16 +187,17 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
 
         if n <= 1_000 {
             group.bench_function(format!("one_match_{n}"), |b| {
-                b.iter(|| {
-                    let _ = black_box(
-                        service
-                            .sync_and_run(
-                                &indexer,
-                                QueryBuilder::pages(one_match()),
-                            )
-                            .expect("sync_and_run succeeds"),
-                    );
-                });
+                b.iter_batched(
+                    || QueryBuilder::pages(one_match()),
+                    |page_query| {
+                        black_box(
+                            service
+                                .sync_and_run(&indexer, page_query)
+                                .expect("sync_and_run succeeds"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
             });
         }
     }

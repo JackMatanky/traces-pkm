@@ -227,9 +227,8 @@ fn bench_parse_markdown_prose_floor(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -265,9 +264,8 @@ fn bench_parse_markdown(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -305,9 +303,8 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -332,9 +329,8 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
             BenchmarkId::from_parameter(count),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -360,9 +356,8 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
             BenchmarkId::from_parameter(max_depth),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -386,9 +381,8 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
             BenchmarkId::from_parameter(line_length),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -446,9 +440,8 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -476,9 +469,8 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
             BenchmarkId::from_parameter(count),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );
@@ -504,9 +496,8 @@ fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
             BenchmarkId::from_parameter(count),
             &source,
             |b, source| {
-                b.iter(|| {
-                    let note = bench_parse(black_box(path), black_box(source));
-                    black_box(note);
+                b.iter_with_large_drop(|| {
+                    black_box(bench_parse(black_box(path), black_box(source)))
                 });
             },
         );

@@ -125,10 +125,11 @@ fn bench_codec_serialize(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             wrapper,
             |b, w| {
-                b.iter(|| {
-                    let bytes = postcard::to_allocvec(black_box(w))
-                        .expect("serialize path");
-                    black_box(bytes);
+                b.iter_with_large_drop(|| {
+                    black_box(
+                        postcard::to_allocvec(black_box(w))
+                            .expect("serialize path"),
+                    )
                 });
             },
         );
@@ -285,11 +286,11 @@ fn bench_codec_deserialize(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &bytes,
             |b, bytes| {
-                b.iter(|| {
+                b.iter_with_large_drop(|| {
                     let decoded: PathWrapper =
                         postcard::from_bytes(black_box(bytes))
                             .expect("deserialize path");
-                    black_box(decoded);
+                    black_box(decoded)
                 });
             },
         );
@@ -332,18 +333,18 @@ fn bench_codec_batch(c: &mut Criterion) {
     ));
 
     group.bench_function("serialize_100", |b| {
-        b.iter(|| {
+        b.iter_with_large_drop(|| {
             let mut batch = Vec::with_capacity(100);
             for p in &paths {
                 batch.push(
                     postcard::to_allocvec(black_box(p)).expect("serialize"),
                 );
             }
-            black_box(batch);
+            black_box(batch)
         });
     });
     group.bench_function("deserialize_100", |b| {
-        b.iter(|| {
+        b.iter_with_large_drop(|| {
             let mut batch = Vec::with_capacity(100);
             for bytes in &serialized {
                 let decoded: PathWrapper =
@@ -351,7 +352,7 @@ fn bench_codec_batch(c: &mut Criterion) {
                         .expect("deserialize");
                 batch.push(decoded);
             }
-            black_box(batch);
+            black_box(batch)
         });
     });
 
@@ -392,12 +393,15 @@ fn bench_row_value_encode(c: &mut Criterion) {
             &n,
             |b, &n| {
                 let notes = generate_sparse_link_notes(n);
-                b.iter(|| {
+                b.iter_with_large_drop(|| {
+                    let mut batch = Vec::with_capacity(notes.len());
                     for note in &notes {
-                        let bytes = postcard::to_allocvec(black_box(note))
-                            .expect("serialize note");
-                        black_box(bytes);
+                        batch.push(
+                            postcard::to_allocvec(black_box(note))
+                                .expect("serialize note"),
+                        );
                     }
+                    black_box(batch)
                 });
             },
         );

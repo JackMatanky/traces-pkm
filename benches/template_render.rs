@@ -1,9 +1,10 @@
 //! Performance benchmark suite for template rendering.
 //!
 //! Exposes and monitors the CPU cost of [`TemplateService::render_to_file`] in
-//! [`WriteMode::DryRun`] (excludes disk-write cost) against a pre-built,
-//! pre-persisted 1000-note project, exercising `template` + `index` + `note`
-//! together the way every `traces template`/`traces -i` render does.
+//! [`WriteMode::DryRun`] (excludes disk-write cost) against pre-built,
+//! pre-persisted projects swept up to 1000 notes, exercising `template` +
+//! `index` + `note` together the way every `traces template`/`traces -i`
+//! render does.
 //! Regressions here directly degrade render latency for template-driven
 //! workflows.
 //!
@@ -109,8 +110,8 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 //                         Benchmarks                          //
 // ----------------------------------------------------------- //
 
-/// Measures template rendering cost over a pre-built 1000-note project, in
-/// `WriteMode::DryRun`.
+/// Measures template rendering cost swept over workspace size (up to 1000
+/// notes, see [`quick_file_counts`]), in `WriteMode::DryRun`.
 ///
 /// The render path every `traces template`/`-i` invocation pays (see module
 /// docs); `DryRun` isolates render cost from disk-write cost so a regression
@@ -125,6 +126,7 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 ///   template expansion or redundant index scans per row.
 fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
+    group.sample_size(10);
 
     for n in quick_file_counts() {
         group.throughput(Throughput::Elements(
@@ -142,11 +144,11 @@ fn bench_render(c: &mut Criterion) {
             BenchmarkId::new("list", n),
             &list_input,
             |b, input| {
-                b.iter(|| {
+                b.iter_with_large_drop(|| {
                     let outcome = service
                         .render_to_file(input, None, WriteMode::DryRun)
                         .expect("render list report");
-                    black_box(outcome);
+                    black_box(outcome)
                 });
             },
         );
@@ -158,11 +160,11 @@ fn bench_render(c: &mut Criterion) {
             BenchmarkId::new("table_filtered", n),
             &table_input,
             |b, input| {
-                b.iter(|| {
+                b.iter_with_large_drop(|| {
                     let outcome = service
                         .render_to_file(input, None, WriteMode::DryRun)
                         .expect("render table report");
-                    black_box(outcome);
+                    black_box(outcome)
                 });
             },
         );

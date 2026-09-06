@@ -91,20 +91,16 @@ fn bench_inlink_map_new(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("sparse", n), &n, |b, &n| {
             let notes = generate_sparse_link_notes(n);
             let files = file_records_for_notes(&notes);
-            b.iter(|| {
-                let inlinks =
-                    InlinkMap::new(black_box(&notes), black_box(&files));
-                black_box(inlinks);
+            b.iter_with_large_drop(|| {
+                black_box(InlinkMap::new(black_box(&notes), black_box(&files)))
             });
         });
 
         group.bench_with_input(BenchmarkId::new("dense", n), &n, |b, &n| {
             let notes = generate_dense_link_notes(n);
             let files = file_records_for_notes(&notes);
-            b.iter(|| {
-                let inlinks =
-                    InlinkMap::new(black_box(&notes), black_box(&files));
-                black_box(inlinks);
+            b.iter_with_large_drop(|| {
+                black_box(InlinkMap::new(black_box(&notes), black_box(&files)))
             });
         });
 
@@ -114,10 +110,11 @@ fn bench_inlink_map_new(c: &mut Criterion) {
             |b, &n| {
                 let notes = generate_hub_link_notes(n);
                 let files = file_records_for_notes(&notes);
-                b.iter(|| {
-                    let inlinks =
-                        InlinkMap::new(black_box(&notes), black_box(&files));
-                    black_box(inlinks);
+                b.iter_with_large_drop(|| {
+                    black_box(InlinkMap::new(
+                        black_box(&notes),
+                        black_box(&files),
+                    ))
                 });
             },
         );
@@ -128,10 +125,11 @@ fn bench_inlink_map_new(c: &mut Criterion) {
             |b, &n| {
                 let notes = generate_duplicate_link_notes(n, 20);
                 let files = file_records_for_notes(&notes);
-                b.iter(|| {
-                    let inlinks =
-                        InlinkMap::new(black_box(&notes), black_box(&files));
-                    black_box(inlinks);
+                b.iter_with_large_drop(|| {
+                    black_box(InlinkMap::new(
+                        black_box(&notes),
+                        black_box(&files),
+                    ))
                 });
             },
         );
@@ -142,10 +140,11 @@ fn bench_inlink_map_new(c: &mut Criterion) {
             |b, &n| {
                 let notes = generate_deep_path_link_notes(n);
                 let files = file_records_for_notes(&notes);
-                b.iter(|| {
-                    let inlinks =
-                        InlinkMap::new(black_box(&notes), black_box(&files));
-                    black_box(inlinks);
+                b.iter_with_large_drop(|| {
+                    black_box(InlinkMap::new(
+                        black_box(&notes),
+                        black_box(&files),
+                    ))
                 });
             },
         );
@@ -156,10 +155,11 @@ fn bench_inlink_map_new(c: &mut Criterion) {
             |b, &n| {
                 let notes = generate_ambiguous_target_link_notes(n, 10);
                 let files = file_records_for_notes(&notes);
-                b.iter(|| {
-                    let inlinks =
-                        InlinkMap::new(black_box(&notes), black_box(&files));
-                    black_box(inlinks);
+                b.iter_with_large_drop(|| {
+                    black_box(InlinkMap::new(
+                        black_box(&notes),
+                        black_box(&files),
+                    ))
                 });
             },
         );
@@ -169,10 +169,11 @@ fn bench_inlink_map_new(c: &mut Criterion) {
             &n,
             |b, &n| {
                 let (notes, files) = generate_attachment_link_notes(n);
-                b.iter(|| {
-                    let inlinks =
-                        InlinkMap::new(black_box(&notes), black_box(&files));
-                    black_box(inlinks);
+                b.iter_with_large_drop(|| {
+                    black_box(InlinkMap::new(
+                        black_box(&notes),
+                        black_box(&files),
+                    ))
                 });
             },
         );
@@ -212,10 +213,11 @@ fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
             |b, &candidates| {
                 let notes = generate_ambiguous_target_link_notes(n, candidates);
                 let files = file_records_for_notes(&notes);
-                b.iter(|| {
-                    let inlinks =
-                        InlinkMap::new(black_box(&notes), black_box(&files));
-                    black_box(inlinks);
+                b.iter_with_large_drop(|| {
+                    black_box(InlinkMap::new(
+                        black_box(&notes),
+                        black_box(&files),
+                    ))
                 });
             },
         );

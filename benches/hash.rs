@@ -57,6 +57,7 @@ use traces_pkm::{Blake3FileHash, Blake3PathHash};
 ///   per-chunk allocation or missing buffering in the hasher.
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
+    group.sample_size(10);
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
         group.throughput(Throughput::Bytes(
             u64::try_from(size).expect("byte length fits u64"),
