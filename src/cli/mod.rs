@@ -289,88 +289,6 @@ impl SortArgs {
     }
 }
 
-#[cfg(test)]
-mod sort_args_tests {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn resolve(sort: &[&str], asc: bool, desc: bool) -> Option<SortOrder> {
-        let args = SortArgs {
-            sort: sort.iter().map(|s| (*s).to_owned()).collect(),
-            asc,
-            desc,
-        };
-        args.resolve(Path::new("")).expect("valid sort")
-    }
-
-    /// Parses `input` the same way [`SortOrder::parse`] does, for asserting
-    /// [`SortArgs::resolve`]'s output against the real grammar rather than
-    /// decomposing its internal terms.
-    fn expect_parse(
-        input: &str,
-        default_direction: SortDirection,
-    ) -> SortOrder {
-        SortOrder::parse(input, default_direction)
-            .expect("valid parse")
-            .expect("some terms")
-    }
-
-    #[test]
-    fn returns_none_when_no_sort_fields_given() {
-        assert_eq!(resolve(&[], false, false), None);
-    }
-
-    #[test]
-    fn defaults_to_descending_without_flags() {
-        let order = resolve(&["file.mtime"], false, false).expect("some sort");
-        assert_eq!(
-            order,
-            expect_parse("file.mtime", SortDirection::Descending)
-        );
-    }
-
-    #[test]
-    fn asc_flag_reverses_every_unprefixed_field() {
-        let order = resolve(&["file.folder", "file.name"], true, false)
-            .expect("some sort");
-        assert_eq!(
-            order,
-            expect_parse("file.folder,file.name", SortDirection::Ascending)
-        );
-    }
-
-    #[test]
-    fn prefix_modifiers_override_the_asc_flag() {
-        let order = resolve(&["+file.folder", "-file.mtime"], true, false)
-            .expect("some sort");
-        assert_eq!(
-            order,
-            expect_parse("+file.folder,-file.mtime", SortDirection::Ascending)
-        );
-    }
-
-    #[test]
-    fn blank_segments_from_trailing_comma_are_skipped() {
-        let order =
-            resolve(&["file.folder,"], false, false).expect("some sort");
-        assert_eq!(
-            order,
-            expect_parse("file.folder", SortDirection::default())
-        );
-    }
-
-    #[test]
-    fn rejects_malformed_field_path() {
-        let args = SortArgs {
-            sort: vec!["file..bad".to_owned()],
-            asc: false,
-            desc: false,
-        };
-        assert!(args.resolve(Path::new("")).is_err());
-    }
-}
-
 /// Synchronizes `root`'s index store and returns page-level records selected
 /// by `from`, filtered by `filters` (composed as AND) and optionally sorted.
 ///
@@ -877,6 +795,91 @@ mod tests {
             ]);
 
             assert!(result.is_err());
+        }
+    }
+
+    mod sort_args {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn resolve(sort: &[&str], asc: bool, desc: bool) -> Option<SortOrder> {
+            let args = SortArgs {
+                sort: sort.iter().map(|s| (*s).to_owned()).collect(),
+                asc,
+                desc,
+            };
+            args.resolve(Path::new("")).expect("valid sort")
+        }
+
+        /// Parses `input` the same way [`SortOrder::parse`] does, for
+        /// asserting [`SortArgs::resolve`]'s output against the real grammar
+        /// rather than decomposing its internal terms.
+        fn expect_parse(
+            input: &str,
+            default_direction: SortDirection,
+        ) -> SortOrder {
+            SortOrder::parse(input, default_direction)
+                .expect("valid parse")
+                .expect("some terms")
+        }
+
+        #[test]
+        fn returns_none_when_no_sort_fields_given() {
+            assert_eq!(resolve(&[], false, false), None);
+        }
+
+        #[test]
+        fn defaults_to_descending_without_flags() {
+            let order =
+                resolve(&["file.mtime"], false, false).expect("some sort");
+            assert_eq!(
+                order,
+                expect_parse("file.mtime", SortDirection::Descending)
+            );
+        }
+
+        #[test]
+        fn asc_flag_reverses_every_unprefixed_field() {
+            let order = resolve(&["file.folder", "file.name"], true, false)
+                .expect("some sort");
+            assert_eq!(
+                order,
+                expect_parse("file.folder,file.name", SortDirection::Ascending)
+            );
+        }
+
+        #[test]
+        fn prefix_modifiers_override_the_asc_flag() {
+            let order = resolve(&["+file.folder", "-file.mtime"], true, false)
+                .expect("some sort");
+            assert_eq!(
+                order,
+                expect_parse(
+                    "+file.folder,-file.mtime",
+                    SortDirection::Ascending
+                )
+            );
+        }
+
+        #[test]
+        fn blank_segments_from_trailing_comma_are_skipped() {
+            let order =
+                resolve(&["file.folder,"], false, false).expect("some sort");
+            assert_eq!(
+                order,
+                expect_parse("file.folder", SortDirection::default())
+            );
+        }
+
+        #[test]
+        fn rejects_malformed_field_path() {
+            let args = SortArgs {
+                sort: vec!["file..bad".to_owned()],
+                asc: false,
+                desc: false,
+            };
+            assert!(args.resolve(Path::new("")).is_err());
         }
     }
 

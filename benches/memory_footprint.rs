@@ -168,10 +168,10 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
         let sync_stats = region.change();
         drop(outcome);
 
-        let region = Region::new(GLOBAL);
+        let refresh_region = Region::new(GLOBAL);
         let (index, _report) =
             black_box(indexer.refresh_with_report().expect("refresh index"));
-        let refresh_stats = region.change();
+        let refresh_stats = refresh_region.change();
         drop(index);
         drop(temp);
 
