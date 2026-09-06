@@ -1157,6 +1157,18 @@ impl IndexStore {
     /// Atomically replaces every stored [`FileBase`], [`Note`], [`ListEntry`],
     /// and derived inlink edge.
     ///
+    /// Uses [`redb::Durability::None`], the same durability posture as
+    /// [`Self::prepare_incremental_txn`]: `index.redb` is a derived cache of
+    /// the Markdown files under this store's root, never their source of
+    /// truth. A crash between commit and the next fsync checkpoint loses at
+    /// most this write, which [`IndexerService::refresh`] or a future
+    /// [`Self::open`] health-check rebuild self-heals by rescanning disk;
+    /// user data (the Markdown files themselves) is never at risk. Skipping
+    /// the fsync this redb otherwise performs on every commit removes a
+    /// fixed per-transaction cost that dominates full-index persistence.
+    ///
+    /// [`IndexerService::refresh`]: super::service::IndexerService::refresh
+    ///
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the transaction fails.
@@ -1169,7 +1181,9 @@ impl IndexStore {
     }
 
     fn prepare_write_txn(&self) -> DbResult<Box<WriteTransaction>> {
-        let txn = Box::new(self.begin_write()?);
+        let mut txn = Box::new(self.begin_write()?);
+        txn.set_durability(redb::Durability::None)
+            .map_err(|source| self.raise_source_error(source))?;
         self.clear_tables_for_write(&txn)?;
         Ok(txn)
     }
