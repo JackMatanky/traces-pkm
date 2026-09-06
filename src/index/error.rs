@@ -67,7 +67,8 @@ pub enum DbError {
     },
 }
 
-/// Error type for the [`super::builder::IndexBuilder`] build pipeline.
+/// Error type for [`super::service::IndexerService`]'s scan-and-parse build
+/// pipeline.
 #[derive(Debug, Error)]
 pub enum IndexBuilderError {
     /// Filesystem error during directory scan or file metadata read.

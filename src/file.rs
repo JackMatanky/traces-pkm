@@ -99,6 +99,7 @@ impl FileBase {
     }
 
     /// Builds a [`FileBase`] with custom fields for test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     pub(crate) fn new_test(
         path: PathBuf,
@@ -348,6 +349,14 @@ pub(crate) struct Timestamp(DateTime<Utc>);
 
 impl Timestamp {
     /// Returns the current UTC timestamp.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; used only by \
+                      FileBase::new_test"
+        )
+    )]
     #[inline]
     #[must_use]
     pub(crate) fn now() -> Self {

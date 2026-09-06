@@ -102,13 +102,6 @@ pub struct SourceExpr(BooleanExpr<SourceAtom>);
 impl SourceExpr {
     /// Returns the inner [`BooleanExpr`].
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of storage query acceleration surface"
-        )
-    )]
     pub(crate) fn expr(&self) -> &BooleanExpr<SourceAtom> {
         &self.0
     }

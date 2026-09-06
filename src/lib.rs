@@ -122,13 +122,13 @@ pub(crate) use file_store::{
 pub use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
     FileEntry, FileIndex, IndexerService, InlinkMap, ListEntry, SyncReport,
     path as path_codec,
 };
-#[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use index::{IndexerService, SyncReport};
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };

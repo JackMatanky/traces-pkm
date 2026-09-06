@@ -13,6 +13,8 @@ use super::{
     QueryBuilder, QueryMode, QueryRow, QuerySet,
     grammar::{BooleanExpr, FileClassExpander, SourceAtom, SourceSelector},
 };
+#[cfg(any(test, feature = "test-utils"))]
+use crate::index::IndexerService;
 use crate::index::{FileIndex, IndexResult, IndexStore, RowIndex};
 /// Query execution engine over a borrowed [`FileIndex`].
 ///
@@ -109,15 +111,8 @@ impl QueryService {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if candidate resolution or storage reads fail.
+    /// Returns `IndexError` if candidate resolution or storage reads fail.
     #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of storage query acceleration surface"
-        )
-    )]
     pub(crate) fn run_from_store(
         &self,
         store: &IndexStore,
@@ -133,15 +128,11 @@ impl QueryService {
         let candidate_paths = resolver.resolve(&source)?;
         let notes = store
             .read_notes_batch(candidate_paths.iter().map(PathBuf::as_path))?;
-        let (all_files, inlinks) = store.read_files_and_links()?;
-        let mut matching_files = Vec::with_capacity(candidate_paths.len());
-        for path in &candidate_paths {
-            if let Ok(idx) = all_files.binary_search_by(|f| f.path().cmp(path))
-                && let Some(f) = all_files.get(idx)
-            {
-                matching_files.push(f.clone());
-            }
-        }
+        let matching_files = store
+            .read_files_batch(candidate_paths.iter().map(PathBuf::as_path))?;
+        let inlinks = store.read_links_for_targets(
+            candidate_paths.iter().map(PathBuf::as_path),
+        )?;
         let index =
             Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
         let rows = match mode {
@@ -149,6 +140,30 @@ impl QueryService {
             QueryMode::Tasks => self.task_rows(&index, &source),
         };
         Ok(QuerySet::new(plan.run(rows)))
+    }
+
+    /// Synchronizes `indexer`'s persisted index against current filesystem
+    /// state, then runs `builder` directly against the synced store via
+    /// [`Self::run_from_store`] - the exact cold-read path `traces
+    /// list`/`table`/`task` use, without ever materializing a full
+    /// [`FileIndex`] of every indexed file.
+    ///
+    /// Exposed so external benchmarks and tests can exercise this path
+    /// through the public API without naming `IndexStore`, which stays
+    /// crate-private.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if syncing the index or querying the store fails.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    pub fn sync_and_run(
+        &self,
+        indexer: &IndexerService,
+        builder: QueryBuilder,
+    ) -> IndexResult<QuerySet> {
+        let store = indexer.sync()?;
+        self.run_from_store(&store, builder)
     }
 
     fn page_rows(
@@ -388,6 +403,36 @@ mod tests {
                 SourceSelector::parse("#project").expect("parse selector");
             let paths = resolver.resolve(&selector).expect("resolve tag");
             assert_eq!(paths.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn incremental_refresh_removes_a_notes_stale_tag_from_the_multimap() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A #project/active")
+                .expect("write a");
+            let indexer = IndexerService::new(temp.path());
+            indexer.persist(&indexer.build().expect("build")).expect("persist");
+
+            // Edit a.md's tag and refresh incrementally (no explicit rebuild).
+            fs::write(temp.path().join("a.md"), "# A #other")
+                .expect("rewrite a with a different tag");
+            indexer.refresh().expect("incremental refresh persists");
+
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let resolver = SourceResolver::new(&store);
+            let old_tag =
+                SourceSelector::parse("#project").expect("parse selector");
+            let new_tag =
+                SourceSelector::parse("#other").expect("parse selector");
+
+            assert!(
+                resolver.resolve(&old_tag).expect("resolve old tag").is_empty(),
+                "a.md's old #project tag should no longer resolve any path"
+            );
+            assert_eq!(
+                resolver.resolve(&new_tag).expect("resolve new tag").as_ref(),
+                [PathBuf::from("a.md")]
+            );
         }
 
         #[test]

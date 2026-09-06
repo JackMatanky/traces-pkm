@@ -40,7 +40,7 @@ pub use error::{CliError, CliResult};
 use crate::{
     Config, ConfigService, DialogProvider,
     config::{DiscoveryScope, TrustRequests},
-    index::{FileIndex, IndexerService},
+    index::{IndexStore, IndexerService},
     query::{
         QueryBuilder, QueryError, QueryService, QuerySet, SortDirection,
         SortOrder, SourceSelector,
@@ -153,7 +153,7 @@ enum Commands {
     Trust(trust::Trust),
     /// Revoke trust from one or more project roots.
     Untrust(untrust::Untrust),
-    /// Build or rebuild the persisted [`FileIndex`].
+    /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
     Index(index::Index),
     /// Query pages and print matching file paths as a Markdown bullet list.
     List(list::List),
@@ -371,14 +371,18 @@ mod sort_args_tests {
     }
 }
 
-/// Refreshes `root`'s [`FileIndex`] and returns page-level records selected by
-/// `from`, filtered by `filters` (composed as AND) and optionally sorted.
+/// Synchronizes `root`'s index store and returns page-level records selected
+/// by `from`, filtered by `filters` (composed as AND) and optionally sorted.
+///
+/// Queries directly against the synced [`IndexStore`], resolving only
+/// candidate rows matching `from` instead of materializing a full
+/// [`FileIndex`](crate::index::FileIndex) of every indexed file.
 ///
 /// Shared by [`list::List`] and [`table::Table`].
 ///
 /// # Errors
 ///
-/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// - [`CliError::Index`] if syncing the index or querying the store fails.
 /// - [`CliError::Query`] if any filter expression or the sort field path is
 ///   malformed.
 fn refresh_page_query(
@@ -388,14 +392,12 @@ fn refresh_page_query(
     order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
-    let index = Arc::new(
-        IndexerService::new(root).with_config(config).refresh().map_err(
-            |source| CliError::Index {
-                root: root.to_path_buf(),
-                source,
-            },
-        )?,
-    );
+    let store = IndexerService::new(root).with_config(config).sync().map_err(
+        |source| CliError::Index {
+            root: root.to_path_buf(),
+            source,
+        },
+    )?;
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut builder = QueryBuilder::pages(source);
@@ -407,17 +409,17 @@ fn refresh_page_query(
     if let Some(order) = order {
         builder = builder.order(order);
     }
-    run_query_builder(config, &index, builder, has_classes)
+    run_query_builder_from_store(config, &store, builder, has_classes)
 }
 
-/// Refreshes `root`'s [`FileIndex`] and returns task-level records selected by
-/// `from`, filtered by `filters` (composed as AND).
+/// Synchronizes `root`'s index store and returns task-level records selected
+/// by `from`, filtered by `filters` (composed as AND).
 ///
 /// Shared by [`task::Task`].
 ///
 /// # Errors
 ///
-/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// - [`CliError::Index`] if syncing the index or querying the store fails.
 /// - [`CliError::Query`] if any filter expression is malformed.
 fn refresh_task_query(
     config: &Config,
@@ -425,14 +427,12 @@ fn refresh_task_query(
     filters: &[String],
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
-    let index = Arc::new(
-        IndexerService::new(root).with_config(config).refresh().map_err(
-            |source| CliError::Index {
-                root: root.to_path_buf(),
-                source,
-            },
-        )?,
-    );
+    let store = IndexerService::new(root).with_config(config).sync().map_err(
+        |source| CliError::Index {
+            root: root.to_path_buf(),
+            source,
+        },
+    )?;
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut builder = QueryBuilder::tasks(source);
@@ -441,7 +441,7 @@ fn refresh_task_query(
             .filter(expr)
             .map_err(|error| query_error(root, error.into()))?;
     }
-    run_query_builder(config, &index, builder, has_classes)
+    run_query_builder_from_store(config, &store, builder, has_classes)
 }
 
 fn parse_source(
@@ -453,19 +453,24 @@ fn parse_source(
         .map_err(|source| query_error(root, source))
 }
 
-fn run_query_builder(
+fn run_query_builder_from_store(
     config: &Config,
-    index: &Arc<FileIndex>,
+    store: &IndexStore,
     builder: QueryBuilder,
     has_classes: bool,
 ) -> Result<QuerySet, CliError> {
+    let root = config.root();
     let service = QueryService::new(config.schemas().class_field_name());
-    if has_classes {
+    let service = if has_classes {
         let schema_service = Arc::new(load_schema_service(config)?);
-        Ok(service.with_class_expander(schema_service).run(index, builder))
+        service.with_class_expander(schema_service)
     } else {
-        Ok(service.run(index, builder))
-    }
+        service
+    };
+    service.run_from_store(store, builder).map_err(|source| CliError::Index {
+        root: root.to_path_buf(),
+        source,
+    })
 }
 
 fn load_schema_service(config: &Config) -> Result<SchemaService, CliError> {
@@ -1146,6 +1151,76 @@ mod tests {
                 .run(&task_index, QueryBuilder::tasks(SourceSelector::All))
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
+        }
+
+        #[test]
+        fn table_reflects_a_note_edit_made_between_two_cli_invocations_with_no_explicit_index_command()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (service, project) = seed_book_project(temp.path());
+            let _guard = CwdGuard::enter(&project);
+
+            // First invocation: no `.traces/index.redb` exists yet, so this
+            // both builds and persists the index (`IndexerService::sync`'s
+            // cold path), with no explicit `traces index` command run.
+            let first_outcome = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.name",
+                "--column",
+                "rating",
+            ])
+            .expect("parse table argv")
+            .run(&service, Arc::new(PresetDialogProvider::new()))
+            .expect("table succeeds");
+            assert_eq!(first_outcome, CommandOutcome::Completed);
+
+            // Edit dune.md directly on disk, simulating an external editor;
+            // no `traces index` command runs in between.
+            fs::write(
+                project.join("books/dune.md"),
+                "---\nrating: 2\n---\n#book\n\n- [ ] read part two\n",
+            )
+            .expect("rewrite dune.md");
+
+            let second_outcome = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.name",
+                "--column",
+                "rating",
+            ])
+            .expect("parse table argv")
+            .run(&service, Arc::new(PresetDialogProvider::new()))
+            .expect("table succeeds");
+            assert_eq!(second_outcome, CommandOutcome::Completed);
+
+            // `table`'s own stdout isn't captured (see the module doc above),
+            // so confirm the edit reached the persisted store - which is
+            // exactly what the CLI command just queried - via the same
+            // `run_from_store` seam `table`'s render path uses internally.
+            let store = IndexerService::new(&project)
+                .sync()
+                .expect("store already current after the second cli call");
+            let rendered = QueryService::new("class")
+                .run_from_store(
+                    &store,
+                    QueryBuilder::pages(SourceSelector::All),
+                )
+                .expect("query from store")
+                .table(&["Name", "Rating"], &["file.name", "rating"])
+                .expect("valid table");
+
+            assert!(
+                rendered.contains("| 2 "),
+                "expected dune's updated rating to appear:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("| 9 "),
+                "expected dune's stale rating to be gone:\n{rendered}"
+            );
         }
 
         #[test]

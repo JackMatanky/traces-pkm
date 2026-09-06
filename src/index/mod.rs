@@ -20,9 +20,10 @@
 //! Inbound links between notes are derived from outlinks during build and
 //! refresh, then persisted alongside them; see [`inlinks`].
 //!
-//! The build pipeline is composed internally by [`builder::IndexBuilder`],
-//! which holds a scan result and reuse directive, deferring note parsing,
-//! sorting, and inlink derivation to build time.
+//! The build pipeline lives directly in [`IndexerService::build`], which scans,
+//! parses every Markdown Note, and derives inlinks in one pass; see
+//! [`IndexerService::sync`](service::IndexerService::sync) for the incremental
+//! counterpart used by cold CLI reads.
 //!
 //! # Lifecycle
 //!
@@ -56,7 +57,9 @@ pub(crate) use error::IndexBuilderError;
 pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;
-pub use service::{IndexerService, SyncReport};
+pub use service::IndexerService;
+#[cfg(any(test, feature = "test-utils"))]
+pub use service::SyncReport;
 pub(crate) use store::IndexStore;
 
 /// Project-relative path to the index database.
@@ -72,8 +75,8 @@ mod tests {
     pub(crate) mod fixtures {
         use std::{fs, path::Path};
 
-        /// Restores a locked directory's permissions on drop, even if the
-        /// test panics. Otherwise, a `0o000` or `0o500` directory blocks the
+        /// Restores a locked directory's permissions on drop, even if the test
+        /// panics. Otherwise, a `0o000` or `0o500` directory blocks the
         /// tempdir's own cleanup.
         #[cfg(unix)]
         pub struct RestorePermissions<'a>(pub &'a Path);

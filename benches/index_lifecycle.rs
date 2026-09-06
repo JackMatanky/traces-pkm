@@ -42,7 +42,9 @@ use criterion::{
     criterion_main,
 };
 use tempfile::TempDir;
-use traces_pkm::{FileIndex, IndexerService};
+use traces_pkm::{
+    FileIndex, IndexerService, QueryBuilder, QueryService, SourceSelector,
+};
 
 #[allow(
     dead_code,
@@ -98,6 +100,17 @@ fn observe_refresh(indexer: &IndexerService) {
         report.deleted(),
         report.links_modified(),
     ));
+}
+
+fn observe_sync_and_run(
+    service: &QueryService,
+    indexer: &IndexerService,
+    source: SourceSelector,
+) {
+    let outcome = service
+        .sync_and_run(indexer, QueryBuilder::pages(source))
+        .expect("sync_and_run succeeds");
+    black_box(outcome.len());
 }
 
 fn observe_load(indexer: &IndexerService) {
@@ -310,6 +323,97 @@ fn bench_file_index_refresh(c: &mut Criterion) {
                         (temp, indexer)
                     },
                     |(_temp, indexer)| observe_refresh(&indexer),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Measures the cold-read sync-and-query path
+/// ([`QueryService::sync_and_run`]) used by `traces list`/`table`/`task`
+/// when a query selects a small subset of a large vault: a persisted-store
+/// diff-and-persist step followed by a store-scoped query resolved through
+/// the `PATHS_BY_TAG` multimap, without ever materializing a full
+/// [`FileIndex`] or decoding a note the query doesn't match.
+///
+/// Queries a tag unique to note `0` (`#rare_0`, see
+/// [`tagged_note_source`]), so exactly one note matches regardless of `n` -
+/// the "cold CLI query against a large vault, one match" shape Phase 8
+/// targets. Complements [`bench_file_index_refresh`]'s `FileIndex::refresh`
+/// group, which necessarily decodes every persisted Note to build a full
+/// `FileIndex` (that materialization is `refresh`'s documented contract, and
+/// its cost is expected to scale with `n` regardless of this change).
+///
+/// The "no-op" cost is *not* sub-millisecond, even for a tiny matching set:
+/// every call still re-scans the project's filesystem tree and diffs every
+/// persisted [`FileBase`] to detect whether anything changed - that scan and
+/// diff is O(vault size) by construction (there is no filesystem-watcher
+/// layer here) and dominates wall-clock time at scale (roughly 1.1s at
+/// 20,000 files, matched almost exactly by `FileIndex::refresh/no-op`'s own
+/// cost). What this group isolates is the cost *above* that unavoidable
+/// baseline.
+///
+/// Expected outcomes:
+/// - Single-note-edit cost stays within measurement noise of the no-op baseline
+///   at every scale (observed: <1% overhead at 20,000 notes), proving
+///   inlink/tag/class maintenance for the edited note does not scan the whole
+///   vault, and the narrow query itself does not decode or return notes it
+///   didn't match.
+///
+/// Unexpected outcomes:
+/// - Single-edit cost growing measurably faster than the no-op baseline as `n`
+///   grows, indicating a full recompute, full-table scan, or full `FileIndex`
+///   materialization snuck back into the sync or query path.
+fn bench_sync_and_run(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::sync_and_run");
+    let service = QueryService::new("class");
+    let one_match =
+        || SourceSelector::parse("#rare_0").expect("valid tag selector");
+
+    for &n in WORKSPACE_FILE_COUNTS {
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        if n >= 10_000 {
+            group.sample_size(10);
+        }
+
+        group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, &n| {
+            b.iter_batched(
+                || setup_persisted_project(n, ProjectShape::Tagged),
+                |(_temp, indexer)| {
+                    observe_sync_and_run(&service, &indexer, one_match());
+                },
+                BatchSize::LargeInput,
+            );
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("single-edit", n),
+            &n,
+            |b, &n| {
+                b.iter_batched(
+                    || {
+                        let (temp, indexer) =
+                            setup_persisted_project(n, ProjectShape::Tagged);
+                        let mut content = tagged_note_source(1.min(n - 1));
+                        content.push_str(
+                            "\nBody change for sync_and_run benchmark.\n",
+                        );
+                        rewrite_note(
+                            temp.path(),
+                            ProjectShape::Tagged,
+                            1.min(n - 1),
+                            n,
+                            &content,
+                        );
+                        (temp, indexer)
+                    },
+                    |(_temp, indexer)| {
+                        observe_sync_and_run(&service, &indexer, one_match());
+                    },
                     BatchSize::LargeInput,
                 );
             },
@@ -635,6 +739,7 @@ criterion_group!(
     bench_file_index_build,
     bench_file_index_build_profiles,
     bench_file_index_refresh,
+    bench_sync_and_run,
     bench_file_index_refresh_profiles,
     bench_index_persist,
     bench_index_persist_profiles,

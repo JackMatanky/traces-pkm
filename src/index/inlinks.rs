@@ -9,7 +9,7 @@
 //!   to [`super::FileEntry`].
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -46,18 +46,19 @@ impl InlinkMap {
 
         for source in notes {
             let src = Source(source.path());
-            for outlink in source.outlinks() {
-                if let Some(target) =
-                    resolver.resolve(source.path(), outlink.target_parts())
-                {
-                    flat_edges.push((target, src));
-                }
+            for target in resolver.resolve_note(source) {
+                flat_edges.push((target, src));
             }
         }
 
         flat_edges.sort_unstable();
         flat_edges.dedup();
+        Self::from_flat_edges(flat_edges)
+    }
 
+    /// Groups pre-sorted, deduplicated `(target, source)` pairs into the
+    /// canonical per-target source-list representation.
+    fn from_flat_edges(flat_edges: Vec<(Target<'_>, Source<'_>)>) -> Self {
         let mut edges: HashMap<PathBuf, Box<[PathBuf]>> = HashMap::new();
         let mut current_target: Option<Target<'_>> = None;
         let mut current_sources: Vec<PathBuf> = Vec::new();
@@ -105,6 +106,14 @@ impl InlinkMap {
     }
 
     /// Returns `true` if `target` has at least one inbound link.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "part of the InlinkMap test/bench introspection surface, \
+                      gated the same as InlinkMap's own export"
+        )
+    )]
     #[inline]
     #[must_use]
     pub fn contains_target(&self, target: &Path) -> bool {
@@ -129,6 +138,14 @@ impl InlinkMap {
     }
 
     /// Returns `true` if the graph contains no inbound link edges.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "part of the InlinkMap test/bench introspection surface, \
+                      gated the same as InlinkMap's own export"
+        )
+    )]
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -136,10 +153,61 @@ impl InlinkMap {
     }
 
     /// Returns the number of unique target paths with inbound links.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "part of the InlinkMap test/bench introspection surface, \
+                      gated the same as InlinkMap's own export"
+        )
+    )]
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    /// Removes every edge sourced by any path in `sources`, dropping a
+    /// target left with no remaining inbound sources.
+    ///
+    /// Takes `&self` rather than consuming: callers (incremental refresh)
+    /// still need the original map afterward to diff against the patched
+    /// result, so this copies only the *retained* sources rather than
+    /// cloning the whole map up front.
+    #[inline]
+    #[must_use]
+    pub(super) fn without_sources(&self, sources: &HashSet<&Path>) -> Self {
+        let mut edges = HashMap::with_capacity(self.0.len());
+        for (target, srcs) in &self.0 {
+            let filtered: Vec<PathBuf> = srcs
+                .iter()
+                .filter(|s| !sources.contains(s.as_path()))
+                .cloned()
+                .collect();
+            if !filtered.is_empty() {
+                edges.insert(target.clone(), filtered.into_boxed_slice());
+            }
+        }
+        Self(edges)
+    }
+
+    /// Adds `edges` (`(target, source)` pairs), inserting each source into
+    /// its target's sorted, deduplicated source list.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_edges(
+        mut self,
+        edges: impl IntoIterator<Item = (PathBuf, PathBuf)>,
+    ) -> Self {
+        for (target, source) in edges {
+            let slot = self.0.entry(target).or_default();
+            let mut sources = std::mem::take(slot).into_vec();
+            if let Err(pos) = sources.binary_search(&source) {
+                sources.insert(pos, source);
+            }
+            *slot = sources.into_boxed_slice();
+        }
+        self
     }
 }
 
@@ -250,6 +318,45 @@ impl<'a> LinkResolver<'a> {
             .and_then(|i| self.files.get(i))
             .map(FileBase::path)
     }
+
+    /// Resolves every one of `note`'s outlinks against this resolver's
+    /// indexed file set, returning deduplicated target paths.
+    ///
+    /// Pure and I/O-free: reused by [`InlinkMap::new`] (one shared resolver
+    /// across every note, cold build) and incremental refresh (the same
+    /// shared resolver, called only for modified notes) so resolving a
+    /// handful of edited notes never pays the cost of rebuilding the
+    /// resolver's file-stem index per note.
+    fn resolve_note(&self, note: &Note) -> Vec<Target<'a>> {
+        let mut targets: Vec<Target<'a>> = note
+            .outlinks()
+            .iter()
+            .filter_map(|outlink| {
+                self.resolve(note.path(), outlink.target_parts())
+            })
+            .collect();
+        targets.sort_unstable();
+        targets.dedup();
+        targets
+    }
+}
+
+/// Resolves each of `notes`' outlinks against `files`, returning
+/// `(target, source)` pairs ready for [`InlinkMap::with_edges`]. Builds one
+/// [`LinkResolver`] shared across every note in `notes`, so patching several
+/// modified notes at once still pays the resolver-build cost only once.
+pub(super) fn resolve_edges_for(
+    notes: &[Note],
+    files: &[FileBase],
+) -> Vec<(PathBuf, PathBuf)> {
+    let resolver = LinkResolver::new(files);
+    let mut edges = Vec::new();
+    for note in notes {
+        for target in resolver.resolve_note(note) {
+            edges.push((target.to_path_buf(), note.path().to_path_buf()));
+        }
+    }
+    edges
 }
 
 /// A resolved link target: the path of the file an outlink points to.
@@ -852,6 +959,77 @@ mod tests {
                 assert_eq!(target, PathBuf::from("target.md"));
                 assert_eq!(sources.as_ref(), [PathBuf::from("source.md")]);
             }
+        }
+    }
+
+    mod without_sources {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn graph_with_two_sources() -> InlinkMap {
+            let mut raw = HashMap::new();
+            raw.insert(
+                PathBuf::from("target.md"),
+                vec![PathBuf::from("a.md"), PathBuf::from("b.md")]
+                    .into_boxed_slice(),
+            );
+            InlinkMap::from_raw(raw)
+        }
+
+        #[test]
+        fn removing_the_only_source_drops_the_target() {
+            let mut raw = HashMap::new();
+            raw.insert(
+                PathBuf::from("target.md"),
+                vec![PathBuf::from("a.md")].into_boxed_slice(),
+            );
+            let inlinks = InlinkMap::from_raw(raw);
+            let stale: HashSet<&Path> =
+                [Path::new("a.md")].into_iter().collect();
+
+            let patched = inlinks.without_sources(&stale);
+
+            assert!(!patched.contains_target(Path::new("target.md")));
+        }
+
+        #[test]
+        fn removing_one_of_several_sources_keeps_the_target() {
+            let inlinks = graph_with_two_sources();
+            let stale: HashSet<&Path> =
+                [Path::new("a.md")].into_iter().collect();
+
+            let patched = inlinks.without_sources(&stale);
+
+            assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                PathBuf::from("b.md")
+            ]);
+        }
+    }
+
+    mod with_edges {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn adding_an_edge_to_an_existing_target_appends_and_resorts() {
+            let mut raw = HashMap::new();
+            raw.insert(
+                PathBuf::from("target.md"),
+                vec![PathBuf::from("z.md")].into_boxed_slice(),
+            );
+            let inlinks = InlinkMap::from_raw(raw);
+
+            let patched = inlinks.with_edges([(
+                PathBuf::from("target.md"),
+                PathBuf::from("a.md"),
+            )]);
+
+            assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                PathBuf::from("a.md"),
+                PathBuf::from("z.md")
+            ]);
         }
     }
     mod folder_proximity {

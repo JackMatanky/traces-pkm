@@ -1,7 +1,7 @@
 //! Index lifecycle service.
 //!
 //! [`IndexerService`] owns a project root and drives the [`super::FileIndex`]
-//! lifecycle through four operations:
+//! lifecycle through five operations:
 //!
 //! - [`build`](IndexerService::build): scan and parse all files into a fresh
 //!   in-memory index.
@@ -10,12 +10,26 @@
 //! - [`load`](IndexerService::load): read a previously-persisted index from
 //!   disk.
 //! - [`refresh`](IndexerService::refresh): re-scan, diff against persisted
-//!   state, and atomically write only changed rows.
+//!   state, and atomically write only changed rows, returning a fully
+//!   materialized [`super::FileIndex`].
+//! - [`sync`](IndexerService::sync): the same incremental diff-and-persist step
+//!   as `refresh`, without materializing a [`super::FileIndex`]; for callers
+//!   that only need a few matching rows from the freshly-synced
+//!   [`super::store::IndexStore`], not every indexed note decoded into memory.
+//!
+//! `refresh` and `sync` share one incremental core
+//! ([`IndexerService::compute_sync_outcome`]): diffing considers every indexed
+//! path, and (see that method's doc) recomputes inbound links from only the
+//! touched notes when doing so is provably safe, falling back to a full
+//! recompute otherwise.
 //!
 //! All disk interaction flows through [`super::store::IndexStore`]; this module
 //! owns service-level orchestration, not table-level read/write mechanics.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use rayon::prelude::*;
 
@@ -24,11 +38,11 @@ use super::{
     delta::{IndexDelta, InlinkDelta},
     entry::{self, ListEntry},
     error::IndexBuilderError,
-    inlinks::InlinkMap,
+    inlinks::{self, InlinkMap},
     store::IndexStore,
 };
 use crate::{
-    Config, DirTree, DirTreeError, TaskConfig,
+    Config, DirTree, DirTreeError, Note, TaskConfig,
     config::FrontmatterConfig,
     file::FileBase,
     note::{MarkdownParserInput, parse_markdown},
@@ -86,21 +100,35 @@ struct RefreshContext<'a> {
     prev_links: &'a InlinkMap,
 }
 
+/// Result of [`IndexerService::compute_sync_outcome`]: the freshly-resolved
+/// inbound link graph and its diff against the previous state, plus the full
+/// merged note set when computing it required a full recompute anyway (letting
+/// [`IndexerService::assemble_refreshed_index`] skip a second one).
+struct SyncOutcome {
+    current_links: InlinkMap,
+    inlink_delta: InlinkDelta,
+    all_notes: Option<Vec<Note>>,
+}
+
 /// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
-/// load, and refresh.
+/// load, refresh, and sync.
 ///
 /// # Lifecycle
 ///
 /// 1. Build a fresh in-memory index: [`Self::build`]
 /// 2. Persist to disk: [`Self::persist`]
 /// 3. On subsequent runs, load from disk: [`Self::load`]
-/// 4. Keep the index current: [`Self::refresh`] (re-scans and persists
-///    atomically, best-effort on persist failure)
+/// 4. Keep the index current: [`Self::refresh`] (full [`FileIndex`],
+///    best-effort persist) or `sync` (crate-internal: persisted store only, no
+///    [`FileIndex`])
 ///
 /// # Errors
 ///
 /// All methods return `IndexError`. [`Self::refresh`] also logs a
-/// `tracing::warn!` on persist failure without propagating it.
+/// `tracing::warn!` on persist failure without propagating it; `sync`
+/// propagates persist failures instead, since a caller reading straight from
+/// the store (never materializing a [`FileIndex`]) has no in-memory fallback
+/// to fall back on if the store itself stayed stale.
 
 #[derive(Clone, Debug)]
 pub struct IndexerService {
@@ -184,7 +212,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if scanning disk, opening the database, or
+    /// Returns `IndexError` if scanning disk, opening the database, or
     /// persisting updates fails.
     #[inline]
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
@@ -205,30 +233,199 @@ impl IndexerService {
             persisted_files: &persisted_files,
             prev_links: &prev_links,
         };
-        self.apply_refresh(ctx, &delta)
+        self.assemble_refreshed_index(ctx, &delta)
     }
 
-    fn apply_refresh(
+    /// Synchronizes the persisted index for this service's root against current
+    /// filesystem state, without materializing a [`FileIndex`].
+    ///
+    /// Shares [`Self::compute_sync_outcome`] with [`Self::refresh_with_report`]
+    /// for the actual diff-and-relink work, then persists and returns the
+    /// now-current [`IndexStore`] handle directly. For a cold, empty delta this
+    /// does zero note decoding and zero writes.
+    ///
+    /// Intended for callers (cold CLI reads via
+    /// [`crate::query::QueryService::run_from_store`]) that only need a few
+    /// matching rows from the store, not every indexed note decoded into memory
+    /// to build a [`FileIndex`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if scanning disk, opening the database, or
+    /// persisting updates fails. Unlike [`Self::refresh`], a persist failure
+    /// here is propagated rather than logged and swallowed: this method's
+    /// entire contract is that the returned store is current, and there is no
+    /// in-memory [`FileIndex`] to fall back on if it silently isn't.
+    #[inline]
+    pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
+        let store = IndexStore::open(&self.root)?;
+        let current_files = self.scan()?;
+        let (persisted_files, prev_links) = store.read_files_and_links()?;
+        let delta = IndexDelta::compute(&current_files, &persisted_files);
+        if delta.is_empty() {
+            return Ok(store);
+        }
+
+        let modified_notes = self.parse_notes(delta.upserted())?;
+        let ctx = RefreshContext {
+            store: &store,
+            current_files,
+            persisted_files: &persisted_files,
+            prev_links: &prev_links,
+        };
+        let outcome =
+            Self::compute_sync_outcome(&ctx, &delta, &modified_notes)?;
+        store.persist_incremental(
+            &delta,
+            &modified_notes,
+            &outcome.inlink_delta,
+        )?;
+        Self::log_sync(&delta, &outcome.inlink_delta);
+        Ok(store)
+    }
+
+    fn assemble_refreshed_index(
         &self,
         ctx: RefreshContext<'_>,
         delta: &IndexDelta,
     ) -> IndexResult<(FileIndex, SyncReport)> {
         let modified_notes = self.parse_notes(delta.upserted())?;
-        let all_notes = Self::merge_refreshed_notes(
-            ctx.store,
-            ctx.persisted_files,
+        let outcome = Self::compute_sync_outcome(&ctx, delta, &modified_notes)?;
+
+        if let Err(source) = ctx.store.persist_incremental(
             delta,
             &modified_notes,
-        )?;
-        let current_links = InlinkMap::new(&all_notes, &ctx.current_files);
-        let inlink_delta = InlinkDelta::compute(&current_links, ctx.prev_links);
-
-        if let Err(source) =
-            ctx.store.persist_incremental(delta, &modified_notes, &inlink_delta)
-        {
+            &outcome.inlink_delta,
+        ) {
             tracing::warn!(%source, "failed to persist refreshed index");
+        } else {
+            Self::log_sync(delta, &outcome.inlink_delta);
         }
 
+        let report = SyncReport::new(
+            delta.upserted().len(),
+            delta.deleted().len(),
+            outcome
+                .inlink_delta
+                .upserted()
+                .len()
+                .saturating_add(outcome.inlink_delta.deleted().len()),
+        );
+        let all_notes = match outcome.all_notes {
+            Some(notes) => notes,
+            None => Self::merge_refreshed_notes(
+                ctx.store,
+                ctx.persisted_files,
+                delta,
+                &modified_notes,
+            )?,
+        };
+        let index = FileIndex::assemble(
+            ctx.current_files,
+            all_notes,
+            outcome.current_links,
+        );
+        Ok((index, report))
+    }
+
+    /// Computes the fresh inbound-link graph and its diff against `prev_links`
+    /// for one non-empty `delta`, deriving it incrementally from only
+    /// `modified_notes` when doing so is provably safe, and by full
+    /// recomputation over every persisted note otherwise. Shared by
+    /// [`Self::sync`] and [`Self::assemble_refreshed_index`]; does not persist
+    /// anything itself, so each caller can apply its own failure-handling
+    /// contract around [`super::store::IndexStore::persist_incremental`].
+    ///
+    /// # Correctness
+    ///
+    /// Link resolution considers every indexed file's path and stem, not just a
+    /// source note's own outlinks: an unedited note's *resolved* target can
+    /// change when an unrelated file is added, removed, or renamed elsewhere in
+    /// the vault (e.g. an ambiguous wikilink becomes resolvable once one of the
+    /// ambiguous candidates is deleted). The incremental patch
+    /// ([`Self::patch_links`]) is therefore sound only when the set of indexed
+    /// paths is unchanged ([`Self::is_paths_unchanged`]); any add/remove/rename
+    /// falls back to a full recompute over every note, matching
+    /// [`InlinkMap::new`]'s original full-vault semantics exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if the full-recompute fallback cannot read every
+    /// persisted note's body.
+    fn compute_sync_outcome(
+        ctx: &RefreshContext<'_>,
+        delta: &IndexDelta,
+        modified_notes: &[Note],
+    ) -> IndexResult<SyncOutcome> {
+        let store = ctx.store;
+        let current_files = &ctx.current_files;
+        let persisted_files = ctx.persisted_files;
+        let prev_links = ctx.prev_links;
+        let (current_links, all_notes) =
+            if Self::is_paths_unchanged(delta, persisted_files) {
+                let links = Self::patch_links(
+                    prev_links,
+                    modified_notes,
+                    current_files,
+                );
+                (links, None)
+            } else {
+                let all_notes = Self::merge_refreshed_notes(
+                    store,
+                    persisted_files,
+                    delta,
+                    modified_notes,
+                )?;
+                let links = InlinkMap::new(&all_notes, current_files);
+                (links, Some(all_notes))
+            };
+        let inlink_delta = InlinkDelta::compute(&current_links, prev_links);
+        Ok(SyncOutcome {
+            current_links,
+            inlink_delta,
+            all_notes,
+        })
+    }
+
+    /// Returns `true` if `delta` only changes content at already-indexed paths,
+    /// with nothing added or removed - the one case where link resolution is
+    /// guaranteed unaffected for *unedited* notes (see
+    /// [`Self::compute_sync_outcome`]'s doc), making an incremental link patch
+    /// sound.
+    fn is_paths_unchanged(
+        delta: &IndexDelta,
+        persisted_files: &[FileBase],
+    ) -> bool {
+        delta.deleted().is_empty()
+            && delta.upserted().iter().all(|file| {
+                persisted_files
+                    .binary_search_by(|p| p.path().cmp(file.path()))
+                    .is_ok()
+            })
+    }
+
+    /// Patches `prev_links` for a content-only edit: drops every edge sourced
+    /// by `modified_notes`, then re-resolves and re-adds their current outlinks
+    /// against `current_files`. Sound only under [`Self::is_paths_unchanged`]
+    /// (see [`Self::compute_sync_outcome`]'s doc): `current_files` is used only
+    /// to resolve link targets, and being unchanged from the file set
+    /// `prev_links` itself was built against, it yields identical resolutions
+    /// for every note this call does not touch.
+    fn patch_links(
+        prev_links: &InlinkMap,
+        modified_notes: &[Note],
+        current_files: &[FileBase],
+    ) -> InlinkMap {
+        let edited: HashSet<&Path> =
+            modified_notes.iter().map(Note::path).collect();
+        let new_edges =
+            inlinks::resolve_edges_for(modified_notes, current_files);
+        prev_links.without_sources(&edited).with_edges(new_edges)
+    }
+
+    /// Emits the one diagnostic trace point for a completed synchronization,
+    /// shared by [`Self::sync`] and [`Self::assemble_refreshed_index`].
+    fn log_sync(delta: &IndexDelta, inlink_delta: &InlinkDelta) {
         let report = SyncReport::new(
             delta.upserted().len(),
             delta.deleted().len(),
@@ -237,9 +434,12 @@ impl IndexerService {
                 .len()
                 .saturating_add(inlink_delta.deleted().len()),
         );
-        let index =
-            FileIndex::assemble(ctx.current_files, all_notes, current_links);
-        Ok((index, report))
+        tracing::debug!(
+            upserted = report.upserted(),
+            deleted = report.deleted(),
+            links_modified = report.links_modified(),
+            "index synced"
+        );
     }
 
     fn merge_refreshed_notes(
