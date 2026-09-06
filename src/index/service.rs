@@ -563,8 +563,12 @@ impl IndexerService {
         Ok(store.read_all_lists()?)
     }
 
-    /// Recursively scans this service's root for regular files, skipping `.git`
-    /// directories, the index database, and symlinks.
+    /// Recursively scans this service's root for regular files, skipping
+    /// `.git` directories, the index database, and symlinks. The directory
+    /// walk itself is sequential, but per-file metadata reads (`stat`) run in
+    /// parallel via `rayon`: each is an independent syscall, so fanning them
+    /// out across threads overlaps their latency instead of paying it
+    /// sequentially file-by-file.
     ///
     /// # Errors
     ///
@@ -573,27 +577,25 @@ impl IndexerService {
     #[inline]
     pub(super) fn scan(&self) -> Result<Vec<FileBase>, IndexBuilderError> {
         let index_db = self.root.join(INDEX_FILE);
-        let mut files = Vec::new();
-        let nodes = DirTree::descendants(&self.root).filter(|node| {
-            node.file_name() != ".traces"
-                && crate::env_vars::is_ignored_dir(node.file_name())
-        });
-        for node in nodes {
-            let node = node.map_err(scan_error)?;
-            let path = node.path();
-            if !node.file_type().is_file() || path == index_db {
-                continue;
-            }
-            let metadata = node.metadata().map_err(scan_error)?;
-            files.push(
-                FileBase::from_metadata(path, &self.root, &metadata).map_err(
-                    |source| IndexBuilderError::Scan {
-                        path: path.to_path_buf(),
-                        source,
-                    },
-                )?,
-            );
-        }
+        let paths = DirTree::descendants(&self.root)
+            .filter(|node| {
+                node.file_name() != ".traces"
+                    && crate::env_vars::is_ignored_dir(node.file_name())
+            })
+            .filter_map(|node| {
+                let node = match node {
+                    Ok(node) => node,
+                    Err(error) => return Some(Err(scan_error(error))),
+                };
+                let path = node.path();
+                (node.file_type().is_file() && path != index_db)
+                    .then(|| Ok(path.to_path_buf()))
+            })
+            .collect::<Result<Vec<PathBuf>, IndexBuilderError>>()?;
+        let mut files = paths
+            .into_par_iter()
+            .map(|path| scan_file_metadata(&path, &self.root))
+            .collect::<Result<Vec<FileBase>, IndexBuilderError>>()?;
         files.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
@@ -606,6 +608,26 @@ fn scan_error(error: DirTreeError) -> IndexBuilderError {
         path,
         source,
     }
+}
+
+/// Reads filesystem metadata for `path` and builds its [`FileBase`], relative
+/// to `root`. Called in parallel across every scanned file by
+/// [`IndexerService::scan`].
+fn scan_file_metadata(
+    path: &Path,
+    root: &Path,
+) -> Result<FileBase, IndexBuilderError> {
+    let metadata =
+        std::fs::metadata(path).map_err(|source| IndexBuilderError::Scan {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    FileBase::from_metadata(path, root, &metadata).map_err(|source| {
+        IndexBuilderError::Scan {
+            path: path.to_path_buf(),
+            source,
+        }
+    })
 }
 
 #[cfg(test)]

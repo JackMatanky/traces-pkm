@@ -177,23 +177,6 @@ impl DirNode {
     pub(crate) fn file_type(&self) -> fs::FileType {
         self.0.file_type()
     }
-
-    /// Reads the node's filesystem metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DirTreeError::NodeInaccessible`] if the node's metadata cannot
-    /// be read (for example, the entry vanished between listing and this call).
-    pub(crate) fn metadata(&self) -> Result<fs::Metadata, DirTreeError> {
-        self.0.metadata().map_err(|source| {
-            let path = self.0.path().to_path_buf();
-            let source = io::Error::from(source);
-            DirTreeError::NodeInaccessible {
-                path,
-                source,
-            }
-        })
-    }
 }
 
 /// Type-erased pruner: the caller's node predicate wrapped so
@@ -766,28 +749,6 @@ mod tests {
             assert_eq!(node.path(), file);
             assert_eq!(node.file_name(), std::ffi::OsStr::new("daily.md"));
             assert!(node.file_type().is_file());
-        }
-
-        #[test]
-        fn metadata_reads_size_and_mtime() {
-            // Arrange
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path();
-            write(root, "daily.md");
-
-            // Act
-            let node = DirTree::children(root)
-                .next()
-                .expect("one entry")
-                .expect("entry is ok");
-            let metadata = node.metadata().expect("metadata reads");
-
-            let expected_len =
-                u64::try_from("content".len()).expect("len fits u64");
-
-            // Assert
-            assert_eq!(metadata.len(), expected_len);
-            assert!(metadata.modified().is_ok());
         }
     }
 

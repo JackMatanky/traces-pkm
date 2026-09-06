@@ -162,7 +162,7 @@ fn bench_file_index_build(c: &mut Criterion) {
             group.sample_size(10);
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || create_project(n, ProjectShape::Plain),
                 |temp| {
                     let index = IndexerService::new(temp.path())
@@ -202,7 +202,7 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
                 BenchmarkId::new(shape.name(), n),
                 &n,
                 |b, &n| {
-                    b.iter_batched(
+                    b.iter_batched_ref(
                         || create_project(n, shape),
                         |temp| {
                             let index = IndexerService::new(temp.path())
@@ -252,9 +252,9 @@ fn bench_file_index_refresh(c: &mut Criterion) {
         }
 
         group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || setup_persisted_project(n, ProjectShape::Plain),
-                |(_temp, indexer)| observe_refresh(&indexer),
+                |(_temp, indexer)| observe_refresh(indexer),
                 BatchSize::LargeInput,
             );
         });
@@ -263,7 +263,7 @@ fn bench_file_index_refresh(c: &mut Criterion) {
             BenchmarkId::new("single-upsert", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let (temp, indexer) =
                             setup_persisted_project(n, ProjectShape::Plain);
@@ -279,7 +279,7 @@ fn bench_file_index_refresh(c: &mut Criterion) {
                         );
                         (temp, indexer)
                     },
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -289,14 +289,14 @@ fn bench_file_index_refresh(c: &mut Criterion) {
             BenchmarkId::new("single-delete", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let (temp, indexer) =
                             setup_persisted_project(n, ProjectShape::Plain);
                         remove_note(temp.path(), ProjectShape::Plain, 0);
                         (temp, indexer)
                     },
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -306,7 +306,7 @@ fn bench_file_index_refresh(c: &mut Criterion) {
             BenchmarkId::new("linked-single-upsert", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let (temp, indexer) = setup_persisted_project(
                             n,
@@ -322,7 +322,7 @@ fn bench_file_index_refresh(c: &mut Criterion) {
                         );
                         (temp, indexer)
                     },
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -350,14 +350,20 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 /// every call still re-scans the project's filesystem tree and diffs every
 /// persisted [`FileBase`] to detect whether anything changed - that scan and
 /// diff is O(vault size) by construction (there is no filesystem-watcher
-/// layer here) and dominates wall-clock time at scale (roughly 1.1s at
-/// 20,000 files, matched almost exactly by `FileIndex::refresh/no-op`'s own
-/// cost). What this group isolates is the cost *above* that unavoidable
-/// baseline.
+/// layer here) and dominates wall-clock time at scale (~74ms at 20,000
+/// files, matched almost exactly by `FileIndex::refresh/no-op`'s own cost).
+/// An earlier measurement of this floor reported ~1.1s: that number was a
+/// benchmark artifact, not a real cost - the "no-op"/"single-edit" routines
+/// previously took `(TempDir, IndexerService)` by value via `iter_batched`
+/// without returning it, so each iteration's `TempDir::drop` (recursively
+/// deleting the fixture's thousands of files) ran *inside* the timed call.
+/// Fixed by switching to `iter_batched_ref`, which never gives the routine
+/// ownership of the fixture. What this group isolates is the cost *above*
+/// that unavoidable scan-and-diff baseline.
 ///
 /// Expected outcomes:
 /// - Single-note-edit cost stays within measurement noise of the no-op baseline
-///   at every scale (observed: <1% overhead at 20,000 notes), proving
+///   at every scale (observed: ~3% overhead at 20,000 notes), proving
 ///   inlink/tag/class maintenance for the edited note does not scan the whole
 ///   vault, and the narrow query itself does not decode or return notes it
 ///   didn't match.
@@ -381,10 +387,10 @@ fn bench_sync_and_run(c: &mut Criterion) {
         }
 
         group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || setup_persisted_project(n, ProjectShape::Tagged),
                 |(_temp, indexer)| {
-                    observe_sync_and_run(&service, &indexer, one_match());
+                    observe_sync_and_run(&service, indexer, one_match());
                 },
                 BatchSize::LargeInput,
             );
@@ -394,7 +400,7 @@ fn bench_sync_and_run(c: &mut Criterion) {
             BenchmarkId::new("single-edit", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let (temp, indexer) =
                             setup_persisted_project(n, ProjectShape::Tagged);
@@ -412,7 +418,7 @@ fn bench_sync_and_run(c: &mut Criterion) {
                         (temp, indexer)
                     },
                     |(_temp, indexer)| {
-                        observe_sync_and_run(&service, &indexer, one_match());
+                        observe_sync_and_run(&service, indexer, one_match());
                     },
                     BatchSize::LargeInput,
                 );
@@ -476,9 +482,9 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
             BenchmarkId::new("no-op-rich", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || setup_persisted_project(n, ProjectShape::RichRealistic),
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -488,9 +494,9 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
             BenchmarkId::new("single-tag-upsert", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || setup_single_tag_upsert(n),
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -501,9 +507,9 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
                 BenchmarkId::new(format!("many-upsert-{changed}"), n),
                 &n,
                 |b, &n| {
-                    b.iter_batched(
+                    b.iter_batched_ref(
                         || setup_many_rich_upserts(n, changed),
-                        |(_temp, indexer)| observe_refresh(&indexer),
+                        |(_temp, indexer)| observe_refresh(indexer),
                         BatchSize::LargeInput,
                     );
                 },
@@ -514,9 +520,9 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
             BenchmarkId::new("single-rich-delete", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || setup_single_rich_delete(n),
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -526,14 +532,14 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
             BenchmarkId::new("attachment-target-present", n),
             &n,
             |b, &n| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         setup_persisted_project(
                             n,
                             ProjectShape::AttachmentProject,
                         )
                     },
-                    |(_temp, indexer)| observe_refresh(&indexer),
+                    |(_temp, indexer)| observe_refresh(indexer),
                     BatchSize::LargeInput,
                 );
             },
@@ -569,10 +575,10 @@ fn bench_index_persist(c: &mut Criterion) {
             group.sample_size(10);
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || setup_unpersisted_project(n, ProjectShape::Plain),
                 |(_temp, indexer, index)| {
-                    indexer.persist(&index).expect("persist index");
+                    indexer.persist(index).expect("persist index");
                     black_box(index.entries().len());
                 },
                 BatchSize::LargeInput,
@@ -602,10 +608,10 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
                 BenchmarkId::new(shape.name(), n),
                 &n,
                 |b, &n| {
-                    b.iter_batched(
+                    b.iter_batched_ref(
                         || setup_unpersisted_project(n, shape),
                         |(_temp, indexer, index)| {
-                            indexer.persist(&index).expect("persist index");
+                            indexer.persist(index).expect("persist index");
                             black_box(index.entries().len());
                         },
                         BatchSize::LargeInput,
