@@ -55,12 +55,16 @@ use traces_pkm::{
 mod common;
 
 use common::{
+    WORKSPACE_FILE_COUNTS,
     content::{
-        linked_note_source, plain_note_source, rich_note_source,
+        ProjectShape, linked_note_source, plain_note_source, rich_note_source,
         tagged_note_source,
     },
-    prelude::*,
-    project::{create_project, remove_note, setup_unpersisted_project},
+    project::{
+        create_project, remove_note, setup_persisted_project,
+        setup_unpersisted_project,
+    },
+    quick_file_counts,
 };
 
 // ----------------------------------------------------------- //

@@ -70,21 +70,6 @@ pub fn quick_file_counts() -> impl Iterator<Item = usize> {
     WORKSPACE_FILE_COUNTS.iter().copied().filter(|&n| n <= 1_000)
 }
 
-/// Lightweight prelude for benchmark files.
-///
-/// Re-exports the most commonly used items so bench files can write
-/// `use common::prelude::*;` instead of importing each item individually.
-/// Bench files with specific needs (e.g., `generate_dense_link_notes`)
-/// still import from submodules directly.
-pub mod prelude {
-    pub use super::{
-        WORKSPACE_FILE_COUNTS,
-        content::ProjectShape,
-        project::{rewrite_note, setup_persisted_project},
-        quick_file_counts,
-    };
-}
-
 /// List/task item-count sweep for single-note parser and allocation scaling.
 pub(crate) const LIST_ITEM_COUNTS: &[usize] = &[10, 100, 1_000, 5_000];
 

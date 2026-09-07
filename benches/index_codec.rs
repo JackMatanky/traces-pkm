@@ -55,7 +55,7 @@ struct PathWrapper {
 )]
 mod common;
 
-use common::{notes::generate_sparse_link_notes, prelude::*};
+use common::{WORKSPACE_FILE_COUNTS, notes::generate_sparse_link_notes};
 
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
