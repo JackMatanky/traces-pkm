@@ -1,6 +1,6 @@
 #!/bin/bash
-# [MISE] description="Post-bench summary: parse criterion JSON output"
-# [MISE] hide=true
+#MISE description="Post-bench summary: parse criterion JSON output"
+#MISE hide=true
 #
 # Prints a summary of which benchmark groups were measured after every bench
 # execution. Runs automatically via depends_post.

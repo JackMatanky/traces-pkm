@@ -160,9 +160,7 @@ def load_benchmark_data(
             the filesystem.
     """
     if not criterion_dir.exists():
-        raise FileNotFoundError(
-            f"Criterion output not found: {criterion_dir}"
-        )
+        raise FileNotFoundError(f"Criterion output not found: {criterion_dir}")
 
     data_points: list[BenchmarkDataPoint] = []
 
@@ -252,16 +250,10 @@ def fit_performance_models(
         List of fitted models sorted by R-squared descending
         (best fit first).  Empty if variance is zero.
     """
-    file_counts: np.ndarray = np.array(
-        [dp.file_count for dp in data_points]
-    )
-    mean_seconds: np.ndarray = np.array(
-        [dp.mean_seconds for dp in data_points]
-    )
+    file_counts: np.ndarray = np.array([dp.file_count for dp in data_points])
+    mean_seconds: np.ndarray = np.array([dp.mean_seconds for dp in data_points])
 
-    ss_tot: float = float(
-        np.sum((mean_seconds - np.mean(mean_seconds)) ** 2)
-    )
+    ss_tot: float = float(np.sum((mean_seconds - np.mean(mean_seconds)) ** 2))
     if ss_tot == 0:
         return []
 
@@ -270,9 +262,7 @@ def fit_performance_models(
         _fit_log(file_counts, mean_seconds, ss_tot),
     ]
 
-    return sorted(
-        models, key=lambda m: m.r_squared, reverse=True
-    )
+    return sorted(models, key=lambda m: m.r_squared, reverse=True)
 
 
 def _fit_linear(
@@ -378,9 +368,7 @@ def extrapolate_to_target_sizes(
     return [
         ExtrapolationResult(
             file_count=sz,
-            predicted_seconds=round(
-                best_model.predict(float(sz)), 3
-            ),
+            predicted_seconds=round(best_model.predict(float(sz)), 3),
             model_name=best_model.name,
         )
         for sz in target_sizes
@@ -415,9 +403,7 @@ def print_report(
     print(f"\nData points: {len(data_points)}")
     print(
         "File counts: "
-        + ", ".join(
-            str(int(dp.file_count)) for dp in data_points
-        )
+        + ", ".join(str(int(dp.file_count)) for dp in data_points)
     )
 
     print("\nFitted models:")
@@ -436,20 +422,12 @@ def print_report(
             f"\nWarning: low R2 ({best.r_squared:.4f})"
             " -- extrapolation unreliable."
         )
-        print(
-            "  Measure directly at target sizes instead."
-        )
+        print("  Measure directly at target sizes instead.")
         return
 
-    print(
-        f"\nExtrapolation (best: {best.name}, "
-        f"R2={best.r_squared:.4f}):"
-    )
+    print(f"\nExtrapolation (best: {best.name}, R2={best.r_squared:.4f}):")
     for ext in extrapolations:
-        print(
-            f"  {ext.file_count:>6,} notes: "
-            f"{ext.predicted_seconds:.3f}s"
-        )
+        print(f"  {ext.file_count:>6,} notes: {ext.predicted_seconds:.3f}s")
 
 
 # -- Entry point ------------------------------------------------------------
@@ -470,15 +448,13 @@ def main() -> None:
     criterion_dir: Path = Path(
         os.environ.get(
             "usage_criterion_dir",
-            sys.argv[1]
-            if len(sys.argv) > 1
-            else "target/criterion",
+            sys.argv[1] if len(sys.argv) > 1 else "target/criterion",
         )
     )
 
     try:
-        data_points: list[BenchmarkDataPoint] = (
-            load_benchmark_data(criterion_dir)
+        data_points: list[BenchmarkDataPoint] = load_benchmark_data(
+            criterion_dir
         )
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -486,15 +462,12 @@ def main() -> None:
 
     if len(data_points) < 2:
         print(
-            f"Need >=2 data points, found "
-            f"{len(data_points)}.",
+            f"Need >=2 data points, found {len(data_points)}.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    fitted_models: list[FittedModel] = (
-        fit_performance_models(data_points)
-    )
+    fitted_models: list[FittedModel] = fit_performance_models(data_points)
     if not fitted_models:
         print(
             "Could not fit models (zero variance?).",
@@ -504,16 +477,12 @@ def main() -> None:
 
     best_model: FittedModel = fitted_models[0]
     extrapolations: list[ExtrapolationResult] = (
-        extrapolate_to_target_sizes(
-            best_model, [50_000, 100_000]
-        )
+        extrapolate_to_target_sizes(best_model, [50_000, 100_000])
         if best_model.r_squared >= 0.95
         else []
     )
 
-    print_report(
-        data_points, fitted_models, extrapolations
-    )
+    print_report(data_points, fitted_models, extrapolations)
 
 
 if __name__ == "__main__":
