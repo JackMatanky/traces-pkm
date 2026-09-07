@@ -34,15 +34,14 @@ use std::{
 use rayon::prelude::*;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexResult,
+    FileIndex, INDEX_FILE, IndexError, IndexResult,
     delta::{IndexDelta, InlinkDelta},
     entry::{self, ListEntry},
-    error::IndexBuilderError,
     inlinks::{self, InlinkMap},
     store::IndexStore,
 };
 use crate::{
-    Config, DirTree, DirTreeError, Note, TaskConfig,
+    Config, DirTree, Note, TaskConfig,
     config::FrontmatterConfig,
     file::FileBase,
     note::{MarkdownParserInput, parse_markdown},
@@ -129,7 +128,6 @@ struct SyncOutcome {
 /// propagates persist failures instead, since a caller reading straight from
 /// the store (never materializing a [`FileIndex`]) has no in-memory fallback
 /// to fall back on if the store itself stayed stale.
-
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -163,8 +161,12 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, or a Markdown file cannot be parsed.
+    /// - [`Walk`] if a directory cannot be read.
+    /// - [`NoteParse`] if a file's metadata cannot be inspected, or a Markdown
+    ///   file cannot be parsed.
+    ///
+    /// [`Walk`]: IndexError::Walk
+    /// [`NoteParse`]: IndexError::NoteParse
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
@@ -196,11 +198,15 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, a Markdown file cannot be parsed, or an unchanged
-    ///   Note's previous value cannot be recalled.
-    /// - `IndexError::Store` if the previously persisted index cannot be
-    ///   loaded.
+    /// - [`Walk`] if a directory cannot be read.
+    /// - [`NoteParse`] if a file's metadata cannot be inspected, a Markdown
+    ///   file cannot be parsed, or an unchanged Note's previous value cannot be
+    ///   recalled.
+    /// - [`Store`] if the previously persisted index cannot be loaded.
+    ///
+    /// [`Walk`]: IndexError::Walk
+    /// [`NoteParse`]: IndexError::NoteParse
+    /// [`Store`]: IndexError::Store
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
         let (index, _) = self.refresh_with_report()?;
@@ -212,8 +218,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if scanning disk, opening the database, or
-    /// persisting updates fails.
+    /// - [`Store`] if scanning disk, opening the database, or persisting
+    ///   updates fails.
+    ///
+    /// [`Store`]: IndexError::Store
     #[inline]
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
         let (store, current_files, persisted_files, prev_links) =
@@ -250,11 +258,13 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if scanning disk, opening the database, or
-    /// persisting updates fails. Unlike [`Self::refresh`], a persist failure
-    /// here is propagated rather than logged and swallowed: this method's
-    /// entire contract is that the returned store is current, and there is no
-    /// in-memory [`FileIndex`] to fall back on if it silently isn't.
+    /// - [`Store`] if scanning disk, opening the database, or persisting
+    ///   updates fails. Unlike [`Self::refresh`], a persist failure here is
+    ///   propagated rather than logged and swallowed: this method's entire
+    ///   contract is that the returned store is current, and there is no
+    ///   in-memory [`FileIndex`] to fall back on if it silently isn't.
+    ///
+    /// [`Store`]: IndexError::Store
     #[inline]
     pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
         let (store, current_files, persisted_files, prev_links) =
@@ -282,25 +292,31 @@ impl IndexerService {
         Ok(store)
     }
 
-    /// Opens this service's [`IndexStore`], scans the current filesystem
-    /// state, and reads the persisted state ([`FileBase`]s and inbound
-    /// links), overlapping the filesystem walk with the store's fixed
-    /// open cost and its own read.
+    /// Opens this service's [`IndexStore`], scans the current filesystem state,
+    /// and reads the persisted state ([`FileBase`]s and inbound links),
+    /// overlapping the filesystem walk with the store's fixed open cost and its
+    /// own read.
     ///
     /// `IndexStore::open` pays a fixed cost independent of database size
-    /// (redb's own file-open/validation machinery); it has no dependency on
-    /// the filesystem scan, so running them concurrently hides the smaller
-    /// of the two almost entirely. Reading the persisted state still must
-    /// wait for `open` to finish (it needs the opened store), so it runs
-    /// immediately after on the same side of the join - the scan continues
-    /// concurrently for its own full duration. Shared by
-    /// [`Self::refresh_with_report`] and [`Self::sync`], both of which need
-    /// exactly this pair before computing an [`IndexDelta`].
+    /// (redb's own file-open/validation machinery); it has no dependency on the
+    /// filesystem scan, so running them concurrently hides the smaller of the
+    /// two almost entirely. Reading the persisted state still must wait for
+    /// `open` to finish (it needs the opened store), so it runs immediately
+    /// after on the same side of the join - the scan continues concurrently for
+    /// its own full duration. Shared by [`Self::refresh_with_report`] and
+    /// [`Self::sync`], both of which need exactly this pair before computing an
+    /// [`IndexDelta`].
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if opening the store, scanning disk, or reading
-    /// the store fails.
+    /// - [`Store`] if opening the store, scanning disk, or reading the store
+    ///   fails.
+    ///
+    /// [`Store`]: IndexError::Store
+    #[allow(
+        clippy::type_complexity,
+        reason = "pre-existing tuple in return type"
+    )]
     fn open_scan_and_read_persisted(
         &self,
     ) -> IndexResult<(IndexStore, Vec<FileBase>, Vec<FileBase>, InlinkMap)>
@@ -382,8 +398,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if the full-recompute fallback cannot read every
-    /// persisted note's body.
+    /// - [`Store`] if the full-recompute fallback cannot read every persisted
+    ///   note's body.
+    ///
+    /// [`Store`]: IndexError::Store
     fn compute_sync_outcome(
         ctx: &RefreshContext<'_>,
         delta: &IndexDelta,
@@ -470,23 +488,23 @@ impl IndexerService {
         );
     }
 
-    /// Merges a full-recompute fallback's persisted notes with this
-    /// refresh's deletions and modifications.
+    /// Merges a full-recompute fallback's persisted notes with this refresh's
+    /// deletions and modifications.
     ///
     /// Bulk-reads and parallel-decodes every persisted note via
     /// [`IndexStore::read_all_notes`] instead of point-looking-up each
-    /// `persisted_files` path individually: this fallback always needs
-    /// (nearly) every persisted note decoded, so one table iteration plus
-    /// parallel decode beats `n` sequential point lookups.
+    /// `persisted_files` path individually: this fallback always needs (nearly)
+    /// every persisted note decoded, so one table iteration plus parallel
+    /// decode beats `n` sequential point lookups.
     ///
     /// Deletion and modification lookups use a [`HashSet`]/[`HashMap`] over
     /// paths rather than a `retain`/`position` scan per deleted or modified
-    /// note: the original per-item linear scan made this function
-    /// `O(deleted * n + modified * n)` in the total persisted note count
-    /// `n`, quadratic for a refresh that both adds/removes files (forcing
-    /// this fallback, see [`Self::compute_sync_outcome`]) and touches many
-    /// notes at once. This path is only reachable when the indexed path set
-    /// itself changed, so `n` is not bounded by any single edit's size.
+    /// note: the original per-item linear scan made this function `O(deleted *
+    /// n + modified * n)` in the total persisted note count `n`, quadratic for
+    /// a refresh that both adds/removes files (forcing this fallback, see
+    /// [`Self::compute_sync_outcome`]) and touches many notes at once. This
+    /// path is only reachable when the indexed path set itself changed, so `n`
+    /// is not bounded by any single edit's size.
     ///
     /// [`IndexStore::read_all_notes`]: super::store::IndexStore::read_all_notes
     fn merge_refreshed_notes(
@@ -522,15 +540,12 @@ impl IndexerService {
         Ok(all_notes)
     }
 
-    fn parse_notes(
-        &self,
-        files: &[FileBase],
-    ) -> Result<Vec<crate::Note>, IndexBuilderError> {
+    fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<crate::Note>> {
         let note_files: Vec<&FileBase> = files
             .iter()
             .filter(|f| f.format() == crate::file::FileFormat::Note)
             .collect();
-        let results: Vec<Result<crate::Note, IndexBuilderError>> = note_files
+        let results: Vec<IndexResult<crate::Note>> = note_files
             .into_par_iter()
             .map(|file| self.parse_note(file))
             .collect();
@@ -541,14 +556,11 @@ impl IndexerService {
         Ok(notes)
     }
 
-    fn parse_note(
-        &self,
-        file: &FileBase,
-    ) -> Result<crate::Note, IndexBuilderError> {
+    fn parse_note(&self, file: &FileBase) -> IndexResult<crate::Note> {
         let full_path = self.root.join(file.path());
         let content =
             std::fs::read_to_string(&full_path).map_err(|source| {
-                IndexBuilderError::NoteParse {
+                IndexError::NoteParse {
                     path: full_path,
                     source,
                 }
@@ -566,8 +578,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Store` if the database's parent directory cannot be
-    ///   created, the transaction fails, or a record cannot be encoded.
+    /// - [`Store`] if the database's parent directory cannot be created, the
+    ///   transaction fails, or a record cannot be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist_index(index)
@@ -578,8 +592,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Store` if the database cannot be read or stored bytes are
-    ///   not a valid record.
+    /// - [`Store`] if the database cannot be read or stored bytes are not a
+    ///   valid record.
+    ///
+    /// [`Store`]: IndexError::Store
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -599,7 +615,9 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if the database cannot be opened or read.
+    /// - [`Store`] if the database cannot be opened or read.
+    ///
+    /// [`Store`]: IndexError::Store
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -622,10 +640,10 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexBuilderError::Scan`] if a directory cannot be read or a file's
-    ///   metadata cannot be inspected.
+    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::NoteParse`] if a file's metadata cannot be inspected.
     #[inline]
-    pub(super) fn scan(&self) -> Result<Vec<FileBase>, IndexBuilderError> {
+    pub(super) fn scan(&self) -> IndexResult<Vec<FileBase>> {
         let index_db = self.root.join(INDEX_FILE);
         let paths = DirTree::descendants(&self.root)
             .filter(|node| {
@@ -635,45 +653,33 @@ impl IndexerService {
             .filter_map(|node| {
                 let node = match node {
                     Ok(node) => node,
-                    Err(error) => return Some(Err(scan_error(error))),
+                    Err(error) => return Some(Err(IndexError::Walk(error))),
                 };
                 let path = node.path();
                 (node.file_type().is_file() && path != index_db)
                     .then(|| Ok(path.to_path_buf()))
             })
-            .collect::<Result<Vec<PathBuf>, IndexBuilderError>>()?;
+            .collect::<IndexResult<Vec<PathBuf>>>()?;
         let mut files = paths
             .into_par_iter()
             .map(|path| scan_file_metadata(&path, &self.root))
-            .collect::<Result<Vec<FileBase>, IndexBuilderError>>()?;
+            .collect::<IndexResult<Vec<FileBase>>>()?;
         files.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
-    }
-}
-
-/// Converts a [`DirTreeError`] into the builder's scan error variant.
-fn scan_error(error: DirTreeError) -> IndexBuilderError {
-    let (path, source) = error.into_parts();
-    IndexBuilderError::Scan {
-        path,
-        source,
     }
 }
 
 /// Reads filesystem metadata for `path` and builds its [`FileBase`], relative
 /// to `root`. Called in parallel across every scanned file by
 /// [`IndexerService::scan`].
-fn scan_file_metadata(
-    path: &Path,
-    root: &Path,
-) -> Result<FileBase, IndexBuilderError> {
+fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileBase> {
     let metadata =
-        std::fs::metadata(path).map_err(|source| IndexBuilderError::Scan {
+        std::fs::metadata(path).map_err(|source| IndexError::NoteParse {
             path: path.to_path_buf(),
             source,
         })?;
     FileBase::from_metadata(path, root, &metadata).map_err(|source| {
-        IndexBuilderError::Scan {
+        IndexError::NoteParse {
             path: path.to_path_buf(),
             source,
         }
@@ -777,10 +783,10 @@ mod tests {
 
         let result = IndexerService::new(temp.path()).build();
         let err = result.expect_err("must fail on unreadable file");
-        let IndexError::Builder(IndexBuilderError::NoteParse {
+        let IndexError::NoteParse {
             path,
             ..
-        }) = err
+        } = err
         else {
             return;
         };
@@ -805,7 +811,6 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::error::IndexBuilderError;
 
         #[test]
         fn extracts_note_metadata_only_for_markdown_files() {
@@ -895,10 +900,7 @@ mod tests {
 
             let result = IndexerService::new(temp.path()).build();
 
-            assert!(matches!(
-                result,
-                Err(IndexError::Builder(IndexBuilderError::NoteParse { .. }))
-            ));
+            assert!(matches!(result, Err(IndexError::NoteParse { .. })));
         }
 
         #[test]
@@ -1039,7 +1041,7 @@ mod tests {
                 .scan()
                 .expect_err("unreadable dir fails");
 
-            assert!(matches!(error, IndexBuilderError::Scan { .. }));
+            assert!(matches!(error, IndexError::Walk(_)));
         }
     }
 

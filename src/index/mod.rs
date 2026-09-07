@@ -52,8 +52,6 @@ pub use codec::path;
 pub use entry::ListEntry;
 pub(crate) use entry::RowIndex;
 pub use entry::{FileEntry, FileIndex};
-#[cfg(test)]
-pub(crate) use error::IndexBuilderError;
 pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;

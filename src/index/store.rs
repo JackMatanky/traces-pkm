@@ -379,7 +379,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if database integrity check fails.
+    /// - [`Store`] if database integrity check fails.
+    ///
+    /// [`Store`]: IndexError::Store
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "part of IndexStore surface")
@@ -397,7 +399,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if opening the transaction or table fails.
+    /// - [`Store`] if opening the transaction or table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn read_notes_batch<'a>(
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
@@ -442,8 +446,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`](super::IndexError) if opening the transaction
-    /// or table fails.
+    /// - [`Store`] if opening the transaction or table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn read_files_batch<'a>(
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
@@ -483,8 +488,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`](super::IndexError) if opening the transaction
-    /// or table fails.
+    /// - [`Store`] if opening the transaction or table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn read_links_for_targets<'a>(
         &self,
         targets: impl IntoIterator<Item = &'a Path>,
@@ -529,7 +535,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if reading fails.
+    /// - [`Store`] if reading fails.
+    ///
+    /// [`Store`]: IndexError::Store
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "part of IndexStore surface")
@@ -542,6 +550,10 @@ impl IndexStore {
     /// Returns sorted paths carrying `tag` or a child of `tag`.
     ///
     /// # Errors
+    ///
+    /// - [`Store`] if opening the database or reading the table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn paths_with_tag(
         &self,
         tag: &str,
@@ -557,6 +569,10 @@ impl IndexStore {
     /// Returns sorted paths carrying the file class `class`.
     ///
     /// # Errors
+    ///
+    /// - [`Store`] if opening the database or reading the table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn paths_with_file_class(
         &self,
         class: &str,
@@ -926,7 +942,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if opening the transaction or table fails.
+    /// - [`Store`] if opening the transaction or table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     ///
     /// [`IndexerService::merge_refreshed_notes`]: super::service::IndexerService::merge_refreshed_notes
     pub(crate) fn read_all_notes(&self) -> IndexResult<Vec<Note>> {
@@ -975,7 +993,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`IndexError`] if reading fails.
+    /// - [`Store`] if reading fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn read_files_and_links(
         &self,
     ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
@@ -1355,7 +1375,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Transaction failure or serialization failure.
+    /// - [`Store`] if the transaction fails or a record cannot be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(super) fn persist_index(&self, index: &FileIndex) -> IndexResult<()> {
         self.write_all(index.entries())
     }
@@ -1364,7 +1386,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Transaction failure or serialization failure.
+    /// - [`Store`] if the transaction fails or a record cannot be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(super) fn persist_incremental(
         &self,
         delta: &IndexDelta,

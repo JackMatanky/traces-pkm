@@ -1,11 +1,13 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`IndexError`] wraps persistence failures ([`DbError`]) and build-pipeline
-//! failures ([`IndexBuilderError`]).
+//! [`IndexError`] wraps persistence failures ([`DbError`]), directory-walk
+//! failures ([`DirTreeError`]), and note-parse failures.
 
 use std::{io, path::PathBuf};
 
 use thiserror::Error;
+
+use crate::DirTreeError;
 
 /// Convenience alias for low-level index persistence operations.
 pub type DbResult<T> = std::result::Result<T, DbError>;
@@ -15,13 +17,26 @@ pub type IndexResult<T> = std::result::Result<T, IndexError>;
 
 /// Error type for [`super::FileIndex`] operations.
 #[derive(Debug, Error)]
+#[expect(
+    private_interfaces,
+    reason = "DirTreeError is pub(crate), IndexError is pub"
+)]
 pub enum IndexError {
     /// Database access or record (de)serialization failed.
     #[error(transparent)]
     Store(#[from] DbError),
-    /// Scanning, parsing, or reconciling the build pipeline failed.
+    /// Directory traversal failed during scan.
     #[error(transparent)]
-    Builder(#[from] IndexBuilderError),
+    Walk(#[from] DirTreeError),
+    /// A markdown file could not be read or parsed into a [`crate::Note`].
+    #[error("failed to parse note {path}")]
+    NoteParse {
+        /// The markdown file that failed to parse.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// Generic error type for low-level redb persistence operations.
@@ -64,47 +79,6 @@ pub enum DbError {
         /// Source postcard deserialization error.
         #[source]
         source: postcard::Error,
-    },
-}
-
-/// Error type for [`super::service::IndexerService`]'s scan-and-parse build
-/// pipeline.
-#[derive(Debug, Error)]
-pub enum IndexBuilderError {
-    /// Filesystem error during directory scan or file metadata read.
-    #[error("failed to scan {path}")]
-    Scan {
-        /// The path that could not be read.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Markdown file could not be read or parsed into a [`crate::Note`].
-    #[error("failed to parse note {path}")]
-    NoteParse {
-        /// The markdown file that failed to parse.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Record metadata matched the previous index, but the corresponding note
-    /// was absent from the persisted index during point-lookup recall.
-    #[error("note missing for record at {path}")]
-    MissingNote {
-        /// The record path whose expected note was absent.
-        path: PathBuf,
-    },
-    /// A previously-persisted [`crate::Note`] could not be read via a
-    /// point lookup during refresh reconciliation.
-    #[error("failed to read persisted note for {path}")]
-    NoteLookup {
-        /// The path whose previous Note lookup failed.
-        path: PathBuf,
-        /// Source index-store error.
-        #[source]
-        source: Box<IndexError>,
     },
 }
 
@@ -161,49 +135,17 @@ mod tests {
         }
     }
 
-    mod index_builder_error_display {
+    mod index_error_display {
         use super::*;
 
         #[test]
-        fn scan_includes_path_in_message() {
-            let err = IndexBuilderError::Scan {
-                path: PathBuf::from("src/main.rs"),
-                source: io::Error::new(io::ErrorKind::NotFound, "missing"),
-            };
-
-            assert!(err.to_string().contains("src/main.rs"));
-        }
-
-        #[test]
         fn note_parse_includes_path_in_message() {
-            let err = IndexBuilderError::NoteParse {
-                path: PathBuf::from("notes").join("bad.md"),
+            let err = IndexError::NoteParse {
+                path: PathBuf::from("notes/bad.md"),
                 source: io::Error::new(io::ErrorKind::InvalidData, "not utf8"),
             };
 
             assert!(err.to_string().contains("bad.md"));
-        }
-
-        #[test]
-        fn missing_note_includes_path_in_message() {
-            let err = IndexBuilderError::MissingNote {
-                path: PathBuf::from("orphan.md"),
-            };
-
-            assert!(err.to_string().contains("orphan.md"));
-        }
-
-        #[test]
-        fn note_lookup_includes_path_in_message() {
-            let err = IndexBuilderError::NoteLookup {
-                path: PathBuf::from("recall.md"),
-                source: Box::new(IndexError::Store(DbError::Redb {
-                    path: PathBuf::from(".traces/index.redb"),
-                    source: Box::new(redb::Error::DatabaseAlreadyOpen),
-                })),
-            };
-
-            assert!(err.to_string().contains("recall.md"));
         }
     }
 
@@ -224,16 +166,17 @@ mod tests {
         }
 
         #[test]
-        fn builder_display_matches_the_wrapped_builder_error_with_no_added_text()
-         {
-            let builder_error = IndexBuilderError::MissingNote {
+        fn walk_display_matches_the_wrapped_dir_tree_error_with_no_added_text()
+        {
+            let walk_error = DirTreeError::NodeInaccessible {
                 path: PathBuf::from("orphan.md"),
+                source: io::Error::other("boom"),
             };
-            let builder_message = builder_error.to_string();
+            let walk_message = walk_error.to_string();
 
-            let wrapped = IndexError::Builder(builder_error);
+            let wrapped = IndexError::Walk(walk_error);
 
-            assert_eq!(wrapped.to_string(), builder_message);
+            assert_eq!(wrapped.to_string(), walk_message);
         }
 
         #[test]
@@ -256,14 +199,28 @@ mod tests {
         }
 
         #[test]
-        fn builder_source_skips_straight_to_the_builder_errors_own_source() {
-            let err = IndexError::Builder(IndexBuilderError::NoteParse {
+        fn walk_source_skips_straight_to_the_dir_tree_errors_own_source() {
+            let err = IndexError::Walk(DirTreeError::NodeInaccessible {
                 path: PathBuf::from("x"),
                 source: io::Error::new(io::ErrorKind::InvalidData, "bad"),
             });
 
             let source = err.source().expect("source present");
-            assert!(source.downcast_ref::<IndexBuilderError>().is_none());
+            assert!(source.downcast_ref::<DirTreeError>().is_none());
+            assert_eq!(
+                source.downcast_ref::<io::Error>().map(io::Error::kind),
+                Some(io::ErrorKind::InvalidData)
+            );
+        }
+
+        #[test]
+        fn note_parse_source_returns_the_io_error() {
+            let err = IndexError::NoteParse {
+                path: PathBuf::from("x"),
+                source: io::Error::new(io::ErrorKind::InvalidData, "bad"),
+            };
+
+            let source = err.source().expect("source present");
             assert_eq!(
                 source.downcast_ref::<io::Error>().map(io::Error::kind),
                 Some(io::ErrorKind::InvalidData)
@@ -283,47 +240,17 @@ mod tests {
         }
 
         #[test]
-        fn index_builder_error_converts_to_the_builder_variant() {
-            let builder_error = IndexBuilderError::MissingNote {
-                path: PathBuf::from("orphan.md"),
+        fn dir_tree_error_converts_to_the_walk_variant() {
+            let walk_error = DirTreeError::NodeInaccessible {
+                path: PathBuf::from("x"),
+                source: io::Error::other("boom"),
             };
 
-            let converted: IndexError = builder_error.into();
+            let converted: IndexError = walk_error.into();
 
             assert!(matches!(
                 converted,
-                IndexError::Builder(IndexBuilderError::MissingNote { .. })
-            ));
-        }
-
-        #[test]
-        fn note_lookup_keeps_its_own_path_distinct_from_the_wrapped_errors_path()
-         {
-            // `NoteLookup`'s own `path` (the record being recalled) must stay
-            // reachable even though its `source` is a full `IndexError` that
-            // may carry an unrelated path of its own (e.g. the database
-            // file, for a `Store`-caused failure).
-            let err = IndexBuilderError::NoteLookup {
-                path: PathBuf::from("recall.md"),
-                source: Box::new(IndexError::Store(DbError::Redb {
-                    path: PathBuf::from(".traces/index.redb"),
-                    source: Box::new(redb::Error::DatabaseAlreadyOpen),
-                })),
-            };
-
-            assert!(matches!(
-                &err,
-                IndexBuilderError::NoteLookup { path, .. }
-                    if path == std::path::Path::new("recall.md")
-            ));
-            assert!(matches!(
-                &err,
-                IndexBuilderError::NoteLookup { source, .. }
-                    if matches!(
-                        &**source,
-                        IndexError::Store(DbError::Redb { path, .. })
-                            if path == std::path::Path::new(".traces/index.redb")
-                    )
+                IndexError::Walk(DirTreeError::NodeInaccessible { .. })
             ));
         }
     }

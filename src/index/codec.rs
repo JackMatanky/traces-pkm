@@ -15,8 +15,13 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::error::{DbError, DbResult};
 
-/// Encodes `value` for a row keyed by `path`, wrapping a failure as
-/// [`DbError::Serialize`].
+/// Encodes `value` for a row keyed by `path`.
+///
+/// # Errors
+///
+/// - [`DbError::Serialize`] if serialization fails
+///
+/// [`DbError::Serialize`]: DbError::Serialize
 pub(super) fn encode_row<T: Serialize>(
     path: &Path,
     value: &T,
@@ -27,8 +32,13 @@ pub(super) fn encode_row<T: Serialize>(
     })
 }
 
-/// Decodes `bytes` for a row keyed by `path`, wrapping a failure as
-/// [`DbError::Deserialize`].
+/// Decodes `bytes` for a row keyed by `path`.
+///
+/// # Errors
+///
+/// - [`DbError::Deserialize`] if deserialization fails
+///
+/// [`DbError::Deserialize`]: DbError::Deserialize
 pub(super) fn decode_row<T: DeserializeOwned>(
     path: &Path,
     bytes: &[u8],
@@ -75,7 +85,7 @@ pub mod path {
     ///
     /// # Errors
     ///
-    /// Returns the serializer's error if encoding fails.
+    /// - Returns the serializer's error if encoding fails.
     #[cfg(unix)]
     #[inline]
     pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
@@ -90,7 +100,7 @@ pub mod path {
     ///
     /// # Errors
     ///
-    /// Returns the deserializer's error if decoding fails.
+    /// - Returns the deserializer's error if decoding fails.
     #[cfg(unix)]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
@@ -106,7 +116,7 @@ pub mod path {
     ///
     /// # Errors
     ///
-    /// Returns the serializer's error if encoding fails.
+    /// - Returns the serializer's error if encoding fails.
     #[cfg(windows)]
     #[inline]
     pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
@@ -122,7 +132,7 @@ pub mod path {
     ///
     /// # Errors
     ///
-    /// Returns the deserializer's error if decoding fails.
+    /// - Returns the deserializer's error if decoding fails.
     #[cfg(windows)]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
@@ -138,7 +148,7 @@ pub mod path {
     ///
     /// # Errors
     ///
-    /// Returns the serializer's error if encoding fails.
+    /// - Returns the serializer's error if encoding fails.
     #[cfg(not(any(unix, windows)))]
     #[inline]
     pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
@@ -152,7 +162,7 @@ pub mod path {
     ///
     /// # Errors
     ///
-    /// Returns the deserializer's error if decoding fails.
+    /// - Returns the deserializer's error if decoding fails.
     #[cfg(not(any(unix, windows)))]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
