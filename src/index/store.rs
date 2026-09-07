@@ -156,18 +156,22 @@ enum WriteTarget {
     Notes,
     Links,
     Lists,
-    Tags,
-    Classes,
+    TagsForward,
+    TagsReverse,
+    ClassesForward,
+    ClassesReverse,
 }
 
 impl WriteTarget {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 8] = [
         Self::Files,
         Self::Notes,
         Self::Links,
         Self::Lists,
-        Self::Tags,
-        Self::Classes,
+        Self::TagsForward,
+        Self::TagsReverse,
+        Self::ClassesForward,
+        Self::ClassesReverse,
     ];
 
     fn run(
@@ -197,12 +201,22 @@ impl WriteTarget {
                 store.write_links(txn, LINKS, entries).map_err(IndexError::from)
             }
             Self::Lists => store.write_lists(txn, entries),
-            Self::Tags => {
-                store.write_source_index(txn, SourceIndex::Tag, entries)
+            Self::TagsForward => {
+                store.write_source_index_forward(txn, SourceIndex::Tag, entries)
             }
-            Self::Classes => {
-                store.write_source_index(txn, SourceIndex::FileClass, entries)
+            Self::TagsReverse => {
+                store.write_source_index_reverse(txn, SourceIndex::Tag, entries)
             }
+            Self::ClassesForward => store.write_source_index_forward(
+                txn,
+                SourceIndex::FileClass,
+                entries,
+            ),
+            Self::ClassesReverse => store.write_source_index_reverse(
+                txn,
+                SourceIndex::FileClass,
+                entries,
+            ),
         }
     }
 }
@@ -1258,21 +1272,44 @@ impl IndexStore {
     }
 
     /// Writes every `entries` note's current values into `index`'s forward
-    /// and reverse tables, for a cold full-rebuild write.
-    fn write_source_index(
+    /// (`value -> [paths]`) table only, for a cold full-rebuild write.
+    ///
+    /// Split from the reverse-table write
+    /// ([`Self::write_source_index_reverse`]) so [`WriteTarget::ALL`]'s
+    /// parallel fan-out can run both tables on separate threads: they are
+    /// distinct redb tables, so writing them concurrently does not violate
+    /// redb's one-writer-per-table constraint.
+    fn write_source_index_forward(
         &self,
         txn: &WriteTransaction,
         index: SourceIndex,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
-        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = note.path().as_os_str().as_encoded_bytes();
             for value in index.values(note) {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes every `entries` note's current values into `index`'s reverse
+    /// (`path -> [values]`) table only. See
+    /// [`Self::write_source_index_forward`]'s doc for why this is split out.
+    fn write_source_index_reverse(
+        &self,
+        txn: &WriteTransaction,
+        index: SourceIndex,
+        entries: &[FileEntry],
+    ) -> IndexResult<()> {
+        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
+        for note in entries.iter().filter_map(FileEntry::note) {
+            let path_bytes = note.path().as_os_str().as_encoded_bytes();
+            for value in index.values(note) {
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.raise_source_error(source))?;
