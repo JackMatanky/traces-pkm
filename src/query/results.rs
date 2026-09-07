@@ -76,7 +76,8 @@ struct TaskRow {
 /// output.
 #[derive(Clone)]
 pub struct QueryRow {
-    entry: Arc<FileEntry>,
+    index: Arc<FileIndex>,
+    position: RowIndex,
     /// Overrides field resolution for exploded rows produced by
     /// [`QuerySet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
@@ -84,23 +85,24 @@ pub struct QueryRow {
 }
 
 impl QueryRow {
-    /// Constructs a new [`QueryRow`] from an entry.
-    pub(super) fn from_entry(entry: Arc<FileEntry>) -> Self {
+    /// Constructs a new [`QueryRow`] at `position` in `index`.
+    ///
+    /// Shares `index` via a cheap [`Arc`] refcount bump rather than cloning
+    /// the matched [`FileEntry`] (and its parsed [`Note`]) into a fresh
+    /// allocation: every row from one query already borrows the same
+    /// already-materialized index, so there is nothing to own independently.
+    pub(super) fn from_row(index: &Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
-            entry,
+            index: Arc::clone(index),
+            position,
             flattened: Vec::new(),
             kind: RowKind::Page,
         }
     }
 
-    /// Constructs a new [`QueryRow`] at `position` in `index`.
-    pub(super) fn from_row(index: &Arc<FileIndex>, position: RowIndex) -> Self {
-        Self::from_entry(Arc::new(index.entry_at(position).clone()))
-    }
-
     /// Resolves this row's indexed [`FileEntry`].
     fn entry(&self) -> &FileEntry {
-        &self.entry
+        self.index.entry_at(self.position)
     }
 
     /// Promotes this row to task level.
