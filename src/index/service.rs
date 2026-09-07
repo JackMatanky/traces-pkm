@@ -216,9 +216,8 @@ impl IndexerService {
     /// persisting updates fails.
     #[inline]
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
-        let store = IndexStore::open(&self.root)?;
-        let (current_files, persisted_files, prev_links) =
-            self.scan_and_read_persisted(&store)?;
+        let (store, current_files, persisted_files, prev_links) =
+            self.open_scan_and_read_persisted()?;
         let delta = IndexDelta::compute(&current_files, &persisted_files);
 
         if delta.is_empty() {
@@ -258,9 +257,8 @@ impl IndexerService {
     /// in-memory [`FileIndex`] to fall back on if it silently isn't.
     #[inline]
     pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
-        let store = IndexStore::open(&self.root)?;
-        let (current_files, persisted_files, prev_links) =
-            self.scan_and_read_persisted(&store)?;
+        let (store, current_files, persisted_files, prev_links) =
+            self.open_scan_and_read_persisted()?;
         let delta = IndexDelta::compute(&current_files, &persisted_files);
         if delta.is_empty() {
             return Ok(store);
@@ -284,27 +282,41 @@ impl IndexerService {
         Ok(store)
     }
 
-    /// Scans this service's root's current filesystem state and reads the
-    /// persisted state ([`FileBase`]s and inbound links) in parallel.
+    /// Opens this service's [`IndexStore`], scans the current filesystem
+    /// state, and reads the persisted state ([`FileBase`]s and inbound
+    /// links), overlapping the filesystem walk with the store's fixed
+    /// open cost and its own read.
     ///
-    /// The two reads are fully independent - one walks the filesystem, the
-    /// other reads `index.redb` - so running them concurrently overlaps
-    /// their I/O latency instead of paying it sequentially. Shared by
+    /// `IndexStore::open` pays a fixed cost independent of database size
+    /// (redb's own file-open/validation machinery); it has no dependency on
+    /// the filesystem scan, so running them concurrently hides the smaller
+    /// of the two almost entirely. Reading the persisted state still must
+    /// wait for `open` to finish (it needs the opened store), so it runs
+    /// immediately after on the same side of the join - the scan continues
+    /// concurrently for its own full duration. Shared by
     /// [`Self::refresh_with_report`] and [`Self::sync`], both of which need
     /// exactly this pair before computing an [`IndexDelta`].
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if scanning disk or reading the store fails.
-    fn scan_and_read_persisted(
+    /// Returns `IndexError` if opening the store, scanning disk, or reading
+    /// the store fails.
+    fn open_scan_and_read_persisted(
         &self,
-        store: &IndexStore,
-    ) -> IndexResult<(Vec<FileBase>, Vec<FileBase>, InlinkMap)> {
-        let (scanned, persisted) =
-            rayon::join(|| self.scan(), || store.read_files_and_links());
+    ) -> IndexResult<(IndexStore, Vec<FileBase>, Vec<FileBase>, InlinkMap)>
+    {
+        let (opened, scanned) = rayon::join(
+            || -> IndexResult<_> {
+                let store = IndexStore::open(&self.root)?;
+                let (persisted_files, prev_links) =
+                    store.read_files_and_links()?;
+                Ok((store, persisted_files, prev_links))
+            },
+            || self.scan(),
+        );
+        let (store, persisted_files, prev_links) = opened?;
         let current_files = scanned?;
-        let (persisted_files, prev_links) = persisted?;
-        Ok((current_files, persisted_files, prev_links))
+        Ok((store, current_files, persisted_files, prev_links))
     }
 
     fn assemble_refreshed_index(
