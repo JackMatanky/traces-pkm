@@ -352,7 +352,8 @@ pub(super) fn resolve_edges_for(
     files: &[FileBase],
 ) -> Vec<(PathBuf, PathBuf)> {
     let resolver = LinkResolver::new(files);
-    let mut edges = Vec::new();
+    let edge_capacity = notes.iter().map(|note| note.outlinks().len()).sum();
+    let mut edges = Vec::with_capacity(edge_capacity);
     for note in notes {
         for target in resolver.resolve_note(note) {
             edges.push((target.to_path_buf(), note.path().to_path_buf()));
