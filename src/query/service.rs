@@ -161,7 +161,7 @@ impl QueryService {
 
     /// Synchronizes `indexer`'s persisted index against current filesystem
     /// state, then runs `builder` directly against the synced store via
-    /// [`Self::run_from_store`] - the exact cold-read path `traces
+    /// `run_from_store`, the exact cold-read path `traces
     /// list`/`table`/`task` use, without ever materializing a full
     /// [`FileIndex`] of every indexed file.
     ///
@@ -183,6 +183,7 @@ impl QueryService {
         self.run_from_store(&store, builder)
     }
 
+    /// Resolves and collects one [`QueryRow`] per matching file.
     fn page_rows(
         &self,
         index: &Arc<FileIndex>,
@@ -191,6 +192,8 @@ impl QueryService {
         self.matched_file_rows(index, source).collect()
     }
 
+    /// Resolves matching files and expands each into one [`QueryRow`] per
+    /// task list item in its note.
     fn task_rows(
         &self,
         index: &Arc<FileIndex>,
@@ -208,6 +211,8 @@ impl QueryService {
         out
     }
 
+    /// Returns an iterator over one page-level [`QueryRow`] per indexed file
+    /// entry matching `source`.
     fn matched_file_rows<'b>(
         &'b self,
         index: &'b Arc<FileIndex>,
@@ -257,6 +262,9 @@ impl<'a> SourceResolver<'a> {
         }
     }
 
+    /// Recursively resolves a boolean source expression, intersecting `And`
+    /// branches and unioning `Or` branches. `Not` is unsupported at the
+    /// store-scoped resolution level and falls back to every indexed path.
     fn resolve_expr(
         &self,
         expr: &BooleanExpr<SourceAtom>,
@@ -289,6 +297,8 @@ impl<'a> SourceResolver<'a> {
         }
     }
 
+    /// Resolves a single source atom (tag, file class, or path glob) via its
+    /// matching [`IndexStore`] index.
     fn resolve_atom(&self, atom: &SourceAtom) -> IndexResult<Box<[PathBuf]>> {
         match atom {
             SourceAtom::Tag(tag) => self.store.paths_with_tag(tag),

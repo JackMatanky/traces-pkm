@@ -23,6 +23,7 @@ pub(super) enum QueryFieldValueRef<'a> {
 }
 
 impl QueryFieldValueRef<'_> {
+    /// Converts this borrowed value into an owned [`NoteFieldValue`].
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -43,6 +44,8 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
+    /// Appends this value's display text to `out`, matching how each variant
+    /// stringifies for list joins, table cells, and text output.
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
             Self::Null => {}
@@ -152,7 +155,7 @@ impl QueryFieldValueRef<'_> {
                 matches!(literal, NoteFieldValue::Object(other) if *value == other)
             }
             Self::List(_) | Self::Owned(_) => {
-                fields_equal(&self.to_owned_value(), literal)
+                is_field_equal(&self.to_owned_value(), literal)
             }
         }
     }
@@ -240,33 +243,35 @@ impl QueryListValueRef<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Returns whether two resolved [`NoteFieldValue`] instances represent equal
 /// values under filter comparison (`==` and `!=`).
 ///
 /// Returns `true` when structural equality (`a == b`) holds, or when both
 /// values stringify (via [`NoteFieldValue::as_str`], which covers `String`,
-/// `Date`, and `Duration`) to the same text. This cross-kind text
-/// normalization allows string literals to match date or duration fields.
-fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
+/// `Date`, and `Duration`) to the same text. This cross-kind text normalization
+/// allows string literals to match date or duration fields.
+fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || matches!((a.as_str(), b.as_str()), (Some(x), Some(y)) if x == y)
 }
 
+/// Returns `true` if `item` equals `target_str`, or if both are Wikilink-tag
+/// strings and `item` is `target_str` or one of its parent tag segments (for
+/// example, `#book` matches a target of `#book/fiction`).
 fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
     item == target_str
         || (item.starts_with('#') && target_str.starts_with('#'))
             && Tag::parse(item).is_ok_and(|tag| tag.is_contained_in(target_str))
 }
 
+/// Returns `true` if `item` and `target` are equal under [`is_field_equal`],
+/// or if both stringify to Wikilink tags where `item` is `target`'s tag or a
+/// parent segment of it.
 fn is_tag_or_value_matching(
     item: &NoteFieldValue,
     target: &NoteFieldValue,
     target_str: Option<&str>,
 ) -> bool {
-    if fields_equal(item, target) {
+    if is_field_equal(item, target) {
         return true;
     }
     let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
@@ -304,6 +309,7 @@ pub(super) fn is_list_containing(
     }
 }
 
+/// Appends `values`, converted by `append`, comma-joined into `out`.
 fn append_joined<T>(
     out: &mut String,
     values: &[T],
@@ -317,6 +323,9 @@ fn append_joined<T>(
     }
 }
 
+/// Appends `value`'s display text to `out`, matching
+/// [`QueryFieldValueRef::append_text`]'s per-variant stringification for an
+/// owned [`NoteFieldValue`].
 fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
     match value {
         NoteFieldValue::Null => {}
@@ -464,7 +473,7 @@ mod tests {
         use super::*;
         #[test]
         fn returns_true_for_identical_note_field_values() {
-            assert!(fields_equal(
+            assert!(is_field_equal(
                 &NoteFieldValue::Number(1.0),
                 &NoteFieldValue::Number(1.0)
             ));
@@ -472,7 +481,7 @@ mod tests {
 
         #[test]
         fn returns_false_for_different_note_field_values() {
-            assert!(!fields_equal(
+            assert!(!is_field_equal(
                 &NoteFieldValue::Number(1.0),
                 &NoteFieldValue::Number(2.0)
             ));
@@ -480,7 +489,7 @@ mod tests {
 
         #[test]
         fn returns_true_for_cross_kind_string_and_date_equality() {
-            assert!(fields_equal(
+            assert!(is_field_equal(
                 &NoteFieldValue::String("2024-01-01".into()),
                 &NoteFieldValue::Date("2024-01-01".into())
             ));

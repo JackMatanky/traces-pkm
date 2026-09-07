@@ -99,8 +99,8 @@ impl FilterExpr {
 
 /// Atomic predicate in a filter expression.
 ///
-/// Either a field-to-literal comparison or a recognized function call
-/// (such as `contains(tags, "#book")`).
+/// Either a field-to-literal comparison or a recognized function call (such as
+/// `contains(tags, "#book")`).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FilterAtom {
     /// `<field> <op> <value>` comparison.
@@ -110,6 +110,7 @@ pub(crate) enum FilterAtom {
 }
 
 impl FilterAtom {
+    /// Evaluates this atom (a comparison or function call) against `row`.
     fn is_matching(&self, row: &QueryRow) -> bool {
         match self {
             Self::Comparison(comparison) => comparison.is_matching(row),
@@ -133,6 +134,8 @@ pub(crate) enum FilterFunction {
 }
 
 impl FilterFunction {
+    /// Builds the function call named `name`, or `None` if `name` names no
+    /// recognized filter function.
     fn build(
         name: &str,
         field: FieldPath,
@@ -148,6 +151,7 @@ impl FilterFunction {
         }
     }
 
+    /// Evaluates this function call against `row`.
     fn is_matching(&self, row: &QueryRow) -> bool {
         match self {
             Self::Contains {
@@ -171,6 +175,8 @@ pub(crate) struct ComparisonExpr {
 }
 
 impl ComparisonExpr {
+    /// Constructs a comparison, precomputing `literal`'s [`SortKey`] once so
+    /// [`Self::is_matching`] never re-derives it per evaluated row.
     pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
@@ -267,9 +273,13 @@ impl TryFrom<&str> for CompareOp {
     }
 }
 
+/// Zero-sized [`AtomParser`] implementation plugging the filter token type and
+/// comparison/function-call grammar into [`parse_boolean_expr`].
 struct FilterGrammar;
 
 impl FilterGrammar {
+    /// Parses one literal token (the right-hand side of a comparison or a
+    /// function argument).
     fn parse_literal_arg(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
@@ -288,6 +298,8 @@ impl FilterGrammar {
         Ok(spanned.into_value())
     }
 
+    /// Parses a function call's `(field, literal)` argument list after its name
+    /// has already been consumed.
     fn parse_function_call(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
@@ -352,6 +364,8 @@ impl FilterGrammar {
         })
     }
 
+    /// Parses a `<field> <op> <value>` comparison after the field's identifier
+    /// token has already been consumed.
     fn parse_comparison(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
@@ -393,6 +407,8 @@ impl AtomParser for FilterGrammar {
         }
     }
 
+    /// Parses one filter atom: a bare identifier followed by `(` is a function
+    /// call, otherwise it is the left-hand field of a comparison.
     fn parse_atom(
         &self,
         input: &str,
@@ -981,8 +997,8 @@ mod tests {
         #[test]
         fn matches_identically_for_borrowed_and_owned_list_values() {
             // Regression: the Owned(List) arm used to re-implement
-            // list_contains's matching inline instead of delegating to it;
-            // both arms must now produce identical results for the same
+            // `is_list_containing`'s matching inline instead of delegating to
+            // it; both arms must now produce identical results for the same
             // logical list.
             let items =
                 vec![NoteFieldValue::String("#book/fiction".to_owned())];

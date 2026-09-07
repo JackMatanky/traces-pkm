@@ -231,7 +231,7 @@ fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
 
 /// Measures point-lookup and iteration performance over an assembled inlink
 /// graph. Evaluates direct slice returns via [`InlinkMap::inlinks_of`],
-/// presence tests via [`InlinkMap::contains_target`], target-row traversal via
+/// presence tests via [`InlinkMap::has_target`], target-row traversal via
 /// [`InlinkMap::iter`], and full source-edge traversal over every inlink slice.
 ///
 /// Expected outcomes:
@@ -267,14 +267,14 @@ fn bench_inlink_map_accessors(c: &mut Criterion) {
 
     group.bench_function("contains_target_hit", |b| {
         b.iter(|| {
-            let found = inlinks.contains_target(black_box(hub_target));
+            let found = inlinks.has_target(black_box(hub_target));
             black_box(found);
         });
     });
 
     group.bench_function("contains_target_miss", |b| {
         b.iter(|| {
-            let found = inlinks.contains_target(black_box(missing_target));
+            let found = inlinks.has_target(black_box(missing_target));
             black_box(found);
         });
     });

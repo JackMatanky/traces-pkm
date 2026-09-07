@@ -1,4 +1,7 @@
-//! [`FileIndex`] and its constituent [`FileEntry`] rows.
+//! [`FileIndex`] and its constituent row types: [`FileEntry`] (one per indexed
+//! file) and [`ListEntry`] (one per list item, persisted in the `LISTS` table).
+//! [`super::service::IndexerService`] is the only producer; construction always
+//! flows through its `build`, `load`, or `refresh` methods.
 
 use std::path::PathBuf;
 
@@ -262,13 +265,13 @@ impl ListEntry {
 /// Borrowed mirror of [`ListEntry`] used to serialize a `LISTS` row without
 /// cloning the source [`Note`]'s path.
 ///
-/// `item` still borrows the live tree node directly; callers MUST pass an
-/// item whose descendant lists are already cleared (see
+/// `item` still borrows the live tree node directly; callers MUST pass an item
+/// whose descendant lists are already cleared (see
 /// `ListItem::without_children`), typically a local variable holding that
 /// derived value, never the original tree node. Field order and types match
 /// identical between the two; [`super::store::IndexStore::read_lists`] and
-/// [`super::store::IndexStore::read_lists_for_path`] deserialize the bytes
-/// back as an owned [`ListEntry`].
+/// [`super::store::IndexStore::read_lists_for_path`] deserialize the bytes back
+/// as an owned [`ListEntry`].
 #[derive(Serialize)]
 pub(super) struct ListEntryRef<'a> {
     pub(super) path: &'a str,
@@ -327,6 +330,7 @@ pub(super) fn redistribute_inlinks(
 mod tests {
     use super::*;
     use crate::IndexerService;
+
     mod position_lookup {
         use pretty_assertions::assert_eq;
 
@@ -336,9 +340,9 @@ mod tests {
         fn entry_size_stays_under_target() {
             assert!(
                 std::mem::size_of::<FileEntry>() <= 160,
-                "FileEntry grew past its target: Note must stay boxed (its \
-                 boxed (its is 240 bytes); check for an accidentallfield \
-                 before raising this bound"
+                "FileEntry grew past its target: Note must stay boxed (Note \
+                 itself is 240 bytes); check for an accidental field before \
+                 raising this bound"
             );
         }
         #[test]

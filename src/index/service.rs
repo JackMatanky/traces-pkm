@@ -92,6 +92,11 @@ impl SyncReport {
     }
 }
 
+/// Bundles the state one incremental refresh/sync pass threads through
+/// [`IndexerService::open_scan_and_read_persisted`],
+/// [`IndexerService::compute_sync_outcome`], and
+/// [`IndexerService::assemble_refreshed_index`], avoiding a growing
+/// positional argument list as that pipeline gained steps.
 struct RefreshContext<'a> {
     store: &'a IndexStore,
     current_files: Vec<FileBase>,
@@ -126,8 +131,8 @@ struct SyncOutcome {
 /// All methods return `IndexError`. [`Self::refresh`] also logs a
 /// `tracing::warn!` on persist failure without propagating it; `sync`
 /// propagates persist failures instead, since a caller reading straight from
-/// the store (never materializing a [`FileIndex`]) has no in-memory fallback
-/// to fall back on if the store itself stayed stale.
+/// the store (never materializing a [`FileIndex`]) has no in-memory fallback to
+/// fall back on if the store itself stayed stale.
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -161,12 +166,9 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Walk`] if a directory cannot be read.
-    /// - [`NoteParse`] if a file's metadata cannot be inspected, or a Markdown
-    ///   file cannot be parsed.
-    ///
-    /// [`Walk`]: IndexError::Walk
-    /// [`NoteParse`]: IndexError::NoteParse
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if a file's metadata cannot be inspected, or a
+    ///   Markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
@@ -186,27 +188,25 @@ impl IndexerService {
     /// - Added or changed Markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Derived inlinks are recomputed in full when a Note is added or removed,
-    /// or when a changed Note's outlink targets actually differ from its
-    /// previously-persisted value (backdating skips the recompute otherwise;
-    /// see `RefreshCache::reconcile_note`). A full recompute (not a per-note
-    /// patch) is required because link target resolution considers every
+    /// Derived inlinks are recomputed in full whenever the delta adds, removes,
+    /// or renames any file; an edit-only delta (every changed path already
+    /// existed and nothing was deleted, see `is_paths_unchanged`) instead
+    /// re-resolves only the modified notes' current outlinks and patches them
+    /// into the previous graph (`patch_links`). A full recompute is required
+    /// whenever paths change because link target resolution considers every
     /// indexed Note: an unedited Note's *resolved* target can change when an
-    /// unrelated Note is added or removed. For example, a wikilink that was
-    /// ambiguous becomes resolvable once one of the ambiguous candidates is
-    /// deleted.
+    /// unrelated Note is added, removed, or renamed elsewhere in the vault. For
+    /// example, a wikilink that was ambiguous becomes resolvable once one of
+    /// the ambiguous candidates is deleted.
     ///
     /// # Errors
     ///
-    /// - [`Walk`] if a directory cannot be read.
-    /// - [`NoteParse`] if a file's metadata cannot be inspected, a Markdown
-    ///   file cannot be parsed, or an unchanged Note's previous value cannot be
-    ///   recalled.
-    /// - [`Store`] if the previously persisted index cannot be loaded.
-    ///
-    /// [`Walk`]: IndexError::Walk
-    /// [`NoteParse`]: IndexError::NoteParse
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if a file's metadata cannot be inspected, a
+    ///   Markdown file cannot be parsed, or an unchanged Note's previous value
+    ///   cannot be recalled.
+    /// - `IndexError::Store` if the previously persisted index cannot be
+    ///   loaded.
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
         let (index, _) = self.refresh_with_report()?;
@@ -218,10 +218,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if scanning disk, opening the database, or persisting
-    ///   updates fails.
-    ///
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Store` if scanning disk, opening the database, or
+    ///   persisting updates fails.
     #[inline]
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
         let (store, current_files, persisted_files, prev_links) =
@@ -258,13 +256,11 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if scanning disk, opening the database, or persisting
-    ///   updates fails. Unlike [`Self::refresh`], a persist failure here is
-    ///   propagated rather than logged and swallowed: this method's entire
-    ///   contract is that the returned store is current, and there is no
+    /// - `IndexError::Store` if scanning disk, opening the database, or
+    ///   persisting updates fails. Unlike [`Self::refresh`], a persist failure
+    ///   here is propagated rather than logged and swallowed: this method's
+    ///   entire contract is that the returned store is current, and there is no
     ///   in-memory [`FileIndex`] to fall back on if it silently isn't.
-    ///
-    /// [`Store`]: IndexError::Store
     #[inline]
     pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
         let (store, current_files, persisted_files, prev_links) =
@@ -309,10 +305,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if opening the store, scanning disk, or reading the store
-    ///   fails.
-    ///
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Store` if opening the store, scanning disk, or reading
+    ///   the store fails.
     #[allow(
         clippy::type_complexity,
         reason = "pre-existing tuple in return type"
@@ -398,10 +392,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the full-recompute fallback cannot read every persisted
-    ///   note's body.
-    ///
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Store` if the full-recompute fallback cannot read every
+    ///   persisted note's body.
     fn compute_sync_outcome(
         ctx: &RefreshContext<'_>,
         delta: &IndexDelta,
@@ -540,6 +532,8 @@ impl IndexerService {
         Ok(all_notes)
     }
 
+    /// Parses every Markdown-classified file in `files` in parallel, stopping
+    /// at the first parse failure.
     fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<crate::Note>> {
         let note_files: Vec<&FileBase> = files
             .iter()
@@ -556,6 +550,8 @@ impl IndexerService {
         Ok(notes)
     }
 
+    /// Reads and parses the Markdown file at `file`'s path, resolved relative
+    /// to this service's root.
     fn parse_note(&self, file: &FileBase) -> IndexResult<crate::Note> {
         let full_path = self.root.join(file.path());
         let content =
@@ -578,10 +574,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the database's parent directory cannot be created, the
-    ///   transaction fails, or a record cannot be encoded.
-    ///
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Store` if the database's parent directory cannot be
+    ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist_index(index)
@@ -592,10 +586,8 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the database cannot be read or stored bytes are not a
-    ///   valid record.
-    ///
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Store` if the database cannot be read or stored bytes are
+    ///   not a valid record.
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -615,9 +607,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the database cannot be opened or read.
-    ///
-    /// [`Store`]: IndexError::Store
+    /// - `IndexError::Store` if the database cannot be opened or read.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -1510,7 +1500,7 @@ mod tests {
             assert_eq!(links.inlinks_of(Path::new("new-target.md")), [
                 PathBuf::from("linker.md")
             ]);
-            assert!(!links.contains_target(Path::new("old-target.md")));
+            assert!(!links.has_target(Path::new("old-target.md")));
         }
 
         #[test]
@@ -1799,24 +1789,25 @@ mod tests {
 
             let refreshed = indexer.refresh().expect("refresh index");
 
-            // The refreshed index reflects the new content...
+            // The refreshed index reflects the new content: "# Revised" has
+            // no frontmatter.
             assert_eq!(
                 find_note(&refreshed, "note.md")
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),
-                None // "# Revised" has no frontmatter
+                None
             );
             // ...and refresh() persists internally, so a fresh load from
-            // disk reflects the same revised content without a separate
-            // `persist()` call.
+            // disk reflects the same revised content ("# Revised" has no
+            // frontmatter) without a separate `persist()` call.
             let loaded = indexer.load().expect("load index");
             assert_eq!(
                 find_note(&loaded, "note.md")
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),
-                None // "# Revised" content, persisted by refresh() itself
+                None
             );
         }
 
@@ -1828,9 +1819,9 @@ mod tests {
             // deleted. `refresh`'s per-file staleness check would mark
             // `a.md` "unchanged, reused" and skip re-parsing it; this proves
             // inlinks must come from a full recompute over every indexed
-            // Note (deleting a Note always forces one, per
-            // `RefreshCache::diff_files`), not a patch limited to the
-            // notes `refresh` actually re-parsed.
+            // Note (deleting a Note makes `is_paths_unchanged` false,
+            // forcing `compute_sync_outcome`'s full-recompute branch), not a
+            // patch limited to the notes `refresh` actually re-parsed.
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
             fs::create_dir_all(temp.path().join("archive"))

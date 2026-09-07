@@ -1,16 +1,15 @@
 //! Errors from index scanning, persistence, and loading.
 //!
 //! [`IndexError`] wraps persistence failures ([`DbError`]), directory-walk
-//! failures ([`DirTreeError`]), and note-parse failures.
+//! failures ([`DirTreeError`]), and note-parse failures. [`DbError`] is the
+//! lower-level error type for the raw redb/filesystem/serialization operations
+//! [`super::store::IndexStore`] performs underneath it.
 
 use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
 use crate::DirTreeError;
-
-/// Convenience alias for low-level index persistence operations.
-pub type DbResult<T> = std::result::Result<T, DbError>;
 
 /// Convenience alias for high-level index operations.
 pub type IndexResult<T> = std::result::Result<T, IndexError>;
@@ -39,9 +38,14 @@ pub enum IndexError {
     },
 }
 
+/// Convenience alias for low-level index persistence operations.
+pub type DbResult<T> = std::result::Result<T, DbError>;
+
 /// Generic error type for low-level redb persistence operations.
 ///
 /// Wraps filesystem I/O, redb database access, and serialization failures.
+/// [`IndexError::Store`] forwards this type transparently, so callers of
+/// high-level index operations see these variants' messages unchanged.
 #[derive(Debug, Error)]
 pub enum DbError {
     /// A filesystem operation failed.

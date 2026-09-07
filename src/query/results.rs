@@ -56,12 +56,14 @@ use crate::{
     note::{ListItem, ListItemType, Note, NoteFieldValue},
 };
 
+/// Whether a [`QueryRow`] represents a page or a promoted task list item.
 #[derive(Clone, Debug, PartialEq)]
 enum RowKind {
     Page,
     Task(TaskRow),
 }
 
+/// Task-specific metadata carried by a task-level [`QueryRow`].
 #[derive(Clone, Debug, PartialEq)]
 struct TaskRow {
     status: TaskStatus,
@@ -87,10 +89,10 @@ pub struct QueryRow {
 impl QueryRow {
     /// Constructs a new [`QueryRow`] at `position` in `index`.
     ///
-    /// Shares `index` via a cheap [`Arc`] refcount bump rather than cloning
-    /// the matched [`FileEntry`] (and its parsed [`Note`]) into a fresh
-    /// allocation: every row from one query already borrows the same
-    /// already-materialized index, so there is nothing to own independently.
+    /// Shares `index` via a cheap [`Arc`] refcount bump rather than cloning the
+    /// matched [`FileEntry`] (and its parsed [`Note`]) into a fresh allocation:
+    /// every row from one query already borrows the same already-materialized
+    /// index, so there is nothing to own independently.
     pub(super) fn from_row(index: &Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
             index: Arc::clone(index),
@@ -233,6 +235,7 @@ impl QueryRow {
         self
     }
 
+    /// Resolves a `file.*` field against this row's [`FileBase`].
     fn resolve_file_ref(&self, field: FileField) -> QueryFieldValueRef<'_> {
         let file = self.file();
         match field {
@@ -275,6 +278,8 @@ impl QueryRow {
         }
     }
 
+    /// Resolves a `task.*` field, or [`QueryFieldValueRef::Null`] for a
+    /// page-level row.
     fn resolve_task_ref(&self, field: TaskField) -> QueryFieldValueRef<'_> {
         let RowKind::Task(task) = &self.kind else {
             return QueryFieldValueRef::Null;
@@ -378,8 +383,8 @@ impl QuerySet {
         self.rows().is_empty()
     }
 
-    /// Returns a reference to the [`QueryRow`] at `index`, or `None` if
-    /// out of bounds.
+    /// Returns a reference to the [`QueryRow`] at `index`, or `None` if out of
+    /// bounds.
     #[inline]
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&QueryRow> {
@@ -1238,7 +1243,8 @@ mod tests {
                 .expect("valid table");
 
             let lines: Vec<&str> = table.lines().collect();
-            assert_eq!(lines.len(), 4); // header + separator + 2 rows
+            // Header + separator + 2 rows.
+            assert_eq!(lines.len(), 4);
             assert_eq!(lines.first(), Some(&"| Name | Rating |"));
             assert_eq!(lines.get(1), Some(&"|------|--------|"));
             assert!(lines.iter().skip(2).any(|line| line.contains('5')));

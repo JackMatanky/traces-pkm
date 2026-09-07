@@ -81,8 +81,8 @@ impl SortOrder {
     }
 
     /// Sorts `rows` according to this composite sort order, returning the
-    /// reordered vec. A stable sort over the identity permutation, so ties
-    /// keep their original relative order with no explicit tiebreak needed.
+    /// reordered vec. A stable sort over the identity permutation, so ties keep
+    /// their original relative order with no explicit tiebreak needed.
     #[must_use]
     pub(super) fn sort_rows(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         if rows.len() <= 1 || self.terms.is_empty() {
@@ -110,7 +110,7 @@ impl SortOrder {
         &self.terms
     }
 
-    /// Returns the number of sort terms.
+    /// Returns `true` if this order has no sort terms.
     #[inline]
     #[must_use]
     #[cfg(test)]
@@ -132,8 +132,8 @@ impl SortOrder {
     /// (descending) prefix; an unprefixed segment uses `default_direction`.
     /// Blank segments, such as those produced by a leading, trailing, or
     /// doubled comma, are skipped rather than rejected. This is the grammar
-    /// behind the CLI's `--sort` flag, where `default_direction` comes from
-    /// the `--asc`/`--desc` flags.
+    /// behind the CLI's `--sort` flag, where `default_direction` comes from the
+    /// `--asc`/`--desc` flags.
     ///
     /// Returns `Ok(None)` if `input` yields no terms once blank segments are
     /// skipped.

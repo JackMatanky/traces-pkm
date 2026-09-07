@@ -1,3 +1,15 @@
+//! Shared recursive-descent boolean expression grammar for the source and
+//! filter query languages.
+//!
+//! [`parse_boolean_expr`] parses a token stream into a [`BooleanExpr`] tree
+//! with standard `not` > `and` > `or` precedence and parenthesized grouping,
+//! delegating atom recognition to a domain-specific [`AtomParser`]
+//! implementation ([`SourceAtom`](super::SourceAtom) for `--from` selectors,
+//! [`FilterAtom`](super::filter::FilterAtom) for `--where` expressions). The
+//! grammar itself knows nothing about either domain; it only recognizes
+//! [`LogicalControl`] tokens (`and`/`or`/`not`/parentheses) and asks the
+//! [`AtomParser`] to parse everything else.
+
 use miette::SourceSpan;
 
 use crate::{
@@ -91,12 +103,18 @@ pub(super) trait AtomParser {
     ) -> QuerySyntaxError;
 }
 
+/// Recursive-descent parser state for one [`parse_boolean_expr`] call: the
+/// original source text (for span-aware error messages), the remaining token
+/// stream, and the domain-specific [`AtomParser`].
 struct BooleanExprParser<'input, G: AtomParser> {
     input: &'input str,
     tokens: LexTokenStream<LexedToken<G::Token>>,
     grammar: G,
 }
 
+/// A precedence-tier parsing function (`parse_and` or `parse_not`), passed to
+/// [`BooleanExprParser::parse_logical_chain`] so `parse_or` and `parse_and`
+/// share one left-associative chain-parsing implementation.
 type ParseTerm<'input, G> =
     fn(
         &mut BooleanExprParser<'input, G>,
@@ -178,6 +196,9 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         self.parse_logical_chain(LogicalOp::And, Self::parse_not)
     }
 
+    /// Parses a left-associative chain of `parse_term` results joined by
+    /// `operator`, collapsing to the single term unchanged when no `operator`
+    /// token follows it.
     fn parse_logical_chain(
         &mut self,
         operator: LogicalOp,

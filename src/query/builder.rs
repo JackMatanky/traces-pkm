@@ -2,19 +2,23 @@
 //! transform pipelines.
 //!
 //! Defines [`QueryBuilder`], which configures index query execution before
-//! passing the request to
-//! [`QueryService::run`](super::QueryService::run).
+//! passing the request to [`QueryService::run`](super::QueryService::run).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
     sort::SortOrder,
 };
 
+/// Selects whether a [`QueryBuilder`] produces page-level or task-level
+/// [`QueryRow`](super::QueryRow)s.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum QueryMode {
+    /// One row per matching note.
     Pages,
+    /// One row per task list item in each matching note.
     Tasks,
 }
+
 /// Declarative query specification for index queries.
 ///
 /// `QueryBuilder` specifies whether to return page-level rows
@@ -28,8 +32,8 @@ pub(crate) enum QueryMode {
 /// Constructing a `QueryBuilder` does not touch the filesystem or execute query
 /// expressions. The builder accumulates transformation steps into an internal
 /// `QueryPlan` and passes them to
-/// [`QueryService::run`](super::QueryService::run), which evaluates the
-/// plan against a borrowed [`FileIndex`](crate::index::FileIndex).
+/// [`QueryService::run`](super::QueryService::run), which evaluates the plan
+/// against a borrowed [`FileIndex`](crate::index::FileIndex).
 ///
 /// # Examples
 ///

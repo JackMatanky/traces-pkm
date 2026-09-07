@@ -88,6 +88,8 @@ impl QueryDisplayFormat {
         }
     }
 
+    /// Renders `rows` as a Markdown table, resolving `columns` against each row
+    /// and escaping cell text.
     fn render_table(
         headers: &[String],
         columns: &[String],
@@ -119,6 +121,8 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
+    /// Renders `rows` as a Markdown bullet list, one bullet per row's resolved
+    /// `field` value.
     fn render_list(field: &str, rows: &[QueryRow]) -> QueryResult<String> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
@@ -130,6 +134,7 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
+    /// Renders `rows` as a Markdown task list, one checkbox line per row.
     fn render_task_list(
         rows: &[QueryRow],
         path_style: TaskPathStyle,
@@ -159,6 +164,8 @@ impl QueryDisplayFormat {
     }
 }
 
+/// Escapes text for safe embedding in a Markdown table cell: replaces newlines
+/// with spaces and escapes pipe characters.
 pub(super) fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }

@@ -134,12 +134,14 @@ impl InlinkDelta {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
 
+    /// Returns the added inbound link edges.
     #[inline]
     #[must_use]
     pub(super) fn upserted(&self) -> &[(PathBuf, PathBuf)] {
         &self.upserted
     }
 
+    /// Returns the removed inbound link edges.
     #[inline]
     #[must_use]
     pub(super) fn deleted(&self) -> &[(PathBuf, PathBuf)] {
@@ -147,6 +149,11 @@ impl InlinkDelta {
     }
 }
 
+/// Pushes every `(target, source)` pair present in `left` but absent from
+/// `right` into `diff`. Both slices are sorted, so a single merge pass
+/// suffices; called twice with swapped arguments by [`InlinkDelta::compute`] to
+/// get both additions (`current` minus `persisted`) and removals (`persisted`
+/// minus `current`) from the same routine.
 fn diff_sorted_sources(
     target: &std::path::Path,
     left: &[PathBuf],

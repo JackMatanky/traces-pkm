@@ -86,8 +86,8 @@ impl QueryPlan {
     }
 
     /// Merges every run of consecutive `Filter` steps into one, via
-    /// `FilterExpr::and`. Preserves the position and relative order of
-    /// every other step.
+    /// `FilterExpr::and`. Preserves the position and relative order of every
+    /// other step.
     #[must_use]
     fn fuse_filters(mut self) -> Self {
         let mut fused = Vec::with_capacity(self.ops.len());
@@ -221,6 +221,8 @@ impl QueryTransform {
         })
     }
 
+    /// Wraps an already-built composite [`SortOrder`] into a
+    /// [`QueryTransform::Sort`] step.
     pub(super) fn order(order: SortOrder) -> Self {
         Self::Sort {
             order,

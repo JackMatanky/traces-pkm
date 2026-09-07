@@ -26,7 +26,7 @@ pub type QueryResult<T> = std::result::Result<T, QueryError>;
 ///
 /// # Examples
 ///
-/// ```text
+/// ```rust,ignore
 /// use traces_pkm::query::{QueryBuilderError, QueryError};
 ///
 /// let error = QueryError::from(QueryBuilderError::LimitOutOfRange {
@@ -48,14 +48,15 @@ pub enum QueryError {
     /// A field path cannot be parsed or names an unknown accessor.
     #[error(transparent)]
     FieldPath(#[from] FieldPathError),
-    /// [`super::QuerySet::task_list`] received page-level records
+    /// [`super::QuerySet::task_list`] received page-level records instead of
+    /// task-level rows.
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"
     )]
     TaskListRequiresTaskRows,
-    /// [`super::QuerySet::table`] received `headers` and `columns` slices
-    /// of unequal length.
+    /// [`super::QuerySet::table`] received `headers` and `columns` slices of
+    /// unequal length.
     #[error(
         "table headers ({headers}) and columns ({columns}) must have the same \
          length"
@@ -121,7 +122,7 @@ pub enum QueryBuilderError {
 ///
 /// # Examples
 ///
-/// ```text
+/// ```rust,ignore
 /// let error = QuerySyntaxError::new(
 ///     QueryDialect::Source,
 ///     "input",
@@ -188,7 +189,7 @@ impl QuerySyntaxError {
 ///
 /// # Examples
 ///
-/// ```text
+/// ```rust,ignore
 /// let error = FieldPathError::new("file.nmae", Some("file.name"));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -213,7 +214,7 @@ impl FieldPathError {
     ///
     /// # Examples
     ///
-    /// ```text
+    /// ```rust,ignore
     /// let error = FieldPathError::new("file.nmae", Some("file.name"));
     /// ```
     pub(in crate::query) fn new(path: &str, suggestion: Option<&str>) -> Self {
@@ -231,7 +232,7 @@ impl FieldPathError {
 ///
 /// # Examples
 ///
-/// ```text
+/// ```rust,ignore
 /// use traces_pkm::query::QueryDialect;
 ///
 /// assert_eq!(QueryDialect::Source.to_string(), "source");

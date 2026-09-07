@@ -371,6 +371,8 @@ pub(crate) trait FileClassExpander: Send + Sync {
     fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
 }
 
+/// Zero-sized [`AtomParser`] implementation plugging the source token type and
+/// tag/path/class-atom grammar into [`parse_boolean_expr`].
 struct SourceGrammar;
 
 impl SourceGrammar {
