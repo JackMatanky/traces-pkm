@@ -344,6 +344,8 @@ flag "-r --report [name]" value_optional=#true {
 flag "--no-report" {
   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 }
+flag "--compare <name>" help="Compare against a saved baseline via critcmp"
+flag "--model" help="Fit performance models (linear, n·ln(n)) after benchmarking"
 flag "-q --quick" {
   help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
 }
@@ -457,6 +459,16 @@ if [[ "${has_criterion_args}" == "true" ]]; then
   bench_args+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
 fi
 cargo "${bench_args[@]}"
+
+# --- Compare ---
+if [[ -n "${usage_compare:-}" ]]; then
+  critcmp "${usage_compare}"
+fi
+
+# --- Model ---
+if [[ "${usage_model:-false}" == "true" ]]; then
+  mise run bench-model
+fi
 '''
 
 [tasks.bench-compare]
