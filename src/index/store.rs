@@ -999,10 +999,15 @@ impl IndexStore {
         &self,
         txn: &ReadTransaction,
     ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
-        let files = self.read_table(txn, FILES, FileBase::path)?;
-        let links =
-            self.read_links(txn, LINKS, |bytes| Some(path_from_bytes(bytes)))?;
-        Ok((files, links))
+        let (files_result, links_result) = rayon::join(
+            || self.read_table(txn, FILES, FileBase::path),
+            || {
+                self.read_links(txn, LINKS, |bytes| {
+                    Some(path_from_bytes(bytes))
+                })
+            },
+        );
+        Ok((files_result?, links_result?))
     }
 
     /// Deserializes every `target -> sources` edge from the `links` multimap
