@@ -64,10 +64,6 @@ name = "template_render"
 harness = false
 name = "memory_footprint"
 
-[[example]]
-name = "autoresearch_bench"
-required-features = ["test-utils"]
-
 # ------------------------------------------------------------- #
 #                         Dependencies                          #
 # ------------------------------------------------------------- #
