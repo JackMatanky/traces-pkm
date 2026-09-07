@@ -27,7 +27,7 @@
 //! owns service-level orchestration, not table-level read/write mechanics.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -442,6 +442,17 @@ impl IndexerService {
         );
     }
 
+    /// Merges a full-recompute fallback's persisted notes with this
+    /// refresh's deletions and modifications.
+    ///
+    /// Deletion and modification lookups use a [`HashSet`]/[`HashMap`] over
+    /// paths rather than a `retain`/`position` scan per deleted or modified
+    /// note: the original per-item linear scan made this function
+    /// `O(deleted * n + modified * n)` in the total persisted note count
+    /// `n`, quadratic for a refresh that both adds/removes files (forcing
+    /// this fallback, see [`Self::compute_sync_outcome`]) and touches many
+    /// notes at once. This path is only reachable when the indexed path set
+    /// itself changed, so `n` is not bounded by any single edit's size.
     fn merge_refreshed_notes(
         store: &IndexStore,
         persisted_files: &[FileBase],
@@ -454,17 +465,26 @@ impl IndexerService {
             .map(FileBase::path)
             .collect();
         let mut all_notes = store.read_notes_batch(note_paths)?;
-        for del in delta.deleted() {
-            all_notes.retain(|n| n.path() != del.path());
+
+        if !delta.deleted().is_empty() {
+            let deleted: HashSet<&Path> =
+                delta.deleted().iter().map(FileBase::path).collect();
+            all_notes.retain(|n| !deleted.contains(n.path()));
         }
+
+        let mut index_of_path: HashMap<PathBuf, usize> = all_notes
+            .iter()
+            .enumerate()
+            .map(|(idx, note)| (note.path().to_path_buf(), idx))
+            .collect();
         for new_note in modified_notes {
-            if let Some(idx) =
-                all_notes.iter().position(|n| n.path() == new_note.path())
+            if let Some(&idx) = index_of_path.get(new_note.path())
+                && let Some(target) = all_notes.get_mut(idx)
             {
-                if let Some(target) = all_notes.get_mut(idx) {
-                    *target = new_note.clone();
-                }
+                *target = new_note.clone();
             } else {
+                index_of_path
+                    .insert(new_note.path().to_path_buf(), all_notes.len());
                 all_notes.push(new_note.clone());
             }
         }
