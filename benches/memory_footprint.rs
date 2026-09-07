@@ -33,9 +33,10 @@ use traces_pkm::{
 mod common;
 
 use common::{
-    FRONTMATTER_FIELD_COUNTS, LIST_ITEM_COUNTS, WORKSPACE_FILE_COUNTS,
-    content::{ProjectShape, frontmatter_fields_source, list_items_source},
-    project::{create_project, setup_persisted_project},
+    FRONTMATTER_FIELD_COUNTS, LIST_ITEM_COUNTS,
+    content::{frontmatter_fields_source, list_items_source},
+    prelude::*,
+    project::create_project,
 };
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;

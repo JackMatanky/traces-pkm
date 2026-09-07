@@ -44,10 +44,8 @@ use traces_pkm::{QueryBuilder, QueryService, SourceSelector};
 mod common;
 
 use common::{
-    WORKSPACE_FILE_COUNTS,
-    content::{
-        ProjectShape, metadata_lookup_note_source, task_triplet_note_source,
-    },
+    content::{metadata_lookup_note_source, task_triplet_note_source},
+    prelude::*,
     project::{build_index_arc, build_index_arc_from_note_source},
 };
 

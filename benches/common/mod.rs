@@ -61,13 +61,28 @@ pub(crate) mod project;
 /// Covers small personal wikis (50–200 notes) through full-scale
 /// vaults (10K–20K notes), with a 20K anchor for reliable
 /// extrapolation to 50K/100K via the `bench-model` script.
-pub(crate) const WORKSPACE_FILE_COUNTS: &[usize] =
+pub const WORKSPACE_FILE_COUNTS: &[usize] =
     &[50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000];
 
 /// Returns the bounded file-count sweep for expensive benchmark matrices.
 #[inline]
-pub(crate) fn quick_file_counts() -> impl Iterator<Item = usize> {
+pub fn quick_file_counts() -> impl Iterator<Item = usize> {
     WORKSPACE_FILE_COUNTS.iter().copied().filter(|&n| n <= 1_000)
+}
+
+/// Lightweight prelude for benchmark files.
+///
+/// Re-exports the most commonly used items so bench files can write
+/// `use common::prelude::*;` instead of importing each item individually.
+/// Bench files with specific needs (e.g., `generate_dense_link_notes`)
+/// still import from submodules directly.
+pub mod prelude {
+    pub use super::{
+        WORKSPACE_FILE_COUNTS,
+        content::ProjectShape,
+        project::{rewrite_note, setup_persisted_project},
+        quick_file_counts,
+    };
 }
 
 /// List/task item-count sweep for single-note parser and allocation scaling.

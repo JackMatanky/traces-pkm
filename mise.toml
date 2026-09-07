@@ -44,6 +44,7 @@ enabled = true
 
 [task_config.input_groups]
 rust = ["Cargo.toml", "Cargo.lock", "src/**/*.rs"]
+bench = ["Cargo.toml", "Cargo.lock", "src/**/*.rs", "benches/**/*.rs"]
 
 # ------------------------------------------------------------- #
 #                      Setup & Maintenance                      #
@@ -315,6 +316,10 @@ fi
 
 [tasks.bench]
 description = "Run Criterion benchmarks"
+sources = ["@group:bench"]
+outputs = { auto = true }
+timeout = "15m"
+depends_post = ["bench-report"]
 usage = '''
 flag "-f --files <pattern>" {
   help "Select bench targets (benches/*.rs) by file-name substring"
@@ -340,6 +345,7 @@ flag "--no-report" {
   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 }
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
+flag "--model" help="Fit performance models (linear, n·ln(n)) after benchmarking"
 flag "-q --quick" {
   help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
 }
@@ -458,7 +464,18 @@ cargo "${bench_args[@]}"
 if [[ -n "${usage_compare:-}" ]]; then
   critcmp "${usage_compare}"
 fi
+
+# --- Model ---
+if [[ "${usage_model:-false}" == "true" ]]; then
+  mise run bench-model
+fi
 '''
+
+[tasks.bench-compare]
+hide = true
+description = "Compare benchmark results against a baseline"
+usage = 'arg "<baseline>" help="Baseline name to compare against"'
+run = "critcmp ${usage_baseline?}"
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #
