@@ -180,11 +180,12 @@ impl InlinkMap {
     pub(super) fn without_sources(&self, sources: &HashSet<&Path>) -> Self {
         let mut edges = HashMap::with_capacity(self.0.len());
         for (target, srcs) in &self.0 {
-            let filtered: Vec<PathBuf> = srcs
-                .iter()
-                .filter(|s| !sources.contains(s.as_path()))
-                .cloned()
-                .collect();
+            let mut filtered = Vec::with_capacity(srcs.len());
+            for source in srcs {
+                if !sources.contains(source.as_path()) {
+                    filtered.push(source.clone());
+                }
+            }
             if !filtered.is_empty() {
                 edges.insert(target.clone(), filtered.into_boxed_slice());
             }
