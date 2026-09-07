@@ -31,6 +31,7 @@ tarpaulin-report.html
 
 # ------------------------ Lint Caches ------------------------ #
 .ruff_cache/
+.rumdl_cache/
 
 # --------------------- Gitingest Digests --------------------- #
 *digest.txt
