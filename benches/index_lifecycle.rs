@@ -61,7 +61,7 @@ use common::{
         tagged_note_source,
     },
     project::{
-        create_project, remove_note, setup_persisted_project,
+        create_project, remove_note, rewrite_note, setup_persisted_project,
         setup_unpersisted_project,
     },
     quick_file_counts,
