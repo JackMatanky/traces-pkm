@@ -313,12 +313,9 @@ impl IndexerService {
         );
         let all_notes = match outcome.all_notes {
             Some(notes) => notes,
-            None => Self::merge_refreshed_notes(
-                ctx.store,
-                ctx.persisted_files,
-                delta,
-                &modified_notes,
-            )?,
+            None => {
+                Self::merge_refreshed_notes(ctx.store, delta, &modified_notes)?
+            }
         };
         let index = FileIndex::assemble(
             ctx.current_files,
@@ -370,12 +367,8 @@ impl IndexerService {
                 );
                 (links, None)
             } else {
-                let all_notes = Self::merge_refreshed_notes(
-                    store,
-                    persisted_files,
-                    delta,
-                    modified_notes,
-                )?;
+                let all_notes =
+                    Self::merge_refreshed_notes(store, delta, modified_notes)?;
                 let links = InlinkMap::new(&all_notes, current_files);
                 (links, Some(all_notes))
             };
@@ -445,6 +438,12 @@ impl IndexerService {
     /// Merges a full-recompute fallback's persisted notes with this
     /// refresh's deletions and modifications.
     ///
+    /// Bulk-reads and parallel-decodes every persisted note via
+    /// [`IndexStore::read_all_notes`] instead of point-looking-up each
+    /// `persisted_files` path individually: this fallback always needs
+    /// (nearly) every persisted note decoded, so one table iteration plus
+    /// parallel decode beats `n` sequential point lookups.
+    ///
     /// Deletion and modification lookups use a [`HashSet`]/[`HashMap`] over
     /// paths rather than a `retain`/`position` scan per deleted or modified
     /// note: the original per-item linear scan made this function
@@ -453,18 +452,14 @@ impl IndexerService {
     /// this fallback, see [`Self::compute_sync_outcome`]) and touches many
     /// notes at once. This path is only reachable when the indexed path set
     /// itself changed, so `n` is not bounded by any single edit's size.
+    ///
+    /// [`IndexStore::read_all_notes`]: super::store::IndexStore::read_all_notes
     fn merge_refreshed_notes(
         store: &IndexStore,
-        persisted_files: &[FileBase],
         delta: &IndexDelta,
         modified_notes: &[crate::Note],
     ) -> IndexResult<Vec<crate::Note>> {
-        let note_paths: Vec<&Path> = persisted_files
-            .iter()
-            .filter(|f| f.format() == crate::file::FileFormat::Note)
-            .map(FileBase::path)
-            .collect();
-        let mut all_notes = store.read_notes_batch(note_paths)?;
+        let mut all_notes = store.read_all_notes()?;
 
         if !delta.deleted().is_empty() {
             let deleted: HashSet<&Path> =

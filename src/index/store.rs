@@ -896,6 +896,26 @@ impl IndexStore {
         Ok((files, notes, links))
     }
 
+    /// Reads every persisted [`Note`], decoded in parallel.
+    ///
+    /// Unlike [`Self::read_notes_batch`]'s per-path point lookups (the right
+    /// choice for a handful of candidate rows), this bulk-iterates the
+    /// `NOTES` table once and decodes every row concurrently via
+    /// [`Self::read_notes_parallel`] - the right choice when a caller needs
+    /// (nearly) every persisted note, as
+    /// [`IndexerService::merge_refreshed_notes`]'s full-recompute fallback
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError`] if opening the transaction or table fails.
+    ///
+    /// [`IndexerService::merge_refreshed_notes`]: super::service::IndexerService::merge_refreshed_notes
+    pub(crate) fn read_all_notes(&self) -> IndexResult<Vec<Note>> {
+        let txn = self.begin_read()?;
+        Ok(self.read_notes_parallel(&txn)?)
+    }
+
     fn read_notes_parallel(
         &self,
         txn: &ReadTransaction,
