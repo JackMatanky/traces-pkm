@@ -1,15 +1,11 @@
-//! Query transformation plan optimization and execution engine.
+//! Query transformation plan optimizer and executor.
 //!
-//! [`QueryPlan`] is the single transformation engine for the whole query
-//! subsystem. [`QueryBuilder`](super::QueryBuilder) builds one fully before a
-//! single pre-fetch [`QueryPlan::run`] call; [`QuerySet`](super::QuerySet)
-//! accumulates one incrementally across chained calls and runs it lazily on
-//! first read. Either way, [`QueryPlan::run`] fuses adjacent `Filter` steps
-//! into one and rewrites `Sort` followed by `Limit` into a single `TopK` step,
-//! trading an `O(n log n)` full sort for an `O(n)` quickselect partition where
-//! possible.
-//!
-//! [`QueryTransform`] is the individual step type a [`QueryPlan`] holds.
+//! [`QueryBuilder`](super::QueryBuilder) runs a complete plan before fetching
+//! rows from the index; [`QuerySet`](super::QuerySet) accumulates a plan across
+//! chained operations and runs it lazily on first read. [`QueryPlan::run`]
+//! fuses adjacent filters, merges consecutive sorts, and rewrites sort-limit
+//! pairs into `TopK`, replacing an `O(n log n)` full sort with an `O(n)`
+//! quickselect partition when a bounded selection is enough.
 #[cfg(test)]
 use super::sort::SortTerm;
 use super::{
@@ -19,65 +15,29 @@ use super::{
 };
 use crate::note::NoteFieldValue;
 
-/// An ordered, optimizable transformation pipeline executed over query rows.
+/// Ordered, optimizable transformation pipeline over query rows.
 ///
-/// `QueryPlan` serves as the central transformation engine for the query
-/// subsystem, operating in two complementary contexts:
-///
-/// 1. **Pre-fetch Execution**: Constructed by
-///    [`QueryBuilder`](super::QueryBuilder) to define filter, sort, and limit
-///    criteria before querying the borrowed
-///    [`FileIndex`](crate::index::FileIndex) via
-///    [`QueryService::run`](super::QueryService::run).
-/// 2. **Post-fetch CTE Chaining**: Accumulated incrementally by
-///    [`QuerySet`](super::QuerySet) across method calls (`.filter()`,
-///    `.sort()`, `.limit()`, `.group_by()`, `.flatten()`), and executed lazily
-///    on first read via [`QuerySet::rows`](super::QuerySet).
-///
-/// # Optimization Passes
-///
-/// Prior to applying transforms to row collections, [`Self::run`]
-/// unconditionally executes algebraic optimization passes:
-///
-/// - **Filter Fusion**: Combines adjacent [`QueryTransform::Filter`] operations
-///   into a single short-circuiting logical `AND` expression
-///   ([`FilterExpr::and`](super::grammar::FilterExpr::and)), eliminating
-///   intermediate vector allocations.
-/// - **Sort-Limit Fusion**: Rewrites adjacent [`QueryTransform::Sort`] and
-///   [`QueryTransform::Limit`] operations into a single
-///   [`QueryTransform::TopK`] operation. This trades an `O(n log n)` full sort
-///   for an `O(n)` quickselect selection via [`slice::select_nth_unstable_by`].
-///
-/// Optimization passes are pure and idempotent: executing them on an already
-/// optimized plan produces an identical plan with no additional overhead.
+/// Optimizations are algebraic and idempotent: running them again on an
+/// optimized plan leaves the plan unchanged.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct QueryPlan {
     ops: Vec<QueryTransform>,
 }
 
 impl QueryPlan {
-    /// Fuses filter and sort-limit operations, then applies them to `rows` in
-    /// one pass.
-    ///
-    /// This is the sole execution entry point for transformation plans. It is
-    /// used by [`QueryService::run`](super::QueryService::run) during pre-fetch
-    /// execution and by [`QuerySet`](super::QuerySet) during lazy
-    /// materialization.
+    /// Optimizes the plan, then applies each transform to `rows`.
     pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         self.fuse_filters().fuse_sorts().fuse_sort_limit().apply(rows)
     }
 
-    /// Returns `true` if this plan has no pending operations.
     pub(super) fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }
 
-    /// Appends `transform` to this query transform plan.
     pub(super) fn push(&mut self, transform: QueryTransform) {
         self.ops.push(transform);
     }
 
-    /// Applies every transform in order. Internal to [`Self::run`].
     fn apply(&self, mut rows: Vec<QueryRow>) -> Vec<QueryRow> {
         for op in &self.ops {
             rows = op.apply(rows);
@@ -85,9 +45,8 @@ impl QueryPlan {
         rows
     }
 
-    /// Merges every run of consecutive `Filter` steps into one, via
-    /// `FilterExpr::and`. Preserves the position and relative order of every
-    /// other step.
+    /// Merges consecutive `Filter` runs with `FilterExpr::and`, preserving
+    /// non-filter steps.
     #[must_use]
     fn fuse_filters(mut self) -> Self {
         let mut fused = Vec::with_capacity(self.ops.len());
@@ -108,9 +67,8 @@ impl QueryPlan {
         self
     }
 
-    /// Merges every run of consecutive `Sort` steps into one composite
-    /// `SortOrder` step. Preserves the position and relative order of every
-    /// other step.
+    /// Merges consecutive `Sort` runs into one composite `SortOrder`,
+    /// preserving non-sort steps.
     #[must_use]
     fn fuse_sorts(mut self) -> Self {
         let mut fused = Vec::with_capacity(self.ops.len());
@@ -138,9 +96,7 @@ impl QueryPlan {
         self
     }
 
-    /// Rewrites every `Sort` step immediately followed by a `Limit(n)` step
-    /// into one `TopK` step, trading a full sort for `select_nth_unstable_by`.
-    /// Preserves the position and relative order of every other step.
+    /// Rewrites each adjacent `Sort`/`Limit(n)` pair into one `TopK` step.
     #[must_use]
     fn fuse_sort_limit(mut self) -> Self {
         let mut fused = Vec::with_capacity(self.ops.len());
@@ -166,12 +122,7 @@ impl QueryPlan {
     }
 }
 
-/// One step in a [`QueryPlan`], produced by
-/// [`QueryBuilder`](super::QueryBuilder) and [`QuerySet`](super::QuerySet)
-/// method calls.
-///
-/// `QueryTransform` steps are constructed exclusively within a [`QueryPlan`]
-/// and passed immediately to [`QueryPlan::push`].
+/// Single operation in a [`QueryPlan`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
@@ -181,8 +132,8 @@ pub(super) enum QueryTransform {
     Limit(usize),
     GroupBy(FieldPath),
     Flatten(FieldPath),
-    /// Sort-then-limit fused by [`QueryPlan`]'s optimizer. Never constructed
-    /// directly by the parse constructors below.
+    /// Optimizer-produced sort-then-limit step; callers construct `Sort` plus
+    /// `Limit`.
     TopK {
         order: SortOrder,
         n: usize,
@@ -190,7 +141,7 @@ pub(super) enum QueryTransform {
 }
 
 impl QueryTransform {
-    /// Parses `expr` into a [`QueryTransform::Filter`] step.
+    /// Parses `expr` as a filter expression.
     ///
     /// # Errors
     ///
@@ -198,15 +149,18 @@ impl QueryTransform {
     /// - [`FieldPath`] if `expr` contains a malformed field path.
     ///
     /// [`Syntax`]: QueryBuilderError::Syntax
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(super) fn filter(expr: &str) -> Result<Self, QueryBuilderError> {
         Ok(Self::Filter(FilterExpr::parse(expr)?))
     }
 
-    /// Parses `field` into a [`QueryTransform::Sort`] step.
+    /// Builds a single-field sort transform.
     ///
     /// # Errors
     ///
     /// - [`FieldPath`] if `field` is not a valid field path.
+    ///
+    /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(super) fn sort(
         field: &str,
         descending: bool,
@@ -221,15 +175,13 @@ impl QueryTransform {
         })
     }
 
-    /// Wraps an already-built composite [`SortOrder`] into a
-    /// [`QueryTransform::Sort`] step.
     pub(super) fn order(order: SortOrder) -> Self {
         Self::Sort {
             order,
         }
     }
 
-    /// Parses `n` into a [`QueryTransform::Limit`] step.
+    /// Builds a limit transform after validating `n` fits `usize`.
     ///
     /// # Errors
     ///
@@ -245,7 +197,7 @@ impl QueryTransform {
         Ok(Self::Limit(n))
     }
 
-    /// Parses `field` into a [`QueryTransform::GroupBy`] step.
+    /// Builds a group-by transform from `field`.
     ///
     /// # Errors
     ///
@@ -256,7 +208,7 @@ impl QueryTransform {
         Ok(Self::GroupBy(FieldPath::parse(field)?))
     }
 
-    /// Parses `field` into a [`QueryTransform::Flatten`] step.
+    /// Builds a flatten transform from `field`.
     ///
     /// # Errors
     ///
@@ -267,7 +219,6 @@ impl QueryTransform {
         Ok(Self::Flatten(FieldPath::parse(field)?))
     }
 
-    /// Applies this single transform to `rows`, returning the transformed vec.
     pub(super) fn apply(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         match self {
             Self::Filter(expr) => {

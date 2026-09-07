@@ -1,16 +1,14 @@
-//! Declarative query builder for source selection, execution mode, and
-//! transform pipelines.
+//! Declarative query builder for source selection, row mode, and transforms.
 //!
-//! Defines [`QueryBuilder`], which configures index query execution before
-//! passing the request to [`QueryService::run`](super::QueryService::run).
+//! [`QueryBuilder`] configures index query execution before passing the
+//! request to [`QueryService::run`](super::QueryService::run).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
     sort::SortOrder,
 };
 
-/// Selects whether a [`QueryBuilder`] produces page-level or task-level
-/// [`QueryRow`](super::QueryRow)s.
+/// Row granularity produced by a [`QueryBuilder`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum QueryMode {
     /// One row per matching note.
@@ -21,19 +19,8 @@ pub(crate) enum QueryMode {
 
 /// Declarative query specification for index queries.
 ///
-/// `QueryBuilder` specifies whether to return page-level rows
-/// ([`pages`](Self::pages)) or task-level rows ([`tasks`](Self::tasks)),
-/// selects candidate files via a [`SourceSelector`], and builds an ordered
-/// sequence of transformation steps ([`filter`](Self::filter),
-/// [`sort`](Self::sort), [`limit`](Self::limit)).
-///
-/// # Execution Lifecycle
-///
-/// Constructing a `QueryBuilder` does not touch the filesystem or execute query
-/// expressions. The builder accumulates transformation steps into an internal
-/// `QueryPlan` and passes them to
-/// [`QueryService::run`](super::QueryService::run), which evaluates the plan
-/// against a borrowed [`FileIndex`](crate::index::FileIndex).
+/// Plans stay inert until [`QueryService::run`](super::QueryService::run)
+/// evaluates them against a borrowed [`FileIndex`](crate::index::FileIndex).
 ///
 /// # Examples
 ///
@@ -59,10 +46,7 @@ pub struct QueryBuilder {
 }
 
 impl QueryBuilder {
-    /// Builds a page-row query builder for `source`.
-    ///
-    /// Page-level queries evaluate candidate files against `source` and produce
-    /// one [`QueryRow`](super::QueryRow) per matching note.
+    /// Builds a page-row query that emits one row per matching note.
     #[inline]
     #[must_use]
     pub fn pages(source: SourceSelector) -> Self {
@@ -73,11 +57,7 @@ impl QueryBuilder {
         }
     }
 
-    /// Builds a task-row query builder for `source`.
-    ///
-    /// Task-level queries evaluate candidate files against `source` and produce
-    /// one [`QueryRow`](super::QueryRow) per task list item in each matching
-    /// note.
+    /// Builds a task-row query that emits one row per task list item.
     #[inline]
     #[must_use]
     pub fn tasks(source: SourceSelector) -> Self {
@@ -105,10 +85,9 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    /// Appends a sort transform for `field` to the query transform plan.
+    /// Appends a sort transform on `field`.
     ///
-    /// Sorts matching rows in ascending order when `descending` is `false`, or
-    /// descending order when `descending` is `true`.
+    /// Set `descending` to reverse natural ascending order.
     ///
     /// # Errors
     ///
@@ -139,10 +118,7 @@ impl QueryBuilder {
         self
     }
 
-    /// Appends a limit transform to restrict the outcome to at most `n` leading
-    /// rows.
-    ///
-    /// Retains up to `n` rows from the evaluated result set.
+    /// Appends a limit that retains at most `n` leading rows.
     ///
     /// # Errors
     ///
@@ -162,8 +138,6 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    /// Splits this builder into its mode, source, and transform plan for
-    /// [`super::QueryService::run`].
     pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
         (self.mode, self.source, self.plan)
     }
@@ -251,11 +225,8 @@ mod tests {
         #[test]
         fn top_k_matches_full_sort_order_for_tied_keys() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            // 200 notes across only 4 distinct rating values (a
-            // low-cardinality field like `status` at PKM scale), large enough
-            // to exercise `select_nth_unstable_by`'s real partitioning logic
-            // (not a small-slice fast path that could coincidentally
-            // preserve order without a stability guarantee).
+            // Low-cardinality keys force ties through top-k partitioning,
+            // catching accidental reliance on small-slice or stable behavior.
             for i in 0..200 {
                 fs::write(
                     temp.path().join(format!("note-{i:03}.md")),
@@ -329,10 +300,8 @@ mod tests {
             let index = Arc::new(
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
-            // Sorted descending by rating: b(9), d(7), e(5), a(3), c(1).
-            // A naive fusion would pick the top 2 (b, d) before the filter
-            // removes d, leaving only [b]. The filter must run between the
-            // sort and the limit, so the correct result is [b, e].
+            // Fusing sort+limit across the filter would return only [b].
+            // Correct order leaves [b, e].
             let request = QueryBuilder::pages(SourceSelector::All)
                 .sort("rating", true)
                 .expect("valid sort")
@@ -374,7 +343,6 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
 
-            // Build sequential filters (simulating multiple --where flags)
             let fused_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2")
                 .expect("valid filter")
@@ -384,7 +352,6 @@ mod tests {
             let fused_outcome =
                 QueryService::new("class").run(&index, fused_request);
 
-            // Single combined filter for comparison
             let combined_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2 and rating < 8")
                 .expect("valid filter");

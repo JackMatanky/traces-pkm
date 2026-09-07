@@ -8,14 +8,13 @@ use super::{
 };
 use crate::{NoteFieldValue, file::Timestamp};
 
-/// A composite ordering clause composed of one or more [`SortTerm`] items.
+/// Composite ordering clause made of one or more [`SortTerm`] values.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SortOrder {
     terms: Box<[SortTerm]>,
 }
 
 impl SortOrder {
-    /// Constructs a single-term `SortOrder`.
     #[inline]
     #[must_use]
     pub(super) fn single(path: FieldPath, direction: SortDirection) -> Self {
@@ -24,7 +23,7 @@ impl SortOrder {
         }
     }
 
-    /// Concatenates two sort order clauses together.
+    /// Appends `other` after this order.
     #[must_use]
     pub(super) fn concat(self, other: Self) -> Self {
         let mut terms = self.terms.into_vec();
@@ -34,8 +33,7 @@ impl SortOrder {
         }
     }
 
-    /// Evaluates each term's field path against each row into a flat
-    /// [`SortKeys`] buffer.
+    /// Builds one row-major [`SortKeys`] buffer for `rows`.
     pub(super) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
         let stride = self.terms.len();
         let mut flat = Vec::with_capacity(rows.len().saturating_mul(stride));
@@ -51,12 +49,10 @@ impl SortOrder {
         }
     }
 
-    /// Compares two rows' precomputed key slices (as produced by
-    /// [`Self::keys_for`]) across every term in this composite order, applying
-    /// each term's [`SortDirection`] and short-circuiting on the first
-    /// non-equal term. Shared by [`Self::sort_rows`]'s full permutation sort
-    /// and [`super::plan::QueryTransform::TopK`]'s quickselect so both
-    /// execution paths apply identical ordering semantics.
+    /// Compares key slices term-by-term.
+    ///
+    /// Applies each term's direction. Shared by full sorting and top-k
+    /// selection so both execution paths keep identical ordering semantics.
     #[must_use]
     pub(super) fn compare_keys(
         &self,
@@ -80,9 +76,7 @@ impl SortOrder {
         Ordering::Equal
     }
 
-    /// Sorts `rows` according to this composite sort order, returning the
-    /// reordered vec. A stable sort over the identity permutation, so ties keep
-    /// their original relative order with no explicit tiebreak needed.
+    /// Sorts `rows`, preserving original relative order for ties.
     #[must_use]
     pub(super) fn sort_rows(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         if rows.len() <= 1 || self.terms.is_empty() {
@@ -102,7 +96,6 @@ impl SortOrder {
             .collect()
     }
 
-    /// Returns the slice of sort terms.
     #[inline]
     #[must_use]
     #[cfg(test)]
@@ -110,7 +103,6 @@ impl SortOrder {
         &self.terms
     }
 
-    /// Returns `true` if this order has no sort terms.
     #[inline]
     #[must_use]
     #[cfg(test)]
@@ -118,7 +110,6 @@ impl SortOrder {
         self.terms.is_empty()
     }
 
-    /// Returns the number of sort terms.
     #[inline]
     #[must_use]
     #[cfg(test)]
@@ -126,22 +117,16 @@ impl SortOrder {
         self.terms.len()
     }
 
-    /// Parses a comma-separated sort clause into a composite `SortOrder`.
+    /// Parses a comma-separated sort clause.
     ///
-    /// Each comma-separated segment may carry a `+` (ascending) or `-`
-    /// (descending) prefix; an unprefixed segment uses `default_direction`.
-    /// Blank segments, such as those produced by a leading, trailing, or
-    /// doubled comma, are skipped rather than rejected. This is the grammar
-    /// behind the CLI's `--sort` flag, where `default_direction` comes from the
-    /// `--asc`/`--desc` flags.
-    ///
-    /// Returns `Ok(None)` if `input` yields no terms once blank segments are
-    /// skipped.
+    /// Segments may carry `+` or `-`; unprefixed segments use
+    /// `default_direction`. Blank segments are skipped, so blank input returns
+    /// `Ok(None)`.
     ///
     /// # Errors
     ///
-    /// - [`QueryBuilderError::FieldPath`] if any segment, after stripping its
-    ///   `+`/`-` prefix, is not a valid field path.
+    /// - [`QueryBuilderError::FieldPath`] if any nonblank segment is not a
+    ///   valid field path after prefix stripping.
     pub(crate) fn parse(
         input: &str,
         default_direction: SortDirection,
@@ -171,7 +156,7 @@ impl SortOrder {
     }
 }
 
-/// A single field path and direction in a composite [`SortOrder`].
+/// Field path plus direction inside a composite [`SortOrder`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SortTerm {
     path: FieldPath,
@@ -179,7 +164,6 @@ pub(super) struct SortTerm {
 }
 
 impl SortTerm {
-    /// Constructs a new sort term.
     #[inline]
     #[must_use]
     const fn new(path: FieldPath, direction: SortDirection) -> Self {
@@ -189,7 +173,6 @@ impl SortTerm {
         }
     }
 
-    /// Returns the field path for this term.
     #[inline]
     #[must_use]
     #[cfg(test)]
@@ -197,7 +180,6 @@ impl SortTerm {
         &self.path
     }
 
-    /// Returns the sort direction for this term.
     #[inline]
     #[must_use]
     pub(super) const fn direction(&self) -> SortDirection {
@@ -205,20 +187,17 @@ impl SortTerm {
     }
 }
 
-/// Sort direction for sorting operations. Defaults to [`Self::Descending`],
-/// matching every unprefixed/unflagged sort term across the CLI and template
-/// callers.
+/// Controls whether a term keeps or reverses its comparison result.
+///
+/// Defaults to [`Self::Descending`] to match unprefixed CLI and template terms.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum SortDirection {
-    /// Ascending order.
     Ascending,
-    /// Descending order (the default).
     #[default]
     Descending,
 }
 
 impl SortDirection {
-    /// Returns `true` if this direction is [`Self::Descending`].
     #[inline]
     #[must_use]
     const fn is_descending(self) -> bool {
@@ -226,14 +205,15 @@ impl SortDirection {
     }
 }
 
-/// Precomputed flat strided buffer of sort keys across rows.
+/// Row-major buffer of precomputed sort keys.
 pub(super) struct SortKeys {
     flat: Vec<SortKey>,
     stride: usize,
 }
 
 impl SortKeys {
-    /// Returns the sort keys for the row at `row_idx`.
+    /// Returns the key slice for `row_idx`, or an empty slice when out of
+    /// range.
     #[inline]
     #[must_use]
     pub(super) fn get(&self, row_idx: usize) -> &[SortKey] {
@@ -243,7 +223,7 @@ impl SortKeys {
     }
 }
 
-/// A compact, native sort scalar for row comparisons.
+/// Normalized scalar used for row-order comparisons.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SortKey {
     Null,
@@ -255,7 +235,7 @@ pub(super) enum SortKey {
 }
 
 impl SortKey {
-    /// Extracts a `SortKey` from a resolved field reference.
+    /// Normalizes a borrowed field value into a comparable scalar.
     pub(super) fn from_value_ref(val: &QueryFieldValueRef<'_>) -> Self {
         match val {
             QueryFieldValueRef::Null => Self::Null,
@@ -293,7 +273,7 @@ impl SortKey {
         }
     }
 
-    /// Extracts a `SortKey` from an owned note field value.
+    /// Normalizes an owned note field value into a comparable scalar.
     pub(super) fn from_owned(owned: &NoteFieldValue) -> Self {
         match owned {
             NoteFieldValue::Null
@@ -328,7 +308,10 @@ impl SortKey {
         }
     }
 
-    /// Compares two sort keys establishing a total ordering.
+    /// Compares two normalized sort keys.
+    ///
+    /// Null sorts below all values; like variants compare by value; unlike
+    /// non-null variants compare equal.
     pub(super) fn total_cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::Null, Self::Null) => Ordering::Equal,
@@ -415,8 +398,8 @@ mod tests {
                 outcome.clone().sort("rating", false).expect("valid sort");
             let descending = outcome.sort("rating", true).expect("valid sort");
 
-            // Matches Dataview: Null is the minimum value, so it leads
-            // ascending and trails descending, like any other value would.
+            // Dataview treats null as the minimum value: first ascending, last
+            // descending.
             assert_eq!(names(&ascending), ["unrated", "rated"]);
             assert_eq!(names(&descending), ["rated", "unrated"]);
         }

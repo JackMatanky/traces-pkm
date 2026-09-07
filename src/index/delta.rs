@@ -1,5 +1,4 @@
-//! Diffing algorithms for incremental refresh: two-pointer merges over
-//! path-sorted [`FileBase`] and [`InlinkMap`] state.
+//! Incremental-refresh deltas for path-sorted file and inlink state.
 
 use std::path::PathBuf;
 
@@ -14,8 +13,7 @@ pub(super) struct IndexDelta {
 }
 
 impl IndexDelta {
-    /// Computes file additions, modifications, and deletions between `current`
-    /// disk files and `persisted` index metadata.
+    /// Computes added, modified, and deleted files.
     pub(super) fn compute(
         current: &[FileBase],
         persisted: &[FileBase],
@@ -60,21 +58,18 @@ impl IndexDelta {
         }
     }
 
-    /// Returns `true` if no files were added, modified, or deleted.
     #[inline]
     #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
 
-    /// Returns the added or modified files.
     #[inline]
     #[must_use]
     pub(super) fn upserted(&self) -> &[FileBase] {
         &self.upserted
     }
 
-    /// Returns the deleted files.
     #[inline]
     #[must_use]
     pub(super) fn deleted(&self) -> &[FileBase] {
@@ -90,8 +85,7 @@ pub(super) struct InlinkDelta {
 }
 
 impl InlinkDelta {
-    /// Computes added and removed `(target, source)` inlink edges between
-    /// `current_links` and `persisted_links`.
+    /// Computes added and removed inlink edges.
     #[inline]
     #[must_use]
     pub(super) fn compute(
@@ -127,21 +121,18 @@ impl InlinkDelta {
         }
     }
 
-    /// Returns `true` if no inbound link edges were added or removed.
     #[inline]
     #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
 
-    /// Returns the added inbound link edges.
     #[inline]
     #[must_use]
     pub(super) fn upserted(&self) -> &[(PathBuf, PathBuf)] {
         &self.upserted
     }
 
-    /// Returns the removed inbound link edges.
     #[inline]
     #[must_use]
     pub(super) fn deleted(&self) -> &[(PathBuf, PathBuf)] {
@@ -149,11 +140,9 @@ impl InlinkDelta {
     }
 }
 
-/// Pushes every `(target, source)` pair present in `left` but absent from
-/// `right` into `diff`. Both slices are sorted, so a single merge pass
-/// suffices; called twice with swapped arguments by [`InlinkDelta::compute`] to
-/// get both additions (`current` minus `persisted`) and removals (`persisted`
-/// minus `current`) from the same routine.
+/// Pushes `left - right` source paths for `target` into `diff`.
+///
+/// Both slices must be sorted; the function performs one merge pass.
 fn diff_sorted_sources(
     target: &std::path::Path,
     left: &[PathBuf],

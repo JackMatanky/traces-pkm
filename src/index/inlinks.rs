@@ -1,29 +1,21 @@
 //! Derived inbound link graph computed from indexed outlinks.
 //!
-//! [`InlinkMap`] represents the full graph of inbound links (backlinks)
-//! pointing to each indexed file or note in the personal knowledge base.
+//! [`InlinkMap`] stores deduplicated source paths keyed by each indexed target.
 //! [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
-//! construct an [`InlinkMap`] and persist it into the database; query execution
-//! and [`super::FileIndex`] read inbound links directly off
-//! [`super::FileEntry`].
+//! construct and persist it; query execution reads inlinks from
+//! [`super::FileEntry`] through [`super::FileIndex`].
 //!
 //! # Link resolution
 //!
-//! Building the graph means resolving every [`Note`] outlink to the file it
-//! targets. [`LinkResolver`] tries three tiers per link, in order: an exact
-//! project-relative path, that path with an implied `.md` extension, and
-//! finally, for a bare Obsidian-style wikilink with no path component,
-//! whichever indexed file shares the link's file stem and sits nearest the
-//! linking note. An ambiguous stem with more than one nearest candidate at the
-//! same distance resolves to no target rather than guessing.
+//! [`LinkResolver`] resolves each [`Note`] outlink by trying an exact path, the
+//! same path with an implied `.md` extension, then the nearest indexed file
+//! sharing a basename-only Wikilink stem. Equal-distance stem matches remain
+//! unresolved.
 //!
-//! Nearest-candidate lookup is a folder-distance query: [`StemIndex`] answers
-//! it with either a flat linear scan or a precomputed [`CandidateTrie`], chosen
-//! per stem by candidate count (see [`TRIE_THRESHOLD`]). Most stems in a real
-//! vault are unique filenames with exactly one candidate, so the flat scan
-//! handles the overwhelming majority of lookups at zero construction cost; the
-//! trie exists purely to keep genuinely ambiguous, large stem clusters off an
-//! `O(candidates)` path.
+//! [`StemIndex`] chooses a flat scan or [`CandidateTrie`] per stem (see
+//! [`TRIE_THRESHOLD`]). Flat scan avoids trie construction for the common
+//! unique-stem case; the trie keeps large ambiguous clusters off an
+//! `O(candidates)` lookup path.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -37,10 +29,10 @@ use crate::{
     note::{LinkTarget, Note},
 };
 
-/// Target-keyed inbound link graph: maps each target path to its deduplicated,
-/// canonically sorted inbound source paths.
+/// Target-keyed inbound link graph.
 ///
-/// Invariants enforced by construction ([`InlinkMap::new`]):
+/// Each target path maps to its deduplicated, canonically sorted inbound source
+/// paths. Construction through [`InlinkMap::new`] enforces:
 ///
 /// 1. Every target key has at least one inbound source.
 /// 2. Sources for each target are strictly deduplicated.
@@ -49,12 +41,11 @@ use crate::{
 pub struct InlinkMap(HashMap<PathBuf, Box<[PathBuf]>>);
 
 impl InlinkMap {
-    /// Parses vault notes and file records into a canonical, validated inlink
-    /// graph.
+    /// Builds a canonical, validated inlink graph.
     ///
-    /// Resolves both internal [`Note`] outlinks and non-note attachment targets
-    /// (images, PDFs, audio). Multiple outlinks from the same source note to
-    /// the same target collapse into a single edge.
+    /// Resolves note outlinks and non-note attachment targets. Multiple
+    /// outlinks from the same source note to the same target collapse into one
+    /// edge.
     #[inline]
     #[must_use]
     pub fn new(notes: &[Note], files: &[FileBase]) -> Self {
@@ -75,8 +66,7 @@ impl InlinkMap {
         Self::from_flat_edges(flat_edges)
     }
 
-    /// Groups pre-sorted, deduplicated `(target, source)` pairs into the
-    /// canonical per-target source-list representation.
+    /// Groups sorted, deduplicated edge pairs into canonical source lists.
     fn from_flat_edges(flat_edges: Vec<(Target<'_>, Source<'_>)>) -> Self {
         let mut edges: HashMap<PathBuf, Box<[PathBuf]>> = HashMap::new();
         let mut current_target: Option<Target<'_>> = None;
@@ -107,16 +97,16 @@ impl InlinkMap {
         Self(edges)
     }
 
-    /// Returns the inbound link sources pointing to `target`.
+    /// Returns inbound sources for `target`.
     ///
-    /// Returns an empty slice if `target` has no inbound links.
+    /// Returns an empty slice when `target` has no inbound links.
     #[inline]
     #[must_use]
     pub fn inlinks_of(&self, target: &Path) -> &[PathBuf] {
         self.0.get(target).map_or(&[], |sources| sources.as_ref())
     }
 
-    /// Returns an iterator over every `(target, sources)` pair in the graph.
+    /// Returns an iterator over `(target, sources)` pairs for every entry.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (&Path, &[PathBuf])> {
         self.0
@@ -124,8 +114,7 @@ impl InlinkMap {
             .map(|(target, sources)| (target.as_path(), sources.as_ref()))
     }
 
-    /// Consumes the map into an iterator yielding owned `(target, sources)`
-    /// pairs.
+    /// Consumes the map into an iterator of owned `(target, sources)` pairs.
     #[inline]
     pub fn into_entries(
         self,
@@ -133,7 +122,7 @@ impl InlinkMap {
         self.0.into_iter()
     }
 
-    /// Returns `true` if `target` has at least one inbound link.
+    /// Returns `true` if `target` has recorded inbound links.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -148,7 +137,7 @@ impl InlinkMap {
         self.0.contains_key(target)
     }
 
-    /// Returns `true` if the graph contains no inbound link edges.
+    /// Returns `true` if no targets have recorded inbound links.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -163,7 +152,7 @@ impl InlinkMap {
         self.0.is_empty()
     }
 
-    /// Returns the number of unique target paths with inbound links.
+    /// Returns the number of targets with recorded inbound links.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -178,20 +167,17 @@ impl InlinkMap {
         self.0.len()
     }
 
-    /// Reconstructs an [`InlinkMap`] from trusted, pre-sorted persistence
-    /// storage.
+    /// Reconstructs trusted persisted inlink storage.
     #[inline]
     #[must_use]
     pub(super) fn from_raw(edges: HashMap<PathBuf, Box<[PathBuf]>>) -> Self {
         Self(edges)
     }
 
-    /// Removes every edge sourced by any path in `sources`, dropping a target
-    /// left with no remaining inbound sources.
+    /// Removes edges from `sources`, dropping targets left without inlinks.
     ///
-    /// Takes `&self` rather than consuming: callers (incremental refresh) still
-    /// need the original map afterward to diff against the patched result, so
-    /// this copies only the *retained* sources rather than cloning the whole
+    /// `&self` lets incremental refresh diff against the original graph; the
+    /// implementation copies only retained sources instead of cloning the whole
     /// map up front.
     #[inline]
     #[must_use]
@@ -211,8 +197,7 @@ impl InlinkMap {
         Self(edges)
     }
 
-    /// Adds `edges` (`(target, source)` pairs), inserting each source into its
-    /// target's sorted, deduplicated source list.
+    /// Inserts edge pairs into sorted, deduplicated per-target source lists.
     #[inline]
     #[must_use]
     pub(super) fn with_edges(
@@ -231,12 +216,10 @@ impl InlinkMap {
     }
 }
 
-/// Resolves every outlink in `notes` against `files`, returning
-/// `(target, source)` pairs ready for [`InlinkMap::with_edges`].
+/// Resolves notes into edge pairs for [`InlinkMap::with_edges`].
 ///
-/// Builds one [`LinkResolver`] shared across every note in `notes`, so patching
-/// several modified notes at once still pays the resolver's file-stem indexing
-/// cost only once.
+/// Shares one [`LinkResolver`] so batch refresh pays stem-index construction
+/// once.
 pub(super) fn resolve_edges_for(
     notes: &[Note],
     files: &[FileBase],
@@ -252,15 +235,14 @@ pub(super) fn resolve_edges_for(
     edges
 }
 
-/// Index of files and their stems, used during link resolution.
+/// Path and stem index used during link resolution.
 struct LinkResolver<'a> {
     files: &'a [FileBase],
     stem_index: HashMap<BaseNameRef<'a>, StemIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
-    /// Builds the resolver, indexing every file's stem in one `O(n)` pass and
-    /// compiling each stem's candidates into a [`StemIndex`].
+    /// Indexes file stems in one `O(n)` pass.
     fn new(files: &'a [FileBase]) -> Self {
         let mut by_stem: HashMap<BaseNameRef<'a>, Vec<&'a Path>> =
             HashMap::with_capacity(files.len());
@@ -280,14 +262,10 @@ impl<'a> LinkResolver<'a> {
         }
     }
 
-    /// Resolves every one of `note`'s outlinks against this resolver's indexed
-    /// file set, returning deduplicated target paths.
+    /// Resolves one note's outlinks to deduplicated target paths.
     ///
-    /// Pure and I/O-free: reused by [`InlinkMap::new`] (one shared resolver
-    /// across every note, cold build) and incremental refresh (the same shared
-    /// resolver, called only for modified notes), so resolving a handful of
-    /// edited notes never pays the cost of rebuilding the resolver's file-stem
-    /// index per note.
+    /// Pure and I/O-free; callers can share one resolver across many notes
+    /// instead of rebuilding the stem index per note.
     fn resolve_note(&self, note: &Note) -> Vec<Target<'a>> {
         let mut targets: Vec<Target<'a>> = note
             .outlinks()
@@ -301,17 +279,11 @@ impl<'a> LinkResolver<'a> {
         targets
     }
 
-    /// Resolves an already-split [`LinkTarget`] to an indexed file's path.
+    /// Resolves a split [`LinkTarget`] to an indexed file path.
     ///
-    /// Resolution tries three tiers in order:
-    ///
-    /// 1. An exact project-relative path match (Markdown-style links).
-    /// 2. The same path with a `.md` extension appended, when `target` has no
-    ///    extension of its own (Markdown-style links that omit the extension).
-    /// 3. The file nearest `from` among every indexed file sharing `target`'s
-    ///    stem (Obsidian wikilink-by-name resolution), attempted only when
-    ///    [`LinkTarget::is_basename`] says `target`'s path has no directory
-    ///    prefix.
+    /// Tries exact path, missing-`.md` path, then nearest basename-stem match
+    /// for Obsidian-style Wikilinks. Equal-distance basename ties stay
+    /// unresolved.
     fn resolve(
         &self,
         from: &Path,
@@ -345,8 +317,6 @@ impl<'a> LinkResolver<'a> {
         self.nearest_by_stem(stem, from, None).map(Target)
     }
 
-    /// Looks up `stem`'s [`StemIndex`], if any file has that stem, and finds
-    /// the candidate nearest `from` within it.
     fn nearest_by_stem(
         &self,
         stem: &str,
@@ -356,7 +326,6 @@ impl<'a> LinkResolver<'a> {
         self.stem_index.get(stem)?.nearest(from, target_ext)
     }
 
-    /// Finds the indexed file whose path exactly equals `path`.
     fn find_by_path(&self, path: &Path) -> Option<&'a Path> {
         self.files
             .binary_search_by(|file| file.path().cmp(path))
@@ -386,40 +355,25 @@ impl Source<'_> {
     }
 }
 
-/// Per-stem candidate index: a flat, linearly scanned list for the common case
-/// of a handful of same-stem candidates, or a [`CandidateTrie`] once candidate
-/// count crosses [`TRIE_THRESHOLD`], where the trie's `O(depth)` per-query cost
-/// beats a flat scan's `O(k)` despite the trie's higher one-time build cost.
+/// Per-stem candidate index.
 ///
-/// This distinction exists because [`LinkResolver::new`] builds one entry per
-/// *distinct file stem* in the whole vault, and the overwhelming majority of
-/// stems are unique filenames with exactly one candidate (no ambiguity to
-/// resolve at all). Building a multi-node tree for a single-element set is pure
-/// overhead: measured, a [`CandidateTrie`] with one candidate takes roughly
-/// 2-3x longer to build-and-query-once than a one-element flat scan. Only stems
-/// with real, sizeable ambiguity (many files sharing one name) benefit from the
-/// trie's precomputed subtree aggregates.
+/// Small clusters use flat scans to avoid trie construction. Large ambiguous
+/// clusters use [`CandidateTrie`] to avoid `O(candidates)` lookup cost; the
+/// switch point is [`TRIE_THRESHOLD`].
 enum StemIndex<'a> {
     Flat(Vec<&'a Path>),
     Trie(Box<CandidateTrie<'a>>),
 }
 
-/// Candidate-count threshold above which [`StemIndex::build`] compiles a
-/// [`CandidateTrie`] instead of keeping a flat, linearly scanned list.
+/// Candidate count at which [`StemIndex::build`] switches to [`CandidateTrie`].
 ///
-/// Measured via `benches/index_inlinks.rs`'s `deep_paths` group (candidates
-/// spread across mostly unique deep folders, one query per candidate): a flat
-/// scan and a freshly built trie are within noise of each other around 50-100
-/// candidates, and the trie wins by a growing margin from there (2-25x faster
-/// by 1,000 candidates). 64 sits just past that measured break-even point, so
-/// genuinely ambiguous, sizeable clusters get the trie's asymptotic protection
-/// while ordinary vaults, where even a heavily duplicated filename rarely
-/// exceeds a few dozen instances, never pay trie construction cost at all.
+/// `benches/index_inlinks.rs` shows flat scan and fresh-trie build within noise
+/// around 50-100 candidates, with trie 2-25x faster by 1,000 candidates. `64`
+/// sits just past that break-even point while ordinary duplicated filenames
+/// avoid trie construction.
 const TRIE_THRESHOLD: usize = 64;
 
 impl<'a> StemIndex<'a> {
-    /// Compiles `candidates` (every file sharing one stem) into whichever
-    /// representation suits its size; see [`TRIE_THRESHOLD`].
     fn build(candidates: Vec<&'a Path>) -> Self {
         if candidates.len() >= TRIE_THRESHOLD {
             Self::Trie(Box::new(CandidateTrie::build(&candidates)))
@@ -428,8 +382,6 @@ impl<'a> StemIndex<'a> {
         }
     }
 
-    /// Finds the candidate nearest `from`, dispatching to whichever strategy
-    /// this index was built with.
     fn nearest(
         &self,
         from: &Path,
@@ -443,10 +395,10 @@ impl<'a> StemIndex<'a> {
         }
     }
 
-    /// The original linear scan: `O(candidates)` per query, no construction
-    /// cost. Correct and fast enough below [`TRIE_THRESHOLD`]; see
-    /// [`CandidateTrie`]'s doc comment for the `O(depth)` alternative this
-    /// falls back from above it.
+    /// Finds the nearest candidate by linear scan.
+    ///
+    /// Equal-distance nearest candidates resolve to `None`; below
+    /// [`TRIE_THRESHOLD`], this is cheaper than building a trie.
     fn nearest_flat(
         candidates: &[&'a Path],
         from: &Path,
@@ -479,11 +431,10 @@ impl<'a> StemIndex<'a> {
     }
 }
 
-/// Computes the path-segment distance between `a`'s and `b`'s containing
-/// folders in a single pass.
+/// Computes containing-folder path distance in one pass.
 ///
-/// Steps up from `a`'s folder to its nearest shared ancestor with `b`'s folder,
-/// then down to `b`'s folder; files in the same folder have distance `0`.
+/// Files in the same folder have distance `0`; otherwise distance is the hops
+/// up to the nearest shared ancestor plus down to the other folder.
 fn folder_distance(a: &Path, b: &Path) -> usize {
     let a_folder = a.parent().unwrap_or_else(|| Path::new(""));
     let b_folder = b.parent().unwrap_or_else(|| Path::new(""));
@@ -522,30 +473,23 @@ fn folder_distance(a: &Path, b: &Path) -> usize {
         .saturating_add(b_count.saturating_sub(shared))
 }
 
-/// A trie over folder-path components for one Wikilink stem's candidates,
-/// answering "nearest candidate to `from`, with tie detection" in
-/// `O(depth(from))` instead of `O(candidates)`.
+/// Folder-component trie for one Wikilink stem's candidates.
 ///
-/// Built fresh per stem, per [`LinkResolver::new`] call: same lifetime and
-/// mutability shape as the flat `Vec` it replaces, so it stays `Sync` for
-/// [`InlinkMap::new`]'s `notes.par_iter()`.
+/// Answers nearest-candidate queries in `O(depth(from))` by precomputing each
+/// folder's nearest same-stem candidate inside its subtree. It has the same
+/// lifetime and mutability shape as the flat `Vec`, so [`InlinkMap::new`]'s
+/// `notes.par_iter()` path remains `Sync`.
 ///
-/// [`folder_distance`] between two paths is exactly the graph distance
-/// between two nodes in the rooted tree formed by folder paths:
-/// `depth(from) + depth(candidate) - 2 * depth(LCA(from, candidate))`. This
-/// trie exploits that by precomputing, once per stem, each folder's nearest
-/// same-stem candidate *within its own subtree* (bottom-up), then answering
-/// each query by walking from `from`'s folder to the trie root and combining
-/// each level's "newly visible" candidates (candidates whose nearest shared
-/// ancestor with `from` is exactly that level) via the exclusion aggregate on
-/// [`TrieNode`].
+/// [`folder_distance`] equals tree distance:
+/// `depth(from) + depth(candidate) - 2 * depth(LCA(from, candidate))`.
+/// Querying walks from `from`'s folder toward the root and combines candidates
+/// newly visible at each level through [`TrieNode`]'s exclusion aggregates.
 struct CandidateTrie<'a> {
     nodes: Vec<TrieNode<'a>>,
     by_folder: HashMap<&'a Path, usize>,
 }
 
 impl<'a> CandidateTrie<'a> {
-    /// Builds a trie over `candidates` (every file sharing one stem).
     fn build(candidates: &[&'a Path]) -> Self {
         let mut nodes = vec![Self::new_node(None, 0)];
         let mut by_folder = HashMap::new();
@@ -566,8 +510,8 @@ impl<'a> CandidateTrie<'a> {
         }
     }
 
-    /// Finds the nearest candidate to `from`, or `None` if no candidate exists
-    /// (for `target_ext`, when given) or the nearest distance ties.
+    /// Finds the nearest candidate, returning `None` on extension miss or
+    /// nearest tie.
     fn nearest(
         &self,
         from: &Path,
@@ -575,11 +519,9 @@ impl<'a> CandidateTrie<'a> {
     ) -> Option<&'a Path> {
         let from_folder = from.parent().unwrap_or_else(|| Path::new(""));
 
-        // Walk from_folder's own ancestor chain (independent of the trie) until
-        // an ancestor that actually exists as a trie node is found; `extra_up`
-        // counts how many of from_folder's own levels were skipped before that
-        // first match (from_folder itself is rarely a trie node: it is the
-        // *linking* note's folder, not a candidate's).
+        // Walk from `from`'s folder to the nearest trie node. `extra_up` counts
+        // skipped source-only folders; the linking note's folder is rarely a
+        // candidate folder.
         let mut extra_up = 0_usize;
         let mut probe = from_folder;
         let start_node = loop {
@@ -631,7 +573,6 @@ impl<'a> CandidateTrie<'a> {
         }
     }
 
-    /// Creates an empty node with no candidates and no children yet.
     fn new_node(parent: Option<usize>, depth: usize) -> TrieNode<'a> {
         TrieNode {
             parent,
@@ -643,11 +584,10 @@ impl<'a> CandidateTrie<'a> {
         }
     }
 
-    /// Returns the node index for `folder`, creating it and every missing
-    /// ancestor along the way. A child is only ever created after its parent
-    /// already exists, so every child's index is strictly greater than its
-    /// parent's; [`Self::aggregate`] relies on this to process children before
-    /// parents by walking the arena in reverse.
+    /// Returns `folder`'s node, creating missing ancestors first.
+    ///
+    /// Child indices are always greater than parent indices;
+    /// [`Self::aggregate`] depends on that reverse-arena ordering.
     fn ensure_folder_node(
         nodes: &mut Vec<TrieNode<'a>>,
         by_folder: &mut HashMap<&'a Path, usize>,
@@ -667,9 +607,7 @@ impl<'a> CandidateTrie<'a> {
         idx
     }
 
-    /// Computes every node's `full` and `excluding` aggregates in one bottom-up
-    /// pass. Processing indices in reverse guarantees every child is finalized
-    /// before its parent needs it (see [`Self::ensure_folder_node`]).
+    /// Computes every node's aggregates in one bottom-up reverse-arena pass.
     fn aggregate(nodes: &mut [TrieNode<'a>]) {
         for idx in (0..nodes.len()).rev() {
             let children = Self::node(nodes, idx).children.clone();
@@ -700,13 +638,11 @@ impl<'a> CandidateTrie<'a> {
         }
     }
 
-    /// For each child, aggregates `local_agg` with every *other* child's `full`
-    /// via a prefix/suffix sweep: `O(children)` total instead of
-    /// `O(children^2)` from re-merging all-but-one children from scratch per
-    /// child. `.get(..).unwrap_or_default()` rather than indexing: `prefix` and
-    /// `suffix` are sized to `children.len() + 1` before either is indexed, so
-    /// this never actually falls back, but it costs nothing to let an
-    /// off-by-one fail safe instead of panicking.
+    /// Computes per-child exclusion aggregates with one prefix/suffix sweep.
+    ///
+    /// This avoids re-merging all siblings for each child (`O(children^2)`).
+    /// Prefix and suffix vectors are sized to `children.len() + 1`; fallback
+    /// reads are defensive only.
     fn excluding_per_child(
         local_agg: &NodeAgg<'a>,
         children: &[usize],
@@ -748,11 +684,8 @@ impl<'a> CandidateTrie<'a> {
     ///
     /// # Panics
     ///
-    /// Never in practice: every index this type stores or computes (`parent`,
-    /// `children`, `excluding` keys, and every local variable derived from them
-    /// below) is only ever produced by [`Self::ensure_folder_node`], which
-    /// always returns either an existing, already-valid arena slot or the index
-    /// of a slot it just pushed; no stored index can exceed `nodes.len()`.
+    /// Panics if `idx` was not produced for `nodes` by
+    /// [`Self::ensure_folder_node`].
     #[expect(
         clippy::expect_used,
         reason = "arena index always valid by construction; see doc comment"
@@ -761,8 +694,11 @@ impl<'a> CandidateTrie<'a> {
         nodes.get(idx).expect("trie arena index always valid by construction")
     }
 
-    /// Mutable counterpart of [`Self::node`]; same invariant, same panic
-    /// guarantee.
+    /// Returns the mutable node at `idx`.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same invalid-index condition as [`Self::node`].
     #[expect(
         clippy::expect_used,
         reason = "arena index always valid by construction; see Self::node"
@@ -777,40 +713,30 @@ impl<'a> CandidateTrie<'a> {
     }
 }
 
-/// One folder in a [`CandidateTrie`]: its depth, its parent and child node
-/// indices, the same-stem candidates whose containing folder is exactly this
-/// node, and the bottom-up aggregates computed over its subtree.
+/// Folder trie node with local candidates and precomputed subtree aggregates.
 struct TrieNode<'a> {
     parent: Option<usize>,
     depth: usize,
     children: Vec<usize>,
-    /// Candidates in exactly this folder, by extension. Rarely more than one
-    /// entry: two candidates here would need the same folder, stem (already
-    /// the whole trie's grouping key), and extension, which is the same
-    /// path.
+    /// Candidates whose containing folder is this node.
+    ///
+    /// Multiple entries imply the same folder and stem with distinct
+    /// extensions.
     locals: Vec<(Option<&'a str>, &'a Path)>,
-    /// This subtree's combined aggregate (this node's `locals` plus every
-    /// child's `full`), computed once after every candidate is inserted.
+    /// Aggregate for this node's locals and every descendant.
     full: NodeAgg<'a>,
-    /// Per-child aggregate of this subtree *excluding* that child's own
-    /// subtree, keyed by child node index. A query walking up through child
-    /// `c` reads the entry for `c` instead of `full` so `c`'s candidates
-    /// (already accounted for at a shallower level) are never
-    /// double-counted. A linearly scanned `Vec`, not a `HashMap`, for the
-    /// same reason as [`NodeAgg::by_ext`]: most folders have only a handful of
-    /// same-stem-candidate subfolders.
+    /// Per-child aggregate excluding that child's subtree.
+    ///
+    /// Queries walking up through child `c` use this instead of `full` to
+    /// avoid counting shallower candidates twice. Stored in a small `Vec`
+    /// because same-stem subfolders are usually few.
     excluding: Vec<(usize, NodeAgg<'a>)>,
 }
 
-/// One trie node's bottom-up aggregate: the extension-unfiltered `combined`
-/// statistics plus a per-extension breakdown, so
-/// [`LinkResolver::nearest_by_stem`] can answer an extension-filtered query
-/// without rescanning candidates.
+/// Subtree aggregate with optional per-extension buckets.
 ///
-/// `by_ext` is a linearly scanned `Vec`, not a `HashMap`: real vaults rarely
-/// have more than one or two distinct extensions among same-stem candidates (in
-/// practice almost always just `.md`), so a `HashMap`'s hashing overhead and
-/// per-node allocation would cost more than it saves.
+/// `by_ext` is a `Vec`, not a `HashMap`: same-stem candidates rarely span
+/// enough extensions for hashing and per-node allocation to win.
 #[derive(Clone, Debug, Default)]
 struct NodeAgg<'a> {
     combined: StemAgg<'a>,
@@ -818,7 +744,6 @@ struct NodeAgg<'a> {
 }
 
 impl<'a> NodeAgg<'a> {
-    /// Builds the single-candidate aggregate for one file at `depth`.
     fn from_local(depth: usize, ext: Option<&'a str>, path: &'a Path) -> Self {
         let agg = StemAgg::candidate(depth, path);
         Self {
@@ -827,8 +752,7 @@ impl<'a> NodeAgg<'a> {
         }
     }
 
-    /// Merges `other` into `self`, combining both the unfiltered aggregate and
-    /// each side's per-extension breakdown.
+    /// Merges unfiltered and per-extension aggregate state.
     fn merge(mut self, other: Self) -> Self {
         self.combined = self.combined.merge(other.combined);
         for (ext, agg) in other.by_ext {
@@ -843,8 +767,6 @@ impl<'a> NodeAgg<'a> {
         self
     }
 
-    /// Looks up this node's aggregate for `target_ext`; `None` means every
-    /// candidate in the subtree without extension filtering.
     fn lookup(&self, target_ext: Option<&str>) -> StemAgg<'a> {
         match target_ext {
             None => self.combined,
@@ -857,12 +779,10 @@ impl<'a> NodeAgg<'a> {
     }
 }
 
-/// One folder's minimum same-stem-candidate depth and tie count, optionally
-/// scoped to one file extension.
+/// Minimum candidate depth, tie count, and sample path for one folder
+/// aggregate.
 ///
-/// `min_depth == usize::MAX` (via [`Self::EMPTY`]) represents "no candidate";
-/// [`Self::merge`] treats it as the identity element, so folding `EMPTY` into
-/// any real aggregate is a no-op in either direction.
+/// [`Self::EMPTY`] is the merge identity and represents no candidate.
 #[derive(Copy, Clone, Debug)]
 struct StemAgg<'a> {
     min_depth: usize,
@@ -877,7 +797,6 @@ impl<'a> StemAgg<'a> {
         sample: None,
     };
 
-    /// Builds the aggregate for a single candidate at `depth`.
     fn candidate(depth: usize, path: &'a Path) -> Self {
         Self {
             min_depth: depth,
@@ -886,10 +805,8 @@ impl<'a> StemAgg<'a> {
         }
     }
 
-    /// Combines two aggregates, keeping the smaller `min_depth` and summing
-    /// `count` when they tie: the same "closest wins, equal-distance ties
-    /// accumulate" rule [`LinkResolver::nearest_by_stem`] used before this trie
-    /// existed.
+    /// Combines aggregates with closest-distance wins and equal-distance tie
+    /// counts.
     fn merge(self, other: Self) -> Self {
         match self.min_depth.cmp(&other.min_depth) {
             std::cmp::Ordering::Less => self,
@@ -1163,13 +1080,9 @@ mod tests {
 
         #[test]
         fn resolves_to_a_distant_shallow_sibling_over_a_close_deep_nesting() {
-            // Candidate A shares a real ancestor folder with `from` ("shared")
-            // but is nested three levels deeper under it. Candidate B shares
-            // no ancestor with `from` beyond the root, but sits directly off
-            // the root. Total path-segment distance still favors B (2) over
-            // A (3): folder_distance counts total hops, not "shares a
-            // meaningful ancestor", which guards against a shortcut that
-            // stops walking as soon as it finds any non-empty ancestor level.
+            // The shallow root sibling is nearer (2) than the deeply nested
+            // shared-ancestor candidate (3), even though the latter shares a
+            // non-root ancestor with `from`.
             let files = files_from_notes(&[
                 "shared/deep/nested/sub/note.md",
                 "far/note.md",
@@ -1184,15 +1097,10 @@ mod tests {
         #[test]
         fn resolves_none_for_a_tie_spanning_an_ancestor_and_a_descendant_branch()
          {
-            // Candidate A sits two levels below `from`'s own folder ("shared").
-            // Candidate B sits one level below a folder ("other") sharing
-            // only the root with `from`. Both are at true distance 2, via
-            // structurally asymmetric branches (one nested under an ancestor
-            // of `from`, the other off a disjoint root-level folder); unlike
-            // the existing symmetric-sibling tie test, this exercises the
-            // exclusion aggregate combining a candidate already counted at a
-            // shallower level with a genuinely new one at a deeper level,
-            // without double- or under-counting either.
+            // Exercises an asymmetric tie: one candidate below `from`'s
+            // ancestor, one below a disjoint root folder. Both are true
+            // distance 2, so the exclusion aggregate must combine shallow and
+            // newly visible candidates without double-counting either.
             let files =
                 files_from_notes(&["shared/a/b/note.md", "other/note.md"]);
 
@@ -1561,8 +1469,6 @@ mod tests {
         }
     }
 
-    // Direct unit tests for `folder_distance`, the flat-scan path's distance
-    // primitive.
     mod folder_proximity {
         use pretty_assertions::assert_eq;
 
@@ -1610,7 +1516,6 @@ mod tests {
 
         #[test]
         fn different_subtrees_step_through_common_ancestor() {
-            // 2 up from c to a, 2 down from a to e.
             assert_eq!(
                 folder_distance(
                     Path::new("a/b/c/file.md"),
@@ -1639,17 +1544,12 @@ mod tests {
         }
     }
 
-    // Direct unit tests for `CandidateTrie`, differentially checked against a
-    // brute-force linear scan over many query points.
     mod candidate_trie {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        /// Brute-force reference implementation mirroring the pre-trie
-        /// `nearest_by_stem` scan, used to differentially check
-        /// [`CandidateTrie`] against many query points without duplicating
-        /// the trie's own aggregate logic in the assertions below.
+        /// Brute-force nearest-candidate oracle using pre-trie scan semantics.
         fn naive_nearest<'a>(
             candidates: &[&'a Path],
             from: &Path,

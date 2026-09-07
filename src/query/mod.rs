@@ -1,50 +1,24 @@
 //! Query source selection, field resolution, and result transformation.
 //!
-//! [`QueryService`] borrows a [`FileIndex`] and executes a [`QueryBuilder`].
-//! The pipeline selects Notes via [`SourceSelector`], pairs each matching Note
-//! with its [`FileBase`] as a [`QueryRow`], and applies chained
-//! transformations through [`QuerySet`].
+//! Call [`QueryService::run`] with a [`QueryBuilder`] and [`SourceSelector`]
+//! to select [`Note`]s from a [`FileIndex`], pair each match with
+//! [`FileBase`] metadata in a [`QueryRow`], and transform rows through
+//! [`QuerySet`].
 //!
-//! # Source Expression Language
+//! # Source expression language
 //!
-//! A source expression is a boolean combination of **leaves** joined by
-//! **logical operators** (`and`, `or`, `not`) and grouped with **parentheses**.
+//! Source expressions combine leaves with `and`, `or`, `not`, and parentheses.
+//! Leaves are:
 //!
-//! ## Leaves
+//! - Tags: `#`-prefixed identifiers matching exact or nested tags. Names may
+//!   contain letters, digits, underscores, hyphens, dots, and forward slashes.
+//! - Paths: exact file paths, folder prefixes, or explicit globs.
+//! - File classes: frontmatter class values matching the named class or a
+//!   transitive descendant.
 //!
-//! ### Tags
-//!
-//! A `#`-prefixed identifier matches Notes carrying that tag or any nested
-//! sub-tag. Tag names may contain letters, digits, underscores, hyphens, dots,
-//! and forward slashes.
-//!
-//! ### Paths
-//!
-//! A path leaf matches an exact file path, every file under a folder prefix,
-//! or an explicit glob.
-//!
-//! ### File Classes
-//!
-//! File Class leaves match Notes whose frontmatter class field contains the
-//! named class or a transitive descendant.
-//!
-//! # Main Types
-//!
-//! - [`QueryService`] drives query execution: [`QueryService::run`] borrows a
-//!   [`FileIndex`] and a [`QueryBuilder`], producing a [`QuerySet`].
-//! - [`QueryBuilder`] describes page/task mode, source selection, and ordered
-//!   transformations.
-//! - [`SourceSelector`] is the top-level entry point: either all Notes or a
-//!   parsed expression.
-//! - [`QueryRow`] pairs a [`FileBase`] with its parsed [`Note`] and resolves
-//!   `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
-//! - [`QuerySet`] stores result rows and provides chained transformation
-//!   methods (`filter`, `sort_field`, [`limit`](QuerySet::limit),
-//!   [`group_by`](QuerySet::group_by), `flatten`) and terminal rendering
-//!   methods ([`table`](QuerySet::table), [`list`](QuerySet::list),
-//!   [`task_list`](QuerySet::task_list)).
-//! - [`QueryError`] reports malformed field paths, invalid expressions, and
-//!   transformation constraint violations.
+//! Field resolution supports `file.*`, `task.*`, frontmatter, tag, and
+//! inlinks fields. [`QueryError`] reports malformed field paths, invalid
+//! expressions, and transformation constraint violations.
 //!
 //! # Examples
 //!
@@ -109,8 +83,7 @@ pub(super) mod test_support {
     use super::*;
     use crate::index::IndexerService;
 
-    /// Builds a [`QuerySet`] over every Markdown Note in `files` written under
-    /// `temp`.
+    /// Writes `files` under `temp` and returns an all-notes page query.
     pub(super) fn outcome_for_files(
         temp: &Path,
         files: &[(&str, &str)],
@@ -124,13 +97,11 @@ pub(super) mod test_support {
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
-    /// Builds a single-record [`QuerySet`] from a single Markdown Note's
-    /// content.
+    /// Writes one Markdown Note and returns an all-notes page query.
     pub(super) fn outcome_for(temp: &Path, content: &str) -> QuerySet {
         outcome_for_files(temp, &[("note.md", content)])
     }
 
-    /// Finds a [`FileEntry`] by path in a sorted entries slice.
     pub(super) fn find_entry<'a>(
         entries: &'a [crate::index::FileEntry],
         path: &Path,
@@ -141,7 +112,6 @@ pub(super) mod test_support {
             .expect("entry not found")
     }
 
-    /// Finds a [`FileBase`] by path in a sorted entries slice.
     pub(super) fn find_base<'a>(
         entries: &'a [crate::index::FileEntry],
         path: &Path,

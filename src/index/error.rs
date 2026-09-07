@@ -1,9 +1,4 @@
 //! Errors from index scanning, persistence, and loading.
-//!
-//! [`IndexError`] wraps persistence failures ([`DbError`]), directory-walk
-//! failures ([`DirTreeError`]), and note-parse failures. [`DbError`] is the
-//! lower-level error type for the raw redb/filesystem/serialization operations
-//! [`super::store::IndexStore`] performs underneath it.
 
 use std::{io, path::PathBuf};
 
@@ -11,76 +6,60 @@ use thiserror::Error;
 
 use crate::DirTreeError;
 
-/// Convenience alias for high-level index operations.
 pub type IndexResult<T> = std::result::Result<T, IndexError>;
 
-/// Error type for [`super::FileIndex`] operations.
+/// Failures returned by [`super::FileIndex`] operations.
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
     reason = "DirTreeError is pub(crate), IndexError is pub"
 )]
 pub enum IndexError {
-    /// Database access or record (de)serialization failed.
+    /// Database access or record serialization/deserialization failed.
     #[error(transparent)]
     Store(#[from] DbError),
     /// Directory traversal failed during scan.
     #[error(transparent)]
     Walk(#[from] DirTreeError),
-    /// A markdown file could not be read or parsed into a [`crate::Note`].
+    /// A Markdown note could not be read or parsed.
     #[error("failed to parse note {path}")]
     NoteParse {
-        /// The markdown file that failed to parse.
         path: PathBuf,
-        /// Source I/O error.
         #[source]
         source: io::Error,
     },
 }
 
-/// Convenience alias for low-level index persistence operations.
 pub type DbResult<T> = std::result::Result<T, DbError>;
 
-/// Generic error type for low-level redb persistence operations.
-///
-/// Wraps filesystem I/O, redb database access, and serialization failures.
-/// [`IndexError::Store`] forwards this type transparently, so callers of
-/// high-level index operations see these variants' messages unchanged.
+/// Low-level index persistence failure.
 #[derive(Debug, Error)]
 pub enum DbError {
-    /// A filesystem operation failed.
+    /// Filesystem access failed.
     #[error("failed to access {path}")]
     Io {
-        /// The path that could not be accessed.
         path: PathBuf,
-        /// Source I/O error.
         #[source]
         source: io::Error,
     },
     /// Opening, reading, or writing the redb-backed database failed.
     #[error("failed to access the database at {path}")]
     Redb {
-        /// The database file path.
         path: PathBuf,
-        /// Source redb error.
         #[source]
         source: Box<redb::Error>,
     },
-    /// A record could not be serialized.
+    /// Record serialization failed.
     #[error("failed to serialize the record for {path}")]
     Serialize {
-        /// The record's project-relative path.
         path: PathBuf,
-        /// Source postcard serialization error.
         #[source]
         source: postcard::Error,
     },
-    /// A stored record could not be deserialized.
+    /// Stored record deserialization failed.
     #[error("failed to deserialize the record for {path}")]
     Deserialize {
-        /// The record's project-relative path.
         path: PathBuf,
-        /// Source postcard deserialization error.
         #[source]
         source: postcard::Error,
     },
@@ -186,9 +165,8 @@ mod tests {
         #[test]
         fn store_source_skips_straight_to_the_db_errors_own_source() {
             // `#[error(transparent)]` hides the wrapping variant from the
-            // source chain entirely: `.source()` returns what `DbError`'s
-            // own `.source()` returns (the io::Error), not the `DbError`
-            // itself.
+            // source chain: `.source()` returns the wrapped error's source,
+            // not the `DbError`.
             let err = IndexError::Store(DbError::Io {
                 path: PathBuf::from("x"),
                 source: io::Error::new(io::ErrorKind::BrokenPipe, "pipe"),

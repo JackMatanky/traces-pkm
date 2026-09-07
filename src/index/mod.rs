@@ -1,41 +1,20 @@
 //! Persistent file indexing, metadata caching, and incremental refresh for a
 //! project root.
 //!
-//! The index is an in-memory snapshot of every file, its parsed metadata, and
-//! derived inbound links. [`IndexerService`] owns the full lifecycle: scan,
-//! parse, persist, load, and refresh. [`FileIndex`] is the value it produces.
+//! [`IndexerService`] scans the filesystem, parses Markdown notes, derives
+//! inbound links, and stores the resulting [`FileIndex`] through the
+//! redb-backed [`store`] module.
 //!
-//! [`FileIndex`] carries no `&Path` of its own. Construction and persistence
-//! flow through [`IndexerService`], while [`FileIndex::entries`] exposes sorted
-//! data for direct inspection.
+//! [`FileIndex`] is an in-memory snapshot of file entries, parsed metadata, and
+//! link data. It carries no root path; callers inspect its sorted
+//! [`FileIndex::entries`] view and use [`crate::query::QueryService`] for
+//! evaluation.
 //!
-//! Query execution lives in [`crate::query`]. [`crate::query::QueryService`]
-//! borrows a [`FileIndex`] through its entry view, keeping `index` focused on
-//! data and `query` focused on evaluation.
-//!
-//! Persistence uses a redb-backed database managed by the [`store`] submodule;
-//! callers use [`IndexerService`]'s methods instead of touching redb tables
-//! directly.
-//!
-//! Inbound links between notes are derived from outlinks during build and
-//! refresh, then persisted alongside them; see [`inlinks`].
-//!
-//! The build pipeline lives directly in [`IndexerService::build`], which scans,
-//! parses every Markdown Note, and derives inlinks in one pass; see
-//! [`IndexerService::sync`](service::IndexerService::sync) for the incremental
-//! counterpart used by cold CLI reads.
-//!
-//! # Lifecycle
-//!
-//! | Step | Entry point |
-//! |------|-------------|
-//! | Build a fresh index | [`IndexerService::build`] |
-//! | Persist to disk | [`IndexerService::persist`] |
-//! | Load from disk | [`IndexerService::load`] |
-//! | Refresh against filesystem | [`IndexerService::refresh`] |
+//! Fresh builds run through [`IndexerService::build`]; cold CLI reads use
+//! [`IndexerService::sync`](service::IndexerService::sync) to load and refresh
+//! an existing store.
 //!
 //! [`store`]: mod@store
-//! [`inlinks`]: mod@inlinks
 mod codec;
 mod delta;
 mod entry;
@@ -60,22 +39,17 @@ pub use service::IndexerService;
 pub use service::SyncReport;
 pub(crate) use store::IndexStore;
 
-/// Project-relative path to the index database.
-///
-/// Stored at `.traces/index.redb`. Callers should use [`IndexerService`]
-/// methods instead of opening this path directly.
+/// Project-relative index database path.
 const INDEX_FILE: &str = ".traces/index.redb";
 
 #[cfg(test)]
 mod tests {
-    /// Shared test fixtures live here so `service.rs` and `store.rs` tests can
-    /// import them without duplicating the definitions.
+    /// Shared fixtures imported by `service.rs` and `store.rs` tests.
     pub(crate) mod fixtures {
         use std::{fs, path::Path};
 
-        /// Restores a locked directory's permissions on drop, even if the test
-        /// panics. Otherwise, a `0o000` or `0o500` directory blocks the
-        /// tempdir's own cleanup.
+        /// Restores locked directory permissions on drop so tempdir cleanup
+        /// works.
         #[cfg(unix)]
         pub struct RestorePermissions<'a>(pub &'a Path);
 

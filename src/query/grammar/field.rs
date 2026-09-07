@@ -1,17 +1,14 @@
 //! Query field path parsing and resolution.
 //!
-//! A query field path string (for example, `file.name`, `task.completed`,
-//! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
-//! can be applied to each [`crate::query::QueryRow`] to extract a
-//! [`NoteFieldValue`].
+//! Field paths such as `file.name`, `task.completed`, `tags`, `inlinks`, or
+//! bare metadata keys resolve to a [`FieldPath`] that extracts a
+//! [`NoteFieldValue`] from each [`crate::query::QueryRow`].
 //!
-//! # Supported Accessors
+//! # Supported accessors
 //!
-//! - `file.<field>`: [`FileField`] accessors backed by [`FileBase`] metadata
-//!   (path, name, folder, size, timestamps).
-//! - `task.<field>`: [`TaskField`] accessors valid on task-level records only
-//!   (completed, text).
-//! - `tags`: Note tags as a list of tag strings.
+//! - `file.<field>`: [`FileField`] accessors backed by [`FileBase`] metadata.
+//! - `task.<field>`: [`TaskField`] accessors valid on task-level records only.
+//! - `tags`: Note tags.
 //! - `inlinks`: Project-relative paths of Notes linking to this Note.
 //! - Bare keys: frontmatter or inline metadata field keys.
 //!
@@ -22,41 +19,30 @@ use crate::{FieldKey, field, query::error::FieldPathError};
 
 /// A `file.<field>` accessor backed by [`FileBase`] metadata.
 ///
-/// Each variant maps to a specific accessor name (for example, `file.name`,
-/// `file.mtime`) and resolves to a [`NoteFieldValue`] by reading the
-/// corresponding [`FileBase`] method.
-///
-/// The full set of accepted accessor names (including aliases like `ctime` for
-/// `created_at`) is listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
+/// Accepted accessor names, including aliases such as `ctime` for
+/// `created_at`, are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
 /// [`FileBase`]: crate::FileBase
-/// [`NoteFieldValue`]: crate::NoteFieldValue
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
-    /// Accesses [`crate::FileBase::path`].
     Path,
-    /// Accesses [`crate::FileBase::name`].
     Name,
-    /// Accesses [`crate::FileBase::folder`].
     Folder,
-    /// Accesses [`crate::FileBase::size`].
     Size,
-    /// Accesses [`crate::FileBase::created_at_or_modified`] as a
-    /// datetime without a UTC offset.
+    /// Accesses [`crate::FileBase::created_at_or_modified`] as a datetime
+    /// without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`crate::FileBase::created_at_or_modified`] as a bare
-    /// date.
+    /// Accesses [`crate::FileBase::created_at_or_modified`] as a bare date.
     CreatedDate,
-    /// Accesses [`crate::FileBase::modified_at`] as a datetime without
-    /// a UTC offset.
+    /// Accesses [`crate::FileBase::modified_at`] as a datetime without a UTC
+    /// offset.
     ModifiedDateTime,
     /// Accesses [`crate::FileBase::modified_at`] as a bare date.
     ModifiedDate,
 }
 
 impl FileField {
-    /// Lists all `file.<field>` accessor names accepted by [`Self::parse`],
-    /// including aliases.
+    /// Accepted `file.<field>` accessor names, including aliases.
     pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
         "path",
         "name",
@@ -72,10 +58,8 @@ impl FileField {
 
     /// Parses the field portion of a `file.<field>` accessor string.
     ///
-    /// Returns `None` when `name` is unknown, allowing the caller to retain the
-    /// full `file.<field>` path for a [`FieldPathError`].
-    ///
-    /// [`FieldPathError`]: crate::query::error::FieldPathError
+    /// Returns `None` for unknown names so callers can report the full
+    /// `file.<field>` path.
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "path" => Some(Self::Path),
@@ -94,24 +78,21 @@ impl FileField {
 /// A `task.<field>` accessor valid on task-level records.
 ///
 /// Resolves to [`crate::NoteFieldValue::Null`] on page-level records.
-/// Accepted names: `completed`, `text`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).
     Completed,
-    /// Accesses task item text.
     Text,
 }
 
 impl TaskField {
-    /// Lists all `task.<field>` accessor names accepted by [`Self::parse`].
+    /// Accepted `task.<field>` accessor names.
     pub(super) const ACCESSOR_NAMES: &'static [&'static str] =
         &["completed", "text"];
 
-    /// Parses the field portion of a `task.<field>` accessor string, returning
-    /// `None` for unknown names.
+    /// Parses the field portion of a `task.<field>` accessor string.
     ///
-    /// [`FieldPathError`]: crate::query::error::FieldPathError
+    /// Returns `None` for unknown names.
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "completed" => Some(Self::Completed),
@@ -123,32 +104,25 @@ impl TaskField {
 
 /// A resolved query field path.
 ///
-/// A `FieldPath` is parsed once per [`crate::query::QuerySet`] transformation
-/// and subsequently applied to each [`crate::query::QueryRow`] to extract a
-/// [`NoteFieldValue`].
+/// Parsed once per [`crate::query::QuerySet`] transformation, then applied to
+/// each [`crate::query::QueryRow`] to extract a [`NoteFieldValue`].
 ///
-/// Recognized path forms: `file.<field>`, `task.<field>`, `tags`, `inlinks`, or
-/// a bare frontmatter key. Unknown `file.*` or `task.*` accessors produce a
-/// [`FieldPathError`] with an optional "did you mean" suggestion.
+/// Unknown `file.*` or `task.*` accessors produce a [`FieldPathError`] with an
+/// optional suggestion.
 ///
 /// [`NoteFieldValue`]: crate::NoteFieldValue
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldPath {
-    /// Wraps a `file.<field>` accessor ([`FileField`]).
     File(FileField),
-    /// Wraps a `task.<field>` accessor ([`TaskField`]), which resolves to
-    /// [`crate::NoteFieldValue::Null`] on page-level records.
+    /// Resolves to [`crate::NoteFieldValue::Null`] on page-level records.
     Task(TaskField),
-    /// Accesses a frontmatter or inline field key.
+    /// Frontmatter or inline field key.
     Metadata(String),
-    /// Accesses Note tags as a [`crate::NoteFieldValue::List`] of tag
-    /// strings.
     Tags,
-    /// Accesses project-relative paths of Notes linking to this Note as a
-    /// [`crate::NoteFieldValue::List`].
+    /// Project-relative paths of Notes linking to this Note.
     ///
-    /// Derived dynamically by [`crate::InlinkMap`] rather than stored directly
-    /// on the Note.
+    /// Derived dynamically by [`crate::InlinkMap`] rather than stored on the
+    /// Note.
     Inlinks,
 }
 
@@ -219,8 +193,6 @@ impl FieldPath {
     }
 }
 
-/// Constructs a [`FieldPathError`] containing an optional "did you mean"
-/// suggestion for a typo in a `file.<field>` or `task.<field>` accessor.
 fn accessor_typo_error(
     path: &str,
     prefix: &str,
@@ -235,8 +207,7 @@ fn accessor_typo_error(
     )
 }
 
-/// Finds the accessor name closest to `input` within the edit-distance
-/// threshold.
+/// Finds the closest accessor name within the edit-distance threshold.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,
@@ -312,8 +283,8 @@ mod tests {
 
         #[test]
         fn closest_accessor_rejects_a_match_past_the_threshold() {
-            // "na" has threshold ceil(2/2).max(1) = 1, but its distance to
-            // "name" is 2 (insert "m", "e"): too far to suggest.
+            // "na" has threshold 1, but distance 2 from "name": too far to
+            // suggest.
             let candidates: &[&str] = &["name"];
             assert_eq!(closest_accessor(candidates, "na"), None);
         }
@@ -325,8 +296,7 @@ mod tests {
 
         #[test]
         fn closest_accessor_breaks_ties_by_iteration_order() {
-            // Both "cat" and "bat" are distance 1 from "mat"; the first
-            // candidate in iteration order wins.
+            // Both candidates are distance 1 from "mat"; iteration order wins.
             let candidates: &[&str] = &["cat", "bat"];
             assert_eq!(closest_accessor(candidates, "mat"), Some("cat"));
         }

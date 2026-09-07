@@ -1,45 +1,4 @@
-//! Query result row representations and common table expression (CTE) result
-//! sets.
-//!
-//! Defines [`QueryRow`] and [`QuerySet`], which encapsulate evaluated index
-//! rows and provide post-fetch CTE transformation pipelines.
-//!
-//! # Common Table Expression (CTE) Semantics
-//!
-//! [`QuerySet`] acts as a branchable, memoized common table expression (CTE)
-//! table:
-//! - **`O(1)` Appends**: Chained transform calls ([`filter`](QuerySet::filter),
-//!   [`sort_field`](QuerySet::sort_field), [`limit`](QuerySet::limit),
-//!   [`group_by`](QuerySet::group_by), [`flatten`](QuerySet::flatten)) append
-//!   steps to an internal [`QueryPlan`] in `O(1)` time.
-//! - **Lazy Materialization**: Computes transformations lazily on first access
-//!   ([`len`](QuerySet::len), [`get`](QuerySet::get), [`iter`](QuerySet::iter),
-//!   or terminal renderers), memoizing the resulting rows.
-//! - **Branching Support**: Multiple derived `QuerySet` instances can branch
-//!   off one base set without mutating base state or re-evaluating shared
-//!   prefixes.
-//!
-//! # Main Types
-//!
-//! - [`QueryRow`] - Individual page or task row paired with indexed file
-//!   metadata.
-//! - [`QuerySet`] - Lazily evaluated result set with chained transform methods
-//!   and terminal renderers.
-//!
-//! # Examples
-//!
-//! ```rust
-//! # #[cfg(feature = "test-utils")]
-//! # {
-//! use traces_pkm::QuerySet;
-//! let set = QuerySet::default();
-//! assert!(set.is_empty());
-//! assert_eq!(set.len(), 0);
-//! # }
-//! ```
-//!
-//! [`FileBase`]: crate::FileBase
-//! [`Note`]: crate::Note
+//! Query result rows and lazy result sets.
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
@@ -56,43 +15,34 @@ use crate::{
     note::{ListItem, ListItemType, Note, NoteFieldValue},
 };
 
-/// Whether a [`QueryRow`] represents a page or a promoted task list item.
 #[derive(Clone, Debug, PartialEq)]
 enum RowKind {
     Page,
     Task(TaskRow),
 }
 
-/// Task-specific metadata carried by a task-level [`QueryRow`].
 #[derive(Clone, Debug, PartialEq)]
 struct TaskRow {
     status: TaskStatus,
     text: String,
 }
 
-/// A query row over one indexed [`FileEntry`].
+/// Query-visible view of one indexed [`FileEntry`].
 ///
-/// `QueryRow` pairs an indexed file entry with optional task item metadata or
-/// exploded field overrides. It resolves `file.*`, `task.*`, frontmatter,
-/// inline fields, `tags`, and derived inlinks for template rendering and CLI
-/// output.
+/// Carries task metadata and flattened field overrides used to resolve
+/// `file.*`, `task.*`, frontmatter, inline fields, `tags`, and inlinks.
 #[derive(Clone)]
 pub struct QueryRow {
     index: Arc<FileIndex>,
     position: RowIndex,
-    /// Overrides field resolution for exploded rows produced by
-    /// [`QuerySet::flatten`].
+    /// Field overrides for exploded rows from [`QuerySet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
     kind: RowKind,
 }
 
 impl QueryRow {
-    /// Constructs a new [`QueryRow`] at `position` in `index`.
-    ///
-    /// Shares `index` via a cheap [`Arc`] refcount bump rather than cloning the
-    /// matched [`FileEntry`] (and its parsed [`Note`]) into a fresh allocation:
-    /// every row from one query already borrows the same already-materialized
-    /// index, so there is nothing to own independently.
+    /// Constructs a row for `position`, sharing `index` instead of cloning the
+    /// matched [`FileEntry`].
     pub(super) fn from_row(index: &Arc<FileIndex>, position: RowIndex) -> Self {
         Self {
             index: Arc::clone(index),
@@ -102,15 +52,14 @@ impl QueryRow {
         }
     }
 
-    /// Resolves this row's indexed [`FileEntry`].
     fn entry(&self) -> &FileEntry {
         self.index.entry_at(self.position)
     }
 
-    /// Promotes this row to task level.
+    /// Promotes task list items to task-level rows.
     ///
-    /// No-ops for a `Plain` or `Checkbox` item; only [`ListItemType::Task`]
-    /// items carry a resolved status to promote.
+    /// Leaves plain and checkbox-only list items as page rows because they lack
+    /// task status.
     pub(super) fn with_task_item(mut self, item: &ListItem) -> Self {
         let ListItemType::Task(task) = item.kind() else {
             return self;
@@ -122,11 +71,9 @@ impl QueryRow {
         self
     }
 
-    /// Returns task completion state if this row represents a task item, or
-    /// `None`.
+    /// Returns task completion for task rows.
     ///
-    /// Returns `Some(true)` for completed tasks, `Some(false)` for incomplete
-    /// tasks, and `None` for page-level rows or cancelled tasks.
+    /// Page-level rows and cancelled tasks resolve to `None`.
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
@@ -136,8 +83,7 @@ impl QueryRow {
         }
     }
 
-    /// Returns the task item's text if this is a task-level row, or `None` for
-    /// page-level rows.
+    /// Returns task text for task-level rows.
     #[inline]
     #[must_use]
     pub fn task_text(&self) -> Option<&str> {
@@ -147,31 +93,29 @@ impl QueryRow {
         }
     }
 
-    /// Returns general file metadata for the underlying indexed note.
+    /// Returns the underlying file metadata.
     #[inline]
     #[must_use]
     pub fn file(&self) -> &FileBase {
         self.entry().file()
     }
 
-    /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
-    /// file has no parsed Note (a non-Markdown file matched by a `file`-typed
-    /// Schema field).
+    /// Returns parsed [`Note`] metadata, or `None` for indexed non-Markdown
+    /// files.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> Option<&Note> {
         self.entry().note()
     }
 
-    /// Returns project-relative paths of Notes whose wikilinks resolve to this
-    /// row's Note, or an empty slice if no Notes link to it.
+    /// Returns project-relative paths of Notes linking to this row's Note.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         self.entry().inlinks()
     }
 
-    /// Resolves a field path string against this row's metadata.
+    /// Parses and resolves `path` against this row's metadata.
     ///
     /// # Errors
     ///
@@ -211,16 +155,12 @@ impl QueryRow {
         }
     }
 
-    /// Resolves a pre-parsed field path into the public owned value type.
     pub(crate) fn resolve_owned(&self, path: &FieldPath) -> NoteFieldValue {
         self.resolve_ref(path).to_owned_value()
     }
 
-    /// Returns a copy of this row with `path` overridden to `value`.
-    ///
-    /// Used by [`QuerySet::flatten`] to set the resolved value for exploded
-    /// list rows. If `path` already has an override, the value is updated in
-    /// place.
+    /// Records a flattened field override, replacing any previous override for
+    /// `path`.
     pub(super) fn with_flattened(
         mut self,
         path: FieldPath,
@@ -235,7 +175,6 @@ impl QueryRow {
         self
     }
 
-    /// Resolves a `file.*` field against this row's [`FileBase`].
     fn resolve_file_ref(&self, field: FileField) -> QueryFieldValueRef<'_> {
         let file = self.file();
         match field {
@@ -278,8 +217,8 @@ impl QueryRow {
         }
     }
 
-    /// Resolves a `task.*` field, or [`QueryFieldValueRef::Null`] for a
-    /// page-level row.
+    /// Resolves a `task.*` field, or [`QueryFieldValueRef::Null`] for page
+    /// rows.
     fn resolve_task_ref(&self, field: TaskField) -> QueryFieldValueRef<'_> {
         let RowKind::Task(task) = &self.kind else {
             return QueryFieldValueRef::Null;
@@ -315,26 +254,12 @@ impl std::fmt::Debug for QueryRow {
     }
 }
 
-/// An ordered, memoized collection of [`QueryRow`] rows produced by an index
-/// query.
+/// Lazily transformed, memoized collection of [`QueryRow`] rows.
 ///
-/// `QuerySet` acts as a common table expression (CTE) result set:
-/// transformation methods (`filter`, `sort_field`, `flatten`) append
-/// transformations in `O(1)` time to a pending plan. Execution occurs lazily on
-/// first read ([`len`](Self::len), [`get`](Self::get), [`iter`](Self::iter), or
-/// any terminal renderer), memoizing the result for all subsequent reads and
-/// branch evaluations.
-///
-/// # Examples
-///
-/// ```rust
-/// # #[cfg(feature = "test-utils")]
-/// # {
-/// use traces_pkm::QuerySet;
-/// let set = QuerySet::default();
-/// assert!(set.is_empty());
-/// # }
-/// ```
+/// Transform methods append to a pending plan in `O(1)` time. Reads
+/// ([`Self::len`], [`Self::get`], [`Self::iter`], and terminal renderers)
+/// materialize and cache the result for subsequent reads and branch
+/// evaluations.
 #[must_use]
 #[derive(Clone, Default)]
 pub struct QuerySet {
@@ -344,7 +269,6 @@ pub struct QuerySet {
 }
 
 impl QuerySet {
-    /// Wraps `rows` into a new [`QuerySet`] with no pending transforms.
     pub(super) fn new(rows: Vec<QueryRow>) -> Self {
         Self {
             base: rows.into(),
@@ -353,12 +277,10 @@ impl QuerySet {
         }
     }
 
-    /// Returns this query set's rows with every pending transform applied,
-    /// computing and memoizing the result on first access. Every read (`len`,
-    /// `get`, `iter`, the minijinja `Object` iteration methods, and the
-    /// terminal renderers) goes through this, so a chain of
-    /// `.where()/.sort()/.limit()/...` calls pays for [`QueryPlan::run`] at
-    /// most once, however many times the resulting rows are read.
+    /// Materializes pending transforms once and returns cached rows.
+    ///
+    /// All reads route through this method, so [`QueryPlan::run`] runs at most
+    /// once per set.
     fn rows(&self) -> &Arc<Vec<QueryRow>> {
         self.cache.get_or_init(|| {
             if self.plan.is_empty() {
@@ -369,38 +291,34 @@ impl QuerySet {
         })
     }
 
-    /// Returns the number of [`QueryRow`] rows in this query set.
+    /// Returns the row count.
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
         self.rows().len()
     }
 
-    /// Returns `true` if this query set contains no [`QueryRow`] rows.
+    /// Returns whether this query set contains no rows.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rows().is_empty()
     }
 
-    /// Returns a reference to the [`QueryRow`] at `index`, or `None` if out of
-    /// bounds.
+    /// Returns the row at `index`, or `None` if out of bounds.
     #[inline]
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&QueryRow> {
         self.rows().get(index)
     }
 
-    /// Returns an iterator over references to the contained [`QueryRow`] rows.
+    /// Returns an iterator over the rows.
     #[inline]
     pub fn iter(&self) -> std::slice::Iter<'_, QueryRow> {
         self.rows().iter()
     }
 
-    /// Appends `transform` to this query set's pending plan, returning a new
-    /// [`QuerySet`] over the same base rows. Cheap: moves the `Arc` (no
-    /// refcount bump; `self` is consumed) and the short transform-step list;
-    /// nothing is evaluated until [`Self::rows`] runs on read.
+    /// Appends `transform` to the pending plan without evaluating rows.
     fn push(self, transform: QueryTransform) -> Self {
         let mut plan = self.plan;
         plan.push(transform);
@@ -411,9 +329,7 @@ impl QuerySet {
         }
     }
 
-    /// Retains only rows matching the filter expression `expr`.
-    ///
-    /// Appends a filter step to the pending transformation plan.
+    /// Retains only rows matching `expr`.
     ///
     /// # Errors
     ///
@@ -425,9 +341,7 @@ impl QuerySet {
         Ok(self.push(QueryTransform::filter(expr)?))
     }
 
-    /// Filters rows matching `expr`, serving as a Rust-side alias for
-    /// [`Self::filter`]. Test-only: no production caller needs an alias for
-    /// [`Self::filter`].
+    /// Test-only Rust-side alias for [`Self::filter`].
     ///
     /// # Errors
     ///
@@ -440,10 +354,8 @@ impl QuerySet {
         self.filter(expr)
     }
 
-    /// Sorts rows by the field at `path` in ascending or descending order.
-    /// Test-only: the template engine's `"sort"` verb and [`Self::sort_field`]
-    /// cover every production caller; this boolean-direction form only
-    /// remains as a lower-ceremony test helper.
+    /// Sorts rows by `path`; test-only alias for the template engine's `sort`
+    /// verb and [`Self::sort_field`].
     ///
     /// # Errors
     ///
@@ -478,10 +390,8 @@ impl QuerySet {
         Ok(self.push(QueryTransform::order(order)))
     }
 
-    /// Appends a composite sort order transform to this query set. Test-only:
-    /// [`QueryBuilder::order`](super::QueryBuilder::order) is the production
-    /// counterpart for the pre-fetch path; nothing drives composite orders
-    /// through the post-fetch [`QuerySet`] chain yet.
+    /// Appends a composite sort order transform; test-only counterpart to the
+    /// pre-fetch [`QueryBuilder::order`](super::QueryBuilder::order) path.
     #[inline]
     #[cfg(test)]
     pub(crate) fn order(self, order: SortOrder) -> Self {
@@ -555,12 +465,10 @@ impl QuerySet {
         self.format(&QueryDisplayFormat::list(path))
     }
 
-    /// Renders task-level rows as a Markdown task list (`- [ ]`/`- [x]`/`-
-    /// [-]`).
+    /// Renders task-level rows as a Markdown task list.
     ///
-    /// `path_style` controls whether each row's file path is appended in
-    /// parentheses: [`TaskPathStyle::None`] for templates,
-    /// [`TaskPathStyle::Suffix`] for `traces task`.
+    /// [`TaskPathStyle::Suffix`] appends each row's file path for `traces
+    /// task`; templates use [`TaskPathStyle::None`].
     ///
     /// # Errors
     ///
@@ -596,10 +504,8 @@ impl QuerySet {
     }
 }
 
-/// Compares evaluated rows, not the pending plan or cache state. Two query sets
-/// that reach the same rows via different transform paths (e.g. two chained
-/// `.filter()` calls vs. one combined filter expression) must compare equal
-/// once both are materialized.
+/// Compares materialized rows, ignoring equivalent pending plans and cache
+/// state.
 impl PartialEq for QuerySet {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -607,11 +513,8 @@ impl PartialEq for QuerySet {
     }
 }
 
-/// Shows the materialized rows, not the pending plan or cache state. A derived
-/// `Debug` would leak `QuerySet`'s internal representation (the pre-transform
-/// `base` and the lazily-populated `cache`, which duplicate each other's
-/// content once materialized), confusing test-failure diffs. Mirrors
-/// [`QueryRow`]'s own hand-rolled [`std::fmt::Debug`].
+/// Shows materialized rows instead of leaking the pending plan or cache state
+/// into test-failure diffs.
 impl std::fmt::Debug for QuerySet {
     #[inline]
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -619,14 +522,10 @@ impl std::fmt::Debug for QuerySet {
     }
 }
 
-/// Converts the [`QuerySet`] into an iterator over owned [`QueryRow`] rows.
-/// Flushes any pending plan first, like every other read.
+/// Converts the set into owned rows after materializing pending transforms.
 ///
-/// Reclaims the materialized rows without cloning when this is the only
-/// surviving reference to them (the common case: a chain like
-/// `query.from().filter(...)` that was never [`Clone`]d for branching) via
-/// [`Arc::try_unwrap`]. Falls back to cloning only when another [`QuerySet`]
-/// branch still shares the same cached rows.
+/// Reclaims the cached rows without cloning when this is the only surviving
+/// reference, falling back to cloning only for shared branches.
 impl IntoIterator for QuerySet {
     type IntoIter = std::vec::IntoIter<Self::Item>;
     type Item = QueryRow;
@@ -653,8 +552,6 @@ impl IntoIterator for QuerySet {
     }
 }
 
-/// Creates an iterator over borrowed [`QueryRow`] rows from the [`QuerySet`],
-/// flushing any pending plan first.
 impl<'a> IntoIterator for &'a QuerySet {
     type IntoIter = std::slice::Iter<'a, QueryRow>;
     type Item = &'a QueryRow;
@@ -1193,7 +1090,6 @@ mod tests {
                 .flatten("tags")
                 .expect("valid flatten");
 
-            // 2 authors * 2 tags = 4 rows
             assert_eq!(flattened.len(), 4);
             let pairs: Vec<(NoteFieldValue, NoteFieldValue)> = flattened
                 .iter()
@@ -1243,7 +1139,6 @@ mod tests {
                 .expect("valid table");
 
             let lines: Vec<&str> = table.lines().collect();
-            // Header + separator + 2 rows.
             assert_eq!(lines.len(), 4);
             assert_eq!(lines.first(), Some(&"| Name | Rating |"));
             assert_eq!(lines.get(1), Some(&"|------|--------|"));

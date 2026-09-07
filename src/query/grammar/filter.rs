@@ -1,10 +1,7 @@
-//! Record filter expression DSL parser and evaluation engine for `--where`
-//! queries.
+//! Record filter expression DSL for `--where` queries.
 //!
-//! Defines [`FilterExpr`], which parses boolean filter expressions containing
-//! field path accessors (`file.name`, `task.completed`, frontmatter keys),
-//! comparison operators, and function calls (`contains`), evaluating candidate
-//! [`QueryRow`] rows.
+//! Parses field path accessors, comparison operators, boolean operators, and
+//! `contains` calls over [`QueryRow`] rows.
 
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
@@ -26,20 +23,17 @@ use crate::{
     },
 };
 
-/// A parsed filter expression AST.
-///
-/// Wraps [`BooleanExpr`] with [`FilterAtom`] leaves, providing the concrete
-/// type used by [`crate::query::QuerySet::filter`].
+/// Parsed filter expression AST used by [`crate::query::QuerySet::filter`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FilterExpr(BooleanExpr<FilterAtom>);
 
 impl FilterExpr {
-    /// Parses a filter expression string into a logical expression tree.
+    /// Parses filter syntax into a logical expression tree.
     ///
     /// # Errors
     ///
-    /// - [`Syntax`] if the expression syntax is invalid or malformed.
-    /// - [`FieldPath`] if any field path in the expression is invalid.
+    /// - [`Syntax`] if the expression syntax is invalid.
+    /// - [`FieldPath`] if any field path is invalid.
     ///
     /// [`Syntax`]: QueryBuilderError::Syntax
     /// [`FieldPath`]: QueryBuilderError::FieldPath
@@ -77,8 +71,7 @@ impl FilterExpr {
         parse_boolean_expr(input, tokens, FilterGrammar).map(Self)
     }
 
-    /// Combines two filter expressions with logical AND, flattening nested
-    /// `And` nodes.
+    /// Combines with logical AND, flattening nested `And` nodes.
     pub(crate) fn and(self, other: Self) -> Self {
         let mut children = match self.0 {
             BooleanExpr::And(children) => children,
@@ -91,26 +84,19 @@ impl FilterExpr {
         Self(BooleanExpr::And(children))
     }
 
-    /// Whether `row` satisfies this expression.
     pub(crate) fn is_matching(&self, row: &QueryRow) -> bool {
         self.0.is_satisfied_by(|atom| atom.is_matching(row))
     }
 }
 
-/// Atomic predicate in a filter expression.
-///
-/// Either a field-to-literal comparison or a recognized function call (such as
-/// `contains(tags, "#book")`).
+/// Atomic predicate: either a comparison or a recognized function call.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FilterAtom {
-    /// `<field> <op> <value>` comparison.
     Comparison(ComparisonExpr),
-    /// Recognized function call, such as `contains(tags, "#book")`.
     Function(FilterFunction),
 }
 
 impl FilterAtom {
-    /// Evaluates this atom (a comparison or function call) against `row`.
     fn is_matching(&self, row: &QueryRow) -> bool {
         match self {
             Self::Comparison(comparison) => comparison.is_matching(row),
@@ -119,14 +105,13 @@ impl FilterAtom {
     }
 }
 
-/// A recognized filter function call.
+/// Filter function with type-specific matching semantics.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FilterFunction {
-    /// `contains(field, target)`.
+    /// `contains(field, target)` predicate.
     ///
-    /// - Lists match by exact value or tag prefix, such as `#book` matching
-    ///   `#book/fiction`.
-    /// - Other field kinds fall back to substring containment.
+    /// Lists match by exact value or tag prefix, such as `#book` matching
+    /// `#book/fiction`; other field kinds fall back to substring containment.
     Contains {
         field: FieldPath,
         target: NoteFieldValue,
@@ -134,8 +119,7 @@ pub(crate) enum FilterFunction {
 }
 
 impl FilterFunction {
-    /// Builds the function call named `name`, or `None` if `name` names no
-    /// recognized filter function.
+    /// Accepts `contains` case-insensitively.
     fn build(
         name: &str,
         field: FieldPath,
@@ -151,7 +135,6 @@ impl FilterFunction {
         }
     }
 
-    /// Evaluates this function call against `row`.
     fn is_matching(&self, row: &QueryRow) -> bool {
         match self {
             Self::Contains {
@@ -162,10 +145,7 @@ impl FilterFunction {
     }
 }
 
-/// A parsed `<field> <op> <value>` comparison node in a filter expression.
-///
-/// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
-/// [`NoteFieldValue`] to evaluate against the resolved field of each row.
+/// Field comparison with a precomputed literal sort key.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComparisonExpr {
     field: FieldPath,
@@ -175,8 +155,7 @@ pub(crate) struct ComparisonExpr {
 }
 
 impl ComparisonExpr {
-    /// Constructs a comparison, precomputing `literal`'s [`SortKey`] once so
-    /// [`Self::is_matching`] never re-derives it per evaluated row.
+    /// Precomputes `literal`'s [`SortKey`] once for row evaluation.
     pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
@@ -191,8 +170,6 @@ impl ComparisonExpr {
         }
     }
 
-    /// Returns whether the given index row satisfies this comparison
-    /// expression.
     pub(super) fn is_matching(&self, row: &QueryRow) -> bool {
         self.op.is_satisfied_by(
             &row.resolve_ref(&self.field),
@@ -202,9 +179,7 @@ impl ComparisonExpr {
     }
 }
 
-/// A comparison operator parsed from a filter expression.
-///
-/// Each variant maps to a syntactic operator in the filter language.
+/// Comparison operator parsed from filter syntax.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum CompareOp {
     /// `==`
@@ -222,7 +197,8 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Evaluates this operator against a field value and literal.
+    /// Applies ordering only when both sides have non-null matching sort-key
+    /// kinds; equality otherwise uses literal comparison.
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
@@ -259,7 +235,6 @@ impl CompareOp {
 impl TryFrom<&str> for CompareOp {
     type Error = ();
 
-    /// Attempts to parse a comparison operator from its string representation.
     fn try_from(spelling: &str) -> Result<Self, Self::Error> {
         match spelling {
             "==" => Ok(Self::Eq),
@@ -273,13 +248,12 @@ impl TryFrom<&str> for CompareOp {
     }
 }
 
-/// Zero-sized [`AtomParser`] implementation plugging the filter token type and
-/// comparison/function-call grammar into [`parse_boolean_expr`].
+/// Filter grammar adapter for [`parse_boolean_expr`].
 struct FilterGrammar;
 
 impl FilterGrammar {
-    /// Parses one literal token (the right-hand side of a comparison or a
-    /// function argument).
+    /// Parses a literal where a comparison or function argument requires a
+    /// value.
     fn parse_literal_arg(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
@@ -298,8 +272,7 @@ impl FilterGrammar {
         Ok(spanned.into_value())
     }
 
-    /// Parses a function call's `(field, literal)` argument list after its name
-    /// has already been consumed.
+    /// Parses a call argument list after the function name.
     fn parse_function_call(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
@@ -364,8 +337,7 @@ impl FilterGrammar {
         })
     }
 
-    /// Parses a `<field> <op> <value>` comparison after the field's identifier
-    /// token has already been consumed.
+    /// Parses a `<field> <op> <value>` comparison after the field token.
     fn parse_comparison(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
@@ -407,8 +379,8 @@ impl AtomParser for FilterGrammar {
         }
     }
 
-    /// Parses one filter atom: a bare identifier followed by `(` is a function
-    /// call, otherwise it is the left-hand field of a comparison.
+    /// Parses a function call when an identifier is followed by `(`; otherwise
+    /// parses a comparison.
     fn parse_atom(
         &self,
         input: &str,
@@ -445,7 +417,7 @@ impl AtomParser for FilterGrammar {
     }
 }
 
-/// Lexical tokens parsed from a filter expression.
+/// Filter expression lexer tokens.
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
@@ -477,8 +449,7 @@ enum FilterToken {
     Ident(String),
 }
 
-/// Unescapes a lexed single- or double-quoted string literal into a
-/// [`NoteFieldValue::String`].
+/// Unescapes a quoted string literal into a [`NoteFieldValue::String`].
 #[expect(
     clippy::needless_pass_by_ref_mut,
     reason = "logos Callback trait requires &mut Lexer"
@@ -903,9 +874,8 @@ mod tests {
                 .expect("valid filter: lowercase or");
             assert_eq!(lower_or.len(), 1);
 
-            // Fields literally named `order`/`andrew` must resolve as whole
-            // identifiers, not get truncated by the Logical token's "or"/"and"
-            // prefix.
+            // Regression: fields named `order`/`andrew` must stay whole
+            // identifiers, not logical-op prefixes.
             let ident_prefix =
                 outcome.filter("order == 5").expect("valid filter: bare field");
             assert_eq!(ident_prefix.len(), 1);
@@ -996,10 +966,8 @@ mod tests {
 
         #[test]
         fn matches_identically_for_borrowed_and_owned_list_values() {
-            // Regression: the Owned(List) arm used to re-implement
-            // `is_list_containing`'s matching inline instead of delegating to
-            // it; both arms must now produce identical results for the same
-            // logical list.
+            // Regression: Owned(List) must delegate to the same list
+            // containment logic as borrowed lists.
             let items =
                 vec![NoteFieldValue::String("#book/fiction".to_owned())];
             let target = NoteFieldValue::String("#book".to_owned());

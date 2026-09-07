@@ -1,10 +1,8 @@
-//! Encoding, decoding, and path reconstruction for the index store.
+//! Index store row codec and platform-native path serialization.
 //!
-//! [`encode_row`] and [`decode_row`] wrap (de)serialization with [`DbError`]
-//! mapping. [`path_from_bytes`] recovers a [`PathBuf`] from raw bytes, trying
-//! UTF-8 first and falling back to lossy decoding. The [`path`] module provides
-//! serde support for [`std::path::Path`] and [`std::path::PathBuf`] using
-//! platform-specific raw byte representations.
+//! Rows use postcard with [`DbError`] context. Path serde preserves platform
+//! path bytes where Rust exposes them, and [`path_from_bytes`] has a lossy
+//! fallback for non-Unicode paths read from byte-oriented stores.
 
 use std::{
     path::{Path, PathBuf},
@@ -15,11 +13,11 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::error::{DbError, DbResult};
 
-/// Encodes `value` for a row keyed by `path`.
+/// Serializes `value`, capturing `path` in any storage error.
 ///
 /// # Errors
 ///
-/// - [`DbError::Serialize`] if serialization fails
+/// - [`DbError::Serialize`] when postcard serialization fails
 ///
 /// [`DbError::Serialize`]: DbError::Serialize
 pub(super) fn encode_row<T: Serialize>(
@@ -32,11 +30,11 @@ pub(super) fn encode_row<T: Serialize>(
     })
 }
 
-/// Decodes `bytes` for a row keyed by `path`.
+/// Deserializes `bytes`, capturing `path` in any storage error.
 ///
 /// # Errors
 ///
-/// - [`DbError::Deserialize`] if deserialization fails
+/// - [`DbError::Deserialize`] when postcard deserialization fails
 ///
 /// [`DbError::Deserialize`]: DbError::Deserialize
 pub(super) fn decode_row<T: DeserializeOwned>(
@@ -49,24 +47,15 @@ pub(super) fn decode_row<T: DeserializeOwned>(
     })
 }
 
-/// Recovers a [`PathBuf`] from raw bytes, trying UTF-8 first and falling back
-/// to lossy decoding for non-Unicode paths.
+/// Builds a path from byte-oriented store data.
 ///
-/// The lossy fallback affects only refresh-diff link paths;
-/// [`IndexStore::read_all`] resolves stored link bytes against loaded notes for
-/// byte-exact query output. `LISTS` keys are always valid UTF-8 by construction
-/// (see [`IndexStore::write_lists_for_note`]), so the fallback never triggers
-/// for [`IndexStore::read_lists`] or [`IndexStore::read_lists_for_path`].
-///
-/// Used by [`IndexStore::read_table`]'s deserialization-error path,
-/// [`IndexStore::read_files_and_links_via`]'s link reconstruction, and the
-/// `LISTS` table readers.
+/// Tries UTF-8 first and falls back to lossy decoding for non-Unicode paths.
+/// The lossy fallback affects only refresh-diff link paths:
+/// [`IndexStore::read_all`] resolves stored link bytes against loaded notes
+/// for byte-exact query output, and `LISTS` keys are valid UTF-8 by
+/// construction (see [`IndexStore::write_lists_for_note`]).
 ///
 /// [`IndexStore::read_all`]: super::store::IndexStore::read_all
-/// [`IndexStore::read_table`]: super::store::IndexStore::read_table
-/// [`IndexStore::read_files_and_links_via`]: super::store::IndexStore::read_files_and_links_via
-/// [`IndexStore::read_lists`]: super::store::IndexStore::read_lists
-/// [`IndexStore::read_lists_for_path`]: super::store::IndexStore::read_lists_for_path
 /// [`IndexStore::write_lists_for_note`]: super::store::IndexStore::write_lists_for_note
 pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
@@ -75,17 +64,16 @@ pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     )
 }
 
-/// Serde support for [`std::path::Path`] and [`std::path::PathBuf`] using
-/// platform-specific byte representations.
+/// Serde support for paths using platform-native encodings.
 pub mod path {
     use std::path::{Path, PathBuf};
 
     use serde::{Deserialize, Deserializer, Serializer};
-    /// Serializes a [`Path`] as raw bytes.
+    /// Emits raw path bytes.
     ///
     /// # Errors
     ///
-    /// - Returns the serializer's error if encoding fails.
+    /// - The serializer rejects the byte payload.
     #[cfg(unix)]
     #[inline]
     pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
@@ -96,11 +84,11 @@ pub mod path {
         serializer.serialize_bytes(path.as_os_str().as_bytes())
     }
 
-    /// Deserializes a [`PathBuf`] from raw bytes.
+    /// Rebuilds a path from raw bytes.
     ///
     /// # Errors
     ///
-    /// - Returns the deserializer's error if decoding fails.
+    /// - The deserializer rejects the byte payload.
     #[cfg(unix)]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
@@ -112,11 +100,11 @@ pub mod path {
         Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
     }
 
-    /// Serializes a [`Path`] as wide characters.
+    /// Emits Windows wide path units.
     ///
     /// # Errors
     ///
-    /// - Returns the serializer's error if encoding fails.
+    /// - The serializer rejects the wide-character payload.
     #[cfg(windows)]
     #[inline]
     pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
@@ -128,11 +116,11 @@ pub mod path {
         wide.serialize(serializer)
     }
 
-    /// Deserializes a [`PathBuf`] from wide characters.
+    /// Rebuilds a path from Windows wide units.
     ///
     /// # Errors
     ///
-    /// - Returns the deserializer's error if decoding fails.
+    /// - The deserializer rejects the wide-character payload.
     #[cfg(windows)]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
@@ -144,11 +132,11 @@ pub mod path {
         Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
     }
 
-    /// Serializes a [`Path`] as a lossless string representation.
+    /// Emits `to_string_lossy` output.
     ///
     /// # Errors
     ///
-    /// - Returns the serializer's error if encoding fails.
+    /// - The serializer rejects the string payload.
     #[cfg(not(any(unix, windows)))]
     #[inline]
     pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
@@ -158,11 +146,11 @@ pub mod path {
         serializer.serialize_str(&path.to_string_lossy())
     }
 
-    /// Deserializes a [`PathBuf`] from a string representation.
+    /// Rebuilds a path from a string.
     ///
     /// # Errors
     ///
-    /// - Returns the deserializer's error if decoding fails.
+    /// - The deserializer rejects the string payload.
     #[cfg(not(any(unix, windows)))]
     #[inline]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
