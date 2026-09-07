@@ -4,24 +4,7 @@
 # ///
 # [MISE] description="Fit performance models to criterion output"
 # [MISE] hide=true
-# [USAGE] arg "[criterion_dir]" {
-# [USAGE]   help="Criterion output directory"
-# [USAGE]   default="target/criterion"
-# [USAGE] }
-# [USAGE] long_help="""
-# [USAGE] Reads Criterion JSON output (new/benchmark.json for the
-# [USAGE] parameter value, new/estimates.json for mean timing),
-# [USAGE] fits linear and n*ln(n) regression models via OLS,
-# [USAGE] and extrapolates to 50K, 100K notes.  Reports R-squared
-# [USAGE] so the caller knows whether extrapolation is trustworthy.
-# [USAGE]
-# [USAGE] Expected directory layout:
-# [USAGE]   target/criterion/<group>/<size>/new/{benchmark,estimates}.json
-# [USAGE]
-# [USAGE] Usage:
-# [USAGE]   mise run bench-model                    # target/criterion
-# [USAGE]   mise run bench-model /path/to/criterion # custom dir
-# [USAGE] """
+# [USAGE] arg "[criterion_dir]" help="Criterion output directory (default: target/criterion)"
 
 from __future__ import annotations
 
