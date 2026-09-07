@@ -2,10 +2,12 @@
 //!
 //! Deterministic, criterion-free workload driving the public
 //! [`IndexerService`]/[`QueryService`] lifecycle end to end: build, persist,
-//! load, no-op refresh, single-note-edit refresh, five representative query
-//! shapes (full-index filter+sort+limit, tag-narrowed page query, task
-//! query, and two cold `sync_and_run` store-scoped shapes - a one-row match
-//! and a broad ~20%-of-vault match, the latter exercising
+//! load, no-op refresh, single-note-edit refresh, a many-delete-plus-many-
+//! modify refresh (forces the full-recompute fallback instead of the
+//! incremental patch path), five representative query shapes (full-index
+//! filter+sort+limit, tag-narrowed page query, task query, and two cold
+//! `sync_and_run` store-scoped shapes - a one-row match and a broad
+//! ~20%-of-vault match, the latter exercising
 //! `IndexStore::read_notes_batch`/`read_files_batch`/`read_links_for_targets`
 //! with a realistic multi-row candidate set), plus an ambiguous-wikilink
 //! cluster (many same-stem files linked by basename-only wikilinks) that
@@ -40,6 +42,15 @@ const AMBIGUOUS_STEM_COUNT: usize = 150;
 /// Notes each carrying one basename-only `[[index]]` wikilink, forcing
 /// [`AMBIGUOUS_STEM_COUNT`]-candidate ambiguity resolution per link.
 const LINKER_COUNT: usize = 50;
+
+/// Throwaway notes created, persisted, then deleted in one refresh cycle to
+/// force the full-recompute fallback (any deletion makes
+/// `IndexerService::compute_sync_outcome`'s `is_paths_unchanged` false).
+const DELETE_BATCH_COUNT: usize = 30;
+
+/// Existing notes rewritten in the same refresh cycle as the deletion batch,
+/// exercising the fallback's per-modified-note merge at a non-trivial scale.
+const MODIFY_BATCH_COUNT: usize = 20;
 
 /// Returns deterministic Markdown content for note `i` of `note_count`.
 ///
@@ -106,12 +117,13 @@ fn timed<T, E>(op: impl FnOnce() -> Result<T, E>) -> Result<(T, u128), E> {
 }
 
 /// Metric names, in the fixed order [`run_once`] returns their timings.
-const METRIC_NAMES: [&str; 10] = [
+const METRIC_NAMES: [&str; 11] = [
     "build_us",
     "persist_us",
     "load_us",
     "refresh_noop_us",
     "refresh_edit_us",
+    "refresh_delete_many_us",
     "query_all_us",
     "query_tag_us",
     "task_query_us",
@@ -133,9 +145,9 @@ const REPEATS: usize = 5;
 fn run_once(
     indexer: &IndexerService,
     root: &std::path::Path,
-) -> Result<[u128; 10], Box<dyn std::error::Error>> {
+) -> Result<[u128; 11], Box<dyn std::error::Error>> {
     let (index, build_us) = timed(|| indexer.build())?;
-    let (_, persist_us) = timed(|| indexer.persist(&index))?;
+    let ((), persist_us) = timed(|| indexer.persist(&index))?;
     drop(index);
     let (loaded, load_us) = timed(|| indexer.load())?;
     let (_, refresh_noop_us) = timed(|| indexer.refresh())?;
@@ -155,6 +167,34 @@ fn run_once(
         ),
     )?;
     let (_, refresh_edit_us) = timed(|| indexer.refresh())?;
+
+    // Full-recompute fallback: create + persist DELETE_BATCH_COUNT throwaway
+    // notes, then delete them and rewrite MODIFY_BATCH_COUNT existing notes
+    // in the same filesystem change. Any deletion makes
+    // `is_paths_unchanged` false, forcing `merge_refreshed_notes`'s full
+    // recompute over every persisted note instead of refresh_edit_us's
+    // incremental patch_links path above. Recreating the victims fresh each
+    // repetition (idempotent) lets the deletion register as a real diff
+    // every time: a path can only be "deleted" if it was persisted first.
+    for i in 0..DELETE_BATCH_COUNT {
+        fs::write(
+            root.join(format!("victim-{i}.md")),
+            format!("# Victim {i}\n"),
+        )?;
+    }
+    indexer.refresh()?;
+    for i in 0..DELETE_BATCH_COUNT {
+        fs::remove_file(root.join(format!("victim-{i}.md")))?;
+    }
+    let modify_start = 2_500;
+    for offset in 0..MODIFY_BATCH_COUNT {
+        let i = modify_start + offset;
+        fs::write(
+            root.join(format!("note-{i}.md")),
+            note_source(i, NOTE_COUNT),
+        )?;
+    }
+    let (_, refresh_delete_many_us) = timed(|| indexer.refresh())?;
 
     let index = Arc::new(loaded);
     let service = QueryService::new("class");
@@ -219,6 +259,7 @@ fn run_once(
         load_us,
         refresh_noop_us,
         refresh_edit_us,
+        refresh_delete_many_us,
         query_all_us,
         query_tag_us,
         task_query_us,
@@ -239,7 +280,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let indexer = IndexerService::new(temp.path());
 
-    let mut mins = [u128::MAX; 10];
+    let mut mins = [u128::MAX; 11];
     for _ in 0..REPEATS {
         let sample = run_once(&indexer, temp.path())?;
         for (slot, value) in mins.iter_mut().zip(sample) {
