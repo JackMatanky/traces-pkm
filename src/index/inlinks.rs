@@ -13,6 +13,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rayon::prelude::*;
+
 use crate::{
     BaseNameRef, FileBase,
     note::{LinkTarget, Note},
@@ -39,17 +41,16 @@ impl InlinkMap {
     #[must_use]
     pub fn new(notes: &[Note], files: &[FileBase]) -> Self {
         let resolver = LinkResolver::new(files);
-        let estimated_edges: usize =
-            notes.iter().map(|n| n.outlinks().len()).sum();
-        let mut flat_edges: Vec<(Target<'_>, Source<'_>)> =
-            Vec::with_capacity(estimated_edges);
-
-        for source in notes {
-            let src = Source(source.path());
-            for target in resolver.resolve_note(source) {
-                flat_edges.push((target, src));
-            }
-        }
+        let mut flat_edges: Vec<(Target<'_>, Source<'_>)> = notes
+            .par_iter()
+            .flat_map_iter(|source| {
+                let src = Source(source.path());
+                resolver
+                    .resolve_note(source)
+                    .into_iter()
+                    .map(move |target| (target, src))
+            })
+            .collect();
 
         flat_edges.sort_unstable();
         flat_edges.dedup();
