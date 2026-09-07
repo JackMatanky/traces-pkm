@@ -57,14 +57,16 @@ pub(crate) mod project;
 
 /// File-count sweep shared by workspace-scale benchmarks.
 ///
-/// The low end catches fixed-cost jumps (`10` -> `100` -> `500` -> `1_000`);
-/// the high end keeps the 10k/20k personal-vault scale in every full sweep.
-pub(crate) const WORKSPACE_FILE_COUNTS: &[usize] =
-    &[10, 100, 500, 1_000, 10_000, 20_000];
+/// Near-perfect log-spacing: 50→20K, 9 points, ~2x effective ratio.
+/// Covers small personal wikis (50–200 notes) through full-scale
+/// vaults (10K–20K notes), with a 20K anchor for reliable
+/// extrapolation to 50K/100K via the `bench-model` script.
+pub const WORKSPACE_FILE_COUNTS: &[usize] =
+    &[50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000];
 
 /// Returns the bounded file-count sweep for expensive benchmark matrices.
 #[inline]
-pub(crate) fn quick_file_counts() -> impl Iterator<Item = usize> {
+pub fn quick_file_counts() -> impl Iterator<Item = usize> {
     WORKSPACE_FILE_COUNTS.iter().copied().filter(|&n| n <= 1_000)
 }
 

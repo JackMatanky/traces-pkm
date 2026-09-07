@@ -21,7 +21,7 @@ use std::{fmt::Write as _, path::PathBuf};
 /// Variants describe vault shape, not the benchmark that currently uses them.
 /// Add a variant only when the shape is broad enough to reuse.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ProjectShape {
+pub enum ProjectShape {
     /// Minimal frontmatter and body content.
     Plain,
     /// Common, nested, and rare tags in note body text.

@@ -44,6 +44,7 @@ enabled = true
 
 [task_config.input_groups]
 rust = ["Cargo.toml", "Cargo.lock", "src/**/*.rs"]
+bench = ["Cargo.toml", "Cargo.lock", "src/**/*.rs", "benches/**/*.rs"]
 
 # ------------------------------------------------------------- #
 #                      Setup & Maintenance                      #
@@ -315,6 +316,10 @@ fi
 
 [tasks.bench]
 description = "Run Criterion benchmarks"
+sources = ["@group:bench"]
+outputs = { auto = true }
+timeout = "15m"
+depends_post = ["bench-report"]
 usage = '''
 flag "-f --files <pattern>" {
   help "Select bench targets (benches/*.rs) by file-name substring"
@@ -340,6 +345,7 @@ flag "--no-report" {
   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 }
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
+flag "--model" help="Fit performance models (linear, n·ln(n)) after benchmarking"
 flag "-q --quick" {
   help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
 }
@@ -411,34 +417,49 @@ eval "extra_args=(${usage_args:-})"
 criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 [[ -n "${usage_args:-}" ]] && has_criterion_args=true
 
-# --- Report (save baseline); see -r/--report --help for behavior ---
-manages_baseline=false
-for a in "${extra_args[@]+"${extra_args[@]}"}"; do
-  case "${a}" in
-    --baseline | --baseline-lenient | --discard-baseline | --load-baseline)
-      manages_baseline=true
-      ;;
-  esac
-done
-
-if [[ "${usage_no_report:-false}" != "true" \
-  && "${manages_baseline}" == "false" ]]; then
-  if [[ -n "${usage_report:-}" && "${usage_report}" != "true" ]]; then
-    report_name="${usage_report}"
-  else
-    if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
-      branch="${branch//\//-}"
-      [[ "${branch}" == "HEAD" ]] && branch="detached"
-      sha="$(git rev-parse --short HEAD)"
-      dirty=""
-      git diff --quiet HEAD || dirty="-dirty"
-      report_name="${branch}-${sha}${dirty}"
-    else
-      report_name="$(date +%Y%m%d-%H%M%S)"
-    fi
-    [[ "${usage_quick:-false}" == "true" ]] && report_name+="-quick"
+# --- Baseline management ---
+# Outputs a baseline name to save, or empty if no baseline should be
+# saved.  Skips when: --no-report is set, or the user forwarded
+# --baseline/--baseline-lenient/--discard-baseline/--load-baseline
+# (criterion rejects combining those with --save-baseline).
+resolve_baseline_name() {
+  if [[ "${usage_no_report:-false}" == "true" ]]; then
+    return
   fi
-  criterion_args+=(--save-baseline "${report_name}")
+
+  for a in "${extra_args[@]+"${extra_args[@]}"}"; do
+    case "${a}" in
+      --baseline | --baseline-lenient | \
+      --discard-baseline | --load-baseline)
+        return
+        ;;
+    esac
+  done
+
+  # Explicit name via -r <name>
+  if [[ -n "${usage_report:-}" \
+    && "${usage_report}" != "true" ]]; then
+    printf '%s' "${usage_report}"
+    return
+  fi
+
+  # Auto-name from git state: branch-sha[-dirty][-quick]
+  if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
+    branch="${branch//\//-}"
+    [[ "${branch}" == "HEAD" ]] && branch="detached"
+    sha="$(git rev-parse --short HEAD)"
+    dirty=""
+    git diff --quiet HEAD || dirty="-dirty"
+    printf '%s' "${branch}-${sha}${dirty}"
+  else
+    printf '%s' "$(date +%Y%m%d-%H%M%S)"
+  fi
+}
+
+baseline="$(resolve_baseline_name)"
+if [[ -n "${baseline}" ]]; then
+  [[ "${usage_quick:-false}" == "true" ]] && baseline+="-quick"
+  criterion_args+=(--save-baseline "${baseline}")
   has_criterion_args=true
 fi
 
@@ -458,7 +479,18 @@ cargo "${bench_args[@]}"
 if [[ -n "${usage_compare:-}" ]]; then
   critcmp "${usage_compare}"
 fi
+
+# --- Model ---
+if [[ "${usage_model:-false}" == "true" ]]; then
+  mise run bench-model
+fi
 '''
+
+[tasks.bench-compare]
+hide = true
+description = "Compare benchmark results against a baseline"
+usage = 'arg "<baseline>" help="Baseline name to compare against"'
+run = "critcmp ${usage_baseline?}"
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #
