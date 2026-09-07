@@ -5,62 +5,126 @@
 # Prints a summary of which benchmark groups were measured after every bench
 # execution. Runs automatically via depends_post.
 
+CRITERION_DIR="${CRITERION_DIR:-target/criterion}"
+
 #######################################
-# Print benchmark group summary.
-# Globals:
-#   CRITERION_DIR
+# Check if criterion output directory exists.
 # Arguments:
 #   None
-# Outputs:
-#   Writes summary to stdout
+# Returns:
+#   0 if directory exists, 1 otherwise
 #######################################
-print_summary() {
-  local criterion_dir="target/criterion"
+has_criterion_output() {
+  [[ -d "${CRITERION_DIR}" ]]
+}
 
-  if [[ ! -d "${criterion_dir}" ]]; then
-    echo "No criterion output found at ${criterion_dir}"
-    return 0
+#######################################
+# Count parameter sizes with results in a benchmark group.
+# Arguments:
+#   group_dir — path to the group directory
+# Outputs:
+#   Writes count to stdout
+#######################################
+count_sizes_with_results() {
+  local group_dir="${1}"
+  local count=0
+  local size_dir
+
+  for size_dir in "${group_dir}"*/; do
+    [[ -d "${size_dir}" ]] || continue
+    if [[ -f "${size_dir}/new/estimates.json" ]]; then
+      (( count += 1 ))
+    fi
+  done
+
+  echo "${count}"
+}
+
+#######################################
+# Print a single benchmark group entry.
+# Arguments:
+#   group_dir — path to the group directory
+# Outputs:
+#   Writes "  - <name>: <count> sizes" to stdout
+#######################################
+print_group_entry() {
+  local group_dir="${1}"
+  local group_name size_count
+
+  group_name="$(basename "${group_dir}")"
+  size_count="$(count_sizes_with_results "${group_dir}")"
+
+  if (( size_count > 0 )); then
+    echo "  - ${group_name}: ${size_count} sizes"
   fi
+}
 
-  echo "## Benchmark Summary"
-  echo ""
-
+#######################################
+# Iterate groups and print those with results.
+# Outputs:
+#   Writes group entries to stdout
+# Returns:
+#   0 if any groups were printed, 1 otherwise
+#######################################
+print_groups() {
   local has_groups=false
-  local group_dir group_name size_dir size_count
+  local group_dir group_name
 
-  for group_dir in "${criterion_dir}"/*/; do
+  for group_dir in "${CRITERION_DIR}"/*/; do
     [[ -d "${group_dir}" ]] || continue
     group_name="$(basename "${group_dir}")"
 
     # Skip baseline comparison directories (contain /)
     [[ "${group_name}" == *"/"* ]] && continue
 
-    # Count parameter sizes with results
-    size_count=0
-    for size_dir in "${group_dir}"*/; do
-      [[ -d "${size_dir}" ]] || continue
-      if [[ -f "${size_dir}/new/estimates.json" ]]; then
-        (( size_count += 1 ))
-      fi
-    done
-
-    if (( size_count > 0 )); then
-      if [[ "${has_groups}" == "false" ]]; then
-        echo "### Groups measured:"
-        has_groups=true
-      fi
-      echo "  - ${group_name}: ${size_count} sizes"
+    if [[ "${has_groups}" == "false" ]]; then
+      echo "### Groups measured:"
+      has_groups=true
     fi
+
+    print_group_entry "${group_dir}"
   done
 
   if [[ "${has_groups}" == "false" ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+#######################################
+# Print the summary footer with usage hints.
+# Outputs:
+#   Writes footer to stdout
+#######################################
+print_footer() {
+  echo ""
+  echo "Run \`mise run bench --compare <baseline>\` for comparison."
+  echo "Run \`mise run bench --model\` for performance modeling."
+}
+
+#######################################
+# Main entry point.
+# Arguments:
+#   None
+# Outputs:
+#   Writes benchmark summary to stdout
+#######################################
+main() {
+  if ! has_criterion_output; then
+    echo "No criterion output found at ${CRITERION_DIR}"
+    return 0
+  fi
+
+  echo "## Benchmark Summary"
+  echo ""
+
+  if ! print_groups; then
     echo "No benchmark groups found."
     return 0
   fi
 
-  echo ""
-  echo "Run \`mise run bench --compare <baseline>\` for comparison."
-  echo "Run \`mise run bench --model\` for performance modeling."
+  print_footer
 }
 
 main "$@"
