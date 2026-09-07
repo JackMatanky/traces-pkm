@@ -2,44 +2,42 @@
 # /// script
 # dependencies = ["numpy"]
 # ///
+# MISE description="Fit performance models to criterion output"
 # MISE hide=true
+# USAGE arg "[criterion_dir]" help="Criterion output directory" default="target/criterion"
 
 """
 Performance curve fitting for Criterion benchmark output.
 
-Reads the JSON files that Criterion writes after each ``cargo bench`` run,
-fits linear and n·ln(n) regression models to the measured data, and
-extrapolates to larger workspace sizes (50K, 100K notes).  Reports R² for
-each model so the caller knows whether the extrapolation is trustworthy.
-
-Usage::
-
-    mise run bench-model                    # reads target/criterion
-    mise run bench-model /path/to/criterion # custom directory
+Reads the JSON files that Criterion writes after each ``cargo bench``
+run, fits linear and n*ln(n) regression models to the measured data,
+and extrapolates to larger workspace sizes (50K, 100K notes).  Reports
+R-squared for each model so the caller knows whether the extrapolation
+is trustworthy.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
+
+# -- Data structures --------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkDataPoint:
-    """A single measured benchmark result extracted from Criterion output.
+    """A single measured benchmark result from Criterion output.
 
     Attributes:
-        group: The benchmark group name (e.g. ``FileIndex::build``).
-        file_count: The parameter value — number of files in the workspace.
-        mean_seconds: Mean wall-clock time in seconds (from ``mean.point_estimate``).
+        group: Benchmark group name (e.g. ``FileIndex::build``).
+        file_count: Parameter value, number of files.
+        mean_seconds: Mean wall-clock time in seconds.
     """
 
     group: str
@@ -54,15 +52,15 @@ class FittedModel:
     Attributes:
         name: Short identifier (``linear`` or ``log``).
         formula: Human-readable formula string.
-        coefficient_n: Slope coefficient for the primary term.
-        coefficient_intercept: Intercept (constant) coefficient.
-        r_squared: Coefficient of determination (1.0 = perfect fit).
+        coeff_n: Slope coefficient for the primary term.
+        coeff_intercept: Intercept (constant) coefficient.
+        r_squared: Coefficient of determination (1.0 = perfect).
     """
 
     name: str
     formula: str
-    coefficient_n: float
-    coefficient_intercept: float
+    coeff_n: float
+    coeff_intercept: float
     r_squared: float
 
     def predict(self, file_count: float) -> float:
@@ -75,10 +73,10 @@ class FittedModel:
             Predicted mean wall-clock time in seconds.
         """
         if self.name == "linear":
-            return self.coefficient_n * file_count + self.coefficient_intercept
+            return self.coeff_n * file_count + self.coeff_intercept
         return (
-            self.coefficient_n * file_count * np.log(file_count)
-            + self.coefficient_intercept
+            self.coeff_n * file_count * np.log(file_count)
+            + self.coeff_intercept
         )
 
 
@@ -88,7 +86,7 @@ class ExtrapolationResult:
 
     Attributes:
         file_count: Target workspace size.
-        predicted_seconds: Predicted mean wall-clock time in seconds.
+        predicted_seconds: Predicted mean wall-clock time.
         model_name: Name of the model used for prediction.
     """
 
@@ -97,35 +95,30 @@ class ExtrapolationResult:
     model_name: str
 
 
-# ---------------------------------------------------------------------------
-# Criterion output loading
-# ---------------------------------------------------------------------------
+# -- Criterion output loading -----------------------------------------------
 
 
-def load_benchmark_data(criterion_dir: Path) -> list[BenchmarkDataPoint]:
-    """Load benchmark measurements from Criterion's JSON output.
+def load_benchmark_data(
+    criterion_dir: Path,
+) -> list[BenchmarkDataPoint]:
+    """Load benchmark measurements from Criterion JSON output.
 
-    Criterion writes each parameterized benchmark to::
-
-        target/criterion/<group>/<parameter>/new/benchmark.json
-        target/criterion/<group>/<parameter>/new/estimates.json
-
-    This function walks that directory tree, reads both files for every
-    benchmark that has a ``new/`` results directory, and returns the
-    extracted data points sorted by file count.
+    Reads ``new/benchmark.json`` for the parameter value and
+    ``new/estimates.json`` for the mean timing from each
+    parameterized benchmark directory.
 
     Args:
-        criterion_dir: Root Criterion output directory (default: ``target/criterion``).
+        criterion_dir: Root Criterion output directory.
 
     Returns:
-        List of benchmark data points, sorted ascending by file count.
+        Data points sorted ascending by file count.
 
     Raises:
-        FileNotFoundError: If ``criterion_dir`` does not exist.
+        FileNotFoundError: If directory does not exist.
     """
     if not criterion_dir.exists():
         raise FileNotFoundError(
-            f"Criterion output directory not found: {criterion_dir}"
+            f"Criterion output not found: {criterion_dir}"
         )
 
     data_points: list[BenchmarkDataPoint] = []
@@ -139,194 +132,178 @@ def load_benchmark_data(criterion_dir: Path) -> list[BenchmarkDataPoint]:
             results_dir = size_dir / "new"
             if not results_dir.is_dir():
                 continue
-            data_point = _parse_benchmark_result(
+            dp = _parse_benchmark_result(
                 group=group_dir.name,
                 results_dir=results_dir,
             )
-            if data_point is not None:
-                data_points.append(data_point)
+            if dp is not None:
+                data_points.append(dp)
 
-    data_points.sort(key=lambda dp: dp.file_count)
+    data_points.sort(key=lambda p: p.file_count)
     return data_points
 
 
 def _parse_benchmark_result(
-    group: str, results_dir: Path
+    group: str,
+    results_dir: Path,
 ) -> BenchmarkDataPoint | None:
     """Parse a single benchmark result from its ``new/`` directory.
 
-    Reads ``benchmark.json`` for the parameter value and ``estimates.json``
-    for the mean timing.  Returns ``None`` if either file is missing or
-    malformed.
-
     Args:
-        group: Benchmark group name (parent directory name).
-        results_dir: Path to the ``new/`` directory containing result files.
+        group: Benchmark group name.
+        results_dir: Path to the ``new/`` directory.
 
     Returns:
-        A parsed data point, or ``None`` on any parse/IO error.
+        A parsed data point, or ``None`` on any error.
     """
     try:
-        benchmark_json = json.loads(
+        bench = json.loads(
             (results_dir / "benchmark.json").read_text()
         )
-        estimates_json = json.loads(
+        est = json.loads(
             (results_dir / "estimates.json").read_text()
         )
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return None
 
     try:
-        file_count = float(benchmark_json["value_str"])
-        mean_seconds = estimates_json["mean"]["point_estimate"] / 1e9
+        file_count = float(bench["value_str"])
+        mean_s = est["mean"]["point_estimate"] / 1e9
     except (KeyError, TypeError, ValueError):
         return None
 
     return BenchmarkDataPoint(
         group=group,
         file_count=file_count,
-        mean_seconds=mean_seconds,
+        mean_seconds=mean_s,
     )
 
 
-# ---------------------------------------------------------------------------
-# Model fitting
-# ---------------------------------------------------------------------------
+# -- Model fitting ----------------------------------------------------------
 
 
 def fit_performance_models(
     data_points: list[BenchmarkDataPoint],
 ) -> list[FittedModel]:
-    """Fit linear and n·ln(n) regression models to benchmark data.
-
-    Uses ordinary least squares (via ``numpy.linalg.lstsq``) to fit two
-    models:
-
-    - **linear**: ``y = a·n + b``
-    - **log**: ``y = a·n·ln(n) + b``
-
-    where ``n`` is the file count and ``y`` is the mean seconds.
+    """Fit linear and n*ln(n) regression models via OLS.
 
     Args:
-        data_points: Benchmark measurements (must contain ≥2 points).
+        data_points: Benchmark measurements (>= 2 required).
 
     Returns:
-        List of fitted models, sorted by R² descending (best fit first).
+        Models sorted by R-squared descending.
     """
-    file_counts = np.array([dp.file_count for dp in data_points])
-    mean_seconds = np.array([dp.mean_seconds for dp in data_points])
+    file_counts = np.array(
+        [dp.file_count for dp in data_points]
+    )
+    mean_seconds = np.array(
+        [dp.mean_seconds for dp in data_points]
+    )
 
-    total_sum_of_squares = float(
+    ss_tot = float(
         np.sum((mean_seconds - np.mean(mean_seconds)) ** 2)
     )
-    if total_sum_of_squares == 0:
+    if ss_tot == 0:
         return []
 
     models = [
-        _fit_linear_model(file_counts, mean_seconds, total_sum_of_squares),
-        _fit_log_model(file_counts, mean_seconds, total_sum_of_squares),
+        _fit_linear(file_counts, mean_seconds, ss_tot),
+        _fit_log(file_counts, mean_seconds, ss_tot),
     ]
 
-    return sorted(models, key=lambda m: m.r_squared, reverse=True)
+    return sorted(
+        models, key=lambda m: m.r_squared, reverse=True
+    )
 
 
-def _fit_linear_model(
-    file_counts: np.ndarray,
-    mean_seconds: np.ndarray,
-    total_sum_of_squares: float,
+def _fit_linear(
+    x: np.ndarray,
+    y: np.ndarray,
+    ss_tot: float,
 ) -> FittedModel:
-    """Fit a linear model ``y = a·n + b`` via OLS.
+    """Fit ``y = a*x + b`` via ordinary least squares.
 
     Args:
-        file_counts: Independent variable (workspace sizes).
-        mean_seconds: Dependent variable (measured times).
-        total_sum_of_squares: Precomputed TSS for R² calculation.
+        x: Independent variable (file counts).
+        y: Dependent variable (mean seconds).
+        ss_tot: Precomputed total sum of squares.
 
     Returns:
         A fitted linear model.
     """
-    design_matrix = np.vstack([file_counts, np.ones(len(file_counts))]).T
-    coefficients, _, _, _ = np.linalg.lstsq(
-        design_matrix, mean_seconds, rcond=None
-    )
-    predicted = design_matrix @ coefficients
-    residual_sum_of_squares = float(np.sum((mean_seconds - predicted) ** 2))
+    A = np.vstack([x, np.ones(len(x))]).T
+    c, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+    pred = A @ c
+    ss_res = float(np.sum((y - pred) ** 2))
 
     return FittedModel(
         name="linear",
-        formula="y = a·n + b",
-        coefficient_n=float(coefficients[0]),
-        coefficient_intercept=float(coefficients[1]),
-        r_squared=1.0 - residual_sum_of_squares / total_sum_of_squares,
+        formula="y = a*n + b",
+        coeff_n=float(c[0]),
+        coeff_intercept=float(c[1]),
+        r_squared=1.0 - ss_res / ss_tot,
     )
 
 
-def _fit_log_model(
-    file_counts: np.ndarray,
-    mean_seconds: np.ndarray,
-    total_sum_of_squares: float,
+def _fit_log(
+    x: np.ndarray,
+    y: np.ndarray,
+    ss_tot: float,
 ) -> FittedModel:
-    """Fit a logarithmic model ``y = a·n·ln(n) + b`` via OLS.
+    """Fit ``y = a*x*ln(x) + b`` via ordinary least squares.
 
     Args:
-        file_counts: Independent variable (workspace sizes).
-        mean_seconds: Dependent variable (measured times).
-        total_sum_of_squares: Precomputed TSS for R² calculation.
+        x: Independent variable (file counts).
+        y: Dependent variable (mean seconds).
+        ss_tot: Precomputed total sum of squares.
 
     Returns:
         A fitted logarithmic model.
     """
-    n_log_n = file_counts * np.log(file_counts)
-    design_matrix = np.vstack([n_log_n, np.ones(len(file_counts))]).T
-    coefficients, _, _, _ = np.linalg.lstsq(
-        design_matrix, mean_seconds, rcond=None
-    )
-    predicted = design_matrix @ coefficients
-    residual_sum_of_squares = float(np.sum((mean_seconds - predicted) ** 2))
+    xlogx = x * np.log(x)
+    A = np.vstack([xlogx, np.ones(len(x))]).T
+    c, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+    pred = A @ c
+    ss_res = float(np.sum((y - pred) ** 2))
 
     return FittedModel(
         name="log",
-        formula="y = a·n·ln(n) + b",
-        coefficient_n=float(coefficients[0]),
-        coefficient_intercept=float(coefficients[1]),
-        r_squared=1.0 - residual_sum_of_squares / total_sum_of_squares,
+        formula="y = a*n*ln(n) + b",
+        coeff_n=float(c[0]),
+        coeff_intercept=float(c[1]),
+        r_squared=1.0 - ss_res / ss_tot,
     )
 
 
-# ---------------------------------------------------------------------------
-# Extrapolation
-# ---------------------------------------------------------------------------
+# -- Extrapolation ----------------------------------------------------------
 
 
 def extrapolate_to_target_sizes(
     best_model: FittedModel,
     target_sizes: list[int],
 ) -> list[ExtrapolationResult]:
-    """Extrapolate workspace performance to larger sizes.
-
-    Uses the best-fit model (highest R²) to predict mean wall-clock time
-    at the given target file counts.
+    """Predict performance at larger workspace sizes.
 
     Args:
-        best_model: The model with the highest R² from the fitted set.
-        target_sizes: Workspace sizes to extrapolate to (e.g. [50_000, 100_000]).
+        best_model: The model with highest R-squared.
+        target_sizes: Workspace sizes to extrapolate to.
 
     Returns:
-        List of extrapolation results, one per target size.
+        One extrapolation result per target size.
     """
     return [
         ExtrapolationResult(
-            file_count=target_size,
-            predicted_seconds=round(best_model.predict(float(target_size)), 3),
+            file_count=sz,
+            predicted_seconds=round(
+                best_model.predict(float(sz)), 3
+            ),
             model_name=best_model.name,
         )
-        for target_size in target_sizes
+        for sz in target_sizes
     ]
 
 
-# ---------------------------------------------------------------------------
-# Reporting
-# ---------------------------------------------------------------------------
+# -- Reporting --------------------------------------------------------------
 
 
 def print_report(
@@ -336,57 +313,62 @@ def print_report(
 ) -> None:
     """Print a human-readable performance model report.
 
-    Outputs the data points used, each fitted model's parameters and R²,
-    and the extrapolated predictions (if R² ≥ 0.95).
-
     Args:
         data_points: The benchmark data that was fitted.
-        fitted_models: All fitted models (sorted by R² descending).
+        fitted_models: All fitted models (best first).
         extrapolations: Extrapolated predictions (may be empty).
     """
     print(f"\nData points: {len(data_points)}")
     print(
-        f"File counts: {', '.join(str(int(dp.file_count)) for dp in data_points)}"
+        "File counts: "
+        + ", ".join(
+            str(int(dp.file_count)) for dp in data_points
+        )
     )
 
     print("\nFitted models:")
+    best = fitted_models[0]
     for model in fitted_models:
-        best_marker = " ← best" if model == fitted_models[0] else ""
+        marker = " <- best" if model is best else ""
         print(
-            f"  {model.formula}: a={model.coefficient_n:.6f}, "
-            f"b={model.coefficient_intercept:.4f}, "
-            f"R²={model.r_squared:.4f}{best_marker}"
+            f"  {model.formula}: "
+            f"a={model.coeff_n:.6f}, "
+            f"b={model.coeff_intercept:.4f}, "
+            f"R2={model.r_squared:.4f}{marker}"
         )
 
-    best_model = fitted_models[0]
-    if best_model.r_squared < 0.95:
+    if best.r_squared < 0.95:
         print(
-            f"\n⚠ Low R² ({best_model.r_squared:.4f}) — extrapolation unreliable."
+            f"\nWarning: low R2 ({best.r_squared:.4f})"
+            " -- extrapolation unreliable."
         )
-        print("  Measure directly at target sizes instead.")
+        print(
+            "  Measure directly at target sizes instead."
+        )
         return
 
     print(
-        f"\nExtrapolation (best model: {best_model.name}, R²={best_model.r_squared:.4f}):"
+        f"\nExtrapolation (best: {best.name}, "
+        f"R2={best.r_squared:.4f}):"
     )
     for ext in extrapolations:
-        print(f"  {ext.file_count:>6,} notes: {ext.predicted_seconds:.3f}s")
+        print(
+            f"  {ext.file_count:>6,} notes: "
+            f"{ext.predicted_seconds:.3f}s"
+        )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+# -- Entry point ------------------------------------------------------------
 
 
 def main() -> None:
-    """Load Criterion output, fit models, and report predictions.
-
-    Reads the criterion output directory from ``sys.argv[1]`` (default:
-    ``target/criterion``), fits performance models, and prints a report.
-    Exits with code 1 on unrecoverable errors.
-    """
-    criterion_dir = (
-        Path(sys.argv[1]) if len(sys.argv) > 1 else Path("target/criterion")
+    """Load Criterion output, fit models, and report."""
+    criterion_dir = Path(
+        os.environ.get(
+            "usage_criterion_dir",
+            sys.argv[1] if len(sys.argv) > 1
+            else "target/criterion",
+        )
     )
 
     try:
@@ -397,7 +379,8 @@ def main() -> None:
 
     if len(data_points) < 2:
         print(
-            f"Need ≥2 data points to fit models, found {len(data_points)}.",
+            f"Need >=2 data points, found "
+            f"{len(data_points)}.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -405,19 +388,24 @@ def main() -> None:
     fitted_models = fit_performance_models(data_points)
     if not fitted_models:
         print(
-            "Could not fit models (zero variance in measurements?).",
+            "Could not fit models "
+            "(zero variance?).",
             file=sys.stderr,
         )
         sys.exit(1)
 
     best_model = fitted_models[0]
     extrapolations = (
-        extrapolate_to_target_sizes(best_model, [50_000, 100_000])
+        extrapolate_to_target_sizes(
+            best_model, [50_000, 100_000]
+        )
         if best_model.r_squared >= 0.95
         else []
     )
 
-    print_report(data_points, fitted_models, extrapolations)
+    print_report(
+        data_points, fitted_models, extrapolations
+    )
 
 
 if __name__ == "__main__":
