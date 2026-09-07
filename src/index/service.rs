@@ -128,11 +128,12 @@ struct SyncOutcome {
 ///
 /// # Errors
 ///
-/// All methods return `IndexError`. [`Self::refresh`] also logs a
-/// `tracing::warn!` on persist failure without propagating it; `sync`
-/// propagates persist failures instead, since a caller reading straight from
-/// the store (never materializing a [`FileIndex`]) has no in-memory fallback to
-/// fall back on if the store itself stayed stale.
+/// - Every method returns `IndexError`.
+/// - [`Self::refresh`] logs a persist failure via `tracing::warn!` without
+///   propagating it.
+/// - `sync` propagates a persist failure instead, since a caller reading
+///   straight from the store (never materializing a [`FileIndex`]) has no
+///   in-memory fallback if the store itself stayed stale.
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,

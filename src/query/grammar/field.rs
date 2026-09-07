@@ -159,9 +159,11 @@ impl FieldPath {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldPathError`] if `path` is empty, has invalid `.` structure
-    /// (for example, `file.` or `a.b`), or names an unknown `file.<field>` or
-    /// `task.<field>` accessor.
+    /// - [`FieldPathError`] if `path` is empty.
+    /// - [`FieldPathError`] if `path` has invalid `.` structure (for example,
+    ///   `file.` or `a.b`).
+    /// - [`FieldPathError`] if `path` names an unknown `file.<field>` or
+    ///   `task.<field>` accessor.
     ///
     /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(crate) fn parse(path: &str) -> Result<Self, FieldPathError> {

@@ -41,7 +41,8 @@ impl SourceSelector {
     ///
     /// # Errors
     ///
-    /// Returns `QueryError::Syntax` when a nonempty `input` is invalid.
+    /// - `QueryError::Syntax` if a nonempty `input` is not a valid source
+    ///   expression.
     #[inline]
     pub fn parse(input: &str) -> QueryResult<Self> {
         if input.trim().is_empty() {
@@ -110,7 +111,7 @@ impl SourceExpr {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::Syntax`] on any tokenization or parse failure.
+    /// - [`QueryBuilderError::Syntax`] if tokenizing or parsing `input` fails.
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
         let tokens = LexTokenStream::<LexedToken<SourceToken>>::tokenize(input)
             .map_err(|e| {
@@ -269,9 +270,9 @@ impl GlobPattern {
     ///
     /// # Errors
     ///
-    /// Returns a [`regex::Error`] if the translated pattern fails to compile as
-    /// a regex (not expected for this fixed `*`/`**`-only translation, but the
-    /// compile step is fallible in principle).
+    /// - Returns a [`regex::Error`] if the translated pattern fails to compile
+    ///   (not expected for this fixed `*`/`**`-only translation, but the
+    ///   compile step is fallible in principle).
     fn compile(pattern: &str) -> Result<Self, regex::Error> {
         let mut regex_source = String::from("^");
         let mut rest = pattern;
@@ -381,8 +382,7 @@ impl SourceGrammar {
     ///
     /// # Errors
     ///
-    /// Returns a [`QueryError::Syntax`] diagnostic if the sigil is empty or
-    /// malformed.
+    /// - [`QueryBuilderError::Syntax`] if the sigil is empty or malformed.
     fn parse_sigil(
         input: &str,
         sigil: &str,
@@ -427,9 +427,10 @@ impl SourceGrammar {
     ///
     /// # Errors
     ///
-    /// Returns a [`QueryError::Syntax`] diagnostic if the function form is
-    /// malformed, the class name is empty, an unknown expansion mode is given,
-    /// or both an argument and a method modifier are present.
+    /// - [`QueryBuilderError::Syntax`] if the function form is malformed.
+    /// - [`QueryBuilderError::Syntax`] if the class name is empty.
+    /// - [`QueryBuilderError::Syntax`] if an unknown expansion mode is given,
+    ///   or both an argument and a method modifier are present.
     fn parse_class_function(
         input: &str,
         tokens: &mut LexTokenStream<LexedToken<SourceToken>>,

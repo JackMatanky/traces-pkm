@@ -269,7 +269,7 @@ impl ListEntry {
 /// whose descendant lists are already cleared (see
 /// `ListItem::without_children`), typically a local variable holding that
 /// derived value, never the original tree node. Field order and types match
-/// identical between the two; [`super::store::IndexStore::read_lists`] and
+/// exactly between the two; [`super::store::IndexStore::read_lists`] and
 /// [`super::store::IndexStore::read_lists_for_path`] deserialize the bytes back
 /// as an owned [`ListEntry`].
 #[derive(Serialize)]

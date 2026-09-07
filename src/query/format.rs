@@ -71,8 +71,15 @@ impl QueryDisplayFormat {
     ///
     /// # Errors
     ///
-    /// Returns query errors for malformed field paths, table column mismatches,
-    /// or task-list rendering on page rows.
+    /// - [`FieldPath`]: a column or list field path is malformed.
+    /// - [`TableColumnCountMismatch`]: `Self::Table` headers and columns differ
+    ///   in length.
+    /// - [`TaskListRequiresTaskRows`]: `Self::TaskList` renders page-level
+    ///   rows.
+    ///
+    /// [`FieldPath`]: QueryError::FieldPath
+    /// [`TableColumnCountMismatch`]: QueryError::TableColumnCountMismatch
+    /// [`TaskListRequiresTaskRows`]: QueryError::TaskListRequiresTaskRows
     pub(super) fn render(&self, rows: &[QueryRow]) -> QueryResult<String> {
         match self {
             Self::Table {

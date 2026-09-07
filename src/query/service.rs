@@ -111,7 +111,9 @@ impl QueryService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if candidate resolution or storage reads fail.
+    /// - `IndexError` if resolving candidate paths against `store` fails.
+    /// - `IndexError` if batch-reading notes, files, or links from `store`
+    ///   fails.
     #[inline]
     pub(crate) fn run_from_store(
         &self,
@@ -171,7 +173,9 @@ impl QueryService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if syncing the index or querying the store fails.
+    /// - `IndexError` if `IndexerService::sync` fails to refresh the persisted
+    ///   index.
+    /// - `IndexError` if `Self::run_from_store` fails against the synced store.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     pub fn sync_and_run(
