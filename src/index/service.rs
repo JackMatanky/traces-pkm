@@ -217,8 +217,8 @@ impl IndexerService {
     #[inline]
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
         let store = IndexStore::open(&self.root)?;
-        let current_files = self.scan()?;
-        let (persisted_files, prev_links) = store.read_files_and_links()?;
+        let (current_files, persisted_files, prev_links) =
+            self.scan_and_read_persisted(&store)?;
         let delta = IndexDelta::compute(&current_files, &persisted_files);
 
         if delta.is_empty() {
@@ -259,8 +259,8 @@ impl IndexerService {
     #[inline]
     pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
         let store = IndexStore::open(&self.root)?;
-        let current_files = self.scan()?;
-        let (persisted_files, prev_links) = store.read_files_and_links()?;
+        let (current_files, persisted_files, prev_links) =
+            self.scan_and_read_persisted(&store)?;
         let delta = IndexDelta::compute(&current_files, &persisted_files);
         if delta.is_empty() {
             return Ok(store);
@@ -282,6 +282,29 @@ impl IndexerService {
         )?;
         Self::log_sync(&delta, &outcome.inlink_delta);
         Ok(store)
+    }
+
+    /// Scans this service's root's current filesystem state and reads the
+    /// persisted state ([`FileBase`]s and inbound links) in parallel.
+    ///
+    /// The two reads are fully independent - one walks the filesystem, the
+    /// other reads `index.redb` - so running them concurrently overlaps
+    /// their I/O latency instead of paying it sequentially. Shared by
+    /// [`Self::refresh_with_report`] and [`Self::sync`], both of which need
+    /// exactly this pair before computing an [`IndexDelta`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if scanning disk or reading the store fails.
+    fn scan_and_read_persisted(
+        &self,
+        store: &IndexStore,
+    ) -> IndexResult<(Vec<FileBase>, Vec<FileBase>, InlinkMap)> {
+        let (scanned, persisted) =
+            rayon::join(|| self.scan(), || store.read_files_and_links());
+        let current_files = scanned?;
+        let (persisted_files, prev_links) = persisted?;
+        Ok((current_files, persisted_files, prev_links))
     }
 
     fn assemble_refreshed_index(
