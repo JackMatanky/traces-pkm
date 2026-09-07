@@ -81,9 +81,10 @@ mod tests {
 
         use super::*;
         use crate::{
+            DirTreeError,
             cli::CwdGuard,
             config::ConfigLoadError,
-            index::{IndexBuilderError, IndexError, IndexerService},
+            index::{IndexError, IndexerService},
         };
 
         #[test]
@@ -202,7 +203,7 @@ mod tests {
                 Index.run(&service).expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {
-                source: IndexError::Builder(IndexBuilderError::Scan { .. }),
+                source: IndexError::Walk(DirTreeError::NodeInaccessible { .. }),
                 ..
             }));
         }

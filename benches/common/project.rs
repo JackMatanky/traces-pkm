@@ -225,7 +225,7 @@ fn write_attachment_files(root: &Path) {
 /// # Panics
 ///
 /// Panics if the temporary project cannot be created, indexed, or persisted.
-pub(crate) fn setup_persisted_project(
+pub fn setup_persisted_project(
     note_count: usize,
     shape: ProjectShape,
 ) -> (TempDir, IndexerService) {
@@ -267,7 +267,7 @@ pub(crate) fn setup_unpersisted_project(
 /// # Panics
 ///
 /// Panics if the rewritten note path escapes `root` or cannot be written.
-pub(crate) fn rewrite_note(
+pub fn rewrite_note(
     root: &Path,
     shape: ProjectShape,
     note_index: usize,

@@ -1,3 +1,11 @@
+//! Boolean expression grammar shared by source and filter queries.
+//!
+//! [`parse_boolean_expr`] builds a [`BooleanExpr`] with `not` > `and` > `or`
+//! precedence and parenthesized grouping. Atom recognition is delegated to
+//! [`AtomParser`] implementations ([`SourceAtom`](super::SourceAtom) for
+//! `--from`, [`FilterAtom`](super::filter::FilterAtom) for `--where`); the
+//! shared parser only interprets [`LogicalControl`] tokens.
+
 use miette::SourceSpan;
 
 use crate::{
@@ -5,10 +13,7 @@ use crate::{
     query::error::{QueryBuilderError, QuerySyntaxError},
 };
 
-/// Binary logical operators shared by source and filter expressions.
-///
-/// Each variant corresponds to multiple syntactic spellings: `AND`/`and`/`&&`
-/// for conjunction, `OR`/`or`/`||` for disjunction.
+/// Binary logical operators and their accepted spellings.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`.
@@ -31,26 +36,18 @@ impl TryFrom<&str> for LogicalOp {
     }
 }
 
-/// Logical control syntax recognized independently of domain-specific atoms.
-///
-/// The shared parser uses these to build the expression tree without knowing
-/// the specifics of the source or filter language.
+/// Logical control tokens consumed by the shared expression parser.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalControl {
-    /// A binary logical operator.
     Operator(LogicalOp),
-    /// Unary logical negation.
     Not,
-    /// An opening grouping parenthesis.
     LeftParen,
-    /// A closing grouping parenthesis.
     RightParen,
 }
 
-/// A parsed boolean expression tree over domain-local atom type `A`.
+/// Boolean expression tree over domain-local atoms.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BooleanExpr<A> {
-    /// A domain-local atom.
     Atom(A),
     /// Every child must match.
     And(Vec<Self>),
@@ -60,22 +57,18 @@ pub(crate) enum BooleanExpr<A> {
     Not(Box<Self>),
 }
 
-/// Domain-specific atom parsing hooks for the shared logical grammar.
+/// Domain-specific atom hooks for the shared logical grammar.
 ///
-/// Implement this trait to plug a domain-specific token type and atom parser
-/// into [`parse_boolean_expr`]. The shared parser handles operator precedence,
-/// grouping, and error recovery, delegating atom recognition to the
-/// implementer.
+/// Implementations supply token classification, atom parsing, and syntax-error
+/// construction while the shared parser owns precedence and grouping.
 pub(super) trait AtomParser {
-    /// The source/filter token type.
     type Token;
-    /// The source/filter atom type.
     type Atom;
 
-    /// Recognizes logical control syntax in a token.
+    /// Maps reserved tokens to logical controls.
     fn control(&self, token: &Self::Token) -> Option<LogicalControl>;
 
-    /// Parses one domain-local atom from the token stream.
+    /// Consumes the next domain-local atom.
     fn parse_atom(
         &self,
         input: &str,
@@ -97,13 +90,14 @@ struct BooleanExprParser<'input, G: AtomParser> {
     grammar: G,
 }
 
+/// Parser function for one precedence tier.
 type ParseTerm<'input, G> =
     fn(
         &mut BooleanExprParser<'input, G>,
     ) -> Result<BooleanExpr<<G as AtomParser>::Atom>, QueryBuilderError>;
 
 impl<A> BooleanExpr<A> {
-    /// Evaluates this tree with the supplied atom predicate.
+    /// Evaluates the tree, short-circuiting `And` and `Or`.
     pub(super) fn is_satisfied_by(
         &self,
         atom_matches: impl Fn(&A) -> bool,
@@ -126,7 +120,7 @@ impl<A> BooleanExpr<A> {
         }
     }
 
-    /// Returns whether any atom satisfies `predicate`.
+    /// Searches the tree until `predicate` matches an atom.
     pub(super) fn has_any_atom(&self, predicate: impl Fn(&A) -> bool) -> bool {
         self.has_any_atom_with(&predicate)
     }
@@ -178,6 +172,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         self.parse_logical_chain(LogicalOp::And, Self::parse_not)
     }
 
+    /// Parses a left-associative `operator` chain, preserving a lone term.
     fn parse_logical_chain(
         &mut self,
         operator: LogicalOp,
@@ -263,13 +258,12 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
 
 /// Parses a complete boolean expression with `not` > `and` > `or` precedence.
 ///
-/// Accepts a pre-tokenized stream and a domain-specific [`AtomParser`] that
-/// handles atom recognition. Returns a [`BooleanExpr`] tree.
+/// Atom recognition is delegated to the supplied [`AtomParser`].
 ///
 /// # Errors
 ///
 /// - [`Syntax`] if the token stream is empty, contains unexpected tokens, has
-///   unbalanced parentheses, or if the domain [`AtomParser`] rejects a token.
+///   unbalanced parentheses, or the domain [`AtomParser`] rejects an atom.
 ///
 /// [`Syntax`]: QueryBuilderError::Syntax
 pub(super) fn parse_boolean_expr<G>(

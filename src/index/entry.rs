@@ -1,4 +1,7 @@
-//! [`FileIndex`] and its constituent [`FileEntry`] rows.
+//! File and list rows persisted by the index.
+//!
+//! [`super::service::IndexerService`] is the only producer; construction flows
+//! through its `build`, `load`, or `refresh` methods.
 
 use std::path::PathBuf;
 
@@ -7,38 +10,27 @@ use serde::{Deserialize, Serialize};
 use super::inlinks::InlinkMap;
 use crate::{FileBase, ListItem, Note};
 
-/// Persisted cache of file records, parsed Note metadata, and derived inbound
-/// links.
+/// Persisted file records with parsed note metadata and derived inbound links.
 ///
-/// Every regular file under the project root contributes one [`FileEntry`]: its
-/// [`FileBase`] metadata, and for Markdown files, its parsed [`Note`] plus
-/// derived inbound links. [`IndexerService`] produces, persists, and loads it;
-/// `FileIndex` itself carries no `&Path`.
-///
-/// Construction always flows through [`IndexerService`]'s [`build`], [`load`],
-/// or [`refresh`] methods, never directly.
+/// Every regular file under the project root contributes one [`FileEntry`].
+/// Markdown files include a parsed [`Note`]; all entries may carry backlinks.
+/// [`IndexerService`] produces, persists, and loads it; `FileIndex` itself
+/// carries no `&Path`.
 ///
 /// [`IndexerService`]: super::service::IndexerService
-/// [`build`]: super::service::IndexerService::build
-/// [`load`]: super::service::IndexerService::load
-/// [`refresh`]: super::service::IndexerService::refresh
 #[derive(Clone, Debug)]
 pub struct FileIndex {
     entries: Box<[FileEntry]>,
 }
 
 impl FileIndex {
-    /// Creates an index from its constituent parts.
-    ///
-    /// Used after scanning, parsing, and inlink derivation are complete.
     pub(super) fn new(entries: Box<[FileEntry]>) -> Self {
         Self {
             entries,
         }
     }
 
-    /// Assembles an index from sorted `files`, sorted `notes`, and an inlink
-    /// map.
+    /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
     pub(crate) fn assemble(
         files: Vec<FileBase>,
         notes: Vec<Note>,
@@ -79,13 +71,10 @@ impl FileIndex {
     }
 }
 
-/// A file's metadata, its optional parsed [`Note`] content, and its inbound
-/// links.
+/// Parsed note metadata and inbound links for one indexed file.
 ///
 /// Notes stay boxed to keep [`FileEntry`]'s stack footprint small (~96 bytes).
-/// Inlinks are stored directly as a boxed slice, allowing both Markdown notes
-/// and non-Markdown attachments (images, PDFs, audio) to carry backlinks with
-/// zero extra wrappers.
+/// Inlinks also apply to non-Markdown attachments such as images and PDFs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileEntry {
     file: FileBase,
@@ -94,7 +83,6 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    /// Creates a new [`FileEntry`].
     pub(super) fn new(file: FileBase, note: Option<Note>) -> Self {
         Self {
             file,
@@ -103,7 +91,7 @@ impl FileEntry {
         }
     }
 
-    /// Returns this entry's [`FileBase`] metadata.
+    /// Returns the record's [`FileBase`] metadata.
     #[inline]
     #[must_use]
     pub fn file(&self) -> &FileBase {
@@ -117,37 +105,27 @@ impl FileEntry {
         self.note.as_deref()
     }
 
-    /// Returns inbound link paths for this entry, or an empty slice if
-    /// absent.
+    /// Returns canonically sorted inbound link paths.
     #[inline]
     #[must_use]
     pub fn inlinks(&self) -> &[PathBuf] {
         &self.inlinks
     }
 
-    /// Sets the inbound links for this entry.
     pub(super) fn set_inlinks(&mut self, inlinks: Box<[PathBuf]>) {
         self.inlinks = inlinks;
     }
 }
 
-/// A persisted record of a single list item and its source note path.
+/// Persisted list item row keyed by source note path and line.
 ///
-/// Wraps a project-relative `path` and the parsed [`ListItem`], mirroring how
-/// note entries wrap [`Note`]. Exposes accessor methods that delegate into the
-/// [`crate::ListItemType`] discriminant, keeping the persistence shape
-/// composable: adding a field to [`crate::TaskListItem`] does not require
-/// updating `ListEntry`'s struct layout.
+/// Stores a project-relative `path` and a flattened [`ListItem`]. `item`'s
+/// descendant lists are always empty (`ListItem::without_children`): each
+/// descendant is persisted as its own `(path, line)` row, avoiding duplicate
+/// subtree storage on every ancestor.
 ///
-/// `item`'s descendant lists are always empty (`ListItem::without_children`): a
-/// `ListEntry` is one row per list item, not per subtree, and each descendant
-/// is persisted as its own, independent `ListEntry`, addressable by its own
-/// `(path, line)` key. Nesting a copy of every descendant inside every
-/// ancestor's row would duplicate that data once per ancestor, growing storage
-/// quadratically with nesting depth for deeply nested lists, unlike note
-/// entries that wrap one [`Note`] once regardless of how deep its lists nest.
-///
-/// Stored in the `LISTS` table in redb, keyed by `(path, line)`.
+/// Accessors delegate to [`crate::ListItemType`] so adding a task field does
+/// not change `ListEntry`'s layout. Rows are stored in redb's `LISTS` table.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListEntry {
     path: String,
@@ -159,8 +137,7 @@ pub struct ListEntry {
     expect(dead_code, reason = "consumed by task queries added in issue 08")
 )]
 impl ListEntry {
-    /// Creates a `ListEntry` from a project-relative `path` and `item`,
-    /// clearing `item`'s descendant lists first (see the type docs).
+    /// Creates a `ListEntry` with descendant lists cleared.
     #[inline]
     #[must_use]
     pub fn new<P: Into<String>>(path: P, item: &ListItem) -> Self {
@@ -177,31 +154,30 @@ impl ListEntry {
         &self.path
     }
 
-    /// Returns the task's status type, or [`None`] if this is not a Task item.
+    /// Task status type, or [`None`] for non-task items.
     #[inline]
     #[must_use]
     pub fn status_type(&self) -> Option<crate::TaskStatusType> {
         self.item.kind().as_task().map(|task| task.status().kind())
     }
 
-    /// Returns the task's priority, or [`None`] if this is not a Task item or
-    /// has no priority.
+    /// Task priority, or [`None`] for non-task items or tasks without priority.
     #[inline]
     #[must_use]
     pub fn priority(&self) -> Option<crate::TaskPriority> {
         self.item.kind().as_task().and_then(crate::TaskListItem::priority)
     }
 
-    /// Returns the task's due date, or [`None`] if this is not a Task item or
-    /// has no due date.
+    /// Task due date, or [`None`] for non-task items or tasks without a due
+    /// date.
     #[inline]
     #[must_use]
     pub fn due_date(&self) -> Option<chrono::NaiveDate> {
         self.item.kind().as_task().and_then(|task| task.dates().due)
     }
 
-    /// Returns `true` if this task item and its entire task subtree are
-    /// resolved, or [`None`] if this is not a Task item.
+    /// Whether this task item and its task subtree are resolved, or [`None`]
+    /// for non-task items.
     #[inline]
     #[must_use]
     pub fn is_fully_complete(&self) -> Option<bool> {
@@ -215,43 +191,42 @@ impl ListEntry {
         self.item.text()
     }
 
-    /// Returns the raw text with only the leading marker prefix stripped.
+    /// Raw text with only the leading marker prefix stripped.
     #[inline]
     #[must_use]
     pub fn raw_text(&self) -> &str {
         self.item.raw_text()
     }
 
-    /// Returns the normalized clean text with task metadata stripped.
+    /// Normalized clean text with task metadata stripped.
     #[inline]
     #[must_use]
     pub fn clean_text(&self) -> &str {
         self.item.clean_text()
     }
 
-    /// Returns the list item's own tags, scanned from its text.
+    /// Tags scanned from the list item's text.
     #[inline]
     #[must_use]
     pub fn tags(&self) -> &[crate::Tag] {
         self.item.tags()
     }
 
-    /// Returns the list item's 1-indexed source line.
+    /// 1-indexed source line.
     #[inline]
     #[must_use]
     pub const fn line(&self) -> crate::SourceLine {
         self.item.line()
     }
 
-    /// Returns the list item's 0-indexed nesting depth.
+    /// 0-indexed nesting depth.
     #[inline]
     #[must_use]
     pub const fn depth(&self) -> u8 {
         self.item.depth()
     }
 
-    /// Returns the immediate parent list item's 1-indexed source line, if
-    /// nested.
+    /// Immediate parent list item's 1-indexed source line, if nested.
     #[inline]
     #[must_use]
     pub const fn parent_line(&self) -> Option<crate::SourceLine> {
@@ -259,16 +234,11 @@ impl ListEntry {
     }
 }
 
-/// Borrowed mirror of [`ListEntry`] used to serialize a `LISTS` row without
-/// cloning the source [`Note`]'s path.
+/// Borrowed `LISTS` row serialized without cloning the source note path.
 ///
-/// `item` still borrows the live tree node directly; callers MUST pass an
-/// item whose descendant lists are already cleared (see
-/// `ListItem::without_children`), typically a local variable holding that
-/// derived value, never the original tree node. Field order and types match
-/// identical between the two; [`super::store::IndexStore::read_lists`] and
-/// [`super::store::IndexStore::read_lists_for_path`] deserialize the bytes
-/// back as an owned [`ListEntry`].
+/// Callers pass a flattened `item` whose descendant lists are already cleared
+/// (see `ListItem::without_children`). Field order and types match
+/// [`ListEntry`] so redb can deserialize the bytes as an owned row.
 #[derive(Serialize)]
 pub(super) struct ListEntryRef<'a> {
     pub(super) path: &'a str,
@@ -280,15 +250,12 @@ pub(super) struct ListEntryRef<'a> {
 pub(crate) struct RowIndex(usize);
 
 impl RowIndex {
-    /// Creates a [`RowIndex`] for the given position into
-    /// [`FileIndex::entries`].
     #[inline]
     #[must_use]
     pub(crate) const fn new(position: usize) -> Self {
         Self(position)
     }
 
-    /// Returns the row index as a `usize`.
     #[inline]
     #[must_use]
     const fn get(self) -> usize {
@@ -296,8 +263,7 @@ impl RowIndex {
     }
 }
 
-/// Merges sorted `files` with sorted `notes`, redistributes `inlinks` into
-/// each entry, and returns boxed [`FileEntry`]s. Used by
+/// Rebuilds indexed entries from sorted persisted rows for
 /// [`super::IndexerService::load`].
 pub(super) fn assemble_entries(
     files: Vec<FileBase>,
@@ -307,8 +273,7 @@ pub(super) fn assemble_entries(
     FileIndex::assemble(files, notes, inlinks).entries
 }
 
-/// Distributes inlink sources from `inlinks` map into each matching
-/// [`FileEntry`].
+/// Moves inlink sources into their matching [`FileEntry`]s.
 pub(super) fn redistribute_inlinks(
     entries: &mut [FileEntry],
     inlinks: InlinkMap,
@@ -327,6 +292,7 @@ pub(super) fn redistribute_inlinks(
 mod tests {
     use super::*;
     use crate::IndexerService;
+
     mod position_lookup {
         use pretty_assertions::assert_eq;
 
@@ -336,9 +302,9 @@ mod tests {
         fn entry_size_stays_under_target() {
             assert!(
                 std::mem::size_of::<FileEntry>() <= 160,
-                "FileEntry grew past its target: Note must stay boxed (its \
-                 boxed (its is 240 bytes); check for an accidentallfield \
-                 before raising this bound"
+                "FileEntry grew past its target: Note must stay boxed (Note \
+                 itself is 240 bytes); check for an accidental field before \
+                 raising this bound"
             );
         }
         #[test]

@@ -1,8 +1,7 @@
-//! Query service executing [`QueryBuilder`] queries over a borrowed
-//! [`FileIndex`].
+//! Query service execution over in-memory and persisted indexes.
 //!
-//! Defines [`QueryService`], which matches notes against candidate source
-//! selectors and applies pre-fetch query plans.
+//! [`QueryService`] evaluates source selectors, applies query plans, and
+//! produces [`QuerySet`] rows for pages or tasks.
 
 use std::{
     path::{Path, PathBuf},
@@ -16,12 +15,10 @@ use super::{
 #[cfg(any(test, feature = "test-utils"))]
 use crate::index::IndexerService;
 use crate::index::{FileIndex, IndexResult, IndexStore, RowIndex};
-/// Query execution engine over a borrowed [`FileIndex`].
+/// Evaluates source expressions against a borrowed [`FileIndex`].
 ///
-/// `QueryService` executes [`QueryBuilder`] specifications against an indexed
-/// repository. It evaluates candidate source expressions, filters page or task
-/// rows, resolves optional File Class hierarchies via an attached
-/// `FileClassExpander`, and produces a [`QuerySet`].
+/// Supports page/task modes, optional File Class expansion, and pending plan
+/// transformations.
 ///
 /// # Examples
 ///
@@ -52,10 +49,7 @@ pub struct QueryService {
 }
 
 impl QueryService {
-    /// Creates a query service configured to read File Class values from
-    /// `class_field`.
-    ///
-    /// Canonicalizes `class_field` so matching is case- and key-normalized.
+    /// Creates a service with case- and key-normalized `class_field` matching.
     #[inline]
     #[must_use]
     pub fn new<S: Into<String>>(class_field: S) -> Self {
@@ -70,7 +64,7 @@ impl QueryService {
         }
     }
 
-    /// Attaches a [`FileClassExpander`] to resolve class hierarchy expansions.
+    /// Attaches class hierarchy expansion.
     #[inline]
     #[must_use]
     pub(crate) fn with_class_expander(
@@ -81,11 +75,7 @@ impl QueryService {
         self
     }
 
-    /// Runs `builder` against `index` and returns a [`QuerySet`].
-    ///
-    /// Resolves candidate notes from `index` according to `builder`'s mode and
-    /// source selector, then attaches any pending transformations to the
-    /// returned [`QuerySet`].
+    /// Applies File Class expansion and plan transformations to `builder`.
     #[inline]
     pub fn run(
         &self,
@@ -105,13 +95,16 @@ impl QueryService {
         QuerySet::new(plan.run(rows))
     }
 
-    /// Executes `builder` directly against `store`, bypassing full
-    /// [`FileIndex`] materialization by resolving only candidate records
-    /// matching `builder`'s source selector.
+    /// Runs `builder` against persisted records without building a full
+    /// [`FileIndex`].
+    ///
+    /// Resolves candidate paths, reads only matching notes/files/inlinks,
+    /// assembles a temporary index, and applies the query plan.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if candidate resolution or storage reads fail.
+    /// - `IndexError` if source resolution or any batch read from `store`
+    ///   fails.
     #[inline]
     pub(crate) fn run_from_store(
         &self,
@@ -126,13 +119,30 @@ impl QueryService {
         }
         let resolver = SourceResolver::new(store);
         let candidate_paths = resolver.resolve(&source)?;
-        let notes = store
-            .read_notes_batch(candidate_paths.iter().map(PathBuf::as_path))?;
-        let matching_files = store
-            .read_files_batch(candidate_paths.iter().map(PathBuf::as_path))?;
-        let inlinks = store.read_links_for_targets(
-            candidate_paths.iter().map(PathBuf::as_path),
-        )?;
+        let (notes_result, (files_result, inlinks_result)) = rayon::join(
+            || {
+                store.read_notes_batch(
+                    candidate_paths.iter().map(PathBuf::as_path),
+                )
+            },
+            || {
+                rayon::join(
+                    || {
+                        store.read_files_batch(
+                            candidate_paths.iter().map(PathBuf::as_path),
+                        )
+                    },
+                    || {
+                        store.read_links_for_targets(
+                            candidate_paths.iter().map(PathBuf::as_path),
+                        )
+                    },
+                )
+            },
+        );
+        let notes = notes_result?;
+        let matching_files = files_result?;
+        let inlinks = inlinks_result?;
         let index =
             Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
         let rows = match mode {
@@ -142,19 +152,15 @@ impl QueryService {
         Ok(QuerySet::new(plan.run(rows)))
     }
 
-    /// Synchronizes `indexer`'s persisted index against current filesystem
-    /// state, then runs `builder` directly against the synced store via
-    /// [`Self::run_from_store`] - the exact cold-read path `traces
-    /// list`/`table`/`task` use, without ever materializing a full
-    /// [`FileIndex`] of every indexed file.
+    /// Syncs `indexer` and runs `builder` through the persisted-store path.
     ///
-    /// Exposed so external benchmarks and tests can exercise this path
-    /// through the public API without naming `IndexStore`, which stays
-    /// crate-private.
+    /// Exposes the cold-read path used by `traces list`, `traces table`, and
+    /// `traces task` without exposing crate-private `IndexStore`.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if syncing the index or querying the store fails.
+    /// - `IndexError` if syncing the persisted index fails.
+    /// - `IndexError` if persisted-store query execution fails.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     pub fn sync_and_run(
@@ -174,6 +180,7 @@ impl QueryService {
         self.matched_file_rows(index, source).collect()
     }
 
+    /// Expands matching notes into one [`QueryRow`] per task list item.
     fn task_rows(
         &self,
         index: &Arc<FileIndex>,
@@ -191,6 +198,7 @@ impl QueryService {
         out
     }
 
+    /// Creates page-level rows for indexed files matching `source`.
     fn matched_file_rows<'b>(
         &'b self,
         index: &'b Arc<FileIndex>,
@@ -215,21 +223,18 @@ impl std::fmt::Debug for QueryService {
     }
 }
 
-/// Candidate path resolver evaluating [`SourceSelector`] expressions directly
-/// against [`IndexStore`] multimap indexes and folder hierarchies.
+/// Store-backed resolver for source selector candidate paths.
 pub(crate) struct SourceResolver<'a> {
     store: &'a IndexStore,
 }
 
 impl<'a> SourceResolver<'a> {
-    /// Creates a resolver scoped to `store`.
     pub(crate) fn new(store: &'a IndexStore) -> Self {
         Self {
             store,
         }
     }
 
-    /// Resolves matching candidate paths for `selector`.
     pub(crate) fn resolve(
         &self,
         selector: &SourceSelector,
@@ -240,6 +245,9 @@ impl<'a> SourceResolver<'a> {
         }
     }
 
+    /// Recursively resolves a boolean source expression, intersecting `And`
+    /// branches and unioning `Or` branches. `Not` is unsupported at the
+    /// store-scoped resolution level and falls back to every indexed path.
     fn resolve_expr(
         &self,
         expr: &BooleanExpr<SourceAtom>,
@@ -272,6 +280,7 @@ impl<'a> SourceResolver<'a> {
         }
     }
 
+    /// Resolves one source atom using tag/class indexes or path matching.
     fn resolve_atom(&self, atom: &SourceAtom) -> IndexResult<Box<[PathBuf]>> {
         match atom {
             SourceAtom::Tag(tag) => self.store.paths_with_tag(tag),
@@ -341,7 +350,6 @@ mod tests {
         query::{QueryBuilder, QueryRow, QuerySet, SourceSelector},
     };
 
-    /// Runs a page-level query via [`QueryService`].
     fn query_pages(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
@@ -350,7 +358,6 @@ mod tests {
             .run(index, QueryBuilder::pages(source.clone()))
     }
 
-    /// Task-level counterpart to [`query_pages`].
     fn query_tasks(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
@@ -413,7 +420,7 @@ mod tests {
             let indexer = IndexerService::new(temp.path());
             indexer.persist(&indexer.build().expect("build")).expect("persist");
 
-            // Edit a.md's tag and refresh incrementally (no explicit rebuild).
+            // Refresh incrementally after removing a tag.
             fs::write(temp.path().join("a.md"), "# A #other")
                 .expect("rewrite a with a different tag");
             indexer.refresh().expect("incremental refresh persists");
@@ -823,7 +830,6 @@ mod tests {
 
         use super::*;
 
-        /// `(completed, text)` pairs for every row in `outcome`, in order.
         fn task_rows(outcome: &QuerySet) -> Vec<(Option<bool>, &str)> {
             outcome
                 .iter()
@@ -1005,9 +1011,8 @@ mod tests {
                 .filter("task.completed == true")
                 .expect("valid filter");
 
-            // The Note has one complete and one incomplete task: filtering
-            // must keep only the matching task row, not both rows from the
-            // one Note that has at least one match.
+            // Filtering must keep only matching task rows, not every row from a
+            // note with one match.
             assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
         }
     }

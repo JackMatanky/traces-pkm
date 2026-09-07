@@ -1,19 +1,14 @@
-//! Markdown display formatting renderers for query result rows.
-//!
-//! Defines [`QueryDisplayFormat`] and [`TaskPathStyle`], which render
-//! [`QueryRow`] collections into Markdown tables, bullet lists, or task list
-//! checkboxes.
+//! Markdown renderers for query result rows.
 
 use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 
-/// Controls whether task list output includes each row's file path.
+/// Controls file-path rendering in task list output.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) enum TaskPathStyle {
-    /// `- [x] text`: path omitted (used by template rendering).
+    /// Omit paths for template rendering.
     #[default]
     None,
-    /// `- [x] text (path)`: path appended in parentheses (used by `traces
-    /// task`).
+    /// Append paths in parentheses for `traces task`.
     Suffix,
 }
 
@@ -36,7 +31,6 @@ pub(super) enum QueryDisplayFormat {
 }
 
 impl QueryDisplayFormat {
-    /// Builds a table display format.
     #[must_use]
     pub(super) fn table(headers: &[&str], columns: &[&str]) -> Self {
         Self::Table {
@@ -51,7 +45,6 @@ impl QueryDisplayFormat {
         }
     }
 
-    /// Builds a bullet-list display format.
     #[must_use]
     pub(super) fn list(field: &str) -> Self {
         Self::List {
@@ -59,7 +52,6 @@ impl QueryDisplayFormat {
         }
     }
 
-    /// Builds a task-list display format.
     #[must_use]
     pub(super) const fn task_list(path_style: TaskPathStyle) -> Self {
         Self::TaskList {
@@ -71,8 +63,15 @@ impl QueryDisplayFormat {
     ///
     /// # Errors
     ///
-    /// Returns query errors for malformed field paths, table column mismatches,
-    /// or task-list rendering on page rows.
+    /// - [`FieldPath`]: a column or list field path is malformed.
+    /// - [`TableColumnCountMismatch`]: `Self::Table` headers and columns differ
+    ///   in length.
+    /// - [`TaskListRequiresTaskRows`]: `Self::TaskList` renders page-level
+    ///   rows.
+    ///
+    /// [`FieldPath`]: QueryError::FieldPath
+    /// [`TableColumnCountMismatch`]: QueryError::TableColumnCountMismatch
+    /// [`TaskListRequiresTaskRows`]: QueryError::TaskListRequiresTaskRows
     pub(super) fn render(&self, rows: &[QueryRow]) -> QueryResult<String> {
         match self {
             Self::Table {
@@ -88,6 +87,7 @@ impl QueryDisplayFormat {
         }
     }
 
+    /// Renders a Markdown table with resolved, escaped cells.
     fn render_table(
         headers: &[String],
         columns: &[String],
@@ -119,6 +119,7 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
+    /// Renders resolved `field` values as Markdown bullets.
     fn render_list(field: &str, rows: &[QueryRow]) -> QueryResult<String> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
@@ -130,6 +131,7 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
+    /// Renders task rows as Markdown checkbox lines.
     fn render_task_list(
         rows: &[QueryRow],
         path_style: TaskPathStyle,
@@ -159,6 +161,8 @@ impl QueryDisplayFormat {
     }
 }
 
+/// Escapes Markdown table cell text by replacing newlines with spaces and
+/// escaping pipes.
 pub(super) fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }

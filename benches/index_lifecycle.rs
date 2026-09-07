@@ -130,12 +130,9 @@ fn observe_load(indexer: &IndexerService) -> FileIndex {
 /// spawns one thread per project rather than sharing across threads.
 fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
     std::thread::scope(|scope| {
-        let handles: Vec<_> = projects
+        projects
             .iter()
             .map(|(_, indexer)| scope.spawn(move || observe_load(indexer)))
-            .collect();
-        handles
-            .into_iter()
             .map(|handle| handle.join().expect("thread panicked"))
             .collect()
     })

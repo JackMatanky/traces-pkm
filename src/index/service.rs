@@ -1,53 +1,34 @@
 //! Index lifecycle service.
 //!
-//! [`IndexerService`] owns a project root and drives the [`super::FileIndex`]
-//! lifecycle through five operations:
+//! [`IndexerService`] scans, parses, persists, loads, refreshes, and syncs one
+//! project root's [`super::FileIndex`] through `IndexStore`.
 //!
-//! - [`build`](IndexerService::build): scan and parse all files into a fresh
-//!   in-memory index.
-//! - [`persist`](IndexerService::persist): write the index to a redb database
-//!   at `.traces/index.redb`.
-//! - [`load`](IndexerService::load): read a previously-persisted index from
-//!   disk.
-//! - [`refresh`](IndexerService::refresh): re-scan, diff against persisted
-//!   state, and atomically write only changed rows, returning a fully
-//!   materialized [`super::FileIndex`].
-//! - [`sync`](IndexerService::sync): the same incremental diff-and-persist step
-//!   as `refresh`, without materializing a [`super::FileIndex`]; for callers
-//!   that only need a few matching rows from the freshly-synced
-//!   [`super::store::IndexStore`], not every indexed note decoded into memory.
-//!
-//! `refresh` and `sync` share one incremental core
-//! ([`IndexerService::compute_sync_outcome`]): diffing considers every indexed
-//! path, and (see that method's doc) recomputes inbound links from only the
-//! touched notes when doing so is provably safe, falling back to a full
-//! recompute otherwise.
-//!
-//! All disk interaction flows through [`super::store::IndexStore`]; this module
-//! owns service-level orchestration, not table-level read/write mechanics.
+//! `refresh` and `sync` share one incremental core: content-only deltas patch
+//! inbound links from touched notes, while path-set changes force a full
+//! recompute because wikilink resolution depends on every indexed path.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
 use rayon::prelude::*;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexResult,
+    FileIndex, INDEX_FILE, IndexError, IndexResult,
     delta::{IndexDelta, InlinkDelta},
     entry::{self, ListEntry},
-    error::IndexBuilderError,
     inlinks::{self, InlinkMap},
     store::IndexStore,
 };
 use crate::{
-    Config, DirTree, DirTreeError, Note, TaskConfig,
+    Config, DirTree, Note, TaskConfig,
     config::FrontmatterConfig,
     file::FileBase,
     note::{MarkdownParserInput, parse_markdown},
 };
-/// Diagnostic summary of an incremental synchronization.
+
+/// Changed-row counts from an incremental synchronization.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct SyncReport {
     upserted: usize,
@@ -56,7 +37,7 @@ pub struct SyncReport {
 }
 
 impl SyncReport {
-    /// Creates a new [`SyncReport`].
+    /// Creates a report from changed-row counts.
     #[inline]
     #[must_use]
     pub const fn new(
@@ -71,21 +52,21 @@ impl SyncReport {
         }
     }
 
-    /// Returns the number of files inserted or updated.
+    /// Files inserted or updated.
     #[inline]
     #[must_use]
     pub const fn upserted(self) -> usize {
         self.upserted
     }
 
-    /// Returns the number of files deleted from the index.
+    /// Files deleted from the index.
     #[inline]
     #[must_use]
     pub const fn deleted(self) -> usize {
         self.deleted
     }
 
-    /// Returns the number of inbound link edges updated.
+    /// Inbound link edges updated.
     #[inline]
     #[must_use]
     pub const fn links_modified(self) -> usize {
@@ -93,6 +74,7 @@ impl SyncReport {
     }
 }
 
+/// State passed across one incremental refresh/sync pipeline.
 struct RefreshContext<'a> {
     store: &'a IndexStore,
     current_files: Vec<FileBase>,
@@ -100,36 +82,18 @@ struct RefreshContext<'a> {
     prev_links: &'a InlinkMap,
 }
 
-/// Result of [`IndexerService::compute_sync_outcome`]: the freshly-resolved
-/// inbound link graph and its diff against the previous state, plus the full
-/// merged note set when computing it required a full recompute anyway (letting
-/// [`IndexerService::assemble_refreshed_index`] skip a second one).
+/// Inbound-link graph, link diff, and optional merged notes from a sync pass.
 struct SyncOutcome {
     current_links: InlinkMap,
     inlink_delta: InlinkDelta,
     all_notes: Option<Vec<Note>>,
 }
 
-/// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
-/// load, refresh, and sync.
+/// Drives the file-index lifecycle for one project root.
 ///
-/// # Lifecycle
-///
-/// 1. Build a fresh in-memory index: [`Self::build`]
-/// 2. Persist to disk: [`Self::persist`]
-/// 3. On subsequent runs, load from disk: [`Self::load`]
-/// 4. Keep the index current: [`Self::refresh`] (full [`FileIndex`],
-///    best-effort persist) or `sync` (crate-internal: persisted store only, no
-///    [`FileIndex`])
-///
-/// # Errors
-///
-/// All methods return `IndexError`. [`Self::refresh`] also logs a
-/// `tracing::warn!` on persist failure without propagating it; `sync`
-/// propagates persist failures instead, since a caller reading straight from
-/// the store (never materializing a [`FileIndex`]) has no in-memory fallback
-/// to fall back on if the store itself stayed stale.
-
+/// `refresh` returns a full [`FileIndex`] and logs persist failures; `sync`
+/// keeps only the persisted store current and propagates persist failures
+/// because it has no in-memory fallback.
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -163,8 +127,9 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, or a Markdown file cannot be parsed.
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if a file's metadata cannot be inspected, or a
+    ///   Markdown file cannot be parsed.
     #[inline]
     pub fn build(&self) -> IndexResult<FileIndex> {
         let files = self.scan()?;
@@ -173,52 +138,44 @@ impl IndexerService {
         Ok(FileIndex::assemble(files, notes, inlinks))
     }
 
-    /// Refreshes the persisted index for this service's root against current
-    /// filesystem state, persisting the fresh result before returning
-    /// (best-effort: a persist failure is logged via `tracing::warn!` and does
-    /// not fail this call).
+    /// Refreshes the persisted index and returns a full in-memory
+    /// [`FileIndex`].
     ///
-    /// Re-scans the root and diffs against the previously persisted index:
+    /// Unchanged Markdown notes reuse persisted parses; changed notes are
+    /// parsed from disk; deleted files vanish with the fresh scan. Persist
+    /// failures are logged and the refreshed in-memory index is still
+    /// returned.
     ///
-    /// - Unchanged Markdown Notes reuse their parsed [`crate::Note`].
-    /// - Added or changed Markdown Notes are parsed from disk.
-    /// - Deleted files disappear because they are absent from the fresh scan.
-    ///
-    /// Derived inlinks are recomputed in full when a Note is added or removed,
-    /// or when a changed Note's outlink targets actually differ from its
-    /// previously-persisted value (backdating skips the recompute otherwise;
-    /// see `RefreshCache::reconcile_note`). A full recompute (not a per-note
-    /// patch) is required because link target resolution considers every
-    /// indexed Note: an unedited Note's *resolved* target can change when an
-    /// unrelated Note is added or removed. For example, a wikilink that was
-    /// ambiguous becomes resolvable once one of the ambiguous candidates is
-    /// deleted.
+    /// Inlinks are patched only for content-only deltas. Any added, deleted, or
+    /// renamed path forces a full recompute because an unedited note's resolved
+    /// wikilink target can change when candidate paths change.
     ///
     /// # Errors
     ///
-    /// - `IndexError::Builder` if a directory cannot be read, a file's metadata
-    ///   cannot be inspected, a Markdown file cannot be parsed, or an unchanged
-    ///   Note's previous value cannot be recalled.
-    /// - `IndexError::Store` if the previously persisted index cannot be
-    ///   loaded.
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if file metadata cannot be inspected, a
+    ///   Markdown file cannot be parsed, or an unchanged note cannot be
+    ///   recalled.
+    /// - `IndexError::Store` if the persisted index cannot be opened or read.
     #[inline]
     pub fn refresh(&self) -> IndexResult<FileIndex> {
         let (index, _) = self.refresh_with_report()?;
         Ok(index)
     }
 
-    /// Refreshes the persisted index for this service's root against current
-    /// filesystem state and returns a [`SyncReport`].
+    /// Refreshes the persisted index and returns changed-row counts.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if scanning disk, opening the database, or
-    /// persisting updates fails.
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if file metadata cannot be inspected, a
+    ///   Markdown file cannot be parsed, or an unchanged note cannot be
+    ///   recalled.
+    /// - `IndexError::Store` if the persisted index cannot be opened or read.
     #[inline]
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
-        let store = IndexStore::open(&self.root)?;
-        let current_files = self.scan()?;
-        let (persisted_files, prev_links) = store.read_files_and_links()?;
+        let (store, current_files, persisted_files, prev_links) =
+            self.open_scan_and_read_persisted()?;
         let delta = IndexDelta::compute(&current_files, &persisted_files);
 
         if delta.is_empty() {
@@ -236,31 +193,24 @@ impl IndexerService {
         self.assemble_refreshed_index(ctx, &delta)
     }
 
-    /// Synchronizes the persisted index for this service's root against current
-    /// filesystem state, without materializing a [`FileIndex`].
+    /// Synchronizes the persisted index without materializing a [`FileIndex`].
     ///
-    /// Shares [`Self::compute_sync_outcome`] with [`Self::refresh_with_report`]
-    /// for the actual diff-and-relink work, then persists and returns the
-    /// now-current [`IndexStore`] handle directly. For a cold, empty delta this
-    /// does zero note decoding and zero writes.
-    ///
-    /// Intended for callers (cold CLI reads via
-    /// [`crate::query::QueryService::run_from_store`]) that only need a few
-    /// matching rows from the store, not every indexed note decoded into memory
-    /// to build a [`FileIndex`].
+    /// Cold empty deltas return the opened store without decoding notes or
+    /// writing rows. Persist failures are propagated because callers read
+    /// directly from the returned store.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if scanning disk, opening the database, or
-    /// persisting updates fails. Unlike [`Self::refresh`], a persist failure
-    /// here is propagated rather than logged and swallowed: this method's
-    /// entire contract is that the returned store is current, and there is no
-    /// in-memory [`FileIndex`] to fall back on if it silently isn't.
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if file metadata cannot be inspected, a
+    ///   Markdown file cannot be parsed, or an unchanged note cannot be
+    ///   recalled.
+    /// - `IndexError::Store` if the database cannot be opened or read, required
+    ///   note bodies cannot be read, or incremental persistence fails.
     #[inline]
     pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
-        let store = IndexStore::open(&self.root)?;
-        let current_files = self.scan()?;
-        let (persisted_files, prev_links) = store.read_files_and_links()?;
+        let (store, current_files, persisted_files, prev_links) =
+            self.open_scan_and_read_persisted()?;
         let delta = IndexDelta::compute(&current_files, &persisted_files);
         if delta.is_empty() {
             return Ok(store);
@@ -282,6 +232,40 @@ impl IndexerService {
         )?;
         Self::log_sync(&delta, &outcome.inlink_delta);
         Ok(store)
+    }
+
+    /// Opens `IndexStore`, scans the filesystem, and reads persisted files and
+    /// inlinks.
+    ///
+    /// The filesystem walk runs concurrently with `IndexStore::open` and the
+    /// store read. Only the read waits on open; the scan continues
+    /// independently.
+    ///
+    /// # Errors
+    ///
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if file metadata cannot be inspected.
+    /// - `IndexError::Store` if opening or reading the store fails.
+    #[allow(
+        clippy::type_complexity,
+        reason = "pre-existing tuple in return type"
+    )]
+    fn open_scan_and_read_persisted(
+        &self,
+    ) -> IndexResult<(IndexStore, Vec<FileBase>, Vec<FileBase>, InlinkMap)>
+    {
+        let (opened, scanned) = rayon::join(
+            || -> IndexResult<_> {
+                let store = IndexStore::open(&self.root)?;
+                let (persisted_files, prev_links) =
+                    store.read_files_and_links()?;
+                Ok((store, persisted_files, prev_links))
+            },
+            || self.scan(),
+        );
+        let (store, persisted_files, prev_links) = opened?;
+        let current_files = scanned?;
+        Ok((store, current_files, persisted_files, prev_links))
     }
 
     fn assemble_refreshed_index(
@@ -313,12 +297,9 @@ impl IndexerService {
         );
         let all_notes = match outcome.all_notes {
             Some(notes) => notes,
-            None => Self::merge_refreshed_notes(
-                ctx.store,
-                ctx.persisted_files,
-                delta,
-                &modified_notes,
-            )?,
+            None => {
+                Self::merge_refreshed_notes(ctx.store, delta, &modified_notes)?
+            }
         };
         let index = FileIndex::assemble(
             ctx.current_files,
@@ -328,30 +309,17 @@ impl IndexerService {
         Ok((index, report))
     }
 
-    /// Computes the fresh inbound-link graph and its diff against `prev_links`
-    /// for one non-empty `delta`, deriving it incrementally from only
-    /// `modified_notes` when doing so is provably safe, and by full
-    /// recomputation over every persisted note otherwise. Shared by
-    /// [`Self::sync`] and [`Self::assemble_refreshed_index`]; does not persist
-    /// anything itself, so each caller can apply its own failure-handling
-    /// contract around [`super::store::IndexStore::persist_incremental`].
+    /// Computes fresh inlinks and their diff for one non-empty `delta`.
     ///
-    /// # Correctness
-    ///
-    /// Link resolution considers every indexed file's path and stem, not just a
-    /// source note's own outlinks: an unedited note's *resolved* target can
-    /// change when an unrelated file is added, removed, or renamed elsewhere in
-    /// the vault (e.g. an ambiguous wikilink becomes resolvable once one of the
-    /// ambiguous candidates is deleted). The incremental patch
-    /// ([`Self::patch_links`]) is therefore sound only when the set of indexed
-    /// paths is unchanged ([`Self::is_paths_unchanged`]); any add/remove/rename
-    /// falls back to a full recompute over every note, matching
-    /// [`InlinkMap::new`]'s original full-vault semantics exactly.
+    /// Content-only deltas patch from `modified_notes`; any path-set change
+    /// does a full recompute and returns merged notes for reuse. Link
+    /// resolution uses every indexed path and stem, so unedited notes can
+    /// retarget when unrelated candidate paths change.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if the full-recompute fallback cannot read every
-    /// persisted note's body.
+    /// - `IndexError::Store` if the full-recompute fallback cannot read every
+    ///   persisted note body.
     fn compute_sync_outcome(
         ctx: &RefreshContext<'_>,
         delta: &IndexDelta,
@@ -370,12 +338,8 @@ impl IndexerService {
                 );
                 (links, None)
             } else {
-                let all_notes = Self::merge_refreshed_notes(
-                    store,
-                    persisted_files,
-                    delta,
-                    modified_notes,
-                )?;
+                let all_notes =
+                    Self::merge_refreshed_notes(store, delta, modified_notes)?;
                 let links = InlinkMap::new(&all_notes, current_files);
                 (links, Some(all_notes))
             };
@@ -387,11 +351,10 @@ impl IndexerService {
         })
     }
 
-    /// Returns `true` if `delta` only changes content at already-indexed paths,
-    /// with nothing added or removed - the one case where link resolution is
-    /// guaranteed unaffected for *unedited* notes (see
-    /// [`Self::compute_sync_outcome`]'s doc), making an incremental link patch
-    /// sound.
+    /// Reports whether `delta` changed only content at previously indexed
+    /// paths.
+    ///
+    /// Only this case leaves link resolution for unedited notes invariant.
     fn is_paths_unchanged(
         delta: &IndexDelta,
         persisted_files: &[FileBase],
@@ -404,13 +367,10 @@ impl IndexerService {
             })
     }
 
-    /// Patches `prev_links` for a content-only edit: drops every edge sourced
-    /// by `modified_notes`, then re-resolves and re-adds their current outlinks
-    /// against `current_files`. Sound only under [`Self::is_paths_unchanged`]
-    /// (see [`Self::compute_sync_outcome`]'s doc): `current_files` is used only
-    /// to resolve link targets, and being unchanged from the file set
-    /// `prev_links` itself was built against, it yields identical resolutions
-    /// for every note this call does not touch.
+    /// Replaces inbound edges sourced by modified notes after re-resolving
+    /// their current outlinks.
+    ///
+    /// Sound only when [`Self::is_paths_unchanged`] holds.
     fn patch_links(
         prev_links: &InlinkMap,
         modified_notes: &[Note],
@@ -423,8 +383,6 @@ impl IndexerService {
         prev_links.without_sources(&edited).with_edges(new_edges)
     }
 
-    /// Emits the one diagnostic trace point for a completed synchronization,
-    /// shared by [`Self::sync`] and [`Self::assemble_refreshed_index`].
     fn log_sync(delta: &IndexDelta, inlink_delta: &InlinkDelta) {
         let report = SyncReport::new(
             delta.upserted().len(),
@@ -442,29 +400,38 @@ impl IndexerService {
         );
     }
 
+    /// Merges persisted notes with deletions and reparsed notes for a full
+    /// recompute.
+    ///
+    /// Bulk-reads all persisted notes because this fallback needs the full note
+    /// set. Path-indexed deletes and replacements avoid an `O((deleted +
+    /// modified) * n)` scan over the persisted note count `n`.
     fn merge_refreshed_notes(
         store: &IndexStore,
-        persisted_files: &[FileBase],
         delta: &IndexDelta,
         modified_notes: &[crate::Note],
     ) -> IndexResult<Vec<crate::Note>> {
-        let note_paths: Vec<&Path> = persisted_files
-            .iter()
-            .filter(|f| f.format() == crate::file::FileFormat::Note)
-            .map(FileBase::path)
-            .collect();
-        let mut all_notes = store.read_notes_batch(note_paths)?;
-        for del in delta.deleted() {
-            all_notes.retain(|n| n.path() != del.path());
+        let mut all_notes = store.read_all_notes()?;
+
+        if !delta.deleted().is_empty() {
+            let deleted: HashSet<&Path> =
+                delta.deleted().iter().map(FileBase::path).collect();
+            all_notes.retain(|n| !deleted.contains(n.path()));
         }
+
+        let mut index_of_path: HashMap<PathBuf, usize> = all_notes
+            .iter()
+            .enumerate()
+            .map(|(idx, note)| (note.path().to_path_buf(), idx))
+            .collect();
         for new_note in modified_notes {
-            if let Some(idx) =
-                all_notes.iter().position(|n| n.path() == new_note.path())
+            if let Some(&idx) = index_of_path.get(new_note.path())
+                && let Some(target) = all_notes.get_mut(idx)
             {
-                if let Some(target) = all_notes.get_mut(idx) {
-                    *target = new_note.clone();
-                }
+                *target = new_note.clone();
             } else {
+                index_of_path
+                    .insert(new_note.path().to_path_buf(), all_notes.len());
                 all_notes.push(new_note.clone());
             }
         }
@@ -472,15 +439,14 @@ impl IndexerService {
         Ok(all_notes)
     }
 
-    fn parse_notes(
-        &self,
-        files: &[FileBase],
-    ) -> Result<Vec<crate::Note>, IndexBuilderError> {
+    /// Parses every Markdown-classified file in `files` in parallel, stopping
+    /// at the first parse failure.
+    fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<crate::Note>> {
         let note_files: Vec<&FileBase> = files
             .iter()
             .filter(|f| f.format() == crate::file::FileFormat::Note)
             .collect();
-        let results: Vec<Result<crate::Note, IndexBuilderError>> = note_files
+        let results: Vec<IndexResult<crate::Note>> = note_files
             .into_par_iter()
             .map(|file| self.parse_note(file))
             .collect();
@@ -491,14 +457,13 @@ impl IndexerService {
         Ok(notes)
     }
 
-    fn parse_note(
-        &self,
-        file: &FileBase,
-    ) -> Result<crate::Note, IndexBuilderError> {
+    /// Reads and parses the Markdown file at `file`'s path, resolved relative
+    /// to this service's root.
+    fn parse_note(&self, file: &FileBase) -> IndexResult<crate::Note> {
         let full_path = self.root.join(file.path());
         let content =
             std::fs::read_to_string(&full_path).map_err(|source| {
-                IndexBuilderError::NoteParse {
+                IndexError::NoteParse {
                     path: full_path,
                     source,
                 }
@@ -549,7 +514,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` if the database cannot be opened or read.
+    /// - `IndexError::Store` if the database cannot be opened or read.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -563,19 +528,17 @@ impl IndexerService {
         Ok(store.read_all_lists()?)
     }
 
-    /// Recursively scans this service's root for regular files, skipping
-    /// `.git` directories, the index database, and symlinks. The directory
-    /// walk itself is sequential, but per-file metadata reads (`stat`) run in
-    /// parallel via `rayon`: each is an independent syscall, so fanning them
-    /// out across threads overlaps their latency instead of paying it
-    /// sequentially file-by-file.
+    /// Recursively scans this service's root for regular files, skipping `.git`
+    /// directories, the index database, and symlinks. Metadata reads run in
+    /// parallel via `rayon` because each is an independent syscall; results are
+    /// path-sorted.
     ///
     /// # Errors
     ///
-    /// - [`IndexBuilderError::Scan`] if a directory cannot be read or a file's
-    ///   metadata cannot be inspected.
+    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::NoteParse`] if a file's metadata cannot be inspected.
     #[inline]
-    pub(super) fn scan(&self) -> Result<Vec<FileBase>, IndexBuilderError> {
+    pub(super) fn scan(&self) -> IndexResult<Vec<FileBase>> {
         let index_db = self.root.join(INDEX_FILE);
         let paths = DirTree::descendants(&self.root)
             .filter(|node| {
@@ -585,45 +548,31 @@ impl IndexerService {
             .filter_map(|node| {
                 let node = match node {
                     Ok(node) => node,
-                    Err(error) => return Some(Err(scan_error(error))),
+                    Err(error) => return Some(Err(IndexError::Walk(error))),
                 };
                 let path = node.path();
                 (node.file_type().is_file() && path != index_db)
                     .then(|| Ok(path.to_path_buf()))
             })
-            .collect::<Result<Vec<PathBuf>, IndexBuilderError>>()?;
+            .collect::<IndexResult<Vec<PathBuf>>>()?;
         let mut files = paths
             .into_par_iter()
             .map(|path| scan_file_metadata(&path, &self.root))
-            .collect::<Result<Vec<FileBase>, IndexBuilderError>>()?;
+            .collect::<IndexResult<Vec<FileBase>>>()?;
         files.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
 
-/// Converts a [`DirTreeError`] into the builder's scan error variant.
-fn scan_error(error: DirTreeError) -> IndexBuilderError {
-    let (path, source) = error.into_parts();
-    IndexBuilderError::Scan {
-        path,
-        source,
-    }
-}
-
-/// Reads filesystem metadata for `path` and builds its [`FileBase`], relative
-/// to `root`. Called in parallel across every scanned file by
-/// [`IndexerService::scan`].
-fn scan_file_metadata(
-    path: &Path,
-    root: &Path,
-) -> Result<FileBase, IndexBuilderError> {
+/// Builds `path`'s [`FileBase`] from metadata relative to `root`.
+fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileBase> {
     let metadata =
-        std::fs::metadata(path).map_err(|source| IndexBuilderError::Scan {
+        std::fs::metadata(path).map_err(|source| IndexError::NoteParse {
             path: path.to_path_buf(),
             source,
         })?;
     FileBase::from_metadata(path, root, &metadata).map_err(|source| {
-        IndexBuilderError::Scan {
+        IndexError::NoteParse {
             path: path.to_path_buf(),
             source,
         }
@@ -646,7 +595,6 @@ mod tests {
         query::{QueryBuilder, QueryService, QuerySet, SourceSelector},
     };
 
-    /// Runs a page-level query via [`QueryService`].
     fn query_pages(
         index: &Arc<FileIndex>,
         source: &SourceSelector,
@@ -727,10 +675,10 @@ mod tests {
 
         let result = IndexerService::new(temp.path()).build();
         let err = result.expect_err("must fail on unreadable file");
-        let IndexError::Builder(IndexBuilderError::NoteParse {
+        let IndexError::NoteParse {
             path,
             ..
-        }) = err
+        } = err
         else {
             return;
         };
@@ -742,7 +690,6 @@ mod tests {
             .expect("restore bad_z");
     }
 
-    /// Finds a [`Note`] by project-relative path in `index`.
     fn find_note<'a>(index: &'a FileIndex, path: &str) -> Option<&'a Note> {
         index
             .entries()
@@ -755,7 +702,6 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::error::IndexBuilderError;
 
         #[test]
         fn extracts_note_metadata_only_for_markdown_files() {
@@ -845,10 +791,7 @@ mod tests {
 
             let result = IndexerService::new(temp.path()).build();
 
-            assert!(matches!(
-                result,
-                Err(IndexError::Builder(IndexBuilderError::NoteParse { .. }))
-            ));
+            assert!(matches!(result, Err(IndexError::NoteParse { .. })));
         }
 
         #[test]
@@ -900,9 +843,8 @@ mod tests {
 
         #[test]
         fn orders_sibling_files_and_directories_by_relative_path() {
-            // Arrange: `b.txt` sorts AFTER anything inside `b` under
-            // component-wise path comparison (`b` < `b.txt`), which matches
-            // the walk's name-ordered depth-first traversal.
+            // Component-wise comparison orders `b` before `b.txt`, matching the
+            // depth-first walk.
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::create_dir_all(root.join("b")).expect("mkdir b");
@@ -989,7 +931,7 @@ mod tests {
                 .scan()
                 .expect_err("unreadable dir fails");
 
-            assert!(matches!(error, IndexBuilderError::Scan { .. }));
+            assert!(matches!(error, IndexError::Walk(_)));
         }
     }
 
@@ -1003,11 +945,8 @@ mod tests {
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
         };
 
-        /// Writes three notes (`a.md`/`b.md`/`c.md`) under `root`, builds
-        /// and persists the index, and returns the scoped service plus the
-        /// initial build's `a`/`c` notes, used to assert they persist
-        /// byte-identical after an incremental refresh that only changes
-        /// `b.md`.
+        /// Seeds three notes and returns the service plus untouched `a`/`c`
+        /// baselines.
         fn seed_three_notes(root: &Path) -> (IndexerService, Note, Note) {
             fs::write(root.join("a.md"), "---\ntitle: A\n---\nBody A.")
                 .expect("write a");
@@ -1296,7 +1235,6 @@ mod tests {
 
         #[test]
         fn refresh_updates_changed_path_in_persisted_store() {
-            // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let (indexer, ..) = seed_three_notes(temp.path());
             fs::write(
@@ -1305,11 +1243,9 @@ mod tests {
             )
             .expect("rewrite b");
 
-            // Act
             let (_refreshed, report) =
                 indexer.refresh_with_report().expect("refresh index");
 
-            // Assert: observable persistence state
             assert_eq!(report.upserted, 1);
             assert_eq!(report.deleted, 0);
             let store = IndexStore::open(temp.path()).expect("open store");
@@ -1327,7 +1263,6 @@ mod tests {
         #[test]
         fn persist_incremental_preserves_unchanged_notes_and_updates_changed_note()
          {
-            // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let (indexer, original_a, original_c) =
                 seed_three_notes(temp.path());
@@ -1338,17 +1273,13 @@ mod tests {
             .expect("rewrite b");
             let refreshed = indexer.refresh().expect("refresh index");
 
-            // Act
             indexer.persist(&refreshed).expect("persist refreshed index");
             let loaded = indexer.load().expect("load index");
 
-            // Assert: the two untouched notes persisted byte-identical to
-            // their original write; the incremental write path never
-            // touched their rows.
+            // Untouched notes persist byte-identical to their original writes.
             assert_eq!(find_note(&loaded, "a.md"), Some(&original_a));
             assert_eq!(find_note(&loaded, "c.md"), Some(&original_c));
 
-            // The changed note reflects the rewrite.
             let loaded_b = find_note(&loaded, "b.md").expect("note b");
             assert_eq!(
                 loaded_b.frontmatter().and_then(|fm| fm.get("title").cloned()),
@@ -1358,7 +1289,6 @@ mod tests {
 
         #[test]
         fn noop_refresh_after_incremental_persist_reports_empty_delta() {
-            // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let (indexer, ..) = seed_three_notes(temp.path());
             fs::write(
@@ -1368,12 +1298,9 @@ mod tests {
             .expect("rewrite b");
             indexer.refresh().expect("refresh index");
 
-            // Act
             let (_, report) =
                 indexer.refresh_with_report().expect("noop refresh");
 
-            // Assert: a refresh against the now-persisted, unchanged
-            // filesystem state reports no further changes.
             assert_eq!(report, SyncReport::default());
         }
 
@@ -1458,7 +1385,7 @@ mod tests {
             assert_eq!(links.inlinks_of(Path::new("new-target.md")), [
                 PathBuf::from("linker.md")
             ]);
-            assert!(!links.contains_target(Path::new("old-target.md")));
+            assert!(!links.has_target(Path::new("old-target.md")));
         }
 
         #[test]
@@ -1747,38 +1674,29 @@ mod tests {
 
             let refreshed = indexer.refresh().expect("refresh index");
 
-            // The refreshed index reflects the new content...
             assert_eq!(
                 find_note(&refreshed, "note.md")
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),
-                None // "# Revised" has no frontmatter
+                None
             );
-            // ...and refresh() persists internally, so a fresh load from
-            // disk reflects the same revised content without a separate
-            // `persist()` call.
+            // No separate `persist` call precedes this load.
             let loaded = indexer.load().expect("load index");
             assert_eq!(
                 find_note(&loaded, "note.md")
                     .and_then(Note::frontmatter)
                     .and_then(|fm| fm.fields().values().next())
                     .and_then(|v| v.as_str()),
-                None // "# Revised" content, persisted by refresh() itself
+                None
             );
         }
 
         #[test]
         fn resolves_stale_ambiguous_wikilink_after_unrelated_deletion() {
-            // `a.md`'s own bytes never change in this test. Its `[[foo]]`
-            // link starts ambiguous (two Notes named `foo`) and later
-            // becomes resolvable purely because a *different* Note is
-            // deleted. `refresh`'s per-file staleness check would mark
-            // `a.md` "unchanged, reused" and skip re-parsing it; this proves
-            // inlinks must come from a full recompute over every indexed
-            // Note (deleting a Note always forces one, per
-            // `RefreshCache::diff_files`), not a patch limited to the
-            // notes `refresh` actually re-parsed.
+            // `a.md` is never reparsed: deleting one `foo.md` changes an
+            // ambiguous `[[foo]]` into a resolvable link, so `refresh` must
+            // full-recompute inlinks when indexed paths change.
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
             fs::create_dir_all(temp.path().join("archive"))

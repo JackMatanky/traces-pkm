@@ -1,4 +1,4 @@
-//! Zero-copy resolved field value types for query resolution.
+//! Zero-copy resolved field values.
 
 use std::{fmt::Write as _, path::PathBuf};
 
@@ -23,6 +23,8 @@ pub(super) enum QueryFieldValueRef<'a> {
 }
 
 impl QueryFieldValueRef<'_> {
+    /// Materializes this resolved value as metadata, converting `Timestamp` to
+    /// date text.
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -43,6 +45,8 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
+    /// Appends the shared query-display text used by list joins, table cells,
+    /// and text output.
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
             Self::Null => {}
@@ -94,8 +98,7 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
-    /// Returns whether this resolved field equals an owned literal under filter
-    /// comparison rules (`==`, `!=`).
+    /// Applies filter equality semantics (`==`, `!=`) to `literal`.
     #[expect(
         clippy::float_cmp,
         reason = "query numeric equality intentionally uses exact parsed \
@@ -152,16 +155,15 @@ impl QueryFieldValueRef<'_> {
                 matches!(literal, NoteFieldValue::Object(other) if *value == other)
             }
             Self::List(_) | Self::Owned(_) => {
-                fields_equal(&self.to_owned_value(), literal)
+                is_field_equal(&self.to_owned_value(), literal)
             }
         }
     }
 
-    /// Evaluates a `contains(field_val, target)` call.
+    /// Evaluates `contains(field_val, target)`.
     ///
-    /// For list fields, matches by exact value or tag prefix (for example,
-    /// `#book` matching `#book/fiction`). For other field kinds, falls back
-    /// to substring containment on stringified values.
+    /// Lists match exact values or descendant tags; string-like fields use
+    /// substring containment.
     pub(super) fn is_containing(&self, target: &NoteFieldValue) -> bool {
         match self {
             Self::List(items) => is_list_containing(items, target),
@@ -240,33 +242,28 @@ impl QueryListValueRef<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Returns whether two resolved [`NoteFieldValue`] instances represent equal
-/// values under filter comparison (`==` and `!=`).
+/// Applies filter equality semantics to metadata values.
 ///
-/// Returns `true` when structural equality (`a == b`) holds, or when both
-/// values stringify (via [`NoteFieldValue::as_str`], which covers `String`,
-/// `Date`, and `Duration`) to the same text. This cross-kind text
-/// normalization allows string literals to match date or duration fields.
-fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
+/// Exact structural equality wins; otherwise string-like values (`String`,
+/// `Date`, `Duration`) compare by text so literals can match typed fields.
+fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || matches!((a.as_str(), b.as_str()), (Some(x), Some(y)) if x == y)
 }
 
+/// Matches exact tags and descendants, so `#book/fiction` satisfies `#book`.
 fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
     item == target_str
         || (item.starts_with('#') && target_str.starts_with('#'))
             && Tag::parse(item).is_ok_and(|tag| tag.is_contained_in(target_str))
 }
 
+/// Matches exact values, or tag descendants when both values stringify to tags.
 fn is_tag_or_value_matching(
     item: &NoteFieldValue,
     target: &NoteFieldValue,
     target_str: Option<&str>,
 ) -> bool {
-    if fields_equal(item, target) {
+    if is_field_equal(item, target) {
         return true;
     }
     let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
@@ -317,6 +314,7 @@ fn append_joined<T>(
     }
 }
 
+/// Uses the shared query-display text rules for owned metadata.
 fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
     match value {
         NoteFieldValue::Null => {}
@@ -464,7 +462,7 @@ mod tests {
         use super::*;
         #[test]
         fn returns_true_for_identical_note_field_values() {
-            assert!(fields_equal(
+            assert!(is_field_equal(
                 &NoteFieldValue::Number(1.0),
                 &NoteFieldValue::Number(1.0)
             ));
@@ -472,7 +470,7 @@ mod tests {
 
         #[test]
         fn returns_false_for_different_note_field_values() {
-            assert!(!fields_equal(
+            assert!(!is_field_equal(
                 &NoteFieldValue::Number(1.0),
                 &NoteFieldValue::Number(2.0)
             ));
@@ -480,7 +478,7 @@ mod tests {
 
         #[test]
         fn returns_true_for_cross_kind_string_and_date_equality() {
-            assert!(fields_equal(
+            assert!(is_field_equal(
                 &NoteFieldValue::String("2024-01-01".into()),
                 &NoteFieldValue::Date("2024-01-01".into())
             ));
