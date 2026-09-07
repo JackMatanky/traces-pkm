@@ -578,12 +578,12 @@ impl IndexerService {
         Ok(store.read_all_lists()?)
     }
 
-    /// Recursively scans this service's root for regular files, skipping
-    /// `.git` directories, the index database, and symlinks. The directory
-    /// walk itself is sequential, but per-file metadata reads (`stat`) run in
-    /// parallel via `rayon`: each is an independent syscall, so fanning them
-    /// out across threads overlaps their latency instead of paying it
-    /// sequentially file-by-file.
+    /// Recursively scans this service's root for regular files, skipping `.git`
+    /// directories, the index database, and symlinks. The directory walk itself
+    /// is sequential, but per-file metadata reads (`stat`) run in parallel via
+    /// `rayon`: each is an independent syscall, so fanning them out across
+    /// threads overlaps their latency instead of paying it sequentially
+    /// file-by-file.
     ///
     /// # Errors
     ///
