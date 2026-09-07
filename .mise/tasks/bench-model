@@ -27,10 +27,10 @@ from pathlib import Path
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkDataPoint:
@@ -101,6 +101,7 @@ class ExtrapolationResult:
 # Criterion output loading
 # ---------------------------------------------------------------------------
 
+
 def load_benchmark_data(criterion_dir: Path) -> list[BenchmarkDataPoint]:
     """Load benchmark measurements from Criterion's JSON output.
 
@@ -166,8 +167,12 @@ def _parse_benchmark_result(
         A parsed data point, or ``None`` on any parse/IO error.
     """
     try:
-        benchmark_json = json.loads((results_dir / "benchmark.json").read_text())
-        estimates_json = json.loads((results_dir / "estimates.json").read_text())
+        benchmark_json = json.loads(
+            (results_dir / "benchmark.json").read_text()
+        )
+        estimates_json = json.loads(
+            (results_dir / "estimates.json").read_text()
+        )
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return None
 
@@ -187,6 +192,7 @@ def _parse_benchmark_result(
 # ---------------------------------------------------------------------------
 # Model fitting
 # ---------------------------------------------------------------------------
+
 
 def fit_performance_models(
     data_points: list[BenchmarkDataPoint],
@@ -210,7 +216,9 @@ def fit_performance_models(
     file_counts = np.array([dp.file_count for dp in data_points])
     mean_seconds = np.array([dp.mean_seconds for dp in data_points])
 
-    total_sum_of_squares = float(np.sum((mean_seconds - np.mean(mean_seconds)) ** 2))
+    total_sum_of_squares = float(
+        np.sum((mean_seconds - np.mean(mean_seconds)) ** 2)
+    )
     if total_sum_of_squares == 0:
         return []
 
@@ -238,7 +246,9 @@ def _fit_linear_model(
         A fitted linear model.
     """
     design_matrix = np.vstack([file_counts, np.ones(len(file_counts))]).T
-    coefficients, _, _, _ = np.linalg.lstsq(design_matrix, mean_seconds, rcond=None)
+    coefficients, _, _, _ = np.linalg.lstsq(
+        design_matrix, mean_seconds, rcond=None
+    )
     predicted = design_matrix @ coefficients
     residual_sum_of_squares = float(np.sum((mean_seconds - predicted) ** 2))
 
@@ -268,7 +278,9 @@ def _fit_log_model(
     """
     n_log_n = file_counts * np.log(file_counts)
     design_matrix = np.vstack([n_log_n, np.ones(len(file_counts))]).T
-    coefficients, _, _, _ = np.linalg.lstsq(design_matrix, mean_seconds, rcond=None)
+    coefficients, _, _, _ = np.linalg.lstsq(
+        design_matrix, mean_seconds, rcond=None
+    )
     predicted = design_matrix @ coefficients
     residual_sum_of_squares = float(np.sum((mean_seconds - predicted) ** 2))
 
@@ -284,6 +296,7 @@ def _fit_log_model(
 # ---------------------------------------------------------------------------
 # Extrapolation
 # ---------------------------------------------------------------------------
+
 
 def extrapolate_to_target_sizes(
     best_model: FittedModel,
@@ -314,6 +327,7 @@ def extrapolate_to_target_sizes(
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
+
 
 def print_report(
     data_points: list[BenchmarkDataPoint],
@@ -346,11 +360,15 @@ def print_report(
 
     best_model = fitted_models[0]
     if best_model.r_squared < 0.95:
-        print(f"\n⚠ Low R² ({best_model.r_squared:.4f}) — extrapolation unreliable.")
+        print(
+            f"\n⚠ Low R² ({best_model.r_squared:.4f}) — extrapolation unreliable."
+        )
         print("  Measure directly at target sizes instead.")
         return
 
-    print(f"\nExtrapolation (best model: {best_model.name}, R²={best_model.r_squared:.4f}):")
+    print(
+        f"\nExtrapolation (best model: {best_model.name}, R²={best_model.r_squared:.4f}):"
+    )
     for ext in extrapolations:
         print(f"  {ext.file_count:>6,} notes: {ext.predicted_seconds:.3f}s")
 
@@ -358,6 +376,7 @@ def print_report(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Load Criterion output, fit models, and report predictions.
@@ -385,7 +404,10 @@ def main() -> None:
 
     fitted_models = fit_performance_models(data_points)
     if not fitted_models:
-        print("Could not fit models (zero variance in measurements?).", file=sys.stderr)
+        print(
+            "Could not fit models (zero variance in measurements?).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     best_model = fitted_models[0]
