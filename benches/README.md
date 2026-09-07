@@ -63,19 +63,18 @@ Sort stress benchmarks (`query_sort.rs`) use a separate sweep:
 
 `benches/common/` provides shared fixtures:
 
-- **`mod.rs`**: `WORKSPACE_FILE_COUNTS`, `quick_file_counts()`, prelude
+- **`mod.rs`**: `WORKSPACE_FILE_COUNTS`, `quick_file_counts()`
 - **`content.rs`**: `ProjectShape` enum, note source generators
 - **`notes.rs`**: Parsed-note fixtures for in-memory benchmarks
 - **`project.rs`**: `TempDir`-backed project fixtures for filesystem benchmarks
 
-### Prelude
+### Imports
 
 ```rust
-use common::prelude::*;
+use common::WORKSPACE_FILE_COUNTS;
+use common::content::ProjectShape;
+use common::project::setup_persisted_project;
 ```
-
-Re-exports: `WORKSPACE_FILE_COUNTS`, `quick_file_counts`, `ProjectShape`,
-`setup_persisted_project`, `rewrite_note`.
 
 ## Task Infrastructure
 
@@ -132,7 +131,7 @@ cargo flamegraph --bench index_lifecycle -- --bench \
 
 1. Create `benches/new_bench.rs`
 2. Add `[[bench]]` target to `Cargo.toml`
-3. Use `common::prelude::*` for shared constants
+3. Import `common::WORKSPACE_FILE_COUNTS` for shared constants
 4. Use `common::project::*` for filesystem fixtures
 5. Use `common::notes::*` for in-memory fixtures
 6. Document expected/unexpected outcomes in doc comments
