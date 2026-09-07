@@ -1,0 +1,50 @@
+#!/bin/bash
+# MISE hide=true
+# Post-bench summary: parse criterion JSON output and print a change summary.
+set -euo pipefail
+
+CRITERION_DIR="target/criterion"
+if [[ ! -d "${CRITERION_DIR}" ]]; then
+  echo "No criterion output found at ${CRITERION_DIR}"
+  exit 0
+fi
+
+echo "## Benchmark Summary"
+echo ""
+
+# Find the most recent baseline directory
+latest_baseline=""
+for dir in "${CRITERION_DIR}"/*/; do
+  [[ -d "${dir}" ]] || continue
+  group_name=$(basename "${dir}")
+  # Skip if this is a baseline comparison directory
+  [[ "${group_name}" == *"/"* ]] && continue
+  latest_baseline="${dir}"
+done
+
+if [[ -z "${latest_baseline}" ]]; then
+  echo "No benchmark groups found."
+  exit 0
+fi
+
+echo "### Groups measured:"
+for group_dir in "${CRITERION_DIR}"/*/; do
+  [[ -d "${group_dir}" ]] || continue
+  group_name=$(basename "${group_dir}")
+  [[ "${group_name}" == *"/"* ]] && continue
+
+  # Count sizes in this group
+  size_count=0
+  for size_dir in "${group_dir}"*/; do
+    [[ -d "${size_dir}" ]] || continue
+    [[ -f "${size_dir}/new/estimates.json" ]] && size_count=$((size_count + 1))
+  done
+
+  if (( size_count > 0 )); then
+    echo "  - ${group_name}: ${size_count} sizes"
+  fi
+done
+
+echo ""
+echo "Run \`mise run bench --compare <baseline>\` for detailed comparison."
+echo "Run \`mise run bench --model\` for performance modeling."
