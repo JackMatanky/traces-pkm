@@ -894,8 +894,12 @@ impl IndexStore {
     /// - [`DbError::Deserialize`] if stored bytes are not a valid record.
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
-        let files = self.read_table(&txn, FILES, FileBase::path)?;
-        let notes = self.read_notes_parallel(&txn)?;
+        let (files_result, notes_result) = rayon::join(
+            || self.read_table(&txn, FILES, FileBase::path),
+            || self.read_notes_parallel(&txn),
+        );
+        let files = files_result?;
+        let notes = notes_result?;
         let links = {
             let by_bytes: HashMap<&[u8], &Path> = notes
                 .iter()
