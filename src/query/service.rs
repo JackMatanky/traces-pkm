@@ -126,13 +126,30 @@ impl QueryService {
         }
         let resolver = SourceResolver::new(store);
         let candidate_paths = resolver.resolve(&source)?;
-        let notes = store
-            .read_notes_batch(candidate_paths.iter().map(PathBuf::as_path))?;
-        let matching_files = store
-            .read_files_batch(candidate_paths.iter().map(PathBuf::as_path))?;
-        let inlinks = store.read_links_for_targets(
-            candidate_paths.iter().map(PathBuf::as_path),
-        )?;
+        let (notes_result, (files_result, inlinks_result)) = rayon::join(
+            || {
+                store.read_notes_batch(
+                    candidate_paths.iter().map(PathBuf::as_path),
+                )
+            },
+            || {
+                rayon::join(
+                    || {
+                        store.read_files_batch(
+                            candidate_paths.iter().map(PathBuf::as_path),
+                        )
+                    },
+                    || {
+                        store.read_links_for_targets(
+                            candidate_paths.iter().map(PathBuf::as_path),
+                        )
+                    },
+                )
+            },
+        );
+        let notes = notes_result?;
+        let matching_files = files_result?;
+        let inlinks = inlinks_result?;
         let index =
             Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
         let rows = match mode {
