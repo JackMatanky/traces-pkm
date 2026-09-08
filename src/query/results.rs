@@ -187,10 +187,10 @@ impl QueryRow {
                 QueryFieldValueRef::Text,
             ),
             FileField::Name => QueryFieldValueRef::Text(file.name().as_str()),
-            FileField::Folder => file.folder().to_str().map_or_else(
+            FileField::Folder => file.folder().as_path().to_str().map_or_else(
                 || {
                     QueryFieldValueRef::Owned(NoteFieldValue::String(
-                        file.folder().to_string_lossy().into_owned(),
+                        file.folder().as_path().to_string_lossy().into_owned(),
                     ))
                 },
                 QueryFieldValueRef::Text,

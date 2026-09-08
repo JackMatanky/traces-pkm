@@ -39,6 +39,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::path::FolderRef;
+
 /// Reports that a path has no final component.
 #[derive(Debug, Error)]
 #[error("path has no file name")]
@@ -149,11 +151,12 @@ impl FileBase {
 
     /// Returns the file's parent directory, relative to the project root.
     ///
-    /// Returns an empty [`Path`] for files directly under the project root.
+    /// Returns a [`FolderRef`] pointing to `""` for files directly under the
+    /// project root.
     #[inline]
     #[must_use]
-    pub(crate) fn folder(&self) -> &Path {
-        &self.folder
+    pub(crate) fn folder(&self) -> FolderRef<'_> {
+        FolderRef::of(&self.path)
     }
 
     /// Returns whether this file is a Markdown note or another regular file.
@@ -560,7 +563,7 @@ mod tests {
 
                 assert_eq!(record.name().as_str(), "todo");
                 assert_eq!(record.path(), Path::new("notes/todo.md"));
-                assert_eq!(record.folder(), Path::new("notes"));
+                assert_eq!(record.folder().as_path(), Path::new("notes"));
                 assert_eq!(record.format(), FileFormat::Note);
                 assert_eq!(record.size(), 7);
                 assert!(record.modified_at().0 <= Utc::now());
@@ -581,7 +584,7 @@ mod tests {
 
                 assert_eq!(record.name().as_str(), "readme");
                 assert_eq!(record.path(), Path::new("readme.md"));
-                assert_eq!(record.folder(), Path::new(""));
+                assert_eq!(record.folder().as_path(), Path::new(""));
                 assert_eq!(record.format(), FileFormat::Note);
                 assert_eq!(record.size(), 2);
             }
