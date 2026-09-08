@@ -1,6 +1,8 @@
 # Source span/position model for the Note AST
 
 Type: grilling
+Blocked by: 39
+Status: claimed
 
 ## Question
 
