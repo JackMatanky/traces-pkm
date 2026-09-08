@@ -189,6 +189,7 @@ impl RootConfinedPath {
 }
 
 impl From<RootConfinedPath> for PathBuf {
+    #[inline]
     fn from(confined: RootConfinedPath) -> Self {
         confined.0
     }
@@ -226,8 +227,8 @@ impl<'a> FolderRef<'a> {
         self.0
     }
 
-    /// Tree distance: hops up to the nearest shared ancestor plus down
-    /// to the other folder. The same folder has distance `0`.
+    /// Tree distance: hops up to the nearest shared ancestor plus down to the
+    /// other folder. The same folder has distance `0`.
     pub(crate) fn distance_to(self, other: FolderRef<'_>) -> usize {
         let mut a_iter = self.0.components();
         let mut b_iter = other.0.components();
@@ -269,6 +270,7 @@ impl<'a> FolderRef<'a> {
 }
 
 impl<'a> From<FolderRef<'a>> for &'a Path {
+    #[inline]
     fn from(folder: FolderRef<'a>) -> Self {
         folder.0
     }

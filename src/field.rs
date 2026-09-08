@@ -385,8 +385,8 @@ impl FieldKey {
     /// canonical to avoid allocation.
     ///
     /// Use this instead of [`Self::canonicalize`] when the caller needs a
-    /// `&str` for comparison and wants to avoid allocation on the common
-    /// path (already-canonical input).
+    /// `&str` for comparison and wants to avoid allocation on the common path
+    /// (already-canonical input).
     #[must_use]
     pub(crate) fn to_canonical(raw: &str) -> Cow<'_, str> {
         if Self::is_canonical(raw) {
