@@ -370,13 +370,15 @@ impl FieldKey {
     /// Returns `true` if `raw` already equals its own [`Self::canonicalize`]d
     /// form, without allocating the canonical form to check.
     ///
-    /// Lets [`FieldKeyRef`] borrow `raw` directly for hashing instead of
-    /// building an owned canonical [`String`] on every lookup.
-    fn is_already_canonical(raw: &str) -> bool {
-        raw.chars().all(|ch| {
-            !ch.is_ascii_whitespace()
-                && (!Self::is_kept(ch) || ch.to_lowercase().eq([ch]))
-        })
+    /// Used by [`FieldKeyRef::hash`] and [`FieldKey::to_canonical`] to avoid
+    /// allocation when the input is already canonical.
+    fn is_canonical(raw: &str) -> bool {
+        !raw.is_empty()
+            && raw.chars().all(|ch| {
+                !ch.is_ascii_whitespace()
+                    && Self::is_kept(ch)
+                    && ch.to_lowercase().eq([ch])
+            })
     }
 }
 
@@ -520,7 +522,7 @@ impl std::hash::Hash for FieldKeyRef<'_> {
     /// [`FieldKey::canonicalize`].
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let canonical = if FieldKey::is_already_canonical(self.0) {
+        let canonical = if FieldKey::is_canonical(self.0) {
             Cow::Borrowed(self.0)
         } else {
             Cow::Owned(FieldKey::canonicalize(self.0))
@@ -1195,6 +1197,42 @@ mod tests {
                     FieldName::try_from("status").expect("valid name");
                 assert!(key.is_name_match(&exact));
                 assert!(!key.is_name_match(&different_case));
+            }
+
+            #[test]
+            fn is_canonical_rejects_strings_with_stripped_punctuation() {
+                // "a!b" canonicalizes to "ab" — the '!' is stripped, so the
+                // canonical form differs from the input.
+                assert!(!FieldKey::is_canonical("a!b"));
+            }
+
+            #[test]
+            fn is_canonical_accepts_already_canonical_strings() {
+                assert!(FieldKey::is_canonical("status"));
+                assert!(FieldKey::is_canonical("time-played"));
+                assert!(FieldKey::is_canonical("field2"));
+                assert!(FieldKey::is_canonical("café"));
+            }
+
+            #[test]
+            fn is_canonical_rejects_whitespace() {
+                assert!(!FieldKey::is_canonical("a b"));
+                assert!(!FieldKey::is_canonical("  "));
+            }
+
+            #[test]
+            fn is_canonical_rejects_empty_string() {
+                assert!(!FieldKey::is_canonical(""));
+            }
+
+            #[test]
+            fn is_canonical_rejects_uppercase() {
+                assert!(!FieldKey::is_canonical("Status"));
+            }
+
+            #[test]
+            fn is_canonical_rejects_stripped_non_ascii_punctuation() {
+                assert!(!FieldKey::is_canonical("café!"));
             }
         }
 
