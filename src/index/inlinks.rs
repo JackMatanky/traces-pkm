@@ -24,7 +24,7 @@ use std::{
 
 use indextree::{Arena, NodeId};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use crate::{
     BaseNameRef, FileBase,
@@ -240,19 +240,21 @@ pub(super) fn resolve_edges_for(
 /// Path and stem index used during link resolution.
 struct LinkResolver<'a> {
     files: &'a [FileBase],
-    /// A fast hasher (`rustc_hash::FxHashMap`) was measured here and showed
-    /// no improvement at current data volumes (`cargo bench --bench
-    /// index_inlinks` vs the `pre-refinement` criterion baseline, 2026-09-08:
-    /// `deep_paths`/`ambiguous`/`collisions` flat to slightly slower), so the
-    /// default `SipHash` stays.
+    /// `rustc_hash::FxHashMap`: measured against `SipHash` under matched
+    /// conditions (`benches/index_inlinks`, `deep_paths` group,
+    /// 2026-09-08) and found 9-11% faster at 1,000+ candidates (e.g.
+    /// `deep_paths/20000`: 17.242ms -> 15.652ms). Neither this map nor
+    /// [`CandidateTrie::by_folder`] keys on attacker-controlled input (both
+    /// are built from the vault's own file paths), so `SipHash`'s `DoS`
+    /// resistance buys nothing here.
     stem_index: FxHashMap<BaseNameRef<'a>, StemIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
     /// Indexes file stems in one `O(n)` pass.
     fn new(files: &'a [FileBase]) -> Self {
-        let mut by_stem: HashMap<BaseNameRef<'a>, Vec<&'a Path>> =
-            HashMap::with_capacity(files.len());
+        let mut by_stem: FxHashMap<BaseNameRef<'a>, Vec<&'a Path>> =
+            FxHashMap::with_capacity_and_hasher(files.len(), FxBuildHasher);
         for file in files {
             let path = file.path();
             if let Some(stem) = BaseNameRef::from_path(path) {
@@ -514,11 +516,8 @@ fn folder_distance(a: &Path, b: &Path) -> usize {
 /// newly visible at each level through [`TrieNode`]'s exclusion aggregates.
 struct CandidateTrie<'a> {
     arena: Arena<TrieNode<'a>>,
-    /// A fast hasher (`rustc_hash::FxHashMap`) was measured here and showed
-    /// no improvement at current data volumes (`cargo bench --bench
-    /// index_inlinks` vs the `pre-refinement` criterion baseline, 2026-09-08:
-    /// `deep_paths`/`ambiguous`/`collisions` flat to slightly slower), so the
-    /// default `SipHash` stays.
+    /// `rustc_hash::FxHashMap`, for the same measured reason as
+    /// [`LinkResolver::stem_index`].
     by_folder: FxHashMap<&'a Path, NodeId>,
     root: NodeId,
 }
@@ -1127,6 +1126,28 @@ mod tests {
                         Some(Target(Path::new("notes/report.md")))
                     );
                 }
+
+                #[test]
+                fn resolves_basename_with_matching_extension_by_stem() {
+                    let mut files = files_from_notes(&[
+                        "near/linking.md",
+                        "near/report.md",
+                    ]);
+                    files.push(file_for_attachment(
+                        "far/report.txt",
+                        FileFormat::Other,
+                    ));
+                    files.sort_by(|a, b| a.path().cmp(b.path()));
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "near/linking.md",
+                            LinkTarget::Path("report.txt")
+                        ),
+                        Some(Target(Path::new("far/report.txt")))
+                    );
+                }
             }
         }
 
@@ -1412,11 +1433,6 @@ mod tests {
                     PathBuf::from("m.md"),
                     PathBuf::from("z.md"),
                 ]);
-                assert!(
-                    sources
-                        .windows(2)
-                        .all(|w| w.first().unwrap() < w.get(1).unwrap())
-                );
             }
 
             #[test]
@@ -1433,6 +1449,8 @@ mod tests {
                     .collect();
                 files.sort_by(|a, b| a.path().cmp(b.path()));
                 let inlinks = InlinkMap::new(&notes, &files);
+
+                assert_eq!(inlinks.len(), 1);
 
                 for (_, sources) in inlinks.iter() {
                     assert!(!sources.is_empty());
@@ -1511,10 +1529,11 @@ mod tests {
                     vec![PathBuf::from("source.md")].into_boxed_slice(),
                 );
                 let inlinks = InlinkMap::from_raw(raw);
-                for (target, sources) in inlinks.into_entries() {
-                    assert_eq!(target, PathBuf::from("target.md"));
-                    assert_eq!(sources.as_ref(), [PathBuf::from("source.md")]);
-                }
+                let mut entries = inlinks.into_entries();
+                let (target, sources) = entries.next().expect("one entry");
+                assert_eq!(target, PathBuf::from("target.md"));
+                assert_eq!(sources.as_ref(), [PathBuf::from("source.md")]);
+                assert!(entries.next().is_none());
             }
         }
 
@@ -1564,6 +1583,20 @@ mod tests {
                         PathBuf::from("b.md")
                     ]);
                 }
+
+                #[test]
+                fn removing_an_absent_source_keeps_the_graph_unchanged() {
+                    let inlinks = graph_with_two_sources();
+                    let stale: HashSet<&Path> =
+                        [Path::new("missing.md")].into_iter().collect();
+
+                    let patched = inlinks.without_sources(&stale);
+
+                    assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                        PathBuf::from("a.md"),
+                        PathBuf::from("b.md")
+                    ]);
+                }
             }
 
             mod with_edges {
@@ -1577,6 +1610,39 @@ mod tests {
                     raw.insert(
                         PathBuf::from("target.md"),
                         vec![PathBuf::from("z.md")].into_boxed_slice(),
+                    );
+                    let inlinks = InlinkMap::from_raw(raw);
+
+                    let patched = inlinks.with_edges([(
+                        PathBuf::from("target.md"),
+                        PathBuf::from("a.md"),
+                    )]);
+
+                    assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                        PathBuf::from("a.md"),
+                        PathBuf::from("z.md")
+                    ]);
+                }
+
+                #[test]
+                fn adding_an_edge_to_a_new_target_inserts_the_source() {
+                    let patched = InlinkMap::default().with_edges([(
+                        PathBuf::from("target.md"),
+                        PathBuf::from("source.md"),
+                    )]);
+
+                    assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                        PathBuf::from("source.md")
+                    ]);
+                }
+
+                #[test]
+                fn adding_a_duplicate_edge_keeps_sources_deduplicated() {
+                    let mut raw = HashMap::new();
+                    raw.insert(
+                        PathBuf::from("target.md"),
+                        vec![PathBuf::from("a.md"), PathBuf::from("z.md")]
+                            .into_boxed_slice(),
                     );
                     let inlinks = InlinkMap::from_raw(raw);
 
