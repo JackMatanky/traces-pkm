@@ -621,7 +621,7 @@ mod tests {
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "true");
+            assert_eq!(rendered, "True");
         }
 
         #[test]

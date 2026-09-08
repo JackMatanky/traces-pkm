@@ -160,14 +160,6 @@ impl Note {
     /// ```
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Note accessor \
-                      symmetry with its fields"
-        )
-    )]
     pub fn lists(&self) -> &[List] {
         &self.lists
     }

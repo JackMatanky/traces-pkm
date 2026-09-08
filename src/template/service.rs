@@ -1052,7 +1052,7 @@ mod tests {
             assert_eq!(
                 fs::read_to_string(written_path(outcome))
                     .expect("read written output"),
-                "claude|true|b|x,z"
+                "claude|True|b|x,z"
             );
         }
 

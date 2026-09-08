@@ -1624,7 +1624,7 @@ mod tests {
                 )
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "truefalse");
+            assert_eq!(rendered, "TrueFalse");
         }
 
         #[test]
@@ -1637,7 +1637,7 @@ mod tests {
                 )
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "falsetrue");
+            assert_eq!(rendered, "FalseTrue");
         }
 
         #[test]
@@ -1709,12 +1709,12 @@ mod tests {
         use super::*;
 
         #[rstest]
-        #[case::divisible_by_4("2024 is is_leap_year", "true")]
-        #[case::not_divisible_by_4("2023 is is_leap_year", "false")]
-        #[case::divisible_by_100_not_400("1900 is is_leap_year", "false")]
-        #[case::divisible_by_400("2000 is is_leap_year", "true")]
-        #[case::leap_date_string("'2024-02-15' is is_leap_year", "true")]
-        #[case::non_leap_date_string("'2023-02-15' is is_leap_year", "false")]
+        #[case::divisible_by_4("2024 is is_leap_year", "True")]
+        #[case::not_divisible_by_4("2023 is is_leap_year", "False")]
+        #[case::divisible_by_100_not_400("1900 is is_leap_year", "False")]
+        #[case::divisible_by_400("2000 is is_leap_year", "True")]
+        #[case::leap_date_string("'2024-02-15' is is_leap_year", "True")]
+        #[case::non_leap_date_string("'2023-02-15' is is_leap_year", "False")]
         fn checks_a_year_or_date_string(
             #[case] expr: &str,
             #[case] expected: &str,

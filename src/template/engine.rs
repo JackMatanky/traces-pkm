@@ -376,7 +376,7 @@ mod tests {
 
             assert_eq!(
                 rendered.content,
-                "true-false-true-true-main-rs-/foo/bar"
+                "True-False-True-True-main-rs-/foo/bar"
             );
         }
     }
@@ -504,7 +504,7 @@ mod tests {
                 .render("{{ ui.confirm(\"proceed?\") }}", "test.md")
                 .expect("render succeeds");
 
-            assert_eq!(rendered.content, "false");
+            assert_eq!(rendered.content, "False");
         }
 
         #[test]

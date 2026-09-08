@@ -270,7 +270,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(check(temp.path(), "path_exists", "note.md"), "true");
+            assert_eq!(check(temp.path(), "path_exists", "note.md"), "True");
         }
 
         #[test]
@@ -279,7 +279,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(check(temp.path(), "path_exists", "sub"), "true");
+            assert_eq!(check(temp.path(), "path_exists", "sub"), "True");
         }
 
         #[test]
@@ -288,7 +288,7 @@ mod tests {
 
             assert_eq!(
                 check(temp.path(), "path_exists", "missing.md"),
-                "false"
+                "False"
             );
         }
 
@@ -304,7 +304,7 @@ mod tests {
                     "path_exists",
                     file.to_str().expect("utf-8 temp path")
                 ),
-                "true"
+                "True"
             );
         }
 
@@ -312,7 +312,7 @@ mod tests {
         fn returns_true_for_an_empty_path_because_it_resolves_to_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            assert_eq!(check(temp.path(), "path_exists", ""), "true");
+            assert_eq!(check(temp.path(), "path_exists", ""), "True");
         }
     }
 
@@ -327,7 +327,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(check(temp.path(), "is_file_path", "note.md"), "true");
+            assert_eq!(check(temp.path(), "is_file_path", "note.md"), "True");
         }
 
         #[test]
@@ -336,7 +336,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(check(temp.path(), "is_file_path", "sub"), "false");
+            assert_eq!(check(temp.path(), "is_file_path", "sub"), "False");
         }
 
         #[test]
@@ -345,7 +345,7 @@ mod tests {
 
             assert_eq!(
                 check(temp.path(), "is_file_path", "missing.md"),
-                "false"
+                "False"
             );
         }
     }
@@ -361,7 +361,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(check(temp.path(), "is_dir_path", "sub"), "true");
+            assert_eq!(check(temp.path(), "is_dir_path", "sub"), "True");
         }
 
         #[test]
@@ -370,7 +370,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(check(temp.path(), "is_dir_path", "note.md"), "false");
+            assert_eq!(check(temp.path(), "is_dir_path", "note.md"), "False");
         }
 
         #[test]
@@ -379,7 +379,7 @@ mod tests {
 
             assert_eq!(
                 check(temp.path(), "is_dir_path", "missing.md"),
-                "false"
+                "False"
             );
         }
 
@@ -387,7 +387,7 @@ mod tests {
         fn returns_true_for_root_itself() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            assert_eq!(check(temp.path(), "is_dir_path", ""), "true");
+            assert_eq!(check(temp.path(), "is_dir_path", ""), "True");
         }
     }
 

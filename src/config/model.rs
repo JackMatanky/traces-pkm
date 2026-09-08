@@ -441,14 +441,6 @@ impl FrontmatterConfig {
     /// Returns the frontmatter key holding a Note's display title.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "public accessor surface kept for API stability; the \
-                      render path uses the validated title() instead"
-        )
-    )]
     pub fn title_name(&self) -> &str {
         self.title.as_str()
     }
@@ -456,14 +448,6 @@ impl FrontmatterConfig {
     /// Returns the frontmatter key holding a Note's aliases.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "public accessor surface kept for API stability; the \
-                      render path uses the validated aliases() instead"
-        )
-    )]
     pub fn aliases_name(&self) -> &str {
         self.aliases.as_str()
     }
@@ -471,15 +455,6 @@ impl FrontmatterConfig {
     /// Returns the creation-timestamp frontmatter key and date format.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "canonical-metadata-role declaration only; \
-                      metadata-schemas spec.md User Story 24 specifies no \
-                      consumer for these values, so nothing reads them yet"
-        )
-    )]
     pub const fn date_created(&self) -> &DateFieldConfig {
         &self.date_created
     }
@@ -487,15 +462,6 @@ impl FrontmatterConfig {
     /// Returns the modification-timestamp frontmatter key and date format.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "canonical-metadata-role declaration only; \
-                      metadata-schemas spec.md User Story 24 specifies no \
-                      consumer for these values, so nothing reads them yet"
-        )
-    )]
     pub const fn date_modified(&self) -> &DateFieldConfig {
         &self.date_modified
     }
@@ -602,15 +568,6 @@ impl DateFieldConfig {
     /// Returns the frontmatter key name.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "canonical-metadata-role declaration only; \
-                      metadata-schemas spec.md User Story 24 specifies no \
-                      consumer for these values, so nothing reads them yet"
-        )
-    )]
     pub fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -618,15 +575,6 @@ impl DateFieldConfig {
     /// Returns the date format string applied to the key's value.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "canonical-metadata-role declaration only; \
-                      metadata-schemas spec.md User Story 24 specifies no \
-                      consumer for these values, so nothing reads them yet"
-        )
-    )]
     pub fn format(&self) -> &str {
         &self.format
     }

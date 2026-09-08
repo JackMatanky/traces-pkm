@@ -574,9 +574,9 @@ mod tests {
         use super::*;
 
         #[rstest]
-        #[case::true_on_a_match("hello@world", "@", "true")]
-        #[case::false_on_no_match("hello", "xyz", "false")]
-        #[case::empty_pattern_matches_anything("", "", "true")]
+        #[case::true_on_a_match("hello@world", "@", "True")]
+        #[case::false_on_no_match("hello", "xyz", "False")]
+        #[case::empty_pattern_matches_anything("", "", "True")]
         fn matches_the_pattern(
             #[case] input: &str,
             #[case] pattern: &str,

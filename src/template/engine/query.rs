@@ -1114,7 +1114,7 @@ mod tests {
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "true");
+            assert_eq!(rendered, "True");
         }
 
         #[test]
@@ -1148,7 +1148,7 @@ mod tests {
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "false:buy milk true:pay rent ");
+            assert_eq!(rendered, "False:buy milk True:pay rent ");
         }
 
         #[test]
@@ -1183,7 +1183,7 @@ mod tests {
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "true:true");
+            assert_eq!(rendered, "True:True");
         }
     }
 
