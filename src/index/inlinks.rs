@@ -22,7 +22,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use indextree::{Arena, NodeId};
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 use crate::{
     BaseNameRef, FileBase,
@@ -238,7 +240,12 @@ pub(super) fn resolve_edges_for(
 /// Path and stem index used during link resolution.
 struct LinkResolver<'a> {
     files: &'a [FileBase],
-    stem_index: HashMap<BaseNameRef<'a>, StemIndex<'a>>,
+    /// A fast hasher (`rustc_hash::FxHashMap`) was measured here and showed
+    /// no improvement at current data volumes (`cargo bench --bench
+    /// index_inlinks` vs the `pre-refinement` criterion baseline, 2026-09-08:
+    /// `deep_paths`/`ambiguous`/`collisions` flat to slightly slower), so the
+    /// default `SipHash` stays.
+    stem_index: FxHashMap<BaseNameRef<'a>, StemIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
@@ -431,46 +438,67 @@ impl<'a> StemIndex<'a> {
     }
 }
 
+/// Containing folder of a path, used to compute tree distance between linking
+/// notes and candidates.
+#[derive(Copy, Clone)]
+struct Folder<'a>(&'a Path);
+
+impl<'a> Folder<'a> {
+    /// Returns `path`'s containing folder, defaulting to the root for
+    /// top-level paths.
+    fn of(path: &'a Path) -> Self {
+        Self(path.parent().unwrap_or_else(|| Path::new("")))
+    }
+
+    /// Computes folder path distance in one pass.
+    ///
+    /// The same folder has distance `0`; otherwise distance is the hops up to
+    /// the nearest shared ancestor plus down to the other folder.
+    fn distance_to(self, other: Folder<'_>) -> usize {
+        let mut a_iter = self.0.components();
+        let mut b_iter = other.0.components();
+        let mut shared: usize = 0;
+        let mut a_count: usize = 0;
+        let mut b_count: usize = 0;
+        let mut matching = true;
+        loop {
+            match (a_iter.next(), b_iter.next()) {
+                (Some(ac), Some(bc)) => {
+                    a_count = a_count.saturating_add(1);
+                    b_count = b_count.saturating_add(1);
+                    if matching && ac == bc {
+                        shared = shared.saturating_add(1);
+                    } else {
+                        matching = false;
+                    }
+                }
+                (Some(_), None) => {
+                    a_count = a_count
+                        .saturating_add(1)
+                        .saturating_add(a_iter.count());
+                    break;
+                }
+                (None, Some(_)) => {
+                    b_count = b_count
+                        .saturating_add(1)
+                        .saturating_add(b_iter.count());
+                    break;
+                }
+                (None, None) => break,
+            }
+        }
+        a_count
+            .saturating_sub(shared)
+            .saturating_add(b_count.saturating_sub(shared))
+    }
+}
+
 /// Computes containing-folder path distance in one pass.
 ///
 /// Files in the same folder have distance `0`; otherwise distance is the hops
 /// up to the nearest shared ancestor plus down to the other folder.
 fn folder_distance(a: &Path, b: &Path) -> usize {
-    let a_folder = a.parent().unwrap_or_else(|| Path::new(""));
-    let b_folder = b.parent().unwrap_or_else(|| Path::new(""));
-    let mut a_iter = a_folder.components();
-    let mut b_iter = b_folder.components();
-    let mut shared: usize = 0;
-    let mut a_count: usize = 0;
-    let mut b_count: usize = 0;
-    let mut matching = true;
-    loop {
-        match (a_iter.next(), b_iter.next()) {
-            (Some(ac), Some(bc)) => {
-                a_count = a_count.saturating_add(1);
-                b_count = b_count.saturating_add(1);
-                if matching && ac == bc {
-                    shared = shared.saturating_add(1);
-                } else {
-                    matching = false;
-                }
-            }
-            (Some(_), None) => {
-                a_count =
-                    a_count.saturating_add(1).saturating_add(a_iter.count());
-                break;
-            }
-            (None, Some(_)) => {
-                b_count =
-                    b_count.saturating_add(1).saturating_add(b_iter.count());
-                break;
-            }
-            (None, None) => break,
-        }
-    }
-    a_count
-        .saturating_sub(shared)
-        .saturating_add(b_count.saturating_sub(shared))
+    Folder::of(a).distance_to(Folder::of(b))
 }
 
 /// Folder-component trie for one Wikilink stem's candidates.
@@ -485,28 +513,36 @@ fn folder_distance(a: &Path, b: &Path) -> usize {
 /// Querying walks from `from`'s folder toward the root and combines candidates
 /// newly visible at each level through [`TrieNode`]'s exclusion aggregates.
 struct CandidateTrie<'a> {
-    nodes: Vec<TrieNode<'a>>,
-    by_folder: HashMap<&'a Path, usize>,
+    arena: Arena<TrieNode<'a>>,
+    /// A fast hasher (`rustc_hash::FxHashMap`) was measured here and showed
+    /// no improvement at current data volumes (`cargo bench --bench
+    /// index_inlinks` vs the `pre-refinement` criterion baseline, 2026-09-08:
+    /// `deep_paths`/`ambiguous`/`collisions` flat to slightly slower), so the
+    /// default `SipHash` stays.
+    by_folder: FxHashMap<&'a Path, NodeId>,
+    root: NodeId,
 }
 
 impl<'a> CandidateTrie<'a> {
     fn build(candidates: &[&'a Path]) -> Self {
-        let mut nodes = vec![Self::new_node(None, 0)];
-        let mut by_folder = HashMap::new();
-        by_folder.insert(Path::new(""), 0_usize);
+        let mut arena = Arena::new();
+        let root = arena.new_node(Self::new_node_data(0));
+        let mut by_folder = FxHashMap::default();
+        by_folder.insert(Path::new(""), root);
 
         for &path in candidates {
-            let folder = path.parent().unwrap_or_else(|| Path::new(""));
+            let folder = Folder::of(path).0;
             let ext = path.extension().and_then(|e| e.to_str());
-            let node_idx =
-                Self::ensure_folder_node(&mut nodes, &mut by_folder, folder);
-            Self::node_mut(&mut nodes, node_idx).locals.push((ext, path));
+            let node_id =
+                Self::ensure_folder_node(&mut arena, &mut by_folder, folder);
+            Self::node_data_mut(&mut arena, node_id).locals.push((ext, path));
         }
 
-        Self::aggregate(&mut nodes);
+        Self::aggregate(&mut arena);
         Self {
-            nodes,
+            arena,
             by_folder,
+            root,
         }
     }
 
@@ -517,7 +553,7 @@ impl<'a> CandidateTrie<'a> {
         from: &Path,
         target_ext: Option<&str>,
     ) -> Option<&'a Path> {
-        let from_folder = from.parent().unwrap_or_else(|| Path::new(""));
+        let from_folder = Folder::of(from).0;
 
         // Walk from `from`'s folder to the nearest trie node. `extra_up` counts
         // skipped source-only folders; the linking note's folder is rarely a
@@ -525,24 +561,24 @@ impl<'a> CandidateTrie<'a> {
         let mut extra_up = 0_usize;
         let mut probe = from_folder;
         let start_node = loop {
-            if let Some(&idx) = self.by_folder.get(probe) {
-                break idx;
+            if let Some(&id) = self.by_folder.get(probe) {
+                break id;
             }
             match probe.parent() {
                 Some(parent) => {
                     probe = parent;
                     extra_up = extra_up.saturating_add(1);
                 }
-                None => break 0,
+                None => break self.root,
             }
         };
 
-        let mut best = StemAgg::EMPTY;
-        let mut node_idx = Some(start_node);
-        let mut prev_child: Option<usize> = None;
+        let mut best = NearestCandidate::EMPTY;
+        let mut node_id = Some(start_node);
+        let mut prev_child: Option<NodeId> = None;
         let mut i = extra_up;
-        while let Some(idx) = node_idx {
-            let node = Self::node(&self.nodes, idx);
+        while let Some(id) = node_id {
+            let node = Self::node_data(&self.arena, id);
             let agg = match prev_child {
                 None => node.full.lookup(target_ext),
                 Some(child) => node
@@ -555,14 +591,14 @@ impl<'a> CandidateTrie<'a> {
             if agg.count > 0 {
                 let distance =
                     i.saturating_add(agg.min_depth).saturating_sub(node.depth);
-                best = best.merge(StemAgg {
+                best = best.merge(NearestCandidate {
                     min_depth: distance,
                     count: agg.count,
                     sample: agg.sample,
                 });
             }
-            prev_child = Some(idx);
-            node_idx = node.parent;
+            prev_child = Some(id);
+            node_id = id.parent(&self.arena);
             i = i.saturating_add(1);
         }
 
@@ -573,11 +609,9 @@ impl<'a> CandidateTrie<'a> {
         }
     }
 
-    fn new_node(parent: Option<usize>, depth: usize) -> TrieNode<'a> {
+    fn new_node_data(depth: usize) -> TrieNode<'a> {
         TrieNode {
-            parent,
             depth,
-            children: Vec::new(),
             locals: Vec::new(),
             full: NodeAgg::default(),
             excluding: Vec::new(),
@@ -585,43 +619,44 @@ impl<'a> CandidateTrie<'a> {
     }
 
     /// Returns `folder`'s node, creating missing ancestors first.
-    ///
-    /// Child indices are always greater than parent indices;
-    /// [`Self::aggregate`] depends on that reverse-arena ordering.
     fn ensure_folder_node(
-        nodes: &mut Vec<TrieNode<'a>>,
-        by_folder: &mut HashMap<&'a Path, usize>,
+        arena: &mut Arena<TrieNode<'a>>,
+        by_folder: &mut FxHashMap<&'a Path, NodeId>,
         folder: &'a Path,
-    ) -> usize {
-        if let Some(&idx) = by_folder.get(folder) {
-            return idx;
+    ) -> NodeId {
+        if let Some(&id) = by_folder.get(folder) {
+            return id;
         }
-        let parent_folder = folder.parent().unwrap_or_else(|| Path::new(""));
-        let parent_idx =
-            Self::ensure_folder_node(nodes, by_folder, parent_folder);
-        let depth = Self::node(nodes, parent_idx).depth.saturating_add(1);
-        let idx = nodes.len();
-        nodes.push(Self::new_node(Some(parent_idx), depth));
-        Self::node_mut(nodes, parent_idx).children.push(idx);
-        by_folder.insert(folder, idx);
-        idx
+        let parent_folder = Folder::of(folder).0;
+        let parent_id =
+            Self::ensure_folder_node(arena, by_folder, parent_folder);
+        let depth = Self::node_data(arena, parent_id).depth.saturating_add(1);
+        let id = arena.new_node(Self::new_node_data(depth));
+        parent_id.append(id, arena);
+        by_folder.insert(folder, id);
+        id
     }
 
-    /// Computes every node's aggregates in one bottom-up reverse-arena pass.
-    fn aggregate(nodes: &mut [TrieNode<'a>]) {
-        for idx in (0..nodes.len()).rev() {
-            let children = Self::node(nodes, idx).children.clone();
+    /// Computes every node's aggregates in one bottom-up pass.
+    ///
+    /// `Arena::iter_node_ids` yields nodes in insertion (storage) order, and
+    /// [`Self::ensure_folder_node`] always creates a parent before any of its
+    /// children; reversing that order visits every child before its parent.
+    fn aggregate(arena: &mut Arena<TrieNode<'a>>) {
+        let insertion_order: Vec<NodeId> = arena.iter_node_ids().collect();
+        for &id in insertion_order.iter().rev() {
+            let children: Vec<NodeId> = id.children(arena).collect();
             let mut local_agg = NodeAgg::default();
-            for &(ext, path) in &Self::node(nodes, idx).locals {
+            for &(ext, path) in &Self::node_data(arena, id).locals {
                 local_agg = local_agg.merge(NodeAgg::from_local(
-                    Self::node(nodes, idx).depth,
+                    Self::node_data(arena, id).depth,
                     ext,
                     path,
                 ));
             }
             let child_aggs: Vec<NodeAgg<'a>> = children
                 .iter()
-                .map(|&c| Self::node(nodes, c).full.clone())
+                .map(|&c| Self::node_data(arena, c).full.clone())
                 .collect();
 
             let mut full = local_agg.clone();
@@ -632,7 +667,7 @@ impl<'a> CandidateTrie<'a> {
             let excluding =
                 Self::excluding_per_child(&local_agg, &children, &child_aggs);
 
-            let node = Self::node_mut(nodes, idx);
+            let node = Self::node_data_mut(arena, id);
             node.full = full;
             node.excluding = excluding;
         }
@@ -645,9 +680,9 @@ impl<'a> CandidateTrie<'a> {
     /// reads are defensive only.
     fn excluding_per_child(
         local_agg: &NodeAgg<'a>,
-        children: &[usize],
+        children: &[NodeId],
         child_aggs: &[NodeAgg<'a>],
-    ) -> Vec<(usize, NodeAgg<'a>)> {
+    ) -> Vec<(NodeId, NodeAgg<'a>)> {
         let n = children.len();
         let mut prefix: Vec<NodeAgg<'a>> =
             Vec::with_capacity(n.saturating_add(1));
@@ -666,58 +701,64 @@ impl<'a> CandidateTrie<'a> {
                 *slot = child_agg.merge(after);
             }
         }
-        (0..n)
-            .map(|i| {
+        children
+            .iter()
+            .enumerate()
+            .map(|(i, &child)| {
                 let before = prefix.get(i).cloned().unwrap_or_default();
                 let after = suffix
                     .get(i.saturating_add(1))
                     .cloned()
                     .unwrap_or_default();
                 let excl = before.merge(after).merge(local_agg.clone());
-                let child = children.get(i).copied().unwrap_or_default();
                 (child, excl)
             })
             .collect()
     }
 
-    /// Returns the node at `idx`.
+    /// Returns the data of the node with the given id.
     ///
     /// # Panics
     ///
-    /// Panics if `idx` was not produced for `nodes` by
-    /// [`Self::ensure_folder_node`].
+    /// Panics if `id` was removed from `arena`. This arena never removes nodes
+    /// after construction, so every `id` it hands out stays valid.
     #[expect(
         clippy::expect_used,
-        reason = "arena index always valid by construction; see doc comment"
+        reason = "indextree NodeId always valid: this arena never removes \
+                  nodes after construction"
     )]
-    fn node<'n>(nodes: &'n [TrieNode<'a>], idx: usize) -> &'n TrieNode<'a> {
-        nodes.get(idx).expect("trie arena index always valid by construction")
+    fn node_data<'n>(
+        arena: &'n Arena<TrieNode<'a>>,
+        id: NodeId,
+    ) -> &'n TrieNode<'a> {
+        arena
+            .get_data(id)
+            .expect("indextree NodeId always valid: arena never removes nodes")
     }
 
-    /// Returns the mutable node at `idx`.
+    /// Returns the mutable data of the node with the given id.
     ///
     /// # Panics
     ///
-    /// Panics under the same invalid-index condition as [`Self::node`].
+    /// Panics under the same invalid-id condition as [`Self::node_data`].
     #[expect(
         clippy::expect_used,
-        reason = "arena index always valid by construction; see Self::node"
+        reason = "indextree NodeId always valid: this arena never removes \
+                  nodes after construction; see Self::node_data"
     )]
-    fn node_mut<'n>(
-        nodes: &'n mut [TrieNode<'a>],
-        idx: usize,
+    fn node_data_mut<'n>(
+        arena: &'n mut Arena<TrieNode<'a>>,
+        id: NodeId,
     ) -> &'n mut TrieNode<'a> {
-        nodes
-            .get_mut(idx)
-            .expect("trie arena index always valid by construction")
+        arena
+            .get_data_mut(id)
+            .expect("indextree NodeId always valid: arena never removes nodes")
     }
 }
 
 /// Folder trie node with local candidates and precomputed subtree aggregates.
 struct TrieNode<'a> {
-    parent: Option<usize>,
     depth: usize,
-    children: Vec<usize>,
     /// Candidates whose containing folder is this node.
     ///
     /// Multiple entries imply the same folder and stem with distinct
@@ -730,7 +771,7 @@ struct TrieNode<'a> {
     /// Queries walking up through child `c` use this instead of `full` to
     /// avoid counting shallower candidates twice. Stored in a small `Vec`
     /// because same-stem subfolders are usually few.
-    excluding: Vec<(usize, NodeAgg<'a>)>,
+    excluding: Vec<(NodeId, NodeAgg<'a>)>,
 }
 
 /// Subtree aggregate with optional per-extension buckets.
@@ -739,13 +780,13 @@ struct TrieNode<'a> {
 /// enough extensions for hashing and per-node allocation to win.
 #[derive(Clone, Debug, Default)]
 struct NodeAgg<'a> {
-    combined: StemAgg<'a>,
-    by_ext: Vec<(&'a str, StemAgg<'a>)>,
+    combined: NearestCandidate<'a>,
+    by_ext: Vec<(&'a str, NearestCandidate<'a>)>,
 }
 
 impl<'a> NodeAgg<'a> {
     fn from_local(depth: usize, ext: Option<&'a str>, path: &'a Path) -> Self {
-        let agg = StemAgg::candidate(depth, path);
+        let agg = NearestCandidate::candidate(depth, path);
         Self {
             combined: agg,
             by_ext: ext.into_iter().map(|extension| (extension, agg)).collect(),
@@ -767,14 +808,14 @@ impl<'a> NodeAgg<'a> {
         self
     }
 
-    fn lookup(&self, target_ext: Option<&str>) -> StemAgg<'a> {
+    fn lookup(&self, target_ext: Option<&str>) -> NearestCandidate<'a> {
         match target_ext {
             None => self.combined,
             Some(ext) => self
                 .by_ext
                 .iter()
                 .find(|(e, _)| *e == ext)
-                .map_or(StemAgg::EMPTY, |(_, agg)| *agg),
+                .map_or(NearestCandidate::EMPTY, |(_, agg)| *agg),
         }
     }
 }
@@ -784,13 +825,13 @@ impl<'a> NodeAgg<'a> {
 ///
 /// [`Self::EMPTY`] is the merge identity and represents no candidate.
 #[derive(Copy, Clone, Debug)]
-struct StemAgg<'a> {
+struct NearestCandidate<'a> {
     min_depth: usize,
     count: usize,
     sample: Option<&'a Path>,
 }
 
-impl<'a> StemAgg<'a> {
+impl<'a> NearestCandidate<'a> {
     const EMPTY: Self = Self {
         min_depth: usize::MAX,
         count: 0,
@@ -820,7 +861,7 @@ impl<'a> StemAgg<'a> {
     }
 }
 
-impl Default for StemAgg<'_> {
+impl Default for NearestCandidate<'_> {
     fn default() -> Self {
         Self::EMPTY
     }
@@ -867,8 +908,7 @@ mod tests {
         parse(path, &src)
     }
 
-    mod target_resolution {
-        use pretty_assertions::assert_eq;
+    mod link_resolver {
 
         use super::*;
 
@@ -888,588 +928,673 @@ mod tests {
             files
         }
 
-        #[test]
-        fn resolves_exact_root_relative_markdown_path() {
-            let files = files_from_notes(&["notes/other.md"]);
+        mod exact_path {
+            use pretty_assertions::assert_eq;
 
-            assert_eq!(
-                resolve(
-                    &files,
-                    "linking.md",
-                    LinkTarget::Path("notes/other.md")
-                ),
-                Some(Target(Path::new("notes/other.md")))
-            );
+            use super::*;
+
+            #[test]
+            fn resolves_exact_root_relative_markdown_path() {
+                let files = files_from_notes(&["notes/other.md"]);
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "linking.md",
+                        LinkTarget::Path("notes/other.md")
+                    ),
+                    Some(Target(Path::new("notes/other.md")))
+                );
+            }
+
+            #[test]
+            fn resolves_markdown_path_missing_extension() {
+                let files = files_from_notes(&["other.md"]);
+
+                assert_eq!(
+                    resolve(&files, "linking.md", LinkTarget::Path("other")),
+                    Some(Target(Path::new("other.md")))
+                );
+            }
+
+            #[test]
+            fn resolves_path_with_anchor_by_path_segment() {
+                let files = files_from_notes(&["other.md"]);
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "linking.md",
+                        LinkTarget::PathWithAnchor("other", "Some Heading")
+                    ),
+                    Some(Target(Path::new("other.md")))
+                );
+            }
         }
 
-        #[test]
-        fn resolves_markdown_path_missing_extension() {
-            let files = files_from_notes(&["other.md"]);
+        mod stem_fallback {
+            use super::*;
 
-            assert_eq!(
-                resolve(&files, "linking.md", LinkTarget::Path("other")),
-                Some(Target(Path::new("other.md")))
-            );
+            mod nearest_wins {
+                use pretty_assertions::assert_eq;
+
+                use super::*;
+
+                #[test]
+                fn resolves_wikilink_by_unique_file_stem() {
+                    let files = files_from_notes(&[
+                        "notes/Project Alpha.md",
+                        "notes/other.md",
+                    ]);
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "linking.md",
+                            LinkTarget::Path("Project Alpha")
+                        ),
+                        Some(Target(Path::new("notes/Project Alpha.md")))
+                    );
+                }
+
+                #[test]
+                fn resolves_ambiguous_stem_match_to_nearest_candidate() {
+                    let files = files_from_notes(&[
+                        "notes/a/note.md",
+                        "notes/b/note.md",
+                    ]);
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "notes/a/linking.md",
+                            LinkTarget::Path("note")
+                        ),
+                        Some(Target(Path::new("notes/a/note.md")))
+                    );
+                }
+
+                #[test]
+                fn resolves_to_nearer_candidate_despite_farther_tie() {
+                    let files = files_from_notes(&[
+                        "far/a/note.md",
+                        "far/b/note.md",
+                        "near/note.md",
+                    ]);
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "near/linking.md",
+                            LinkTarget::Path("note")
+                        ),
+                        Some(Target(Path::new("near/note.md")))
+                    );
+                }
+
+                #[test]
+                fn resolves_to_a_distant_shallow_sibling_over_a_close_deep_nesting()
+                 {
+                    // The shallow root sibling is nearer (2) than the deeply
+                    // nested shared-ancestor candidate (3), even though the
+                    // latter shares a non-root ancestor with `from`.
+                    let files = files_from_notes(&[
+                        "shared/deep/nested/sub/note.md",
+                        "far/note.md",
+                    ]);
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "shared/linking.md",
+                            LinkTarget::Path("note")
+                        ),
+                        Some(Target(Path::new("far/note.md")))
+                    );
+                }
+            }
+
+            mod ties_resolve_to_none {
+                use pretty_assertions::assert_eq;
+
+                use super::*;
+
+                #[test]
+                fn returns_none_for_ambiguous_stem_match_at_equal_distance() {
+                    let files = files_from_notes(&["a/note.md", "b/note.md"]);
+
+                    assert_eq!(
+                        resolve(&files, "linking.md", LinkTarget::Path("note")),
+                        None
+                    );
+                }
+
+                #[test]
+                fn resolves_none_for_a_tie_spanning_an_ancestor_and_a_descendant_branch()
+                 {
+                    // Exercises an asymmetric tie: one candidate below
+                    // `from`'s ancestor, one below a disjoint root folder.
+                    // Both are true distance 2, so the exclusion aggregate
+                    // must combine shallow and newly visible candidates
+                    // without double-counting either.
+                    let files = files_from_notes(&[
+                        "shared/a/b/note.md",
+                        "other/note.md",
+                    ]);
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "shared/linking.md",
+                            LinkTarget::Path("note")
+                        ),
+                        None
+                    );
+                }
+            }
+
+            mod self_reference {
+                use pretty_assertions::assert_eq;
+
+                use super::*;
+
+                #[test]
+                fn resolves_ambiguous_self_referential_stem_to_itself() {
+                    let files = files_from_notes(&["a.md", "b/a.md"]);
+
+                    assert_eq!(
+                        resolve(&files, "a.md", LinkTarget::Path("a")),
+                        Some(Target(Path::new("a.md")))
+                    );
+                }
+            }
+
+            mod extension_narrowing {
+                use pretty_assertions::assert_eq;
+
+                use super::*;
+
+                #[test]
+                fn resolves_basename_with_extension_by_stem() {
+                    let files = files_from_notes(&["notes/report.md"]);
+
+                    assert_eq!(
+                        resolve(
+                            &files,
+                            "linking.md",
+                            LinkTarget::Path("report.txt")
+                        ),
+                        Some(Target(Path::new("notes/report.md")))
+                    );
+                }
+            }
         }
 
-        #[test]
-        fn resolves_wikilink_by_unique_file_stem() {
-            let files =
-                files_from_notes(&["notes/Project Alpha.md", "notes/other.md"]);
+        mod attachments {
+            use pretty_assertions::assert_eq;
 
-            assert_eq!(
-                resolve(
-                    &files,
-                    "linking.md",
-                    LinkTarget::Path("Project Alpha")
-                ),
-                Some(Target(Path::new("notes/Project Alpha.md")))
-            );
+            use super::*;
+
+            #[test]
+            fn resolves_links_to_image_attachments() {
+                let mut files = files_from_notes(&["note.md"]);
+                files.push(file_for_attachment(
+                    "assets/diagram.png",
+                    FileFormat::Other,
+                ));
+                files.sort_by(|a, b| a.path().cmp(b.path()));
+
+                assert_eq!(
+                    resolve(&files, "note.md", LinkTarget::Path("diagram.png")),
+                    Some(Target(Path::new("assets/diagram.png")))
+                );
+            }
+
+            #[test]
+            fn resolves_links_to_pdf_attachments() {
+                let mut files = files_from_notes(&["note.md"]);
+                files.push(file_for_attachment(
+                    "docs/specification.pdf",
+                    FileFormat::Other,
+                ));
+                files.sort_by(|a, b| a.path().cmp(b.path()));
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "note.md",
+                        LinkTarget::Path("specification.pdf")
+                    ),
+                    Some(Target(Path::new("docs/specification.pdf")))
+                );
+            }
         }
 
-        #[test]
-        fn returns_none_for_unmatched_qualified_path_without_stem_fallback() {
-            let files = files_from_notes(&["archive/foo.md", "notes/bar.md"]);
-
-            assert_eq!(
-                resolve(&files, "linking.md", LinkTarget::Path("notes/foo")),
-                None
-            );
-        }
-
-        #[test]
-        fn resolves_path_with_anchor_by_path_segment() {
-            let files = files_from_notes(&["other.md"]);
-
-            assert_eq!(
-                resolve(
-                    &files,
-                    "linking.md",
-                    LinkTarget::PathWithAnchor("other", "Some Heading")
-                ),
-                Some(Target(Path::new("other.md")))
-            );
-        }
-
-        #[test]
-        fn resolves_ambiguous_stem_match_to_nearest_candidate() {
-            let files =
-                files_from_notes(&["notes/a/note.md", "notes/b/note.md"]);
-
-            assert_eq!(
-                resolve(&files, "notes/a/linking.md", LinkTarget::Path("note")),
-                Some(Target(Path::new("notes/a/note.md")))
-            );
-        }
-
-        #[test]
-        fn resolves_ambiguous_self_referential_stem_to_itself() {
-            let files = files_from_notes(&["a.md", "b/a.md"]);
-
-            assert_eq!(
-                resolve(&files, "a.md", LinkTarget::Path("a")),
-                Some(Target(Path::new("a.md")))
-            );
-        }
-
-        #[test]
-        fn returns_none_for_ambiguous_stem_match_at_equal_distance() {
-            let files = files_from_notes(&["a/note.md", "b/note.md"]);
-
-            assert_eq!(
-                resolve(&files, "linking.md", LinkTarget::Path("note")),
-                None
-            );
-        }
-
-        #[test]
-        fn resolves_to_nearer_candidate_despite_farther_tie() {
-            let files = files_from_notes(&[
-                "far/a/note.md",
-                "far/b/note.md",
-                "near/note.md",
-            ]);
-
-            assert_eq!(
-                resolve(&files, "near/linking.md", LinkTarget::Path("note")),
-                Some(Target(Path::new("near/note.md")))
-            );
-        }
-
-        #[test]
-        fn returns_none_for_basename_matching_no_indexed_file() {
-            let files = files_from_notes(&["other.md"]);
-
-            assert_eq!(
-                resolve(&files, "linking.md", LinkTarget::Path("nonexistent")),
-                None
-            );
-        }
-
-        #[test]
-        fn resolves_basename_with_extension_by_stem() {
-            let files = files_from_notes(&["notes/report.md"]);
-
-            assert_eq!(
-                resolve(&files, "linking.md", LinkTarget::Path("report.txt")),
-                Some(Target(Path::new("notes/report.md")))
-            );
-        }
-
-        #[test]
-        fn returns_none_for_unresolvable_url_target() {
-            let files = files_from_notes(&["other.md"]);
-
-            assert_eq!(
-                resolve(
-                    &files,
-                    "linking.md",
-                    LinkTarget::Path("https://example.com")
-                ),
-                None
-            );
-        }
-
-        #[test]
-        fn returns_none_for_anchor_only_target() {
-            let files = files_from_notes(&["other.md"]);
-
-            assert_eq!(
-                resolve(
-                    &files,
-                    "linking.md",
-                    LinkTarget::AnchorOnly("Some Heading")
-                ),
-                None
-            );
-        }
-
-        #[test]
-        fn resolves_links_to_image_attachments() {
-            let mut files = files_from_notes(&["note.md"]);
-            files.push(file_for_attachment(
-                "assets/diagram.png",
-                FileFormat::Other,
-            ));
-            files.sort_by(|a, b| a.path().cmp(b.path()));
-
-            assert_eq!(
-                resolve(&files, "note.md", LinkTarget::Path("diagram.png")),
-                Some(Target(Path::new("assets/diagram.png")))
-            );
-        }
-
-        #[test]
-        fn resolves_links_to_pdf_attachments() {
-            let mut files = files_from_notes(&["note.md"]);
-            files.push(file_for_attachment(
-                "docs/specification.pdf",
-                FileFormat::Other,
-            ));
-            files.sort_by(|a, b| a.path().cmp(b.path()));
-
-            assert_eq!(
-                resolve(
-                    &files,
-                    "note.md",
-                    LinkTarget::Path("specification.pdf")
-                ),
-                Some(Target(Path::new("docs/specification.pdf")))
-            );
-        }
-
-        #[test]
-        fn resolves_to_a_distant_shallow_sibling_over_a_close_deep_nesting() {
-            // The shallow root sibling is nearer (2) than the deeply nested
-            // shared-ancestor candidate (3), even though the latter shares a
-            // non-root ancestor with `from`.
-            let files = files_from_notes(&[
-                "shared/deep/nested/sub/note.md",
-                "far/note.md",
-            ]);
-
-            assert_eq!(
-                resolve(&files, "shared/linking.md", LinkTarget::Path("note")),
-                Some(Target(Path::new("far/note.md")))
-            );
-        }
-
-        #[test]
-        fn resolves_none_for_a_tie_spanning_an_ancestor_and_a_descendant_branch()
-         {
-            // Exercises an asymmetric tie: one candidate below `from`'s
-            // ancestor, one below a disjoint root folder. Both are true
-            // distance 2, so the exclusion aggregate must combine shallow and
-            // newly visible candidates without double-counting either.
-            let files =
-                files_from_notes(&["shared/a/b/note.md", "other/note.md"]);
-
-            assert_eq!(
-                resolve(&files, "shared/linking.md", LinkTarget::Path("note")),
-                None
-            );
-        }
-    }
-
-    mod inlink_map_construction {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        fn build_graph(notes: &[Note], extra_files: &[FileBase]) -> InlinkMap {
-            let mut files: Vec<FileBase> = notes
-                .iter()
-                .map(|n| file_for_note(n.path().to_str().unwrap()))
-                .collect();
-            files.extend_from_slice(extra_files);
-            files.sort_by(|a, b| a.path().cmp(b.path()));
-            InlinkMap::new(notes, &files)
-        }
-
-        #[test]
-        fn maps_target_to_single_linking_note() {
-            let notes = [
-                note_with_outlink("a.md", "b", LinkType::Wikilink),
-                parse("b.md", "# B"),
-            ];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert_eq!(inlinks.inlinks_of(Path::new("b.md")), [PathBuf::from(
-                "a.md"
-            )]);
-        }
-
-        #[test]
-        fn maps_target_to_every_linking_note() {
-            let notes = [
-                note_with_outlink("a.md", "target", LinkType::Wikilink),
-                note_with_outlink("b.md", "target", LinkType::Wikilink),
-                parse("target.md", "# Target"),
-            ];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert_eq!(inlinks.inlinks_of(Path::new("target.md")), [
-                PathBuf::from("a.md"),
-                PathBuf::from("b.md")
-            ]);
-        }
-
-        #[test]
-        fn collapses_duplicate_outlinks_within_one_note_to_one_edge() {
-            let note = parse("a.md", "[[b]] and [[b]] again");
-            let notes = [note, parse("b.md", "# B")];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert_eq!(inlinks.inlinks_of(Path::new("b.md")), [PathBuf::from(
-                "a.md"
-            )]);
-        }
-
-        #[test]
-        fn records_self_link_without_corrupting_other_edges() {
-            let notes = [
-                note_with_outlink("a.md", "a", LinkType::Wikilink),
-                note_with_outlink("b.md", "a", LinkType::Wikilink),
-            ];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert_eq!(inlinks.inlinks_of(Path::new("a.md")), [
-                PathBuf::from("a.md"),
-                PathBuf::from("b.md")
-            ]);
-        }
-
-        #[test]
-        fn omits_notes_with_no_inbound_links() {
-            let notes = [parse("lonely.md", "# Lonely")];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert!(!inlinks.has_target(Path::new("lonely.md")));
-            assert!(inlinks.inlinks_of(Path::new("lonely.md")).is_empty());
-        }
-
-        #[test]
-        fn ignores_outlinks_that_do_not_resolve_to_any_file() {
-            let notes = [note_with_outlink(
-                "a.md",
-                "https://example.com",
-                LinkType::Markdown,
-            )];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert!(inlinks.is_empty());
-            assert_eq!(inlinks.len(), 0);
-        }
-
-        #[test]
-        fn resolves_ambiguous_wikilink_to_nearest_note() {
-            let notes = [
-                note_with_outlink(
-                    "notes/a/linking.md",
-                    "note",
-                    LinkType::Wikilink,
-                ),
-                parse("notes/a/note.md", "# Near"),
-                parse("notes/b/note.md", "# Far"),
-            ];
-
-            let inlinks = build_graph(&notes, &[]);
-
-            assert_eq!(inlinks.inlinks_of(Path::new("notes/a/note.md")), [
-                PathBuf::from("notes/a/linking.md")
-            ]);
-            assert!(
-                inlinks.inlinks_of(Path::new("notes/b/note.md")).is_empty()
-            );
-        }
-
-        #[test]
-        fn indexes_non_note_attachments_as_inlink_targets() {
-            let notes = [
-                note_with_outlink("note1.md", "chart.png", LinkType::Wikilink),
-                note_with_outlink("note2.md", "chart.png", LinkType::Wikilink),
-            ];
-            let attachments =
-                [file_for_attachment("images/chart.png", FileFormat::Other)];
-
-            let inlinks = build_graph(&notes, &attachments);
-
-            assert_eq!(inlinks.inlinks_of(Path::new("images/chart.png")), [
-                PathBuf::from("note1.md"),
-                PathBuf::from("note2.md")
-            ]);
-        }
-    }
-
-    mod inlink_map_invariants {
-        use super::*;
-
-        #[test]
-        fn inbound_sources_are_always_sorted_in_ascending_path_order() {
-            let notes = [
-                note_with_outlink("z.md", "target", LinkType::Wikilink),
-                note_with_outlink("a.md", "target", LinkType::Wikilink),
-                note_with_outlink("m.md", "target", LinkType::Wikilink),
-                parse("target.md", "# Target"),
-            ];
-
-            let mut files: Vec<FileBase> = notes
-                .iter()
-                .map(|n| file_for_note(n.path().to_str().unwrap()))
-                .collect();
-            files.sort_by(|a, b| a.path().cmp(b.path()));
-            let inlinks = InlinkMap::new(&notes, &files);
-
-            let sources = inlinks.inlinks_of(Path::new("target.md"));
-            assert_eq!(sources, [
-                PathBuf::from("a.md"),
-                PathBuf::from("m.md"),
-                PathBuf::from("z.md"),
-            ]);
-            assert!(
-                sources
-                    .windows(2)
-                    .all(|w| w.first().unwrap() < w.get(1).unwrap())
-            );
-        }
-
-        #[test]
-        fn inbound_sources_contain_no_duplicates() {
-            let note =
-                parse("source.md", "[[target]] and [[target]] and [[target]]");
-            let target = parse("target.md", "# Target");
-            let notes = [note, target];
-
-            let mut files: Vec<FileBase> = notes
-                .iter()
-                .map(|n| file_for_note(n.path().to_str().unwrap()))
-                .collect();
-            files.sort_by(|a, b| a.path().cmp(b.path()));
-            let inlinks = InlinkMap::new(&notes, &files);
-
-            let sources = inlinks.inlinks_of(Path::new("target.md"));
-            assert_eq!(sources.len(), 1);
-            assert_eq!(
-                sources.first().map(PathBuf::as_path),
-                Some(Path::new("source.md"))
-            );
-        }
-
-        #[test]
-        fn every_target_in_map_has_at_least_one_source() {
-            let notes = [
-                note_with_outlink("a.md", "target", LinkType::Wikilink),
-                parse("target.md", "# Target"),
-                parse("standalone.md", "# Standalone"),
-            ];
-
-            let mut files: Vec<FileBase> = notes
-                .iter()
-                .map(|n| file_for_note(n.path().to_str().unwrap()))
-                .collect();
-            files.sort_by(|a, b| a.path().cmp(b.path()));
-            let inlinks = InlinkMap::new(&notes, &files);
-
-            for (_, sources) in inlinks.iter() {
-                assert!(!sources.is_empty());
+        mod unresolvable {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn returns_none_for_unmatched_qualified_path_without_stem_fallback()
+            {
+                let files =
+                    files_from_notes(&["archive/foo.md", "notes/bar.md"]);
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "linking.md",
+                        LinkTarget::Path("notes/foo")
+                    ),
+                    None
+                );
+            }
+
+            #[test]
+            fn returns_none_for_basename_matching_no_indexed_file() {
+                let files = files_from_notes(&["other.md"]);
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "linking.md",
+                        LinkTarget::Path("nonexistent")
+                    ),
+                    None
+                );
+            }
+
+            #[test]
+            fn returns_none_for_unresolvable_url_target() {
+                let files = files_from_notes(&["other.md"]);
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "linking.md",
+                        LinkTarget::Path("https://example.com")
+                    ),
+                    None
+                );
+            }
+
+            #[test]
+            fn returns_none_for_anchor_only_target() {
+                let files = files_from_notes(&["other.md"]);
+
+                assert_eq!(
+                    resolve(
+                        &files,
+                        "linking.md",
+                        LinkTarget::AnchorOnly("Some Heading")
+                    ),
+                    None
+                );
             }
         }
     }
 
-    mod inlink_map_accessors {
+    mod inlink_map {
         use super::*;
 
-        #[test]
-        fn inlinks_of_returns_sources_for_known_target() {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("target.md"),
-                vec![PathBuf::from("src.md")].into_boxed_slice(),
-            );
-            let inlinks = InlinkMap::from_raw(raw);
+        mod construction {
+            use pretty_assertions::assert_eq;
 
-            assert_eq!(inlinks.inlinks_of(Path::new("target.md")), [
-                PathBuf::from("src.md")
-            ]);
+            use super::*;
+
+            fn build_graph(
+                notes: &[Note],
+                extra_files: &[FileBase],
+            ) -> InlinkMap {
+                let mut files: Vec<FileBase> = notes
+                    .iter()
+                    .map(|n| file_for_note(n.path().to_str().unwrap()))
+                    .collect();
+                files.extend_from_slice(extra_files);
+                files.sort_by(|a, b| a.path().cmp(b.path()));
+                InlinkMap::new(notes, &files)
+            }
+
+            #[test]
+            fn maps_target_to_single_linking_note() {
+                let notes = [
+                    note_with_outlink("a.md", "b", LinkType::Wikilink),
+                    parse("b.md", "# B"),
+                ];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert_eq!(inlinks.inlinks_of(Path::new("b.md")), [
+                    PathBuf::from("a.md")
+                ]);
+            }
+
+            #[test]
+            fn maps_target_to_every_linking_note() {
+                let notes = [
+                    note_with_outlink("a.md", "target", LinkType::Wikilink),
+                    note_with_outlink("b.md", "target", LinkType::Wikilink),
+                    parse("target.md", "# Target"),
+                ];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert_eq!(inlinks.inlinks_of(Path::new("target.md")), [
+                    PathBuf::from("a.md"),
+                    PathBuf::from("b.md")
+                ]);
+            }
+
+            #[test]
+            fn collapses_duplicate_outlinks_within_one_note_to_one_edge() {
+                let note = parse("a.md", "[[b]] and [[b]] again");
+                let notes = [note, parse("b.md", "# B")];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert_eq!(inlinks.inlinks_of(Path::new("b.md")), [
+                    PathBuf::from("a.md")
+                ]);
+            }
+
+            #[test]
+            fn records_self_link_without_corrupting_other_edges() {
+                let notes = [
+                    note_with_outlink("a.md", "a", LinkType::Wikilink),
+                    note_with_outlink("b.md", "a", LinkType::Wikilink),
+                ];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert_eq!(inlinks.inlinks_of(Path::new("a.md")), [
+                    PathBuf::from("a.md"),
+                    PathBuf::from("b.md")
+                ]);
+            }
+
+            #[test]
+            fn omits_notes_with_no_inbound_links() {
+                let notes = [parse("lonely.md", "# Lonely")];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert!(!inlinks.has_target(Path::new("lonely.md")));
+                assert!(inlinks.inlinks_of(Path::new("lonely.md")).is_empty());
+            }
+
+            #[test]
+            fn ignores_outlinks_that_do_not_resolve_to_any_file() {
+                let notes = [note_with_outlink(
+                    "a.md",
+                    "https://example.com",
+                    LinkType::Markdown,
+                )];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert!(inlinks.is_empty());
+                assert_eq!(inlinks.len(), 0);
+            }
+
+            #[test]
+            fn resolves_ambiguous_wikilink_to_nearest_note() {
+                let notes = [
+                    note_with_outlink(
+                        "notes/a/linking.md",
+                        "note",
+                        LinkType::Wikilink,
+                    ),
+                    parse("notes/a/note.md", "# Near"),
+                    parse("notes/b/note.md", "# Far"),
+                ];
+
+                let inlinks = build_graph(&notes, &[]);
+
+                assert_eq!(inlinks.inlinks_of(Path::new("notes/a/note.md")), [
+                    PathBuf::from("notes/a/linking.md")
+                ]);
+                assert!(
+                    inlinks.inlinks_of(Path::new("notes/b/note.md")).is_empty()
+                );
+            }
+
+            #[test]
+            fn indexes_non_note_attachments_as_inlink_targets() {
+                let notes = [
+                    note_with_outlink(
+                        "note1.md",
+                        "chart.png",
+                        LinkType::Wikilink,
+                    ),
+                    note_with_outlink(
+                        "note2.md",
+                        "chart.png",
+                        LinkType::Wikilink,
+                    ),
+                ];
+                let attachments = [file_for_attachment(
+                    "images/chart.png",
+                    FileFormat::Other,
+                )];
+
+                let inlinks = build_graph(&notes, &attachments);
+
+                assert_eq!(
+                    inlinks.inlinks_of(Path::new("images/chart.png")),
+                    [PathBuf::from("note1.md"), PathBuf::from("note2.md")]
+                );
+            }
         }
 
-        #[test]
-        fn inlinks_of_returns_empty_slice_for_unknown_target() {
-            let inlinks = InlinkMap::default();
-            assert!(inlinks.inlinks_of(Path::new("nonexistent.md")).is_empty());
+        mod invariants {
+            use super::*;
+
+            #[test]
+            fn inbound_sources_are_always_sorted_in_ascending_path_order() {
+                let notes = [
+                    note_with_outlink("z.md", "target", LinkType::Wikilink),
+                    note_with_outlink("a.md", "target", LinkType::Wikilink),
+                    note_with_outlink("m.md", "target", LinkType::Wikilink),
+                    parse("target.md", "# Target"),
+                ];
+
+                let mut files: Vec<FileBase> = notes
+                    .iter()
+                    .map(|n| file_for_note(n.path().to_str().unwrap()))
+                    .collect();
+                files.sort_by(|a, b| a.path().cmp(b.path()));
+                let inlinks = InlinkMap::new(&notes, &files);
+
+                let sources = inlinks.inlinks_of(Path::new("target.md"));
+                assert_eq!(sources, [
+                    PathBuf::from("a.md"),
+                    PathBuf::from("m.md"),
+                    PathBuf::from("z.md"),
+                ]);
+                assert!(
+                    sources
+                        .windows(2)
+                        .all(|w| w.first().unwrap() < w.get(1).unwrap())
+                );
+            }
+
+            #[test]
+            fn every_target_in_map_has_at_least_one_source() {
+                let notes = [
+                    note_with_outlink("a.md", "target", LinkType::Wikilink),
+                    parse("target.md", "# Target"),
+                    parse("standalone.md", "# Standalone"),
+                ];
+
+                let mut files: Vec<FileBase> = notes
+                    .iter()
+                    .map(|n| file_for_note(n.path().to_str().unwrap()))
+                    .collect();
+                files.sort_by(|a, b| a.path().cmp(b.path()));
+                let inlinks = InlinkMap::new(&notes, &files);
+
+                for (_, sources) in inlinks.iter() {
+                    assert!(!sources.is_empty());
+                }
+            }
         }
 
-        #[test]
-        fn has_target_checks_presence() {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("target.md"),
-                vec![PathBuf::from("src.md")].into_boxed_slice(),
-            );
-            let inlinks = InlinkMap::from_raw(raw);
+        mod accessors {
+            use super::*;
 
-            assert!(inlinks.has_target(Path::new("target.md")));
-            assert!(!inlinks.has_target(Path::new("other.md")));
+            #[test]
+            fn inlinks_of_returns_sources_for_known_target() {
+                let mut raw = HashMap::new();
+                raw.insert(
+                    PathBuf::from("target.md"),
+                    vec![PathBuf::from("src.md")].into_boxed_slice(),
+                );
+                let inlinks = InlinkMap::from_raw(raw);
+
+                assert_eq!(inlinks.inlinks_of(Path::new("target.md")), [
+                    PathBuf::from("src.md")
+                ]);
+            }
+
+            #[test]
+            fn inlinks_of_returns_empty_slice_for_unknown_target() {
+                let inlinks = InlinkMap::default();
+                assert!(
+                    inlinks.inlinks_of(Path::new("nonexistent.md")).is_empty()
+                );
+            }
+
+            #[test]
+            fn has_target_checks_presence() {
+                let mut raw = HashMap::new();
+                raw.insert(
+                    PathBuf::from("target.md"),
+                    vec![PathBuf::from("src.md")].into_boxed_slice(),
+                );
+                let inlinks = InlinkMap::from_raw(raw);
+
+                assert!(inlinks.has_target(Path::new("target.md")));
+                assert!(!inlinks.has_target(Path::new("other.md")));
+            }
+
+            #[test]
+            fn iter_and_len_reflect_graph_cardinality() {
+                let mut raw = HashMap::new();
+                raw.insert(
+                    PathBuf::from("t1.md"),
+                    vec![PathBuf::from("s1.md")].into_boxed_slice(),
+                );
+                raw.insert(
+                    PathBuf::from("t2.md"),
+                    vec![PathBuf::from("s2.md")].into_boxed_slice(),
+                );
+                let inlinks = InlinkMap::from_raw(raw);
+
+                assert_eq!(inlinks.len(), 2);
+                assert!(!inlinks.is_empty());
+
+                let collected: HashMap<_, _> = inlinks
+                    .iter()
+                    .map(|(target, sources)| {
+                        (target.to_path_buf(), sources.to_vec())
+                    })
+                    .collect();
+                assert_eq!(collected.len(), 2);
+            }
+
+            #[test]
+            fn into_entries_yields_owned_entries() {
+                let mut raw = HashMap::new();
+                raw.insert(
+                    PathBuf::from("target.md"),
+                    vec![PathBuf::from("source.md")].into_boxed_slice(),
+                );
+                let inlinks = InlinkMap::from_raw(raw);
+                for (target, sources) in inlinks.into_entries() {
+                    assert_eq!(target, PathBuf::from("target.md"));
+                    assert_eq!(sources.as_ref(), [PathBuf::from("source.md")]);
+                }
+            }
         }
 
-        #[test]
-        fn iter_and_len_reflect_graph_cardinality() {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("t1.md"),
-                vec![PathBuf::from("s1.md")].into_boxed_slice(),
-            );
-            raw.insert(
-                PathBuf::from("t2.md"),
-                vec![PathBuf::from("s2.md")].into_boxed_slice(),
-            );
-            let inlinks = InlinkMap::from_raw(raw);
+        mod refresh_support {
+            use super::*;
 
-            assert_eq!(inlinks.len(), 2);
-            assert!(!inlinks.is_empty());
+            mod without_sources {
+                use pretty_assertions::assert_eq;
 
-            let collected: HashMap<_, _> = inlinks
-                .iter()
-                .map(|(target, sources)| {
-                    (target.to_path_buf(), sources.to_vec())
-                })
-                .collect();
-            assert_eq!(collected.len(), 2);
-        }
+                use super::*;
 
-        #[test]
-        fn into_entries_yields_owned_entries() {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("target.md"),
-                vec![PathBuf::from("source.md")].into_boxed_slice(),
-            );
-            let inlinks = InlinkMap::from_raw(raw);
-            for (target, sources) in inlinks.into_entries() {
-                assert_eq!(target, PathBuf::from("target.md"));
-                assert_eq!(sources.as_ref(), [PathBuf::from("source.md")]);
+                fn graph_with_two_sources() -> InlinkMap {
+                    let mut raw = HashMap::new();
+                    raw.insert(
+                        PathBuf::from("target.md"),
+                        vec![PathBuf::from("a.md"), PathBuf::from("b.md")]
+                            .into_boxed_slice(),
+                    );
+                    InlinkMap::from_raw(raw)
+                }
+
+                #[test]
+                fn removing_the_only_source_drops_the_target() {
+                    let mut raw = HashMap::new();
+                    raw.insert(
+                        PathBuf::from("target.md"),
+                        vec![PathBuf::from("a.md")].into_boxed_slice(),
+                    );
+                    let inlinks = InlinkMap::from_raw(raw);
+                    let stale: HashSet<&Path> =
+                        [Path::new("a.md")].into_iter().collect();
+
+                    let patched = inlinks.without_sources(&stale);
+
+                    assert!(!patched.has_target(Path::new("target.md")));
+                }
+
+                #[test]
+                fn removing_one_of_several_sources_keeps_the_target() {
+                    let inlinks = graph_with_two_sources();
+                    let stale: HashSet<&Path> =
+                        [Path::new("a.md")].into_iter().collect();
+
+                    let patched = inlinks.without_sources(&stale);
+
+                    assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                        PathBuf::from("b.md")
+                    ]);
+                }
+            }
+
+            mod with_edges {
+                use pretty_assertions::assert_eq;
+
+                use super::*;
+
+                #[test]
+                fn adding_an_edge_to_an_existing_target_appends_and_resorts() {
+                    let mut raw = HashMap::new();
+                    raw.insert(
+                        PathBuf::from("target.md"),
+                        vec![PathBuf::from("z.md")].into_boxed_slice(),
+                    );
+                    let inlinks = InlinkMap::from_raw(raw);
+
+                    let patched = inlinks.with_edges([(
+                        PathBuf::from("target.md"),
+                        PathBuf::from("a.md"),
+                    )]);
+
+                    assert_eq!(patched.inlinks_of(Path::new("target.md")), [
+                        PathBuf::from("a.md"),
+                        PathBuf::from("z.md")
+                    ]);
+                }
             }
         }
     }
 
-    mod without_sources {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        fn graph_with_two_sources() -> InlinkMap {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("target.md"),
-                vec![PathBuf::from("a.md"), PathBuf::from("b.md")]
-                    .into_boxed_slice(),
-            );
-            InlinkMap::from_raw(raw)
-        }
-
-        #[test]
-        fn removing_the_only_source_drops_the_target() {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("target.md"),
-                vec![PathBuf::from("a.md")].into_boxed_slice(),
-            );
-            let inlinks = InlinkMap::from_raw(raw);
-            let stale: HashSet<&Path> =
-                [Path::new("a.md")].into_iter().collect();
-
-            let patched = inlinks.without_sources(&stale);
-
-            assert!(!patched.has_target(Path::new("target.md")));
-        }
-
-        #[test]
-        fn removing_one_of_several_sources_keeps_the_target() {
-            let inlinks = graph_with_two_sources();
-            let stale: HashSet<&Path> =
-                [Path::new("a.md")].into_iter().collect();
-
-            let patched = inlinks.without_sources(&stale);
-
-            assert_eq!(patched.inlinks_of(Path::new("target.md")), [
-                PathBuf::from("b.md")
-            ]);
-        }
-    }
-
-    mod with_edges {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn adding_an_edge_to_an_existing_target_appends_and_resorts() {
-            let mut raw = HashMap::new();
-            raw.insert(
-                PathBuf::from("target.md"),
-                vec![PathBuf::from("z.md")].into_boxed_slice(),
-            );
-            let inlinks = InlinkMap::from_raw(raw);
-
-            let patched = inlinks.with_edges([(
-                PathBuf::from("target.md"),
-                PathBuf::from("a.md"),
-            )]);
-
-            assert_eq!(patched.inlinks_of(Path::new("target.md")), [
-                PathBuf::from("a.md"),
-                PathBuf::from("z.md")
-            ]);
-        }
-    }
-
-    mod folder_proximity {
+    mod folder_distance {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -1541,6 +1666,72 @@ mod tests {
                 ),
                 3
             );
+        }
+    }
+
+    mod stem_index {
+        use super::*;
+
+        mod dispatch {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            fn same_stem_files(count: usize) -> Vec<FileBase> {
+                let paths: Vec<String> =
+                    (0..count).map(|i| format!("d{i}/note.md")).collect();
+                let mut files: Vec<FileBase> =
+                    paths.iter().map(|p| file_for_note(p)).collect();
+                files.sort_by(|a, b| a.path().cmp(b.path()));
+                files
+            }
+
+            #[test]
+            fn resolves_identically_at_the_trie_threshold_boundary() {
+                for count in [TRIE_THRESHOLD - 1, TRIE_THRESHOLD] {
+                    let files = same_stem_files(count);
+                    let resolver = LinkResolver::new(&files);
+
+                    assert_eq!(
+                        resolver.resolve(
+                            Path::new("d0/linking.md"),
+                            LinkTarget::Path("note"),
+                        ),
+                        Some(Target(Path::new("d0/note.md"))),
+                        "candidate count = {count}"
+                    );
+                }
+            }
+        }
+    }
+
+    mod resolve_edges_for {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn preserves_resolution_order_and_cross_note_duplicate_edges() {
+            let notes = [
+                note_with_outlink("z.md", "b", LinkType::Wikilink),
+                note_with_outlink("y.md", "a", LinkType::Wikilink),
+                note_with_outlink("w.md", "b", LinkType::Wikilink),
+                note_with_outlink("v.md", "missing", LinkType::Wikilink),
+            ];
+            let mut files: Vec<FileBase> =
+                ["z.md", "y.md", "w.md", "v.md", "a.md", "b.md"]
+                    .iter()
+                    .map(|p| file_for_note(p))
+                    .collect();
+            files.sort_by(|a, b| a.path().cmp(b.path()));
+
+            let edges = resolve_edges_for(&notes, &files);
+
+            assert_eq!(edges, [
+                (PathBuf::from("b.md"), PathBuf::from("z.md")),
+                (PathBuf::from("a.md"), PathBuf::from("y.md")),
+                (PathBuf::from("b.md"), PathBuf::from("w.md")),
+            ]);
         }
     }
 
@@ -1675,6 +1866,69 @@ mod tests {
                     naive_nearest(&candidates, from),
                     "mismatch for from = {from:?}"
                 );
+            }
+        }
+
+        mod agrees_with_naive_scan {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            /// Deterministic Linear Congruential Generator (LCG):
+            /// `state = state * a + c` mod 2^64. One multiply and one add per
+            /// draw, with no dependency on `rand`, reproducible across runs so
+            /// a failure is always replayable from the fixed seed.
+            fn lcg_next(state: &mut u64) -> u64 {
+                *state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                *state
+            }
+
+            #[test]
+            fn matches_the_naive_oracle_on_randomized_folder_sets() {
+                let mut state = 0x243f_6a88_85a3_08d3_u64;
+                let components = ["a", "b", "c", "d"];
+                for _ in 0..128 {
+                    let candidate_count =
+                        ((lcg_next(&mut state) >> 57) as usize) + 2;
+                    let mut paths: Vec<PathBuf> =
+                        Vec::with_capacity(candidate_count);
+                    for _ in 0..candidate_count {
+                        let depth = (lcg_next(&mut state) >> 62) + 1;
+                        let mut path = PathBuf::new();
+                        for _ in 0..depth {
+                            path.push(
+                                components
+                                    [(lcg_next(&mut state) >> 62) as usize],
+                            );
+                        }
+                        path.push("note.md");
+                        paths.push(path);
+                    }
+                    let candidates: Vec<&Path> =
+                        paths.iter().map(PathBuf::as_path).collect();
+                    let trie = CandidateTrie::build(&candidates);
+
+                    for _ in 0..4 {
+                        let depth = (lcg_next(&mut state) >> 62) + 1;
+                        let mut from = PathBuf::new();
+                        for _ in 0..depth {
+                            from.push(
+                                components
+                                    [(lcg_next(&mut state) >> 62) as usize],
+                            );
+                        }
+                        from.push("linking.md");
+                        let from = from.as_path();
+                        assert_eq!(
+                            trie.nearest(from, None),
+                            naive_nearest(&candidates, from),
+                            "mismatch for candidates = {candidates:?}, from = \
+                             {from:?}"
+                        );
+                    }
+                }
             }
         }
     }
