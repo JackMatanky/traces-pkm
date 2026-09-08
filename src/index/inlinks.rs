@@ -1885,49 +1885,78 @@ mod tests {
                 *state
             }
 
+            /// Draws one folder component from the four-entry pool this
+            /// generator indexes with two bits per draw.
+            fn draw_component<'a>(
+                components: &[&'a str],
+                state: &mut u64,
+            ) -> &'a str {
+                let idx =
+                    usize::try_from(lcg_next(state) >> 62).unwrap_or_default();
+                components.get(idx).copied().unwrap_or("a")
+            }
+
+            /// Draws a folder depth in `1..=4`.
+            fn draw_depth(state: &mut u64) -> usize {
+                usize::try_from((lcg_next(state) >> 62).wrapping_add(1))
+                    .unwrap_or_default()
+            }
+
+            /// Builds one randomized folder-prefixed path: a `1..=4`
+            /// component folder prefix plus `file_name`.
+            fn draw_folder_prefixed_path(
+                components: &[&str],
+                state: &mut u64,
+                file_name: &str,
+            ) -> PathBuf {
+                let depth = draw_depth(state);
+                let mut path = PathBuf::new();
+                for _ in 0..depth {
+                    path.push(draw_component(components, state));
+                }
+                path.push(file_name);
+                path
+            }
+
+            /// Checks one randomized candidate set against the oracle from
+            /// four randomized query points.
+            fn assert_random_set_agrees_with_oracle(
+                components: &[&str],
+                state: &mut u64,
+            ) {
+                let candidate_count =
+                    usize::try_from((lcg_next(state) >> 57).wrapping_add(2))
+                        .unwrap_or_default();
+                let paths: Vec<PathBuf> = (0..candidate_count)
+                    .map(|_| {
+                        draw_folder_prefixed_path(components, state, "note.md")
+                    })
+                    .collect();
+                let candidates: Vec<&Path> =
+                    paths.iter().map(PathBuf::as_path).collect();
+                let trie = CandidateTrie::build(&candidates);
+
+                for from in (0..4).map(|_| {
+                    draw_folder_prefixed_path(components, state, "linking.md")
+                }) {
+                    let from = from.as_path();
+                    assert_eq!(
+                        trie.nearest(from, None),
+                        naive_nearest(&candidates, from),
+                        "mismatch for candidates = {candidates:?}, from = \
+                         {from:?}"
+                    );
+                }
+            }
+
             #[test]
             fn matches_the_naive_oracle_on_randomized_folder_sets() {
                 let mut state = 0x243f_6a88_85a3_08d3_u64;
-                let components = ["a", "b", "c", "d"];
+                let components: &[&str] = &["a", "b", "c", "d"];
                 for _ in 0..128 {
-                    let candidate_count =
-                        ((lcg_next(&mut state) >> 57) as usize) + 2;
-                    let mut paths: Vec<PathBuf> =
-                        Vec::with_capacity(candidate_count);
-                    for _ in 0..candidate_count {
-                        let depth = (lcg_next(&mut state) >> 62) + 1;
-                        let mut path = PathBuf::new();
-                        for _ in 0..depth {
-                            path.push(
-                                components
-                                    [(lcg_next(&mut state) >> 62) as usize],
-                            );
-                        }
-                        path.push("note.md");
-                        paths.push(path);
-                    }
-                    let candidates: Vec<&Path> =
-                        paths.iter().map(PathBuf::as_path).collect();
-                    let trie = CandidateTrie::build(&candidates);
-
-                    for _ in 0..4 {
-                        let depth = (lcg_next(&mut state) >> 62) + 1;
-                        let mut from = PathBuf::new();
-                        for _ in 0..depth {
-                            from.push(
-                                components
-                                    [(lcg_next(&mut state) >> 62) as usize],
-                            );
-                        }
-                        from.push("linking.md");
-                        let from = from.as_path();
-                        assert_eq!(
-                            trie.nearest(from, None),
-                            naive_nearest(&candidates, from),
-                            "mismatch for candidates = {candidates:?}, from = \
-                             {from:?}"
-                        );
-                    }
+                    assert_random_set_agrees_with_oracle(
+                        components, &mut state,
+                    );
                 }
             }
         }
