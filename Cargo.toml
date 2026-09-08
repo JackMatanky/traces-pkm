@@ -76,6 +76,7 @@ clap_complete = "4.6.7"
 comfy-table = { version = "7.2.2", default-features = false }
 convert_case = "0.11.0"
 indexmap = { version = "2.14", features = ["rayon", "serde"] }
+indextree = "4.9"
 inquire = "0.9"
 logos = "0.16"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
