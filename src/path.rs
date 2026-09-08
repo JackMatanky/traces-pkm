@@ -201,6 +201,79 @@ impl AsRef<Path> for RootConfinedPath {
     }
 }
 
+/// A borrowed reference to a directory path.
+///
+/// Wraps `Path` to distinguish directory paths from file paths at the type
+/// level. The containing folder of `notes/todo.md` is `notes`; the containing
+/// folder of `root.md` is `""`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub(crate) struct FolderRef<'a>(&'a Path);
+
+impl<'a> FolderRef<'a> {
+    /// Extracts the containing folder from `path`.
+    ///
+    /// Returns the root `""` for top-level paths.
+    #[inline]
+    #[must_use]
+    pub(crate) fn of(path: &'a Path) -> Self {
+        Self(path.parent().unwrap_or_else(|| Path::new("")))
+    }
+
+    /// Returns the inner path.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_path(self) -> &'a Path {
+        self.0
+    }
+
+    /// Tree distance: hops up to the nearest shared ancestor plus down
+    /// to the other folder. The same folder has distance `0`.
+    pub(crate) fn distance_to(self, other: FolderRef<'_>) -> usize {
+        let mut a_iter = self.0.components();
+        let mut b_iter = other.0.components();
+        let mut shared: usize = 0;
+        let mut a_count: usize = 0;
+        let mut b_count: usize = 0;
+        let mut matching = true;
+        loop {
+            match (a_iter.next(), b_iter.next()) {
+                (Some(ac), Some(bc)) => {
+                    a_count = a_count.saturating_add(1);
+                    b_count = b_count.saturating_add(1);
+                    if matching && ac == bc {
+                        shared = shared.saturating_add(1);
+                    } else {
+                        matching = false;
+                    }
+                }
+
+                (Some(_), None) => {
+                    a_count = a_count
+                        .saturating_add(1)
+                        .saturating_add(a_iter.count());
+                    break;
+                }
+                (None, Some(_)) => {
+                    b_count = b_count
+                        .saturating_add(1)
+                        .saturating_add(b_iter.count());
+                    break;
+                }
+                (None, None) => break,
+            }
+        }
+        a_count
+            .saturating_sub(shared)
+            .saturating_add(b_count.saturating_sub(shared))
+    }
+}
+
+impl<'a> From<FolderRef<'a>> for &'a Path {
+    fn from(folder: FolderRef<'a>) -> Self {
+        folder.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +417,59 @@ mod tests {
                     .expect_err("escaping symlink ancestor is rejected");
 
             assert!(matches!(error, PathError::EscapesRoot));
+        }
+    }
+
+    mod folder_ref {
+        use super::*;
+
+        #[test]
+        fn same_folder_has_zero_distance() {
+            let a = FolderRef::of(Path::new("folder/a.md"));
+            let b = FolderRef::of(Path::new("folder/b.md"));
+            assert_eq!(a.distance_to(b), 0);
+        }
+
+        #[test]
+        fn parent_and_child_have_distance_one() {
+            let a = FolderRef::of(Path::new("folder/sub/a.md"));
+            let b = FolderRef::of(Path::new("folder/b.md"));
+            assert_eq!(a.distance_to(b), 1);
+            assert_eq!(b.distance_to(a), 1);
+        }
+
+        #[test]
+        fn siblings_have_distance_two() {
+            let a = FolderRef::of(Path::new("folder/sub1/a.md"));
+            let b = FolderRef::of(Path::new("folder/sub2/b.md"));
+            assert_eq!(a.distance_to(b), 2);
+        }
+
+        #[test]
+        fn different_subtrees_step_through_common_ancestor() {
+            let a = FolderRef::of(Path::new("a/b/c/file.md"));
+            let b = FolderRef::of(Path::new("a/d/e/file.md"));
+            assert_eq!(a.distance_to(b), 4);
+        }
+
+        #[test]
+        fn root_and_nested_folder_compute_correct_distance() {
+            let a = FolderRef::of(Path::new("root.md"));
+            let b = FolderRef::of(Path::new("a/b/c/nested.md"));
+            assert_eq!(a.distance_to(b), 3);
+            assert_eq!(b.distance_to(a), 3);
+        }
+
+        #[test]
+        fn of_extracts_parent_directory() {
+            assert_eq!(
+                FolderRef::of(Path::new("a/b/file.md")).as_path(),
+                Path::new("a/b")
+            );
+            assert_eq!(
+                FolderRef::of(Path::new("root.md")).as_path(),
+                Path::new("")
+            );
         }
     }
 }

@@ -138,6 +138,7 @@ pub use note::{
     Note, NoteFieldValue, TaskDates, TaskListItem, TaskPriority,
     duration_seconds, parse_markdown,
 };
+pub(crate) use path::FolderRef;
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;
 #[cfg(any(test, feature = "test-utils"))]
