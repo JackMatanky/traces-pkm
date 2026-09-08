@@ -39,6 +39,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Reports that a path has no final component.
+#[derive(Debug, Error)]
+#[error("path has no file name")]
+pub(crate) struct MissingFileName;
+
 /// Metadata captured for one regular file under a project root.
 ///
 /// Stored paths are project-root-relative so the index can move with the
@@ -178,8 +183,8 @@ impl FileBase {
     }
 
     /// Returns [`Self::created_at`] when available, falling back to
-    /// [`Self::modified_at`] when creation time is unsupported on the host
-    /// OS or filesystem.
+    /// [`Self::modified_at`] when creation time is unsupported on the host OS
+    /// or filesystem.
     #[inline]
     #[must_use]
     pub(crate) fn created_at_or_modified(&self) -> Timestamp {
@@ -236,11 +241,6 @@ impl TryFrom<&Path> for FileName {
     }
 }
 
-/// Reports that a path has no final component.
-#[derive(Debug, Error)]
-#[error("path has no file name")]
-pub(crate) struct MissingFileName;
-
 /// Owned file name with any extension stripped.
 ///
 /// Uses [`Path::file_stem`] on [`FileName`]'s stored text. For `todo.md`,
@@ -271,9 +271,8 @@ impl From<&FileName> for BaseName {
 
 /// Borrowed file name with any extension stripped.
 ///
-/// Use this instead of [`BaseName`] when a comparison or hash lookup can
-/// borrow directly from a [`Path`]. Dotfile behavior matches
-/// [`Path::file_stem`].
+/// Use this instead of [`BaseName`] when a comparison or hash lookup can borrow
+/// directly from a [`Path`]. Dotfile behavior matches [`Path::file_stem`].
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BaseNameRef<'a>(&'a str);
 
@@ -303,15 +302,11 @@ impl std::borrow::Borrow<str> for BaseNameRef<'_> {
 
 /// Coarse file classification used by the two-tier index.
 ///
-/// Markdown notes get parsed [`Note`] metadata in addition to their
+/// Markdown notes get parsed [`crate::Note`] metadata in addition to their
 /// [`FileBase`]. Other files only keep general file metadata.
-///
-/// [`Note`]: crate::Note
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FileFormat {
-    /// Markdown file parsed into a [`Note`].
-    ///
-    /// [`Note`]: crate::Note
+    /// Markdown file parsed into a [`crate::Note`].
     Note,
     /// Regular non-Markdown file.
     Other,
@@ -397,8 +392,8 @@ impl Timestamp {
 
     /// Formats this timestamp as a bare date without time or offset.
     ///
-    /// Produces values like `"2026-07-29"` for the `cdate`/`mdate` query
-    /// field values.
+    /// Produces values like `"2026-07-29"` for the `cdate`/`mdate` query field
+    /// values.
     #[inline]
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {
@@ -450,9 +445,8 @@ impl Timestamp {
     /// Formats this timestamp into `out`, using [`Self::to_datetime_string`]'s
     /// form when it has a non-zero time-of-day component (see
     /// [`Self::has_time_component`]), or [`Self::to_date_string`]'s bare-date
-    /// form otherwise. Writes directly into `out` with no intermediate
-    /// `String` allocation, unlike calling either formatter and pushing its
-    /// result.
+    /// form otherwise. Writes directly into `out` with no intermediate `String`
+    /// allocation, unlike calling either formatter and pushing its result.
     #[inline]
     pub(crate) fn append_conditional(self, out: &mut String) {
         use std::fmt::Write as _;
@@ -464,10 +458,10 @@ impl Timestamp {
     }
 
     /// Formats this timestamp as an owned [`String`], using
-    /// [`Self::to_datetime_string`]'s form when it has a non-zero
-    /// time-of-day component, or [`Self::to_date_string`]'s bare-date form
-    /// otherwise. Prefer [`Self::append_conditional`] when writing into an
-    /// existing buffer.
+    /// [`Self::to_datetime_string`]'s form when it has a non-zero time-of-day
+    /// component, or [`Self::to_date_string`]'s bare-date form otherwise.
+    /// Prefer [`Self::append_conditional`] when writing into an existing
+    /// buffer.
     #[inline]
     #[must_use]
     pub(crate) fn to_conditional_string(self) -> String {
