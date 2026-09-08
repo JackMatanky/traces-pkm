@@ -94,6 +94,7 @@ mod path;
 mod position;
 mod query;
 mod schema;
+mod strsim;
 mod tag;
 mod task;
 mod template;
