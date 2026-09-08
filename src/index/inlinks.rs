@@ -12,10 +12,23 @@
 //! sharing a basename-only Wikilink stem. Equal-distance stem matches remain
 //! unresolved.
 //!
-//! [`StemIndex`] chooses a flat scan or [`CandidateTrie`] per stem (see
-//! [`TRIE_THRESHOLD`]). Flat scan avoids trie construction for the common
-//! unique-stem case; the trie keeps large ambiguous clusters off an
-//! `O(candidates)` lookup path.
+//! # Stem index design
+//!
+//! Most file stems are unique, so a flat linear scan is fastest for the common
+//! case. When a stem has many candidates (≥ [`TRIE_THRESHOLD`]), a
+//! [`CandidateTrie`] precomputes per-folder subtree aggregates so nearest-
+//! candidate queries run in `O(depth)` instead of `O(candidates)`. The trie
+//! models folder containment as a tree, where
+//! `folder_distance(a, b) = depth(a) + depth(b) - 2 * depth(LCA(a, b))`.
+//!
+//! # Hash map choice
+//!
+//! [`FxHashMap`] is used instead of [`HashMap`] for internal indexes. The keys
+//! are vault-internal file paths, not attacker-controlled input, so
+//! [`SipHash`]'s denial-of-service resistance is unnecessary.
+//! [`FxHashMap`] uses a simpler, non-cryptographic hash function that avoids
+//! the per-entry computational overhead of [`SipHash`], yielding measurable
+//! gains at the thousand-entry scale typical of vault path indexes.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -173,7 +186,7 @@ impl InlinkMap {
     #[inline]
     #[must_use]
     pub(super) fn from_raw(edges: HashMap<PathBuf, Box<[PathBuf]>>) -> Self {
-        Self(edges)
+        Self::from(edges)
     }
 
     /// Removes edges from `sources`, dropping targets left without inlinks.
@@ -218,6 +231,13 @@ impl InlinkMap {
     }
 }
 
+impl From<HashMap<PathBuf, Box<[PathBuf]>>> for InlinkMap {
+    #[inline]
+    fn from(edges: HashMap<PathBuf, Box<[PathBuf]>>) -> Self {
+        Self(edges)
+    }
+}
+
 /// Resolves notes into edge pairs for [`InlinkMap::with_edges`].
 ///
 /// Shares one [`LinkResolver`] so batch refresh pays stem-index construction
@@ -240,13 +260,6 @@ pub(super) fn resolve_edges_for(
 /// Path and stem index used during link resolution.
 struct LinkResolver<'a> {
     files: &'a [FileBase],
-    /// `rustc_hash::FxHashMap`: measured against `SipHash` under matched
-    /// conditions (`benches/index_inlinks`, `deep_paths` group,
-    /// 2026-09-08) and found 9-11% faster at 1,000+ candidates (e.g.
-    /// `deep_paths/20000`: 17.242ms -> 15.652ms). Neither this map nor
-    /// [`CandidateTrie::by_folder`] keys on attacker-controlled input (both
-    /// are built from the vault's own file paths), so `SipHash`'s `DoS`
-    /// resistance buys nothing here.
     stem_index: FxHashMap<BaseNameRef<'a>, StemIndex<'a>>,
 }
 
@@ -366,20 +379,14 @@ impl Source<'_> {
 
 /// Per-stem candidate index.
 ///
-/// Small clusters use flat scans to avoid trie construction. Large ambiguous
-/// clusters use [`CandidateTrie`] to avoid `O(candidates)` lookup cost; the
-/// switch point is [`TRIE_THRESHOLD`].
+/// Dispatches to flat scan or [`CandidateTrie`] based on candidate count
+/// (see [`TRIE_THRESHOLD`]).
 enum StemIndex<'a> {
     Flat(Vec<&'a Path>),
     Trie(Box<CandidateTrie<'a>>),
 }
 
 /// Candidate count at which [`StemIndex::build`] switches to [`CandidateTrie`].
-///
-/// `benches/index_inlinks.rs` shows flat scan and fresh-trie build within noise
-/// around 50-100 candidates, with trie 2-25x faster by 1,000 candidates. `64`
-/// sits just past that break-even point while ordinary duplicated filenames
-/// avoid trie construction.
 const TRIE_THRESHOLD: usize = 64;
 
 impl<'a> StemIndex<'a> {
@@ -406,8 +413,7 @@ impl<'a> StemIndex<'a> {
 
     /// Finds the nearest candidate by linear scan.
     ///
-    /// Equal-distance nearest candidates resolve to `None`; below
-    /// [`TRIE_THRESHOLD`], this is cheaper than building a trie.
+    /// Equal-distance nearest candidates resolve to `None`.
     fn nearest_flat(
         candidates: &[&'a Path],
         from: &Path,
@@ -506,18 +512,11 @@ fn folder_distance(a: &Path, b: &Path) -> usize {
 /// Folder-component trie for one Wikilink stem's candidates.
 ///
 /// Answers nearest-candidate queries in `O(depth(from))` by precomputing each
-/// folder's nearest same-stem candidate inside its subtree. It has the same
-/// lifetime and mutability shape as the flat `Vec`, so [`InlinkMap::new`]'s
-/// `notes.par_iter()` path remains `Sync`.
-///
-/// [`folder_distance`] equals tree distance:
-/// `depth(from) + depth(candidate) - 2 * depth(LCA(from, candidate))`.
-/// Querying walks from `from`'s folder toward the root and combines candidates
-/// newly visible at each level through [`TrieNode`]'s exclusion aggregates.
+/// folder's nearest same-stem candidate inside its subtree. The trie's
+/// lifetime and mutability shape keeps [`InlinkMap::new`]'s parallel path
+/// `Sync`.
 struct CandidateTrie<'a> {
     arena: Arena<TrieNode<'a>>,
-    /// `rustc_hash::FxHashMap`, for the same measured reason as
-    /// [`LinkResolver::stem_index`].
     by_folder: FxHashMap<&'a Path, NodeId>,
     root: NodeId,
 }
