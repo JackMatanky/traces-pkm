@@ -24,6 +24,7 @@ use std::{
 
 use indextree::{Arena, NodeId};
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 use crate::{
     BaseNameRef, FileBase,
@@ -244,7 +245,7 @@ struct LinkResolver<'a> {
     /// index_inlinks` vs the `pre-refinement` criterion baseline, 2026-09-08:
     /// `deep_paths`/`ambiguous`/`collisions` flat to slightly slower), so the
     /// default `SipHash` stays.
-    stem_index: HashMap<BaseNameRef<'a>, StemIndex<'a>>,
+    stem_index: FxHashMap<BaseNameRef<'a>, StemIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
@@ -518,7 +519,7 @@ struct CandidateTrie<'a> {
     /// index_inlinks` vs the `pre-refinement` criterion baseline, 2026-09-08:
     /// `deep_paths`/`ambiguous`/`collisions` flat to slightly slower), so the
     /// default `SipHash` stays.
-    by_folder: HashMap<&'a Path, NodeId>,
+    by_folder: FxHashMap<&'a Path, NodeId>,
     root: NodeId,
 }
 
@@ -526,7 +527,7 @@ impl<'a> CandidateTrie<'a> {
     fn build(candidates: &[&'a Path]) -> Self {
         let mut arena = Arena::new();
         let root = arena.new_node(Self::new_node_data(0));
-        let mut by_folder = HashMap::new();
+        let mut by_folder = FxHashMap::default();
         by_folder.insert(Path::new(""), root);
 
         for &path in candidates {
@@ -620,7 +621,7 @@ impl<'a> CandidateTrie<'a> {
     /// Returns `folder`'s node, creating missing ancestors first.
     fn ensure_folder_node(
         arena: &mut Arena<TrieNode<'a>>,
-        by_folder: &mut HashMap<&'a Path, NodeId>,
+        by_folder: &mut FxHashMap<&'a Path, NodeId>,
         folder: &'a Path,
     ) -> NodeId {
         if let Some(&id) = by_folder.get(folder) {
@@ -908,7 +909,6 @@ mod tests {
     }
 
     mod link_resolver {
-        
 
         use super::*;
 
