@@ -309,7 +309,7 @@ impl FieldKey {
     #[must_use]
     pub(crate) fn is_canonical_match(&self, candidate: &str) -> bool {
         self.canonical.as_ref() == candidate
-            || self.canonical.as_ref() == Self::canonicalize(candidate).as_str()
+            || self.canonical.as_ref() == Self::to_canonical(candidate).as_ref()
     }
 
     /// Returns `true` if `candidate` exactly matches this key's raw name.
@@ -379,6 +379,21 @@ impl FieldKey {
                     && Self::is_kept(ch)
                     && ch.to_lowercase().eq([ch])
             })
+    }
+
+    /// Returns the canonical form of `raw`, borrowing when `raw` is already
+    /// canonical to avoid allocation.
+    ///
+    /// Use this instead of [`Self::canonicalize`] when the caller needs a
+    /// `&str` for comparison and wants to avoid allocation on the common
+    /// path (already-canonical input).
+    #[must_use]
+    pub(crate) fn to_canonical(raw: &str) -> Cow<'_, str> {
+        if Self::is_canonical(raw) {
+            Cow::Borrowed(raw)
+        } else {
+            Cow::Owned(Self::canonicalize(raw))
+        }
     }
 }
 
@@ -517,17 +532,11 @@ impl<'a> FieldKeyRef<'a> {
 
 impl std::hash::Hash for FieldKeyRef<'_> {
     /// Hashes the canonical form, consistent with [`FieldKey`]'s own
-    /// [`Hash`](std::hash::Hash) impl: [`Cow::Borrowed`] when `self.0` is
-    /// already canonical, otherwise [`Cow::Owned`] via
-    /// [`FieldKey::canonicalize`].
+    /// [`Hash`](std::hash::Hash) impl, delegating to
+    /// [`FieldKey::to_canonical`].
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let canonical = if FieldKey::is_canonical(self.0) {
-            Cow::Borrowed(self.0)
-        } else {
-            Cow::Owned(FieldKey::canonicalize(self.0))
-        };
-        canonical.as_ref().hash(state);
+        FieldKey::to_canonical(self.0).as_ref().hash(state);
     }
 }
 
@@ -1233,6 +1242,45 @@ mod tests {
             #[test]
             fn is_canonical_rejects_stripped_non_ascii_punctuation() {
                 assert!(!FieldKey::is_canonical("café!"));
+            }
+        }
+
+        mod to_canonical {
+            use super::super::super::*;
+
+            #[test]
+            fn borrows_already_canonical_input() {
+                let result = FieldKey::to_canonical("status");
+                assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+                assert_eq!(result.as_ref(), "status");
+            }
+
+            #[test]
+            fn allocates_for_non_canonical_input() {
+                let result = FieldKey::to_canonical("Status");
+                assert!(matches!(result, std::borrow::Cow::Owned(_)));
+                assert_eq!(result.as_ref(), "status");
+            }
+
+            #[test]
+            fn allocates_for_input_with_stripped_punctuation() {
+                let result = FieldKey::to_canonical("a!b");
+                assert!(matches!(result, std::borrow::Cow::Owned(_)));
+                assert_eq!(result.as_ref(), "ab");
+            }
+
+            #[test]
+            fn borrows_non_ascii_lowercase_input() {
+                let result = FieldKey::to_canonical("café");
+                assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+                assert_eq!(result.as_ref(), "café");
+            }
+
+            #[test]
+            fn allocates_for_whitespace_input() {
+                let result = FieldKey::to_canonical("a b");
+                assert!(matches!(result, std::borrow::Cow::Owned(_)));
+                assert_eq!(result.as_ref(), "a-b");
             }
         }
 
