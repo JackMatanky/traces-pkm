@@ -18,6 +18,7 @@
 //! platform-specific open-at APIs.
 
 use std::{
+    convert::TryFrom,
     io,
     path::{Component, Path, PathBuf},
 };
@@ -91,6 +92,14 @@ impl SafeRelativePath {
     ///   component that is not a plain name or `.`, or has no plain-name
     ///   component at all
     pub(crate) fn parse(candidate: &Path) -> Result<Self, PathError> {
+        Self::try_from(candidate)
+    }
+}
+
+impl<'a> TryFrom<&'a Path> for SafeRelativePath {
+    type Error = PathError;
+
+    fn try_from(candidate: &'a Path) -> Result<Self, Self::Error> {
         if candidate.is_absolute() {
             return Err(PathError::Absolute);
         }
@@ -168,7 +177,7 @@ impl RootConfinedPath {
     #[inline]
     #[must_use]
     pub(crate) fn into_path_buf(self) -> PathBuf {
-        self.0
+        self.into()
     }
 
     /// Returns the longest ancestor of `path` that already exists on disk.
@@ -176,6 +185,12 @@ impl RootConfinedPath {
         path.ancestors()
             .find(|ancestor| ancestor.exists())
             .map_or_else(PathBuf::new, Path::to_path_buf)
+    }
+}
+
+impl From<RootConfinedPath> for PathBuf {
+    fn from(confined: RootConfinedPath) -> Self {
+        confined.0
     }
 }
 
