@@ -71,7 +71,7 @@ const TAGS_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("tags_by_path");
 
 /// Reverse file-class index: path -> current normalized classes.
-const CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
+const FILE_CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("classes_by_path");
 
 /// Path-derived source index, pairing forward and reverse tables so
@@ -101,7 +101,7 @@ impl SourceIndex {
     ) -> MultimapTableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
             Self::Tag => TAGS_BY_PATH,
-            Self::FileClass => CLASSES_BY_PATH,
+            Self::FileClass => FILE_CLASSES_BY_PATH,
         }
     }
 
@@ -137,10 +137,10 @@ enum WriteTarget {
     Notes,
     Links,
     Lists,
-    TagsForward,
-    TagsReverse,
-    ClassesForward,
-    ClassesReverse,
+    PathsByTags,
+    TagsByPath,
+    PathsByFileClasses,
+    FileClassesByPath,
 }
 
 impl WriteTarget {
@@ -149,10 +149,10 @@ impl WriteTarget {
         Self::Notes,
         Self::Links,
         Self::Lists,
-        Self::TagsForward,
-        Self::TagsReverse,
-        Self::ClassesForward,
-        Self::ClassesReverse,
+        Self::PathsByTags,
+        Self::TagsByPath,
+        Self::PathsByFileClasses,
+        Self::FileClassesByPath,
     ];
 
     fn run(
@@ -182,18 +182,18 @@ impl WriteTarget {
                 store.write_links(txn, LINKS, entries).map_err(IndexError::from)
             }
             Self::Lists => store.write_lists(txn, entries),
-            Self::TagsForward => {
+            Self::PathsByTags => {
                 store.write_source_index_forward(txn, SourceIndex::Tag, entries)
             }
-            Self::TagsReverse => {
+            Self::TagsByPath => {
                 store.write_source_index_reverse(txn, SourceIndex::Tag, entries)
             }
-            Self::ClassesForward => store.write_source_index_forward(
+            Self::PathsByFileClasses => store.write_source_index_forward(
                 txn,
                 SourceIndex::FileClass,
                 entries,
             ),
-            Self::ClassesReverse => store.write_source_index_reverse(
+            Self::FileClassesByPath => store.write_source_index_reverse(
                 txn,
                 SourceIndex::FileClass,
                 entries,
@@ -1243,7 +1243,7 @@ impl IndexStore {
         let _ = txn.delete_multimap_table(PATHS_BY_TAG);
         let _ = txn.delete_multimap_table(PATHS_BY_FILE_CLASS);
         let _ = txn.delete_multimap_table(TAGS_BY_PATH);
-        let _ = txn.delete_multimap_table(CLASSES_BY_PATH);
+        let _ = txn.delete_multimap_table(FILE_CLASSES_BY_PATH);
         Ok(())
     }
 
