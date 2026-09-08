@@ -3,7 +3,7 @@
 use indexmap::{IndexMap, IndexSet};
 
 use super::{SchemaName, fields::SchemaFieldDef};
-use crate::{FieldName, field::closest_match};
+use crate::{FieldName, strsim::closest_match};
 
 /// A resolved Schema with its effective field definitions and position in the
 /// `extends` DAG.

@@ -15,7 +15,7 @@
 //! [`NoteFieldValue`]: crate::NoteFieldValue
 //! [`FileBase`]: crate::FileBase
 
-use crate::{FieldKey, field, query::error::FieldPathError};
+use crate::{FieldKey, query::error::FieldPathError, strsim::closest_match};
 
 /// A `file.<field>` accessor backed by [`FileBase`] metadata.
 ///
@@ -212,7 +212,7 @@ fn closest_accessor(
     candidates: &[&'static str],
     input: &str,
 ) -> Option<&'static str> {
-    field::closest_match(candidates.iter().map(|&name| (name, name)), input)
+    closest_match(candidates.iter().map(|&name| (name, name)), input)
 }
 
 #[cfg(test)]
