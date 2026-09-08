@@ -19,7 +19,8 @@
 //! [`CandidateTrie`] precomputes per-folder subtree aggregates so nearest-
 //! candidate queries run in `O(depth)` instead of `O(candidates)`. The trie
 //! models folder containment as a tree, where
-//! `folder_distance(a, b) = depth(a) + depth(b) - 2 * depth(LCA(a, b))`.
+//! `FolderRef::of(a).distance_to(FolderRef::of(b)) = depth(a) + depth(b) - 2 *
+//! depth(LCA(a, b))`.
 //!
 //! # Hash map choice
 //!
@@ -42,6 +43,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use crate::{
     BaseNameRef, FileBase,
     note::{LinkTarget, Note},
+    path::FolderRef,
 };
 
 /// Target-keyed inbound link graph.
@@ -428,7 +430,8 @@ impl<'a> StemIndex<'a> {
             {
                 continue;
             }
-            let distance = folder_distance(from, candidate);
+            let distance =
+                FolderRef::of(from).distance_to(FolderRef::of(candidate));
             match nearest {
                 Some((best, _)) if distance > best => {}
                 Some((best, _)) if distance == best => tied = true,
@@ -444,69 +447,6 @@ impl<'a> StemIndex<'a> {
             nearest.map(|(_, path)| path)
         }
     }
-}
-
-/// Containing folder of a path, used to compute tree distance between linking
-/// notes and candidates.
-#[derive(Copy, Clone)]
-struct Folder<'a>(&'a Path);
-
-impl<'a> Folder<'a> {
-    /// Returns `path`'s containing folder, defaulting to the root for
-    /// top-level paths.
-    fn of(path: &'a Path) -> Self {
-        Self(path.parent().unwrap_or_else(|| Path::new("")))
-    }
-
-    /// Computes folder path distance in one pass.
-    ///
-    /// The same folder has distance `0`; otherwise distance is the hops up to
-    /// the nearest shared ancestor plus down to the other folder.
-    fn distance_to(self, other: Folder<'_>) -> usize {
-        let mut a_iter = self.0.components();
-        let mut b_iter = other.0.components();
-        let mut shared: usize = 0;
-        let mut a_count: usize = 0;
-        let mut b_count: usize = 0;
-        let mut matching = true;
-        loop {
-            match (a_iter.next(), b_iter.next()) {
-                (Some(ac), Some(bc)) => {
-                    a_count = a_count.saturating_add(1);
-                    b_count = b_count.saturating_add(1);
-                    if matching && ac == bc {
-                        shared = shared.saturating_add(1);
-                    } else {
-                        matching = false;
-                    }
-                }
-                (Some(_), None) => {
-                    a_count = a_count
-                        .saturating_add(1)
-                        .saturating_add(a_iter.count());
-                    break;
-                }
-                (None, Some(_)) => {
-                    b_count = b_count
-                        .saturating_add(1)
-                        .saturating_add(b_iter.count());
-                    break;
-                }
-                (None, None) => break,
-            }
-        }
-        a_count
-            .saturating_sub(shared)
-            .saturating_add(b_count.saturating_sub(shared))
-    }
-}
-
-/// Computes containing-folder path distance in one pass.
-///
-/// Files in the same folder have distance `0`; otherwise distance is the hops
-/// up to the nearest shared ancestor plus down to the other folder.
-fn folder_distance(a: &Path, b: &Path) -> usize {
-    Folder::of(a).distance_to(Folder::of(b))
 }
 
 /// Folder-component trie for one Wikilink stem's candidates.
@@ -529,7 +469,7 @@ impl<'a> CandidateTrie<'a> {
         by_folder.insert(Path::new(""), root);
 
         for &path in candidates {
-            let folder = Folder::of(path).0;
+            let folder = FolderRef::of(path).as_path();
             let ext = path.extension().and_then(|e| e.to_str());
             let node_id =
                 Self::ensure_folder_node(&mut arena, &mut by_folder, folder);
@@ -551,7 +491,7 @@ impl<'a> CandidateTrie<'a> {
         from: &Path,
         target_ext: Option<&str>,
     ) -> Option<&'a Path> {
-        let from_folder = Folder::of(from).0;
+        let from_folder = FolderRef::of(from).as_path();
 
         // Walk from `from`'s folder to the nearest trie node. `extra_up` counts
         // skipped source-only folders; the linking note's folder is rarely a
@@ -625,7 +565,7 @@ impl<'a> CandidateTrie<'a> {
         if let Some(&id) = by_folder.get(folder) {
             return id;
         }
-        let parent_folder = Folder::of(folder).0;
+        let parent_folder = FolderRef::of(folder).as_path();
         let parent_id =
             Self::ensure_folder_node(arena, by_folder, parent_folder);
         let depth = Self::node_data(arena, parent_id).depth.saturating_add(1);
@@ -1659,7 +1599,7 @@ mod tests {
         }
     }
 
-    mod folder_distance {
+    mod folder_ref_distance {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -1667,10 +1607,8 @@ mod tests {
         #[test]
         fn same_folder_has_zero_distance() {
             assert_eq!(
-                folder_distance(
-                    Path::new("folder/a.md"),
-                    Path::new("folder/b.md")
-                ),
+                FolderRef::of(Path::new("folder/a.md"))
+                    .distance_to(FolderRef::of(Path::new("folder/b.md"))),
                 0
             );
         }
@@ -1678,17 +1616,13 @@ mod tests {
         #[test]
         fn parent_and_child_have_distance_one() {
             assert_eq!(
-                folder_distance(
-                    Path::new("folder/sub/a.md"),
-                    Path::new("folder/b.md")
-                ),
+                FolderRef::of(Path::new("folder/sub/a.md"))
+                    .distance_to(FolderRef::of(Path::new("folder/b.md"))),
                 1
             );
             assert_eq!(
-                folder_distance(
-                    Path::new("folder/a.md"),
-                    Path::new("folder/sub/b.md")
-                ),
+                FolderRef::of(Path::new("folder/a.md"))
+                    .distance_to(FolderRef::of(Path::new("folder/sub/b.md"))),
                 1
             );
         }
@@ -1696,10 +1630,8 @@ mod tests {
         #[test]
         fn siblings_have_distance_two() {
             assert_eq!(
-                folder_distance(
-                    Path::new("folder/sub1/a.md"),
-                    Path::new("folder/sub2/b.md")
-                ),
+                FolderRef::of(Path::new("folder/sub1/a.md"))
+                    .distance_to(FolderRef::of(Path::new("folder/sub2/b.md"))),
                 2
             );
         }
@@ -1707,10 +1639,8 @@ mod tests {
         #[test]
         fn different_subtrees_step_through_common_ancestor() {
             assert_eq!(
-                folder_distance(
-                    Path::new("a/b/c/file.md"),
-                    Path::new("a/d/e/file.md")
-                ),
+                FolderRef::of(Path::new("a/b/c/file.md"))
+                    .distance_to(FolderRef::of(Path::new("a/d/e/file.md"))),
                 4
             );
         }
@@ -1718,17 +1648,13 @@ mod tests {
         #[test]
         fn root_and_nested_folder_compute_correct_distance() {
             assert_eq!(
-                folder_distance(
-                    Path::new("root.md"),
-                    Path::new("a/b/c/nested.md")
-                ),
+                FolderRef::of(Path::new("root.md"))
+                    .distance_to(FolderRef::of(Path::new("a/b/c/nested.md"))),
                 3
             );
             assert_eq!(
-                folder_distance(
-                    Path::new("a/b/c/nested.md"),
-                    Path::new("root.md")
-                ),
+                FolderRef::of(Path::new("a/b/c/nested.md"))
+                    .distance_to(FolderRef::of(Path::new("root.md"))),
                 3
             );
         }
@@ -1813,7 +1739,8 @@ mod tests {
             let mut nearest: Option<(usize, &'a Path)> = None;
             let mut tied = false;
             for &candidate in candidates {
-                let distance = folder_distance(from, candidate);
+                let distance =
+                    FolderRef::of(from).distance_to(FolderRef::of(candidate));
                 match nearest {
                     Some((best, _)) if distance > best => {}
                     Some((best, _)) if distance == best => tied = true,
