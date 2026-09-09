@@ -32,8 +32,9 @@ jobs:
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install --yes rust
-      - run: mise install --yes hk taplo gitleaks cargo:cargo-deny cargo:cargo-audit cargo:ryl
+      - run: mise install --yes core:rust
+      - run: mise install --yes hk taplo gitleaks
+      - run: mise install --yes cargo:cargo-deny cargo:cargo-audit cargo:ryl
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
@@ -48,7 +49,8 @@ jobs:
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install --yes rust cargo:cargo-nextest
+      - run: mise install --yes core:rust
+      - run: mise install --yes cargo:cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-ubuntu-latest"
@@ -65,8 +67,8 @@ jobs:
           install: false
       - run: |
           msrv=$(cargo metadata --format-version 1 | jq -r '.packages[0].rust_version')
-          mise install --yes "rust@${msrv}"
-          mise exec "rust@${msrv}" -- cargo check --workspace --all-features
+          mise install --yes "core:rust@${msrv}"
+          mise exec "core:rust@${msrv}" -- cargo check --workspace --all-features
 
   docs:
     runs-on: ubuntu-latest
@@ -77,7 +79,7 @@ jobs:
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install --yes rust
+      - run: mise install --yes core:rust
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-ubuntu-latest"
