@@ -79,12 +79,12 @@ impl Object for FileOps {
                 let root = Arc::clone(&self.root);
                 Some(Value::from_function(
                     move |path: &str| -> TemplateEngineResult<String> {
-                        let confined =
+                        let safe =
                             SafeRelativePath::parse(&root, Path::new(path))
                                 .map_err(|source| {
                                     confine_error(path, source)
                                 })?;
-                        std::fs::read_to_string(confined.as_ref()).map_err(
+                        std::fs::read_to_string(safe.as_ref()).map_err(
                             |source| {
                                 super::error::invalid_operation(
                                     format!("failed to read {path}"),

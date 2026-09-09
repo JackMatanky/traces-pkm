@@ -205,8 +205,8 @@ impl SafeRelativePath {
 
 impl From<SafeRelativePath> for PathBuf {
     #[inline]
-    fn from(confined: SafeRelativePath) -> Self {
-        confined.0
+    fn from(path: SafeRelativePath) -> Self {
+        path.0
     }
 }
 

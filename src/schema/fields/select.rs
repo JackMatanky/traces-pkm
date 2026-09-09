@@ -239,22 +239,21 @@ impl SelectValuesFileCache {
         relative_path: &str,
     ) -> Result<Arc<Vec<FieldValue>>, SchemaSelectFieldFileError> {
         let path = Path::new(relative_path);
-        let confined = SafeRelativePath::parse(&self.dir, path)?;
-        let confined_path = confined.into_path_buf();
+        let safe = SafeRelativePath::parse(&self.dir, path)?;
+        let resolved = safe.into_path_buf();
 
-        let ext =
-            confined_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = resolved.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext != "toml" && ext != "json" {
             return Err(SchemaSelectFieldFileError::BadExtension(
                 relative_path.to_owned(),
             ));
         }
 
-        if let Some(entries) = self.cache.borrow().get(&confined_path) {
+        if let Some(entries) = self.cache.borrow().get(&resolved) {
             return Ok(Arc::clone(entries));
         }
 
-        let content = std::fs::read_to_string(&confined_path)?;
+        let content = std::fs::read_to_string(&resolved)?;
         let val: crate::schema::raw::RawSchemaSelectFieldValues =
             if ext == "toml" {
                 toml::from_str(&content).map_err(Box::new)?
@@ -268,7 +267,7 @@ impl SelectValuesFileCache {
             entries.into_iter().map(FieldValue::from).collect::<Vec<_>>();
 
         let arc_entries = Arc::new(domain_entries);
-        self.cache.borrow_mut().insert(confined_path, Arc::clone(&arc_entries));
+        self.cache.borrow_mut().insert(resolved, Arc::clone(&arc_entries));
         Ok(arc_entries)
     }
 }
