@@ -55,6 +55,15 @@ local vcs = new Mapping<String, Step> {
 
 local security = new Mapping<String, Step> {
     ["detect-private-key"] = Builtins.detect_private_key
+    ["cargo-audit"] = new Step {
+        glob = List("**/Cargo.lock")
+        check = new CommandSpec {
+            command = new Command {
+                argv = List("cargo", "audit")
+            }
+            effect = "read"
+        }
+    }
     ["gitleaks"] = (Builtins.gitleaks) {
         check = new CommandSpec {
             command = "for file in {{files}}; do gitleaks dir --redact --no-banner --log-level error \"$file\" || exit $?; done"

@@ -5,25 +5,39 @@
 # -----------------------------------------------------------------------------
 
 [tools]
+# -- Toolchain --
 rust = { version = "nightly", profile = "default", components = [
   "rust-src",
   "rustfmt",
   "rust-analyzer",
 ] }
 hk = "latest"
+
+# -- Data formats --
 taplo = "latest"
+"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
+
+# -- Security --
 gitleaks = "latest"
+"cargo:cargo-audit" = "latest"
 "cargo:cargo-deny" = "latest"
+
+# -- Testing & Quality --
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
-"cargo:cargo-watch" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:cargo-mutants" = "latest"
-"cargo:cargo-sweep" = "latest"
+
+# -- Benchmarking --
 "cargo:critcmp" = "latest"
+
+# -- Dev experience --
+"cargo:cargo-watch" = "latest"
+"cargo:cargo-sweep" = "latest"
+
+# -- Docs & ADRs --
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
-"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 
 [settings]
 # Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
