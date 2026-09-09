@@ -289,7 +289,7 @@ impl<'a> TemplateWriteTarget<'a> {
                     },
                     |source| TemplateError::OutputPathUnverifiable {
                         path: candidate.to_path_buf(),
-                        source,
+                        source: io::Error::other(source),
                     },
                 )
             })

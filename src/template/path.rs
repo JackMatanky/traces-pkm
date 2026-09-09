@@ -76,8 +76,8 @@ impl TemplatePathInput {
                 TemplatePathError::Absolute(path.to_path_buf())
             }
             PathError::UnsafeComponent
-            | PathError::EscapesRoot
-            | PathError::Verify(_) => {
+            | PathError::OutsideRoot
+            | PathError::StrictPath(_) => {
                 TemplatePathError::UnsafeComponent(path.to_path_buf())
             }
         })

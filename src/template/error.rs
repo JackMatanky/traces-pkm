@@ -69,14 +69,14 @@ pub enum TemplateError {
 
     /// An explicit output path could not be verified against the project root.
     ///
-    /// Returned when canonicalizing the root or an existing ancestor fails, for
-    /// example because of permissions or a symlink loop. The writer fails
-    /// closed instead of writing to an unverified path.
+    /// Returned when `strict-path` cannot validate the root boundary or resolve
+    /// the candidate's existing path components. The writer fails closed
+    /// instead of writing to an unverified path.
     #[error("failed to verify output path {path} is inside the project root")]
     OutputPathUnverifiable {
         /// Output candidate whose confinement could not be verified.
         path: PathBuf,
-        /// Filesystem error returned while canonicalizing the path.
+        /// Filesystem error returned while validating the path boundary.
         #[source]
         source: io::Error,
     },

@@ -157,7 +157,7 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
         || SourceSelector::parse("#rare_0").expect("valid tag selector");
 
     for &n in WORKSPACE_FILE_COUNTS {
-        let (temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
+        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
 
         let query = QueryBuilder::pages(one_match());
         let region = Region::new(GLOBAL);
@@ -174,7 +174,6 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
             black_box(indexer.refresh_with_report().expect("refresh index"));
         let refresh_stats = refresh_region.change();
         drop(index);
-        drop(temp);
 
         eprintln!(
             "[memory] sync_and_run/one-match({n}): net {} bytes, {} allocs; \

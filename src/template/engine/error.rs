@@ -15,11 +15,10 @@ pub(super) type TemplateEngineResult<T> = std::result::Result<T, Error>;
 /// confinement.
 ///
 /// [`PathError::Absolute`], [`PathError::UnsafeComponent`], and
-/// [`PathError::EscapesRoot`] share the "escapes the project root" message
+/// [`PathError::OutsideRoot`] share the "escapes the project root" message
 /// because template authors see all three as the same failed containment
-/// check. [`PathError::Verify`] gets a separate message because containment
-/// could not be confirmed, usually because `root` or one of its ancestors
-/// could not be canonicalized.
+/// check. [`PathError::StrictPath`] gets a separate message because containment
+/// could not be confirmed.
 pub(super) fn confine_error(path: &str, source: PathError) -> Error {
     source.fold_confinement(
         || {

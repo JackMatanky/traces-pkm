@@ -153,9 +153,9 @@ impl InspectTarget {
     /// # Errors
     ///
     /// - [`PathError::Absolute`], [`PathError::UnsafeComponent`], or
-    ///   [`PathError::EscapesRoot`] if a relative `path` resolves outside
+    ///   [`PathError::OutsideRoot`] if a relative `path` resolves outside
     ///   `root`.
-    /// - [`PathError::Verify`] if containment cannot be confirmed.
+    /// - [`PathError::StrictPath`] if containment cannot be confirmed.
     fn resolve(root: &Path, path: &str) -> Result<Self, PathError> {
         let candidate = Path::new(path);
         if candidate.is_absolute() {

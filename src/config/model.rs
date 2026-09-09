@@ -768,7 +768,7 @@ mod tests {
                 .expect_err("schema directory escapes root through symlink");
 
             assert!(matches!(error, ConfigFileError::InvalidSubDir {
-                source: crate::path::PathError::EscapesRoot,
+                source: crate::path::PathError::OutsideRoot,
                 ..
             }));
         }

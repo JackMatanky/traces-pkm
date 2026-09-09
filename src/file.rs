@@ -39,7 +39,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::path::FolderRef;
+use crate::path::{FolderRef, RelativePath};
 
 /// Reports that a path has no final component.
 #[derive(Debug, Error)]
@@ -66,25 +66,18 @@ pub struct FileBase {
 impl FileBase {
     /// Builds a [`FileBase`] from filesystem metadata.
     ///
-    /// `path` is the absolute file path under `root`; both are used to store a
-    /// project-relative path in the record. The modification time is read from
-    /// `metadata`; creation time is captured if the host OS reports it, and
-    /// [`None`] otherwise.
+    /// `relative` is a project-root-relative path already validated by the
+    /// scanner. The modification time is read from `metadata`; creation time is
+    /// captured if the host OS reports it, and [`None`] otherwise.
     ///
     /// # Errors
     ///
     /// - [`std::io::Error`] if the file's modification time cannot be read.
     pub(crate) fn from_metadata(
-        path: &Path,
-        root: &Path,
+        relative: RelativePath,
         metadata: &fs::Metadata,
     ) -> Result<Self, std::io::Error> {
-        // TODO: `unwrap_or` silently stores absolute paths for any input
-        // outside `root`. Replace with a strict lexical confinement check (see
-        // `SafeRelativePath`); deferred from the dirtree deepening because
-        // per-file `RootConfinedPath` canonicalization would add filesystem
-        // syscalls to every index build.
-        let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+        let relative = relative.into_path_buf();
         let modified_at = metadata.modified().map(Timestamp::from)?;
         let created_at = metadata.created().map(Timestamp::from).ok();
         let file_name =
@@ -554,12 +547,11 @@ mod tests {
                     .expect("mkdir");
                 fs::write(&file, "content").expect("write file");
 
-                let record = FileBase::from_metadata(
-                    &file,
-                    temp.path(),
-                    &metadata_for(&file),
-                )
-                .expect("build record");
+                let relative = RelativePath::derive(temp.path(), &file)
+                    .expect("derive relative path");
+                let record =
+                    FileBase::from_metadata(relative, &metadata_for(&file))
+                        .expect("build record");
 
                 assert_eq!(record.name().as_str(), "todo");
                 assert_eq!(record.path(), Path::new("notes/todo.md"));
@@ -575,12 +567,11 @@ mod tests {
                 let file = temp.path().join("readme.md");
                 fs::write(&file, "hi").expect("write file");
 
-                let record = FileBase::from_metadata(
-                    &file,
-                    temp.path(),
-                    &metadata_for(&file),
-                )
-                .expect("build record");
+                let relative = RelativePath::derive(temp.path(), &file)
+                    .expect("derive relative path");
+                let record =
+                    FileBase::from_metadata(relative, &metadata_for(&file))
+                        .expect("build record");
 
                 assert_eq!(record.name().as_str(), "readme");
                 assert_eq!(record.path(), Path::new("readme.md"));

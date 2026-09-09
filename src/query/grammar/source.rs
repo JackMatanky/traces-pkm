@@ -3,7 +3,7 @@
 //! Matches candidate notes against tag (`#tag`), path (`folder/`, `file.md`,
 //! `**/*.md`), and File Class (`@Class`) leaves.
 
-use std::{collections::BTreeSet, path::Path};
+use std::{borrow::Cow, collections::BTreeSet, path::Path};
 
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
@@ -242,7 +242,8 @@ where
 /// Compiled glob used by path source atoms.
 ///
 /// `*` matches characters except `/`; `**` also crosses `/`; every other
-/// character matches literally. The compiled regex is whole-path anchored.
+/// character matches literally. Native path separators are normalized to `/`
+/// before matching. The compiled regex is whole-path anchored.
 #[derive(Clone)]
 pub(crate) struct GlobPattern {
     regex: Regex,
@@ -276,9 +277,20 @@ impl GlobPattern {
         })
     }
 
-    #[must_use]
     pub(crate) fn is_match(&self, path: &Path) -> bool {
-        self.regex.is_match(&path.to_string_lossy())
+        let path = path.to_string_lossy();
+        let normalized = normalize_separators(path.as_ref());
+        self.regex.is_match(&normalized)
+    }
+}
+
+/// Rewrites the platform separator to `/` so globs written with `/` match paths
+/// stored with the native separator. Borrowed on Unix.
+fn normalize_separators(path: &str) -> Cow<'_, str> {
+    if std::path::MAIN_SEPARATOR == '/' {
+        Cow::Borrowed(path)
+    } else {
+        Cow::Owned(path.replace(std::path::MAIN_SEPARATOR, "/"))
     }
 }
 
@@ -783,6 +795,33 @@ mod tests {
         #[test]
         fn parses_a_double_star_wildcard_path_glob() {
             assert!(SourceExpr::parse("**/draft.md").is_ok());
+        }
+    }
+    mod glob_pattern {
+        use super::*;
+
+        #[cfg(not(windows))]
+        #[test]
+        fn keeps_backslashes_literal_on_unix() {
+            let path = r"covers\dune.md";
+            let normalized = normalize_separators(path);
+
+            assert!(matches!(normalized, Cow::Borrowed(_)));
+            assert_eq!(normalized, path);
+            let pattern =
+                GlobPattern::compile("covers/*.md").expect("valid glob");
+            assert!(!pattern.is_match(Path::new(path)));
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn normalizes_windows_separators_for_slash_globs() {
+            let normalized = normalize_separators(r"notes\a.md");
+            assert_eq!(normalized, "notes/a.md");
+
+            let pattern =
+                GlobPattern::compile("notes/*.md").expect("valid glob");
+            assert!(pattern.is_match(Path::new(r"notes\a.md")));
         }
     }
 

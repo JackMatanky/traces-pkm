@@ -22,6 +22,7 @@ mod error;
 mod inlinks;
 mod service;
 mod store;
+mod sync;
 
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use codec::path;
@@ -35,9 +36,9 @@ pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;
 pub use service::IndexerService;
-#[cfg(any(test, feature = "test-utils"))]
-pub use service::SyncReport;
 pub(crate) use store::IndexStore;
+#[cfg(any(test, feature = "test-utils"))]
+pub use sync::SyncReport;
 
 /// Project-relative index database path.
 const INDEX_FILE: &str = ".traces/index.redb";

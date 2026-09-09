@@ -2,15 +2,16 @@
 //!
 //! Main types:
 //! - [`SafeRelativePath`] - Relative path accepted by lexical checks only
+//! - [`RelativePath`] - Root-derived relative path proven by lexical checks
 //! - [`RootConfinedPath`] - Path accepted by lexical and filesystem checks
 //! - [`PathError`] - Path validation failure
 //!
 //! Confinement happens in two phases:
 //! - Lexical validation rejects absolute paths, parent-directory components,
 //!   non-normal components other than `.`, and paths without a named component
-//! - Filesystem validation canonicalizes `root` and the longest existing
-//!   ancestor of `root.join(candidate)`, then checks that the ancestor remains
-//!   inside `root`
+//! - Filesystem validation uses `strict-path` boundary resolution to resolve
+//!   symlinks, Windows 8.3 short names, and alternate data streams before the
+//!   containment check
 //!
 //! The returned confined path is the plain join, not the canonicalized path. A
 //! symlink changed after validation and before later I/O can still redirect the
@@ -19,10 +20,10 @@
 
 use std::{
     convert::TryFrom,
-    io,
     path::{Component, Path, PathBuf},
 };
 
+use strict_path::{PathBoundary, StrictPathError};
 use thiserror::Error;
 
 /// Reports why path validation failed.
@@ -31,6 +32,12 @@ pub(crate) enum PathError {
     /// Rejects an absolute candidate path.
     #[error("path is absolute, expected a relative path")]
     Absolute,
+    /// Rejects a candidate outside the expected root.
+    ///
+    /// Returned when a rooted walk path does not begin with `root`, or when
+    /// `strict-path` resolves a confined candidate outside the root boundary.
+    #[error("path is outside the root directory")]
+    OutsideRoot,
     /// Rejects a lexically unsafe relative path.
     ///
     /// Returned when the candidate contains `..`, contains a component other
@@ -40,34 +47,28 @@ pub(crate) enum PathError {
          component"
     )]
     UnsafeComponent,
-    /// Rejects a candidate whose existing ancestor resolves outside `root`.
-    #[error("path escapes the root directory")]
-    EscapesRoot,
-    /// Reports that filesystem validation could not be completed.
-    ///
-    /// Returned when canonicalizing `root` or the candidate's existing ancestor
-    /// fails. Validation fails closed.
-    #[error("failed to verify path is inside the root directory")]
-    Verify(#[source] io::Error),
+    /// Reports that `strict-path` filesystem validation could not be completed.
+    #[error(transparent)]
+    StrictPath(#[from] StrictPathError),
 }
 
 impl PathError {
     /// Routes a confinement failure to an escape or verification outcome.
     ///
     /// Uses `escape` for [`Self::Absolute`], [`Self::UnsafeComponent`], and
-    /// [`Self::EscapesRoot`]. Uses `unverifiable` for [`Self::Verify`] and
-    /// passes through the source [`io::Error`].
+    /// [`Self::OutsideRoot`]. Uses `unverifiable` for [`Self::StrictPath`] and
+    /// passes through the source [`StrictPathError`].
     #[must_use]
     pub(crate) fn fold_confinement<T>(
         self,
         escape: impl FnOnce() -> T,
-        unverifiable: impl FnOnce(io::Error) -> T,
+        unverifiable: impl FnOnce(StrictPathError) -> T,
     ) -> T {
         match self {
-            Self::Absolute | Self::UnsafeComponent | Self::EscapesRoot => {
+            Self::Absolute | Self::UnsafeComponent | Self::OutsideRoot => {
                 escape()
             }
-            Self::Verify(source) => unverifiable(source),
+            Self::StrictPath(source) => unverifiable(source),
         }
     }
 }
@@ -128,8 +129,8 @@ impl AsRef<Path> for SafeRelativePath {
 
 /// Stores a path proven to resolve inside a root directory.
 ///
-/// The path itself may not exist yet. [`Self::parse`] validates the longest
-/// existing ancestor and returns `root.join(candidate)`, preserving the root's
+/// The path itself may not exist yet. [`Self::parse`] validates the candidate
+/// with `strict-path` and returns `root.join(candidate)`, preserving the root's
 /// original spelling.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RootConfinedPath(PathBuf);
@@ -141,9 +142,9 @@ impl RootConfinedPath {
     /// - Lexical check: [`SafeRelativePath::parse`] rejects absolute paths,
     ///   parent-directory components, non-normal components other than `.`, and
     ///   paths without a named component
-    /// - Filesystem check: canonicalizes `root` and the longest existing
-    ///   ancestor of `root.join(candidate)`, then rejects the candidate if that
-    ///   ancestor is outside canonical `root`
+    /// - Filesystem check: uses `strict-path` to validate `root` as a boundary
+    ///   and resolve the candidate's existing components before rejecting paths
+    ///   outside canonical `root`
     ///
     /// The returned path is not canonicalized. A symlink changed after this
     /// function returns and before later I/O can still race the confinement
@@ -154,23 +155,24 @@ impl RootConfinedPath {
     /// - [`PathError::Absolute`] if `candidate` is absolute
     /// - [`PathError::UnsafeComponent`] if `candidate` contains an unsafe
     ///   component or has no named component
-    /// - [`PathError::EscapesRoot`] if the ancestor resolves outside `root`
-    /// - [`PathError::Verify`] if canonicalizing `root` or the longest existing
-    ///   ancestor fails
+    /// - [`PathError::OutsideRoot`] if `candidate` resolves outside `root`
+    /// - [`PathError::StrictPath`] if `strict-path` cannot validate `root` as a
+    ///   boundary or resolve the candidate's existing path components
     pub(crate) fn parse(
         root: &Path,
         candidate: &Path,
     ) -> Result<Self, PathError> {
         let safe = SafeRelativePath::parse(candidate)?;
-        let joined = root.join(safe.as_ref());
-        let existing_ancestor = Self::longest_existing_ancestor(&joined);
-        let canonical_ancestor =
-            existing_ancestor.canonicalize().map_err(PathError::Verify)?;
-        let canonical_root = root.canonicalize().map_err(PathError::Verify)?;
-        if !canonical_ancestor.starts_with(&canonical_root) {
-            return Err(PathError::EscapesRoot);
-        }
-        Ok(Self(joined))
+        let boundary: PathBoundary<()> = PathBoundary::try_new(root)?;
+        let _ = boundary.strict_join(safe.as_ref()).map_err(
+            |error| match error {
+                StrictPathError::PathEscapesBoundary {
+                    ..
+                } => PathError::OutsideRoot,
+                other => PathError::StrictPath(other),
+            },
+        )?;
+        Ok(Self(root.join(safe.as_ref())))
     }
 
     /// Consumes `self` and returns the confined path.
@@ -178,13 +180,6 @@ impl RootConfinedPath {
     #[must_use]
     pub(crate) fn into_path_buf(self) -> PathBuf {
         self.into()
-    }
-
-    /// Returns the longest ancestor of `path` that already exists on disk.
-    fn longest_existing_ancestor(path: &Path) -> PathBuf {
-        path.ancestors()
-            .find(|ancestor| ancestor.exists())
-            .map_or_else(PathBuf::new, Path::to_path_buf)
     }
 }
 
@@ -199,6 +194,41 @@ impl AsRef<Path> for RootConfinedPath {
     #[inline]
     fn as_ref(&self) -> &Path {
         &self.0
+    }
+}
+
+/// Stores a project-relative path derived from a rooted walk path and proven
+/// safe by lexical checks only. No filesystem access.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RelativePath(SafeRelativePath);
+
+impl RelativePath {
+    /// Derives `path` relative to `root`, failing if the prefix does not match
+    /// or the remainder is lexically unsafe.
+    ///
+    /// # Errors
+    ///
+    /// - [`PathError::OutsideRoot`] if `path` is not under `root`
+    /// - [`PathError::UnsafeComponent`] if the derived remainder contains an
+    ///   unsafe component or has no named component
+    pub(crate) fn derive(root: &Path, path: &Path) -> Result<Self, PathError> {
+        let relative =
+            path.strip_prefix(root).map_err(|_| PathError::OutsideRoot)?;
+        SafeRelativePath::parse(relative).map(Self)
+    }
+
+    #[inline]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "part of RelativePath inspection surface")
+    )]
+    pub(crate) fn as_path(&self) -> &Path {
+        self.0.as_ref()
+    }
+
+    #[inline]
+    pub(crate) fn into_path_buf(self) -> PathBuf {
+        self.0.as_ref().to_path_buf()
     }
 }
 
@@ -334,6 +364,50 @@ mod tests {
         }
     }
 
+    mod relative_path {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn derive_accepts_a_root_child() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("a.md");
+
+            let relative =
+                RelativePath::derive(temp.path(), &path).expect("derive path");
+
+            assert_eq!(relative.as_path(), Path::new("a.md"));
+        }
+
+        #[test]
+        fn derive_rejects_an_out_of_root_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root_a = temp.path().join("a");
+            let root_b = temp.path().join("b");
+            std::fs::create_dir(&root_a).expect("create root a");
+            std::fs::create_dir(&root_b).expect("create root b");
+
+            let error = RelativePath::derive(&root_a, &root_b.join("x.md"))
+                .expect_err("sibling path is outside root");
+
+            assert!(matches!(error, PathError::OutsideRoot));
+        }
+
+        #[test]
+        fn derive_rejects_parent_components_in_the_remainder() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+
+            let error = RelativePath::derive(
+                temp.path(),
+                &temp.path().join("a/../b.md"),
+            )
+            .expect_err("parent component is rejected");
+
+            assert!(matches!(error, PathError::UnsafeComponent));
+        }
+    }
+
     mod root_confined_path {
         use pretty_assertions::assert_eq;
 
@@ -395,7 +469,7 @@ mod tests {
                 RootConfinedPath::parse(&root, Path::new("link/secret.md"))
                     .expect_err("symlink escaping root is rejected");
 
-            assert!(matches!(error, PathError::EscapesRoot));
+            assert!(matches!(error, PathError::OutsideRoot));
         }
 
         #[cfg(unix)]
@@ -411,14 +485,41 @@ mod tests {
             std::fs::create_dir(&outside).expect("create outside dir");
             symlink(&outside, root.join("link")).expect("create symlink");
 
-            // `link/new/note.md` doesn't exist yet, but its existing
-            // ancestor (`link`) is a symlink escaping `root`, which is the
-            // write path this check guards against.
+            // `link/new/note.md` doesn't exist yet, but its existing symlink
+            // component escapes `root`, which is the write path this check
+            // guards against.
             let error =
                 RootConfinedPath::parse(&root, Path::new("link/new/note.md"))
                     .expect_err("escaping symlink ancestor is rejected");
 
-            assert!(matches!(error, PathError::EscapesRoot));
+            assert!(matches!(error, PathError::OutsideRoot));
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn parse_rejects_a_candidate_escaping_through_an_existing_junction() {
+            use std::process::Command;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("root");
+            let outside = temp.path().join("outside");
+            std::fs::create_dir(&root).expect("create root");
+            std::fs::create_dir(&outside).expect("create outside dir");
+            let junction = root.join("link");
+            let output = Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .output()
+                .expect("run mklink");
+            assert!(output.status.success(), "mklink /J failed: {output:?}");
+
+            let error =
+                RootConfinedPath::parse(&root, Path::new("link/secret.md"))
+                    .expect_err("junction escaping root is rejected");
+
+            std::fs::remove_dir(junction).expect("remove junction");
+            assert!(matches!(error, PathError::OutsideRoot));
         }
     }
 

@@ -107,7 +107,8 @@ impl<'a> TemplateService<'a> {
     /// - `Render` if minijinja evaluation fails.
     /// - `OutputPathEscapesRoot` if the output path attempts to escape the
     ///   root.
-    /// - `OutputPathUnverifiable` if the root cannot be canonicalized.
+    /// - `OutputPathUnverifiable` if `strict-path` cannot validate the root
+    ///   boundary or resolve existing candidate components.
     /// - `Prompt` if an interactive UI prompt inside the template fails or is
     ///   cancelled.
     /// - `OutputFileAlreadyExists` if the output file already exists under

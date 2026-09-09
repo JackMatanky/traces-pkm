@@ -222,6 +222,44 @@ type BoxedRange<'a> = Box<redb::Range<'a, &'static [u8], &'static [u8]>>;
 type BytesMultimapTable<'txn> =
     redb::MultimapTable<'txn, &'static [u8], &'static [u8]>;
 
+/// Borrowed redb key carrying a project-relative path's native bytes.
+#[derive(Copy, Clone)]
+struct IndexPathKey<'a>(&'a Path);
+
+impl<'a> IndexPathKey<'a> {
+    #[inline]
+    fn new(path: &'a Path) -> Self {
+        Self(path)
+    }
+
+    #[inline]
+    fn as_bytes(&self) -> &'a [u8] {
+        self.0.as_os_str().as_encoded_bytes()
+    }
+
+    #[inline]
+    fn path(&self) -> &'a Path {
+        self.0
+    }
+}
+
+/// Lossy UTF-8 spelling of a note path, as stored in `LISTS` row keys and row
+/// payloads. Keeps write and cleanup paths consistent.
+#[derive(Clone)]
+struct IndexListKey(String);
+
+impl IndexListKey {
+    #[inline]
+    fn new(path: &Path) -> Self {
+        Self(path.to_string_lossy().into_owned())
+    }
+
+    #[inline]
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Redb-backed handle to one project root's index database.
 #[derive(Debug)]
 pub(crate) struct IndexStore {
@@ -395,7 +433,7 @@ impl IndexStore {
     ) -> Vec<Note> {
         let mut notes = Vec::new();
         for path in paths {
-            let key = path.as_os_str().as_encoded_bytes();
+            let key = IndexPathKey::new(path).as_bytes();
             if let Ok(Some(guard)) = table.get(key) {
                 match decode_row::<Note>(path, guard.value()) {
                     Ok(note) => notes.push(note),
@@ -434,7 +472,7 @@ impl IndexStore {
         };
         let mut files = Vec::new();
         for path in paths {
-            let key = path.as_os_str().as_encoded_bytes();
+            let key = IndexPathKey::new(path).as_bytes();
             if let Ok(Some(guard)) = table.get(key) {
                 match decode_row::<FileBase>(path, guard.value()) {
                     Ok(file) => files.push(file),
@@ -476,7 +514,7 @@ impl IndexStore {
         };
         let mut edges = HashMap::new();
         for target in targets {
-            let key = target.as_os_str().as_encoded_bytes();
+            let key = IndexPathKey::new(target).as_bytes();
             let sources = self.collect_link_sources(&table, key)?;
             if !sources.is_empty() {
                 edges.insert(target.to_path_buf(), sources.into_boxed_slice());
@@ -569,7 +607,7 @@ impl IndexStore {
             }
             Err(e) => return Err(self.raise_source_error(e).into()),
         };
-        let mut paths = Self::collect_multimap_key_paths(&table, key)?;
+        let mut paths = self.collect_multimap_key_paths(&table, key)?;
         paths.sort();
         paths.dedup();
         Ok(paths.into_boxed_slice())
@@ -578,16 +616,14 @@ impl IndexStore {
     /// Collects every path value stored under `key` in an already-open multimap
     /// table.
     fn collect_multimap_key_paths(
+        &self,
         table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
         key: &[u8],
     ) -> IndexResult<Vec<PathBuf>> {
         let mut paths = Vec::new();
         if let Ok(iter) = table.get(key) {
             for entry in iter {
-                let guard = entry.map_err(|e| DbError::Redb {
-                    path: PathBuf::new(),
-                    source: Box::new(e.into()),
-                })?;
+                let guard = entry.map_err(|e| self.raise_source_error(e))?;
                 paths.push(path_from_bytes(guard.value()));
             }
         }
@@ -911,7 +947,7 @@ impl IndexStore {
             let by_bytes: HashMap<&[u8], &Path> = notes
                 .iter()
                 .map(|note| {
-                    (note.path().as_os_str().as_encoded_bytes(), note.path())
+                    (IndexPathKey::new(note.path()).as_bytes(), note.path())
                 })
                 .collect();
             self.read_links(&txn, LINKS, |bytes| {
@@ -1118,10 +1154,10 @@ impl IndexStore {
             .map_err(|source| self.raise_source_error(source))?;
         for item in items {
             let path = path_of(item);
-            let key = path.as_os_str().as_encoded_bytes();
-            let value = encode_row(path, item)?;
+            let key = IndexPathKey::new(path);
+            let value = encode_row(key.path(), item)?;
             table
-                .insert(key, value.as_slice())
+                .insert(key.as_bytes(), value.as_slice())
                 .map_err(|source| self.raise_source_error(source))?;
         }
         Ok(())
@@ -1147,11 +1183,12 @@ impl IndexStore {
             if inlinks.is_empty() {
                 continue;
             }
-            let target_key = entry.file().path().as_os_str().as_encoded_bytes();
+            let target_key = IndexPathKey::new(entry.file().path());
             for source in inlinks {
+                let source_key = IndexPathKey::new(source);
                 table
-                    .insert(target_key, source.as_os_str().as_encoded_bytes())
-                    .map_err(|source| self.raise_source_error(source))?;
+                    .insert(target_key.as_bytes(), source_key.as_bytes())
+                    .map_err(|err| self.raise_source_error(err))?;
             }
         }
         Ok(())
@@ -1182,12 +1219,12 @@ impl IndexStore {
         table: &mut redb::Table<'_, &[u8], &[u8]>,
         note: &Note,
     ) -> IndexResult<()> {
-        let path_str = note.path().to_string_lossy();
+        let path_key = IndexListKey::new(note.path());
         for item in note.list_items() {
-            let key = Self::list_key(&path_str, item.line());
+            let key = Self::list_key(path_key.as_str(), item.line());
             let leaf = item.without_children();
             let entry = ListEntryRef {
-                path: &path_str,
+                path: path_key.as_str(),
                 item: &leaf,
             };
             let bytes = encode_row(note.path(), &entry)?;
@@ -1289,7 +1326,7 @@ impl IndexStore {
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
-            let path_bytes = note.path().as_os_str().as_encoded_bytes();
+            let path_bytes = IndexPathKey::new(note.path()).as_bytes();
             for value in index.values(note) {
                 forward
                     .insert(value.as_bytes(), path_bytes)
@@ -1308,7 +1345,7 @@ impl IndexStore {
     ) -> IndexResult<()> {
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
-            let path_bytes = note.path().as_os_str().as_encoded_bytes();
+            let path_bytes = IndexPathKey::new(note.path()).as_bytes();
             for value in index.values(note) {
                 reverse
                     .insert(path_bytes, value.as_bytes())
@@ -1370,8 +1407,45 @@ impl IndexStore {
         modified_notes: &[Note],
         inlink_delta: &InlinkDelta,
     ) -> IndexResult<()> {
+        self.persist_incremental_with_notes(
+            delta,
+            || modified_notes.iter(),
+            inlink_delta,
+        )
+    }
+
+    /// Row-level incremental write for a rebuilt note set.
+    ///
+    /// # Errors
+    ///
+    /// - [`Store`] if the transaction fails or a record cannot be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
+    pub(super) fn persist_incremental_rebuilt_notes(
+        &self,
+        delta: &IndexDelta,
+        notes: &[Note],
+        inlink_delta: &InlinkDelta,
+    ) -> IndexResult<()> {
+        self.persist_incremental_with_notes(
+            delta,
+            || Self::notes_for_upserted_files(delta.upserted(), notes),
+            inlink_delta,
+        )
+    }
+
+    fn persist_incremental_with_notes<'a, Notes, Iter>(
+        &self,
+        delta: &IndexDelta,
+        modified_notes: Notes,
+        inlink_delta: &InlinkDelta,
+    ) -> IndexResult<()>
+    where
+        Notes: Fn() -> Iter,
+        Iter: Iterator<Item = &'a Note>,
+    {
         if delta.is_empty()
-            && modified_notes.is_empty()
+            && modified_notes().next().is_none()
             && inlink_delta.is_empty()
         {
             return Ok(());
@@ -1383,6 +1457,18 @@ impl IndexStore {
         self.apply_inlink_delta(&write_txn, inlink_delta)?;
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
+    }
+
+    fn notes_for_upserted_files<'a>(
+        upserted: &'a [FileBase],
+        notes: &'a [Note],
+    ) -> impl Iterator<Item = &'a Note> {
+        upserted.iter().filter_map(move |file| {
+            notes
+                .binary_search_by(|note| note.path().cmp(file.path()))
+                .ok()
+                .and_then(|idx| notes.get(idx))
+        })
     }
 
     /// Removes every deleted file's rows from `FILES`, `NOTES`, `LISTS`, and
@@ -1413,7 +1499,7 @@ impl IndexStore {
             .open_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
         for del in deleted {
-            let key = del.path().as_os_str().as_encoded_bytes();
+            let key = IndexPathKey::new(del.path()).as_bytes();
             files_table
                 .remove(key)
                 .map_err(|source| self.raise_source_error(source))?;
@@ -1433,10 +1519,8 @@ impl IndexStore {
             .open_table(LISTS)
             .map_err(|source| self.raise_source_error(source))?;
         for del in deleted {
-            self.remove_lists_for_path(
-                &mut lists_table,
-                &del.path().to_string_lossy(),
-            )?;
+            let path_key = IndexListKey::new(del.path());
+            self.remove_lists_for_path(&mut lists_table, path_key.as_str())?;
         }
         Ok(())
     }
@@ -1452,7 +1536,7 @@ impl IndexStore {
             let mut reverse =
                 self.open_multimap_for_write(write_txn, index.reverse())?;
             for del in deleted {
-                let path_bytes = del.path().as_os_str().as_encoded_bytes();
+                let path_bytes = IndexPathKey::new(del.path()).as_bytes();
                 self.clear_source_index_entry(
                     &mut forward,
                     &mut reverse,
@@ -1501,24 +1585,28 @@ impl IndexStore {
     }
 
     /// Writes upserted notes' rows, list items, and tag/class index entries.
-    fn apply_modified_notes(
+    fn apply_modified_notes<'a, Notes, Iter>(
         &self,
         write_txn: &WriteTransaction,
-        modified_notes: &[Note],
-    ) -> IndexResult<()> {
-        if modified_notes.is_empty() {
+        modified_notes: Notes,
+    ) -> IndexResult<()>
+    where
+        Notes: Fn() -> Iter,
+        Iter: Iterator<Item = &'a Note>,
+    {
+        if modified_notes().next().is_none() {
             return Ok(());
         }
-        self.upsert_notes(write_txn, modified_notes)?;
-        self.upsert_lists_for_notes(write_txn, modified_notes)?;
+        self.upsert_notes(write_txn, modified_notes())?;
+        self.upsert_lists_for_notes(write_txn, modified_notes())?;
         self.upsert_tags_and_classes(write_txn, modified_notes)?;
         Ok(())
     }
 
-    fn upsert_notes(
+    fn upsert_notes<'a>(
         &self,
         write_txn: &WriteTransaction,
-        modified_notes: &[Note],
+        modified_notes: impl Iterator<Item = &'a Note>,
     ) -> IndexResult<()> {
         let mut notes_table = write_txn
             .open_table(NOTES)
@@ -1531,31 +1619,33 @@ impl IndexStore {
 
     /// Replaces every modified note's `LISTS` rows: removes its previous rows,
     /// then writes its current list items.
-    fn upsert_lists_for_notes(
+    fn upsert_lists_for_notes<'a>(
         &self,
         write_txn: &WriteTransaction,
-        modified_notes: &[Note],
+        modified_notes: impl Iterator<Item = &'a Note>,
     ) -> IndexResult<()> {
         let mut lists_table = write_txn
             .open_table(LISTS)
             .map_err(|source| self.raise_source_error(source))?;
         for note in modified_notes {
-            self.remove_lists_for_path(
-                &mut lists_table,
-                &note.path().to_string_lossy(),
-            )?;
+            let path_key = IndexListKey::new(note.path());
+            self.remove_lists_for_path(&mut lists_table, path_key.as_str())?;
             self.write_lists_for_note(&mut lists_table, note)?;
         }
         Ok(())
     }
 
-    fn upsert_tags_and_classes(
+    fn upsert_tags_and_classes<'a, Notes, Iter>(
         &self,
         write_txn: &WriteTransaction,
-        modified_notes: &[Note],
-    ) -> IndexResult<()> {
+        modified_notes: Notes,
+    ) -> IndexResult<()>
+    where
+        Notes: Fn() -> Iter,
+        Iter: Iterator<Item = &'a Note>,
+    {
         for index in SourceIndex::ALL {
-            self.upsert_source_index(write_txn, index, modified_notes)?;
+            self.upsert_source_index(write_txn, index, modified_notes())?;
         }
         Ok(())
     }
@@ -1564,18 +1654,18 @@ impl IndexStore {
     /// table, first removing exactly this note's previous values via the
     /// reverse (path-keyed) table - O(that note's previous value count), never
     /// a full-table scan.
-    fn upsert_source_index(
+    fn upsert_source_index<'a>(
         &self,
         write_txn: &WriteTransaction,
         index: SourceIndex,
-        modified_notes: &[Note],
+        modified_notes: impl Iterator<Item = &'a Note>,
     ) -> IndexResult<()> {
         let mut forward =
             self.open_multimap_for_write(write_txn, index.forward())?;
         let mut reverse =
             self.open_multimap_for_write(write_txn, index.reverse())?;
         for note in modified_notes {
-            let path_bytes = note.path().as_os_str().as_encoded_bytes();
+            let path_bytes = IndexPathKey::new(note.path()).as_bytes();
             self.clear_source_index_entry(
                 &mut forward,
                 &mut reverse,
@@ -1605,17 +1695,17 @@ impl IndexStore {
             .open_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
         for (target, src) in inlink_delta.deleted() {
-            let target_key = target.as_os_str().as_encoded_bytes();
-            let source_key = src.as_os_str().as_encoded_bytes();
+            let target_key = IndexPathKey::new(target);
+            let source_key = IndexPathKey::new(src);
             links_table
-                .remove(target_key, source_key)
+                .remove(target_key.as_bytes(), source_key.as_bytes())
                 .map_err(|err| self.raise_source_error(err))?;
         }
         for (target, src) in inlink_delta.upserted() {
-            let target_key = target.as_os_str().as_encoded_bytes();
-            let source_key = src.as_os_str().as_encoded_bytes();
+            let target_key = IndexPathKey::new(target);
+            let source_key = IndexPathKey::new(src);
             links_table
-                .insert(target_key, source_key)
+                .insert(target_key.as_bytes(), source_key.as_bytes())
                 .map_err(|err| self.raise_source_error(err))?;
         }
         Ok(())
@@ -1637,10 +1727,10 @@ impl IndexStore {
         path: &Path,
         value: &T,
     ) -> IndexResult<()> {
-        let key = path.as_os_str().as_encoded_bytes();
-        let bytes = encode_row(path, value)?;
+        let key = IndexPathKey::new(path);
+        let bytes = encode_row(key.path(), value)?;
         table
-            .insert(key, bytes.as_slice())
+            .insert(key.as_bytes(), bytes.as_slice())
             .map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
@@ -1703,6 +1793,35 @@ mod tests {
         assert_eq!(loaded.first().map(FileBase::path), Some(Path::new("a.md")));
     }
 
+    mod multimap_paths {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_database_path_when_table_type_mismatches() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let store = IndexStore::open(root).expect("open store");
+            let write_txn = store.begin_write().expect("begin write txn");
+            let wrong_table: TableDefinition<&[u8], &[u8]> =
+                TableDefinition::new("paths_by_tag");
+            write_txn.open_table(wrong_table).expect("open wrong table");
+            write_txn.commit().expect("commit wrong table");
+
+            let err = store.paths_with_tag("x").expect_err("type mismatch");
+            let IndexError::Store(DbError::Redb {
+                path,
+                ..
+            }) = err
+            else {
+                panic!("expected redb store error");
+            };
+
+            assert_eq!(path, root.join(INDEX_FILE));
+        }
+    }
+
     const TEST_TABLE: TableDefinition<&[u8], &[u8]> =
         TableDefinition::new("test_table");
 
@@ -1739,12 +1858,9 @@ mod tests {
         notes: &[Note],
         links: &InlinkMap,
     ) -> IndexResult<()> {
-        let entries = crate::index::entry::assemble_entries(
-            files.to_vec(),
-            notes.to_vec(),
-            links.clone(),
-        );
-        store.write_all(&entries)
+        let index =
+            FileIndex::assemble(files.to_vec(), notes.to_vec(), links.clone());
+        store.write_all(index.entries())
     }
 
     /// Writes an orphanable raw `LINKS` row that `write_all` cannot assemble.
@@ -1755,8 +1871,8 @@ mod tests {
                 write_txn.open_multimap_table(LINKS).expect("open links table");
             table
                 .insert(
-                    target.as_os_str().as_encoded_bytes(),
-                    source.as_os_str().as_encoded_bytes(),
+                    IndexPathKey::new(target).as_bytes(),
+                    IndexPathKey::new(source).as_bytes(),
                 )
                 .expect("insert raw link");
         }
@@ -1868,8 +1984,7 @@ mod tests {
                 "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
             )
             .expect("write note");
-            let files =
-                IndexerService::new(temp.path()).scan().expect("scan root");
+            let files = IndexerService::scan(temp.path()).expect("scan root");
             let note = parse(
                 "note.md",
                 "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
@@ -2157,8 +2272,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("stale.md"), "old")
                 .expect("write stale");
-            let stale =
-                IndexerService::new(temp.path()).scan().expect("scan stale");
+            let stale = IndexerService::scan(temp.path()).expect("scan stale");
             let store = IndexStore::open(temp.path()).expect("open store");
             write_all_parts(&store, &stale, &[], &InlinkMap::default())
                 .expect("persist stale");
@@ -2166,8 +2280,7 @@ mod tests {
                 .expect("remove stale");
             fs::write(temp.path().join("fresh.md"), "new")
                 .expect("write fresh");
-            let fresh =
-                IndexerService::new(temp.path()).scan().expect("scan fresh");
+            let fresh = IndexerService::scan(temp.path()).expect("scan fresh");
 
             write_all_parts(&store, &fresh, &[], &InlinkMap::default())
                 .expect("persist fresh");
@@ -2196,8 +2309,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("café ☕.md"), "content")
                 .expect("write unicode-named file");
-            let files =
-                IndexerService::new(temp.path()).scan().expect("scan root");
+            let files = IndexerService::scan(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
 
             write_all_parts(&store, &files, &[], &InlinkMap::default())
@@ -2285,8 +2397,7 @@ mod tests {
             fs::write(temp.path().join(&weird), "# weird")
                 .expect("write weird note");
 
-            let files =
-                IndexerService::new(temp.path()).scan().expect("scan root");
+            let files = IndexerService::scan(temp.path()).expect("scan root");
 
             assert!(files.iter().any(|file| file.path() == weird));
         }
@@ -2299,8 +2410,7 @@ mod tests {
             fs::write(temp.path().join("a-b/c.md"), "1")
                 .expect("write a-b/c.md");
             fs::write(temp.path().join("a/z.md"), "2").expect("write a/z.md");
-            let files =
-                IndexerService::new(temp.path()).scan().expect("scan root");
+            let files = IndexerService::scan(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             write_all_parts(&store, &files, &[], &InlinkMap::default())
                 .expect("persist records");
@@ -2504,8 +2614,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write note");
-            let files =
-                IndexerService::new(temp.path()).scan().expect("scan root");
+            let files = IndexerService::scan(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             write_all_parts(&store, &files, &[], &InlinkMap::default())
                 .expect("persist records");

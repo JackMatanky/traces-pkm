@@ -19,6 +19,12 @@ The service driving the index lifecycle: building fresh indexes, persisting to
 disk, loading cached data, and performing differential refreshes.
 *Avoid*: index manager, scanner, indexer facade
 
+#### Index Update
+
+The computed change set and recomputed state from one incremental
+synchronization, not yet applied.
+*Avoid*: sync outcome, reconciliation result, sync delta
+
 ### Indexed Data
 
 #### File Base

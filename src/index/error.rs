@@ -4,7 +4,7 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
-use crate::DirTreeError;
+use crate::{DirTreeError, path::PathError};
 
 pub type IndexResult<T> = std::result::Result<T, IndexError>;
 
@@ -12,7 +12,7 @@ pub type IndexResult<T> = std::result::Result<T, IndexError>;
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
-    reason = "DirTreeError is pub(crate), IndexError is pub"
+    reason = "DirTreeError and PathError are pub(crate), IndexError is pub"
 )]
 pub enum IndexError {
     /// Database access or record serialization/deserialization failed.
@@ -21,6 +21,9 @@ pub enum IndexError {
     /// Directory traversal failed during scan.
     #[error(transparent)]
     Walk(#[from] DirTreeError),
+    /// A path rejected by lexical confinement validation.
+    #[error(transparent)]
+    Path(#[from] PathError),
     /// A Markdown note could not be read or parsed.
     #[error("failed to parse note {path}")]
     NoteParse {

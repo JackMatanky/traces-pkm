@@ -197,11 +197,9 @@ mod tests {
         fn deleted_note_sets_has_deleted_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "content").expect("write a");
-            let previous =
-                IndexerService::new(temp.path()).scan().expect("scan");
+            let previous = IndexerService::scan(temp.path()).expect("scan");
             fs::remove_file(temp.path().join("a.md")).expect("delete a");
-            let current =
-                IndexerService::new(temp.path()).scan().expect("scan");
+            let current = IndexerService::scan(temp.path()).expect("scan");
 
             let diff = IndexDelta::compute(&current, &previous);
 
@@ -215,12 +213,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("image.png"), "fake")
                 .expect("write image");
-            let previous =
-                IndexerService::new(temp.path()).scan().expect("scan");
+            let previous = IndexerService::scan(temp.path()).expect("scan");
             fs::remove_file(temp.path().join("image.png"))
                 .expect("delete image");
-            let current =
-                IndexerService::new(temp.path()).scan().expect("scan");
+            let current = IndexerService::scan(temp.path()).expect("scan");
 
             let diff = IndexDelta::compute(&current, &previous);
 
@@ -233,12 +229,10 @@ mod tests {
         fn upserted_note_does_not_set_has_deleted_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "v1").expect("write a");
-            let previous =
-                IndexerService::new(temp.path()).scan().expect("scan");
+            let previous = IndexerService::scan(temp.path()).expect("scan");
             fs::write(temp.path().join("a.md"), "v2, longer content")
                 .expect("rewrite a");
-            let current =
-                IndexerService::new(temp.path()).scan().expect("scan");
+            let current = IndexerService::scan(temp.path()).expect("scan");
 
             let diff = IndexDelta::compute(&current, &previous);
 

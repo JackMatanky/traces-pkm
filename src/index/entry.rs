@@ -263,16 +263,6 @@ impl RowIndex {
     }
 }
 
-/// Rebuilds indexed entries from sorted persisted rows for
-/// [`super::IndexerService::load`].
-pub(super) fn assemble_entries(
-    files: Vec<FileBase>,
-    notes: Vec<Note>,
-    inlinks: InlinkMap,
-) -> Box<[FileEntry]> {
-    FileIndex::assemble(files, notes, inlinks).entries
-}
-
 /// Moves inlink sources into their matching [`FileEntry`]s.
 pub(super) fn redistribute_inlinks(
     entries: &mut [FileEntry],
