@@ -16,7 +16,6 @@ concurrency:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
-  MISE_JOBS: "1"
 
 jobs:
   check:
@@ -29,12 +28,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
         with:
-          bootstrap: true
+          install: false
+      - run: mise install rust
+      - run: mise install hk taplo gitleaks cargo:cargo-deny cargo:cargo-audit cargo:ryl
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
       - run: mise run check
-      - run: hk check --all --no-fail-fast
 
   test:
     runs-on: ubuntu-latest
@@ -42,7 +42,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
         with:
-          bootstrap: true
+          install: false
+      - run: mise install rust cargo:cargo-nextest
       - uses: Swatinem/rust-cache@v2
       - run: mise run test
 
@@ -52,9 +53,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
         with:
-          bootstrap: true
+          install: false
       - run: |
           msrv=$(cargo metadata --format-version 1 | jq -r '.packages[0].rust_version')
+          mise install "rust@${msrv}"
           mise exec "rust@${msrv}" -- cargo check --workspace --all-features
 
   docs:
@@ -63,6 +65,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
         with:
-          bootstrap: true
+          install: false
+      - run: mise install rust
       - uses: Swatinem/rust-cache@v2
       - run: mise run doc
