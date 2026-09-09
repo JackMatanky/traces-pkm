@@ -8,4 +8,4 @@
 [toolchain]
 channel = "nightly"
 profile = "default"
-components = ["rust-src", "rustfmt", "rust-analyzer"]
+components = ["rust-analyzer", "clippy", "rustfmt", "rust-src"]
