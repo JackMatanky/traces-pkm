@@ -1038,22 +1038,6 @@ pub(crate) enum FieldKeyError {
     },
 }
 
-/// Coerces a YAML scalar into raw text usable as a field key/name.
-///
-/// Returns `None` for YAML values that cannot stand as a key: `Null`,
-/// `Sequence`, `Mapping`, and `Tagged`.
-pub(crate) fn scalar_to_string(value: serde_yaml::Value) -> Option<String> {
-    match value {
-        serde_yaml::Value::String(s) => Some(s),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        serde_yaml::Value::Null
-        | serde_yaml::Value::Sequence(_)
-        | serde_yaml::Value::Mapping(_)
-        | serde_yaml::Value::Tagged(_) => None,
-    }
-}
-
 impl From<serde_yaml::Value> for FieldValueRef<'static> {
     /// Converts a [`serde_yaml::Value`] into a [`FieldValueRef`] with date
     /// classification.
@@ -1093,6 +1077,22 @@ impl From<serde_yaml::Value> for FieldValueRef<'static> {
             }
             serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
         }
+    }
+}
+
+/// Coerces a YAML scalar into raw text usable as a field key/name.
+///
+/// Returns `None` for YAML values that cannot stand as a key: `Null`,
+/// `Sequence`, `Mapping`, and `Tagged`.
+pub(crate) fn scalar_to_string(value: serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => Some(s),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Null
+        | serde_yaml::Value::Sequence(_)
+        | serde_yaml::Value::Mapping(_)
+        | serde_yaml::Value::Tagged(_) => None,
     }
 }
 
