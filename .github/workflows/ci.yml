@@ -27,14 +27,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install --yes core:rust
-      - run: mise install --yes hk taplo gitleaks
-      - run: mise install --yes cargo:cargo-deny cargo:cargo-audit cargo:ryl
+      - run: mise install rust
+      - run: mise install hk taplo gitleaks cargo:cargo-deny cargo:cargo-audit cargo:ryl
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
@@ -44,43 +41,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install --yes core:rust
-      - run: mise install --yes cargo:cargo-nextest
+      - run: mise install rust cargo:cargo-nextest
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "ci-ubuntu-latest"
       - run: mise run test
 
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
       - run: |
           msrv=$(cargo metadata --format-version 1 | jq -r '.packages[0].rust_version')
-          mise install --yes "core:rust@${msrv}"
-          mise exec "core:rust@${msrv}" -- cargo check --workspace --all-features
+          mise install "rust@${msrv}"
+          mise exec "rust@${msrv}" -- cargo check --workspace --all-features
 
   docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install --yes core:rust
+      - run: mise install rust
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "ci-ubuntu-latest"
       - run: mise run doc
