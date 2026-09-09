@@ -92,7 +92,7 @@ impl SchemaService {
         self.schemas.get(name)
     }
 
-    /// Return every Schema that directly extends `name`.
+    /// Return every Schema that directly extends `name`, sorted by name.
     ///
     /// Excludes `name` itself and every transitive descendant. Empty, not an
     /// error, if `name` has no Schema or nothing extends it.
@@ -102,12 +102,14 @@ impl SchemaService {
         let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
-        schema
+        let mut children: Vec<_> = schema
             .children()
             .iter()
             .filter_map(|child| self.schemas.get(child.as_str()))
             .cloned()
-            .collect()
+            .collect();
+        children.sort_by(|a, b| a.name().cmp(b.name()));
+        children
     }
 
     /// Borrowed names of every Schema that directly extends `name`.
@@ -124,7 +126,8 @@ impl SchemaService {
             .flat_map(|schema| schema.children().iter().map(SchemaName::as_str))
     }
 
-    /// Return every Schema that directly or transitively extends `name`.
+    /// Return every Schema that directly or transitively extends `name`,
+    /// sorted by name.
     ///
     /// Excludes `name` itself. Empty, not an error, if `name` has no Schema or
     /// nothing extends it.
@@ -134,12 +137,14 @@ impl SchemaService {
         let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
-        schema
+        let mut descendants: Vec<_> = schema
             .descendants()
             .iter()
             .filter_map(|descendant| self.schemas.get(descendant.as_str()))
             .cloned()
-            .collect()
+            .collect();
+        descendants.sort_by(|a, b| a.name().cmp(b.name()));
+        descendants
     }
 
     /// Return the set of Schema names matching `classes`, including transitive
@@ -339,7 +344,7 @@ mod tests {
             let (registry, warnings, _failures) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(warnings.is_empty());
+            assert_eq!(warnings, []);
             let book = registry.get("book").expect("book resolved");
             assert_eq!(book.name(), "book");
             assert!(book.field("status").is_some());
@@ -365,7 +370,7 @@ mod tests {
             let (registry, warnings, _failures) =
                 resolve_dir(&missing).expect("missing dir is not fatal");
 
-            assert!(warnings.is_empty());
+            assert_eq!(warnings, []);
             assert!(registry.get("anything").is_none());
         }
 
@@ -748,7 +753,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(service.children_of("ghost").is_empty());
+            assert_eq!(service.children_of("ghost"), []);
         }
     }
 
@@ -842,7 +847,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(service.descendants_of("sci_fi").is_empty());
+            assert_eq!(service.descendants_of("sci_fi"), []);
         }
 
         #[test]
@@ -853,7 +858,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(service.descendants_of("ghost").is_empty());
+            assert_eq!(service.descendants_of("ghost"), []);
         }
     }
 

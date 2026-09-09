@@ -70,6 +70,7 @@ module-item-order-groupings = [
       "trait_alias",
       "impl",
       "fn",
+      "test_binder_constraints",
     ],
   ],
 ]

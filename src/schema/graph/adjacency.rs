@@ -550,7 +550,7 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&[]));
             let adj = build_adj(&raw);
 
-            assert!(adj.children_slice(DenseIndex(0)).is_empty());
+            assert_eq!(adj.children_slice(DenseIndex(0)), []);
         }
 
         #[test]
@@ -580,7 +580,7 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&[]));
             let adj = build_adj(&raw);
 
-            assert!(adj.children_slice(DenseIndex(99)).is_empty());
+            assert_eq!(adj.children_slice(DenseIndex(99)), []);
         }
     }
 
@@ -698,7 +698,7 @@ mod tests {
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
             );
 
-            assert!(warnings.is_empty());
+            assert_eq!(warnings, []);
         }
 
         #[test]

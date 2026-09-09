@@ -164,7 +164,7 @@ mod tests {
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
         );
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]

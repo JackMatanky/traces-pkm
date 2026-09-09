@@ -394,7 +394,10 @@ mod tests {
 
             args.run(&service).expect("show trust status");
 
-            assert!(service.list_trusted().expect("list trusted").is_empty());
+            assert_eq!(
+                service.list_trusted().expect("list trusted"),
+                Vec::<std::path::PathBuf>::new()
+            );
         }
     }
 
@@ -431,7 +434,10 @@ mod tests {
                 .run(&service)
                 .expect("clean trust store");
 
-            assert!(service.list_trusted().expect("list trusted").is_empty());
+            assert_eq!(
+                service.list_trusted().expect("list trusted"),
+                Vec::<std::path::PathBuf>::new()
+            );
         }
 
         #[test]

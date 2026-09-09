@@ -503,7 +503,7 @@ mod tests {
                 ..
             } = resolve(&raw).expect("resolves");
 
-            assert!(warnings.is_empty());
+            assert_eq!(warnings, []);
             let book = resolved.get("book").expect("book resolved");
             assert_eq!(book.name(), "book");
             let status = book.field("status").expect("status field");
@@ -807,7 +807,7 @@ mod tests {
                 ..
             } = resolve(&raw).expect("resolves");
 
-            assert!(warnings.is_empty());
+            assert_eq!(warnings, []);
             let global =
                 resolved.get(GLOBAL_SCHEMA_NAME).expect("global resolved");
             assert!(

@@ -112,6 +112,8 @@ pub mod path {
         S: Serializer,
     {
         use std::os::windows::ffi::OsStrExt as _;
+
+        use serde::Serialize as _;
         let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
         wide.serialize(serializer)
     }

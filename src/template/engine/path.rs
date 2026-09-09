@@ -391,6 +391,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     mod io_errors {
         use std::os::unix::fs::PermissionsExt as _;
 

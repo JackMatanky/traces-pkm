@@ -169,7 +169,7 @@ mod tests {
         #[test]
         fn returns_empty_vec_for_unset_folders() {
             let field = SchemaFileField::default();
-            assert!(field.folders().is_empty());
+            assert_eq!(field.folders(), Vec::<String>::new());
         }
 
         #[test]
@@ -181,7 +181,7 @@ mod tests {
         #[test]
         fn returns_empty_vec_for_unset_class() {
             let field = SchemaFileField::default();
-            assert!(field.class().is_empty());
+            assert_eq!(field.class(), Vec::<String>::new());
         }
     }
 

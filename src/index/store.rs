@@ -2077,7 +2077,7 @@ mod tests {
             assert_eq!(b_second.clean_text(), "Plain in B");
             let c_lists =
                 store.read_lists_for_path(&txn, "c.md").expect("read c lists");
-            assert!(c_lists.is_empty());
+            assert_eq!(c_lists, []);
         }
 
         #[test]
@@ -2495,8 +2495,8 @@ mod tests {
             let (files, notes, links) =
                 store.read_all().expect("load after recovery");
 
-            assert!(files.is_empty());
-            assert!(notes.is_empty());
+            assert_eq!(files, []);
+            assert_eq!(notes, []);
             assert!(links.is_empty());
         }
 
@@ -2532,8 +2532,8 @@ mod tests {
             let (files, notes, links) =
                 store.read_all().expect("load after recovery");
 
-            assert!(files.is_empty());
-            assert!(notes.is_empty());
+            assert_eq!(files, []);
+            assert_eq!(notes, []);
             assert!(links.is_empty());
         }
     }

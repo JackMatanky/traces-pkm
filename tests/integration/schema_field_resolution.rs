@@ -98,7 +98,7 @@ fn children_of_returns_direct_extenders()
 
     let children = service.children_of("book");
     let names: Vec<&str> = children.iter().map(|s| s.name()).collect();
-    if names != ["sci_fi", "memoir"] {
+    if names != ["memoir", "sci_fi"] {
         return Err(std::io::Error::other(format!(
             "direct children mismatch: {names:?}"
         ))

@@ -624,7 +624,7 @@ mod tests {
             assert_eq!(discovered.local().len(), 2);
             assert_eq!(discovered.local().first().unwrap().root(), parent);
             assert_eq!(discovered.local().get(1).unwrap().root(), child);
-            assert!(discovered.global().is_empty());
+            assert_eq!(discovered.global(), []);
         }
 
         #[test]

@@ -53,7 +53,7 @@ jobs:
         with:
           shared-key: "hk-ubuntu"
       - run: mise install --locked taplo gitleaks cargo:cargo-deny cargo:cargo-audit cargo:ryl
-      - run: mise install --locked hk
+      - run: mise install hk
       - run: mise exec -- hk validate
       - run: mise exec -- hk check --all --no-fail-fast --format jsonl --skip-step cargo-clippy --skip-step cargo-test
 
@@ -92,7 +92,13 @@ jobs:
           install: false
       - id: msrv
         run: |
-          msrv="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["rust-version"])')"
+          # Cargo.toml uses multi-line inline tables (TOML 1.1); tomllib and
+          # other strict TOML 1.0 parsers reject them, so extract directly.
+          msrv="$(sed -n 's/^rust-version *= *"\([^"]*\)".*$/\1/p' Cargo.toml)"
+          if [[ -z "${msrv}" ]]; then
+            echo "rust-version not found in Cargo.toml" >&2
+            exit 1
+          fi
           echo "version=${msrv}" >> "${GITHUB_OUTPUT}"
       - run: mise install "rust@${{ steps.msrv.outputs.version }}"
       - uses: Swatinem/rust-cache@v2

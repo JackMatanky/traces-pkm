@@ -286,7 +286,7 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::{FieldStringValue, FieldValueRef};
+    use crate::field::FieldValueRef;
 
     mod is_iso_date {
         use crate::field::FieldStringValue;

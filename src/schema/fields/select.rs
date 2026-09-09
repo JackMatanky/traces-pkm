@@ -1905,7 +1905,7 @@ mod tests {
 
             assert!(errors.is_empty());
             let def = select_field(&field_type).expect("expected select field");
-            assert!(def.values().is_empty());
+            assert_eq!(def.values(), []);
         }
     }
 
