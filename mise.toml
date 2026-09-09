@@ -45,11 +45,11 @@ gitleaks = "latest"
 lockfile = true
 task.disable_spec_from_run_scripts = true
 experimental = true
-yes = true
 
 [env]
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
+MISE_YES = "1"
 
 [task_config]
 global_inputs = ["mise.toml"]
