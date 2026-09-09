@@ -714,6 +714,7 @@ impl TaskListItem {
     ///     false,
     /// );
     /// assert!(task.dates().is_empty());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn dates(&self) -> TaskDates {
@@ -884,6 +885,7 @@ impl std::str::FromStr for TaskPriority {
 /// let mut dates = TaskDates::default();
 /// dates.due = NaiveDate::from_ymd_opt(2025, 1, 15);
 /// assert!(!dates.is_empty());
+/// assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
 /// ```
 #[derive(
     Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
@@ -947,6 +949,7 @@ impl TaskDates {
     /// use traces_pkm::TaskDates;
     ///
     /// assert!(TaskDates::default().is_empty());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {

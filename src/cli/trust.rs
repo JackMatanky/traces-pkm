@@ -384,6 +384,7 @@ mod tests {
 
         #[test]
         fn checks_status_without_changing_trust_store() {
+            use pretty_assertions::assert_eq;
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
@@ -420,6 +421,7 @@ mod tests {
 
         #[test]
         fn removes_a_stale_root() {
+            use pretty_assertions::assert_eq;
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");

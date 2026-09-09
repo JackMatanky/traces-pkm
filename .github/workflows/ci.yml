@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -21,9 +21,11 @@ env:
   MISE_AUTO_INSTALL: "0"
   RUSTUP_AUTO_INSTALL: "0"
 
+# Job names mirror the command each job runs; "lints" is the hk suite.
 jobs:
-  platform-check:
-    name: Check (${{ matrix.os }})
+  # -- Compile gates --
+  check:
+    name: check (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -40,8 +42,8 @@ jobs:
           shared-key: "platform-check-${{ matrix.os }}"
       - run: mise exec -- cargo check --workspace --all-targets --all-features
 
-  hk:
-    name: hk checks
+  clippy:
+    name: clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,12 +53,10 @@ jobs:
           install_args: rust
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "hk-ubuntu"
-      - run: mise install --locked taplo tombi gitleaks cargo:ryl cargo-deny cargo-audit
-      - run: mise install hk
-      - run: mise exec -- hk validate
-      - run: mise exec -- hk check --all --no-fail-fast --format jsonl --skip-step cargo-clippy --skip-step cargo-test
+          shared-key: "clippy-ubuntu"
+      - run: mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  # -- Tests --
   test:
     runs-on: ubuntu-latest
     steps:
@@ -69,8 +69,9 @@ jobs:
       - run: mise install --locked cargo:cargo-nextest
       - run: mise run test
 
-  lint:
-    name: Clippy
+  # -- Repository lints (hk) --
+  lints:
+    name: lints (hk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,8 +81,23 @@ jobs:
           install_args: rust
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "clippy-ubuntu"
-      - run: mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings
+          shared-key: "hk-ubuntu"
+      - run: mise install --locked taplo tombi gitleaks cargo:ryl cargo-deny cargo:cargo-audit
+      - run: mise install hk
+      - run: mise exec -- hk validate
+      - run: mise exec -- hk check --all --no-fail-fast --format jsonl --skip-step cargo-clippy --skip-step cargo-test
+
+  # -- Docs & compatibility --
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          experimental: true
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+      - run: mise run doc
 
   msrv:
     runs-on: ubuntu-latest
@@ -105,14 +121,3 @@ jobs:
         with:
           shared-key: "msrv-${{ steps.msrv.outputs.version }}"
       - run: mise exec "rust@${{ steps.msrv.outputs.version }}" -- cargo check --workspace --all-features
-
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v4
-        with:
-          experimental: true
-          install_args: rust
-      - uses: Swatinem/rust-cache@v2
-      - run: mise run doc

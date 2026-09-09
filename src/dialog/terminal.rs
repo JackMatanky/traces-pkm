@@ -227,6 +227,7 @@ mod tests {
 
         #[test]
         fn returns_empty_when_items_are_empty() {
+            use pretty_assertions::assert_eq;
             let p = TerminalDialogProvider::new();
             assert_eq!(
                 p.multi_select("pick", &[]).unwrap(),
@@ -236,6 +237,7 @@ mod tests {
 
         #[test]
         fn returns_empty_when_not_a_tty() {
+            use pretty_assertions::assert_eq;
             if skip_if_tty("returns_empty_when_not_a_tty") {
                 return;
             }

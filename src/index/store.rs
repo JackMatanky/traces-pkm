@@ -2466,6 +2466,7 @@ mod tests {
         #[test]
         fn recovers_by_rebuilding_when_the_files_table_has_the_old_str_key_schema()
          {
+            use pretty_assertions::assert_eq;
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             let db_path = root.join(INDEX_FILE);
@@ -2503,6 +2504,7 @@ mod tests {
         #[test]
         fn recovers_by_rebuilding_when_the_lists_table_has_the_old_str_key_schema()
          {
+            use pretty_assertions::assert_eq;
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             let db_path = root.join(INDEX_FILE);

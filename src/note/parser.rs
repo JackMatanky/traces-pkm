@@ -86,7 +86,7 @@ use list::ListTracker;
 ///     "# Hello\nStatus:: Draft",
 /// );
 /// let note = parse_markdown(&input);
-/// assert_eq!(note.outlinks(), []);
+/// assert!(note.outlinks().is_empty());
 /// assert_eq!(note.tags().len(), 0);
 /// ```
 #[inline]

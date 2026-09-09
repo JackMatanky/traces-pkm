@@ -1380,6 +1380,7 @@ mod tests {
 
             #[test]
             fn every_target_in_map_has_at_least_one_source() {
+                use pretty_assertions::{assert_eq, assert_ne};
                 let notes = [
                     note_with_outlink("a.md", "target", LinkType::Wikilink),
                     parse("target.md", "# Target"),
@@ -1420,6 +1421,7 @@ mod tests {
 
             #[test]
             fn inlinks_of_returns_empty_slice_for_unknown_target() {
+                use pretty_assertions::assert_eq;
                 let inlinks = InlinkMap::default();
                 assert_eq!(
                     inlinks.inlinks_of(Path::new("nonexistent.md")),
