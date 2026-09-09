@@ -14,12 +14,13 @@ hk = "1.58.1"
 
 # -- Data formats --
 taplo = "latest"
+tombi = "latest"
 "cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
 
 # -- Security --
 gitleaks = "latest"
+cargo-deny = "latest"
 "cargo:cargo-audit" = "latest"
-"cargo:cargo-deny" = "latest"
 
 # -- Testing & Quality --
 "cargo:cargo-nextest" = "latest"

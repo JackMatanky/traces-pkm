@@ -11,7 +11,9 @@ exclude = List(
     "node_modules",
     "dist",
     "build",
-    "LICENSE"
+    "LICENSE",
+    ".scratch",
+    ".agents"
 )
 
 local hygiene = new Mapping<String, Step> {
