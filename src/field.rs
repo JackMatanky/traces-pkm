@@ -35,7 +35,6 @@ use serde::{
     ser::{SerializeMap, SerializeSeq},
 };
 use thiserror::Error;
-use yaml_serde as serde_yaml;
 
 /// Stores an exact schema field identifier.
 ///
@@ -781,6 +780,59 @@ pub(crate) enum FormatParsePolicy {
     Passthrough,
 }
 
+/// A string value that knows whether it is a plain string, ISO date, or ISO
+/// datetime. Construction-time classification centralizes the logic that
+/// determines which [`FieldValueRef`] variant a string becomes.
+///
+/// Use [`classify`](Self::classify) to produce the appropriate
+/// [`FieldValueRef`] variant. The `is_iso_date` and `is_iso_datetime`
+/// methods are available for callers that need to inspect the classification
+/// directly.
+#[repr(transparent)]
+pub(crate) struct FieldStringValue<'a>(Cow<'a, str>);
+
+impl<'a> FieldStringValue<'a> {
+    /// Wraps a string value for potential date/datetime classification.
+    #[inline]
+    pub fn new(s: Cow<'a, str>) -> Self {
+        Self(s)
+    }
+
+    /// Returns `true` if this string matches the ISO date format
+    /// `YYYY-MM-DD`.
+    #[inline]
+    pub fn is_iso_date(&self) -> bool {
+        is_iso_date(&self.0)
+    }
+
+    /// Returns `true` if this string matches the ISO datetime format
+    /// `YYYY-MM-DDThh:mm:ss`.
+    #[inline]
+    pub fn is_iso_datetime(&self) -> bool {
+        is_iso_datetime(&self.0)
+    }
+
+    /// Consumes the string and returns the appropriate [`FieldValueRef`]
+    /// variant based on the parse policy.
+    ///
+    /// When `policy` is [`FormatParsePolicy::Classify`], ISO datetime strings
+    /// become [`FieldValueRef::DateTime`], ISO date strings become
+    /// [`FieldValueRef::Date`], and all other strings become
+    /// [`FieldValueRef::String`].
+    #[inline]
+    pub fn classify(self, policy: FormatParsePolicy) -> FieldValueRef<'a> {
+        if policy == FormatParsePolicy::Classify {
+            if self.is_iso_datetime() {
+                return FieldValueRef::DateTime(self.0);
+            }
+            if self.is_iso_date() {
+                return FieldValueRef::Date(self.0);
+            }
+        }
+        FieldValueRef::String(self.0)
+    }
+}
+
 /// Checks whether `s` starts with an ISO date format `YYYY-MM-DD`.
 pub(crate) fn is_iso_date(s: &str) -> bool {
     let bytes = s.as_bytes();
@@ -808,6 +860,113 @@ pub(crate) fn is_iso_datetime(s: &str) -> bool {
         && bytes.get(14..16).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
         && bytes.get(16) == Some(&b':')
         && bytes.get(17..19).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+}
+
+/// Seed that carries [`FormatParsePolicy`] through map value deserialization.
+struct FieldValueRefSeed<'a> {
+    policy: FormatParsePolicy,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'de: 'a, 'a> de::DeserializeSeed<'de> for FieldValueRefSeed<'a> {
+    type Value = FieldValueRef<'a>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        FieldValueRef::deserialize_with(deserializer, self.policy)
+    }
+}
+
+/// Serde [`Visitor`] for [`FieldValueRef`] with configurable date
+/// classification.
+struct FieldValueRefVisitor<'a> {
+    policy: FormatParsePolicy,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'de: 'a, 'a> Visitor<'de> for FieldValueRefVisitor<'a> {
+    type Value = FieldValueRef<'a>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a TOML, JSON, or YAML field value")
+    }
+
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+        Ok(FieldValueRef::Bool(v))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(FieldValueRef::Int(v))
+    }
+
+    /// Saturates at [`i64::MAX`] for a magnitude beyond `i64`'s range.
+    /// Values files in this domain (Schema `select`/`multi` options)
+    /// never need integers that large, so keeping a single
+    /// [`FieldValueRef::Int`] variant is worth that ceiling.
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(FieldValueRef::Int(i64::try_from(v).unwrap_or(i64::MAX)))
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
+        Ok(FieldValueRef::Float(v))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+        Ok(FieldStringValue::new(Cow::Owned(v.to_owned()))
+            .classify(self.policy))
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'a str) -> Result<Self::Value, E> {
+        Ok(FieldStringValue::new(Cow::Borrowed(v)).classify(self.policy))
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+        Ok(FieldStringValue::new(Cow::Owned(v)).classify(self.policy))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(FieldValueRef::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(FieldValueRef::Null)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut vec = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(elem) = seq.next_element()? {
+            vec.push(elem);
+        }
+        Ok(FieldValueRef::List(vec))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let policy = self.policy;
+        let mut index_map = IndexMap::new();
+        while let Some(key) = map.next_key::<Cow<'a, str>>()? {
+            let value = map.next_value_seed(FieldValueRefSeed {
+                policy,
+                _marker: PhantomData,
+            })?;
+            index_map.insert(key, value);
+        }
+        Ok(FieldValueRef::Object(index_map))
+    }
 }
 
 /// Deserializes from any self-describing format (TOML, JSON, or YAML) with
@@ -841,133 +1000,6 @@ impl<'a> FieldValueRef<'a> {
         'de: 'a,
         D: Deserializer<'de>,
     {
-        struct FieldValueRefVisitor<'a> {
-            policy: FormatParsePolicy,
-            _marker: PhantomData<&'a ()>,
-        }
-
-        impl<'de: 'a, 'a> Visitor<'de> for FieldValueRefVisitor<'a> {
-            type Value = FieldValueRef<'a>;
-
-            fn expecting(
-                &self,
-                formatter: &mut fmt::Formatter<'_>,
-            ) -> fmt::Result {
-                formatter.write_str("a TOML, JSON, or YAML field value")
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
-                Ok(FieldValueRef::Bool(v))
-            }
-
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(FieldValueRef::Int(v))
-            }
-
-            /// Saturates at [`i64::MAX`] for a magnitude beyond `i64`'s range.
-            /// Values files in this domain (Schema `select`/`multi` options)
-            /// never need integers that large, so keeping a single
-            /// [`FieldValueRef::Int`] variant is worth that ceiling.
-            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(FieldValueRef::Int(i64::try_from(v).unwrap_or(i64::MAX)))
-            }
-
-            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-                Ok(FieldValueRef::Float(v))
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if self.policy == FormatParsePolicy::Classify {
-                    if is_iso_datetime(v) {
-                        return Ok(FieldValueRef::DateTime(Cow::Owned(
-                            v.to_owned(),
-                        )));
-                    }
-                    if is_iso_date(v) {
-                        return Ok(FieldValueRef::Date(Cow::Owned(
-                            v.to_owned(),
-                        )));
-                    }
-                }
-                Ok(FieldValueRef::String(Cow::Owned(v.to_owned())))
-            }
-
-            fn visit_borrowed_str<E>(self, v: &'a str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if self.policy == FormatParsePolicy::Classify {
-                    if is_iso_datetime(v) {
-                        return Ok(FieldValueRef::DateTime(Cow::Borrowed(v)));
-                    }
-                    if is_iso_date(v) {
-                        return Ok(FieldValueRef::Date(Cow::Borrowed(v)));
-                    }
-                }
-                Ok(FieldValueRef::String(Cow::Borrowed(v)))
-            }
-
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if self.policy == FormatParsePolicy::Classify {
-                    if is_iso_datetime(&v) {
-                        return Ok(FieldValueRef::DateTime(Cow::Owned(v)));
-                    }
-                    if is_iso_date(&v) {
-                        return Ok(FieldValueRef::Date(Cow::Owned(v)));
-                    }
-                }
-                Ok(FieldValueRef::String(Cow::Owned(v)))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                Ok(FieldValueRef::Null)
-            }
-
-            fn visit_some<D>(
-                self,
-                deserializer: D,
-            ) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Deserialize::deserialize(deserializer)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(FieldValueRef::Null)
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut vec = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-                while let Some(elem) = seq.next_element()? {
-                    vec.push(elem);
-                }
-                Ok(FieldValueRef::List(vec))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut index_map = IndexMap::new();
-                while let Some((key, value)) =
-                    map.next_entry::<Cow<'a, str>, FieldValueRef<'a>>()?
-                {
-                    index_map.insert(key, value);
-                }
-                Ok(FieldValueRef::Object(index_map))
-            }
-        }
-
         deserializer.deserialize_any(FieldValueRefVisitor {
             policy,
             _marker: PhantomData,
@@ -1043,13 +1075,8 @@ impl From<serde_yaml::Value> for FieldValueRef<'static> {
                 }
             }
             serde_yaml::Value::String(s) => {
-                if is_iso_datetime(&s) {
-                    Self::DateTime(Cow::Owned(s))
-                } else if is_iso_date(&s) {
-                    Self::Date(Cow::Owned(s))
-                } else {
-                    Self::String(Cow::Owned(s))
-                }
+                FieldStringValue::new(Cow::Owned(s))
+                    .classify(FormatParsePolicy::Classify)
             }
             serde_yaml::Value::Sequence(seq) => {
                 Self::List(seq.into_iter().map(Self::from).collect())
@@ -1593,6 +1620,102 @@ mod tests {
             d.hash(&mut h4);
             // same canonical form, so hashes should match
             assert_eq!(h3.finish(), h4.finish());
+        }
+    }
+
+    mod is_iso_datetime {
+        use crate::field::is_iso_datetime;
+
+        #[test]
+        fn accepts_valid_datetime() {
+            assert!(is_iso_datetime("2026-08-22T14:30:00Z"));
+        }
+
+        #[test]
+        fn accepts_datetime_without_offset() {
+            assert!(is_iso_datetime("2026-08-22T14:30:00"));
+        }
+
+        #[test]
+        fn rejects_date_only() {
+            assert!(!is_iso_datetime("2026-08-22"));
+        }
+
+        #[test]
+        fn rejects_short_string() {
+            assert!(!is_iso_datetime("2026-08-22T14:30"));
+        }
+
+        #[test]
+        fn rejects_missing_t_separator() {
+            assert!(!is_iso_datetime("2026-08-22 14:30:00"));
+        }
+    }
+
+    mod format_parse_policy {
+        use std::borrow::Cow;
+
+        use pretty_assertions::assert_eq;
+
+        use crate::field::*;
+
+        #[test]
+        fn classify_dates_becomes_date_variant() {
+            let json = r#"{"d": "2026-07-29"}"#;
+            let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
+                &mut serde_json::Deserializer::from_str(json),
+                FormatParsePolicy::Classify,
+            )
+            .expect("valid json");
+            let entry = match &value {
+                FieldValueRef::Object(m) => m.get("d").cloned(),
+                _ => None,
+            }
+            .expect("key present");
+            assert_eq!(
+                entry,
+                FieldValueRef::Date(Cow::Owned("2026-07-29".to_owned()))
+            );
+        }
+
+        #[test]
+        fn classify_datetimes_becomes_datetime_variant() {
+            let json = r#"{"dt": "2026-07-29T14:30:00Z"}"#;
+            let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
+                &mut serde_json::Deserializer::from_str(json),
+                FormatParsePolicy::Classify,
+            )
+            .expect("valid json");
+            let entry = match &value {
+                FieldValueRef::Object(m) => m.get("dt").cloned(),
+                _ => None,
+            }
+            .expect("key present");
+            assert_eq!(
+                entry,
+                FieldValueRef::DateTime(Cow::Owned(
+                    "2026-07-29T14:30:00Z".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn passthrough_keeps_dates_as_strings() {
+            let json = r#"{"d": "2026-07-29"}"#;
+            let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
+                &mut serde_json::Deserializer::from_str(json),
+                FormatParsePolicy::Passthrough,
+            )
+            .expect("valid json");
+            let entry = match &value {
+                FieldValueRef::Object(m) => m.get("d").cloned(),
+                _ => None,
+            }
+            .expect("key present");
+            assert_eq!(
+                entry,
+                FieldValueRef::String(Cow::Owned("2026-07-29".to_owned()))
+            );
         }
     }
 

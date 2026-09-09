@@ -96,6 +96,7 @@ regex = "1.13.1"
 rustc-hash = "2.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+serde_yaml = { package = "yaml_serde", version = "0.10" }
 strict-path = "0.2.3"
 strsim = "0.11"
 thiserror = "2"
@@ -103,7 +104,6 @@ toml = "1.1"
 tracing = "0.1"
 uuid = { version = "1.26.0", features = ["v4"] }
 walkdir = "2.5"
-yaml_serde = { package = "yaml_serde", version = "0.10" }
 
 # --------------------- Dev Dependencies ---------------------- #
 [dev-dependencies]

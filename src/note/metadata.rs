@@ -6,7 +6,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
-use yaml_serde as serde_yaml;
 
 use super::field::NoteFieldValue;
 use crate::{

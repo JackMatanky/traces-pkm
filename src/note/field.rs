@@ -139,8 +139,9 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
                     Self::String(s.into_owned())
                 }
             }
-            FieldValueRef::Date(s) => Self::Date(s.into_owned()),
-            FieldValueRef::DateTime(s) => Self::Date(s.into_owned()),
+            FieldValueRef::Date(s) | FieldValueRef::DateTime(s) => {
+                Self::Date(s.into_owned())
+            }
             FieldValueRef::List(arr) => {
                 Self::List(arr.into_iter().map(Into::into).collect())
             }
@@ -284,8 +285,6 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use yaml_serde as serde_yaml;
-
     use super::*;
     use crate::field::{FieldValueRef, is_iso_date};
 
