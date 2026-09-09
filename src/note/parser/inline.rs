@@ -8,7 +8,7 @@
 use phf::phf_set;
 
 use crate::{
-    field::is_iso_date,
+    field::FieldStringValue,
     note::{Link, NoteFieldValue, cursor::SourceText},
 };
 
@@ -264,7 +264,7 @@ impl<'a> InlineValueParser<'a> {
     fn parse_date_at(&self, pos: usize) -> Option<Atom> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
-        (is_iso_date(date) && self.is_atom_boundary(end))
+        (FieldStringValue::is_date_str(date) && self.is_atom_boundary(end))
             .then(|| (NoteFieldValue::Date(date.to_owned()), end))
     }
 

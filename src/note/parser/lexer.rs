@@ -16,7 +16,7 @@ use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
 use crate::{
-    DelimiterType, FieldKey, Tag, field::is_iso_date, note::NoteFieldValue,
+    DelimiterType, FieldKey, Tag, field::FieldStringValue, note::NoteFieldValue,
 };
 
 /// Extracts inline fields and tags from a parser scan buffer.
@@ -256,7 +256,7 @@ fn task_field_callback(
     let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
         return Filter::Skip;
     };
-    if !is_iso_date(candidate) {
+    if !FieldStringValue::is_date_str(candidate) {
         return Filter::Skip;
     }
     let Ok(key) = FieldKey::try_from(key) else {

@@ -128,7 +128,12 @@ impl TryFrom<serde_yaml::Value> for FieldName {
     /// Returns [`FieldNameError::NotScalar`] for `Null`, `Sequence`,
     /// `Mapping`, and `Tagged` values; otherwise see [`FieldName::validate`].
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw = scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
+        let raw = match value {
+            serde_yaml::Value::String(s) => s,
+            serde_yaml::Value::Number(n) => n.to_string(),
+            serde_yaml::Value::Bool(b) => b.to_string(),
+            _ => return Err(FieldNameError::NotScalar),
+        };
         Self::try_from(raw)
     }
 }
@@ -488,7 +493,12 @@ impl TryFrom<serde_yaml::Value> for FieldKey {
     /// Returns [`FieldKeyError::Name`] for `Null`, `Sequence`, `Mapping`,
     /// and `Tagged` values; otherwise see [`FieldKey::try_new`].
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw = scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
+        let raw = match value {
+            serde_yaml::Value::String(s) => s,
+            serde_yaml::Value::Number(n) => n.to_string(),
+            serde_yaml::Value::Bool(b) => b.to_string(),
+            _ => return Err(FieldNameError::NotScalar.into()),
+        };
         Self::try_new(raw)
     }
 }
@@ -767,6 +777,51 @@ impl Serialize for FieldValueRef<'_> {
     }
 }
 
+impl From<serde_yaml::Value> for FieldValueRef<'static> {
+    /// Converts a [`serde_yaml::Value`] into a [`FieldValueRef`] with date
+    /// classification.
+    ///
+    /// Mapping keys are coerced from scalars; entries with non-scalar keys
+    /// are skipped. Date strings are classified as [`FieldValueRef::Date`] or
+    /// [`FieldValueRef::DateTime`].
+    fn from(value: serde_yaml::Value) -> Self {
+        match value {
+            serde_yaml::Value::Null => Self::Null,
+            serde_yaml::Value::Bool(b) => Self::Bool(b),
+            serde_yaml::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Self::Float(f)
+                } else if let Some(i) = n.as_i64() {
+                    Self::Int(i)
+                } else {
+                    Self::Null
+                }
+            }
+            serde_yaml::Value::String(s) => {
+                FieldStringValue::new(Cow::Owned(s))
+                    .classify(FormatParsePolicy::Classify)
+            }
+            serde_yaml::Value::Sequence(seq) => {
+                Self::List(seq.into_iter().map(Self::from).collect())
+            }
+            serde_yaml::Value::Mapping(map) => {
+                let mut index_map = IndexMap::new();
+                for (k, v) in map {
+                    let key = match k {
+                        serde_yaml::Value::String(s) => s,
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        _ => continue,
+                    };
+                    index_map.insert(Cow::Owned(key), Self::from(v));
+                }
+                Self::Object(index_map)
+            }
+            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
+        }
+    }
+}
+
 /// Controls how [`FieldValueRef`] classifies string scalars during
 /// deserialization from JSON, YAML, or TOML.
 ///
@@ -802,14 +857,55 @@ impl<'a> FieldStringValue<'a> {
     /// `YYYY-MM-DD`.
     #[inline]
     pub fn is_iso_date(&self) -> bool {
-        is_iso_date(&self.0)
+        Self::is_date_str(&self.0)
     }
 
     /// Returns `true` if this string matches the ISO datetime format
     /// `YYYY-MM-DDThh:mm:ss`.
     #[inline]
     pub fn is_iso_datetime(&self) -> bool {
-        is_iso_datetime(&self.0)
+        Self::is_datetime_str(&self.0)
+    }
+
+    /// Returns `true` if `s` matches the ISO date format `YYYY-MM-DD`.
+    #[inline]
+    pub fn is_date_str(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.len() >= 10
+            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(4) == Some(&b'-')
+            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(7) == Some(&b'-')
+            && bytes
+                .get(8..10)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+    }
+
+    /// Returns `true` if `s` matches the ISO datetime format
+    /// `YYYY-MM-DDThh:mm:ss`.
+    #[inline]
+    pub fn is_datetime_str(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.len() >= 19
+            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(4) == Some(&b'-')
+            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(7) == Some(&b'-')
+            && bytes
+                .get(8..10)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(10) == Some(&b'T')
+            && bytes
+                .get(11..13)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(13) == Some(&b':')
+            && bytes
+                .get(14..16)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(16) == Some(&b':')
+            && bytes
+                .get(17..19)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
     }
 
     /// Consumes the string and returns the appropriate [`FieldValueRef`]
@@ -831,35 +927,6 @@ impl<'a> FieldStringValue<'a> {
         }
         FieldValueRef::String(self.0)
     }
-}
-
-/// Checks whether `s` starts with an ISO date format `YYYY-MM-DD`.
-pub(crate) fn is_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 10
-        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-}
-
-/// Checks whether `s` starts with an ISO date-time format
-/// `YYYY-MM-DDThh:mm:ss`.
-pub(crate) fn is_iso_datetime(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 19
-        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(10) == Some(&b'T')
-        && bytes.get(11..13).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(13) == Some(&b':')
-        && bytes.get(14..16).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(16) == Some(&b':')
-        && bytes.get(17..19).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 /// Seed that carries [`FormatParsePolicy`] through map value deserialization.
@@ -1036,64 +1103,6 @@ pub(crate) enum FieldKeyError {
     EmptyCanonical {
         name: String,
     },
-}
-
-impl From<serde_yaml::Value> for FieldValueRef<'static> {
-    /// Converts a [`serde_yaml::Value`] into a [`FieldValueRef`] with date
-    /// classification.
-    ///
-    /// Mapping keys are coerced via [`scalar_to_string`]; entries with
-    /// non-scalar keys are skipped. Date strings are classified as
-    /// [`FieldValueRef::Date`] or [`FieldValueRef::DateTime`].
-    fn from(value: serde_yaml::Value) -> Self {
-        match value {
-            serde_yaml::Value::Null => Self::Null,
-            serde_yaml::Value::Bool(b) => Self::Bool(b),
-            serde_yaml::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Self::Float(f)
-                } else if let Some(i) = n.as_i64() {
-                    Self::Int(i)
-                } else {
-                    Self::Null
-                }
-            }
-            serde_yaml::Value::String(s) => {
-                FieldStringValue::new(Cow::Owned(s))
-                    .classify(FormatParsePolicy::Classify)
-            }
-            serde_yaml::Value::Sequence(seq) => {
-                Self::List(seq.into_iter().map(Self::from).collect())
-            }
-            serde_yaml::Value::Mapping(map) => {
-                let mut index_map = IndexMap::new();
-                for (k, v) in map {
-                    let Some(key) = scalar_to_string(k) else {
-                        continue;
-                    };
-                    index_map.insert(Cow::Owned(key), Self::from(v));
-                }
-                Self::Object(index_map)
-            }
-            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
-        }
-    }
-}
-
-/// Coerces a YAML scalar into raw text usable as a field key/name.
-///
-/// Returns `None` for YAML values that cannot stand as a key: `Null`,
-/// `Sequence`, `Mapping`, and `Tagged`.
-pub(crate) fn scalar_to_string(value: serde_yaml::Value) -> Option<String> {
-    match value {
-        serde_yaml::Value::String(s) => Some(s),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        serde_yaml::Value::Null
-        | serde_yaml::Value::Sequence(_)
-        | serde_yaml::Value::Mapping(_)
-        | serde_yaml::Value::Tagged(_) => None,
-    }
 }
 
 #[cfg(test)]
@@ -1624,31 +1633,31 @@ mod tests {
     }
 
     mod is_iso_datetime {
-        use crate::field::is_iso_datetime;
+        use crate::field::FieldStringValue;
 
         #[test]
         fn accepts_valid_datetime() {
-            assert!(is_iso_datetime("2026-08-22T14:30:00Z"));
+            assert!(FieldStringValue::is_datetime_str("2026-08-22T14:30:00Z"));
         }
 
         #[test]
         fn accepts_datetime_without_offset() {
-            assert!(is_iso_datetime("2026-08-22T14:30:00"));
+            assert!(FieldStringValue::is_datetime_str("2026-08-22T14:30:00"));
         }
 
         #[test]
         fn rejects_date_only() {
-            assert!(!is_iso_datetime("2026-08-22"));
+            assert!(!FieldStringValue::is_datetime_str("2026-08-22"));
         }
 
         #[test]
         fn rejects_short_string() {
-            assert!(!is_iso_datetime("2026-08-22T14:30"));
+            assert!(!FieldStringValue::is_datetime_str("2026-08-22T14:30"));
         }
 
         #[test]
         fn rejects_missing_t_separator() {
-            assert!(!is_iso_datetime("2026-08-22 14:30:00"));
+            assert!(!FieldStringValue::is_datetime_str("2026-08-22 14:30:00"));
         }
     }
 

@@ -286,44 +286,44 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::{FieldValueRef, is_iso_date};
+    use crate::field::{FieldStringValue, FieldValueRef};
 
     mod is_iso_date {
-        use super::*;
+        use crate::field::FieldStringValue;
 
         #[test]
         fn accepts_valid_date() {
-            assert!(is_iso_date("2026-08-22"));
+            assert!(FieldStringValue::is_date_str("2026-08-22"));
         }
         #[test]
         fn rejects_date_without_dashes() {
-            assert!(!is_iso_date("20260822"));
+            assert!(!FieldStringValue::is_date_str("20260822"));
         }
         #[test]
         fn rejects_short_string() {
-            assert!(!is_iso_date("2026-08"));
+            assert!(!FieldStringValue::is_date_str("2026-08"));
         }
         #[test]
         fn rejects_non_digit_in_year() {
-            assert!(!is_iso_date("abcd-08-22"));
+            assert!(!FieldStringValue::is_date_str("abcd-08-22"));
         }
         #[test]
         fn rejects_non_digit_in_month() {
-            assert!(!is_iso_date("2026-ab-22"));
+            assert!(!FieldStringValue::is_date_str("2026-ab-22"));
         }
         #[test]
         fn rejects_non_digit_in_day() {
-            assert!(!is_iso_date("2026-08-cd"));
+            assert!(!FieldStringValue::is_date_str("2026-08-cd"));
         }
 
         #[test]
         fn rejects_correct_length_but_missing_first_dash() {
-            assert!(!is_iso_date("202608-22"));
+            assert!(!FieldStringValue::is_date_str("202608-22"));
         }
 
         #[test]
         fn rejects_correct_length_but_missing_second_dash() {
-            assert!(!is_iso_date("2026-0822"));
+            assert!(!FieldStringValue::is_date_str("2026-0822"));
         }
     }
 
