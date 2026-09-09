@@ -124,16 +124,19 @@ impl RefreshPlan {
         })
     }
 
+    /// Reports whether the scan produced no changes.
     #[inline]
     pub(super) fn is_empty(&self) -> bool {
         self.delta.is_empty()
     }
 
+    /// Returns the files this pass would upsert.
     #[inline]
     pub(super) fn upserted_files(&self) -> &[FileBase] {
         self.delta.upserted()
     }
 
+    /// Consumes the plan and returns the opened store.
     #[inline]
     pub(super) fn into_store(self) -> IndexStore {
         self.store
@@ -233,6 +236,7 @@ pub(super) struct IndexUpdate {
 }
 
 impl IndexUpdate {
+    /// Returns changed-row counts for this update.
     pub(super) fn report(&self) -> SyncReport {
         SyncReport::new(
             self.delta.upserted().len(),
@@ -301,9 +305,11 @@ impl IndexUpdate {
 /// Merges persisted notes with deletions and reparsed notes for a full
 /// recompute.
 ///
+/// Consumes `modified_notes`, moving rather than cloning each note.
+///
 /// Bulk-reads all persisted notes because this fallback needs the full note
-/// set. Path-indexed deletes and replacements avoid a quadratic scan over the
-/// persisted note count.
+/// set. Path-indexed deletes and replacements avoid an O((deleted + modified)
+/// × n) scan over the persisted note count n.
 ///
 /// # Errors
 ///

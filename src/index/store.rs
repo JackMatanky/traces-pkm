@@ -223,6 +223,10 @@ type BytesMultimapTable<'txn> =
     redb::MultimapTable<'txn, &'static [u8], &'static [u8]>;
 
 /// Borrowed redb key carrying a project-relative path's native bytes.
+///
+/// Wraps the path rather than the encoded bytes: error construction and row
+/// payloads borrow the same `&Path`, and converting bytes back to an `OsStr`
+/// would require the unsafe `from_encoded_bytes_unchecked`.
 #[derive(Copy, Clone)]
 struct IndexPathKey<'a>(&'a Path);
 
@@ -1416,6 +1420,9 @@ impl IndexStore {
 
     /// Row-level incremental write for a rebuilt note set.
     ///
+    /// Requires `notes` sorted by path: upserted rows are recovered by binary
+    /// search, so an unsorted set would silently skip row writes.
+    ///
     /// # Errors
     ///
     /// - [`Store`] if the transaction fails or a record cannot be encoded.
@@ -1427,6 +1434,13 @@ impl IndexStore {
         notes: &[Note],
         inlink_delta: &InlinkDelta,
     ) -> IndexResult<()> {
+        debug_assert!(
+            notes.windows(2).all(|pair| match pair {
+                [a, b] => a.path() <= b.path(),
+                _ => true,
+            }),
+            "rebuilt notes must be path-sorted for upsert recovery"
+        );
         self.persist_incremental_with_notes(
             delta,
             || Self::notes_for_upserted_files(delta.upserted(), notes),

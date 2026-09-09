@@ -289,7 +289,7 @@ impl IndexerService {
         Ok(store.read_all_lists()?)
     }
 
-    /// Recursively scans this service's root for regular files, skipping `.git`
+    /// Recursively scans `root` for regular files, skipping `.git`
     /// directories, the index database, and symlinks. Metadata reads run in
     /// parallel via `rayon` because each is an independent syscall; results are
     /// path-sorted.
@@ -1394,6 +1394,32 @@ mod tests {
 
             assert!(old_target.inlinks().is_empty());
             assert_eq!(new_target.inlinks(), [PathBuf::from("linker.md")]);
+        }
+
+        #[test]
+        fn content_only_refresh_keeps_untouched_notes_in_the_returned_index() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("target.md"), "---\ntitle: Keep\n---")
+                .expect("write target");
+            fs::write(root.join("linker.md"), "- [ ] first")
+                .expect("write linker");
+            let indexer = IndexerService::new(root);
+            indexer
+                .persist(&indexer.build().expect("build index"))
+                .expect("persist index");
+
+            fs::write(root.join("linker.md"), "- [ ] second")
+                .expect("edit linker only");
+
+            let refreshed = indexer.refresh().expect("refresh index");
+
+            assert_eq!(
+                find_note(&refreshed, "target.md")
+                    .and_then(Note::frontmatter)
+                    .map(|fm| fm.fields().len()),
+                Some(1)
+            );
         }
 
         #[test]

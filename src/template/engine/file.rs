@@ -12,12 +12,12 @@
 //! rendering completes.
 //!
 //! `file.include()` confines its `path` argument to `root` via
-//! [`RootConfinedPath::parse`], the same seam [`TemplateWriteTarget`] uses
+//! [`SafeRelativePath::parse`], the same seam [`TemplateWriteTarget`] uses
 //! for `-o` and `file.write_to()` candidates. Symlink escapes are rejected the
 //! same way on the read and write sides.
 //!
 //! [`Config::root`]: crate::config::Config::root
-//! [`RootConfinedPath::parse`]: crate::path::RootConfinedPath::parse
+//! [`SafeRelativePath::parse`]: crate::path::SafeRelativePath::parse
 //! [`TemplateWriteTarget`]: super::super::writer::TemplateWriteTarget
 
 use std::{path::Path, sync::Arc};
@@ -28,7 +28,7 @@ use minijinja::{
 };
 
 use super::error::{TemplateEngineResult, confine_error};
-use crate::path::RootConfinedPath;
+use crate::path::SafeRelativePath;
 
 /// The [`State::set_temp`] key used to store `file.write_to()`'s declared path.
 ///
@@ -80,7 +80,7 @@ impl Object for FileOps {
                 Some(Value::from_function(
                     move |path: &str| -> TemplateEngineResult<String> {
                         let confined =
-                            RootConfinedPath::parse(&root, Path::new(path))
+                            SafeRelativePath::parse(&root, Path::new(path))
                                 .map_err(|source| {
                                     confine_error(path, source)
                                 })?;

@@ -23,7 +23,7 @@ use super::{
 };
 use crate::{
     FieldName, FieldNameError, Tag, TaskStatusMap,
-    path::{PathError, RootConfinedPath, SafeRelativePath},
+    path::{PathError, RelativePath, SafeRelativePath},
 };
 
 /// Default `[schemas] class_field` when unconfigured.
@@ -267,7 +267,7 @@ impl TemplateConfig {
 /// Guaranteed to be relative, contain only normal components (no `..`), and be
 /// non-empty.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ConfigSubDir(SafeRelativePath);
+pub(crate) struct ConfigSubDir(RelativePath);
 
 impl ConfigSubDir {
     /// Returns the subdirectory as a relative [`Path`].
@@ -288,8 +288,8 @@ impl ConfigSubDir {
         &self,
         root: &Path,
     ) -> Result<PathBuf, ConfigFileError> {
-        RootConfinedPath::parse(root, self.as_path())
-            .map(RootConfinedPath::into_path_buf)
+        SafeRelativePath::parse(root, self.as_path())
+            .map(SafeRelativePath::into_path_buf)
             .map_err(|source| ConfigFileError::InvalidSubDir {
                 path: self.as_path().to_path_buf(),
                 source,
@@ -318,7 +318,7 @@ impl TryFrom<PathBuf> for ConfigSubDir {
 
     #[inline]
     fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
-        SafeRelativePath::parse(&path).map(Self)
+        RelativePath::parse(&path).map(Self)
     }
 }
 
@@ -327,7 +327,7 @@ impl TryFrom<&str> for ConfigSubDir {
 
     #[inline]
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        SafeRelativePath::parse(Path::new(s)).map(Self)
+        RelativePath::parse(Path::new(s)).map(Self)
     }
 }
 

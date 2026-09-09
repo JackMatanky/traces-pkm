@@ -19,7 +19,7 @@ use super::{
     },
     parser::SchemaFieldParser,
 };
-use crate::{FieldValue, path::RootConfinedPath};
+use crate::{FieldValue, path::SafeRelativePath};
 
 type CachedSelectValues = Arc<Vec<FieldValue>>;
 type ValuesFileCacheMap = IndexMap<PathBuf, CachedSelectValues>;
@@ -239,7 +239,7 @@ impl SelectValuesFileCache {
         relative_path: &str,
     ) -> Result<Arc<Vec<FieldValue>>, SchemaSelectFieldFileError> {
         let path = Path::new(relative_path);
-        let confined = RootConfinedPath::parse(&self.dir, path)?;
+        let confined = SafeRelativePath::parse(&self.dir, path)?;
         let confined_path = confined.into_path_buf();
 
         let ext =

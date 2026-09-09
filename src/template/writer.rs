@@ -9,7 +9,7 @@
 //! them by precedence:
 //!
 //! 1. `-o` / `--output` (`requested`): a runtime value confined to
-//!    [`Config::root`] via [`RootConfinedPath::parse`].
+//!    [`Config::root`] via [`SafeRelativePath::parse`].
 //! 2. `file.write_to()` ([`DeclaredOutputPath`]): also a runtime value confined
 //!    to [`Config::root`].
 //! 3. Caller-supplied default: from an already trust-gated
@@ -26,7 +26,7 @@ use std::{
 };
 
 use super::{error::TemplateError, path::DeclaredOutputPath};
-use crate::{DialogError, DialogProvider, path::RootConfinedPath};
+use crate::{DialogError, DialogProvider, path::SafeRelativePath};
 
 /// Controls whether rendered output is returned or written.
 ///
@@ -268,7 +268,7 @@ impl<'a> TemplateWriteTarget<'a> {
     }
 
     /// Confines `candidate`, a runtime `-o`/`file.write_to()` value, to `root`
-    /// via [`RootConfinedPath::parse`]. See the module docs.
+    /// via [`SafeRelativePath::parse`]. See the module docs.
     ///
     /// # Errors
     ///
@@ -280,8 +280,8 @@ impl<'a> TemplateWriteTarget<'a> {
         root: &Path,
         candidate: &Path,
     ) -> Result<PathBuf, TemplateError> {
-        RootConfinedPath::parse(root, candidate)
-            .map(RootConfinedPath::into_path_buf)
+        SafeRelativePath::parse(root, candidate)
+            .map(SafeRelativePath::into_path_buf)
             .map_err(|source| {
                 source.fold_confinement(
                     || TemplateError::OutputPathEscapesRoot {

@@ -24,7 +24,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::path::{PathError, SafeRelativePath};
+use crate::path::{PathError, RelativePath};
 
 /// The extension every rendered note gets by default, absent an explicit
 /// `-o`/`file.write_to()` override.
@@ -36,7 +36,7 @@ const DEFAULT_EXTENSION: &str = "md";
 /// cannot escape through parent traversal. It does not prove the template file
 /// exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TemplatePathInput(SafeRelativePath);
+pub struct TemplatePathInput(RelativePath);
 
 impl TemplatePathInput {
     /// Parses a path as a template identifier.
@@ -71,7 +71,7 @@ impl TemplatePathInput {
     /// [`Component::Normal`]: std::path::Component::Normal
     #[inline]
     pub fn parse(path: &Path) -> Result<Self, TemplatePathError> {
-        SafeRelativePath::parse(path).map(Self).map_err(|error| match error {
+        RelativePath::parse(path).map(Self).map_err(|error| match error {
             PathError::Absolute => {
                 TemplatePathError::Absolute(path.to_path_buf())
             }

@@ -1,9 +1,8 @@
 //! Validate relative paths and confine them to a root.
 //!
 //! Main types:
-//! - [`SafeRelativePath`] - Relative path accepted by lexical checks only
-//! - [`RelativePath`] - Root-derived relative path proven by lexical checks
-//! - [`RootConfinedPath`] - Path accepted by lexical and filesystem checks
+//! - [`RelativePath`] - Relative path accepted by lexical checks only
+//! - [`SafeRelativePath`] - Path accepted by lexical and filesystem checks
 //! - [`PathError`] - Path validation failure
 //!
 //! Confinement happens in two phases:
@@ -77,9 +76,9 @@ impl PathError {
 ///
 /// Does not touch the filesystem and does not resolve symlinks.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SafeRelativePath(PathBuf);
+pub(crate) struct RelativePath(PathBuf);
 
-impl SafeRelativePath {
+impl RelativePath {
     /// Validates `candidate` by inspecting path components only.
     ///
     /// Accepts paths that are relative, contain only [`Component::Normal`] and
@@ -95,9 +94,30 @@ impl SafeRelativePath {
     pub(crate) fn parse(candidate: &Path) -> Result<Self, PathError> {
         Self::try_from(candidate)
     }
+
+    /// Derives `path` relative to `root`, failing if the prefix does not match
+    /// or the remainder is lexically unsafe.
+    ///
+    /// # Errors
+    ///
+    /// - [`PathError::OutsideRoot`] if `path` is not under `root`
+    /// - [`PathError::UnsafeComponent`] if the derived remainder contains an
+    ///   unsafe component or has no named component
+    pub(crate) fn derive(root: &Path, path: &Path) -> Result<Self, PathError> {
+        let relative =
+            path.strip_prefix(root).map_err(|_| PathError::OutsideRoot)?;
+        Self::parse(relative)
+    }
+
+    /// Consumes `self` and returns the relative path.
+    #[inline]
+    #[must_use]
+    pub(crate) fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
 }
 
-impl<'a> TryFrom<&'a Path> for SafeRelativePath {
+impl<'a> TryFrom<&'a Path> for RelativePath {
     type Error = PathError;
 
     fn try_from(candidate: &'a Path) -> Result<Self, Self::Error> {
@@ -120,7 +140,7 @@ impl<'a> TryFrom<&'a Path> for SafeRelativePath {
     }
 }
 
-impl AsRef<Path> for SafeRelativePath {
+impl AsRef<Path> for RelativePath {
     #[inline]
     fn as_ref(&self) -> &Path {
         &self.0
@@ -133,13 +153,13 @@ impl AsRef<Path> for SafeRelativePath {
 /// with `strict-path` and returns `root.join(candidate)`, preserving the root's
 /// original spelling.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RootConfinedPath(PathBuf);
+pub(crate) struct SafeRelativePath(PathBuf);
 
-impl RootConfinedPath {
+impl SafeRelativePath {
     /// Validates `candidate` and returns its plain join with `root`.
     ///
     /// Uses two-phase validation:
-    /// - Lexical check: [`SafeRelativePath::parse`] rejects absolute paths,
+    /// - Lexical check: [`RelativePath::parse`] rejects absolute paths,
     ///   parent-directory components, non-normal components other than `.`, and
     ///   paths without a named component
     /// - Filesystem check: uses `strict-path` to validate `root` as a boundary
@@ -162,7 +182,7 @@ impl RootConfinedPath {
         root: &Path,
         candidate: &Path,
     ) -> Result<Self, PathError> {
-        let safe = SafeRelativePath::parse(candidate)?;
+        let safe = RelativePath::parse(candidate)?;
         let boundary: PathBoundary<()> = PathBoundary::try_new(root)?;
         let _ = boundary.strict_join(safe.as_ref()).map_err(
             |error| match error {
@@ -183,52 +203,17 @@ impl RootConfinedPath {
     }
 }
 
-impl From<RootConfinedPath> for PathBuf {
+impl From<SafeRelativePath> for PathBuf {
     #[inline]
-    fn from(confined: RootConfinedPath) -> Self {
+    fn from(confined: SafeRelativePath) -> Self {
         confined.0
     }
 }
 
-impl AsRef<Path> for RootConfinedPath {
+impl AsRef<Path> for SafeRelativePath {
     #[inline]
     fn as_ref(&self) -> &Path {
         &self.0
-    }
-}
-
-/// Stores a project-relative path derived from a rooted walk path and proven
-/// safe by lexical checks only. No filesystem access.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RelativePath(SafeRelativePath);
-
-impl RelativePath {
-    /// Derives `path` relative to `root`, failing if the prefix does not match
-    /// or the remainder is lexically unsafe.
-    ///
-    /// # Errors
-    ///
-    /// - [`PathError::OutsideRoot`] if `path` is not under `root`
-    /// - [`PathError::UnsafeComponent`] if the derived remainder contains an
-    ///   unsafe component or has no named component
-    pub(crate) fn derive(root: &Path, path: &Path) -> Result<Self, PathError> {
-        let relative =
-            path.strip_prefix(root).map_err(|_| PathError::OutsideRoot)?;
-        SafeRelativePath::parse(relative).map(Self)
-    }
-
-    #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "part of RelativePath inspection surface")
-    )]
-    pub(crate) fn as_path(&self) -> &Path {
-        self.0.as_ref()
-    }
-
-    #[inline]
-    pub(crate) fn into_path_buf(self) -> PathBuf {
-        self.0.as_ref().to_path_buf()
     }
 }
 
@@ -310,60 +295,6 @@ impl<'a> From<FolderRef<'a>> for &'a Path {
 mod tests {
     use super::*;
 
-    mod safe_relative_path {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn parse_accepts_a_plain_relative_path() {
-            let parsed = SafeRelativePath::parse(Path::new("notes/daily.md"))
-                .expect("plain relative path is safe");
-
-            assert_eq!(parsed.as_ref(), Path::new("notes/daily.md"));
-        }
-
-        #[test]
-        fn parse_rejects_an_absolute_path() {
-            let error = SafeRelativePath::parse(Path::new("/etc/passwd"))
-                .expect_err("absolute path is rejected");
-
-            assert!(matches!(error, PathError::Absolute));
-        }
-
-        #[test]
-        fn parse_rejects_a_parent_dir_component() {
-            let error = SafeRelativePath::parse(Path::new("../escape.md"))
-                .expect_err("`..` is rejected");
-
-            assert!(matches!(error, PathError::UnsafeComponent));
-        }
-
-        #[test]
-        fn parse_rejects_an_empty_path() {
-            let error = SafeRelativePath::parse(Path::new(""))
-                .expect_err("empty path has no Normal component");
-
-            assert!(matches!(error, PathError::UnsafeComponent));
-        }
-
-        #[test]
-        fn parse_rejects_a_bare_current_dir() {
-            let error = SafeRelativePath::parse(Path::new("."))
-                .expect_err("bare `.` has no Normal component");
-
-            assert!(matches!(error, PathError::UnsafeComponent));
-        }
-
-        #[test]
-        fn parse_accepts_a_leading_current_dir() {
-            let parsed = SafeRelativePath::parse(Path::new("./daily.md"))
-                .expect("leading `.` alongside a Normal component is safe");
-
-            assert_eq!(parsed.as_ref(), Path::new("./daily.md"));
-        }
-    }
-
     mod relative_path {
         use pretty_assertions::assert_eq;
 
@@ -377,7 +308,55 @@ mod tests {
             let relative =
                 RelativePath::derive(temp.path(), &path).expect("derive path");
 
-            assert_eq!(relative.as_path(), Path::new("a.md"));
+            assert_eq!(relative.as_ref(), Path::new("a.md"));
+        }
+
+        #[test]
+        fn parse_accepts_a_plain_relative_path() {
+            let parsed = RelativePath::parse(Path::new("notes/daily.md"))
+                .expect("plain relative path is safe");
+
+            assert_eq!(parsed.as_ref(), Path::new("notes/daily.md"));
+        }
+
+        #[test]
+        fn parse_rejects_an_absolute_path() {
+            let error = RelativePath::parse(Path::new("/etc/passwd"))
+                .expect_err("absolute path is rejected");
+
+            assert!(matches!(error, PathError::Absolute));
+        }
+
+        #[test]
+        fn parse_rejects_a_parent_dir_component() {
+            let error = RelativePath::parse(Path::new("../escape.md"))
+                .expect_err("`..` is rejected");
+
+            assert!(matches!(error, PathError::UnsafeComponent));
+        }
+
+        #[test]
+        fn parse_rejects_an_empty_path() {
+            let error = RelativePath::parse(Path::new(""))
+                .expect_err("empty path has no Normal component");
+
+            assert!(matches!(error, PathError::UnsafeComponent));
+        }
+
+        #[test]
+        fn parse_rejects_a_bare_current_dir() {
+            let error = RelativePath::parse(Path::new("."))
+                .expect_err("bare `.` has no Normal component");
+
+            assert!(matches!(error, PathError::UnsafeComponent));
+        }
+
+        #[test]
+        fn parse_accepts_a_leading_current_dir() {
+            let parsed = RelativePath::parse(Path::new("./daily.md"))
+                .expect("leading `.` alongside a Normal component is safe");
+
+            assert_eq!(parsed.as_ref(), Path::new("./daily.md"));
         }
 
         #[test]
@@ -408,7 +387,7 @@ mod tests {
         }
     }
 
-    mod root_confined_path {
+    mod safe_relative_path {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -420,7 +399,7 @@ mod tests {
                 .expect("seed file");
 
             let confined =
-                RootConfinedPath::parse(temp.path(), Path::new("daily.md"))
+                SafeRelativePath::parse(temp.path(), Path::new("daily.md"))
                     .expect("candidate resolves inside root");
 
             assert_eq!(confined.as_ref(), temp.path().join("daily.md"));
@@ -430,7 +409,7 @@ mod tests {
         fn parse_confines_a_candidate_that_does_not_exist_yet() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            let confined = RootConfinedPath::parse(
+            let confined = SafeRelativePath::parse(
                 temp.path(),
                 Path::new("notes/2026/daily.md"),
             )
@@ -447,7 +426,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             let error =
-                RootConfinedPath::parse(temp.path(), Path::new("../escape.md"))
+                SafeRelativePath::parse(temp.path(), Path::new("../escape.md"))
                     .expect_err("`..` is rejected");
 
             assert!(matches!(error, PathError::UnsafeComponent));
@@ -466,7 +445,7 @@ mod tests {
             symlink(&outside, root.join("link")).expect("create symlink");
 
             let error =
-                RootConfinedPath::parse(&root, Path::new("link/secret.md"))
+                SafeRelativePath::parse(&root, Path::new("link/secret.md"))
                     .expect_err("symlink escaping root is rejected");
 
             assert!(matches!(error, PathError::OutsideRoot));
@@ -489,7 +468,7 @@ mod tests {
             // component escapes `root`, which is the write path this check
             // guards against.
             let error =
-                RootConfinedPath::parse(&root, Path::new("link/new/note.md"))
+                SafeRelativePath::parse(&root, Path::new("link/new/note.md"))
                     .expect_err("escaping symlink ancestor is rejected");
 
             assert!(matches!(error, PathError::OutsideRoot));
@@ -515,7 +494,7 @@ mod tests {
             assert!(output.status.success(), "mklink /J failed: {output:?}");
 
             let error =
-                RootConfinedPath::parse(&root, Path::new("link/secret.md"))
+                SafeRelativePath::parse(&root, Path::new("link/secret.md"))
                     .expect_err("junction escaping root is rejected");
 
             std::fs::remove_dir(junction).expect("remove junction");

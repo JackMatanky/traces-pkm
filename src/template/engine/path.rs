@@ -35,7 +35,7 @@ use minijinja::Environment;
 use super::error::{TemplateEngineResult, confine_error};
 use crate::{
     BaseName, FileName,
-    path::{PathError, RootConfinedPath},
+    path::{PathError, SafeRelativePath},
 };
 
 /// Filesystem fact selected by a path I/O test.
@@ -145,7 +145,7 @@ impl InspectTarget {
     ///
     /// Absolute paths are used as-is. A path naming `root` itself
     /// ([`Self::is_root_reference`]) resolves directly to it. Every other
-    /// relative path is confined via [`RootConfinedPath::parse`], the same seam
+    /// relative path is confined via [`SafeRelativePath::parse`], the same seam
     /// [`super::file`] uses for `file.include()` and `file.write_to()` paths.
     /// Parent traversals and symlink escapes are therefore rejected
     /// consistently across template primitives.
@@ -163,8 +163,8 @@ impl InspectTarget {
         } else if Self::is_root_reference(candidate) {
             Ok(Self(root.to_owned()))
         } else {
-            RootConfinedPath::parse(root, candidate)
-                .map(RootConfinedPath::into_path_buf)
+            SafeRelativePath::parse(root, candidate)
+                .map(SafeRelativePath::into_path_buf)
                 .map(Self)
         }
     }
@@ -173,11 +173,11 @@ impl InspectTarget {
     ///
     /// That means every component is [`Component::CurDir`], or there are no
     /// components at all, as in an empty path. This cannot escape no matter how
-    /// it is joined. [`SafeRelativePath::parse`] rejects this shape because it
+    /// it is joined. [`RelativePath::parse`] rejects this shape because it
     /// is meaningless as a file to write or include; here it is the legitimate
     /// "ask about root" case `is_dir_path('.')`/`path_exists('')` rely on.
     ///
-    /// [`SafeRelativePath::parse`]: crate::path::SafeRelativePath::parse
+    /// [`RelativePath::parse`]: crate::path::RelativePath::parse
     fn is_root_reference(candidate: &Path) -> bool {
         candidate.components().all(|component| component == Component::CurDir)
     }

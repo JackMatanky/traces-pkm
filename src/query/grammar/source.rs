@@ -253,6 +253,9 @@ pub(crate) struct GlobPattern {
 impl GlobPattern {
     /// Compiles `pattern` into an anchored path matcher.
     ///
+    /// The pattern must use `/` separators; candidates are normalized to `/`
+    /// before matching, so `\` in a pattern is literal and never a separator.
+    ///
     /// # Errors
     ///
     /// - [`regex::Error`] if the translated pattern fails to compile.
@@ -277,6 +280,7 @@ impl GlobPattern {
         })
     }
 
+    #[must_use]
     pub(crate) fn is_match(&self, path: &Path) -> bool {
         let path = path.to_string_lossy();
         let normalized = normalize_separators(path.as_ref());
