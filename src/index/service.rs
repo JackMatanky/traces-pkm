@@ -118,12 +118,7 @@ impl IndexerService {
     pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
         let plan = RefreshPlan::collect(&self.root)?;
         if plan.is_empty() {
-            let store = plan.into_store();
-            let (files, notes, inlinks) = store.read_all()?;
-            return Ok((
-                FileIndex::assemble(files, notes, inlinks),
-                SyncReport::default(),
-            ));
+            return Self::refresh_unchanged(plan);
         }
         let modified_notes = self.parse_notes(plan.upserted_files())?;
         let (store, update) = plan.reconcile(modified_notes)?;
@@ -134,7 +129,39 @@ impl IndexerService {
                 tracing::warn!(%source, "failed to persist refreshed index");
             }
         }
-        Ok((update.into_index(&store)?, report))
+        let index = update.into_index(&store)?;
+        Ok((index, report))
+    }
+
+    /// Materializes an unchanged-delta refresh from the store it opened.
+    ///
+    /// # Errors
+    ///
+    /// - `IndexError::Store` if the persisted index cannot be read.
+    fn refresh_unchanged(
+        plan: RefreshPlan,
+    ) -> IndexResult<(FileIndex, SyncReport)> {
+        let (files, notes, inlinks) = plan.into_store().read_all()?;
+        Ok((FileIndex::assemble(files, notes, inlinks), SyncReport::default()))
+    }
+
+    /// Rebuilds and persists the index from scratch, returning it.
+    ///
+    /// Private helper for the `traces index` command, factored so this crate
+    /// owns the rebuild policy and the CLI handler stays a single forwarding
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::NoteParse` if a note cannot be parsed.
+    /// - `IndexError::Path` if a walked file cannot be derived as a safe
+    ///   project-relative path.
+    /// - `IndexError::Store` if persisting the rebuilt index fails.
+    pub(crate) fn rebuild(&self) -> IndexResult<FileIndex> {
+        let index = self.build()?;
+        self.persist(&index)?;
+        Ok(index)
     }
 
     /// Synchronizes the persisted index without materializing a [`FileIndex`].

@@ -302,8 +302,9 @@ impl IndexUpdate {
 /// recompute.
 ///
 /// Bulk-reads all persisted notes because this fallback needs the full note
-/// set. Path-indexed deletes and replacements avoid an `O((deleted + modified)
-/// * n)` scan over the persisted note count `n`.
+/// set. Path-indexed deletes and replacements avoid a quadratic scan over the
+/// persisted note count.
+///
 /// # Errors
 ///
 /// - `IndexError::Store` if persisted notes cannot be read or decoded.

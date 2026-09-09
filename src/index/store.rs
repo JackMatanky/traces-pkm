@@ -1794,7 +1794,6 @@ mod tests {
     }
 
     mod multimap_paths {
-        use pretty_assertions::assert_eq;
 
         use super::*;
 
@@ -1809,16 +1808,12 @@ mod tests {
             write_txn.open_table(wrong_table).expect("open wrong table");
             write_txn.commit().expect("commit wrong table");
 
-            let err = store.paths_with_tag("x").expect_err("type mismatch");
-            let IndexError::Store(DbError::Redb {
-                path,
-                ..
-            }) = err
-            else {
-                panic!("expected redb store error");
-            };
-
-            assert_eq!(path, root.join(INDEX_FILE));
+            let error = store.paths_with_tag("x").expect_err("type mismatch");
+            assert!(matches!(
+                &error,
+                IndexError::Store(DbError::Redb { path, .. })
+                    if path == &root.join(INDEX_FILE)
+            ));
         }
     }
 

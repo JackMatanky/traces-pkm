@@ -37,14 +37,14 @@ impl Index {
     )]
     pub(super) fn run(&self, service: &ConfigService) -> CliResult {
         let config = super::load_config(service)?;
-        let root = config.root();
-        let index_error = |source| CliError::Index {
-            root: root.to_path_buf(),
+        let root = config.root().to_path_buf();
+        let index = IndexerService::new(&root)
+            .with_config(&config)
+            .rebuild()
+            .map_err(|source| CliError::Index {
+            root: root.clone(),
             source,
-        };
-        let indexer = IndexerService::new(root).with_config(&config);
-        let index = indexer.build().map_err(index_error)?;
-        indexer.persist(&index).map_err(index_error)?;
+        })?;
         eprintln!(
             "indexed {} file(s) under {}",
             index.entries().len(),
