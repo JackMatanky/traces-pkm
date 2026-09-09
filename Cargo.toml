@@ -31,10 +31,12 @@ name = "index_codec"
 [[bench]]
 harness = false
 name = "hash"
+required-features = ["test-utils"]
 
 [[bench]]
 harness = false
 name = "index_lifecycle"
+required-features = ["test-utils"]
 
 [[bench]]
 harness = false
@@ -43,14 +45,17 @@ name = "index_inlinks"
 [[bench]]
 harness = false
 name = "query_execution"
+required-features = ["test-utils"]
 
 [[bench]]
 harness = false
 name = "query_sort"
+required-features = ["test-utils"]
 
 [[bench]]
 harness = false
 name = "query_parsing"
+required-features = ["test-utils"]
 
 [[bench]]
 harness = false
@@ -59,10 +64,12 @@ name = "note_parsing"
 [[bench]]
 harness = false
 name = "template_render"
+required-features = ["test-utils"]
 
 [[bench]]
 harness = false
 name = "memory_footprint"
+required-features = ["test-utils"]
 
 # ------------------------------------------------------------- #
 #                         Dependencies                          #
