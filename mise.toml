@@ -45,6 +45,7 @@ gitleaks = "latest"
 lockfile = true
 task.disable_spec_from_run_scripts = true
 experimental = true
+yes = true
 
 [env]
 HK_MISE = "1"
