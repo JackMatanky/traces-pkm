@@ -199,11 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_reference_whose_field_segment_fails_field_name_validation() {
-        assert!(matches!(
-            FieldAddress::try_from("#book/!!!"),
-            Err(FieldAddressError::FieldName(_))
-        ));
+    fn accepts_a_reference_with_stripped_punctuation_in_field_segment() {
+        let address = FieldAddress::try_from("#book/!!!").expect("parses");
+
+        assert_eq!(address.schema(), &SchemaName::from("book"));
+        assert_eq!(address.field().as_str(), "!!!");
     }
 
     #[test]

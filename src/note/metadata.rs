@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use yaml_serde as serde_yaml;
 
-use super::field::{NoteFieldValue, yaml_payload_key_to_string};
-use crate::{FieldKey, FieldKeyRef};
+use super::field::{NoteFieldValue, yaml_value_to_field_ref};
+use crate::{FieldKey, FieldKeyRef, field::scalar_to_string};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -163,13 +163,14 @@ impl From<&RawFrontmatter> for Frontmatter {
         };
         let mut fields = IndexMap::new();
         for (raw_key, raw_value) in map {
-            let Some(key_str) = yaml_payload_key_to_string(raw_key) else {
+            let Some(key_str) = scalar_to_string(raw_key) else {
                 continue;
             };
             let Ok(key) = FieldKey::try_new(key_str) else {
                 continue;
             };
-            fields.insert(key, NoteFieldValue::from(raw_value));
+            let fv = yaml_value_to_field_ref(raw_value);
+            fields.insert(key, NoteFieldValue::from(fv));
         }
         Self::new(fields)
     }

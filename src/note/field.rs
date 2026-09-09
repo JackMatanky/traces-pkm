@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use yaml_serde as serde_yaml;
 
 use super::Link;
+use crate::field::{FieldValueRef, scalar_to_string};
 
 /// A metadata value parsed from YAML frontmatter or inline field text.
 ///
@@ -109,75 +110,96 @@ impl NoteFieldValue {
     }
 }
 
-/// Converts YAML scalars, sequences, mappings, and tags into metadata values.
+/// Converts a [`FieldValueRef`] into a [`NoteFieldValue`].
 ///
-/// Plain strings are classified further: wikilink syntax becomes
-/// [`NoteFieldValue::Link`], an ISO date prefix becomes
-/// [`NoteFieldValue::Date`], and anything else stays
-/// [`NoteFieldValue::String`].
-impl From<serde_yaml::Value> for NoteFieldValue {
+/// Handles note-specific post-classification: empty strings become null,
+/// wikilink syntax becomes [`NoteFieldValue::Link`].
+impl From<FieldValueRef<'_>> for NoteFieldValue {
     #[inline]
-    fn from(val: serde_yaml::Value) -> Self {
-        match val {
-            serde_yaml::Value::Null => Self::Null,
-            serde_yaml::Value::Bool(b) => Self::Bool(b),
-            serde_yaml::Value::Number(n) => n.as_f64().map_or_else(
-                || {
-                    n.as_i64().map_or(Self::Null, |i| {
-                        #[expect(
-                            clippy::as_conversions,
-                            clippy::cast_precision_loss,
-                            reason = "YAML integer numbers converted to f64"
-                        )]
-                        Self::Number(i as f64)
-                    })
-                },
-                Self::Number,
-            ),
-            serde_yaml::Value::String(s) => {
+    fn from(value: FieldValueRef<'_>) -> Self {
+        match value {
+            FieldValueRef::Null => Self::Null,
+            FieldValueRef::Bool(b) => Self::Bool(b),
+            FieldValueRef::Int(i) =>
+            {
+                #[expect(
+                    clippy::as_conversions,
+                    clippy::cast_precision_loss,
+                    reason = "integer field value converted to f64"
+                )]
+                Self::Number(i as f64)
+            }
+            FieldValueRef::Float(f) => Self::Number(f),
+            FieldValueRef::String(s) => {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     Self::Null
                 } else if let Some(link) = Link::parse_wikilink(trimmed) {
                     Self::Link(link)
-                } else if is_iso_date(trimmed) {
-                    Self::Date(s)
                 } else {
-                    Self::String(s)
+                    Self::String(s.into_owned())
                 }
             }
-            serde_yaml::Value::Sequence(seq) => {
-                Self::List(seq.into_iter().map(Self::from).collect())
+            FieldValueRef::Date(s) => Self::Date(s.into_owned()),
+            FieldValueRef::List(arr) => {
+                Self::List(arr.into_iter().map(Into::into).collect())
             }
-            serde_yaml::Value::Mapping(map) => {
-                let mut index_map = IndexMap::new();
-                for (k, v) in map {
-                    let Some(key) = yaml_payload_key_to_string(k) else {
-                        continue;
-                    };
-                    index_map.insert(key, Self::from(v));
-                }
-                Self::Object(index_map)
-            }
-            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
+            FieldValueRef::Object(map) => Self::Object(
+                map.into_iter()
+                    .map(|(k, v)| (k.into_owned(), v.into()))
+                    .collect(),
+            ),
         }
     }
 }
 
-/// Coerces a YAML scalar key into a nested [`NoteFieldValue::Object`] payload
-/// key.
+/// Converts an already-parsed [`serde_yaml::Value`] into a
+/// [`FieldValueRef`] with date classification.
 ///
-/// Returns `None` for YAML values that cannot stand as keys: `Null`,
-/// `Sequence`, `Mapping`, and `Tagged`. Callers skip those entries rather than
-/// failing the whole document.
-pub(super) fn yaml_payload_key_to_string(
-    key: serde_yaml::Value,
-) -> Option<String> {
-    match key {
-        serde_yaml::Value::String(s) => Some(s),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        _ => None,
+/// Used when the YAML value has already been deserialized (e.g., from
+/// frontmatter parsing) and needs to be converted to the intermediate
+/// representation before becoming a [`NoteFieldValue`].
+pub(super) fn yaml_value_to_field_ref(
+    value: serde_yaml::Value,
+) -> FieldValueRef<'static> {
+    match value {
+        serde_yaml::Value::Null => FieldValueRef::Null,
+        serde_yaml::Value::Bool(b) => FieldValueRef::Bool(b),
+        serde_yaml::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                FieldValueRef::Float(f)
+            } else if let Some(i) = n.as_i64() {
+                FieldValueRef::Int(i)
+            } else {
+                FieldValueRef::Null
+            }
+        }
+        serde_yaml::Value::String(s) => {
+            if crate::field::is_iso_date(&s) {
+                FieldValueRef::Date(std::borrow::Cow::Owned(s))
+            } else {
+                FieldValueRef::String(std::borrow::Cow::Owned(s))
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => FieldValueRef::List(
+            seq.into_iter().map(yaml_value_to_field_ref).collect(),
+        ),
+        serde_yaml::Value::Mapping(map) => {
+            let mut index_map = IndexMap::new();
+            for (k, v) in map {
+                let Some(key) = scalar_to_string(k) else {
+                    continue;
+                };
+                index_map.insert(
+                    std::borrow::Cow::Owned(key),
+                    yaml_value_to_field_ref(v),
+                );
+            }
+            FieldValueRef::Object(index_map)
+        }
+        serde_yaml::Value::Tagged(tagged) => {
+            yaml_value_to_field_ref(tagged.value)
+        }
     }
 }
 
@@ -325,25 +347,6 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
-    mod yaml_key_conversion {
-        use super::*;
-
-        #[test]
-        fn converts_number_key_to_string() {
-            let key = serde_yaml::Value::Number(42.into());
-            assert_eq!(yaml_payload_key_to_string(key), Some("42".to_owned()));
-        }
-
-        #[test]
-        fn converts_bool_key_to_string() {
-            let key = serde_yaml::Value::Bool(true);
-            assert_eq!(
-                yaml_payload_key_to_string(key),
-                Some("true".to_owned())
-            );
-        }
-    }
-
     mod is_iso_date {
         use super::*;
 
@@ -404,7 +407,7 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                NoteFieldValue::from(yaml),
+                NoteFieldValue::from(yaml_value_to_field_ref(yaml)),
                 NoteFieldValue::Object(IndexMap::from_iter([
                     ("bool".to_owned(), NoteFieldValue::Bool(true)),
                     (
@@ -441,7 +444,7 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                NoteFieldValue::from(yaml),
+                NoteFieldValue::from(yaml_value_to_field_ref(yaml)),
                 NoteFieldValue::Object(IndexMap::from_iter([(
                     "link".to_owned(),
                     NoteFieldValue::Link(Link::new(
@@ -464,7 +467,7 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                NoteFieldValue::from(yaml),
+                NoteFieldValue::from(yaml_value_to_field_ref(yaml)),
                 NoteFieldValue::Object(IndexMap::from_iter([(
                     "outer".to_owned(),
                     NoteFieldValue::Object(IndexMap::from_iter([(

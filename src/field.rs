@@ -65,19 +65,12 @@ impl FieldName {
     ///
     /// - [`FieldNameError::Empty`] if `raw` is empty or whitespace-only
     /// - [`FieldNameError::ContainsSlash`] if `raw` contains `/`
-    /// - [`FieldNameError::EmptyCanonical`] if `raw` has no searchable
-    ///   characters after [`FieldKey`] canonicalization
     fn validate(raw: &str) -> Result<(), FieldNameError> {
         if raw.trim().is_empty() {
             return Err(FieldNameError::Empty);
         }
         if raw.contains('/') {
             return Err(FieldNameError::ContainsSlash {
-                name: raw.to_owned(),
-            });
-        }
-        if FieldKey::is_canonical_empty(raw) {
-            return Err(FieldNameError::EmptyCanonical {
                 name: raw.to_owned(),
             });
         }
@@ -133,11 +126,34 @@ impl TryFrom<serde_yaml::Value> for FieldName {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldNameError::UnsupportedYamlKey`] for `Null`, `Sequence`,
+    /// Returns [`FieldNameError::NotScalar`] for `Null`, `Sequence`,
     /// `Mapping`, and `Tagged` values; otherwise see [`FieldName::validate`].
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw = yaml_scalar_to_string(value)
-            .ok_or(FieldNameError::UnsupportedYamlKey)?;
+        let raw = scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
+        Self::try_from(raw)
+    }
+}
+
+impl TryFrom<serde_json::Value> for FieldName {
+    type Error = FieldNameError;
+
+    /// Coerces a JSON scalar `value` into a [`FieldName`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FieldNameError::NotScalar`] for `Null`, `Array`, and
+    /// `Object` values; otherwise see [`FieldName::validate`].
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        let raw = match value {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Null
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => {
+                return Err(FieldNameError::NotScalar);
+            }
+        };
         Self::try_from(raw)
     }
 }
@@ -254,16 +270,14 @@ impl FieldKey {
     ///
     /// # Errors
     ///
-    /// - [`FieldKeyError::Empty`] if `raw` is empty or whitespace-only
+    /// - [`FieldKeyError::Name`] if `raw` fails [`FieldName`] validation
     /// - [`FieldKeyError::EmptyCanonical`] if canonicalization strips every
     ///   searchable character
     pub(crate) fn try_new(
         raw: impl Into<String>,
     ) -> Result<Self, FieldKeyError> {
         let raw = raw.into();
-        if raw.trim().is_empty() {
-            return Err(FieldKeyError::Empty);
-        }
+        FieldName::try_from(raw.as_str())?;
         if Self::is_canonical_empty(&raw) {
             return Err(FieldKeyError::EmptyCanonical {
                 name: raw,
@@ -472,11 +486,34 @@ impl TryFrom<serde_yaml::Value> for FieldKey {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldKeyError::UnsupportedYamlKey`] for `Null`, `Sequence`,
-    /// `Mapping`, and `Tagged` values; otherwise see [`FieldKey::try_new`].
+    /// Returns [`FieldKeyError::Name`] for `Null`, `Sequence`, `Mapping`,
+    /// and `Tagged` values; otherwise see [`FieldKey::try_new`].
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw = yaml_scalar_to_string(value)
-            .ok_or(FieldKeyError::UnsupportedYamlKey)?;
+        let raw = scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
+        Self::try_new(raw)
+    }
+}
+
+impl TryFrom<serde_json::Value> for FieldKey {
+    type Error = FieldKeyError;
+
+    /// Coerces a JSON scalar `value` into a [`FieldKey`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FieldKeyError::Name`] for `Null`, `Array`, and `Object`
+    /// values; otherwise see [`FieldKey::try_new`].
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        let raw = match value {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Null
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => {
+                return Err(FieldNameError::NotScalar.into());
+            }
+        };
         Self::try_new(raw)
     }
 }
@@ -567,6 +604,8 @@ pub(crate) enum FieldValue {
     Float(f64),
     /// Plain text value.
     String(String),
+    /// ISO `YYYY-MM-DD` date string.
+    Date(String),
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
@@ -605,6 +644,7 @@ impl From<FieldValueRef<'_>> for FieldValue {
             FieldValueRef::Int(i) => Self::Int(i),
             FieldValueRef::Float(f) => Self::Float(f),
             FieldValueRef::String(s) => Self::String(s.into_owned()),
+            FieldValueRef::Date(s) => Self::Date(s.into_owned()),
             FieldValueRef::List(arr) => {
                 Self::List(arr.into_iter().map(Into::into).collect())
             }
@@ -627,7 +667,7 @@ impl Serialize for FieldValue {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
             Self::Float(f) => serializer.serialize_f64(*f),
-            Self::String(s) => serializer.serialize_str(s),
+            Self::String(s) | Self::Date(s) => serializer.serialize_str(s),
             Self::List(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for elem in arr {
@@ -680,6 +720,9 @@ pub(crate) enum FieldValueRef<'a> {
     Float(f64),
     /// Plain text value, borrowed from the source document where possible.
     String(Cow<'a, str>),
+    /// ISO `YYYY-MM-DD` date string, borrowed from the source document where
+    /// possible.
+    Date(Cow<'a, str>),
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
@@ -696,7 +739,7 @@ impl Serialize for FieldValueRef<'_> {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
             Self::Float(f) => serializer.serialize_f64(*f),
-            Self::String(s) => serializer.serialize_str(s),
+            Self::String(s) | Self::Date(s) => serializer.serialize_str(s),
             Self::List(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for elem in arr {
@@ -715,16 +758,65 @@ impl Serialize for FieldValueRef<'_> {
     }
 }
 
+/// Controls how [`FieldValueRef`] classifies string scalars during
+/// deserialization from JSON, YAML, or TOML.
+///
+/// Extensible to datetimes and other date formats.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FormatParsePolicy {
+    /// Classify ISO date strings as [`FieldValueRef::Date`].
+    #[default]
+    Classify,
+    /// Treat all strings as plain text.
+    Passthrough,
+}
+
+/// Checks whether `s` starts with an ISO date format `YYYY-MM-DD`.
+pub(crate) fn is_iso_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 10
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+}
+
 /// Deserializes from any self-describing format (TOML, JSON, or YAML) with
 /// zero-copy borrowing: [`Deserializer::deserialize_any`] drives whichever
 /// `visit_*` method matches the source data, borrowing text from `'de` wherever
 /// the format's deserializer supports it.
+///
+/// The default impl uses [`FormatParsePolicy::Passthrough`], treating all
+/// strings as plain text. Use [`FieldValueRef::deserialize_with`] to classify
+/// ISO date strings as [`FieldValueRef::Date`].
 impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct FieldValueRefVisitor<'a>(PhantomData<&'a ()>);
+        Self::deserialize_with(deserializer, FormatParsePolicy::Passthrough)
+    }
+}
+
+impl<'a> FieldValueRef<'a> {
+    /// Deserializes with the given [`FormatParsePolicy`].
+    ///
+    /// When `policy` is [`FormatParsePolicy::Classify`], ISO date strings are
+    /// classified as [`FieldValueRef::Date`] rather than
+    /// [`FieldValueRef::String`].
+    pub(crate) fn deserialize_with<'de, D>(
+        deserializer: D,
+        policy: FormatParsePolicy,
+    ) -> Result<Self, D::Error>
+    where
+        'de: 'a,
+        D: Deserializer<'de>,
+    {
+        struct FieldValueRefVisitor<'a> {
+            policy: FormatParsePolicy,
+            _marker: PhantomData<&'a ()>,
+        }
 
         impl<'de: 'a, 'a> Visitor<'de> for FieldValueRefVisitor<'a> {
             type Value = FieldValueRef<'a>;
@@ -760,21 +852,36 @@ impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
             where
                 E: de::Error,
             {
-                Ok(FieldValueRef::String(Cow::Owned(v.to_owned())))
+                if self.policy == FormatParsePolicy::Classify && is_iso_date(v)
+                {
+                    Ok(FieldValueRef::Date(Cow::Owned(v.to_owned())))
+                } else {
+                    Ok(FieldValueRef::String(Cow::Owned(v.to_owned())))
+                }
             }
 
             fn visit_borrowed_str<E>(self, v: &'a str) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                Ok(FieldValueRef::String(Cow::Borrowed(v)))
+                if self.policy == FormatParsePolicy::Classify && is_iso_date(v)
+                {
+                    Ok(FieldValueRef::Date(Cow::Borrowed(v)))
+                } else {
+                    Ok(FieldValueRef::String(Cow::Borrowed(v)))
+                }
             }
 
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                Ok(FieldValueRef::String(Cow::Owned(v)))
+                if self.policy == FormatParsePolicy::Classify && is_iso_date(&v)
+                {
+                    Ok(FieldValueRef::Date(Cow::Owned(v)))
+                } else {
+                    Ok(FieldValueRef::String(Cow::Owned(v)))
+                }
             }
 
             fn visit_none<E>(self) -> Result<Self::Value, E> {
@@ -820,7 +927,10 @@ impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
             }
         }
 
-        deserializer.deserialize_any(FieldValueRefVisitor(PhantomData))
+        deserializer.deserialize_any(FieldValueRefVisitor {
+            policy,
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -837,37 +947,29 @@ pub(crate) enum FieldNameError {
     ContainsSlash {
         name: String,
     },
-    /// Rejects a name with no searchable canonical characters.
-    #[error("field name {name:?} has no searchable characters")]
-    EmptyCanonical {
-        name: String,
-    },
     /// Rejects a YAML value that cannot be represented as scalar field text.
-    #[error("YAML value cannot be used as a field name")]
-    UnsupportedYamlKey,
+    #[error("YAML value is not a scalar")]
+    NotScalar,
 }
 
 /// Reports why a [`FieldKey`] could not be parsed.
 #[derive(Debug, Error)]
 pub(crate) enum FieldKeyError {
-    /// Rejects an empty or whitespace-only key.
-    #[error("field key is empty")]
-    Empty,
+    /// The raw key failed [`FieldName`] validation.
+    #[error(transparent)]
+    Name(#[from] FieldNameError),
     /// Rejects a key with no searchable canonical characters.
     #[error("field key {name:?} has no searchable characters")]
     EmptyCanonical {
         name: String,
     },
-    /// Rejects a YAML value that cannot be represented as scalar field text.
-    #[error("YAML value cannot be used as a field key")]
-    UnsupportedYamlKey,
 }
 
 /// Coerces a YAML scalar into raw text usable as a field key/name.
 ///
 /// Returns `None` for YAML values that cannot stand as a key: `Null`,
 /// `Sequence`, `Mapping`, and `Tagged`.
-fn yaml_scalar_to_string(value: serde_yaml::Value) -> Option<String> {
+pub(crate) fn scalar_to_string(value: serde_yaml::Value) -> Option<String> {
     match value {
         serde_yaml::Value::String(s) => Some(s),
         serde_yaml::Value::Number(n) => Some(n.to_string()),
@@ -945,11 +1047,9 @@ mod tests {
             }
 
             #[test]
-            fn rejects_a_name_with_an_empty_canonical_form() {
-                assert!(matches!(
-                    FieldName::try_from("!!!"),
-                    Err(FieldNameError::EmptyCanonical { .. })
-                ));
+            fn accepts_name_with_only_stripped_punctuation() {
+                let name = FieldName::try_from("!!!").expect("valid name");
+                assert_eq!(name.as_str(), "!!!");
             }
 
             #[test]
@@ -994,7 +1094,7 @@ mod tests {
                     serde_yaml::from_str("null").expect("valid yaml");
                 assert!(matches!(
                     FieldName::try_from(value),
-                    Err(FieldNameError::UnsupportedYamlKey)
+                    Err(FieldNameError::NotScalar)
                 ));
             }
 
@@ -1096,7 +1196,7 @@ mod tests {
             fn rejects_an_empty_key() {
                 assert!(matches!(
                     FieldKey::try_new(""),
-                    Err(FieldKeyError::Empty)
+                    Err(FieldKeyError::Name(FieldNameError::Empty))
                 ));
             }
 
@@ -1104,7 +1204,7 @@ mod tests {
             fn rejects_a_whitespace_only_key() {
                 assert!(matches!(
                     FieldKey::try_new("   "),
-                    Err(FieldKeyError::Empty)
+                    Err(FieldKeyError::Name(FieldNameError::Empty))
                 ));
             }
 
@@ -1144,7 +1244,7 @@ mod tests {
                     serde_yaml::from_str("null").expect("valid yaml");
                 assert!(matches!(
                     FieldKey::try_from(value),
-                    Err(FieldKeyError::UnsupportedYamlKey)
+                    Err(FieldKeyError::Name(FieldNameError::NotScalar))
                 ));
             }
         }
