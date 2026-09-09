@@ -128,12 +128,8 @@ impl TryFrom<serde_yaml::Value> for FieldName {
     /// Returns [`FieldNameError::NotScalar`] for `Null`, `Sequence`,
     /// `Mapping`, and `Tagged` values; otherwise see [`FieldName::validate`].
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw = match value {
-            serde_yaml::Value::String(s) => s,
-            serde_yaml::Value::Number(n) => n.to_string(),
-            serde_yaml::Value::Bool(b) => b.to_string(),
-            _ => return Err(FieldNameError::NotScalar),
-        };
+        let raw =
+            yaml_scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
         Self::try_from(raw)
     }
 }
@@ -493,12 +489,8 @@ impl TryFrom<serde_yaml::Value> for FieldKey {
     /// Returns [`FieldKeyError::Name`] for `Null`, `Sequence`, `Mapping`,
     /// and `Tagged` values; otherwise see [`FieldKey::try_new`].
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw = match value {
-            serde_yaml::Value::String(s) => s,
-            serde_yaml::Value::Number(n) => n.to_string(),
-            serde_yaml::Value::Bool(b) => b.to_string(),
-            _ => return Err(FieldNameError::NotScalar.into()),
-        };
+        let raw =
+            yaml_scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
         Self::try_new(raw)
     }
 }
@@ -807,11 +799,8 @@ impl From<serde_yaml::Value> for FieldValueRef<'static> {
             serde_yaml::Value::Mapping(map) => {
                 let mut index_map = IndexMap::new();
                 for (k, v) in map {
-                    let key = match k {
-                        serde_yaml::Value::String(s) => s,
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        serde_yaml::Value::Bool(b) => b.to_string(),
-                        _ => continue,
+                    let Some(key) = yaml_scalar_to_string(k) else {
+                        continue;
                     };
                     index_map.insert(Cow::Owned(key), Self::from(v));
                 }
@@ -1103,6 +1092,24 @@ pub(crate) enum FieldKeyError {
     EmptyCanonical {
         name: String,
     },
+}
+
+/// Coerces a YAML scalar into its string representation.
+///
+/// Returns `None` for non-scalar values: `Null`, `Sequence`, `Mapping`,
+/// `Tagged`.
+pub(crate) fn yaml_scalar_to_string(
+    value: serde_yaml::Value,
+) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => Some(s),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Null
+        | serde_yaml::Value::Sequence(_)
+        | serde_yaml::Value::Mapping(_)
+        | serde_yaml::Value::Tagged(_) => None,
+    }
 }
 
 #[cfg(test)]
