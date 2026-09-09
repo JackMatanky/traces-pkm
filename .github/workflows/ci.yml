@@ -28,6 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
+        with:
+          bootstrap: true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
@@ -39,6 +41,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
+        with:
+          bootstrap: true
       - uses: Swatinem/rust-cache@v2
       - run: mise run test
 
@@ -47,6 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
+        with:
+          bootstrap: true
       - run: |
           msrv=$(cargo metadata --format-version 1 | jq -r '.packages[0].rust_version')
           mise exec "rust@${msrv}" -- cargo check --workspace --all-features
@@ -56,5 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
+        with:
+          bootstrap: true
       - uses: Swatinem/rust-cache@v2
       - run: mise run doc

@@ -8,8 +8,11 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use yaml_serde as serde_yaml;
 
-use super::field::{NoteFieldValue, yaml_value_to_field_ref};
-use crate::{FieldKey, FieldKeyRef, field::scalar_to_string};
+use super::field::NoteFieldValue;
+use crate::{
+    FieldKey, FieldKeyRef,
+    field::{FieldValueRef, scalar_to_string},
+};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -169,7 +172,7 @@ impl From<&RawFrontmatter> for Frontmatter {
             let Ok(key) = FieldKey::try_new(key_str) else {
                 continue;
             };
-            let fv = yaml_value_to_field_ref(raw_value);
+            let fv = FieldValueRef::from(raw_value);
             fields.insert(key, NoteFieldValue::from(fv));
         }
         Self::new(fields)

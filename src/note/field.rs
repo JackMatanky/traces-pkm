@@ -14,10 +14,9 @@
 //! ```
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use yaml_serde as serde_yaml;
 
 use super::Link;
-use crate::field::{FieldValueRef, scalar_to_string};
+use crate::field::FieldValueRef;
 
 /// A metadata value parsed from YAML frontmatter or inline field text.
 ///
@@ -141,6 +140,7 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
                 }
             }
             FieldValueRef::Date(s) => Self::Date(s.into_owned()),
+            FieldValueRef::DateTime(s) => Self::Date(s.into_owned()),
             FieldValueRef::List(arr) => {
                 Self::List(arr.into_iter().map(Into::into).collect())
             }
@@ -151,67 +151,6 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
             ),
         }
     }
-}
-
-/// Converts an already-parsed [`serde_yaml::Value`] into a
-/// [`FieldValueRef`] with date classification.
-///
-/// Used when the YAML value has already been deserialized (e.g., from
-/// frontmatter parsing) and needs to be converted to the intermediate
-/// representation before becoming a [`NoteFieldValue`].
-pub(super) fn yaml_value_to_field_ref(
-    value: serde_yaml::Value,
-) -> FieldValueRef<'static> {
-    match value {
-        serde_yaml::Value::Null => FieldValueRef::Null,
-        serde_yaml::Value::Bool(b) => FieldValueRef::Bool(b),
-        serde_yaml::Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                FieldValueRef::Float(f)
-            } else if let Some(i) = n.as_i64() {
-                FieldValueRef::Int(i)
-            } else {
-                FieldValueRef::Null
-            }
-        }
-        serde_yaml::Value::String(s) => {
-            if crate::field::is_iso_date(&s) {
-                FieldValueRef::Date(std::borrow::Cow::Owned(s))
-            } else {
-                FieldValueRef::String(std::borrow::Cow::Owned(s))
-            }
-        }
-        serde_yaml::Value::Sequence(seq) => FieldValueRef::List(
-            seq.into_iter().map(yaml_value_to_field_ref).collect(),
-        ),
-        serde_yaml::Value::Mapping(map) => {
-            let mut index_map = IndexMap::new();
-            for (k, v) in map {
-                let Some(key) = scalar_to_string(k) else {
-                    continue;
-                };
-                index_map.insert(
-                    std::borrow::Cow::Owned(key),
-                    yaml_value_to_field_ref(v),
-                );
-            }
-            FieldValueRef::Object(index_map)
-        }
-        serde_yaml::Value::Tagged(tagged) => {
-            yaml_value_to_field_ref(tagged.value)
-        }
-    }
-}
-
-/// Checks whether `s` starts with an ISO date format `YYYY-MM-DD`.
-pub(crate) fn is_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 10
-        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 /// Converts a duration unit string into seconds.
@@ -345,7 +284,10 @@ pub fn duration_seconds(spelling: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use yaml_serde as serde_yaml;
+
     use super::*;
+    use crate::field::{FieldValueRef, is_iso_date};
 
     mod is_iso_date {
         use super::*;
@@ -407,7 +349,7 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                NoteFieldValue::from(yaml_value_to_field_ref(yaml)),
+                NoteFieldValue::from(FieldValueRef::from(yaml)),
                 NoteFieldValue::Object(IndexMap::from_iter([
                     ("bool".to_owned(), NoteFieldValue::Bool(true)),
                     (
@@ -444,7 +386,7 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                NoteFieldValue::from(yaml_value_to_field_ref(yaml)),
+                NoteFieldValue::from(FieldValueRef::from(yaml)),
                 NoteFieldValue::Object(IndexMap::from_iter([(
                     "link".to_owned(),
                     NoteFieldValue::Link(Link::new(
@@ -467,7 +409,7 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                NoteFieldValue::from(yaml_value_to_field_ref(yaml)),
+                NoteFieldValue::from(FieldValueRef::from(yaml)),
                 NoteFieldValue::Object(IndexMap::from_iter([(
                     "outer".to_owned(),
                     NoteFieldValue::Object(IndexMap::from_iter([(

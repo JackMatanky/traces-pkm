@@ -606,6 +606,8 @@ pub(crate) enum FieldValue {
     String(String),
     /// ISO `YYYY-MM-DD` date string.
     Date(String),
+    /// ISO `YYYY-MM-DDThh:mm:ss` date-time string.
+    DateTime(String),
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
@@ -645,6 +647,7 @@ impl From<FieldValueRef<'_>> for FieldValue {
             FieldValueRef::Float(f) => Self::Float(f),
             FieldValueRef::String(s) => Self::String(s.into_owned()),
             FieldValueRef::Date(s) => Self::Date(s.into_owned()),
+            FieldValueRef::DateTime(s) => Self::DateTime(s.into_owned()),
             FieldValueRef::List(arr) => {
                 Self::List(arr.into_iter().map(Into::into).collect())
             }
@@ -667,7 +670,9 @@ impl Serialize for FieldValue {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
             Self::Float(f) => serializer.serialize_f64(*f),
-            Self::String(s) | Self::Date(s) => serializer.serialize_str(s),
+            Self::String(s) | Self::Date(s) | Self::DateTime(s) => {
+                serializer.serialize_str(s)
+            }
             Self::List(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for elem in arr {
@@ -723,6 +728,9 @@ pub(crate) enum FieldValueRef<'a> {
     /// ISO `YYYY-MM-DD` date string, borrowed from the source document where
     /// possible.
     Date(Cow<'a, str>),
+    /// ISO `YYYY-MM-DDThh:mm:ss` date-time string, borrowed from the source
+    /// document where possible.
+    DateTime(Cow<'a, str>),
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
@@ -739,7 +747,9 @@ impl Serialize for FieldValueRef<'_> {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
             Self::Float(f) => serializer.serialize_f64(*f),
-            Self::String(s) | Self::Date(s) => serializer.serialize_str(s),
+            Self::String(s) | Self::Date(s) | Self::DateTime(s) => {
+                serializer.serialize_str(s)
+            }
             Self::List(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for elem in arr {
@@ -780,6 +790,24 @@ pub(crate) fn is_iso_date(s: &str) -> bool {
         && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
         && bytes.get(7) == Some(&b'-')
         && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+}
+
+/// Checks whether `s` starts with an ISO date-time format
+/// `YYYY-MM-DDThh:mm:ss`.
+pub(crate) fn is_iso_datetime(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 19
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(10) == Some(&b'T')
+        && bytes.get(11..13).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(13) == Some(&b':')
+        && bytes.get(14..16).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(16) == Some(&b':')
+        && bytes.get(17..19).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 /// Deserializes from any self-describing format (TOML, JSON, or YAML) with
@@ -852,36 +880,49 @@ impl<'a> FieldValueRef<'a> {
             where
                 E: de::Error,
             {
-                if self.policy == FormatParsePolicy::Classify && is_iso_date(v)
-                {
-                    Ok(FieldValueRef::Date(Cow::Owned(v.to_owned())))
-                } else {
-                    Ok(FieldValueRef::String(Cow::Owned(v.to_owned())))
+                if self.policy == FormatParsePolicy::Classify {
+                    if is_iso_datetime(v) {
+                        return Ok(FieldValueRef::DateTime(Cow::Owned(
+                            v.to_owned(),
+                        )));
+                    }
+                    if is_iso_date(v) {
+                        return Ok(FieldValueRef::Date(Cow::Owned(
+                            v.to_owned(),
+                        )));
+                    }
                 }
+                Ok(FieldValueRef::String(Cow::Owned(v.to_owned())))
             }
 
             fn visit_borrowed_str<E>(self, v: &'a str) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                if self.policy == FormatParsePolicy::Classify && is_iso_date(v)
-                {
-                    Ok(FieldValueRef::Date(Cow::Borrowed(v)))
-                } else {
-                    Ok(FieldValueRef::String(Cow::Borrowed(v)))
+                if self.policy == FormatParsePolicy::Classify {
+                    if is_iso_datetime(v) {
+                        return Ok(FieldValueRef::DateTime(Cow::Borrowed(v)));
+                    }
+                    if is_iso_date(v) {
+                        return Ok(FieldValueRef::Date(Cow::Borrowed(v)));
+                    }
                 }
+                Ok(FieldValueRef::String(Cow::Borrowed(v)))
             }
 
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                if self.policy == FormatParsePolicy::Classify && is_iso_date(&v)
-                {
-                    Ok(FieldValueRef::Date(Cow::Owned(v)))
-                } else {
-                    Ok(FieldValueRef::String(Cow::Owned(v)))
+                if self.policy == FormatParsePolicy::Classify {
+                    if is_iso_datetime(&v) {
+                        return Ok(FieldValueRef::DateTime(Cow::Owned(v)));
+                    }
+                    if is_iso_date(&v) {
+                        return Ok(FieldValueRef::Date(Cow::Owned(v)));
+                    }
                 }
+                Ok(FieldValueRef::String(Cow::Owned(v)))
             }
 
             fn visit_none<E>(self) -> Result<Self::Value, E> {
@@ -978,6 +1019,53 @@ pub(crate) fn scalar_to_string(value: serde_yaml::Value) -> Option<String> {
         | serde_yaml::Value::Sequence(_)
         | serde_yaml::Value::Mapping(_)
         | serde_yaml::Value::Tagged(_) => None,
+    }
+}
+
+impl From<serde_yaml::Value> for FieldValueRef<'static> {
+    /// Converts a [`serde_yaml::Value`] into a [`FieldValueRef`] with date
+    /// classification.
+    ///
+    /// Mapping keys are coerced via [`scalar_to_string`]; entries with
+    /// non-scalar keys are skipped. Date strings are classified as
+    /// [`FieldValueRef::Date`] or [`FieldValueRef::DateTime`].
+    fn from(value: serde_yaml::Value) -> Self {
+        match value {
+            serde_yaml::Value::Null => Self::Null,
+            serde_yaml::Value::Bool(b) => Self::Bool(b),
+            serde_yaml::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Self::Float(f)
+                } else if let Some(i) = n.as_i64() {
+                    Self::Int(i)
+                } else {
+                    Self::Null
+                }
+            }
+            serde_yaml::Value::String(s) => {
+                if is_iso_datetime(&s) {
+                    Self::DateTime(Cow::Owned(s))
+                } else if is_iso_date(&s) {
+                    Self::Date(Cow::Owned(s))
+                } else {
+                    Self::String(Cow::Owned(s))
+                }
+            }
+            serde_yaml::Value::Sequence(seq) => {
+                Self::List(seq.into_iter().map(Self::from).collect())
+            }
+            serde_yaml::Value::Mapping(map) => {
+                let mut index_map = IndexMap::new();
+                for (k, v) in map {
+                    let Some(key) = scalar_to_string(k) else {
+                        continue;
+                    };
+                    index_map.insert(Cow::Owned(key), Self::from(v));
+                }
+                Self::Object(index_map)
+            }
+            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
+        }
     }
 }
 
@@ -1732,6 +1820,16 @@ mod tests {
             #[case::string(
                 FieldValueRef::String(Cow::Borrowed("hi")),
                 "\"hi\""
+            )]
+            #[case::date(
+                FieldValueRef::Date(Cow::Borrowed("2026-07-29")),
+                "\"2026-07-29\""
+            )]
+            #[case::datetime(
+                FieldValueRef::DateTime(Cow::Borrowed(
+                    "2026-07-29T14:30:00Z"
+                )),
+                "\"2026-07-29T14:30:00Z\""
             )]
             #[case::list(
                 FieldValueRef::List(vec![FieldValueRef::Bool(true)]),

@@ -16,8 +16,7 @@ use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
 use crate::{
-    DelimiterType, FieldKey, Tag,
-    note::{NoteFieldValue, field::is_iso_date},
+    DelimiterType, FieldKey, Tag, field::is_iso_date, note::NoteFieldValue,
 };
 
 /// Extracts inline fields and tags from a parser scan buffer.
