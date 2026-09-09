@@ -27,11 +27,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install rust
-      - run: mise install hk taplo gitleaks cargo:cargo-deny cargo:cargo-audit cargo:ryl
+      - run: mise install --yes rust
+      - run: mise install --yes hk taplo gitleaks cargo:cargo-deny cargo:cargo-audit cargo:ryl
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
@@ -41,32 +43,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install rust cargo:cargo-nextest
+      - run: mise install --yes rust cargo:cargo-nextest
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-ubuntu-latest"
       - run: mise run test
 
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
       - run: |
           msrv=$(cargo metadata --format-version 1 | jq -r '.packages[0].rust_version')
-          mise install "rust@${msrv}"
+          mise install --yes "rust@${msrv}"
           mise exec "rust@${msrv}" -- cargo check --workspace --all-features
 
   docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - uses: jdx/mise-action@v4
         with:
           install: false
-      - run: mise install rust
+      - run: mise install --yes rust
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-ubuntu-latest"
       - run: mise run doc
