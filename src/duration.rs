@@ -418,7 +418,10 @@ impl DurationValue {
     /// Returns the canonical name of the last parsed unit (e.g., `"hour"`).
     #[must_use]
     pub fn unit_name(&self) -> &str {
-        self.last_unit().map(unit_name_of).unwrap_or("")
+        self.last_unit()
+            .or_else(|| parse_unit(&self.raw))
+            .map(unit_name_of)
+            .unwrap_or("")
     }
 
     /// Scans backward from the end of `raw` to extract the last unit string.
@@ -451,4 +454,276 @@ impl From<DurationValue> for DurationSeconds {
 #[must_use]
 pub fn duration_seconds(spelling: &str) -> Option<DurationSeconds> {
     DurationValue::parse(spelling).map(|d| d.to_seconds())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod duration_seconds_ops {
+        use super::*;
+
+        #[test]
+        fn add_combines_seconds() {
+            let a = DurationSeconds::from(100.0);
+            let b = DurationSeconds::from(200.0);
+            assert_eq!(a + b, DurationSeconds::from(300.0));
+        }
+
+        #[test]
+        fn sub_subtracts_seconds() {
+            let a = DurationSeconds::from(300.0);
+            let b = DurationSeconds::from(100.0);
+            assert_eq!(a - b, DurationSeconds::from(200.0));
+        }
+
+        #[test]
+        fn mul_scales_seconds() {
+            let a = DurationSeconds::from(100.0);
+            assert_eq!(a * 3.0, DurationSeconds::from(300.0));
+            assert_eq!(3.0 * a, DurationSeconds::from(300.0));
+        }
+
+        #[test]
+        fn ord_uses_total_cmp() {
+            let a = DurationSeconds::from(100.0);
+            let b = DurationSeconds::from(200.0);
+            assert!(a < b);
+            assert!(b > a);
+        }
+
+        #[test]
+        fn from_f64_roundtrip() {
+            let d = DurationSeconds::from(42.5);
+            let f: f64 = d.into();
+            assert_eq!(f, 42.5);
+        }
+
+        #[test]
+        fn from_duration_value() {
+            let dv = DurationValue::parse("1h").unwrap();
+            let ds: DurationSeconds = dv.into();
+            assert_eq!(ds.as_f64(), 3_600.0);
+        }
+    }
+
+    mod duration_value_parse {
+        use super::*;
+
+        #[test]
+        fn parses_single_part() {
+            assert_eq!(
+                DurationValue::parse("1h").unwrap().to_seconds().as_f64(),
+                3_600.0
+            );
+            assert_eq!(
+                DurationValue::parse("30m").unwrap().to_seconds().as_f64(),
+                1_800.0
+            );
+            assert_eq!(
+                DurationValue::parse("500ms").unwrap().to_seconds().as_f64(),
+                0.5
+            );
+        }
+
+        #[test]
+        fn parses_multi_part_with_space() {
+            let d = DurationValue::parse("1h 30m").unwrap();
+            assert_eq!(d.to_seconds().as_f64(), 5_400.0);
+            assert_eq!(d.as_raw(), "1h 30m");
+        }
+
+        #[test]
+        fn parses_multi_part_without_separator() {
+            assert_eq!(
+                DurationValue::parse("1h30m").unwrap().to_seconds().as_f64(),
+                5_400.0
+            );
+        }
+
+        #[test]
+        fn parses_multi_part_with_comma() {
+            let d = DurationValue::parse("4 yrs, 6 wks").unwrap();
+            assert_eq!(
+                d.to_seconds().as_f64(),
+                4.0 * 31_536_000.0 + 6.0 * 604_800.0
+            );
+        }
+
+        #[test]
+        fn parses_decimal_numbers() {
+            assert_eq!(
+                DurationValue::parse("1.5h").unwrap().to_seconds().as_f64(),
+                5_400.0
+            );
+        }
+
+        #[test]
+        fn returns_none_for_empty() {
+            assert!(DurationValue::parse("").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_whitespace_only() {
+            assert!(DurationValue::parse("   ").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_invalid_unit() {
+            assert!(DurationValue::parse("1h invalid").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_no_unit() {
+            assert!(DurationValue::parse("1").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_no_number() {
+            assert!(DurationValue::parse("h").is_none());
+        }
+    }
+
+    mod duration_value_diff_seconds {
+        use super::*;
+
+        #[test]
+        fn returns_some_for_fixed_units() {
+            assert!(
+                DurationValue::parse("1h").unwrap().diff_seconds().is_some()
+            );
+            assert!(
+                DurationValue::parse("30d").unwrap().diff_seconds().is_some()
+            );
+        }
+
+        #[test]
+        fn returns_none_for_variable_units() {
+            assert!(
+                DurationValue::parse("3mo").unwrap().diff_seconds().is_none()
+            );
+            assert!(
+                DurationValue::parse("2y").unwrap().diff_seconds().is_none()
+            );
+        }
+
+        #[test]
+        fn returns_correct_seconds_for_fixed_units() {
+            let h = DurationValue::parse("1h").unwrap().diff_seconds().unwrap();
+            assert_eq!(h.as_f64(), 3_600.0);
+        }
+    }
+
+    mod duration_value_unit_name {
+        use super::*;
+
+        #[test]
+        fn returns_canonical_name_for_single_unit() {
+            assert_eq!(DurationValue::parse("1h").unwrap().unit_name(), "hour");
+            assert_eq!(DurationValue::parse("30d").unwrap().unit_name(), "day");
+        }
+
+        #[test]
+        fn returns_last_unit_for_multi_part() {
+            assert_eq!(
+                DurationValue::parse("1h 30m").unwrap().unit_name(),
+                "minute"
+            );
+        }
+    }
+
+    mod parse_unit_name {
+        use super::*;
+
+        #[test]
+        fn parses_bare_unit_names() {
+            let d = DurationValue::parse_unit_name("hours").unwrap();
+            assert_eq!(d.to_seconds().as_f64(), 3_600.0);
+            assert_eq!(d.as_raw(), "hours");
+        }
+
+        #[test]
+        fn is_case_insensitive() {
+            assert!(DurationValue::parse_unit_name("H").is_some());
+            assert!(DurationValue::parse_unit_name("Hours").is_some());
+        }
+
+        #[test]
+        fn rejects_unknown() {
+            assert!(DurationValue::parse_unit_name("foo").is_none());
+        }
+    }
+
+    mod parse_unit_helper {
+        use super::*;
+
+        #[test]
+        fn accepts_all_recognized_spellings() {
+            for &(spelling, kind, _, _) in DURATIONS {
+                assert_eq!(parse_unit(spelling).unwrap(), kind, "{spelling}");
+            }
+        }
+
+        #[test]
+        fn is_case_insensitive() {
+            assert_eq!(parse_unit("H").unwrap(), DurationUnit::Hour);
+            assert_eq!(parse_unit("HOUR").unwrap(), DurationUnit::Hour);
+        }
+    }
+
+    mod registry_consistency {
+        use super::*;
+
+        #[test]
+        fn durations_covers_all_unit_types() {
+            let mut seen = std::collections::HashSet::new();
+            for &(_, kind, _, _) in DURATIONS {
+                seen.insert(kind);
+            }
+            assert_eq!(seen.len(), 8);
+        }
+
+        #[test]
+        fn durations_seconds_match_durations_to_seconds() {
+            for &(kind, expected) in DURATIONS_TO_SECONDS {
+                for &(_, k, secs, _) in
+                    DURATIONS.iter().filter(|&&(_, k, _, _)| k == kind)
+                {
+                    assert_eq!(secs, expected, "disagree for {k:?}");
+                }
+            }
+        }
+
+        #[test]
+        fn durations_names_match_unit_names() {
+            for &(kind, expected_names) in UNIT_NAMES {
+                let actual: Vec<&str> = DURATIONS
+                    .iter()
+                    .filter(|&&(_, k, _, _)| k == kind)
+                    .map(|&(s, _, _, _)| s)
+                    .collect();
+                assert_eq!(
+                    actual.as_slice(),
+                    expected_names,
+                    "disagree for {kind:?}"
+                );
+            }
+        }
+    }
+
+    mod template_consistency {
+        use super::*;
+
+        #[test]
+        fn all_unit_names_parse_as_single_part() {
+            for &(kind, names) in UNIT_NAMES {
+                let canonical = unit_name_of(kind);
+                for name in names {
+                    let d = DurationValue::parse_unit_name(name)
+                        .unwrap_or_else(|| panic!("{name} must parse"));
+                    assert_eq!(d.unit_name(), canonical, "for {name}");
+                }
+            }
+        }
+    }
 }
