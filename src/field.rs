@@ -84,7 +84,11 @@ impl TryFrom<String> for FieldName {
     ///
     /// # Errors
     ///
-    /// See [`FieldName::validate`].
+    /// - [`Empty`] if `raw` is empty or whitespace-only
+    /// - [`ContainsSlash`] if `raw` contains `/`
+    ///
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         Self::validate(&raw)?;
         Ok(Self(raw))
@@ -98,7 +102,11 @@ impl TryFrom<&str> for FieldName {
     ///
     /// # Errors
     ///
-    /// See [`FieldName::validate`].
+    /// - [`Empty`] if `raw` is empty or whitespace-only
+    /// - [`ContainsSlash`] if `raw` contains `/`
+    ///
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         Self::validate(raw)?;
         Ok(Self(raw.to_owned()))
@@ -108,11 +116,6 @@ impl TryFrom<&str> for FieldName {
 impl FromStr for FieldName {
     type Err = FieldNameError;
 
-    /// Parses `raw` as a [`FieldName`].
-    ///
-    /// # Errors
-    ///
-    /// See [`FieldName::validate`].
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw)
     }
@@ -125,8 +128,13 @@ impl TryFrom<serde_yaml::Value> for FieldName {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldNameError::NotScalar`] for `Null`, `Sequence`,
-    /// `Mapping`, and `Tagged` values; otherwise see [`FieldName::validate`].
+    /// - [`NotScalar`] for `Null`, `Sequence`, `Mapping`, and `Tagged` values
+    /// - [`Empty`] if the coerced string is empty or whitespace-only
+    /// - [`ContainsSlash`] if the coerced string contains `/`
+    ///
+    /// [`NotScalar`]: FieldNameError::NotScalar
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
         let raw =
             yaml_scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
@@ -141,8 +149,13 @@ impl TryFrom<serde_json::Value> for FieldName {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldNameError::NotScalar`] for `Null`, `Array`, and
-    /// `Object` values; otherwise see [`FieldName::validate`].
+    /// - [`NotScalar`] for `Null`, `Array`, and `Object` values
+    /// - [`Empty`] if the coerced string is empty or whitespace-only
+    /// - [`ContainsSlash`] if the coerced string contains `/`
+    ///
+    /// [`NotScalar`]: FieldNameError::NotScalar
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
         let raw = match value {
             serde_json::Value::String(s) => s,
@@ -432,7 +445,6 @@ impl PartialEq for FieldKey {
     }
 }
 
-/// Hashes the canonical form, consistent with [`PartialEq`].
 impl std::hash::Hash for FieldKey {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -469,11 +481,6 @@ impl TryFrom<&str> for FieldKey {
 impl FromStr for FieldKey {
     type Err = FieldKeyError;
 
-    /// Parses `raw` as a [`FieldKey`].
-    ///
-    /// # Errors
-    ///
-    /// See [`FieldKey::try_new`].
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_new(raw)
     }
@@ -520,8 +527,6 @@ impl TryFrom<serde_json::Value> for FieldKey {
 }
 
 impl Serialize for FieldKey {
-    /// Serializes as the original key text ([`FieldKey::name`]), not the
-    /// canonical form.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -531,11 +536,6 @@ impl Serialize for FieldKey {
 }
 
 impl<'de> Deserialize<'de> for FieldKey {
-    /// Deserializes from a string and validates it as a [`FieldKey`].
-    ///
-    /// # Errors
-    ///
-    /// See [`FieldKey::try_new`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -569,9 +569,6 @@ impl<'a> FieldKeyRef<'a> {
 }
 
 impl std::hash::Hash for FieldKeyRef<'_> {
-    /// Hashes the canonical form, consistent with [`FieldKey`]'s own
-    /// [`Hash`](std::hash::Hash) impl, delegating to
-    /// [`FieldKey::to_canonical`].
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         FieldKey::to_canonical(self.0).as_ref().hash(state);
@@ -579,8 +576,6 @@ impl std::hash::Hash for FieldKeyRef<'_> {
 }
 
 impl Equivalent<FieldKey> for FieldKeyRef<'_> {
-    /// Reuses [`FieldKey::is_match`] directly: exact raw-text match or
-    /// canonical match, with no duplicated matching logic.
     #[inline]
     fn equivalent(&self, key: &FieldKey) -> bool {
         key.is_match(self.0)
