@@ -278,3 +278,167 @@ const fn unit_name_of(unit: DurationUnit) -> &'static str {
         DurationUnit::Year => "year",
     }
 }
+
+/// A validated duration expression.
+///
+/// Constructed only via [`DurationValue::parse`] or
+/// [`DurationValue::parse_unit_name`]. Carries both the raw source text
+/// and the parsed total seconds.
+///
+/// # Examples
+///
+/// ```
+/// use traces_pkm::duration::DurationValue;
+///
+/// let dur = DurationValue::parse("1h 30m").expect("valid");
+/// assert_eq!(dur.to_seconds().as_f64(), 5400.0);
+/// assert_eq!(dur.as_raw(), "1h 30m");
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct DurationValue {
+    raw: String,
+    seconds: DurationSeconds,
+}
+
+impl DurationValue {
+    /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
+    ///
+    /// Returns `None` if the spelling is empty, contains no valid parts,
+    /// or has unrecognized units.
+    pub fn parse(spelling: &str) -> Option<Self> {
+        let bytes = spelling.as_bytes();
+        let len = bytes.len();
+        let mut pos = 0;
+        let mut total = 0.0f64;
+        let mut parsed_any = false;
+
+        while pos < len {
+            // skip separators (whitespace, commas)
+            while pos < len
+                && (bytes[pos].is_ascii_whitespace() || bytes[pos] == b',')
+            {
+                pos += 1;
+            }
+            if pos >= len {
+                break;
+            }
+
+            // parse number
+            let num_start = pos;
+            let mut has_decimal = false;
+            while pos < len {
+                if bytes[pos].is_ascii_digit() {
+                    pos += 1;
+                } else if bytes[pos] == b'.' && !has_decimal {
+                    has_decimal = true;
+                    pos += 1;
+                } else {
+                    break;
+                }
+            }
+            if num_start == pos {
+                return None;
+            }
+            let number: f64 = core::str::from_utf8(&bytes[num_start..pos])
+                .ok()?
+                .parse()
+                .ok()?;
+            if !number.is_finite() {
+                return None;
+            }
+
+            // skip whitespace between number and unit
+            while pos < len && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+
+            // parse unit
+            let unit_start = pos;
+            while pos < len && bytes[pos].is_ascii_alphabetic() {
+                pos += 1;
+            }
+            if unit_start == pos {
+                return None;
+            }
+            let unit_str =
+                core::str::from_utf8(&bytes[unit_start..pos]).ok()?;
+
+            let kind = parse_unit(unit_str)?;
+            total += number * unit_seconds(kind);
+            parsed_any = true;
+        }
+
+        parsed_any.then(|| Self {
+            raw: spelling.to_owned(),
+            seconds: DurationSeconds(total),
+        })
+    }
+
+    /// Parses a bare unit name (e.g., `"hours"`, `"d"`) as a single-part
+    /// duration with an implicit quantity of 1. Used by the template engine.
+    pub(crate) fn parse_unit_name(name: &str) -> Option<Self> {
+        let kind = parse_unit(name)?;
+        Some(Self {
+            raw: name.to_owned(),
+            seconds: DurationSeconds(unit_seconds(kind)),
+        })
+    }
+
+    /// Returns the total duration as [`DurationSeconds`].
+    #[inline]
+    #[must_use]
+    pub const fn to_seconds(&self) -> DurationSeconds {
+        self.seconds
+    }
+
+    /// Returns the raw source spelling.
+    #[inline]
+    #[must_use]
+    pub fn as_raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Returns `Some(DurationSeconds)` for fixed-length units, `None` for
+    /// variable-length units (months, years). For multi-part durations,
+    /// returns the last unit's value.
+    #[must_use]
+    pub fn diff_seconds(&self) -> Option<DurationSeconds> {
+        let last = self.last_unit()?;
+        match last {
+            DurationUnit::Millisecond => Some(DurationSeconds(0.0)),
+            DurationUnit::Second => Some(DurationSeconds(1.0)),
+            DurationUnit::Minute => Some(DurationSeconds(60.0)),
+            DurationUnit::Hour => Some(DurationSeconds(3_600.0)),
+            DurationUnit::Day => Some(DurationSeconds(86_400.0)),
+            DurationUnit::Week => Some(DurationSeconds(604_800.0)),
+            DurationUnit::Month | DurationUnit::Year => None,
+        }
+    }
+
+    /// Returns the canonical name of the last parsed unit (e.g., `"hour"`).
+    #[must_use]
+    pub fn unit_name(&self) -> &str {
+        self.last_unit().map(unit_name_of).unwrap_or("")
+    }
+
+    /// Scans backward from the end of `raw` to extract the last unit string.
+    fn last_unit(&self) -> Option<DurationUnit> {
+        let bytes = self.raw.as_bytes();
+        let len = bytes.len();
+        let mut pos = len;
+        while pos > 0 && bytes[pos - 1].is_ascii_alphabetic() {
+            pos -= 1;
+        }
+        if pos == len || pos == 0 {
+            return None;
+        }
+        let unit_str = core::str::from_utf8(&bytes[pos..]).ok()?;
+        parse_unit(unit_str)
+    }
+}
+
+impl From<DurationValue> for DurationSeconds {
+    fn from(d: DurationValue) -> Self {
+        d.seconds
+    }
+}
