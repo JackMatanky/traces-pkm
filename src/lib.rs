@@ -94,7 +94,13 @@ pub use dialog::{
     TerminalDialogProvider,
 };
 pub(crate) use dirtree::{DirTree, DirTreeError};
-pub(crate) use duration::{DurationSeconds, DurationUnit, DurationValue};
+#[expect(
+    unused_imports,
+    reason = "pub(crate) re-export for DurationError"
+)]
+pub(crate) use duration::{
+    DurationError, DurationSeconds, DurationUnit, DurationValue,
+};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };

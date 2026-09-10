@@ -1,22 +1,31 @@
+//! Duration parsing, validation, and computation.
+//!
+//! Three-layer design:
+//!
+//! - **Source text** (`&str`) — raw input from parser or frontmatter.
+//! - **Validated** ([`DurationValue`]) — parsed, carries raw text + total
+//!   seconds.
+//! - **Computable** ([`DurationSeconds`]) — typed `f64` with `Ord`, `Add`,
+//!   `Sub`, `Mul`.
+//!
+//! All duration unit knowledge lives in [`DurationUnit`]. Callers should not
+//! maintain their own unit registries.
+
 use std::fmt;
 
 /// A duration measured in seconds.
 ///
 /// Wraps `f64` with NaN-safe ordering and arithmetic traits. Constructed from
-/// [`DurationValue::to_seconds`] or via conversion traits.
-///
-/// # Examples
-///
-/// ```
-/// use traces_pkm::{DurationSeconds, DurationValue};
-///
-/// let a = DurationValue::parse("1h").unwrap().to_seconds();
-/// let b = DurationValue::parse("30m").unwrap().to_seconds();
-/// assert_eq!(a + b, DurationSeconds::from(5400.0));
-/// assert!(a > b);
-/// ```
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// [`DurationValue::to_seconds`] or via conversion traits. Always finite —
+/// callers must not construct with `NaN` or infinity.
+#[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(f64);
+
+impl PartialEq for DurationSeconds {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == std::cmp::Ordering::Equal
+    }
+}
 
 impl DurationSeconds {
     /// Returns the inner `f64` value.
@@ -26,7 +35,8 @@ impl DurationSeconds {
         self.0
     }
 
-    /// Returns the duration as a whole number of seconds (truncated).
+    /// Returns the duration as a whole number of seconds (truncated toward
+    /// zero). Fractional seconds are discarded.
     #[inline]
     #[must_use]
     pub const fn as_i64(self) -> i64 {
@@ -50,13 +60,13 @@ impl From<f64> for DurationSeconds {
 }
 
 impl From<DurationSeconds> for f64 {
-    fn from(d: DurationSeconds) -> f64 {
+    fn from(d: DurationSeconds) -> Self {
         d.0
     }
 }
 
 impl From<DurationSeconds> for i64 {
-    fn from(d: DurationSeconds) -> i64 {
+    fn from(d: DurationSeconds) -> Self {
         d.as_i64()
     }
 }
@@ -113,17 +123,18 @@ impl std::ops::Mul<DurationSeconds> for f64 {
     }
 }
 
-/// Error returned when parsing a duration string fails.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DurationParseError;
-
-impl fmt::Display for DurationParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("invalid duration spelling")
-    }
+/// Error returned when a duration operation fails.
+///
+/// Raised by [`DurationValue::from_str`] when the input cannot be parsed.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum DurationError {
+    /// The input string is not a valid duration spelling.
+    #[error("invalid duration `{input}`")]
+    Parse {
+        /// The raw input that failed to parse.
+        input: String,
+    },
 }
-
-impl std::error::Error for DurationParseError {}
 
 /// A recognized duration unit.
 ///
@@ -142,7 +153,8 @@ pub(crate) enum DurationUnit {
 
 impl DurationUnit {
     /// Case-insensitive lookup of a unit string.
-    pub fn parse(unit: &str) -> Option<Self> {
+    #[must_use]
+    pub(crate) fn parse(unit: &str) -> Option<Self> {
         let mut buf = [0u8; 16];
         let slice = buf.get_mut(..unit.len())?;
         slice.copy_from_slice(unit.as_bytes());
@@ -224,17 +236,7 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 /// Constructed only via [`DurationValue::parse`] or
 /// [`DurationValue::parse_unit_name`]. Carries both the raw source text and the
 /// parsed total seconds.
-///
-/// # Examples
-///
-/// ```
-/// use traces_pkm::DurationValue;
-///
-/// let dur = DurationValue::parse("1h 30m").expect("valid");
-/// assert_eq!(dur.to_seconds().as_f64(), 5400.0);
-/// assert_eq!(dur.as_raw(), "1h 30m");
-/// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DurationValue {
     raw: String,
     seconds: DurationSeconds,
@@ -334,8 +336,11 @@ impl DurationValue {
     /// Returns the raw source spelling.
     #[inline]
     #[must_use]
-    #[allow(dead_code)]
-    pub fn as_raw(&self) -> &str {
+    #[allow(
+        dead_code,
+        reason = "used in tests and doc examples within this module"
+    )]
+    pub(crate) fn as_raw(&self) -> &str {
         &self.raw
     }
 
@@ -345,16 +350,15 @@ impl DurationValue {
     #[must_use]
     pub fn diff_seconds(&self) -> Option<DurationSeconds> {
         let unit = self.last_unit()?;
-        matches!(
-            unit,
+        match unit {
             DurationUnit::Millisecond
-                | DurationUnit::Second
-                | DurationUnit::Minute
-                | DurationUnit::Hour
-                | DurationUnit::Day
-                | DurationUnit::Week
-        )
-        .then_some(DurationSeconds(unit.seconds()))
+            | DurationUnit::Second
+            | DurationUnit::Minute
+            | DurationUnit::Hour
+            | DurationUnit::Day
+            | DurationUnit::Week => Some(DurationSeconds(unit.seconds())),
+            DurationUnit::Month | DurationUnit::Year => None,
+        }
     }
 
     /// Returns the canonical name of the last parsed unit (e.g., `"hour"`).
@@ -362,8 +366,7 @@ impl DurationValue {
     pub fn unit_name(&self) -> &str {
         self.last_unit()
             .or_else(|| DurationUnit::parse(&self.raw))
-            .map(DurationUnit::name)
-            .unwrap_or("")
+            .map_or("", DurationUnit::name)
     }
 
     /// Scans backward from the end of `raw` to extract the last unit string.
@@ -391,11 +394,19 @@ impl From<DurationValue> for DurationSeconds {
     }
 }
 
+/// Enables `"1h 30m".parse::<DurationValue>()`.
+///
+/// # Errors
+///
+/// Returns [`DurationError::Parse`] if the string is empty, contains no valid
+/// parts, or has unrecognized units.
 impl std::str::FromStr for DurationValue {
-    type Err = DurationParseError;
+    type Err = DurationError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s).ok_or(DurationParseError)
+        Self::parse(s).ok_or(DurationError::Parse {
+            input: s.to_owned(),
+        })
     }
 }
 
