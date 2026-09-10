@@ -141,10 +141,12 @@ impl QueryFieldValueRef<'_> {
             Self::Duration(value) => {
                 if let NoteFieldValue::Duration(other) = literal {
                     match (
-                        crate::note::duration_seconds(value),
-                        crate::note::duration_seconds(other),
+                        crate::duration::DurationValue::parse(value),
+                        crate::duration::DurationValue::parse(other),
                     ) {
-                        (Some(sx), Some(sy)) => sx == sy,
+                        (Some(dv), Some(do_)) => {
+                            dv.to_seconds() == do_.to_seconds()
+                        }
                         _ => *value == other,
                     }
                 } else {
