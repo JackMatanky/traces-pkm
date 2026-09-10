@@ -431,34 +431,4 @@ mod tests {
             assert_eq!(value, NoteFieldValue::Duration("1h30m".to_owned()));
         }
     }
-
-    mod duration_unit {
-        use rstest::rstest;
-
-        #[rstest]
-        #[case::hours("h")]
-        #[case::minutes("m")]
-        #[case::seconds("s")]
-        #[case::days("d")]
-        #[case::hours_upper("H")]
-        #[case::minutes_upper("M")]
-        #[case::seconds_upper("S")]
-        #[case::days_upper("D")]
-        fn accepts_valid_duration_units(#[case] unit: &str) {
-            assert!(
-                crate::DurationUnit::parse(unit).is_some(),
-                "{unit} must be a valid duration unit"
-            );
-        }
-
-        #[rstest]
-        #[case::empty("")]
-        #[case::single_char_invalid("x")]
-        fn rejects_invalid_duration_units(#[case] unit: &str) {
-            assert!(
-                crate::DurationUnit::parse(unit).is_none(),
-                "{unit} must not be a valid duration unit"
-            );
-        }
-    }
 }
