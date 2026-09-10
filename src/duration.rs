@@ -2,11 +2,11 @@
 //!
 //! Three-layer design:
 //!
-//! - **Source text** (`&str`) — raw input from parser or frontmatter.
-//! - **Validated** ([`DurationValue`]) — parsed, carries raw text + total
+//! - **Source text** (`&str`), raw input from parser or frontmatter.
+//! - **Validated** ([`DurationValue`]), parsed, carries raw text + total
 //!   seconds.
-//! - **Computable** ([`DurationSeconds`]) — typed `f64` with `Ord`, `Add`,
-//!   `Sub`, `Mul`.
+//! - **Computable** ([`DurationSeconds`]), typed `f64` with [`Ord`], [`Add`],
+//!   [`Sub`], [`Mul`].
 //!
 //! All duration unit knowledge lives in [`DurationUnit`]. Callers should not
 //! maintain their own unit registries.
@@ -32,8 +32,9 @@ pub(crate) struct DurationValue {
 impl DurationValue {
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
-    /// Returns `None` if the spelling is empty, contains no valid parts, or has
-    /// unrecognized units.
+    /// Accepts one or more `<number><unit>` parts separated by whitespace or
+    /// commas. Returns `None` if the spelling is empty, contains no valid
+    /// parts, or has unrecognized units.
     pub fn parse(spelling: &str) -> Option<Self> {
         let bytes = spelling.as_bytes();
         let len = bytes.len();
@@ -110,8 +111,11 @@ impl DurationValue {
         })
     }
 
-    /// Parses a bare unit name (e.g., `"hours"`, `"d"`) as a single-part
-    /// duration with an implicit quantity of 1. Used by the template engine.
+    /// Parses a bare unit name as a single-part duration with quantity 1.
+    ///
+    /// Accepts any spelling recognized by [`DurationUnit::parse`] (e.g.,
+    /// `"hours"`, `"d"`, `"sec"`). Used by the template engine for
+    /// date-shift operations.
     pub(crate) fn parse_unit_name(name: &str) -> Option<Self> {
         let kind = DurationUnit::parse(name)?;
         Some(Self {
@@ -138,9 +142,10 @@ impl DurationValue {
         &self.raw
     }
 
-    /// Returns `Some(DurationSeconds)` for fixed-length units, `None` for
-    /// variable-length units (months, years). For multi-part durations, returns
-    /// the last unit's value.
+    /// Returns the seconds value for fixed-length units, or `None` for
+    /// variable-length units (months, years).
+    ///
+    /// For multi-part durations, returns the last unit's value.
     #[must_use]
     pub fn diff_seconds(&self) -> Option<DurationSeconds> {
         let unit = self.last_unit()?;
@@ -155,7 +160,10 @@ impl DurationValue {
         }
     }
 
-    /// Returns the canonical name of the last parsed unit (e.g., `"hour"`).
+    /// Returns the canonical singular name of the last parsed unit.
+    ///
+    /// For `"1h 30m"`, returns `"minute"` (the last unit). Falls back to
+    /// parsing the raw text as a single unit name.
     #[must_use]
     pub fn unit_name(&self) -> &str {
         self.last_unit()
@@ -163,7 +171,9 @@ impl DurationValue {
             .map_or("", DurationUnit::name)
     }
 
-    /// Scans backward from the end of `raw` to extract the last unit string.
+    /// Scans backward from the end of `raw` to extract the trailing unit
+    /// string. Returns `None` if the raw text has no trailing alphabetic
+    /// characters (e.g., `"1"` or `""`).
     fn last_unit(&self) -> Option<DurationUnit> {
         let bytes = self.raw.as_bytes();
         let len = bytes.len();
@@ -196,8 +206,8 @@ impl From<DurationValue> for DurationSeconds {
 ///
 /// # Errors
 ///
-/// Returns [`DurationError::Parse`] if the string is empty, contains no valid
-/// parts, or has unrecognized units.
+/// - [`DurationError::Parse`] if the string is empty, contains no valid parts,
+///   or has unrecognized units.
 impl FromStr for DurationValue {
     type Err = DurationError;
 
@@ -306,7 +316,7 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 /// A duration measured in seconds.
 ///
 /// Wraps `f64` with NaN-safe ordering and arithmetic traits. Constructed from
-/// [`DurationValue::to_seconds`] or via conversion traits. Always finite —
+/// [`DurationValue::to_seconds`] or via conversion traits. Always finite;
 /// callers must not construct with `NaN` or infinity.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(f64);
