@@ -6,7 +6,7 @@ use super::{
     QueryRow, error::QueryBuilderError, grammar::FieldPath,
     value::QueryFieldValueRef,
 };
-use crate::{NoteFieldValue, file::Timestamp};
+use crate::{NoteFieldValue, duration::DurationSeconds, file::Timestamp};
 
 /// Composite ordering clause made of one or more [`SortTerm`] values.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,7 +237,7 @@ pub(super) enum SortKey {
     Bool(bool),
     Number(f64),
     Date(Timestamp),
-    Duration(f64),
+    Duration(DurationSeconds),
     Text(Box<str>),
 }
 
@@ -257,8 +257,8 @@ impl SortKey {
                 }
             }
             QueryFieldValueRef::Duration(s) => {
-                if let Some(secs) = crate::note::duration_seconds(s) {
-                    Self::Duration(secs)
+                if let Some(dv) = crate::duration::DurationValue::parse(s) {
+                    Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text((*s).into())
                 }
@@ -266,8 +266,10 @@ impl SortKey {
             QueryFieldValueRef::Text(s) => {
                 if let Some(ts) = Timestamp::parse_iso(s) {
                     Self::Date(ts)
-                } else if let Some(secs) = crate::note::duration_seconds(s) {
-                    Self::Duration(secs)
+                } else if let Some(dv) =
+                    crate::duration::DurationValue::parse(s)
+                {
+                    Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text((*s).into())
                 }
@@ -296,8 +298,8 @@ impl SortKey {
                 }
             }
             NoteFieldValue::Duration(s) => {
-                if let Some(secs) = crate::note::duration_seconds(s) {
-                    Self::Duration(secs)
+                if let Some(dv) = crate::duration::DurationValue::parse(s) {
+                    Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text(s.as_str().into())
                 }
@@ -305,8 +307,10 @@ impl SortKey {
             NoteFieldValue::String(s) => {
                 if let Some(ts) = Timestamp::parse_iso(s) {
                     Self::Date(ts)
-                } else if let Some(secs) = crate::note::duration_seconds(s) {
-                    Self::Duration(secs)
+                } else if let Some(dv) =
+                    crate::duration::DurationValue::parse(s)
+                {
+                    Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text(s.as_str().into())
                 }
@@ -325,8 +329,8 @@ impl SortKey {
             (Self::Null, _) => Ordering::Less,
             (_, Self::Null) => Ordering::Greater,
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
-            (Self::Number(a), Self::Number(b))
-            | (Self::Duration(a), Self::Duration(b)) => a.total_cmp(b),
+            (Self::Number(a), Self::Number(b)) => a.total_cmp(b),
+            (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
             (Self::Date(a), Self::Date(b)) => a.cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
             _ => Ordering::Equal,
@@ -599,8 +603,8 @@ mod tests {
 
         #[test]
         fn compares_durations_numerically() {
-            let one_hour = SortKey::Duration(3600.0);
-            let thirty_mins = SortKey::Duration(1800.0);
+            let one_hour = SortKey::Duration(DurationSeconds::from(3_600.0));
+            let thirty_mins = SortKey::Duration(DurationSeconds::from(1_800.0));
             assert_eq!(one_hour.total_cmp(&thirty_mins), Ordering::Greater);
             assert_eq!(thirty_mins.total_cmp(&one_hour), Ordering::Less);
         }

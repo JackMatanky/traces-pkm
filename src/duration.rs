@@ -126,7 +126,7 @@ impl fmt::Display for DurationParseError {
 impl std::error::Error for DurationParseError {}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-enum DurationUnit {
+pub(crate) enum DurationUnit {
     Millisecond,
     Second,
     Minute,
