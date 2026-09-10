@@ -1,15 +1,16 @@
-//! Validate exact and forgiving field identifiers, and carry field values
-//! parsed from TOML, JSON, or YAML.
+//! Exact and forgiving field identifiers, and field values parsed from TOML,
+//! JSON, or YAML.
 //!
 //! # Main Types
 //!
-//! - [`FieldKey`] - Forgiving note field identity with a canonical form
-//! - [`FieldKeyRef`] - Borrowed candidate for a zero-allocation, O(1) forgiving
-//!   [`FieldKey`] lookup
-//! - [`FieldValue`] - Owned, format-agnostic field value
-//! - [`FieldValueRef`] - Zero-copy borrowed field value
-//! - [`FieldNameError`] - Field-name parse failure
-//! - [`FieldKeyError`] - Field-key parse failure
+//! - [`FieldName`] - exact schema field identifier preserving case
+//! - [`FieldNameRef`] - borrowed counterpart to [`FieldName`]
+//! - [`FieldKey`] - forgiving note field identity with a canonical form
+//! - [`FieldKeyRef`] - zero-allocation, O(1) forgiving [`FieldKey`] lookup
+//! - [`FieldValue`] - owned, format-agnostic field value
+//! - [`FieldValueRef`] - zero-copy borrowed field value
+//! - [`FieldNameError`] - field-name parse failure
+//! - [`FieldKeyError`] - field-key parse failure
 //!
 //! [`FieldName`] preserves exact identity: `status` and `Status` are distinct.
 //! [`FieldKey`] preserves the original text for display and stores a canonical
@@ -17,9 +18,8 @@
 //!
 //! [`FieldValueRef`] borrows from a document's source text wherever the backing
 //! TOML/JSON/YAML deserializer supports it (an unescaped string borrows
-//! directly; anything needing processing still allocates). This follows the
-//! crate's owned/borrowed newtype split: [`FieldValue`] is the owned
-//! counterpart, built once a value must outlive its source text.
+//! directly; anything needing processing still allocates). [`FieldValue`] is
+//! the owned counterpart, built once a value must outlive its source text.
 
 use std::{
     borrow::{Borrow, Cow},
@@ -44,7 +44,6 @@ use thiserror::Error;
 pub(crate) struct FieldName(String);
 
 impl FieldName {
-    /// Returns this name as a string slice.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -62,8 +61,11 @@ impl FieldName {
     ///
     /// # Errors
     ///
-    /// - [`FieldNameError::Empty`] if `raw` is empty or whitespace-only
-    /// - [`FieldNameError::ContainsSlash`] if `raw` contains `/`
+    /// - [`Empty`] if `raw` is empty or whitespace-only
+    /// - [`ContainsSlash`] if `raw` contains `/`
+    ///
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn validate(raw: &str) -> Result<(), FieldNameError> {
         if raw.trim().is_empty() {
             return Err(FieldNameError::Empty);
@@ -202,7 +204,11 @@ impl<'de> Deserialize<'de> for FieldName {
     ///
     /// # Errors
     ///
-    /// See [`FieldName::validate`].
+    /// - [`Empty`] if the string is empty or whitespace-only
+    /// - [`ContainsSlash`] if the string contains `/`
+    ///
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -220,7 +226,6 @@ impl<'de> Deserialize<'de> for FieldName {
 pub(crate) struct FieldNameRef<'a>(&'a str);
 
 impl<'a> FieldNameRef<'a> {
-    /// Returns this name as a string slice.
     #[inline]
     #[must_use]
     pub(crate) const fn as_str(self) -> &'a str {
@@ -235,7 +240,11 @@ impl<'a> TryFrom<&'a str> for FieldNameRef<'a> {
     ///
     /// # Errors
     ///
-    /// See [`FieldName::validate`].
+    /// - [`Empty`] if `raw` is empty or whitespace-only
+    /// - [`ContainsSlash`] if `raw` contains `/`
+    ///
+    /// [`Empty`]: FieldNameError::Empty
+    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
     fn try_from(raw: &'a str) -> Result<Self, Self::Error> {
         FieldName::validate(raw)?;
         Ok(Self(raw))
@@ -351,7 +360,7 @@ impl FieldKey {
 
     /// Canonicalizes a raw key for forgiving field matching.
     ///
-    /// Character transformations, applied left to right:
+    /// Character transformations:
     /// - ASCII whitespace is substituted with `-`
     /// - `_` and `-` are kept unchanged
     /// - ASCII letters are kept and lowercased
@@ -397,8 +406,9 @@ impl FieldKey {
     /// Returns `true` if `raw` already equals its own [`Self::canonicalize`]d
     /// form, without allocating the canonical form to check.
     ///
-    /// Used by [`FieldKeyRef::hash`] and [`FieldKey::to_canonical`] to avoid
-    /// allocation when the input is already canonical.
+    /// Used by [`FieldKeyRef`]'s [`Hash`](std::hash::Hash) impl and
+    /// [`FieldKey::to_canonical`] to avoid allocation when the input is
+    /// already canonical.
     fn is_canonical(raw: &str) -> bool {
         !raw.is_empty()
             && raw.chars().all(|ch| {
@@ -459,7 +469,12 @@ impl TryFrom<String> for FieldKey {
     ///
     /// # Errors
     ///
-    /// See [`FieldKey::try_new`].
+    /// - [`Name`] if `raw` fails [`FieldName`] validation
+    /// - [`EmptyCanonical`] if canonicalization strips every searchable
+    ///   character
+    ///
+    /// [`Name`]: FieldKeyError::Name
+    /// [`EmptyCanonical`]: FieldKeyError::EmptyCanonical
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         Self::try_new(raw)
     }
@@ -472,7 +487,12 @@ impl TryFrom<&str> for FieldKey {
     ///
     /// # Errors
     ///
-    /// See [`FieldKey::try_new`].
+    /// - [`Name`] if `raw` fails [`FieldName`] validation
+    /// - [`EmptyCanonical`] if canonicalization strips every searchable
+    ///   character
+    ///
+    /// [`Name`]: FieldKeyError::Name
+    /// [`EmptyCanonical`]: FieldKeyError::EmptyCanonical
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         Self::try_new(raw)
     }
@@ -493,8 +513,14 @@ impl TryFrom<serde_yaml::Value> for FieldKey {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldKeyError::Name`] for `Null`, `Sequence`, `Mapping`,
-    /// and `Tagged` values; otherwise see [`FieldKey::try_new`].
+    /// - [`NotScalar`] for `Null`, `Sequence`, `Mapping`, and `Tagged` values
+    /// - [`Name`] if the coerced string fails [`FieldName`] validation
+    /// - [`EmptyCanonical`] if canonicalization strips every searchable
+    ///   character
+    ///
+    /// [`NotScalar`]: FieldNameError::NotScalar
+    /// [`Name`]: FieldKeyError::Name
+    /// [`EmptyCanonical`]: FieldKeyError::EmptyCanonical
     fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
         let raw =
             yaml_scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
@@ -509,8 +535,14 @@ impl TryFrom<serde_json::Value> for FieldKey {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldKeyError::Name`] for `Null`, `Array`, and `Object`
-    /// values; otherwise see [`FieldKey::try_new`].
+    /// - [`NotScalar`] for `Null`, `Array`, and `Object` values
+    /// - [`Name`] if the coerced string fails [`FieldName`] validation
+    /// - [`EmptyCanonical`] if canonicalization strips every searchable
+    ///   character
+    ///
+    /// [`NotScalar`]: FieldNameError::NotScalar
+    /// [`Name`]: FieldKeyError::Name
+    /// [`EmptyCanonical`]: FieldKeyError::EmptyCanonical
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
         let raw = match value {
             serde_json::Value::String(s) => s,
@@ -808,8 +840,6 @@ impl From<serde_yaml::Value> for FieldValueRef<'static> {
 
 /// Controls how [`FieldValueRef`] classifies string scalars during
 /// deserialization from JSON, YAML, or TOML.
-///
-/// Extensible to datetimes and other date formats.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum FormatParsePolicy {
     /// Classify ISO date strings as [`FieldValueRef::Date`].
@@ -1089,10 +1119,8 @@ pub(crate) enum FieldKeyError {
     },
 }
 
-/// Coerces a YAML scalar into its string representation.
-///
-/// Returns `None` for non-scalar values: `Null`, `Sequence`, `Mapping`,
-/// `Tagged`.
+/// Coerces a YAML scalar into its string representation, returning `None` for
+/// non-scalar values.
 pub(crate) fn yaml_scalar_to_string(
     value: serde_yaml::Value,
 ) -> Option<String> {

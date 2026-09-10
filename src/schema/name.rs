@@ -6,19 +6,13 @@
 use std::{borrow::Borrow, fmt};
 
 use serde::Deserialize;
-use thiserror::Error;
 
-use super::GLOBAL_SCHEMA_NAME;
+use super::{GLOBAL_SCHEMA_NAME, error::SchemaNameError};
 use crate::BaseNameRef;
 
 /// A Schema name from its source file stem.
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
 pub(crate) struct SchemaName(String);
-
-/// Why a [`SchemaName`] could not be constructed.
-#[derive(Debug, Eq, PartialEq, Error)]
-#[error("Schema name must not be empty")]
-pub(crate) struct EmptySchemaName;
 
 impl SchemaName {
     /// Return this name as a string slice.
@@ -45,8 +39,8 @@ impl SchemaName {
     /// Returns the reserved Global Schema name.
     ///
     /// Infallible, unlike [`Self::try_from`]: `GLOBAL_SCHEMA_NAME` is a
-    /// compile-time non-empty `&'static str` literal, so there is no empty
-    /// case to reject.
+    /// compile-time non-empty `&'static str` literal, so there is no empty case
+    /// to reject.
     #[inline]
     #[must_use]
     pub(crate) fn global() -> Self {
@@ -56,26 +50,25 @@ impl SchemaName {
     /// Attempts to construct a [`SchemaName`], rejecting an empty name.
     ///
     /// An inherent method rather than a `TryFrom<&str>` trait impl: with the
-    /// `#[cfg(test)]`/`test-utils`-gated `From<&str>` impl below present in
-    /// the same build, a manual `TryFrom<&str>` impl conflicts with std's
-    /// blanket `impl<T, U> TryFrom<U> for T where U: Into<T>` (E0119). An
-    /// inherent method shadows the blanket trait impl for `SchemaName::
-    /// try_from(...)` call syntax without implementing the trait itself.
+    /// `#[cfg(test)]`/`test-utils`-gated `From<&str>` impl below present in the
+    /// same build, a manual `TryFrom<&str>` impl conflicts with std's blanket
+    /// `impl<T, U> TryFrom<U> for T where U: Into<T>` (E0119). An inherent
+    /// method shadows the blanket trait impl for `SchemaName:: try_from(...)`
+    /// call syntax without implementing the trait itself.
     ///
     /// Most callers should prefer a source-specific infallible constructor
     /// instead: [`Self::global`] for the reserved name, or the
     /// `From<`[`BaseNameRef`]`>` impl below for a Schema file's stem, both of
     /// which are non-empty by construction and never reach this check. This
-    /// method exists for the one remaining case (a `$ref` schema segment
-    /// parsed from user-authored TOML text) where the input is genuinely
-    /// untrusted.
+    /// method exists for the one remaining case (a `$ref` schema segment parsed
+    /// from user-authored TOML text) where the input is genuinely untrusted.
     ///
     /// # Errors
     ///
-    /// - [`EmptySchemaName`] if `name` is empty
-    pub(crate) fn try_from(name: &str) -> Result<Self, EmptySchemaName> {
+    /// - [`SchemaNameError::Empty`] if `name` is empty
+    pub(crate) fn try_from(name: &str) -> Result<Self, SchemaNameError> {
         if name.is_empty() {
-            return Err(EmptySchemaName);
+            return Err(SchemaNameError::Empty);
         }
         Ok(Self(name.to_owned()))
     }
@@ -90,10 +83,10 @@ impl From<SchemaNameRef<'_>> for SchemaName {
 impl From<BaseNameRef<'_>> for SchemaName {
     /// Builds a [`SchemaName`] from a Schema TOML file's stem.
     ///
-    /// Infallible, unlike [`SchemaName::try_from`]: [`BaseNameRef`] is
-    /// always derived from [`Path::file_stem`](std::path::Path::file_stem),
-    /// which never yields an empty string for a real path component, so the
-    /// non-empty invariant already holds before this conversion runs.
+    /// Infallible, unlike [`SchemaName::try_from`]: [`BaseNameRef`] is always
+    /// derived from [`Path::file_stem`](std::path::Path::file_stem), which
+    /// never yields an empty string for a real path component, so the non-empty
+    /// invariant already holds before this conversion runs.
     fn from(stem: BaseNameRef<'_>) -> Self {
         Self(stem.as_str().to_owned())
     }
@@ -101,9 +94,9 @@ impl From<BaseNameRef<'_>> for SchemaName {
 
 #[cfg(any(test, feature = "test-utils"))]
 impl From<&str> for SchemaName {
-    /// Test-only infallible constructor: every test fixture name is a
-    /// non-empty literal, so forcing `Result` handling through hundreds of
-    /// call sites buys production code nothing.
+    /// Test-only infallible constructor: every test fixture name is a non-empty
+    /// literal, so forcing `Result` handling through hundreds of call sites
+    /// buys production code nothing.
     #[expect(
         clippy::expect_used,
         reason = "test-only constructor; an invalid literal here is a test \

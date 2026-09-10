@@ -41,11 +41,6 @@ use thiserror::Error;
 
 use crate::path::{FolderRef, RelativePath};
 
-/// Reports that a path has no final component.
-#[derive(Debug, Error)]
-#[error("path has no file name")]
-pub(crate) struct MissingFileName;
-
 /// Metadata captured for one regular file under a project root.
 ///
 /// Stored paths are project-root-relative so the index can move with the
@@ -222,18 +217,18 @@ impl FileName {
 }
 
 impl TryFrom<&Path> for FileName {
-    type Error = MissingFileName;
+    type Error = FileNameError;
 
     /// Builds a [`FileName`] from `path`'s final component.
     ///
     /// # Errors
     ///
-    /// - [`MissingFileName`] if `path` has no final component, such as `/`,
-    ///   `..`, or an empty path.
+    /// - [`FileNameError::Missing`] if `path` has no final component, such as
+    ///   `/`, `..`, or an empty path.
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         path.file_name()
             .map(|name| Self(name.to_string_lossy().into_owned()))
-            .ok_or(MissingFileName)
+            .ok_or(FileNameError::Missing)
     }
 }
 
@@ -503,6 +498,14 @@ impl From<SystemTime> for Timestamp {
     }
 }
 
+/// Reports why a [`FileName`] could not be constructed.
+#[derive(Debug, Error)]
+pub(crate) enum FileNameError {
+    /// The path has no final component.
+    #[error("path has no file name")]
+    Missing,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,7 +650,7 @@ mod tests {
             let error = FileName::try_from(Path::new(".."))
                 .expect_err("path with no file name is rejected");
 
-            assert!(matches!(error, MissingFileName));
+            assert!(matches!(error, FileNameError::Missing));
         }
     }
 

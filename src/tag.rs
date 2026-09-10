@@ -7,31 +7,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Errors returned by [`Tag::parse`].
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub enum TagError {
-    /// The input tag string is missing the leading `#` prefix.
-    #[error("tag must start with `#`")]
-    MissingHash,
-    /// The character immediately following `#` is not an ASCII letter.
-    #[error("tag must start with `#` followed by a letter, found `{found}`")]
-    InvalidFirstCharacter {
-        /// The invalid character found after `#`.
-        found: char,
-    },
-    /// The tag body contains an invalid character.
-    #[error(
-        "invalid character `{found}` in tag; only letters, digits, `_`, `-`, \
-         and `/` are allowed"
-    )]
-    InvalidBodyCharacter {
-        /// Byte offset in the input where the invalid character occurred.
-        offset: usize,
-        /// The invalid character encountered.
-        found: char,
-    },
-}
-
 /// A validated Markdown tag, including its leading `#`.
 ///
 /// Constructed via [`Tag::parse`], which validates the format and pre-computes
@@ -154,6 +129,31 @@ impl Tag {
     pub fn is_exact_match(&self, other: &Self) -> bool {
         self == other
     }
+}
+
+/// Errors returned by [`Tag::parse`].
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum TagError {
+    /// The input tag string is missing the leading `#` prefix.
+    #[error("tag must start with `#`")]
+    MissingHash,
+    /// The character immediately following `#` is not an ASCII letter.
+    #[error("tag must start with `#` followed by a letter, found `{found}`")]
+    InvalidFirstCharacter {
+        /// The invalid character found after `#`.
+        found: char,
+    },
+    /// The tag body contains an invalid character.
+    #[error(
+        "invalid character `{found}` in tag; only letters, digits, `_`, `-`, \
+         and `/` are allowed"
+    )]
+    InvalidBodyCharacter {
+        /// Byte offset in the input where the invalid character occurred.
+        offset: usize,
+        /// The invalid character encountered.
+        found: char,
+    },
 }
 
 #[cfg(test)]

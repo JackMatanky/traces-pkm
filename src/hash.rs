@@ -13,17 +13,6 @@ use std::{
 
 use thiserror::Error;
 
-/// Reports that a file could not be read for hashing.
-#[derive(Debug, Error)]
-#[error("failed to read {path} for hashing")]
-pub struct HashError {
-    /// Path that could not be read.
-    pub(crate) path: PathBuf,
-    /// Source I/O error.
-    #[source]
-    pub(crate) source: io::Error,
-}
-
 /// Stores a BLAKE3 hash of file contents.
 ///
 /// Prefer hashing already-loaded content when the caller has it. Hashing a path
@@ -117,6 +106,17 @@ impl Blake3PathHash {
         str::from_utf8(&self.0)
             .expect("blake3 hex digest is always valid ASCII/UTF-8")
     }
+}
+
+/// Reports that a file could not be read for hashing.
+#[derive(Debug, Error)]
+#[error("failed to read {path} for hashing")]
+pub struct HashError {
+    /// Path that could not be read.
+    pub(crate) path: PathBuf,
+    /// Source I/O error.
+    #[source]
+    pub(crate) source: io::Error,
 }
 
 #[cfg(test)]

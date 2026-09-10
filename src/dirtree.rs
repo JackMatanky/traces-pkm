@@ -34,68 +34,6 @@ use std::{
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
-/// A failure raised while traversing a directory tree.
-///
-/// Callers match to state their missing-root policy and convert remaining
-/// errors via [`into_parts`](Self::into_parts).
-#[derive(Debug, Error)]
-pub(crate) enum DirTreeError {
-    /// The walk root does not exist.
-    #[error("walk root {path} does not exist")]
-    MissingRoot {
-        /// The root path passed to the constructor.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// The root exists but could not be opened.
-    #[error("failed to access walk root {path}")]
-    RootInaccessible {
-        /// The root path passed to the constructor.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// A node beneath the root failed (unreadable directory, metadata failure,
-    /// mid-readdir glitch).
-    #[error("failed to access node {path}")]
-    NodeInaccessible {
-        /// The failing node's path, falling back to the walk root when the
-        /// path is unavailable (mid-readdir stream errors).
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-}
-
-impl DirTreeError {
-    /// Splits the error into its resolved path and I/O source.
-    ///
-    /// Every variant carries the same `{path, source}` shape, allowing callers
-    /// to decompose any error variant into its constituent path and underlying
-    /// [`std::io::Error`] via tuple destructuring:
-    /// `let (path, source) = error.into_parts();`.
-    pub(crate) fn into_parts(self) -> (PathBuf, io::Error) {
-        match self {
-            Self::MissingRoot {
-                path,
-                source,
-            }
-            | Self::RootInaccessible {
-                path,
-                source,
-            }
-            | Self::NodeInaccessible {
-                path,
-                source,
-            } => (path, source),
-        }
-    }
-}
-
 /// Classifies one raw walkdir failure against the walk's root.
 fn classify(fallback: &Path, source: walkdir::Error) -> DirTreeError {
     let depth = source.depth();
@@ -340,6 +278,68 @@ impl Iterator for DirTree {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.start().next().map(|result| DirNode::try_new(&self.root, result))
+    }
+}
+
+/// A failure raised while traversing a directory tree.
+///
+/// Callers match to state their missing-root policy and convert remaining
+/// errors via [`into_parts`](Self::into_parts).
+#[derive(Debug, Error)]
+pub(crate) enum DirTreeError {
+    /// The walk root does not exist.
+    #[error("walk root {path} does not exist")]
+    MissingRoot {
+        /// The root path passed to the constructor.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// The root exists but could not be opened.
+    #[error("failed to access walk root {path}")]
+    RootInaccessible {
+        /// The root path passed to the constructor.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// A node beneath the root failed (unreadable directory, metadata failure,
+    /// mid-readdir glitch).
+    #[error("failed to access node {path}")]
+    NodeInaccessible {
+        /// The failing node's path, falling back to the walk root when the
+        /// path is unavailable (mid-readdir stream errors).
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+}
+
+impl DirTreeError {
+    /// Splits the error into its resolved path and I/O source.
+    ///
+    /// Every variant carries the same `{path, source}` shape, allowing callers
+    /// to decompose any error variant into its constituent path and underlying
+    /// [`std::io::Error`] via tuple destructuring:
+    /// `let (path, source) = error.into_parts();`.
+    pub(crate) fn into_parts(self) -> (PathBuf, io::Error) {
+        match self {
+            Self::MissingRoot {
+                path,
+                source,
+            }
+            | Self::RootInaccessible {
+                path,
+                source,
+            }
+            | Self::NodeInaccessible {
+                path,
+                source,
+            } => (path, source),
+        }
     }
 }
 

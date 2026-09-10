@@ -282,45 +282,6 @@ impl<'a, T: ?Sized> TokenSpec<'a, T> {
     }
 }
 
-/// Diagnostic errors emitted during lexical tokenization and parsing.
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub(crate) enum LexError {
-    /// An unexpected token was encountered where another token was expected.
-    #[error("found `{found}`, expected {expected}")]
-    UnexpectedToken {
-        /// The byte span of the unexpected token.
-        span: SourceSpan,
-        /// Description of the token found in the input.
-        found: String,
-        /// Description of the expected token.
-        expected: &'static str,
-    },
-    /// The input stream ended unexpectedly.
-    #[error("unexpected end of input, expected {expected}")]
-    UnexpectedEndOfInput {
-        /// The byte span at the end of input.
-        span: SourceSpan,
-        /// Description of the expected token.
-        expected: &'static str,
-    },
-}
-
-impl LexError {
-    /// Returns the byte span of this error.
-    #[must_use]
-    pub(crate) fn span(&self) -> SourceSpan {
-        match self {
-            Self::UnexpectedToken {
-                span,
-                ..
-            }
-            | Self::UnexpectedEndOfInput {
-                span,
-                ..
-            } => *span,
-        }
-    }
-}
 /// Strips matching single (`'...'`) or double (`"..."`) quotes from `raw` and
 /// unescapes backslash sequences via [`lexical_backslash_unescape`].
 ///
@@ -361,6 +322,46 @@ fn lexical_backslash_unescape(input: &str) -> String {
         }
     }
     output
+}
+
+/// Diagnostic errors emitted during lexical tokenization and parsing.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub(crate) enum LexError {
+    /// An unexpected token was encountered where another token was expected.
+    #[error("found `{found}`, expected {expected}")]
+    UnexpectedToken {
+        /// The byte span of the unexpected token.
+        span: SourceSpan,
+        /// Description of the token found in the input.
+        found: String,
+        /// Description of the expected token.
+        expected: &'static str,
+    },
+    /// The input stream ended unexpectedly.
+    #[error("unexpected end of input, expected {expected}")]
+    UnexpectedEndOfInput {
+        /// The byte span at the end of input.
+        span: SourceSpan,
+        /// Description of the expected token.
+        expected: &'static str,
+    },
+}
+
+impl LexError {
+    /// Returns the byte span of this error.
+    #[must_use]
+    pub(crate) fn span(&self) -> SourceSpan {
+        match self {
+            Self::UnexpectedToken {
+                span,
+                ..
+            }
+            | Self::UnexpectedEndOfInput {
+                span,
+                ..
+            } => *span,
+        }
+    }
 }
 
 #[cfg(test)]

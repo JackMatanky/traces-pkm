@@ -10,6 +10,14 @@ use thiserror::Error;
 use super::{SchemaName, fields::SchemaFieldBuilderError};
 use crate::FieldName;
 
+/// Why a [`SchemaName`] could not be constructed.
+#[derive(Debug, Eq, PartialEq, Error)]
+pub(crate) enum SchemaNameError {
+    /// Rejects an empty name.
+    #[error("Schema name must not be empty")]
+    Empty,
+}
+
 /// Convenience alias for schema operations that may fail.
 pub(crate) type SchemaResult<T> = std::result::Result<T, SchemaError>;
 

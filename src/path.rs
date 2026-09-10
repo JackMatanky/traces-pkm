@@ -25,53 +25,6 @@ use std::{
 use strict_path::{PathBoundary, StrictPathError};
 use thiserror::Error;
 
-/// Reports why path validation failed.
-#[derive(Debug, Error)]
-pub(crate) enum PathError {
-    /// Rejects an absolute candidate path.
-    #[error("path is absolute, expected a relative path")]
-    Absolute,
-    /// Rejects a candidate outside the expected root.
-    ///
-    /// Returned when a rooted walk path does not begin with `root`, or when
-    /// `strict-path` resolves a confined candidate outside the root boundary.
-    #[error("path is outside the root directory")]
-    OutsideRoot,
-    /// Rejects a lexically unsafe relative path.
-    ///
-    /// Returned when the candidate contains `..`, contains a component other
-    /// than a plain name or `.`, or has no plain-name component.
-    #[error(
-        "path contains an unsafe component (such as `..`) or has no named \
-         component"
-    )]
-    UnsafeComponent,
-    /// Reports that `strict-path` filesystem validation could not be completed.
-    #[error(transparent)]
-    StrictPath(#[from] StrictPathError),
-}
-
-impl PathError {
-    /// Routes a confinement failure to an escape or verification outcome.
-    ///
-    /// Uses `escape` for [`Self::Absolute`], [`Self::UnsafeComponent`], and
-    /// [`Self::OutsideRoot`]. Uses `unverifiable` for [`Self::StrictPath`] and
-    /// passes through the source [`StrictPathError`].
-    #[must_use]
-    pub(crate) fn fold_confinement<T>(
-        self,
-        escape: impl FnOnce() -> T,
-        unverifiable: impl FnOnce(StrictPathError) -> T,
-    ) -> T {
-        match self {
-            Self::Absolute | Self::UnsafeComponent | Self::OutsideRoot => {
-                escape()
-            }
-            Self::StrictPath(source) => unverifiable(source),
-        }
-    }
-}
-
 /// Stores a relative path proven safe by lexical checks.
 ///
 /// Does not touch the filesystem and does not resolve symlinks.
@@ -288,6 +241,53 @@ impl<'a> From<FolderRef<'a>> for &'a Path {
     #[inline]
     fn from(folder: FolderRef<'a>) -> Self {
         folder.0
+    }
+}
+
+/// Reports why path validation failed.
+#[derive(Debug, Error)]
+pub(crate) enum PathError {
+    /// Rejects an absolute candidate path.
+    #[error("path is absolute, expected a relative path")]
+    Absolute,
+    /// Rejects a candidate outside the expected root.
+    ///
+    /// Returned when a rooted walk path does not begin with `root`, or when
+    /// `strict-path` resolves a confined candidate outside the root boundary.
+    #[error("path is outside the root directory")]
+    OutsideRoot,
+    /// Rejects a lexically unsafe relative path.
+    ///
+    /// Returned when the candidate contains `..`, contains a component other
+    /// than a plain name or `.`, or has no plain-name component.
+    #[error(
+        "path contains an unsafe component (such as `..`) or has no named \
+         component"
+    )]
+    UnsafeComponent,
+    /// Reports that `strict-path` filesystem validation could not be completed.
+    #[error(transparent)]
+    StrictPath(#[from] StrictPathError),
+}
+
+impl PathError {
+    /// Routes a confinement failure to an escape or verification outcome.
+    ///
+    /// Uses `escape` for [`Self::Absolute`], [`Self::UnsafeComponent`], and
+    /// [`Self::OutsideRoot`]. Uses `unverifiable` for [`Self::StrictPath`] and
+    /// passes through the source [`StrictPathError`].
+    #[must_use]
+    pub(crate) fn fold_confinement<T>(
+        self,
+        escape: impl FnOnce() -> T,
+        unverifiable: impl FnOnce(StrictPathError) -> T,
+    ) -> T {
+        match self {
+            Self::Absolute | Self::UnsafeComponent | Self::OutsideRoot => {
+                escape()
+            }
+            Self::StrictPath(source) => unverifiable(source),
+        }
     }
 }
 

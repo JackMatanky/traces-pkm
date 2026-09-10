@@ -18,56 +18,6 @@ use thiserror::Error;
 
 use crate::{Blake3PathHash, DirTree, DirTreeError, dirs::StateDirRoot};
 
-/// Reports a [`FileStateStore`] operation failure.
-#[derive(Debug, Error)]
-pub enum FileStateStoreError {
-    /// Fails before hashing when a target path cannot be canonicalized.
-    #[error("failed to canonicalize path {path}")]
-    Canonicalize {
-        /// Path that could not be canonicalized.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Fails while creating, checking, reading, or removing a store entry.
-    #[error("file state store operation failed for {path}")]
-    StoreIo {
-        /// Path the failing operation targeted (a directory or an entry).
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Fails while reading a companion file.
-    #[error("failed to read companion file {path}")]
-    CompanionRead {
-        /// Companion file path.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Fails while writing a companion file.
-    #[error("failed to write companion file {path}")]
-    CompanionWrite {
-        /// Companion file path.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// Fails while removing a companion file.
-    #[error("failed to remove companion file {path}")]
-    CompanionRemove {
-        /// Companion file path.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-}
-
 /// Stores canonical file paths under hash-named entries.
 ///
 /// Entry behavior by platform:
@@ -462,6 +412,56 @@ fn store_error(error: DirTreeError) -> FileStateStoreError {
         path,
         source,
     }
+}
+
+/// Reports a [`FileStateStore`] operation failure.
+#[derive(Debug, Error)]
+pub enum FileStateStoreError {
+    /// Fails before hashing when a target path cannot be canonicalized.
+    #[error("failed to canonicalize path {path}")]
+    Canonicalize {
+        /// Path that could not be canonicalized.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// Fails while creating, checking, reading, or removing a store entry.
+    #[error("file state store operation failed for {path}")]
+    StoreIo {
+        /// Path the failing operation targeted (a directory or an entry).
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// Fails while reading a companion file.
+    #[error("failed to read companion file {path}")]
+    CompanionRead {
+        /// Companion file path.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// Fails while writing a companion file.
+    #[error("failed to write companion file {path}")]
+    CompanionWrite {
+        /// Companion file path.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// Fails while removing a companion file.
+    #[error("failed to remove companion file {path}")]
+    CompanionRemove {
+        /// Companion file path.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
 }
 
 #[cfg(test)]
