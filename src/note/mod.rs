@@ -43,7 +43,7 @@ mod metadata;
 mod model;
 mod parser;
 
-pub use field::{NoteFieldValue, duration_seconds};
+pub use field::NoteFieldValue;
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
     List, ListItem, ListItemIter, ListItemType, ListText, TaskDates,
@@ -53,3 +53,5 @@ pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
 pub use model::Note;
 pub use parser::{MarkdownParserInput, parse_markdown};
+
+pub use crate::duration::{DurationSeconds, DurationValue, duration_seconds};
