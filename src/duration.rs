@@ -240,3 +240,41 @@ const UNIT_NAMES: &[(DurationUnit, &[&str])] = &[
     (DurationUnit::Month, &["mo", "mos", "month", "months"]),
     (DurationUnit::Year, &["y", "yr", "yrs", "year", "years"]),
 ];
+
+/// Case-insensitive lookup of a unit string.
+pub(crate) fn parse_unit(unit: &str) -> Option<DurationUnit> {
+    let mut buf = [0u8; 16];
+    let slice = buf.get_mut(..unit.len())?;
+    slice.copy_from_slice(unit.as_bytes());
+    slice.make_ascii_lowercase();
+    let lower = core::str::from_utf8(slice).ok()?;
+    UNIT_MAP.get(lower).copied()
+}
+
+/// Seconds per [`DurationUnit`].
+const fn unit_seconds(unit: DurationUnit) -> f64 {
+    match unit {
+        DurationUnit::Millisecond => 0.001,
+        DurationUnit::Second => 1.0,
+        DurationUnit::Minute => 60.0,
+        DurationUnit::Hour => 3_600.0,
+        DurationUnit::Day => 86_400.0,
+        DurationUnit::Week => 604_800.0,
+        DurationUnit::Month => 2_592_000.0,
+        DurationUnit::Year => 31_536_000.0,
+    }
+}
+
+/// Canonical singular name for a [`DurationUnit`].
+const fn unit_name_of(unit: DurationUnit) -> &'static str {
+    match unit {
+        DurationUnit::Millisecond => "millisecond",
+        DurationUnit::Second => "second",
+        DurationUnit::Minute => "minute",
+        DurationUnit::Hour => "hour",
+        DurationUnit::Day => "day",
+        DurationUnit::Week => "week",
+        DurationUnit::Month => "month",
+        DurationUnit::Year => "year",
+    }
+}
