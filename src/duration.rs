@@ -442,3 +442,13 @@ impl From<DurationValue> for DurationSeconds {
         d.seconds
     }
 }
+
+/// Total seconds for a duration spelling like `"1h 30m"`.
+///
+/// Equivalent to `DurationValue::parse(spelling).map(DurationSeconds::from)`.
+/// Prefer [`DurationValue::parse`] when the validated value is reused.
+#[inline]
+#[must_use]
+pub fn duration_seconds(spelling: &str) -> Option<DurationSeconds> {
+    DurationValue::parse(spelling).map(|d| d.to_seconds())
+}
