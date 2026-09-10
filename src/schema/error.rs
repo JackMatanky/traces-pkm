@@ -47,8 +47,8 @@ pub(crate) enum SchemaError {
     Cycle {
         schemas: Vec<SchemaName>,
     },
-    /// Two effective fields share a [`FieldKey`](crate::FieldKey)
-    /// canonical form.
+    /// Two effective fields share a [`FieldKey`](crate::FieldKey) canonical
+    /// form.
     #[error(
         "Schema {schema:?} has ambiguous fields {first:?} and {second:?}: \
          both canonicalize to the same metadata key"
@@ -67,11 +67,10 @@ pub(crate) enum SchemaError {
 /// Why a Schema TOML file could not be loaded, once its path is known.
 ///
 /// Deliberately not shared with `select`'s file loader
-/// (`SchemaSelectFieldFileError`, in `fields::error`, a private submodule
-/// this doc comment can't link to):
-/// Schema files are always TOML, values files can be TOML or JSON, so the two
-/// don't have the same shape to share, even though both follow the same
-/// "read, then parse" pattern.
+/// (`SchemaSelectFieldFileError`, in `fields::error`, a private submodule this
+/// doc comment can't link to): Schema files are always TOML, values files can
+/// be TOML or JSON, so the two don't have the same shape to share, even though
+/// both follow the same "read, then parse" pattern.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFileError {
     #[error("{0}")]
@@ -88,8 +87,8 @@ impl From<SchemaFieldBuilderError> for SchemaError {
 
 /// A recoverable Schema resolution defect.
 ///
-/// Resolution skips the offending key or parent and continues. Every warning
-/// is surfaced to the caller as diagnostic context.
+/// Resolution skips the offending key or parent and continues. Every warning is
+/// surfaced to the caller as diagnostic context.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.
@@ -107,9 +106,9 @@ pub(crate) enum SchemaWarning {
         schema: SchemaName,
         target: SchemaName,
     },
-    /// A declared `extends` parent exists but failed to build its own
-    /// fields. This Schema resolves without that parent's contribution;
-    /// other valid parents still contribute.
+    /// A declared `extends` parent exists but failed to build its own fields.
+    /// This Schema resolves without that parent's contribution; other valid
+    /// parents still contribute.
     ParentFailedToResolve {
         schema: SchemaName,
         parent: SchemaName,
@@ -122,19 +121,18 @@ pub(crate) enum SchemaWarning {
         field: String,
     },
     /// A bare `$ref` override declared an invalid attribute (unknown key,
-    /// wrongly-shaped value, or invalid `number`/`select` configuration).
-    /// The key (or whole `values` override) is dropped and the base field's
-    /// value is used as-is.
+    /// wrongly-shaped value, or invalid `number`/`select` configuration). The
+    /// key (or whole `values` override) is dropped and the base field's value
+    /// is used as-is.
     ///
-    /// `message` is exactly what a hard failure for this same attribute
-    /// would report (`SchemaFieldParserError`'s `Display`, a private
-    /// `fields::error` type), rather than a second, hand-mirrored wording per
-    /// failure kind: five variants used to restate
-    /// `SchemaFieldParserError`'s five variants field-for-field just to
-    /// change "field ... has no attribute" into "$ref override ... has no
-    /// attribute"; the wrapped message already carries the address, kind,
-    /// and key, so this variant only adds what a degraded override actually
-    /// needs on top: that it *was* degraded.
+    /// `message` is exactly what a hard failure for this same attribute would
+    /// report (`SchemaFieldParserError`'s `Display`, a private `fields::error`
+    /// type), rather than a second, hand-mirrored wording per failure kind:
+    /// five variants used to restate `SchemaFieldParserError`'s five variants
+    /// field-for-field just to change "field ... has no attribute" into "$ref
+    /// override ... has no attribute"; the wrapped message already carries the
+    /// address, kind, and key, so this variant only adds what a degraded
+    /// override actually needs on top: that it *was* degraded.
     DegradedOverride {
         message: String,
     },
