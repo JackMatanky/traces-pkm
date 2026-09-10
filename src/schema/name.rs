@@ -38,32 +38,12 @@ impl SchemaName {
 
     /// Returns the reserved Global Schema name.
     ///
-    /// Infallible, unlike [`Self::try_from`]: `GLOBAL_SCHEMA_NAME` is a
-    /// compile-time non-empty `&'static str` literal, so there is no empty case
-    /// to reject.
+    /// `GLOBAL_SCHEMA_NAME` is a `&'static str` literal, so there is no
+    /// empty case to reject.
     #[inline]
     #[must_use]
     pub(crate) fn global() -> Self {
         Self(GLOBAL_SCHEMA_NAME.to_owned())
-    }
-
-    /// Attempts to construct a [`SchemaName`], rejecting an empty name.
-    ///
-    /// Most callers should prefer a source-specific infallible constructor
-    /// instead: [`Self::global`] for the reserved name, or the
-    /// `From<`[`BaseNameRef`]`>` impl below for a Schema file's stem, both of
-    /// which are non-empty by construction and never reach this check. This
-    /// method exists for the one remaining case (a `$ref` schema segment parsed
-    /// from user-authored TOML text) where the input is genuinely untrusted.
-    ///
-    /// # Errors
-    ///
-    /// - [`SchemaNameError::Empty`] if `name` is empty
-    pub(crate) fn try_from(name: &str) -> Result<Self, SchemaNameError> {
-        if name.is_empty() {
-            return Err(SchemaNameError::Empty);
-        }
-        Ok(Self(name.to_owned()))
     }
 
     /// Test-only infallible constructor: every test fixture name is a non-empty
@@ -75,6 +55,29 @@ impl SchemaName {
     }
 }
 
+impl TryFrom<&str> for SchemaName {
+    type Error = SchemaNameError;
+
+    /// Attempts to construct a [`SchemaName`], rejecting an empty name.
+    ///
+    /// Prefer an infallible path for non-empty inputs:
+    /// - [`SchemaName::global`] for the reserved Global Schema name.
+    /// - [`From<BaseNameRef>`] for a Schema file's stem.
+    ///
+    /// This exists for `$ref` segments parsed from user-authored TOML,
+    /// where the input is genuinely untrusted.
+    ///
+    /// # Errors
+    ///
+    /// - [`SchemaNameError::Empty`] if `name` is empty
+    fn try_from(name: &str) -> Result<Self, Self::Error> {
+        if name.is_empty() {
+            return Err(SchemaNameError::Empty);
+        }
+        Ok(Self(name.to_owned()))
+    }
+}
+
 impl From<SchemaNameRef<'_>> for SchemaName {
     fn from(name: SchemaNameRef<'_>) -> Self {
         Self(name.0.to_owned())
@@ -82,14 +85,13 @@ impl From<SchemaNameRef<'_>> for SchemaName {
 }
 
 impl From<BaseNameRef<'_>> for SchemaName {
-    /// Builds a [`SchemaName`] from a Schema TOML file's stem.
+    /// Builds a [`SchemaName`] from a Schema file's stem.
     ///
-    /// Infallible, unlike [`SchemaName::try_from`]: [`BaseNameRef`] is always
-    /// derived from [`Path::file_stem`](std::path::Path::file_stem), which
-    /// never yields an empty string for a real path component, so the non-empty
-    /// invariant already holds before this conversion runs.
-    fn from(stem: BaseNameRef<'_>) -> Self {
-        Self(stem.as_str().to_owned())
+    /// Infallible: [`BaseNameRef`] derives from
+    /// [`Path::file_stem`](std::path::Path::file_stem), which is never
+    /// empty for a real path component.
+    fn from(name: BaseNameRef<'_>) -> Self {
+        Self(name.as_str().to_owned())
     }
 }
 
