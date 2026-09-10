@@ -82,7 +82,7 @@ impl DurationValue {
 
             // skip whitespace between number and unit
             while pos < len
-                && bytes.get(pos).is_some_and(|b| b.is_ascii_whitespace())
+                && bytes.get(pos).is_some_and(u8::is_ascii_whitespace)
             {
                 pos = pos.saturating_add(1);
             }
@@ -90,7 +90,7 @@ impl DurationValue {
             // parse unit
             let unit_start = pos;
             while pos < len
-                && bytes.get(pos).is_some_and(|b| b.is_ascii_alphabetic())
+                && bytes.get(pos).is_some_and(u8::is_ascii_alphabetic)
             {
                 pos = pos.saturating_add(1);
             }
@@ -134,9 +134,13 @@ impl DurationValue {
     /// Returns the raw source spelling.
     #[inline]
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "used in tests and doc examples within this module"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API, split from the fields() iterator that is used"
+        )
     )]
     pub(crate) fn as_raw(&self) -> &str {
         &self.raw
@@ -181,7 +185,7 @@ impl DurationValue {
         while pos > 0
             && bytes
                 .get(pos.saturating_sub(1))
-                .is_some_and(|b| b.is_ascii_alphabetic())
+                .is_some_and(u8::is_ascii_alphabetic)
         {
             pos = pos.saturating_sub(1);
         }
@@ -333,7 +337,13 @@ impl DurationSeconds {
     /// zero). Fractional seconds are discarded.
     #[inline]
     #[must_use]
-    pub const fn as_i64(self) -> i64 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::as_conversions,
+        reason = "f64-to-i64 has no const safe alternative in std; callers \
+                  bound values to duration-range magnitudes"
+    )]
+    pub fn as_i64(self) -> i64 {
         self.0.trunc() as i64
     }
 }
@@ -464,6 +474,21 @@ mod tests {
             let b = DurationSeconds::from(200.0);
             assert!(a < b);
             assert!(b > a);
+            assert_eq!(a, DurationSeconds::from(100.0));
+        }
+
+        #[test]
+        fn nan_cmp_is_equal() {
+            let nan = DurationSeconds::from(f64::NAN);
+            assert_eq!(nan, nan);
+        }
+
+        #[test]
+        fn nan_ordering_is_total_cmp() {
+            let nan = DurationSeconds::from(f64::NAN);
+            let zero = DurationSeconds::from(0.0);
+            assert_eq!(nan.cmp(&zero), Ordering::Greater);
+            assert_eq!(zero.cmp(&nan), Ordering::Less);
         }
 
         #[test]
@@ -474,10 +499,29 @@ mod tests {
         }
 
         #[test]
+        fn from_f64_zero() {
+            let d = DurationSeconds::from(0.0);
+            assert_eq!(d.as_f64(), 0.0);
+        }
+
+        #[test]
         fn from_duration_value() {
             let dv = DurationValue::parse("1h").unwrap();
             let ds: DurationSeconds = dv.into();
             assert_eq!(ds.as_f64(), 3_600.0);
+        }
+
+        #[test]
+        fn as_i64_truncates_toward_zero() {
+            assert_eq!(DurationSeconds::from(1.9).as_i64(), 1);
+            assert_eq!(DurationSeconds::from(-1.9).as_i64(), -1);
+            assert_eq!(DurationSeconds::from(0.0).as_i64(), 0);
+        }
+
+        #[test]
+        fn display_formats_as_number() {
+            assert_eq!(DurationSeconds::from(3600.0).to_string(), "3600");
+            assert_eq!(DurationSeconds::from(0.5).to_string(), "0.5");
         }
     }
 
@@ -485,18 +529,66 @@ mod tests {
         use super::*;
 
         #[test]
-        fn parses_single_part() {
+        fn parses_single_hours() {
             assert_eq!(
                 DurationValue::parse("1h").unwrap().to_seconds().as_f64(),
                 3_600.0
             );
+        }
+
+        #[test]
+        fn parses_single_minutes() {
             assert_eq!(
                 DurationValue::parse("30m").unwrap().to_seconds().as_f64(),
                 1_800.0
             );
+        }
+
+        #[test]
+        fn parses_single_milliseconds() {
             assert_eq!(
                 DurationValue::parse("500ms").unwrap().to_seconds().as_f64(),
                 0.5
+            );
+        }
+
+        #[test]
+        fn parses_single_seconds() {
+            assert_eq!(
+                DurationValue::parse("90s").unwrap().to_seconds().as_f64(),
+                90.0
+            );
+        }
+
+        #[test]
+        fn parses_single_days() {
+            assert_eq!(
+                DurationValue::parse("2d").unwrap().to_seconds().as_f64(),
+                172_800.0
+            );
+        }
+
+        #[test]
+        fn parses_single_weeks() {
+            assert_eq!(
+                DurationValue::parse("1w").unwrap().to_seconds().as_f64(),
+                604_800.0
+            );
+        }
+
+        #[test]
+        fn parses_single_months() {
+            assert_eq!(
+                DurationValue::parse("3mo").unwrap().to_seconds().as_f64(),
+                7_776_000.0
+            );
+        }
+
+        #[test]
+        fn parses_single_years() {
+            assert_eq!(
+                DurationValue::parse("1y").unwrap().to_seconds().as_f64(),
+                31_536_000.0
             );
         }
 
@@ -533,6 +625,27 @@ mod tests {
         }
 
         #[test]
+        fn parses_decimal_without_leading_digit() {
+            assert_eq!(
+                DurationValue::parse(".5h").unwrap().to_seconds().as_f64(),
+                1_800.0
+            );
+        }
+
+        #[test]
+        fn parses_with_leading_trailing_whitespace() {
+            let d = DurationValue::parse(" 1h ").unwrap();
+            assert_eq!(d.to_seconds().as_f64(), 3_600.0);
+            assert_eq!(d.as_raw(), " 1h ");
+        }
+
+        #[test]
+        fn parses_with_multiple_consecutive_separators() {
+            let d = DurationValue::parse("1  h  30  m").unwrap();
+            assert_eq!(d.to_seconds().as_f64(), 5_400.0);
+        }
+
+        #[test]
         fn returns_none_for_empty() {
             assert!(DurationValue::parse("").is_none());
         }
@@ -556,35 +669,76 @@ mod tests {
         fn returns_none_for_no_number() {
             assert!(DurationValue::parse("h").is_none());
         }
+
+        #[test]
+        fn returns_none_for_multiple_decimals() {
+            assert!(DurationValue::parse("1.2.3h").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_unit_longer_than_16_bytes() {
+            let long_unit = "a".repeat(17);
+            let input = format!("1{long_unit}");
+            assert!(DurationValue::parse(&input).is_none());
+        }
+
+        #[test]
+        fn returns_none_for_only_separators_and_unit() {
+            assert!(DurationValue::parse(", h").is_none());
+        }
     }
 
     mod duration_value_diff_seconds {
         use super::*;
 
         #[test]
-        fn returns_some_for_fixed_units() {
-            assert!(
-                DurationValue::parse("1h").unwrap().diff_seconds().is_some()
-            );
-            assert!(
-                DurationValue::parse("30d").unwrap().diff_seconds().is_some()
-            );
+        fn returns_some_for_all_fixed_units() {
+            let fixed = ["500ms", "30s", "5m", "2h", "1d", "1w"];
+            for input in fixed {
+                let d = DurationValue::parse(input).unwrap();
+                assert!(
+                    d.diff_seconds().is_some(),
+                    "expected Some for fixed unit: {input}"
+                );
+            }
         }
 
         #[test]
         fn returns_none_for_variable_units() {
-            assert!(
-                DurationValue::parse("3mo").unwrap().diff_seconds().is_none()
-            );
-            assert!(
-                DurationValue::parse("2y").unwrap().diff_seconds().is_none()
-            );
+            let variable = ["3mo", "2y"];
+            for input in variable {
+                let d = DurationValue::parse(input).unwrap();
+                assert!(
+                    d.diff_seconds().is_none(),
+                    "expected None for variable unit: {input}"
+                );
+            }
         }
 
         #[test]
-        fn returns_correct_seconds_for_fixed_units() {
-            let h = DurationValue::parse("1h").unwrap().diff_seconds().unwrap();
-            assert_eq!(h.as_f64(), 3_600.0);
+        fn returns_correct_seconds_for_each_fixed_unit() {
+            let cases: &[(&str, f64)] = &[
+                ("500ms", 0.001),
+                ("30s", 1.0),
+                ("5m", 60.0),
+                ("2h", 3_600.0),
+                ("1d", 86_400.0),
+                ("1w", 604_800.0),
+            ];
+            for &(input, expected) in cases {
+                let got = DurationValue::parse(input)
+                    .unwrap()
+                    .diff_seconds()
+                    .unwrap()
+                    .as_f64();
+                assert_eq!(got, expected, "mismatch for {input}");
+            }
+        }
+
+        #[test]
+        fn returns_last_unit_for_multi_part() {
+            let d = DurationValue::parse("1h 30m").unwrap();
+            assert_eq!(d.diff_seconds().unwrap().as_f64(), 60.0);
         }
     }
 
@@ -593,8 +747,23 @@ mod tests {
 
         #[test]
         fn returns_canonical_name_for_single_unit() {
-            assert_eq!(DurationValue::parse("1h").unwrap().unit_name(), "hour");
-            assert_eq!(DurationValue::parse("30d").unwrap().unit_name(), "day");
+            let cases: &[(&str, &str)] = &[
+                ("1h", "hour"),
+                ("30d", "day"),
+                ("5m", "minute"),
+                ("100ms", "millisecond"),
+                ("30s", "second"),
+                ("2w", "week"),
+                ("3mo", "month"),
+                ("1y", "year"),
+            ];
+            for &(input, expected) in cases {
+                assert_eq!(
+                    DurationValue::parse(input).unwrap().unit_name(),
+                    expected,
+                    "mismatch for {input}"
+                );
+            }
         }
 
         #[test]
@@ -603,6 +772,24 @@ mod tests {
                 DurationValue::parse("1h 30m").unwrap().unit_name(),
                 "minute"
             );
+        }
+
+        #[test]
+        fn returns_empty_for_no_trailing_unit() {
+            let d = DurationValue {
+                raw: "1".to_owned(),
+                seconds: DurationSeconds(1.0),
+            };
+            assert_eq!(d.unit_name(), "");
+        }
+
+        #[test]
+        fn falls_back_to_raw_text_parsing() {
+            let d = DurationValue {
+                raw: "hours".to_owned(),
+                seconds: DurationSeconds(3_600.0),
+            };
+            assert_eq!(d.unit_name(), "hour");
         }
     }
 
@@ -620,11 +807,26 @@ mod tests {
         fn is_case_insensitive() {
             assert!(DurationValue::parse_unit_name("H").is_some());
             assert!(DurationValue::parse_unit_name("Hours").is_some());
+            assert!(DurationValue::parse_unit_name("HOURS").is_some());
         }
 
         #[test]
         fn rejects_unknown() {
             assert!(DurationValue::parse_unit_name("foo").is_none());
+        }
+
+        #[test]
+        fn parses_all_abbreviations() {
+            let abbrevs = [
+                "ms", "s", "sec", "m", "min", "h", "hr", "d", "w", "wk", "mo",
+                "y", "yr",
+            ];
+            for abbr in abbrevs {
+                assert!(
+                    DurationValue::parse_unit_name(abbr).is_some(),
+                    "failed for abbreviation: {abbr}"
+                );
+            }
         }
     }
 
@@ -647,6 +849,49 @@ mod tests {
         #[test]
         fn rejects_unknown() {
             assert!(DurationUnit::parse("foo").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_string_longer_than_16_bytes() {
+            let long = "a".repeat(17);
+            assert!(DurationUnit::parse(&long).is_none());
+        }
+
+        #[test]
+        fn returns_none_for_empty_string() {
+            assert!(DurationUnit::parse("").is_none());
+        }
+    }
+
+    mod from_str {
+        use super::*;
+
+        #[test]
+        fn roundtrips_valid_input() {
+            let d: DurationValue = "1h 30m".parse().unwrap();
+            assert_eq!(d.to_seconds().as_f64(), 5_400.0);
+        }
+
+        #[test]
+        fn returns_parse_error_for_invalid_input() {
+            let err = "not a duration".parse::<DurationValue>().unwrap_err();
+            assert!(
+                matches!(err, DurationError::Parse { ref input } if input == "not a duration")
+            );
+        }
+
+        #[test]
+        fn error_display_contains_input() {
+            let err = "bad".parse::<DurationValue>().unwrap_err();
+            assert!(err.to_string().contains("bad"));
+        }
+
+        #[test]
+        fn returns_parse_error_for_empty_input() {
+            let err = "".parse::<DurationValue>().unwrap_err();
+            assert!(
+                matches!(err, DurationError::Parse { ref input } if input.is_empty())
+            );
         }
     }
 
@@ -686,6 +931,28 @@ mod tests {
             for unit in all {
                 let name = unit.name();
                 assert!(seen.insert(name), "duplicate name: {name}");
+            }
+        }
+
+        #[test]
+        fn parse_roundtrips_each_unit() {
+            let all = [
+                DurationUnit::Millisecond,
+                DurationUnit::Second,
+                DurationUnit::Minute,
+                DurationUnit::Hour,
+                DurationUnit::Day,
+                DurationUnit::Week,
+                DurationUnit::Month,
+                DurationUnit::Year,
+            ];
+            for unit in all {
+                let name = unit.name();
+                assert_eq!(
+                    DurationUnit::parse(name).unwrap(),
+                    unit,
+                    "roundtrip failed for {name}"
+                );
             }
         }
     }
