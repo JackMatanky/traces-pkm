@@ -32,7 +32,7 @@ use minijinja::{
 };
 
 use super::error::TemplateEngineResult;
-use crate::duration::DurationValue;
+use crate::DurationValue;
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///

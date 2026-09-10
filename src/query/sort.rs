@@ -6,7 +6,7 @@ use super::{
     QueryRow, error::QueryBuilderError, grammar::FieldPath,
     value::QueryFieldValueRef,
 };
-use crate::{NoteFieldValue, duration::DurationSeconds, file::Timestamp};
+use crate::{DurationSeconds, NoteFieldValue, file::Timestamp};
 
 /// Composite ordering clause made of one or more [`SortTerm`] values.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -257,7 +257,7 @@ impl SortKey {
                 }
             }
             QueryFieldValueRef::Duration(s) => {
-                if let Some(dv) = crate::duration::DurationValue::parse(s) {
+                if let Some(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text((*s).into())
@@ -266,9 +266,7 @@ impl SortKey {
             QueryFieldValueRef::Text(s) => {
                 if let Some(ts) = Timestamp::parse_iso(s) {
                     Self::Date(ts)
-                } else if let Some(dv) =
-                    crate::duration::DurationValue::parse(s)
-                {
+                } else if let Some(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text((*s).into())
@@ -298,7 +296,7 @@ impl SortKey {
                 }
             }
             NoteFieldValue::Duration(s) => {
-                if let Some(dv) = crate::duration::DurationValue::parse(s) {
+                if let Some(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text(s.as_str().into())
@@ -307,9 +305,7 @@ impl SortKey {
             NoteFieldValue::String(s) => {
                 if let Some(ts) = Timestamp::parse_iso(s) {
                     Self::Date(ts)
-                } else if let Some(dv) =
-                    crate::duration::DurationValue::parse(s)
-                {
+                } else if let Some(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text(s.as_str().into())
@@ -587,6 +583,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::SortKey;
+        use crate::DurationSeconds;
 
         #[test]
         fn null_is_less_than_any_non_null() {

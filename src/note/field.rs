@@ -154,8 +154,6 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
     }
 }
 
-pub use crate::duration::duration_seconds;
-
 #[cfg(test)]
 mod tests {
     use super::*;

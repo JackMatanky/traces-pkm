@@ -2,8 +2,8 @@ use std::fmt;
 
 /// A duration measured in seconds.
 ///
-/// Wraps `f64` with NaN-safe ordering and arithmetic traits.
-/// Constructed from [`DurationValue::to_seconds`] or via conversion traits.
+/// Wraps `f64` with NaN-safe ordering and arithmetic traits. Constructed from
+/// [`DurationValue::to_seconds`] or via conversion traits.
 ///
 /// # Examples
 ///
@@ -16,7 +16,7 @@ use std::fmt;
 /// assert!(a > b);
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DurationSeconds(f64);
+pub(crate) struct DurationSeconds(f64);
 
 impl DurationSeconds {
     /// Returns the inner `f64` value.
@@ -125,6 +125,9 @@ impl fmt::Display for DurationParseError {
 
 impl std::error::Error for DurationParseError {}
 
+/// A recognized duration unit.
+///
+/// Single source of truth for unit parsing, seconds conversion, and naming.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum DurationUnit {
     Millisecond,
@@ -137,46 +140,45 @@ pub(crate) enum DurationUnit {
     Year,
 }
 
-/// Source of truth: `(spelling, kind, seconds_per_unit, is_fixed_length)`.
-///
-/// Every other registry is derived from this. Add new spellings here only.
-const DURATIONS: &[(&str, DurationUnit, f64, bool)] = &[
-    ("ms", DurationUnit::Millisecond, 0.001, true),
-    ("millisecond", DurationUnit::Millisecond, 0.001, true),
-    ("milliseconds", DurationUnit::Millisecond, 0.001, true),
-    ("s", DurationUnit::Second, 1.0, true),
-    ("sec", DurationUnit::Second, 1.0, true),
-    ("secs", DurationUnit::Second, 1.0, true),
-    ("second", DurationUnit::Second, 1.0, true),
-    ("seconds", DurationUnit::Second, 1.0, true),
-    ("m", DurationUnit::Minute, 60.0, true),
-    ("min", DurationUnit::Minute, 60.0, true),
-    ("mins", DurationUnit::Minute, 60.0, true),
-    ("minute", DurationUnit::Minute, 60.0, true),
-    ("minutes", DurationUnit::Minute, 60.0, true),
-    ("h", DurationUnit::Hour, 3_600.0, true),
-    ("hr", DurationUnit::Hour, 3_600.0, true),
-    ("hrs", DurationUnit::Hour, 3_600.0, true),
-    ("hour", DurationUnit::Hour, 3_600.0, true),
-    ("hours", DurationUnit::Hour, 3_600.0, true),
-    ("d", DurationUnit::Day, 86_400.0, true),
-    ("day", DurationUnit::Day, 86_400.0, true),
-    ("days", DurationUnit::Day, 86_400.0, true),
-    ("w", DurationUnit::Week, 604_800.0, true),
-    ("wk", DurationUnit::Week, 604_800.0, true),
-    ("wks", DurationUnit::Week, 604_800.0, true),
-    ("week", DurationUnit::Week, 604_800.0, true),
-    ("weeks", DurationUnit::Week, 604_800.0, true),
-    ("mo", DurationUnit::Month, 2_592_000.0, false),
-    ("mos", DurationUnit::Month, 2_592_000.0, false),
-    ("month", DurationUnit::Month, 2_592_000.0, false),
-    ("months", DurationUnit::Month, 2_592_000.0, false),
-    ("y", DurationUnit::Year, 31_536_000.0, false),
-    ("yr", DurationUnit::Year, 31_536_000.0, false),
-    ("yrs", DurationUnit::Year, 31_536_000.0, false),
-    ("year", DurationUnit::Year, 31_536_000.0, false),
-    ("years", DurationUnit::Year, 31_536_000.0, false),
-];
+impl DurationUnit {
+    /// Case-insensitive lookup of a unit string.
+    pub fn parse(unit: &str) -> Option<Self> {
+        let mut buf = [0u8; 16];
+        let slice = buf.get_mut(..unit.len())?;
+        slice.copy_from_slice(unit.as_bytes());
+        slice.make_ascii_lowercase();
+        let lower = core::str::from_utf8(slice).ok()?;
+        UNIT_MAP.get(lower).copied()
+    }
+
+    /// Seconds per unit.
+    pub const fn seconds(self) -> f64 {
+        match self {
+            Self::Millisecond => 0.001,
+            Self::Second => 1.0,
+            Self::Minute => 60.0,
+            Self::Hour => 3_600.0,
+            Self::Day => 86_400.0,
+            Self::Week => 604_800.0,
+            Self::Month => 2_592_000.0,
+            Self::Year => 31_536_000.0,
+        }
+    }
+
+    /// Canonical singular name (e.g., `"hour"`, `"month"`).
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Millisecond => "millisecond",
+            Self::Second => "second",
+            Self::Minute => "minute",
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::Year => "year",
+        }
+    }
+}
 
 /// Case-insensitive unit string → [`DurationUnit`].
 static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
@@ -217,73 +219,11 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
     "years" => DurationUnit::Year,
 };
 
-/// [`DurationUnit`] → seconds per unit.
-const DURATIONS_TO_SECONDS: &[(DurationUnit, f64)] = &[
-    (DurationUnit::Millisecond, 0.001),
-    (DurationUnit::Second, 1.0),
-    (DurationUnit::Minute, 60.0),
-    (DurationUnit::Hour, 3_600.0),
-    (DurationUnit::Day, 86_400.0),
-    (DurationUnit::Week, 604_800.0),
-    (DurationUnit::Month, 2_592_000.0),
-    (DurationUnit::Year, 31_536_000.0),
-];
-
-/// [`DurationUnit`] → all recognized spellings for that unit.
-const UNIT_NAMES: &[(DurationUnit, &[&str])] = &[
-    (DurationUnit::Millisecond, &["ms", "millisecond", "milliseconds"]),
-    (DurationUnit::Second, &["s", "sec", "secs", "second", "seconds"]),
-    (DurationUnit::Minute, &["m", "min", "mins", "minute", "minutes"]),
-    (DurationUnit::Hour, &["h", "hr", "hrs", "hour", "hours"]),
-    (DurationUnit::Day, &["d", "day", "days"]),
-    (DurationUnit::Week, &["w", "wk", "wks", "week", "weeks"]),
-    (DurationUnit::Month, &["mo", "mos", "month", "months"]),
-    (DurationUnit::Year, &["y", "yr", "yrs", "year", "years"]),
-];
-
-/// Case-insensitive lookup of a unit string.
-pub(crate) fn parse_unit(unit: &str) -> Option<DurationUnit> {
-    let mut buf = [0u8; 16];
-    let slice = buf.get_mut(..unit.len())?;
-    slice.copy_from_slice(unit.as_bytes());
-    slice.make_ascii_lowercase();
-    let lower = core::str::from_utf8(slice).ok()?;
-    UNIT_MAP.get(lower).copied()
-}
-
-/// Seconds per [`DurationUnit`].
-const fn unit_seconds(unit: DurationUnit) -> f64 {
-    match unit {
-        DurationUnit::Millisecond => 0.001,
-        DurationUnit::Second => 1.0,
-        DurationUnit::Minute => 60.0,
-        DurationUnit::Hour => 3_600.0,
-        DurationUnit::Day => 86_400.0,
-        DurationUnit::Week => 604_800.0,
-        DurationUnit::Month => 2_592_000.0,
-        DurationUnit::Year => 31_536_000.0,
-    }
-}
-
-/// Canonical singular name for a [`DurationUnit`].
-const fn unit_name_of(unit: DurationUnit) -> &'static str {
-    match unit {
-        DurationUnit::Millisecond => "millisecond",
-        DurationUnit::Second => "second",
-        DurationUnit::Minute => "minute",
-        DurationUnit::Hour => "hour",
-        DurationUnit::Day => "day",
-        DurationUnit::Week => "week",
-        DurationUnit::Month => "month",
-        DurationUnit::Year => "year",
-    }
-}
-
 /// A validated duration expression.
 ///
 /// Constructed only via [`DurationValue::parse`] or
-/// [`DurationValue::parse_unit_name`]. Carries both the raw source text
-/// and the parsed total seconds.
+/// [`DurationValue::parse_unit_name`]. Carries both the raw source text and the
+/// parsed total seconds.
 ///
 /// # Examples
 ///
@@ -295,7 +235,7 @@ const fn unit_name_of(unit: DurationUnit) -> &'static str {
 /// assert_eq!(dur.as_raw(), "1h 30m");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-pub struct DurationValue {
+pub(crate) struct DurationValue {
     raw: String,
     seconds: DurationSeconds,
 }
@@ -303,8 +243,8 @@ pub struct DurationValue {
 impl DurationValue {
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
-    /// Returns `None` if the spelling is empty, contains no valid parts,
-    /// or has unrecognized units.
+    /// Returns `None` if the spelling is empty, contains no valid parts, or has
+    /// unrecognized units.
     pub fn parse(spelling: &str) -> Option<Self> {
         let bytes = spelling.as_bytes();
         let len = bytes.len();
@@ -363,8 +303,8 @@ impl DurationValue {
             let unit_str =
                 core::str::from_utf8(&bytes[unit_start..pos]).ok()?;
 
-            let kind = parse_unit(unit_str)?;
-            total += number * unit_seconds(kind);
+            let kind = DurationUnit::parse(unit_str)?;
+            total += number * kind.seconds();
             parsed_any = true;
         }
 
@@ -377,10 +317,10 @@ impl DurationValue {
     /// Parses a bare unit name (e.g., `"hours"`, `"d"`) as a single-part
     /// duration with an implicit quantity of 1. Used by the template engine.
     pub(crate) fn parse_unit_name(name: &str) -> Option<Self> {
-        let kind = parse_unit(name)?;
+        let kind = DurationUnit::parse(name)?;
         Some(Self {
             raw: name.to_owned(),
-            seconds: DurationSeconds(unit_seconds(kind)),
+            seconds: DurationSeconds(kind.seconds()),
         })
     }
 
@@ -394,33 +334,35 @@ impl DurationValue {
     /// Returns the raw source spelling.
     #[inline]
     #[must_use]
+    #[allow(dead_code)]
     pub fn as_raw(&self) -> &str {
         &self.raw
     }
 
     /// Returns `Some(DurationSeconds)` for fixed-length units, `None` for
-    /// variable-length units (months, years). For multi-part durations,
-    /// returns the last unit's value.
+    /// variable-length units (months, years). For multi-part durations, returns
+    /// the last unit's value.
     #[must_use]
     pub fn diff_seconds(&self) -> Option<DurationSeconds> {
-        let last = self.last_unit()?;
-        match last {
-            DurationUnit::Millisecond => Some(DurationSeconds(0.0)),
-            DurationUnit::Second => Some(DurationSeconds(1.0)),
-            DurationUnit::Minute => Some(DurationSeconds(60.0)),
-            DurationUnit::Hour => Some(DurationSeconds(3_600.0)),
-            DurationUnit::Day => Some(DurationSeconds(86_400.0)),
-            DurationUnit::Week => Some(DurationSeconds(604_800.0)),
-            DurationUnit::Month | DurationUnit::Year => None,
-        }
+        let unit = self.last_unit()?;
+        matches!(
+            unit,
+            DurationUnit::Millisecond
+                | DurationUnit::Second
+                | DurationUnit::Minute
+                | DurationUnit::Hour
+                | DurationUnit::Day
+                | DurationUnit::Week
+        )
+        .then_some(DurationSeconds(unit.seconds()))
     }
 
     /// Returns the canonical name of the last parsed unit (e.g., `"hour"`).
     #[must_use]
     pub fn unit_name(&self) -> &str {
         self.last_unit()
-            .or_else(|| parse_unit(&self.raw))
-            .map(unit_name_of)
+            .or_else(|| DurationUnit::parse(&self.raw))
+            .map(DurationUnit::name)
             .unwrap_or("")
     }
 
@@ -432,11 +374,14 @@ impl DurationValue {
         while pos > 0 && bytes[pos - 1].is_ascii_alphabetic() {
             pos -= 1;
         }
-        if pos == len || pos == 0 {
+        // pos == len: no trailing alphabetic chars (e.g. "1" or "")
+        // pos == 0: entire string is alphabetic (e.g. "days")
+        // pos > 0: trailing unit after digits (e.g. "1h")
+        if pos == len {
             return None;
         }
         let unit_str = core::str::from_utf8(&bytes[pos..]).ok()?;
-        parse_unit(unit_str)
+        DurationUnit::parse(unit_str)
     }
 }
 
@@ -446,14 +391,12 @@ impl From<DurationValue> for DurationSeconds {
     }
 }
 
-/// Total seconds for a duration spelling like `"1h 30m"`.
-///
-/// Equivalent to `DurationValue::parse(spelling).map(DurationSeconds::from)`.
-/// Prefer [`DurationValue::parse`] when the validated value is reused.
-#[inline]
-#[must_use]
-pub fn duration_seconds(spelling: &str) -> Option<DurationSeconds> {
-    DurationValue::parse(spelling).map(|d| d.to_seconds())
+impl std::str::FromStr for DurationValue {
+    type Err = DurationParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or(DurationParseError)
+    }
 }
 
 #[cfg(test)]
@@ -654,20 +597,25 @@ mod tests {
         }
     }
 
-    mod parse_unit_helper {
+    mod duration_unit_parse {
         use super::*;
 
         #[test]
-        fn accepts_all_recognized_spellings() {
-            for &(spelling, kind, _, _) in DURATIONS {
-                assert_eq!(parse_unit(spelling).unwrap(), kind, "{spelling}");
-            }
+        fn is_case_insensitive() {
+            assert_eq!(DurationUnit::parse("H").unwrap(), DurationUnit::Hour);
+            assert_eq!(
+                DurationUnit::parse("HOUR").unwrap(),
+                DurationUnit::Hour
+            );
+            assert_eq!(
+                DurationUnit::parse("hours").unwrap(),
+                DurationUnit::Hour
+            );
         }
 
         #[test]
-        fn is_case_insensitive() {
-            assert_eq!(parse_unit("H").unwrap(), DurationUnit::Hour);
-            assert_eq!(parse_unit("HOUR").unwrap(), DurationUnit::Hour);
+        fn rejects_unknown() {
+            assert!(DurationUnit::parse("foo").is_none());
         }
     }
 
@@ -675,54 +623,38 @@ mod tests {
         use super::*;
 
         #[test]
-        fn durations_covers_all_unit_types() {
+        fn unit_map_covers_all_unit_types() {
             let mut seen = std::collections::HashSet::new();
-            for &(_, kind, _, _) in DURATIONS {
-                seen.insert(kind);
+            for entry in UNIT_MAP.entries() {
+                seen.insert(*entry.1);
             }
             assert_eq!(seen.len(), 8);
         }
 
         #[test]
-        fn durations_seconds_match_durations_to_seconds() {
-            for &(kind, expected) in DURATIONS_TO_SECONDS {
-                for &(_, k, secs, _) in
-                    DURATIONS.iter().filter(|&&(_, k, _, _)| k == kind)
-                {
-                    assert_eq!(secs, expected, "disagree for {k:?}");
-                }
+        fn seconds_are_consistent() {
+            for entry in UNIT_MAP.entries() {
+                let secs = entry.1.seconds();
+                assert!(secs > 0.0, "{:?} has non-positive seconds", entry.0);
             }
         }
 
         #[test]
-        fn durations_names_match_unit_names() {
-            for &(kind, expected_names) in UNIT_NAMES {
-                let actual: Vec<&str> = DURATIONS
-                    .iter()
-                    .filter(|&&(_, k, _, _)| k == kind)
-                    .map(|&(s, _, _, _)| s)
-                    .collect();
-                assert_eq!(
-                    actual.as_slice(),
-                    expected_names,
-                    "disagree for {kind:?}"
-                );
-            }
-        }
-    }
-
-    mod template_consistency {
-        use super::*;
-
-        #[test]
-        fn all_unit_names_parse_as_single_part() {
-            for &(kind, names) in UNIT_NAMES {
-                let canonical = unit_name_of(kind);
-                for name in names {
-                    let d = DurationValue::parse_unit_name(name)
-                        .unwrap_or_else(|| panic!("{name} must parse"));
-                    assert_eq!(d.unit_name(), canonical, "for {name}");
-                }
+        fn names_are_unique() {
+            let all = [
+                DurationUnit::Millisecond,
+                DurationUnit::Second,
+                DurationUnit::Minute,
+                DurationUnit::Hour,
+                DurationUnit::Day,
+                DurationUnit::Week,
+                DurationUnit::Month,
+                DurationUnit::Year,
+            ];
+            let mut seen = std::collections::HashSet::new();
+            for unit in all {
+                let name = unit.name();
+                assert!(seen.insert(name), "duplicate name: {name}");
             }
         }
     }

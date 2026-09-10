@@ -53,5 +53,3 @@ pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
 pub use model::Note;
 pub use parser::{MarkdownParserInput, parse_markdown};
-
-pub use crate::duration::{DurationSeconds, DurationValue, duration_seconds};

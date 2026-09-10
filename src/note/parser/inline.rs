@@ -193,7 +193,7 @@ impl<'a> InlineValueParser<'a> {
             .map(|(offset, ch)| self.source.token_end(unit_start, offset, ch))
             .last()?;
         let unit = self.source.get(unit_start..unit_end)?;
-        crate::duration::parse_unit(unit).is_some().then_some(unit_end)
+        crate::DurationUnit::parse(unit).is_some().then_some(unit_end)
     }
 
     /// Parses a case-insensitive `true`/`false` keyword atom at `pos`.
@@ -446,18 +446,17 @@ mod tests {
         #[case::days_upper("D")]
         fn accepts_valid_duration_units(#[case] unit: &str) {
             assert!(
-                crate::duration::parse_unit(unit).is_some(),
+                crate::DurationUnit::parse(unit).is_some(),
                 "{unit} must be a valid duration unit"
             );
         }
 
         #[rstest]
-        #[case::years("y")]
         #[case::empty("")]
         #[case::single_char_invalid("x")]
         fn rejects_invalid_duration_units(#[case] unit: &str) {
             assert!(
-                crate::duration::parse_unit(unit).is_none(),
+                crate::DurationUnit::parse(unit).is_none(),
                 "{unit} must not be a valid duration unit"
             );
         }

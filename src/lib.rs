@@ -94,7 +94,7 @@ pub use dialog::{
     TerminalDialogProvider,
 };
 pub(crate) use dirtree::{DirTree, DirTreeError};
-pub use duration::{DurationSeconds, DurationValue};
+pub(crate) use duration::{DurationSeconds, DurationUnit, DurationValue};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };
@@ -120,7 +120,7 @@ pub(crate) use lexer::{
 pub use note::{
     List, ListItem, ListItemIter, ListItemType, ListText, MarkdownParserInput,
     Note, NoteFieldValue, TaskDates, TaskListItem, TaskPriority,
-    duration_seconds, parse_markdown,
+    parse_markdown,
 };
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;
