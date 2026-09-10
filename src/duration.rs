@@ -112,3 +112,27 @@ impl std::ops::Mul<DurationSeconds> for f64 {
         DurationSeconds(self * rhs.0)
     }
 }
+
+/// Error returned when parsing a duration string fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DurationParseError;
+
+impl fmt::Display for DurationParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid duration spelling")
+    }
+}
+
+impl std::error::Error for DurationParseError {}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+enum DurationUnit {
+    Millisecond,
+    Second,
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
+}
