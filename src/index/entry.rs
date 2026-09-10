@@ -212,10 +212,11 @@ impl ListEntry {
         self.item.tags()
     }
 
-    /// 1-indexed source line.
+    /// 1-indexed source line, or `None` if the position has not been
+    /// assigned yet.
     #[inline]
     #[must_use]
-    pub const fn line(&self) -> crate::SourceLine {
+    pub const fn line(&self) -> Option<crate::SourceLine> {
         self.item.line()
     }
 

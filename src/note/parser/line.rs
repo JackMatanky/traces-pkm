@@ -37,10 +37,15 @@ impl ByteTracker {
     /// An offset beyond the source length resolves to the last line.
     #[inline]
     #[must_use]
-    pub(super) fn byte_to_line(&self, offset: ByteOffset) -> SourceLine {
+    #[expect(
+        clippy::expect_used,
+        reason = "partition_point always returns >= 1, so line is non-zero"
+    )]
+    pub(super) fn line_at(&self, offset: ByteOffset) -> SourceLine {
         let offset = usize::from(offset);
         let line = self.line_starts.partition_point(|&start| start <= offset);
         SourceLine::new(u32::try_from(line).unwrap_or(u32::MAX))
+            .expect("line number is always non-zero")
     }
 }
 
@@ -55,12 +60,12 @@ mod tests {
         let tracker = ByteTracker::new("no newlines here");
 
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(0)),
-            SourceLine::new(1)
+            tracker.line_at(ByteOffset::new(0)),
+            SourceLine::new(1).expect("non-zero")
         );
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(10)),
-            SourceLine::new(1)
+            tracker.line_at(ByteOffset::new(10)),
+            SourceLine::new(1).expect("non-zero")
         );
     }
 
@@ -69,28 +74,28 @@ mod tests {
         let tracker = ByteTracker::new("one\ntwo\nthree");
 
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(0)),
-            SourceLine::new(1),
+            tracker.line_at(ByteOffset::new(0)),
+            SourceLine::new(1).expect("non-zero"),
             "start of line 1"
         );
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(2)),
-            SourceLine::new(1),
+            tracker.line_at(ByteOffset::new(2)),
+            SourceLine::new(1).expect("non-zero"),
             "mid line 1"
         );
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(4)),
-            SourceLine::new(2),
+            tracker.line_at(ByteOffset::new(4)),
+            SourceLine::new(2).expect("non-zero"),
             "start of line 2"
         );
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(8)),
-            SourceLine::new(3),
+            tracker.line_at(ByteOffset::new(8)),
+            SourceLine::new(3).expect("non-zero"),
             "start of line 3"
         );
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(12)),
-            SourceLine::new(3),
+            tracker.line_at(ByteOffset::new(12)),
+            SourceLine::new(3).expect("non-zero"),
             "last byte of line 3"
         );
     }
@@ -100,13 +105,13 @@ mod tests {
         let tracker = ByteTracker::new("one\n\nthree");
 
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(4)),
-            SourceLine::new(2),
+            tracker.line_at(ByteOffset::new(4)),
+            SourceLine::new(2).expect("non-zero"),
             "the empty line"
         );
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(5)),
-            SourceLine::new(3)
+            tracker.line_at(ByteOffset::new(5)),
+            SourceLine::new(3).expect("non-zero")
         );
     }
 
@@ -115,8 +120,8 @@ mod tests {
         let tracker = ByteTracker::new("");
 
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(0)),
-            SourceLine::new(1)
+            tracker.line_at(ByteOffset::new(0)),
+            SourceLine::new(1).expect("non-zero")
         );
     }
 
@@ -125,8 +130,8 @@ mod tests {
         let tracker = ByteTracker::new("one\ntwo\nthree");
 
         assert_eq!(
-            tracker.byte_to_line(ByteOffset::new(1000)),
-            SourceLine::new(3)
+            tracker.line_at(ByteOffset::new(1000)),
+            SourceLine::new(3).expect("non-zero")
         );
     }
 }

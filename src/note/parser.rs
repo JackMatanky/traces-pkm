@@ -378,7 +378,7 @@ impl<'a> ParserContext<'a> {
 
     /// Computes the item's source line from `offset` and starts tracking it.
     fn start_item(&mut self, offset: ByteOffset) {
-        let line = self.line_tracker.byte_to_line(offset);
+        let line = self.line_tracker.line_at(offset);
         self.list_nesting.start_item(line);
     }
 
@@ -706,7 +706,10 @@ mod tests {
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("parent item");
-            assert_eq!(parent.line(), SourceLine::new(1));
+            assert_eq!(
+                parent.line(),
+                Some(SourceLine::new(1).expect("non-zero"))
+            );
             assert_eq!(parent.depth(), 0);
             assert_eq!(parent.parent(), None);
 
@@ -715,18 +718,30 @@ mod tests {
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("child item");
-            assert_eq!(child.line(), SourceLine::new(2));
+            assert_eq!(
+                child.line(),
+                Some(SourceLine::new(2).expect("non-zero"))
+            );
             assert_eq!(child.depth(), 1);
-            assert_eq!(child.parent(), Some(SourceLine::new(1)));
+            assert_eq!(
+                child.parent(),
+                Some(SourceLine::new(1).expect("non-zero"))
+            );
 
             let grandchild = child
                 .children()
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("grandchild item");
-            assert_eq!(grandchild.line(), SourceLine::new(3));
+            assert_eq!(
+                grandchild.line(),
+                Some(SourceLine::new(3).expect("non-zero"))
+            );
             assert_eq!(grandchild.depth(), 2);
-            assert_eq!(grandchild.parent(), Some(SourceLine::new(2)));
+            assert_eq!(
+                grandchild.parent(),
+                Some(SourceLine::new(2).expect("non-zero"))
+            );
         }
 
         #[test]
@@ -736,7 +751,10 @@ mod tests {
 
             let list = note.lists().first().expect("list present");
             let sibling = list.items().get(1).expect("sibling item");
-            assert_eq!(sibling.line(), SourceLine::new(3));
+            assert_eq!(
+                sibling.line(),
+                Some(SourceLine::new(3).expect("non-zero"))
+            );
             assert_eq!(sibling.depth(), 0);
             assert_eq!(sibling.parent(), None);
         }

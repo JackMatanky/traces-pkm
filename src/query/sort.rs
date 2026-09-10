@@ -1,6 +1,6 @@
 //! Sort-key utilities and total-order comparison for resolved field values.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, num::NonZeroUsize};
 
 use super::{
     QueryRow, error::QueryBuilderError, grammar::FieldPath,
@@ -34,9 +34,15 @@ impl SortOrder {
     }
 
     /// Builds one row-major [`SortKeys`] buffer for `rows`.
+    #[expect(
+        clippy::expect_used,
+        reason = "caller guarantees non-empty terms via sort_rows guard"
+    )]
     pub(super) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
-        let stride = self.terms.len();
-        let mut flat = Vec::with_capacity(rows.len().saturating_mul(stride));
+        let stride = NonZeroUsize::new(self.terms.len())
+            .expect("caller guards non-empty");
+        let mut flat =
+            Vec::with_capacity(rows.len().saturating_mul(stride.get()));
         for row in rows {
             for term in &self.terms {
                 let val_ref = row.resolve_ref(&term.path);
@@ -208,7 +214,7 @@ impl SortDirection {
 /// Row-major buffer of precomputed sort keys.
 pub(super) struct SortKeys {
     flat: Vec<SortKey>,
-    stride: usize,
+    stride: NonZeroUsize,
 }
 
 impl SortKeys {
@@ -217,8 +223,9 @@ impl SortKeys {
     #[inline]
     #[must_use]
     pub(super) fn get(&self, row_idx: usize) -> &[SortKey] {
-        let start = row_idx.saturating_mul(self.stride);
-        let end = start.saturating_add(self.stride);
+        let stride = self.stride.get();
+        let start = row_idx.saturating_mul(stride);
+        let end = start.saturating_add(stride);
         self.flat.get(start..end).unwrap_or(&[])
     }
 }

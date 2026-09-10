@@ -149,7 +149,7 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
         assert_eq!(record.line(), SourceLine::new(line), "record {index} line");
         assert_eq!(
             record.parent_line(),
-            parent_line.map(SourceLine::new),
+            parent_line.and_then(SourceLine::new),
             "record {index} parent_line"
         );
     }

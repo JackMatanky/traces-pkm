@@ -288,8 +288,18 @@ impl IndexStore {
     #[must_use]
     fn list_key_bounds(path: &str) -> (Vec<u8>, Vec<u8>) {
         (
-            Self::list_key(path, SourceLine::new(0)),
-            Self::list_key(path, SourceLine::new(u32::MAX)),
+            {
+                let mut key = Vec::with_capacity(path.len().saturating_add(4));
+                key.extend_from_slice(path.as_bytes());
+                key.extend_from_slice(&0u32.to_be_bytes());
+                key
+            },
+            {
+                let mut key = Vec::with_capacity(path.len().saturating_add(4));
+                key.extend_from_slice(path.as_bytes());
+                key.extend_from_slice(&u32::MAX.to_be_bytes());
+                key
+            },
         )
     }
 
@@ -1225,7 +1235,14 @@ impl IndexStore {
     ) -> IndexResult<()> {
         let path_key = IndexListKey::new(note.path());
         for item in note.list_items() {
-            let key = Self::list_key(path_key.as_str(), item.line());
+            #[expect(
+                clippy::expect_used,
+                reason = "parser always assigns a line to each list item"
+            )]
+            let key = Self::list_key(
+                path_key.as_str(),
+                item.line().expect("parser always sets line"),
+            );
             let leaf = item.without_children();
             let entry = ListEntryRef {
                 path: path_key.as_str(),
@@ -2030,21 +2047,33 @@ mod tests {
             assert_eq!(rec0.clean_text(), "Todo task");
             assert_eq!(rec0.status_type(), Some(TaskStatusType::Todo));
             assert_eq!(rec0.due_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
-            assert_eq!(rec0.line(), SourceLine::new(1));
+            assert_eq!(
+                rec0.line(),
+                Some(SourceLine::new(1).expect("non-zero"))
+            );
             assert_eq!(rec0.depth(), 0);
 
             let rec1 = lists.get(1).expect("second item");
             assert_eq!(rec1.clean_text(), "Plain bullet");
             assert_eq!(rec1.status_type(), None);
-            assert_eq!(rec1.line(), SourceLine::new(2));
+            assert_eq!(
+                rec1.line(),
+                Some(SourceLine::new(2).expect("non-zero"))
+            );
             assert_eq!(rec1.depth(), 0);
 
             let rec2 = lists.get(2).expect("third item");
             assert_eq!(rec2.clean_text(), "Child task");
             assert_eq!(rec2.status_type(), Some(TaskStatusType::Done));
-            assert_eq!(rec2.line(), SourceLine::new(3));
+            assert_eq!(
+                rec2.line(),
+                Some(SourceLine::new(3).expect("non-zero"))
+            );
             assert_eq!(rec2.depth(), 1);
-            assert_eq!(rec2.parent_line(), Some(SourceLine::new(2)));
+            assert_eq!(
+                rec2.parent_line(),
+                Some(SourceLine::new(2).expect("non-zero"))
+            );
         }
 
         #[test]

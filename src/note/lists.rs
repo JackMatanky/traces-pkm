@@ -427,10 +427,11 @@ impl ListItem {
         self.position.depth()
     }
 
-    /// Returns the item's 1-indexed source line.
+    /// Returns the item's 1-indexed source line, or `None` if the position
+    /// has not been assigned yet.
     #[inline]
     #[must_use]
-    pub(crate) const fn line(&self) -> SourceLine {
+    pub(crate) const fn line(&self) -> Option<SourceLine> {
         self.position.line()
     }
 
@@ -1327,7 +1328,7 @@ impl std::iter::FusedIterator for ListItemIter<'_> {}
 )]
 pub(super) struct ListItemPosition {
     depth: u8,
-    line: SourceLine,
+    line: Option<SourceLine>,
     parent: Option<SourceLine>,
 }
 
@@ -1343,7 +1344,7 @@ impl ListItemPosition {
     ) -> Self {
         Self {
             depth,
-            line,
+            line: Some(line),
             parent,
         }
     }
@@ -1355,10 +1356,11 @@ impl ListItemPosition {
         self.depth
     }
 
-    /// Returns the 1-indexed source line.
+    /// Returns the 1-indexed source line, or `None` if the position has not
+    /// been assigned yet.
     #[inline]
     #[must_use]
-    pub(super) const fn line(&self) -> SourceLine {
+    pub(super) const fn line(&self) -> Option<SourceLine> {
         self.line
     }
 
@@ -1503,7 +1505,6 @@ mod tests {
             fn defaults_position_to_zero_and_no_parent() {
                 let item = ListItem::new("item", ListItemType::Plain);
 
-                assert_eq!(item.line(), SourceLine::new(0));
                 assert_eq!(item.depth(), 0);
                 assert_eq!(item.parent(), None);
             }
@@ -1511,16 +1512,22 @@ mod tests {
             #[test]
             fn with_position_sets_line_depth_and_parent() {
                 let position = ListItemPosition::new(
-                    SourceLine::new(3),
+                    SourceLine::new(3).expect("non-zero"),
                     2,
-                    Some(SourceLine::new(1)),
+                    Some(SourceLine::new(1).expect("non-zero")),
                 );
                 let item = ListItem::new("item", ListItemType::Plain)
                     .with_position(position);
 
-                assert_eq!(item.line(), SourceLine::new(3));
+                assert_eq!(
+                    item.line(),
+                    Some(SourceLine::new(3).expect("non-zero"))
+                );
                 assert_eq!(item.depth(), 2);
-                assert_eq!(item.parent(), Some(SourceLine::new(1)));
+                assert_eq!(
+                    item.parent(),
+                    Some(SourceLine::new(1).expect("non-zero"))
+                );
             }
         }
     }
