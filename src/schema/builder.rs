@@ -455,7 +455,7 @@ mod tests {
         fields: &[(&str, RawSchemaFieldDef)],
     ) -> RawSchema {
         RawSchema {
-            extends: extends.iter().map(|&s| SchemaName::from(s)).collect(),
+            extends: extends.iter().map(|&s| SchemaName::new_test(s)).collect(),
             excludes: Vec::new(),
             fields: fields
                 .iter()
@@ -493,7 +493,7 @@ mod tests {
         fn resolves_a_schema_with_no_extends() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
 
@@ -523,11 +523,11 @@ mod tests {
         fn own_fields_override_parent_fields() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[(
                     "status",
                     select_field(&["outline", "shipped"]),
@@ -557,14 +557,14 @@ mod tests {
         fn first_listed_parent_wins_a_shared_field() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("a"),
+                SchemaName::new_test("a"),
                 schema(&[], &[("shared", select_field(&["from-a"]))]),
             );
             raw.insert(
-                SchemaName::from("b"),
+                SchemaName::new_test("b"),
                 schema(&[], &[("shared", select_field(&["from-b"]))]),
             );
-            raw.insert(SchemaName::from("child"), schema(&["a", "b"], &[]));
+            raw.insert(SchemaName::new_test("child"), schema(&["a", "b"], &[]));
 
             let ResolvedSchemas {
                 schemas: resolved,
@@ -587,14 +587,14 @@ mod tests {
         fn excludes_drops_an_inherited_field_by_name() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[
                     ("status", select_field(&["draft"])),
                     ("author", input_field()),
                 ]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema_with_excludes(&["book"], &["status"], &[]),
             );
 
@@ -615,11 +615,11 @@ mod tests {
         fn excludes_is_exact_and_does_not_drop_a_different_case_field() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema_with_excludes(&["book"], &["Status"], &[]),
             );
 
@@ -636,11 +636,11 @@ mod tests {
         fn own_redeclaration_of_an_excluded_field_survives() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema_with_excludes(&["book"], &["status"], &[(
                     "status",
                     input_field(),
@@ -695,7 +695,7 @@ mod tests {
         ) {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("f", field_def)]),
             );
 
@@ -715,7 +715,7 @@ mod tests {
         fn multi_defaults_to_false_and_honors_a_local_override() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[
                     ("status", select_field(&["draft"])),
                     ("authors", RawSchemaFieldDef {
@@ -739,18 +739,18 @@ mod tests {
         fn emits_warning_when_parent_failed_to_resolve() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("broken"),
+                SchemaName::new_test("broken"),
                 schema(&[], &[
                     ("status", input_field()),
                     ("Status", input_field()),
                 ]),
             );
             raw.insert(
-                SchemaName::from("good"),
+                SchemaName::new_test("good"),
                 schema(&[], &[("label", select_field(&["a"]))]),
             );
             raw.insert(
-                SchemaName::from("child"),
+                SchemaName::new_test("child"),
                 schema(&["broken", "good"], &[]),
             );
 
@@ -763,11 +763,11 @@ mod tests {
             assert_eq!(failures.len(), 1);
             assert_eq!(
                 failures.first().expect("one failure").schema,
-                SchemaName::from("broken")
+                SchemaName::new_test("broken")
             );
             assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
-                schema: SchemaName::from("child"),
-                parent: SchemaName::from("broken"),
+                schema: SchemaName::new_test("child"),
+                parent: SchemaName::new_test("broken"),
             }));
             let child = resolved.get("child").expect("child resolves");
             assert!(
@@ -790,11 +790,11 @@ mod tests {
         fn does_not_inherit_fields_from_its_own_declared_extends() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("title", input_field())]),
             );
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&["book"], &[(
                     "priority",
                     select_field(&["low", "high"]),
@@ -820,18 +820,18 @@ mod tests {
         fn resolves_before_a_sibling_that_refs_it_despite_declaring_extends() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("title", input_field())]),
             );
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&["book"], &[(
                     "priority",
                     select_field(&["low", "high"]),
                 )]),
             );
             raw.insert(
-                SchemaName::from("poem"),
+                SchemaName::new_test("poem"),
                 schema(&[], &[(
                     "priority",
                     ref_field("#global/priority", None),
@@ -861,7 +861,7 @@ mod tests {
         fn stray_required_on_global_is_ignored_with_a_warning() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[("priority", RawSchemaFieldDef {
                     required: Some(true),
                     ..select_field(&["low", "high"])
@@ -894,11 +894,11 @@ mod tests {
         fn to_ancestor_resolves_with_local_overrides() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[(
                     "status",
                     ref_field("#book/status", Some(true)),
@@ -929,11 +929,11 @@ mod tests {
         fn to_global_resolves_with_local_overrides() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[("priority", select_field(&["low", "high"]))]),
             );
             raw.insert(
-                SchemaName::from("task"),
+                SchemaName::new_test("task"),
                 schema(&[], &[(
                     "priority",
                     ref_field("#global/priority", Some(true)),
@@ -964,11 +964,11 @@ mod tests {
         fn to_global_resolves_regardless_of_insertion_order() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[("name", select_field(&["anon"]))]),
             );
             raw.insert(
-                SchemaName::from("author"),
+                SchemaName::new_test("author"),
                 schema(&[], &[("name", ref_field("#global/name", None))]),
             );
 
@@ -993,11 +993,11 @@ mod tests {
         fn that_switches_field_type_starts_from_empty_base_options() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[("status", RawSchemaFieldDef {
                     source: RawSchemaFieldSource::Ref {
                         address: field_address("#book/status"),
@@ -1031,14 +1031,14 @@ mod tests {
         fn to_a_file_field_merges_the_filter_with_local_overrides() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[(
                     "cover",
                     file_field(&["assets"], Some("png"), &["image"]),
                 )]),
             );
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("cover", RawSchemaFieldDef {
                     options: options(&[(
                         "folders",
@@ -1073,11 +1073,11 @@ mod tests {
         fn bare_override_with_unknown_key_degrades_with_a_warning() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[("status", RawSchemaFieldDef {
                     options: options(&[("folders", string_list(&["assets"]))]),
                     ..RawSchemaFieldDef::reference(field_address(
@@ -1115,14 +1115,14 @@ mod tests {
         fn bare_override_with_type_mismatched_value_degrades_with_a_warning() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[(
                     "rating",
                     RawSchemaFieldDef::direct(RawSchemaFieldType::Number),
                 )]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[("rating", RawSchemaFieldDef {
                     options: options(&[(
                         "min",
@@ -1161,14 +1161,14 @@ mod tests {
         fn bare_override_applies_valid_keys_alongside_dropped_unknown() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[(
                     "cover",
                     file_field(&["assets"], Some("png"), &["image"]),
                 )]),
             );
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("cover", RawSchemaFieldDef {
                     options: options(&[
                         ("folders", string_list(&["assets/covers"])),
@@ -1208,9 +1208,9 @@ mod tests {
         #[test]
         fn to_unknown_field_degrades_to_a_failure() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from("book"), schema(&[], &[]));
+            raw.insert(SchemaName::new_test("book"), schema(&[], &[]));
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[(
                     "status",
                     ref_field("#book/status", None),
@@ -1236,11 +1236,11 @@ mod tests {
         fn to_non_ancestor_sibling_degrades_to_a_failure() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
             );
             raw.insert(
-                SchemaName::from("movie"),
+                SchemaName::new_test("movie"),
                 schema(&[], &[("status", ref_field("#book/status", None))]),
             );
 
@@ -1263,11 +1263,11 @@ mod tests {
         fn with_type_override_and_unknown_key_degrades_to_a_failure() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[("status", RawSchemaFieldDef {
                     source: RawSchemaFieldSource::Ref {
                         address: field_address("#book/status"),
@@ -1307,11 +1307,11 @@ mod tests {
         fn to_nonexistent_ancestor_field_degrades_to_failure() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("ancestor"),
+                SchemaName::new_test("ancestor"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
             );
             raw.insert(
-                SchemaName::from("descendant"),
+                SchemaName::new_test("descendant"),
                 schema(&["ancestor"], &[(
                     "ghost",
                     ref_field("#ancestor/ghost", None),
@@ -1341,7 +1341,7 @@ mod tests {
         fn rejects_ambiguous_field_names_with_different_case() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[
                     ("status", input_field()),
                     ("Status", input_field()),
@@ -1361,11 +1361,11 @@ mod tests {
         fn rejects_own_field_colliding_with_inherited_field() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("Due Date", input_field())]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["book"], &[("due-date", input_field())]),
             );
 
@@ -1382,7 +1382,7 @@ mod tests {
         fn rejects_direct_field_with_unknown_key() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("published", RawSchemaFieldDef {
                     options: options(&[("values", string_list(&["draft"]))]),
                     ..RawSchemaFieldDef::direct(RawSchemaFieldType::Date)
@@ -1416,7 +1416,7 @@ mod tests {
         fn rejects_direct_field_with_type_mismatched_value() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("rating", RawSchemaFieldDef {
                     options: options(&[(
                         "min",
@@ -1458,9 +1458,9 @@ mod tests {
         #[test]
         fn is_a_matches_transitively_through_extends() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from("thing"), schema(&[], &[]));
-            raw.insert(SchemaName::from("book"), schema(&["thing"], &[]));
-            raw.insert(SchemaName::from("sci_fi"), schema(&["book"], &[]));
+            raw.insert(SchemaName::new_test("thing"), schema(&[], &[]));
+            raw.insert(SchemaName::new_test("book"), schema(&["thing"], &[]));
+            raw.insert(SchemaName::new_test("sci_fi"), schema(&["book"], &[]));
 
             let ResolvedSchemas {
                 schemas: resolved,
@@ -1478,18 +1478,18 @@ mod tests {
         fn failed_link_breaks_hierarchy_downstream() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
             );
             raw.insert(
-                SchemaName::from("broken"),
+                SchemaName::new_test("broken"),
                 schema(&["book"], &[
                     ("dup", input_field()),
                     ("Dup", input_field()),
                 ]),
             );
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["broken"], &[("subgenre", input_field())]),
             );
 
@@ -1515,11 +1515,13 @@ mod tests {
 
             let book = resolved.get("book").expect("book resolves");
             assert!(
-                !book.descendants().contains(&SchemaName::from("sci_fi")),
+                !book.descendants().contains(&SchemaName::new_test("sci_fi")),
                 "book.descendants() must not list sci_fi: sci_fi no longer \
                  is-a book"
             );
-            assert!(!book.descendants().contains(&SchemaName::from("broken")));
+            assert!(
+                !book.descendants().contains(&SchemaName::new_test("broken"))
+            );
         }
     }
 
@@ -1532,7 +1534,7 @@ mod tests {
         fn missing_extends_target_degrades_with_a_warning() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("sci_fi"),
+                SchemaName::new_test("sci_fi"),
                 schema(&["ghost"], &[("title", input_field())]),
             );
 
@@ -1543,12 +1545,12 @@ mod tests {
             } = resolve(&raw).expect("resolves");
 
             assert!(warnings.contains(&SchemaWarning::MissingExtendsTarget {
-                schema: SchemaName::from("sci_fi"),
-                target: SchemaName::from("ghost"),
+                schema: SchemaName::new_test("sci_fi"),
+                target: SchemaName::new_test("ghost"),
             }));
             assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
-                schema: SchemaName::from("sci_fi"),
-                parent: SchemaName::from("ghost"),
+                schema: SchemaName::new_test("sci_fi"),
+                parent: SchemaName::new_test("ghost"),
             }));
             let sci_fi =
                 resolved.get("sci_fi").expect("own fields still render");
@@ -1560,11 +1562,11 @@ mod tests {
         fn malformed_field_does_not_block_unrelated_sibling() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
             );
             raw.insert(
-                SchemaName::from("broken"),
+                SchemaName::new_test("broken"),
                 schema(&[], &[
                     ("status", input_field()),
                     ("Status", input_field()),
@@ -1581,21 +1583,21 @@ mod tests {
             assert!(!resolved.contains_key("broken"));
             assert_eq!(failures.len(), 1);
             let failure = failures.first().expect("one failure");
-            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert_eq!(failure.schema, SchemaName::new_test("broken"));
         }
 
         #[test]
         fn child_of_failed_parent_resolves_own_fields() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("broken"),
+                SchemaName::new_test("broken"),
                 schema(&[], &[
                     ("status", input_field()),
                     ("Status", input_field()),
                 ]),
             );
             raw.insert(
-                SchemaName::from("child"),
+                SchemaName::new_test("child"),
                 schema(&["broken"], &[("title", input_field())]),
             );
 
@@ -1607,10 +1609,10 @@ mod tests {
 
             assert_eq!(failures.len(), 1);
             let failure = failures.first().expect("one failure");
-            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert_eq!(failure.schema, SchemaName::new_test("broken"));
             assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
-                schema: SchemaName::from("child"),
-                parent: SchemaName::from("broken"),
+                schema: SchemaName::new_test("child"),
+                parent: SchemaName::new_test("broken"),
             }));
             let child = resolved.get("child").expect("child still resolves");
             assert!(child.field("title").is_some());
@@ -1619,8 +1621,8 @@ mod tests {
         #[test]
         fn rejects_cycle_as_hard_error() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
-            raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
+            raw.insert(SchemaName::new_test("a"), schema(&["b"], &[]));
+            raw.insert(SchemaName::new_test("b"), schema(&["a"], &[]));
 
             let err = resolve(&raw).expect_err("cycle rejected");
             assert!(
@@ -1629,8 +1631,8 @@ mod tests {
                     SchemaError::Cycle { schemas }
                         if schemas
                             == &vec![
-                                SchemaName::from("a"),
-                                SchemaName::from("b")
+                                SchemaName::new_test("a"),
+                                SchemaName::new_test("b")
                             ]
                 ),
                 "expected Cycle over [a, b], got {err:?}"
@@ -1640,9 +1642,9 @@ mod tests {
         #[test]
         fn cycle_error_excludes_a_non_cyclic_dependent() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
-            raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
-            raw.insert(SchemaName::from("c"), schema(&["a"], &[]));
+            raw.insert(SchemaName::new_test("a"), schema(&["b"], &[]));
+            raw.insert(SchemaName::new_test("b"), schema(&["a"], &[]));
+            raw.insert(SchemaName::new_test("c"), schema(&["a"], &[]));
 
             let err = resolve(&raw).expect_err("cycle rejected");
             assert!(
@@ -1651,8 +1653,8 @@ mod tests {
                     SchemaError::Cycle { schemas }
                         if schemas
                             == &vec![
-                                SchemaName::from("a"),
-                                SchemaName::from("b")
+                                SchemaName::new_test("a"),
+                                SchemaName::new_test("b")
                             ]
                 ),
                 "expected Cycle over [a, b] only, excluding non-cyclic \
@@ -1664,14 +1666,14 @@ mod tests {
         fn multiple_schemas_fail_independently() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::from("alpha"),
+                SchemaName::new_test("alpha"),
                 schema(&[], &[
                     ("status", input_field()),
                     ("Status", input_field()),
                 ]),
             );
             raw.insert(
-                SchemaName::from("beta"),
+                SchemaName::new_test("beta"),
                 schema(&[], &[
                     ("name", input_field()),
                     ("Name", input_field()),
@@ -1690,8 +1692,8 @@ mod tests {
             );
             let failed_schemas: Vec<&SchemaName> =
                 failures.iter().map(|f| &f.schema).collect();
-            assert!(failed_schemas.contains(&&SchemaName::from("alpha")));
-            assert!(failed_schemas.contains(&&SchemaName::from("beta")));
+            assert!(failed_schemas.contains(&&SchemaName::new_test("alpha")));
+            assert!(failed_schemas.contains(&&SchemaName::new_test("beta")));
         }
     }
 }

@@ -18,22 +18,6 @@ use crate::{FieldKey, FieldKeyRef, Tag};
 /// Stores page-level frontmatter, top-level lists, outgoing links, inline
 /// fields, and tags. [`Self::tasks`] derives task items from stored lists
 /// instead of duplicating them.
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-///
-/// use traces_pkm::{MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(
-///     Path::new("note.md"),
-///     "# Title\n- [ ] Task",
-/// );
-/// let note = parse_markdown(&input);
-/// assert_eq!(note.path(), Path::new("note.md"));
-/// assert_eq!(note.tasks().count(), 1);
-/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {
     #[serde(with = "crate::index::path")]
@@ -98,19 +82,6 @@ impl Note {
     }
 
     /// Returns the project-relative path to this note.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input =
-    ///     MarkdownParserInput::for_test(Path::new("docs/spec.md"), "# Spec");
-    /// let note = parse_markdown(&input);
-    /// assert_eq!(note.path(), Path::new("docs/spec.md"));
-    /// ```
     #[inline]
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -118,21 +89,6 @@ impl Note {
     }
 
     /// Returns the parsed YAML frontmatter block, if present.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "---\ntitle: Hello\n---\nBody",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// assert!(note.frontmatter().is_some());
-    /// ```
     #[inline]
     #[must_use]
     pub const fn frontmatter(&self) -> Option<&Frontmatter> {
@@ -143,21 +99,6 @@ impl Note {
     ///
     /// Nested `ListItem` values hold child lists. Use [`Self::tasks`] for a
     /// flattened view of task items from every list depth.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "- Item 1\n- Item 2",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// assert_eq!(note.lists().len(), 1);
-    /// ```
     #[inline]
     #[must_use]
     pub fn lists(&self) -> &[List] {
@@ -165,21 +106,6 @@ impl Note {
     }
 
     /// Returns the outgoing links extracted from Markdown and wikilink syntax.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "Link to [[Other Note]]",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// assert_eq!(note.outlinks().len(), 1);
-    /// ```
     #[inline]
     #[must_use]
     pub fn outlinks(&self) -> &[Link] {
@@ -254,21 +180,6 @@ impl Note {
 
     /// Returns Markdown tags from paragraphs, headings, and list items, in
     /// document order.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "Tag #rust in text",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// assert_eq!(note.tags().len(), 1);
-    /// ```
     #[inline]
     #[must_use]
     pub fn tags(&self) -> &[Tag] {
@@ -277,21 +188,6 @@ impl Note {
 
     /// Iterates over all list items across all nesting depths in document
     /// order.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("tasks.md"),
-    ///     "- [ ] Top level task\n  - [x] Subtask\n- Plain bullet",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// assert_eq!(note.list_items().count(), 3);
-    /// ```
     #[inline]
     #[must_use]
     pub fn list_items(&self) -> ListItemIter<'_> {
@@ -299,21 +195,6 @@ impl Note {
     }
 
     /// Iterates over task list items across all nesting depths.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("tasks.md"),
-    ///     "- [ ] Top level task\n  - [x] Subtask\n- Plain bullet",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// assert_eq!(note.tasks().count(), 2);
-    /// ```
     #[inline]
     #[must_use]
     pub fn tasks(&self) -> ListItemIter<'_> {

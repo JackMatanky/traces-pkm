@@ -49,13 +49,6 @@ impl SchemaName {
 
     /// Attempts to construct a [`SchemaName`], rejecting an empty name.
     ///
-    /// An inherent method rather than a `TryFrom<&str>` trait impl: with the
-    /// `#[cfg(test)]`/`test-utils`-gated `From<&str>` impl below present in the
-    /// same build, a manual `TryFrom<&str>` impl conflicts with std's blanket
-    /// `impl<T, U> TryFrom<U> for T where U: Into<T>` (E0119). An inherent
-    /// method shadows the blanket trait impl for `SchemaName:: try_from(...)`
-    /// call syntax without implementing the trait itself.
-    ///
     /// Most callers should prefer a source-specific infallible constructor
     /// instead: [`Self::global`] for the reserved name, or the
     /// `From<`[`BaseNameRef`]`>` impl below for a Schema file's stem, both of
@@ -71,6 +64,14 @@ impl SchemaName {
             return Err(SchemaNameError::Empty);
         }
         Ok(Self(name.to_owned()))
+    }
+
+    /// Test-only infallible constructor: every test fixture name is a non-empty
+    /// literal, so forcing `Result` handling through hundreds of call sites
+    /// buys production code nothing.
+    #[cfg(test)]
+    pub(crate) fn new_test(name: &str) -> Self {
+        Self::try_from(name).expect("test schema name must not be empty")
     }
 }
 
@@ -89,21 +90,6 @@ impl From<BaseNameRef<'_>> for SchemaName {
     /// invariant already holds before this conversion runs.
     fn from(stem: BaseNameRef<'_>) -> Self {
         Self(stem.as_str().to_owned())
-    }
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-impl From<&str> for SchemaName {
-    /// Test-only infallible constructor: every test fixture name is a non-empty
-    /// literal, so forcing `Result` handling through hundreds of call sites
-    /// buys production code nothing.
-    #[expect(
-        clippy::expect_used,
-        reason = "test-only constructor; an invalid literal here is a test \
-                  fixture bug, not a recoverable caller error"
-    )]
-    fn from(name: &str) -> Self {
-        Self::try_from(name).expect("test schema name must not be empty")
     }
 }
 
@@ -260,7 +246,7 @@ mod tests {
 
         #[test]
         fn schema_name_from_str_owns_a_copy_of_the_given_name() {
-            let name = SchemaName::from("book");
+            let name = SchemaName::new_test("book");
 
             assert_eq!(name.as_str(), "book");
         }
@@ -301,8 +287,8 @@ mod tests {
 
         #[test]
         fn is_global_matches_only_the_reserved_name() {
-            assert!(SchemaName::from("global").is_global());
-            assert!(!SchemaName::from("book").is_global());
+            assert!(SchemaName::new_test("global").is_global());
+            assert!(!SchemaName::new_test("book").is_global());
             assert!(SchemaNameRef::from("global").is_global());
             assert!(!SchemaNameRef::from("book").is_global());
         }

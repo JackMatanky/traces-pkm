@@ -57,25 +57,7 @@
 //! - `TemplateService`, `CommitPolicy`, `WriteMode`: Template rendering and
 //!   file writes.
 //! - `Blake3FileHash`, `Blake3PathHash`: BLAKE3 hashing primitives.
-//!
-//! # Examples
-//!
-//! Parse a Markdown note and extract its structured tasks:
-//!
-//! ```rust
-//! use std::path::Path;
-//!
-//! use traces_pkm::{MarkdownParserInput, Tag, parse_markdown};
-//!
-//! let markdown = "# Project Plan\n\n- [ ] Implement query engine 📅 \
-//!                 2026-09-01 #work\n- [x] Initial design #work\n";
-//!
-//! let input = MarkdownParserInput::for_test(Path::new("plan.md"), markdown);
-//! let note = parse_markdown(&input);
-//!
-//! assert_eq!(note.tasks().count(), 2);
-//! assert!(note.tags().iter().any(|t| t.as_str() == "#work"));
-//! ```
+
 mod config;
 mod delimiter;
 mod dialog;

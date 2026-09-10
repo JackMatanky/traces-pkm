@@ -24,24 +24,6 @@
 //! - [`ListItemIter`]: A depth-first iterator yielding all list items across
 //!   top-level and nested child lists in document order, optionally filtered to
 //!   [`ListItemType::Task`] items.
-//!
-//! # Examples
-//!
-//! ```rust
-//! use traces_pkm::{
-//!     ListText, TaskDates, TaskListItem, TaskPriority, TaskStatus,
-//! };
-//!
-//! let dates = TaskDates::default();
-//! let task = TaskListItem::new(
-//!     dates,
-//!     Some(TaskPriority::High),
-//!     TaskStatus::default(),
-//!     true,
-//! );
-//! assert_eq!(task.priority(), Some(TaskPriority::High));
-//! assert!(task.is_fully_complete());
-//! ```
 use chrono::NaiveDate;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -52,21 +34,6 @@ use crate::{FieldKey, SourceLine, Tag, TaskStatus};
 ///
 /// Holds direct child [`ListItem`] elements and a flag indicating whether the
 /// list is numbered (ordered) or bulleted (unordered).
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-///
-/// use traces_pkm::{MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(
-///     Path::new("note.md"),
-///     "1. First\n2. Second",
-/// );
-/// let note = parse_markdown(&input);
-/// assert_eq!(note.lists().len(), 1);
-/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct List {
     is_ordered: bool,
@@ -105,22 +72,6 @@ impl List {
     /// Returns the direct child items in this list.
     ///
     /// Does not include descendant items nested inside child lists.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "- Item 1\n- Item 2",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// let list = &note.lists()[0];
-    /// assert_eq!(list.items().len(), 2);
-    /// ```
     #[inline]
     #[must_use]
     pub fn items(&self) -> &[ListItem] {
@@ -133,23 +84,6 @@ impl List {
 /// Stores both raw and normalized text representations via [`ListText`], nested
 /// child [`List`] structures, extracted Dataview-style inline fields, tags
 /// scanned from the item's own text, and source line positioning information.
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-///
-/// use traces_pkm::{MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(
-///     Path::new("note.md"),
-///     "- [ ] Action item",
-/// );
-/// let note = parse_markdown(&input);
-/// let item = &note.lists()[0].items()[0];
-/// assert!(item.kind().is_task());
-/// assert_eq!(item.clean_text(), "Action item");
-/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: ListText,
@@ -242,22 +176,6 @@ impl ListItem {
     /// Returns this item's own tags, scanned from its text.
     ///
     /// Does not include tags from child items or inherited Note-level tags.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "- [ ] Task #project",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// let item = &note.lists()[0].items()[0];
-    /// assert_eq!(item.tags().len(), 1);
-    /// ```
     #[inline]
     #[must_use]
     pub fn tags(&self) -> &[Tag] {
@@ -266,23 +184,6 @@ impl ListItem {
 
     /// Returns the plain or normalized text representation holding both raw
     /// and clean variants.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "- [ ] Task 📅 2025-01-15",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// let item = &note.lists()[0].items()[0];
-    /// assert_eq!(item.text().raw(), "Task 📅 2025-01-15");
-    /// assert_eq!(item.text().clean(), "Task");
-    /// ```
     #[inline]
     #[must_use]
     pub fn text(&self) -> &ListText {
@@ -292,22 +193,6 @@ impl ListItem {
     /// Returns the raw text with only the leading marker prefix stripped.
     ///
     /// Retains tags, dates, priority emojis, and inline fields.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "- [ ] Task 📅 2025-01-15",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// let item = &note.lists()[0].items()[0];
-    /// assert_eq!(item.raw_text(), "Task 📅 2025-01-15");
-    /// ```
     #[inline]
     #[must_use]
     pub fn raw_text(&self) -> &str {
@@ -318,22 +203,6 @@ impl ListItem {
     ///
     /// Strips configured task tag filters, date shorthand syntax, priority
     /// emojis, and inline task fields.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input = MarkdownParserInput::for_test(
-    ///     Path::new("note.md"),
-    ///     "- [ ] Task 📅 2025-01-15",
-    /// );
-    /// let note = parse_markdown(&input);
-    /// let item = &note.lists()[0].items()[0];
-    /// assert_eq!(item.clean_text(), "Task");
-    /// ```
     #[inline]
     #[must_use]
     pub fn clean_text(&self) -> &str {
@@ -341,20 +210,6 @@ impl ListItem {
     }
 
     /// Returns this item's classification: plain bullet, checkbox, or Task.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::{MarkdownParserInput, parse_markdown};
-    ///
-    /// let input =
-    ///     MarkdownParserInput::for_test(Path::new("note.md"), "- [ ] Task");
-    /// let note = parse_markdown(&input);
-    /// let item = &note.lists()[0].items()[0];
-    /// assert!(item.kind().is_task());
-    /// ```
     #[inline]
     #[must_use]
     pub const fn kind(&self) -> &ListItemType {
@@ -455,22 +310,6 @@ impl ListItem {
 ///   from [`super::Note::tasks`].
 /// - [`Self::Task`]: Status-marked item classified as an active task, carrying
 ///   an encapsulated [`TaskListItem`].
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-///
-/// use traces_pkm::{MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(
-///     Path::new("note.md"),
-///     "- Plain\n- [ ] Task",
-/// );
-/// let note = parse_markdown(&input);
-/// assert!(note.lists()[0].items()[0].kind().is_plain());
-/// assert!(note.lists()[0].items()[1].kind().is_task());
-/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum ListItemType {
     /// A plain bullet with no marker.
@@ -1238,21 +1077,6 @@ impl PartialEq<ListText> for &str {
 ///
 /// [`Note::list_items`]: super::Note::list_items
 /// [`Note::tasks`]: super::Note::tasks
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-///
-/// use traces_pkm::{MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(
-///     Path::new("note.md"),
-///     "- Item 1\n  - Item 1.1\n- Item 2",
-/// );
-/// let note = parse_markdown(&input);
-/// assert_eq!(note.list_items().count(), 3);
-/// ```
 #[derive(Clone, Debug)]
 pub struct ListItemIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,

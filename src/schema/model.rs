@@ -167,10 +167,10 @@ mod tests {
                 field(SchemaFieldType::Input),
             );
             let mut ancestors = IndexSet::new();
-            ancestors.insert(SchemaName::from("thing"));
+            ancestors.insert(SchemaName::new_test("thing"));
 
             let schema = Schema::new(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 fields.clone(),
                 ancestors.clone(),
             );
@@ -185,15 +185,15 @@ mod tests {
         #[test]
         fn set_hierarchy_stores_the_given_children_and_descendants() {
             let mut schema = Schema::new(
-                SchemaName::from("thing"),
+                SchemaName::new_test("thing"),
                 IndexMap::new(),
                 IndexSet::new(),
             );
             let mut children = IndexSet::new();
-            children.insert(SchemaName::from("book"));
+            children.insert(SchemaName::new_test("book"));
             let mut descendants = IndexSet::new();
-            descendants.insert(SchemaName::from("book"));
-            descendants.insert(SchemaName::from("sci_fi"));
+            descendants.insert(SchemaName::new_test("book"));
+            descendants.insert(SchemaName::new_test("sci_fi"));
 
             schema.set_hierarchy(children.clone(), descendants.clone());
 
@@ -208,8 +208,11 @@ mod tests {
                 FieldName::try_from("title").expect("valid test field name"),
                 field(SchemaFieldType::Input),
             );
-            let schema =
-                Schema::new(SchemaName::from("book"), fields, IndexSet::new());
+            let schema = Schema::new(
+                SchemaName::new_test("book"),
+                fields,
+                IndexSet::new(),
+            );
 
             assert_eq!(
                 schema.field("title"),
@@ -220,7 +223,7 @@ mod tests {
         #[test]
         fn field_returns_none_when_the_name_is_absent() {
             let schema = Schema::new(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 IndexMap::new(),
                 IndexSet::new(),
             );
@@ -231,7 +234,7 @@ mod tests {
         #[test]
         fn is_a_matches_when_queried_equals_its_own_name() {
             let schema = Schema::new(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 IndexMap::new(),
                 IndexSet::new(),
             );
@@ -242,9 +245,9 @@ mod tests {
         #[test]
         fn is_a_matches_when_queried_is_a_transitive_ancestor() {
             let mut ancestors = IndexSet::new();
-            ancestors.insert(SchemaName::from("thing"));
+            ancestors.insert(SchemaName::new_test("thing"));
             let schema = Schema::new(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 IndexMap::new(),
                 ancestors,
             );
@@ -255,7 +258,7 @@ mod tests {
         #[test]
         fn is_a_does_not_match_an_unrelated_name() {
             let schema = Schema::new(
-                SchemaName::from("book"),
+                SchemaName::new_test("book"),
                 IndexMap::new(),
                 IndexSet::new(),
             );
@@ -286,7 +289,7 @@ mod tests {
                     )
                 })
                 .collect::<IndexMap<_, _>>();
-            Schema::new(SchemaName::from("book"), fields, IndexSet::new())
+            Schema::new(SchemaName::new_test("book"), fields, IndexSet::new())
         }
 
         #[test]

@@ -182,7 +182,7 @@ mod tests {
     fn parses_a_well_formed_address() {
         let address = FieldAddress::try_from("#book/status").expect("parses");
 
-        assert_eq!(address.schema(), &SchemaName::from("book"));
+        assert_eq!(address.schema(), &SchemaName::new_test("book"));
         assert_eq!(address.field().as_str(), "status");
     }
 
@@ -202,7 +202,7 @@ mod tests {
     fn accepts_a_reference_with_stripped_punctuation_in_field_segment() {
         let address = FieldAddress::try_from("#book/!!!").expect("parses");
 
-        assert_eq!(address.schema(), &SchemaName::from("book"));
+        assert_eq!(address.schema(), &SchemaName::new_test("book"));
         assert_eq!(address.field().as_str(), "!!!");
     }
 

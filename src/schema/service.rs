@@ -444,11 +444,11 @@ mod tests {
             assert!(service.get("child").is_some());
             assert_eq!(failures.len(), 1);
             let failure = failures.first().expect("schema failure");
-            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert_eq!(failure.schema, SchemaName::new_test("broken"));
             assert!(failure.error.to_string().contains("missing.json"));
             assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
-                schema: SchemaName::from("child"),
-                parent: SchemaName::from("broken"),
+                schema: SchemaName::new_test("child"),
+                parent: SchemaName::new_test("broken"),
             }));
         }
 

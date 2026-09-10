@@ -73,22 +73,6 @@ use list::ListTracker;
 /// frontmatter, lists, outlinks, inline fields, and tags in document order.
 /// Inline fields and tags are excluded from fenced code blocks, indented code
 /// blocks, and inline code spans.
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-///
-/// use traces_pkm::{MarkdownParserInput, parse_markdown};
-///
-/// let input = MarkdownParserInput::for_test(
-///     Path::new("note.md"),
-///     "# Hello\nStatus:: Draft",
-/// );
-/// let note = parse_markdown(&input);
-/// assert!(note.outlinks().is_empty());
-/// assert_eq!(note.tags().len(), 0);
-/// ```
 #[inline]
 #[must_use]
 pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {

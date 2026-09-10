@@ -150,7 +150,7 @@ mod tests {
 
     fn schema(extends: &[&str]) -> RawSchema {
         RawSchema {
-            extends: extends.iter().map(|&s| SchemaName::from(s)).collect(),
+            extends: extends.iter().map(|&s| SchemaName::new_test(s)).collect(),
             ..RawSchema::default()
         }
     }
@@ -159,8 +159,8 @@ mod tests {
     fn does_not_warn_when_global_is_present_in_raw() {
         use pretty_assertions::assert_eq;
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
-        raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
+        raw.insert(SchemaName::new_test(GLOBAL_SCHEMA_NAME), schema(&[]));
+        raw.insert(SchemaName::new_test("book"), schema(&[GLOBAL_SCHEMA_NAME]));
         let (_builder, warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -171,8 +171,8 @@ mod tests {
     #[test]
     fn build_returns_graph_in_topological_order() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
-        raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
+        raw.insert(SchemaName::new_test(GLOBAL_SCHEMA_NAME), schema(&[]));
+        raw.insert(SchemaName::new_test("book"), schema(&[GLOBAL_SCHEMA_NAME]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -186,8 +186,8 @@ mod tests {
     #[test]
     fn build_returns_cyclic_schema_names_when_the_extends_dag_has_a_cycle() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::from("a"), schema(&["b"]));
-        raw.insert(SchemaName::from("b"), schema(&["a"]));
+        raw.insert(SchemaName::new_test("a"), schema(&["b"]));
+        raw.insert(SchemaName::new_test("b"), schema(&["a"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -195,6 +195,9 @@ mod tests {
 
         let err = builder.build().expect_err("cyclic dag rejected");
 
-        assert_eq!(err, vec![SchemaName::from("a"), SchemaName::from("b")]);
+        assert_eq!(err, vec![
+            SchemaName::new_test("a"),
+            SchemaName::new_test("b")
+        ]);
     }
 }
