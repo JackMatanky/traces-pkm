@@ -5,48 +5,9 @@
 //! strings, wikilinks, durations, booleans, nulls, ISO dates, numbers, and
 //! tags.
 
-use phf::phf_set;
-
 use crate::{
     field::FieldStringValue,
     note::{Link, NoteFieldValue, cursor::SourceText},
-};
-
-static DURATION_UNITS: phf::Set<&'static str> = phf_set! {
-    "year",
-    "years",
-    "yr",
-    "yrs",
-    "month",
-    "months",
-    "mo",
-    "mos",
-    "week",
-    "weeks",
-    "wk",
-    "wks",
-    "w",
-    "day",
-    "days",
-    "d",
-    "hour",
-    "hours",
-    "hr",
-    "hrs",
-    "h",
-    "minute",
-    "minutes",
-    "min",
-    "mins",
-    "m",
-    "second",
-    "seconds",
-    "sec",
-    "secs",
-    "s",
-    "millisecond",
-    "milliseconds",
-    "ms",
 };
 
 /// An atom parsed at some position: its value and the exclusive byte offset
@@ -217,7 +178,7 @@ impl<'a> InlineValueParser<'a> {
     /// Finds the end offset of one `<number><unit>` duration part at `pos`.
     ///
     /// Returns `None` if `pos` is not a number followed by a recognized
-    /// [`is_duration_unit`] unit.
+    /// duration unit.
     fn parse_duration_part_end(&self, pos: usize) -> Option<usize> {
         let number_end = self.parse_number_end(pos)?;
         let unit_start = self.skip_whitespace(number_end);
@@ -232,7 +193,7 @@ impl<'a> InlineValueParser<'a> {
             .map(|(offset, ch)| self.source.token_end(unit_start, offset, ch))
             .last()?;
         let unit = self.source.get(unit_start..unit_end)?;
-        is_duration_unit(unit).then_some(unit_end)
+        crate::duration::parse_unit(unit).is_some().then_some(unit_end)
     }
 
     /// Parses a case-insensitive `true`/`false` keyword atom at `pos`.
@@ -340,21 +301,6 @@ impl<'a> InlineValueParser<'a> {
             })
             .unwrap_or_else(|| self.source.len())
     }
-}
-
-/// Whether `unit` is a recognized duration unit, matched case-insensitively
-/// against [`DURATION_UNITS`].
-fn is_duration_unit(unit: &str) -> bool {
-    let mut buf = [0u8; 16];
-    let Some(slice) = buf.get_mut(..unit.len()) else {
-        return false;
-    };
-    slice.copy_from_slice(unit.as_bytes());
-    slice.make_ascii_lowercase();
-    let Ok(lower) = std::str::from_utf8(slice) else {
-        return false;
-    };
-    DURATION_UNITS.contains(lower)
 }
 
 #[cfg(test)]
@@ -489,8 +435,6 @@ mod tests {
     mod duration_unit {
         use rstest::rstest;
 
-        use super::*;
-
         #[rstest]
         #[case::hours("h")]
         #[case::minutes("m")]
@@ -502,7 +446,7 @@ mod tests {
         #[case::days_upper("D")]
         fn accepts_valid_duration_units(#[case] unit: &str) {
             assert!(
-                is_duration_unit(unit),
+                crate::duration::parse_unit(unit).is_some(),
                 "{unit} must be a valid duration unit"
             );
         }
@@ -513,7 +457,7 @@ mod tests {
         #[case::single_char_invalid("x")]
         fn rejects_invalid_duration_units(#[case] unit: &str) {
             assert!(
-                !is_duration_unit(unit),
+                crate::duration::parse_unit(unit).is_none(),
                 "{unit} must not be a valid duration unit"
             );
         }
