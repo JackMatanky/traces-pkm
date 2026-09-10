@@ -63,6 +63,7 @@ mod delimiter;
 mod dialog;
 mod dirs;
 mod dirtree;
+pub mod duration;
 mod env_vars;
 mod field;
 mod file;
