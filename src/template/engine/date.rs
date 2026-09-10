@@ -390,7 +390,8 @@ fn date_add(
     n: i64,
     kwargs: Kwargs,
 ) -> TemplateEngineResult<String> {
-    date_shift_unit(value, n, unit_kwarg(&kwargs)?)
+    let unit = unit_kwarg(&kwargs)?;
+    date_shift_unit(value, n, &unit)
 }
 
 /// `{{ value | date_sub(n, unit="days") }}` subtracts `n` `unit`s from a piped
@@ -411,17 +412,18 @@ fn date_sub(
     n: i64,
     kwargs: Kwargs,
 ) -> TemplateEngineResult<String> {
+    let unit = unit_kwarg(&kwargs)?;
     date_shift_unit(
         value,
         n.checked_neg().ok_or_else(date_out_of_range_error)?,
-        unit_kwarg(&kwargs)?,
+        &unit,
     )
 }
 
 fn date_shift_unit(
     value: &str,
     n: i64,
-    unit: DurationValue,
+    unit: &DurationValue,
 ) -> TemplateEngineResult<String> {
     shift_date(value, |dt| match unit.unit_name() {
         "year" | "years" => {
@@ -450,11 +452,10 @@ fn date_shift_unit(
             }
         }
         _ => {
-            let secs = unit
-                .diff_seconds()
-                .expect("only months/years return None, handled above")
-                .as_i64();
-            dt.checked_add_signed(chrono::Duration::seconds(secs * n))
+            let secs = unit.diff_seconds()?.as_i64();
+            dt.checked_add_signed(chrono::Duration::seconds(
+                secs.checked_mul(n)?,
+            ))
         }
     })
 }
@@ -468,11 +469,9 @@ fn date_shift_unit(
 ///   overflows chrono's representable range.
 fn add_days(value: &str, n: u64) -> TemplateEngineResult<String> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
-    date_shift_unit(
-        value,
-        n_i64,
-        DurationValue::parse_unit_name("days").expect("valid unit"),
-    )
+    let unit = DurationValue::parse_unit_name("days")
+        .ok_or_else(|| unknown_unit_error("days"))?;
+    date_shift_unit(value, n_i64, &unit)
 }
 
 /// `{{ value | sub_days(n) }}` is a convenience shortcut for
@@ -485,11 +484,9 @@ fn add_days(value: &str, n: u64) -> TemplateEngineResult<String> {
 fn sub_days(value: &str, n: u64) -> TemplateEngineResult<String> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     let n_i64 = n_i64.checked_neg().ok_or_else(date_out_of_range_error)?;
-    date_shift_unit(
-        value,
-        n_i64,
-        DurationValue::parse_unit_name("days").expect("valid unit"),
-    )
+    let unit = DurationValue::parse_unit_name("days")
+        .ok_or_else(|| unknown_unit_error("days"))?;
+    date_shift_unit(value, n_i64, &unit)
 }
 
 /// `{{ value | add_months(n) }}` is a convenience shortcut for
@@ -500,11 +497,9 @@ fn sub_days(value: &str, n: u64) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
 fn add_months(value: &str, n: u32) -> TemplateEngineResult<String> {
-    date_shift_unit(
-        value,
-        i64::from(n),
-        DurationValue::parse_unit_name("months").expect("valid unit"),
-    )
+    let unit = DurationValue::parse_unit_name("months")
+        .ok_or_else(|| unknown_unit_error("months"))?;
+    date_shift_unit(value, i64::from(n), &unit)
 }
 
 /// `{{ value | sub_months(n) }}` is a convenience shortcut for
@@ -517,11 +512,9 @@ fn add_months(value: &str, n: u32) -> TemplateEngineResult<String> {
 fn sub_months(value: &str, n: u32) -> TemplateEngineResult<String> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
-    date_shift_unit(
-        value,
-        n_i64,
-        DurationValue::parse_unit_name("months").expect("valid unit"),
-    )
+    let unit = DurationValue::parse_unit_name("months")
+        .ok_or_else(|| unknown_unit_error("months"))?;
+    date_shift_unit(value, n_i64, &unit)
 }
 
 /// `{{ value | add_years(n) }}` is a convenience shortcut for
@@ -532,11 +525,9 @@ fn sub_months(value: &str, n: u32) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
 fn add_years(value: &str, n: u32) -> TemplateEngineResult<String> {
-    date_shift_unit(
-        value,
-        i64::from(n),
-        DurationValue::parse_unit_name("years").expect("valid unit"),
-    )
+    let unit = DurationValue::parse_unit_name("years")
+        .ok_or_else(|| unknown_unit_error("years"))?;
+    date_shift_unit(value, i64::from(n), &unit)
 }
 
 /// `{{ value | sub_years(n) }}` is a convenience shortcut for
@@ -549,11 +540,9 @@ fn add_years(value: &str, n: u32) -> TemplateEngineResult<String> {
 fn sub_years(value: &str, n: u32) -> TemplateEngineResult<String> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
-    date_shift_unit(
-        value,
-        n_i64,
-        DurationValue::parse_unit_name("years").expect("valid unit"),
-    )
+    let unit = DurationValue::parse_unit_name("years")
+        .ok_or_else(|| unknown_unit_error("years"))?;
+    date_shift_unit(value, n_i64, &unit)
 }
 
 /// `{{ value | start_of_month }}` returns the first day of the input month.

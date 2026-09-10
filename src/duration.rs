@@ -40,16 +40,7 @@ impl DurationSeconds {
     #[inline]
     #[must_use]
     pub const fn as_i64(self) -> i64 {
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "duration seconds truncated to i64 for template date \
-                      arithmetic"
-        )]
-        {
-            self.0 as i64
-        }
+        self.0.trunc() as i64
     }
 }
 
@@ -60,12 +51,14 @@ impl From<f64> for DurationSeconds {
 }
 
 impl From<DurationSeconds> for f64 {
+    #[inline]
     fn from(d: DurationSeconds) -> Self {
         d.0
     }
 }
 
 impl From<DurationSeconds> for i64 {
+    #[inline]
     fn from(d: DurationSeconds) -> Self {
         d.as_i64()
     }
@@ -118,6 +111,7 @@ impl std::ops::Mul<f64> for DurationSeconds {
 impl std::ops::Mul<DurationSeconds> for f64 {
     type Output = DurationSeconds;
 
+    #[inline]
     fn mul(self, rhs: DurationSeconds) -> DurationSeconds {
         DurationSeconds(self * rhs.0)
     }
@@ -256,10 +250,12 @@ impl DurationValue {
 
         while pos < len {
             // skip separators (whitespace, commas)
-            while pos < len
-                && (bytes[pos].is_ascii_whitespace() || bytes[pos] == b',')
-            {
-                pos += 1;
+            while pos < len {
+                let b = *bytes.get(pos)?;
+                if !b.is_ascii_whitespace() && b != b',' {
+                    break;
+                }
+                pos = pos.saturating_add(1);
             }
             if pos >= len {
                 break;
@@ -269,11 +265,12 @@ impl DurationValue {
             let num_start = pos;
             let mut has_decimal = false;
             while pos < len {
-                if bytes[pos].is_ascii_digit() {
-                    pos += 1;
-                } else if bytes[pos] == b'.' && !has_decimal {
+                let b = *bytes.get(pos)?;
+                if b.is_ascii_digit() {
+                    pos = pos.saturating_add(1);
+                } else if b == b'.' && !has_decimal {
                     has_decimal = true;
-                    pos += 1;
+                    pos = pos.saturating_add(1);
                 } else {
                     break;
                 }
@@ -281,7 +278,7 @@ impl DurationValue {
             if num_start == pos {
                 return None;
             }
-            let number: f64 = core::str::from_utf8(&bytes[num_start..pos])
+            let number: f64 = core::str::from_utf8(bytes.get(num_start..pos)?)
                 .ok()?
                 .parse()
                 .ok()?;
@@ -290,20 +287,24 @@ impl DurationValue {
             }
 
             // skip whitespace between number and unit
-            while pos < len && bytes[pos].is_ascii_whitespace() {
-                pos += 1;
+            while pos < len
+                && bytes.get(pos).is_some_and(|b| b.is_ascii_whitespace())
+            {
+                pos = pos.saturating_add(1);
             }
 
             // parse unit
             let unit_start = pos;
-            while pos < len && bytes[pos].is_ascii_alphabetic() {
-                pos += 1;
+            while pos < len
+                && bytes.get(pos).is_some_and(|b| b.is_ascii_alphabetic())
+            {
+                pos = pos.saturating_add(1);
             }
             if unit_start == pos {
                 return None;
             }
             let unit_str =
-                core::str::from_utf8(&bytes[unit_start..pos]).ok()?;
+                core::str::from_utf8(bytes.get(unit_start..pos)?).ok()?;
 
             let kind = DurationUnit::parse(unit_str)?;
             total += number * kind.seconds();
@@ -336,7 +337,7 @@ impl DurationValue {
     /// Returns the raw source spelling.
     #[inline]
     #[must_use]
-    #[allow(
+    #[expect(
         dead_code,
         reason = "used in tests and doc examples within this module"
     )]
@@ -374,8 +375,12 @@ impl DurationValue {
         let bytes = self.raw.as_bytes();
         let len = bytes.len();
         let mut pos = len;
-        while pos > 0 && bytes[pos - 1].is_ascii_alphabetic() {
-            pos -= 1;
+        while pos > 0
+            && bytes
+                .get(pos.saturating_sub(1))
+                .is_some_and(|b| b.is_ascii_alphabetic())
+        {
+            pos = pos.saturating_sub(1);
         }
         // pos == len: no trailing alphabetic chars (e.g. "1" or "")
         // pos == 0: entire string is alphabetic (e.g. "days")
@@ -383,7 +388,7 @@ impl DurationValue {
         if pos == len {
             return None;
         }
-        let unit_str = core::str::from_utf8(&bytes[pos..]).ok()?;
+        let unit_str = core::str::from_utf8(bytes.get(pos..)?).ok()?;
         DurationUnit::parse(unit_str)
     }
 }
@@ -404,7 +409,7 @@ impl std::str::FromStr for DurationValue {
     type Err = DurationError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s).ok_or(DurationError::Parse {
+        Self::parse(s).ok_or_else(|| DurationError::Parse {
             input: s.to_owned(),
         })
     }
