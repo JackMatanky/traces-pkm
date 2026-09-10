@@ -331,8 +331,8 @@ mod tests {
             assert_eq!(hierarchy_for(&graph, "book").0, vec![
                 "sci_fi", "memoir"
             ]);
-            assert!(hierarchy_for(&graph, "sci_fi").0.is_empty());
-            assert!(hierarchy_for(&graph, "memoir").0.is_empty());
+            assert_eq!(hierarchy_for(&graph, "sci_fi").0, Vec::<&str>::new());
+            assert_eq!(hierarchy_for(&graph, "memoir").0, Vec::<&str>::new());
         }
 
         #[test]
@@ -360,8 +360,8 @@ mod tests {
             raw.insert(SchemaName::from("b"), schema(&[]));
             let graph = build_graph(&raw);
 
-            assert!(hierarchy_for(&graph, "a").0.is_empty());
-            assert!(hierarchy_for(&graph, "b").0.is_empty());
+            assert_eq!(hierarchy_for(&graph, "a").0, Vec::<&str>::new());
+            assert_eq!(hierarchy_for(&graph, "b").0, Vec::<&str>::new());
         }
 
         #[test]

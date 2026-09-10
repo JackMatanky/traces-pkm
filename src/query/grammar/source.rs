@@ -620,6 +620,11 @@ enum SourceToken {
         ignore(case)
     )]
     Logical(LogicalOp),
+    #[expect(
+        clippy::duplicated_attributes,
+        reason = "logos requires one #[token] per literal; the shared \
+                  `priority = 3` meta trips the lint"
+    )]
     #[token("!", priority = 3)]
     #[token("not", priority = 3, ignore(case))]
     Not,
@@ -633,8 +638,7 @@ enum SourceToken {
     Tag(String),
     #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
     ClassSigil(String),
-    #[regex(r#"\"([^\"\\]|\\.)*\""#, quoted_callback)]
-    #[regex(r#"'([^'\\]|\\.)*'"#, quoted_callback)]
+    #[regex(r#"\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'"#, quoted_callback)]
     Quoted(String),
     #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
     Bare(String),

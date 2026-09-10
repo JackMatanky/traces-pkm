@@ -1357,7 +1357,7 @@ mod tests {
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
-            assert!(target.inlinks().is_empty());
+            assert_eq!(target.inlinks(), Vec::<std::path::PathBuf>::new());
         }
 
         #[test]
@@ -1392,7 +1392,7 @@ mod tests {
                 })
                 .expect("new target record");
 
-            assert!(old_target.inlinks().is_empty());
+            assert_eq!(old_target.inlinks(), Vec::<std::path::PathBuf>::new());
             assert_eq!(new_target.inlinks(), [PathBuf::from("linker.md")]);
         }
 

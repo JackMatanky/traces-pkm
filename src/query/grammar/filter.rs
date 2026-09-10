@@ -438,8 +438,7 @@ enum FilterToken {
     Not,
     #[regex("==|!=|>=|<=|>|<", |lex| CompareOp::try_from(lex.slice()))]
     Op(CompareOp),
-    #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
-    #[regex(r"'([^'\\]|\\.)*'", string_callback)]
+    #[regex(r#""([^"\\]|\\.)*"|'([^'\\]|\\.)*'"#, string_callback)]
     #[token("true", |_| NoteFieldValue::Bool(true), priority = 3)]
     #[token("false", |_| NoteFieldValue::Bool(false), priority = 3)]
     #[token("null", |_| NoteFieldValue::Null, priority = 3)]

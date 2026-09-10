@@ -1491,7 +1491,7 @@ mod tests {
             fn has_no_tags_by_default() {
                 let item = ListItem::new("plain item", ListItemType::Plain);
 
-                assert!(item.tags().is_empty());
+                assert_eq!(item.tags(), []);
             }
         }
 

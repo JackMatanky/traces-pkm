@@ -425,7 +425,10 @@ mod tests {
                 .with_multi_select([]);
 
             assert_eq!(p.multi_select("pick", &items).unwrap(), vec![0, 2]);
-            assert!(p.multi_select("pick", &items).unwrap().is_empty());
+            assert_eq!(
+                p.multi_select("pick", &items).unwrap(),
+                Vec::<usize>::new()
+            );
         }
 
         #[test]
@@ -433,14 +436,20 @@ mod tests {
             let items = vec!["a".to_owned(), "b".to_owned()];
             let p = PresetDialogProvider::new();
 
-            assert!(p.multi_select("pick", &items).unwrap().is_empty());
+            assert_eq!(
+                p.multi_select("pick", &items).unwrap(),
+                Vec::<usize>::new()
+            );
         }
 
         #[test]
         fn returns_empty_when_items_are_empty_and_preserves_queue() {
             let p = PresetDialogProvider::new().with_multi_select([1, 2]);
 
-            assert!(p.multi_select("pick", &[]).unwrap().is_empty());
+            assert_eq!(
+                p.multi_select("pick", &[]).unwrap(),
+                Vec::<usize>::new()
+            );
 
             assert_eq!(
                 p.multi_select("pick", &["a".to_owned()]).unwrap(),

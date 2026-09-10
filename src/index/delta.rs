@@ -239,7 +239,7 @@ mod tests {
             let upserted_paths: Vec<_> =
                 diff.upserted().iter().map(FileBase::path).collect();
             assert_eq!(upserted_paths, [std::path::Path::new("a.md")]);
-            assert!(diff.deleted().is_empty());
+            assert_eq!(diff.deleted(), []);
         }
     }
 

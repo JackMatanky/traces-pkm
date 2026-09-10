@@ -157,6 +157,7 @@ mod tests {
 
     #[test]
     fn does_not_warn_when_global_is_present_in_raw() {
+        use pretty_assertions::assert_eq;
         let mut raw = IndexMap::new();
         raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
         raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
@@ -164,7 +165,7 @@ mod tests {
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
         );
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]

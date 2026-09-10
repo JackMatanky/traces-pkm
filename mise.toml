@@ -6,21 +6,21 @@
 
 [tools]
 # -- Toolchain --
-rust = { version = "nightly", profile = "default", components = [
-  "rust-src",
+rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
+  "clippy",
   "rustfmt",
-  "rust-analyzer",
 ] }
-hk = "latest"
+hk = "1.58.1"
 
 # -- Data formats --
 taplo = "latest"
-"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
+tombi = "latest"
+"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
 
 # -- Security --
 gitleaks = "latest"
+cargo-deny = "latest"
 "cargo:cargo-audit" = "latest"
-"cargo:cargo-deny" = "latest"
 
 # -- Testing & Quality --
 "cargo:cargo-nextest" = "latest"
@@ -37,7 +37,7 @@ gitleaks = "latest"
 
 # -- Docs & ADRs --
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
-"cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
+"cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
 
 [settings]
 # Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
@@ -646,4 +646,4 @@ depends = ["check", "lint", "test"]
 # ------------------------------------------------------------- #
 
 [hooks]
-postinstall = "hk install --mise"
+postinstall = '[ "${CI:-false}" = "true" ] || hk install --mise'

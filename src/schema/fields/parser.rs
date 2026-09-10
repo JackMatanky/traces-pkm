@@ -463,7 +463,7 @@ mod tests {
 
             let result = parser.string_list(&opts, "tags", Vec::new());
 
-            assert!(result.is_empty());
+            assert_eq!(result, Vec::<String>::new());
             let errors = parser.finish(&opts);
             assert_eq!(errors.len(), 1);
             assert!(matches!(
@@ -484,7 +484,7 @@ mod tests {
             let result =
                 parser.string_list(&opts, "tags", vec!["fb".to_owned()]);
 
-            assert!(result.is_empty());
+            assert_eq!(result, Vec::<String>::new());
             assert!(parser.finish(&opts).is_empty());
         }
     }

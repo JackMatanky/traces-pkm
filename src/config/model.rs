@@ -816,7 +816,7 @@ mod tests {
         fn defaults_to_empty_tag_filters_and_default_statuses() {
             let config = TaskConfig::default();
 
-            assert!(config.tag_filters().is_empty());
+            assert_eq!(config.tag_filters(), []);
             assert!(config.statuses().by_symbol(' '.into()).is_some());
         }
 
@@ -842,7 +842,7 @@ mod tests {
 
             let config = TaskConfig::try_from(raw).expect("empty is valid");
 
-            assert!(config.tag_filters().is_empty());
+            assert_eq!(config.tag_filters(), []);
         }
 
         #[test]

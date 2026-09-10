@@ -1280,7 +1280,10 @@ mod tests {
                 let inlinks = build_graph(&notes, &[]);
 
                 assert!(!inlinks.has_target(Path::new("lonely.md")));
-                assert!(inlinks.inlinks_of(Path::new("lonely.md")).is_empty());
+                assert_eq!(
+                    inlinks.inlinks_of(Path::new("lonely.md")),
+                    Vec::<std::path::PathBuf>::new()
+                );
             }
 
             #[test]
@@ -1314,8 +1317,9 @@ mod tests {
                 assert_eq!(inlinks.inlinks_of(Path::new("notes/a/note.md")), [
                     PathBuf::from("notes/a/linking.md")
                 ]);
-                assert!(
-                    inlinks.inlinks_of(Path::new("notes/b/note.md")).is_empty()
+                assert_eq!(
+                    inlinks.inlinks_of(Path::new("notes/b/note.md")),
+                    Vec::<std::path::PathBuf>::new()
                 );
             }
 
@@ -1376,6 +1380,7 @@ mod tests {
 
             #[test]
             fn every_target_in_map_has_at_least_one_source() {
+                use pretty_assertions::{assert_eq, assert_ne};
                 let notes = [
                     note_with_outlink("a.md", "target", LinkType::Wikilink),
                     parse("target.md", "# Target"),
@@ -1392,7 +1397,7 @@ mod tests {
                 assert_eq!(inlinks.len(), 1);
 
                 for (_, sources) in inlinks.iter() {
-                    assert!(!sources.is_empty());
+                    assert_ne!(sources, Vec::<std::path::PathBuf>::new());
                 }
             }
         }
@@ -1416,9 +1421,11 @@ mod tests {
 
             #[test]
             fn inlinks_of_returns_empty_slice_for_unknown_target() {
+                use pretty_assertions::assert_eq;
                 let inlinks = InlinkMap::default();
-                assert!(
-                    inlinks.inlinks_of(Path::new("nonexistent.md")).is_empty()
+                assert_eq!(
+                    inlinks.inlinks_of(Path::new("nonexistent.md")),
+                    Vec::<std::path::PathBuf>::new()
                 );
             }
 

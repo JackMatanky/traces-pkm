@@ -430,7 +430,7 @@ mod tests {
             assert!(done_symbols.contains(&TaskStatusSymbol::new('x')));
             assert!(done_symbols.contains(&TaskStatusSymbol::new('X')));
 
-            assert!(map.by_type(TaskStatusType::NonTask).is_empty());
+            assert_eq!(map.by_type(TaskStatusType::NonTask), []);
         }
 
         #[test]

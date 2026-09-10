@@ -227,19 +227,27 @@ mod tests {
 
         #[test]
         fn returns_empty_when_items_are_empty() {
+            use pretty_assertions::assert_eq;
             let p = TerminalDialogProvider::new();
-            assert!(p.multi_select("pick", &[]).unwrap().is_empty());
+            assert_eq!(
+                p.multi_select("pick", &[]).unwrap(),
+                Vec::<usize>::new()
+            );
         }
 
         #[test]
         fn returns_empty_when_not_a_tty() {
+            use pretty_assertions::assert_eq;
             if skip_if_tty("returns_empty_when_not_a_tty") {
                 return;
             }
             let items = vec!["a".to_owned(), "b".to_owned()];
             let p = TerminalDialogProvider::new();
 
-            assert!(p.multi_select("pick", &items).unwrap().is_empty());
+            assert_eq!(
+                p.multi_select("pick", &items).unwrap(),
+                Vec::<usize>::new()
+            );
         }
     }
 

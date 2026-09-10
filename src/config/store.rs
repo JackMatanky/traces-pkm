@@ -622,7 +622,7 @@ mod tests {
             // Assert
             assert_eq!(removed, 1);
             let tracked = fixture.state.list_tracked_configs().expect("list");
-            assert!(tracked.is_empty());
+            assert_eq!(tracked, Vec::<std::path::PathBuf>::new());
         }
     }
 
@@ -666,7 +666,7 @@ mod tests {
             assert_eq!(removed, 1);
             let trusted =
                 fixture.state.list_trusted_workspaces().expect("list");
-            assert!(trusted.is_empty());
+            assert_eq!(trusted, Vec::<std::path::PathBuf>::new());
         }
     }
 }

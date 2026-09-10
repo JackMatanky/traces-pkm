@@ -577,7 +577,7 @@ mod tests {
             let fields = InlineTokenLexer::new(false)
                 .extract_fields("Hello [!!!:: value]");
 
-            assert!(fields.is_empty());
+            assert_eq!(fields, []);
         }
 
         #[test]

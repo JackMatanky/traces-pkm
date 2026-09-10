@@ -384,6 +384,7 @@ mod tests {
 
         #[test]
         fn checks_status_without_changing_trust_store() {
+            use pretty_assertions::assert_eq;
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
@@ -394,7 +395,10 @@ mod tests {
 
             args.run(&service).expect("show trust status");
 
-            assert!(service.list_trusted().expect("list trusted").is_empty());
+            assert_eq!(
+                service.list_trusted().expect("list trusted"),
+                Vec::<std::path::PathBuf>::new()
+            );
         }
     }
 
@@ -417,6 +421,7 @@ mod tests {
 
         #[test]
         fn removes_a_stale_root() {
+            use pretty_assertions::assert_eq;
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
@@ -431,7 +436,10 @@ mod tests {
                 .run(&service)
                 .expect("clean trust store");
 
-            assert!(service.list_trusted().expect("list trusted").is_empty());
+            assert_eq!(
+                service.list_trusted().expect("list trusted"),
+                Vec::<std::path::PathBuf>::new()
+            );
         }
 
         #[test]

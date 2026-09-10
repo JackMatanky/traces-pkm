@@ -1,5 +1,5 @@
-amends "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.58.1/hk@1.58.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.58.1/hk@1.58.1#/Builtins.pkl"
 
 fail_fast = false
 
@@ -11,7 +11,9 @@ exclude = List(
     "node_modules",
     "dist",
     "build",
-    "LICENSE"
+    "LICENSE",
+    ".scratch",
+    ".agents"
 )
 
 local hygiene = new Mapping<String, Step> {
@@ -23,21 +25,28 @@ local hygiene = new Mapping<String, Step> {
 local data_formats = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
     ["check-yaml"] = (Builtins.ryl) {
+        check_after_diff = false
+        check = new CommandSpec {
+            command = new Command {
+                argv = List("ryl", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
+            }
+            effect = "read"
+        }
         check_diff = new CommandSpec {
             command = new Command {
-                argv = List("ryl", "--diff", "-d", "extends: default", "{{files}}")
+                argv = List("ryl", "--diff", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
             }
             effect = "read"
         }
         check_list_files = new CommandSpec {
             command = new Command {
-                argv = List("ryl", "--list-files", "-d", "extends: default", "{{files}}")
+                argv = List("ryl", "--list-files", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
             }
             effect = "read"
         }
         fix = new CommandSpec {
             command = new Command {
-                argv = List("ryl", "--fix", "-d", "extends: default", "{{files}}")
+                argv = List("ryl", "--fix", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
             }
             effect = "write"
         }

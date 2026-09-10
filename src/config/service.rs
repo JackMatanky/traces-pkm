@@ -861,7 +861,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert!(result.unwrap().is_empty());
+            assert_eq!(result.unwrap(), Vec::<std::path::PathBuf>::new());
         }
 
         #[test]
@@ -918,7 +918,10 @@ mod tests {
             // Assert
             assert!(result.is_ok());
             assert_eq!(result.unwrap(), 1);
-            assert!(fixture.service.list_tracked().unwrap().is_empty());
+            assert_eq!(
+                fixture.service.list_tracked().unwrap(),
+                Vec::<std::path::PathBuf>::new()
+            );
         }
 
         #[test]
@@ -961,7 +964,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert!(result.unwrap().is_empty());
+            assert_eq!(result.unwrap(), Vec::<std::path::PathBuf>::new());
         }
 
         #[test]
@@ -1001,7 +1004,10 @@ mod tests {
             // Assert
             assert!(result.is_ok());
             assert_eq!(result.unwrap(), 1);
-            assert!(fixture.service.list_trusted().unwrap().is_empty());
+            assert_eq!(
+                fixture.service.list_trusted().unwrap(),
+                Vec::<std::path::PathBuf>::new()
+            );
         }
 
         #[test]

@@ -432,7 +432,7 @@ mod tests {
 
             let entry = ListEntry::new("notes/nested.md", &parent);
 
-            assert!(entry.item.children().is_empty());
+            assert_eq!(entry.item.children(), []);
         }
 
         #[test]
