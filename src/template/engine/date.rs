@@ -33,7 +33,7 @@ use minijinja::{
 use num_traits::ToPrimitive as _;
 
 use super::error::TemplateEngineResult;
-use crate::{DurationUnit, DurationValue};
+use crate::DurationUnit;
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///
@@ -251,14 +251,13 @@ fn format_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<&str> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `unit` is not one of
-///   [`DurationValue::parse_unit_name`]'s accepted unit names or abbreviations.
+///   [`DurationUnit::parse`]'s accepted unit names or abbreviations.
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
-fn unit_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<DurationValue> {
+fn unit_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<DurationUnit> {
     let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
     kwargs.assert_all_used()?;
-    DurationValue::parse_unit_name(unit_str)
-        .ok_or_else(|| unknown_unit_error(unit_str))
+    DurationUnit::parse(unit_str).ok_or_else(|| unknown_unit_error(unit_str))
 }
 
 /// Formats `formattable`, anything chrono's `.format(fmt)` produces
@@ -392,7 +391,7 @@ fn date_add(
     kwargs: Kwargs,
 ) -> TemplateEngineResult<String> {
     let unit = unit_kwarg(&kwargs)?;
-    date_shift_unit(value, n, &unit)
+    date_shift_unit(value, n, unit)
 }
 
 /// `{{ value | date_sub(n, unit="days") }}` subtracts `n` `unit`s from a piped
@@ -417,17 +416,16 @@ fn date_sub(
     date_shift_unit(
         value,
         n.checked_neg().ok_or_else(date_out_of_range_error)?,
-        &unit,
+        unit,
     )
 }
-
 fn date_shift_unit(
     value: &str,
     n: i64,
-    unit: &DurationValue,
+    unit: DurationUnit,
 ) -> TemplateEngineResult<String> {
-    shift_date(value, |dt| match unit.last_unit() {
-        Some(DurationUnit::Year) => {
+    shift_date(value, |dt| match unit {
+        DurationUnit::Year => {
             let months = n.checked_mul(12)?;
             let months_u32 = u32::try_from(months.abs()).ok()?;
             if months >= 0 {
@@ -436,7 +434,7 @@ fn date_shift_unit(
                 dt.checked_sub_months(Months::new(months_u32))
             }
         }
-        Some(DurationUnit::Month) => {
+        DurationUnit::Month => {
             let months_u32 = u32::try_from(n.abs()).ok()?;
             if n >= 0 {
                 dt.checked_add_months(Months::new(months_u32))
@@ -444,7 +442,7 @@ fn date_shift_unit(
                 dt.checked_sub_months(Months::new(months_u32))
             }
         }
-        Some(DurationUnit::Day) => {
+        DurationUnit::Day => {
             let days_u64 = u64::try_from(n.abs()).ok()?;
             if n >= 0 {
                 dt.checked_add_days(Days::new(days_u64))
@@ -452,16 +450,15 @@ fn date_shift_unit(
                 dt.checked_sub_days(Days::new(days_u64))
             }
         }
-        Some(DurationUnit::Millisecond) => {
+        DurationUnit::Millisecond => {
             dt.checked_add_signed(chrono::Duration::try_milliseconds(n)?)
         }
-        Some(u) => {
+        u => {
             let secs = u.seconds_i64()?;
             dt.checked_add_signed(chrono::Duration::seconds(
                 secs.checked_mul(n)?,
             ))
         }
-        None => None,
     })
 }
 
@@ -474,9 +471,7 @@ fn date_shift_unit(
 ///   overflows chrono's representable range.
 fn add_days(value: &str, n: u64) -> TemplateEngineResult<String> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
-    let unit = DurationValue::parse_unit_name("days")
-        .ok_or_else(|| unknown_unit_error("days"))?;
-    date_shift_unit(value, n_i64, &unit)
+    date_shift_unit(value, n_i64, DurationUnit::Day)
 }
 
 /// `{{ value | sub_days(n) }}` is a convenience shortcut for
@@ -489,9 +484,7 @@ fn add_days(value: &str, n: u64) -> TemplateEngineResult<String> {
 fn sub_days(value: &str, n: u64) -> TemplateEngineResult<String> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     let n_i64 = n_i64.checked_neg().ok_or_else(date_out_of_range_error)?;
-    let unit = DurationValue::parse_unit_name("days")
-        .ok_or_else(|| unknown_unit_error("days"))?;
-    date_shift_unit(value, n_i64, &unit)
+    date_shift_unit(value, n_i64, DurationUnit::Day)
 }
 
 /// `{{ value | add_months(n) }}` is a convenience shortcut for
@@ -502,9 +495,7 @@ fn sub_days(value: &str, n: u64) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
 fn add_months(value: &str, n: u32) -> TemplateEngineResult<String> {
-    let unit = DurationValue::parse_unit_name("months")
-        .ok_or_else(|| unknown_unit_error("months"))?;
-    date_shift_unit(value, i64::from(n), &unit)
+    date_shift_unit(value, i64::from(n), DurationUnit::Month)
 }
 
 /// `{{ value | sub_months(n) }}` is a convenience shortcut for
@@ -517,9 +508,7 @@ fn add_months(value: &str, n: u32) -> TemplateEngineResult<String> {
 fn sub_months(value: &str, n: u32) -> TemplateEngineResult<String> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
-    let unit = DurationValue::parse_unit_name("months")
-        .ok_or_else(|| unknown_unit_error("months"))?;
-    date_shift_unit(value, n_i64, &unit)
+    date_shift_unit(value, n_i64, DurationUnit::Month)
 }
 
 /// `{{ value | add_years(n) }}` is a convenience shortcut for
@@ -530,9 +519,7 @@ fn sub_months(value: &str, n: u32) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
 ///   overflows chrono's representable range.
 fn add_years(value: &str, n: u32) -> TemplateEngineResult<String> {
-    let unit = DurationValue::parse_unit_name("years")
-        .ok_or_else(|| unknown_unit_error("years"))?;
-    date_shift_unit(value, i64::from(n), &unit)
+    date_shift_unit(value, i64::from(n), DurationUnit::Year)
 }
 
 /// `{{ value | sub_years(n) }}` is a convenience shortcut for
@@ -545,9 +532,7 @@ fn add_years(value: &str, n: u32) -> TemplateEngineResult<String> {
 fn sub_years(value: &str, n: u32) -> TemplateEngineResult<String> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
-    let unit = DurationValue::parse_unit_name("years")
-        .ok_or_else(|| unknown_unit_error("years"))?;
-    date_shift_unit(value, n_i64, &unit)
+    date_shift_unit(value, n_i64, DurationUnit::Year)
 }
 
 /// `{{ value | start_of_month }}` returns the first day of the input month.
@@ -660,7 +645,7 @@ fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` or `other` is not a parseable
 ///   date/time string (see [`ParsedDate::parse`]) or `unit` is not one of
-///   [`DurationValue::parse_unit_name`]'s accepted names (see [`unit_kwarg`]).
+///   [`DurationUnit::parse`]'s accepted names (see [`unit_kwarg`]).
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
 #[expect(
@@ -677,14 +662,7 @@ fn date_diff(
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
 
-    let Some(u) = unit.last_unit() else {
-        return Err(Error::new(
-            ErrorKind::InvalidOperation,
-            "duration has no unit for date_diff",
-        ));
-    };
-
-    match u {
+    match unit {
         DurationUnit::Year => Ok(Value::from(signed_years_since(
             from.datetime.date(),
             to.datetime.date(),
@@ -693,7 +671,7 @@ fn date_diff(
             from.datetime.date(),
             to.datetime.date(),
         ))),
-        _ => {
+        u => {
             let unit_secs = u.seconds();
             let delta = to.datetime.signed_duration_since(from.datetime);
 
@@ -807,7 +785,7 @@ fn date_out_of_range_error() -> Error {
 }
 
 /// Builds the error for a `unit="..."` kwarg naming anything outside
-/// [`DurationValue::parse_unit_name`]'s accepted unit names.
+/// [`DurationUnit::parse`]'s accepted unit names.
 ///
 /// Shared by [`date_add`], [`date_sub`], and [`date_diff`] via [`unit_kwarg`].
 fn unknown_unit_error(unit: &str) -> Error {

@@ -2,7 +2,7 @@
 //!
 //! The primary type callers interact with is [`DurationUnit`], which carries
 //! all unit knowledge (parsing, seconds, naming). [`DurationValue`] wraps a
-//! parsed duration with its total seconds and last unit. [`DurationSeconds`] is
+//! parsed duration with its total seconds. [`DurationSeconds`] is
 //! a typed `f64` with [`Ord`], [`Add`], [`Sub`], [`Mul`].
 //!
 //! All duration unit knowledge lives in [`DurationUnit`]. Callers should not
@@ -17,13 +17,11 @@ use std::{
 
 /// A validated duration expression.
 ///
-/// Constructed only via [`DurationValue::parse`] or
-/// [`DurationValue::parse_unit_name`]. Stores the parsed total seconds and the
-/// last unit encountered during parsing.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// Constructed only via [`DurationValue::parse`]. Stores the parsed total
+/// seconds.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DurationValue {
     seconds: DurationSeconds,
-    unit: Option<DurationUnit>,
 }
 
 impl DurationValue {
@@ -53,7 +51,6 @@ impl DurationValue {
         let len = bytes.len();
         let mut pos = 0;
         let mut total = 0.0f64;
-        let mut last_unit = None::<DurationUnit>;
         let mut parsed_any = false;
 
         while pos < len {
@@ -72,7 +69,6 @@ impl DurationValue {
             pos = pos_after_unit;
 
             total += number * kind.seconds();
-            last_unit = Some(kind);
             parsed_any = true;
         }
 
@@ -82,39 +78,14 @@ impl DurationValue {
 
         Ok(Self {
             seconds: DurationSeconds::try_from(total)?,
-            unit: last_unit,
-        })
-    }
-
-    /// Parses a bare unit name as a single-part duration with quantity 1.
-    ///
-    /// Accepts any spelling recognized by [`DurationUnit::parse`] (e.g.,
-    /// `"hours"`, `"d"`, `"sec"`). Used by the template engine for date-shift
-    /// operations.
-    pub(crate) fn parse_unit_name(name: &str) -> Option<Self> {
-        let kind = DurationUnit::parse(name)?;
-        Some(Self {
-            seconds: DurationSeconds::try_from(kind.seconds()).ok()?,
-            unit: Some(kind),
         })
     }
 
     /// Returns the total duration as [`DurationSeconds`].
     #[inline]
     #[must_use]
-    pub(crate) const fn to_seconds(&self) -> DurationSeconds {
+    pub(crate) const fn to_seconds(self) -> DurationSeconds {
         self.seconds
-    }
-
-    /// Returns the last parsed unit, if any.
-    ///
-    /// For `"1h 30m"`, returns [`DurationUnit::Minute`] (the last unit). For
-    /// bare unit names like `"hours"`, returns the corresponding unit. Returns
-    /// `None` only for synthetic `DurationValue` instances with no unit (which
-    /// cannot be constructed through the public API).
-    #[must_use]
-    pub(crate) const fn last_unit(&self) -> Option<DurationUnit> {
-        self.unit
     }
 
     /// Advances `pos` past whitespace and commas.
@@ -491,8 +462,9 @@ mod tests {
     use super::*;
 
     mod duration_seconds_ops {
-        use super::*;
+        use pretty_assertions::assert_eq;
 
+        use super::*;
         #[test]
         fn add_combines_seconds() {
             let a = DurationSeconds::try_from(100.0).unwrap();
@@ -537,7 +509,10 @@ mod tests {
         #[test]
         fn from_duration_value() {
             let dv = DurationValue::parse("1h").unwrap();
-            assert_eq!(dv.to_seconds().0, 3_600.0);
+            assert_eq!(
+                dv.to_seconds(),
+                DurationSeconds::try_from(3_600.0).unwrap()
+            );
         }
 
         #[test]
@@ -554,10 +529,10 @@ mod tests {
     }
 
     mod duration_value_parse {
+        use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
-
         #[rstest]
         #[case::milliseconds("500ms", 0.5)]
         #[case::seconds("90s", 90.0)]
@@ -569,58 +544,70 @@ mod tests {
         #[case::years("1y", 31_536_000.0)]
         fn parses_single_unit(#[case] input: &str, #[case] expected: f64) {
             assert_eq!(
-                DurationValue::parse(input).unwrap().to_seconds().0,
-                expected
+                DurationValue::parse(input).unwrap().to_seconds(),
+                DurationSeconds::try_from(expected).unwrap()
             );
         }
 
         #[test]
         fn parses_multi_part_with_space() {
             let d = DurationValue::parse("1h 30m").unwrap();
-            assert_eq!(d.to_seconds().0, 5_400.0);
-            assert_eq!(d.last_unit(), Some(DurationUnit::Minute));
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
+            );
         }
 
         #[test]
         fn parses_multi_part_without_separator() {
             assert_eq!(
-                DurationValue::parse("1h30m").unwrap().to_seconds().0,
-                5_400.0
+                DurationValue::parse("1h30m").unwrap().to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
             );
         }
 
         #[test]
         fn parses_multi_part_with_comma() {
             let d = DurationValue::parse("4 yrs, 6 wks").unwrap();
-            assert_eq!(d.to_seconds().0, 4.0 * 31_536_000.0 + 6.0 * 604_800.0);
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(4.0 * 31_536_000.0 + 6.0 * 604_800.0)
+                    .unwrap()
+            );
         }
 
         #[test]
         fn parses_decimal_numbers() {
             assert_eq!(
-                DurationValue::parse("1.5h").unwrap().to_seconds().0,
-                5_400.0
+                DurationValue::parse("1.5h").unwrap().to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
             );
         }
 
         #[test]
         fn parses_decimal_without_leading_digit() {
             assert_eq!(
-                DurationValue::parse(".5h").unwrap().to_seconds().0,
-                1_800.0
+                DurationValue::parse(".5h").unwrap().to_seconds(),
+                DurationSeconds::try_from(1_800.0).unwrap()
             );
         }
 
         #[test]
         fn parses_with_leading_trailing_whitespace() {
             let d = DurationValue::parse(" 1h ").unwrap();
-            assert_eq!(d.to_seconds().0, 3_600.0);
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(3_600.0).unwrap()
+            );
         }
 
         #[test]
         fn parses_with_multiple_consecutive_separators() {
             let d = DurationValue::parse("1  h  30  m").unwrap();
-            assert_eq!(d.to_seconds().0, 5_400.0);
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
+            );
         }
 
         #[rstest]
@@ -694,53 +681,8 @@ mod tests {
         }
     }
 
-    mod parse_unit_name {
-        use rstest::rstest;
-
-        use super::*;
-
-        #[test]
-        fn parses_bare_unit_names() {
-            let d = DurationValue::parse_unit_name("hours").unwrap();
-            assert_eq!(d.to_seconds().0, 3_600.0);
-            assert_eq!(d.last_unit(), Some(DurationUnit::Hour));
-        }
-
-        #[rstest]
-        #[case::ms("ms")]
-        #[case::s("s")]
-        #[case::sec("sec")]
-        #[case::m("m")]
-        #[case::min("min")]
-        #[case::h("h")]
-        #[case::hr("hr")]
-        #[case::d("d")]
-        #[case::w("w")]
-        #[case::wk("wk")]
-        #[case::mo("mo")]
-        #[case::y("y")]
-        #[case::yr("yr")]
-        fn parses_all_abbreviations(#[case] abbr: &str) {
-            assert!(
-                DurationValue::parse_unit_name(abbr).is_some(),
-                "failed for abbreviation: {abbr}"
-            );
-        }
-
-        #[test]
-        fn is_case_insensitive() {
-            assert!(DurationValue::parse_unit_name("H").is_some());
-            assert!(DurationValue::parse_unit_name("Hours").is_some());
-            assert!(DurationValue::parse_unit_name("HOURS").is_some());
-        }
-
-        #[test]
-        fn rejects_unknown() {
-            assert!(DurationValue::parse_unit_name("foo").is_none());
-        }
-    }
-
     mod duration_unit_parse {
+        use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
@@ -750,6 +692,49 @@ mod tests {
         #[case::all_upper("HOUR", DurationUnit::Hour)]
         #[case::lower_plural("hours", DurationUnit::Hour)]
         fn is_case_insensitive(
+            #[case] input: &str,
+            #[case] expected: DurationUnit,
+        ) {
+            assert_eq!(DurationUnit::parse(input).unwrap(), expected);
+        }
+
+        #[rstest]
+        #[case::ms("ms", DurationUnit::Millisecond)]
+        #[case::millisecond("millisecond", DurationUnit::Millisecond)]
+        #[case::milliseconds("milliseconds", DurationUnit::Millisecond)]
+        #[case::s("s", DurationUnit::Second)]
+        #[case::sec("sec", DurationUnit::Second)]
+        #[case::secs("secs", DurationUnit::Second)]
+        #[case::second("second", DurationUnit::Second)]
+        #[case::seconds("seconds", DurationUnit::Second)]
+        #[case::m("m", DurationUnit::Minute)]
+        #[case::min("min", DurationUnit::Minute)]
+        #[case::mins("mins", DurationUnit::Minute)]
+        #[case::minute("minute", DurationUnit::Minute)]
+        #[case::minutes("minutes", DurationUnit::Minute)]
+        #[case::h("h", DurationUnit::Hour)]
+        #[case::hr("hr", DurationUnit::Hour)]
+        #[case::hrs("hrs", DurationUnit::Hour)]
+        #[case::hour("hour", DurationUnit::Hour)]
+        #[case::hours("hours", DurationUnit::Hour)]
+        #[case::d("d", DurationUnit::Day)]
+        #[case::day("day", DurationUnit::Day)]
+        #[case::days("days", DurationUnit::Day)]
+        #[case::w("w", DurationUnit::Week)]
+        #[case::wk("wk", DurationUnit::Week)]
+        #[case::wks("wks", DurationUnit::Week)]
+        #[case::week("week", DurationUnit::Week)]
+        #[case::weeks("weeks", DurationUnit::Week)]
+        #[case::mo("mo", DurationUnit::Month)]
+        #[case::mos("mos", DurationUnit::Month)]
+        #[case::month("month", DurationUnit::Month)]
+        #[case::months("months", DurationUnit::Month)]
+        #[case::y("y", DurationUnit::Year)]
+        #[case::yr("yr", DurationUnit::Year)]
+        #[case::yrs("yrs", DurationUnit::Year)]
+        #[case::year("year", DurationUnit::Year)]
+        #[case::years("years", DurationUnit::Year)]
+        fn parses_all_units_and_abbreviations(
             #[case] input: &str,
             #[case] expected: DurationUnit,
         ) {
@@ -780,12 +765,16 @@ mod tests {
     }
 
     mod from_str {
-        use super::*;
+        use pretty_assertions::assert_eq;
 
+        use super::*;
         #[test]
         fn roundtrips_valid_input() {
             let d: DurationValue = "1h 30m".parse().unwrap();
-            assert_eq!(d.to_seconds().0, 5_400.0);
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
+            );
         }
 
         #[test]
@@ -808,8 +797,9 @@ mod tests {
     }
 
     mod registry_consistency {
-        use super::*;
+        use pretty_assertions::assert_eq;
 
+        use super::*;
         #[test]
         fn unit_map_covers_all_unit_types() {
             let mut seen = std::collections::HashSet::new();
