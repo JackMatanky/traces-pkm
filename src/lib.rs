@@ -63,7 +63,7 @@ mod delimiter;
 mod dialog;
 mod dirs;
 mod dirtree;
-pub mod duration;
+mod duration;
 mod env_vars;
 mod field;
 mod file;
@@ -94,6 +94,7 @@ pub use dialog::{
     TerminalDialogProvider,
 };
 pub(crate) use dirtree::{DirTree, DirTreeError};
+pub use duration::{DurationSeconds, DurationValue};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };

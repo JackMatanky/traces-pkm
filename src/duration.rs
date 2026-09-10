@@ -8,7 +8,7 @@ use std::fmt;
 /// # Examples
 ///
 /// ```
-/// use traces_pkm::duration::{DurationSeconds, DurationValue};
+/// use traces_pkm::{DurationSeconds, DurationValue};
 ///
 /// let a = DurationValue::parse("1h").unwrap().to_seconds();
 /// let b = DurationValue::parse("30m").unwrap().to_seconds();
@@ -288,7 +288,7 @@ const fn unit_name_of(unit: DurationUnit) -> &'static str {
 /// # Examples
 ///
 /// ```
-/// use traces_pkm::duration::DurationValue;
+/// use traces_pkm::DurationValue;
 ///
 /// let dur = DurationValue::parse("1h 30m").expect("valid");
 /// assert_eq!(dur.to_seconds().as_f64(), 5400.0);
