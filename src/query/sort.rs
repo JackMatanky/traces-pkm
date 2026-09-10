@@ -257,7 +257,7 @@ impl SortKey {
                 }
             }
             QueryFieldValueRef::Duration(s) => {
-                if let Some(dv) = crate::DurationValue::parse(s) {
+                if let Ok(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text((*s).into())
@@ -266,7 +266,7 @@ impl SortKey {
             QueryFieldValueRef::Text(s) => {
                 if let Some(ts) = Timestamp::parse_iso(s) {
                     Self::Date(ts)
-                } else if let Some(dv) = crate::DurationValue::parse(s) {
+                } else if let Ok(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text((*s).into())
@@ -296,7 +296,7 @@ impl SortKey {
                 }
             }
             NoteFieldValue::Duration(s) => {
-                if let Some(dv) = crate::DurationValue::parse(s) {
+                if let Ok(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text(s.as_str().into())
@@ -305,7 +305,7 @@ impl SortKey {
             NoteFieldValue::String(s) => {
                 if let Some(ts) = Timestamp::parse_iso(s) {
                     Self::Date(ts)
-                } else if let Some(dv) = crate::DurationValue::parse(s) {
+                } else if let Ok(dv) = crate::DurationValue::parse(s) {
                     Self::Duration(dv.to_seconds())
                 } else {
                     Self::Text(s.as_str().into())
@@ -600,8 +600,10 @@ mod tests {
 
         #[test]
         fn compares_durations_numerically() {
-            let one_hour = SortKey::Duration(DurationSeconds::from(3_600.0));
-            let thirty_mins = SortKey::Duration(DurationSeconds::from(1_800.0));
+            let one_hour =
+                SortKey::Duration(DurationSeconds::try_from(3_600.0).unwrap());
+            let thirty_mins =
+                SortKey::Duration(DurationSeconds::try_from(1_800.0).unwrap());
             assert_eq!(one_hour.total_cmp(&thirty_mins), Ordering::Greater);
             assert_eq!(thirty_mins.total_cmp(&one_hour), Ordering::Less);
         }

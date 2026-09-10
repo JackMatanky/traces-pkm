@@ -30,9 +30,10 @@ use minijinja::{
     Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
 };
+use num_traits::ToPrimitive as _;
 
 use super::error::TemplateEngineResult;
-use crate::DurationValue;
+use crate::{DurationUnit, DurationValue};
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///
@@ -425,8 +426,8 @@ fn date_shift_unit(
     n: i64,
     unit: &DurationValue,
 ) -> TemplateEngineResult<String> {
-    shift_date(value, |dt| match unit.unit_name() {
-        "year" | "years" => {
+    shift_date(value, |dt| match unit.last_unit() {
+        Some(DurationUnit::Year) => {
             let months = n.checked_mul(12)?;
             let months_u32 = u32::try_from(months.abs()).ok()?;
             if months >= 0 {
@@ -435,7 +436,7 @@ fn date_shift_unit(
                 dt.checked_sub_months(Months::new(months_u32))
             }
         }
-        "month" | "months" => {
+        Some(DurationUnit::Month) => {
             let months_u32 = u32::try_from(n.abs()).ok()?;
             if n >= 0 {
                 dt.checked_add_months(Months::new(months_u32))
@@ -443,7 +444,7 @@ fn date_shift_unit(
                 dt.checked_sub_months(Months::new(months_u32))
             }
         }
-        "day" | "days" => {
+        Some(DurationUnit::Day) => {
             let days_u64 = u64::try_from(n.abs()).ok()?;
             if n >= 0 {
                 dt.checked_add_days(Days::new(days_u64))
@@ -451,12 +452,16 @@ fn date_shift_unit(
                 dt.checked_sub_days(Days::new(days_u64))
             }
         }
-        _ => {
-            let secs = unit.diff_seconds()?.as_i64();
+        Some(DurationUnit::Millisecond) => {
+            dt.checked_add_signed(chrono::Duration::try_milliseconds(n)?)
+        }
+        Some(u) => {
+            let secs = u.seconds_i64()?;
             dt.checked_add_signed(chrono::Duration::seconds(
                 secs.checked_mul(n)?,
             ))
         }
+        None => None,
     })
 }
 
@@ -672,51 +677,57 @@ fn date_diff(
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
 
-    match unit.unit_name() {
-        "year" | "years" => Ok(Value::from(signed_years_since(
+    let Some(u) = unit.last_unit() else {
+        return Err(Error::new(
+            ErrorKind::InvalidOperation,
+            "duration has no unit for date_diff",
+        ));
+    };
+
+    match u {
+        DurationUnit::Year => Ok(Value::from(signed_years_since(
             from.datetime.date(),
             to.datetime.date(),
         ))),
-        "month" | "months" => Ok(Value::from(signed_months_since(
+        DurationUnit::Month => Ok(Value::from(signed_months_since(
             from.datetime.date(),
             to.datetime.date(),
         ))),
         _ => {
-            #[expect(
-                clippy::expect_used,
-                reason = "this arm is reached only for fixed-length units, \
-                          all of which DurationValue::diff_seconds maps to \
-                          Some; None is only ever months/years, handled above"
-            )]
-            let unit_seconds = unit
-                .diff_seconds()
-                .expect("only months/years return None, handled above");
+            let unit_secs = u.seconds();
             let delta = to.datetime.signed_duration_since(from.datetime);
 
             if from.precision == DatePrecision::DateTime
                 && to.precision == DatePrecision::DateTime
             {
-                #[expect(
-                    clippy::as_conversions,
-                    clippy::cast_precision_loss,
-                    reason = "TimeDelta::num_seconds() is bounded by chrono's \
-                              NaiveDateTime range (~262,000 years, well under \
-                              2^52 seconds), and unit_seconds is at most \
-                              86,400, so neither cast loses precision in \
-                              practice"
-                )]
-                let result = (delta.num_seconds() as f64
+                let whole_seconds =
+                    delta.num_seconds().to_f64().ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::InvalidOperation,
+                            "date difference is too large to represent as \
+                             seconds",
+                        )
+                    })?;
+                let result = (whole_seconds
                     + f64::from(delta.subsec_nanos()) / 1e9)
-                    / unit_seconds.as_f64();
+                    / unit_secs;
                 Ok(Value::from(result))
+            } else if u == DurationUnit::Millisecond {
+                Ok(Value::from(delta.num_milliseconds()))
             } else {
+                let unit_secs_i64 = u.seconds_i64().ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidOperation,
+                        "duration unit has no whole-second value",
+                    )
+                })?;
                 #[expect(
                     clippy::arithmetic_side_effects,
-                    reason = "unit_seconds is 86_400, 3_600, 60, or 1 \
-                              (DurationValue::diff_seconds), never zero, so \
-                              this division never panics"
+                    reason = "unit_secs_i64 is 86_400, 3_600, 60, or 1 (fixed \
+                              units only), never zero, so this division never \
+                              panics"
                 )]
-                let result = delta.num_seconds() / unit_seconds.as_i64();
+                let result = delta.num_seconds() / unit_secs_i64;
                 Ok(Value::from(result))
             }
         }
