@@ -17,6 +17,8 @@
 //!   filters.
 //! - [`ui`] registers dialog-backed `ui.*` helpers.
 //! - [`uuid`] registers the standalone UUID generator.
+//! - [`yaml`] registers YAML serialization (`to_yaml`), parsing (`from_yaml`),
+//!   and frontmatter extraction (`frontmatter`).
 //!
 //! [`TemplateService`]: super::service::TemplateService
 //! [`Environment`]: minijinja::Environment
@@ -32,6 +34,7 @@ mod query;
 mod schema;
 mod string;
 mod ui;
+mod yaml;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -47,6 +50,7 @@ use self::{
     schema::SchemaOps,
     string::StrOps,
     ui::UiOps,
+    yaml::YamlOps,
 };
 use super::{
     error::TemplateError, loader::TemplateLoader, path::DeclaredOutputPath,
@@ -141,6 +145,7 @@ impl TemplateEngine {
         DateOps.register(&mut env);
         StrOps::register(&mut env);
         NumOps::register(&mut env);
+        YamlOps::register(&mut env);
         SchemaOps::new(service).register(&mut env);
         env.add_function("uuid", uuid);
         Ok(Self {
@@ -606,6 +611,77 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "4.0 6.48074069840786 3.14");
+        }
+
+        #[test]
+        fn evaluates_frontmatter_filter() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config_for(temp.path()),
+            )
+            .expect("valid test schema directory");
+
+            let template = "{% set text = \"---\\ntitle: Hello\\n---\\nBody\" \
+                            %}{{ text | frontmatter | to_yaml | trim }}";
+            let rendered =
+                engine.render(template, "test.md").expect("render succeeds");
+            assert_eq!(rendered.content, "title: Hello");
+        }
+
+        #[test]
+        fn evaluates_frontmatter_accessor() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config_for(temp.path()),
+            )
+            .expect("valid test schema directory");
+
+            let template = "{% set text = \"---\\ntitle: Hello\\n---\\nBody\" \
+                            %}Title: {{ (text | frontmatter).title }}";
+            let rendered =
+                engine.render(template, "test.md").expect("render succeeds");
+
+            assert_eq!(rendered.content, "Title: Hello");
+        }
+
+        #[test]
+        fn evaluates_from_yaml_filter() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config_for(temp.path()),
+            )
+            .expect("valid test schema directory");
+
+            let template = "{% set text = \"title: Hello\" %}{{ text | \
+                            from_yaml | to_yaml | trim }}";
+            let rendered =
+                engine.render(template, "test.md").expect("render succeeds");
+
+            assert_eq!(rendered.content, "title: Hello");
+        }
+
+        #[test]
+        fn evaluates_to_yaml_filter_on_collections() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config_for(temp.path()),
+            )
+            .expect("valid test schema directory");
+
+            let template = "{% set items = [\"apple\", \"banana\"] %}{{ items \
+                            | to_yaml | trim }}";
+            let rendered =
+                engine.render(template, "test.md").expect("render succeeds");
+
+            assert_eq!(rendered.content, "- apple\n- banana");
         }
     }
 }
