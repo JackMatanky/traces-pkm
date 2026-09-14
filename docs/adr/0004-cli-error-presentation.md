@@ -1,7 +1,7 @@
 ---
 number: 4
 title: Centralize CLI error presentation and command outcomes
-status: proposed
+status: accepted
 date: 2026-07-27
 tags:
   - error-handling
