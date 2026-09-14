@@ -59,6 +59,7 @@
 //! - `Blake3FileHash`, `Blake3PathHash`: BLAKE3 hashing primitives.
 
 mod config;
+mod date;
 mod delimiter;
 mod dialog;
 mod dirs;
@@ -88,6 +89,7 @@ pub mod cli;
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use config::{Config, ConfigService, TaskConfig, TrustRequest};
+pub(crate) use date::{DateTimeValue, DateValue};
 pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,

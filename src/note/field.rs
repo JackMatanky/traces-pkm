@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::Link;
-use crate::field::FieldValueRef;
+use crate::{DateTimeValue, DateValue, field::FieldValueRef};
 
 /// A metadata value parsed from YAML frontmatter or inline field text.
 ///
@@ -41,8 +41,10 @@ pub enum NoteFieldValue {
     Number(f64),
     /// Plain text value.
     String(String),
-    /// ISO `YYYY-MM-DD` date string.
-    Date(String),
+    /// ISO `YYYY-MM-DD` date.
+    Date(DateValue),
+    /// ISO `YYYY-MM-DDThh:mm:ss` date-time.
+    DateTime(DateTimeValue),
     /// Duration literal in source spelling, such as `4h15m` or `4 yrs, 6 wks`.
     Duration(String),
     /// A link parsed from wikilink or Markdown link syntax.
@@ -73,7 +75,7 @@ impl NoteFieldValue {
     #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Self::String(s) | Self::Date(s) | Self::Duration(s) => Some(s),
+            Self::String(s) | Self::Duration(s) => Some(s),
             _ => None,
         }
     }
@@ -88,9 +90,6 @@ impl NoteFieldValue {
     /// use chrono::NaiveDate;
     /// use traces_pkm::NoteFieldValue;
     ///
-    /// let date_val = NoteFieldValue::Date("2025-01-15".to_owned());
-    /// assert_eq!(date_val.as_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
-    ///
     /// let str_val = NoteFieldValue::String("2025-01-15T12:00:00".to_owned());
     /// assert_eq!(str_val.as_date(), NaiveDate::from_ymd_opt(2025, 1, 15));
     ///
@@ -101,7 +100,8 @@ impl NoteFieldValue {
     #[must_use]
     pub fn as_date(&self) -> Option<chrono::NaiveDate> {
         match self {
-            Self::Date(s) | Self::String(s) if s.len() >= 10 => {
+            Self::Date(value) => Some(value.into_inner()),
+            Self::String(s) if s.len() >= 10 => {
                 chrono::NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok()
             }
             _ => None,
@@ -139,9 +139,8 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
                     Self::String(s.into_owned())
                 }
             }
-            FieldValueRef::Date(s) | FieldValueRef::DateTime(s) => {
-                Self::Date(s.into_owned())
-            }
+            FieldValueRef::Date(value) => Self::Date(value),
+            FieldValueRef::DateTime(value) => Self::DateTime(value),
             FieldValueRef::List(arr) => {
                 Self::List(arr.into_iter().map(Into::into).collect())
             }
@@ -158,45 +157,6 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
 mod tests {
     use super::*;
     use crate::field::FieldValueRef;
-
-    mod is_iso_date {
-        use crate::field::FieldStringValue;
-
-        #[test]
-        fn accepts_valid_date() {
-            assert!(FieldStringValue::is_date_str("2026-08-22"));
-        }
-        #[test]
-        fn rejects_date_without_dashes() {
-            assert!(!FieldStringValue::is_date_str("20260822"));
-        }
-        #[test]
-        fn rejects_short_string() {
-            assert!(!FieldStringValue::is_date_str("2026-08"));
-        }
-        #[test]
-        fn rejects_non_digit_in_year() {
-            assert!(!FieldStringValue::is_date_str("abcd-08-22"));
-        }
-        #[test]
-        fn rejects_non_digit_in_month() {
-            assert!(!FieldStringValue::is_date_str("2026-ab-22"));
-        }
-        #[test]
-        fn rejects_non_digit_in_day() {
-            assert!(!FieldStringValue::is_date_str("2026-08-cd"));
-        }
-
-        #[test]
-        fn rejects_correct_length_but_missing_first_dash() {
-            assert!(!FieldStringValue::is_date_str("202608-22"));
-        }
-
-        #[test]
-        fn rejects_correct_length_but_missing_second_dash() {
-            assert!(!FieldStringValue::is_date_str("2026-0822"));
-        }
-    }
 
     mod field_value {
         use pretty_assertions::assert_eq;
@@ -224,7 +184,10 @@ mod tests {
                     ("bool".to_owned(), NoteFieldValue::Bool(true)),
                     (
                         "date".to_owned(),
-                        NoteFieldValue::Date("2026-07-29".to_owned())
+                        NoteFieldValue::Date(
+                            DateValue::parse_iso("2026-07-29")
+                                .expect("valid date")
+                        )
                     ),
                     (
                         "list".to_owned(),
@@ -295,14 +258,20 @@ mod tests {
         use super::*;
 
         #[test]
-        fn as_str_returns_inner_str_for_string_date_and_duration() {
+        fn as_str_returns_inner_str_for_string_and_duration() {
             let str_val = NoteFieldValue::String("text".to_owned());
-            let date_val = NoteFieldValue::Date("2026-09-02".to_owned());
             let dur_val = NoteFieldValue::Duration("4h".to_owned());
 
             assert_eq!(str_val.as_str(), Some("text"));
-            assert_eq!(date_val.as_str(), Some("2026-09-02"));
             assert_eq!(dur_val.as_str(), Some("4h"));
+        }
+
+        #[test]
+        fn as_str_returns_none_for_a_typed_date_field() {
+            let date_val = NoteFieldValue::Date(
+                DateValue::parse_iso("2026-09-02").expect("valid date"),
+            );
+            assert_eq!(date_val.as_str(), None);
         }
 
         #[test]

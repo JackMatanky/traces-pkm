@@ -3,8 +3,7 @@
 use std::{fmt::Write as _, path::PathBuf};
 
 use crate::{
-    Tag,
-    file::Timestamp,
+    DateTimeValue, DateValue, Tag,
     note::{Link, NoteFieldValue},
 };
 /// Borrowed field value resolved from a [`super::QueryRow`].
@@ -14,17 +13,16 @@ pub(super) enum QueryFieldValueRef<'a> {
     Number(f64),
     Text(&'a str),
     Link(&'a Link),
-    Date(&'a str),
+    Date(DateValue),
+    DateTime(DateTimeValue),
     Duration(&'a str),
-    Timestamp(Timestamp),
     Object(&'a indexmap::IndexMap<String, NoteFieldValue>),
     List(QueryListValueRef<'a>),
     Owned(NoteFieldValue),
 }
 
 impl QueryFieldValueRef<'_> {
-    /// Materializes this resolved value as metadata, converting `Timestamp` to
-    /// date text.
+    /// Materializes this resolved value as metadata.
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -32,12 +30,10 @@ impl QueryFieldValueRef<'_> {
             Self::Number(value) => NoteFieldValue::Number(*value),
             Self::Text(value) => NoteFieldValue::String((*value).to_owned()),
             Self::Link(value) => NoteFieldValue::Link((*value).clone()),
-            Self::Date(value) => NoteFieldValue::Date((*value).to_owned()),
+            Self::Date(value) => NoteFieldValue::Date(*value),
+            Self::DateTime(value) => NoteFieldValue::DateTime(*value),
             Self::Duration(value) => {
                 NoteFieldValue::Duration((*value).to_owned())
-            }
-            Self::Timestamp(ts) => {
-                NoteFieldValue::Date(ts.to_conditional_string())
             }
             Self::Object(value) => NoteFieldValue::Object((*value).clone()),
             Self::List(value) => value.to_owned_value(),
@@ -58,10 +54,9 @@ impl QueryFieldValueRef<'_> {
             Self::Number(value) => {
                 let _ = write!(out, "{value}");
             }
-            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
-                out.push_str(value);
-            }
-            Self::Timestamp(ts) => ts.append_conditional(out),
+            Self::Text(value) | Self::Duration(value) => out.push_str(value),
+            Self::Date(value) => out.push_str(&value.to_date_string()),
+            Self::DateTime(value) => out.push_str(&value.to_datetime_string()),
             Self::Link(link) => out.push_str(link.target()),
             Self::Object(fields) => {
                 for (idx, (key, field)) in fields.iter().enumerate() {
@@ -90,9 +85,7 @@ impl QueryFieldValueRef<'_> {
 
     pub(super) fn as_str(&self) -> Option<&str> {
         match self {
-            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
-                Some(value)
-            }
+            Self::Text(value) | Self::Duration(value) => Some(value),
             Self::Owned(value) => value.as_str(),
             _ => None,
         }
@@ -117,27 +110,18 @@ impl QueryFieldValueRef<'_> {
             Self::Link(value) => {
                 matches!(literal, NoteFieldValue::Link(other) if *value == other)
             }
-            Self::Timestamp(ts) => {
-                if let NoteFieldValue::Date(lit_s) = literal
-                    && let Some(lit_ts) = Timestamp::parse_iso(lit_s)
-                {
-                    return ts == &lit_ts;
+            Self::Date(value) => match literal {
+                NoteFieldValue::Date(other) => value == other,
+                NoteFieldValue::DateTime(other) => {
+                    other.is_equal_to_date(*value)
                 }
-                false
-            }
-            Self::Date(value) => {
-                if let NoteFieldValue::Date(other) = literal {
-                    match (
-                        Timestamp::parse_iso(value),
-                        Timestamp::parse_iso(other),
-                    ) {
-                        (Some(tx), Some(ty)) => tx == ty,
-                        _ => *value == other,
-                    }
-                } else {
-                    false
-                }
-            }
+                _ => false,
+            },
+            Self::DateTime(value) => match literal {
+                NoteFieldValue::DateTime(other) => value == other,
+                NoteFieldValue::Date(other) => value.is_equal_to_date(*other),
+                _ => false,
+            },
             Self::Duration(value) => {
                 if let NoteFieldValue::Duration(other) = literal {
                     match (
@@ -187,7 +171,8 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
             NoteFieldValue::Bool(value) => Self::Bool(*value),
             NoteFieldValue::Number(value) => Self::Number(*value),
             NoteFieldValue::String(value) => Self::Text(value),
-            NoteFieldValue::Date(value) => Self::Date(value),
+            NoteFieldValue::Date(value) => Self::Date(*value),
+            NoteFieldValue::DateTime(value) => Self::DateTime(*value),
             NoteFieldValue::Duration(value) => Self::Duration(value),
             NoteFieldValue::Link(value) => Self::Link(value),
             NoteFieldValue::List(value) => {
@@ -322,9 +307,13 @@ fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
         NoteFieldValue::Null => {}
         NoteFieldValue::Bool(value) => out.push_str(&value.to_string()),
         NoteFieldValue::Number(value) => out.push_str(&value.to_string()),
-        NoteFieldValue::String(value)
-        | NoteFieldValue::Date(value)
-        | NoteFieldValue::Duration(value) => out.push_str(value),
+        NoteFieldValue::String(value) | NoteFieldValue::Duration(value) => {
+            out.push_str(value);
+        }
+        NoteFieldValue::Date(value) => out.push_str(&value.to_date_string()),
+        NoteFieldValue::DateTime(value) => {
+            out.push_str(&value.to_datetime_string());
+        }
         NoteFieldValue::Link(link) => out.push_str(link.target()),
         NoteFieldValue::List(items) => {
             append_joined(out, items, append_owned_field_text);
@@ -479,10 +468,12 @@ mod tests {
         }
 
         #[test]
-        fn returns_true_for_cross_kind_string_and_date_equality() {
-            assert!(is_field_equal(
+        fn returns_false_for_a_string_literal_against_a_typed_date_field() {
+            assert!(!is_field_equal(
                 &NoteFieldValue::String("2024-01-01".into()),
-                &NoteFieldValue::Date("2024-01-01".into())
+                &NoteFieldValue::Date(
+                    DateValue::parse_iso("2024-01-01").expect("valid date")
+                )
             ));
         }
     }

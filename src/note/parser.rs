@@ -447,7 +447,7 @@ mod tests {
         super::{ListItem, ListItemType, NoteFieldValue},
         *,
     };
-    use crate::SourceLine;
+    use crate::{DateValue, SourceLine};
 
     fn parse(src: &str) -> Note {
         let input =
@@ -550,7 +550,9 @@ mod tests {
             );
             assert_eq!(
                 fields.get("date").copied(),
-                Some(&NoteFieldValue::Date("2026-07-29".to_owned()))
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso("2026-07-29").expect("valid date")
+                ))
             );
         }
 
@@ -1002,15 +1004,19 @@ mod tests {
                 first.fields().iter().next().expect("first due field");
             assert!(first_key.is_canonical_match("due"));
             assert_eq!(
-                first_vals.first().and_then(|v| v.as_str()),
-                Some("2026-01-01")
+                first_vals.first(),
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso("2026-01-01").expect("valid date")
+                ))
             );
 
             let (_second_key, second_vals) =
                 second.fields().iter().next().expect("second due field");
             assert_eq!(
-                second_vals.first().and_then(|v| v.as_str()),
-                Some("2026-02-02")
+                second_vals.first(),
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso("2026-02-02").expect("valid date")
+                ))
             );
         }
 
@@ -1063,7 +1069,9 @@ mod tests {
             assert!(key.is_canonical_match(expected_key));
             assert_eq!(
                 values.first(),
-                Some(&NoteFieldValue::Date(expected_date.to_owned()))
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso(expected_date).expect("valid date")
+                ))
             );
         }
 
@@ -1077,14 +1085,18 @@ mod tests {
             assert_eq!(due_key.name(), "due");
             assert_eq!(
                 due_vals.first(),
-                Some(&NoteFieldValue::Date("2022-07-14".to_owned()))
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso("2022-07-14").expect("valid date")
+                ))
             );
             let (sched_key, sched_vals) =
                 fields.iter().nth(1).expect("scheduled field");
             assert_eq!(sched_key.name(), "scheduled");
             assert_eq!(
                 sched_vals.first(),
-                Some(&NoteFieldValue::Date("2022-07-24".to_owned()))
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso("2022-07-24").expect("valid date")
+                ))
             );
         }
 

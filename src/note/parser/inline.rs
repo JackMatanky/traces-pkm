@@ -6,7 +6,7 @@
 //! tags.
 
 use crate::{
-    field::FieldStringValue,
+    DateValue,
     note::{Link, NoteFieldValue, cursor::SourceText},
 };
 
@@ -225,8 +225,11 @@ impl<'a> InlineValueParser<'a> {
     fn parse_date_at(&self, pos: usize) -> Option<Atom> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
-        (FieldStringValue::is_date_str(date) && self.is_atom_boundary(end))
-            .then(|| (NoteFieldValue::Date(date.to_owned()), end))
+        if !(DateValue::is_iso_shape(date) && self.is_atom_boundary(end)) {
+            return None;
+        }
+        let value = DateValue::parse_iso(date).ok()?;
+        Some((NoteFieldValue::Date(value), end))
     }
 
     /// Parses a finite `f64` number atom at `pos`.

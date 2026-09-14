@@ -6,7 +6,7 @@ use super::{
     QueryRow, error::QueryBuilderError, grammar::FieldPath,
     value::QueryFieldValueRef,
 };
-use crate::{DurationSeconds, NoteFieldValue, file::Timestamp};
+use crate::{DateTimeValue, DateValue, DurationSeconds, NoteFieldValue};
 
 /// Composite ordering clause made of one or more [`SortTerm`] values.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -236,7 +236,7 @@ pub(super) enum SortKey {
     Null,
     Bool(bool),
     Number(f64),
-    Date(Timestamp),
+    DateTime(DateTimeValue),
     Duration(DurationSeconds),
     Text(Box<str>),
 }
@@ -248,13 +248,9 @@ impl SortKey {
             QueryFieldValueRef::Null => Self::Null,
             QueryFieldValueRef::Bool(b) => Self::Bool(*b),
             QueryFieldValueRef::Number(n) => Self::Number(*n),
-            QueryFieldValueRef::Timestamp(ts) => Self::Date(*ts),
-            QueryFieldValueRef::Date(s) => {
-                if let Some(ts) = Timestamp::parse_iso(s) {
-                    Self::Date(ts)
-                } else {
-                    Self::Text((*s).into())
-                }
+            QueryFieldValueRef::DateTime(value) => Self::DateTime(*value),
+            QueryFieldValueRef::Date(value) => {
+                Self::DateTime(DateTimeValue::from(*value))
             }
             QueryFieldValueRef::Duration(s) => {
                 if let Ok(dv) = crate::DurationValue::parse(s) {
@@ -263,15 +259,7 @@ impl SortKey {
                     Self::Text((*s).into())
                 }
             }
-            QueryFieldValueRef::Text(s) => {
-                if let Some(ts) = Timestamp::parse_iso(s) {
-                    Self::Date(ts)
-                } else if let Ok(dv) = crate::DurationValue::parse(s) {
-                    Self::Duration(dv.to_seconds())
-                } else {
-                    Self::Text((*s).into())
-                }
-            }
+            QueryFieldValueRef::Text(s) => Self::from_text(s),
             QueryFieldValueRef::Link(link) => Self::Text(link.target().into()),
             QueryFieldValueRef::Object(_) | QueryFieldValueRef::List(_) => {
                 Self::Null
@@ -288,12 +276,9 @@ impl SortKey {
             | NoteFieldValue::Object(_) => Self::Null,
             NoteFieldValue::Bool(b) => Self::Bool(*b),
             NoteFieldValue::Number(n) => Self::Number(*n),
-            NoteFieldValue::Date(s) => {
-                if let Some(ts) = Timestamp::parse_iso(s) {
-                    Self::Date(ts)
-                } else {
-                    Self::Text(s.as_str().into())
-                }
+            NoteFieldValue::DateTime(value) => Self::DateTime(*value),
+            NoteFieldValue::Date(value) => {
+                Self::DateTime(DateTimeValue::from(*value))
             }
             NoteFieldValue::Duration(s) => {
                 if let Ok(dv) = crate::DurationValue::parse(s) {
@@ -302,16 +287,25 @@ impl SortKey {
                     Self::Text(s.as_str().into())
                 }
             }
-            NoteFieldValue::String(s) => {
-                if let Some(ts) = Timestamp::parse_iso(s) {
-                    Self::Date(ts)
-                } else if let Ok(dv) = crate::DurationValue::parse(s) {
-                    Self::Duration(dv.to_seconds())
-                } else {
-                    Self::Text(s.as_str().into())
-                }
-            }
+            NoteFieldValue::String(s) => Self::from_text(s),
             NoteFieldValue::Link(link) => Self::Text(link.target().into()),
+        }
+    }
+
+    /// Opportunistically classifies a plain string as a date-time, date, or
+    /// duration, falling back to text. Tries [`DateTimeValue::parse_iso`]
+    /// before [`DateValue::parse_iso`]: a full date-time string always fails
+    /// `DateValue`'s whole-string match, so trying it second never
+    /// misclassifies.
+    fn from_text(s: &str) -> Self {
+        if let Ok(value) = DateTimeValue::parse_iso(s) {
+            Self::DateTime(value)
+        } else if let Ok(value) = DateValue::parse_iso(s) {
+            Self::DateTime(DateTimeValue::from(value))
+        } else if let Ok(dv) = crate::DurationValue::parse(s) {
+            Self::Duration(dv.to_seconds())
+        } else {
+            Self::Text(s.into())
         }
     }
 
@@ -327,7 +321,7 @@ impl SortKey {
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
             (Self::Number(a), Self::Number(b)) => a.total_cmp(b),
             (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
-            (Self::Date(a), Self::Date(b)) => a.cmp(b),
+            (Self::DateTime(a), Self::DateTime(b)) => a.cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
             _ => Ordering::Equal,
         }

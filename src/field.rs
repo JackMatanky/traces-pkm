@@ -36,6 +36,8 @@ use serde::{
 };
 use thiserror::Error;
 
+use crate::{DateTimeValue, DateValue};
+
 /// Stores an exact schema field identifier.
 ///
 /// Equality and ordering use the raw text. `status` and `Status` remain
@@ -632,10 +634,10 @@ pub(crate) enum FieldValue {
     Float(f64),
     /// Plain text value.
     String(String),
-    /// ISO `YYYY-MM-DD` date string.
-    Date(String),
-    /// ISO `YYYY-MM-DDThh:mm:ss` date-time string.
-    DateTime(String),
+    /// ISO `YYYY-MM-DD` date.
+    Date(DateValue),
+    /// ISO `YYYY-MM-DDThh:mm:ss` date-time.
+    DateTime(DateTimeValue),
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
@@ -674,8 +676,8 @@ impl From<FieldValueRef<'_>> for FieldValue {
             FieldValueRef::Int(i) => Self::Int(i),
             FieldValueRef::Float(f) => Self::Float(f),
             FieldValueRef::String(s) => Self::String(s.into_owned()),
-            FieldValueRef::Date(s) => Self::Date(s.into_owned()),
-            FieldValueRef::DateTime(s) => Self::DateTime(s.into_owned()),
+            FieldValueRef::Date(value) => Self::Date(value),
+            FieldValueRef::DateTime(value) => Self::DateTime(value),
             FieldValueRef::List(arr) => {
                 Self::List(arr.into_iter().map(Into::into).collect())
             }
@@ -698,9 +700,9 @@ impl Serialize for FieldValue {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
             Self::Float(f) => serializer.serialize_f64(*f),
-            Self::String(s) | Self::Date(s) | Self::DateTime(s) => {
-                serializer.serialize_str(s)
-            }
+            Self::String(s) => serializer.serialize_str(s),
+            Self::Date(value) => value.serialize(serializer),
+            Self::DateTime(value) => value.serialize(serializer),
             Self::List(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for elem in arr {
@@ -753,12 +755,10 @@ pub(crate) enum FieldValueRef<'a> {
     Float(f64),
     /// Plain text value, borrowed from the source document where possible.
     String(Cow<'a, str>),
-    /// ISO `YYYY-MM-DD` date string, borrowed from the source document where
-    /// possible.
-    Date(Cow<'a, str>),
-    /// ISO `YYYY-MM-DDThh:mm:ss` date-time string, borrowed from the source
-    /// document where possible.
-    DateTime(Cow<'a, str>),
+    /// ISO `YYYY-MM-DD` date.
+    Date(DateValue),
+    /// ISO `YYYY-MM-DDThh:mm:ss` date-time.
+    DateTime(DateTimeValue),
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
@@ -775,9 +775,9 @@ impl Serialize for FieldValueRef<'_> {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
             Self::Float(f) => serializer.serialize_f64(*f),
-            Self::String(s) | Self::Date(s) | Self::DateTime(s) => {
-                serializer.serialize_str(s)
-            }
+            Self::String(s) => serializer.serialize_str(s),
+            Self::Date(value) => value.serialize(serializer),
+            Self::DateTime(value) => value.serialize(serializer),
             Self::List(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for elem in arr {
@@ -854,72 +854,16 @@ pub(crate) enum FormatParsePolicy {
 /// determines which [`FieldValueRef`] variant a string becomes.
 ///
 /// Use [`classify`](Self::classify) to produce the appropriate
-/// [`FieldValueRef`] variant. The `is_iso_date` and `is_iso_datetime`
-/// methods are available for callers that need to inspect the classification
-/// directly.
+/// [`FieldValueRef`] variant, delegating to [`crate::DateTimeValue::parse_iso`]
+/// and [`crate::DateValue::parse_iso`] for the actual classification.
 #[repr(transparent)]
 pub(crate) struct FieldStringValue<'a>(Cow<'a, str>);
 
 impl<'a> FieldStringValue<'a> {
     /// Wraps a string value for potential date/datetime classification.
     #[inline]
-    pub fn new(s: Cow<'a, str>) -> Self {
+    pub(crate) fn new(s: Cow<'a, str>) -> Self {
         Self(s)
-    }
-
-    /// Returns `true` if this string matches the ISO date format
-    /// `YYYY-MM-DD`.
-    #[inline]
-    pub fn is_iso_date(&self) -> bool {
-        Self::is_date_str(&self.0)
-    }
-
-    /// Returns `true` if this string matches the ISO datetime format
-    /// `YYYY-MM-DDThh:mm:ss`.
-    #[inline]
-    pub fn is_iso_datetime(&self) -> bool {
-        Self::is_datetime_str(&self.0)
-    }
-
-    /// Returns `true` if `s` matches the ISO date format `YYYY-MM-DD`.
-    #[inline]
-    pub fn is_date_str(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.len() >= 10
-            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(4) == Some(&b'-')
-            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(7) == Some(&b'-')
-            && bytes
-                .get(8..10)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-    }
-
-    /// Returns `true` if `s` matches the ISO datetime format
-    /// `YYYY-MM-DDThh:mm:ss`.
-    #[inline]
-    pub fn is_datetime_str(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.len() >= 19
-            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(4) == Some(&b'-')
-            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(7) == Some(&b'-')
-            && bytes
-                .get(8..10)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(10) == Some(&b'T')
-            && bytes
-                .get(11..13)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(13) == Some(&b':')
-            && bytes
-                .get(14..16)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(16) == Some(&b':')
-            && bytes
-                .get(17..19)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
     }
 
     /// Consumes the string and returns the appropriate [`FieldValueRef`]
@@ -930,13 +874,16 @@ impl<'a> FieldStringValue<'a> {
     /// [`FieldValueRef::Date`], and all other strings become
     /// [`FieldValueRef::String`].
     #[inline]
-    pub fn classify(self, policy: FormatParsePolicy) -> FieldValueRef<'a> {
+    pub(crate) fn classify(
+        self,
+        policy: FormatParsePolicy,
+    ) -> FieldValueRef<'a> {
         if policy == FormatParsePolicy::Classify {
-            if self.is_iso_datetime() {
-                return FieldValueRef::DateTime(self.0);
+            if let Ok(value) = DateTimeValue::parse_iso(&self.0) {
+                return FieldValueRef::DateTime(value);
             }
-            if self.is_iso_date() {
-                return FieldValueRef::Date(self.0);
+            if let Ok(value) = DateValue::parse_iso(&self.0) {
+                return FieldValueRef::Date(value);
             }
         }
         FieldValueRef::String(self.0)
@@ -1662,35 +1609,6 @@ mod tests {
         }
     }
 
-    mod is_iso_datetime {
-        use crate::field::FieldStringValue;
-
-        #[test]
-        fn accepts_valid_datetime() {
-            assert!(FieldStringValue::is_datetime_str("2026-08-22T14:30:00Z"));
-        }
-
-        #[test]
-        fn accepts_datetime_without_offset() {
-            assert!(FieldStringValue::is_datetime_str("2026-08-22T14:30:00"));
-        }
-
-        #[test]
-        fn rejects_date_only() {
-            assert!(!FieldStringValue::is_datetime_str("2026-08-22"));
-        }
-
-        #[test]
-        fn rejects_short_string() {
-            assert!(!FieldStringValue::is_datetime_str("2026-08-22T14:30"));
-        }
-
-        #[test]
-        fn rejects_missing_t_separator() {
-            assert!(!FieldStringValue::is_datetime_str("2026-08-22 14:30:00"));
-        }
-    }
-
     mod format_parse_policy {
         use std::borrow::Cow;
 
@@ -1713,7 +1631,10 @@ mod tests {
             .expect("key present");
             assert_eq!(
                 entry,
-                FieldValueRef::Date(Cow::Owned("2026-07-29".to_owned()))
+                FieldValueRef::Date(
+                    crate::DateValue::parse_iso("2026-07-29")
+                        .expect("valid date")
+                )
             );
         }
 
@@ -1732,9 +1653,10 @@ mod tests {
             .expect("key present");
             assert_eq!(
                 entry,
-                FieldValueRef::DateTime(Cow::Owned(
-                    "2026-07-29T14:30:00Z".to_owned()
-                ))
+                FieldValueRef::DateTime(
+                    crate::DateTimeValue::parse_iso("2026-07-29T14:30:00Z")
+                        .expect("valid datetime")
+                )
             );
         }
 
@@ -1984,13 +1906,16 @@ mod tests {
                 "\"hi\""
             )]
             #[case::date(
-                FieldValueRef::Date(Cow::Borrowed("2026-07-29")),
+                FieldValueRef::Date(
+                    DateValue::parse_iso("2026-07-29").expect("valid date")
+                ),
                 "\"2026-07-29\""
             )]
             #[case::datetime(
-                FieldValueRef::DateTime(Cow::Borrowed(
-                    "2026-07-29T14:30:00Z"
-                )),
+                FieldValueRef::DateTime(
+                    DateTimeValue::parse_iso("2026-07-29T14:30:00Z")
+                        .expect("valid datetime")
+                ),
                 "\"2026-07-29T14:30:00Z\""
             )]
             #[case::list(

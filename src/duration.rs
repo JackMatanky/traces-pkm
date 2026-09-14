@@ -20,6 +20,9 @@ use std::{
     str::FromStr,
 };
 
+use chrono::TimeDelta;
+use num_traits::ToPrimitive as _;
+
 /// A validated duration expression with its total seconds.
 ///
 /// Constructed exclusively via [`DurationValue::parse`] or the [`FromStr`]
@@ -253,6 +256,17 @@ impl FromStr for DurationValue {
     }
 }
 
+impl TryFrom<DurationValue> for TimeDelta {
+    type Error = DurationError;
+
+    /// Converts to a [`TimeDelta`] via [`DurationValue::to_seconds`], returning
+    /// [`DurationError::NonFiniteSeconds`] on arithmetic overflow.
+    #[inline]
+    fn try_from(duration: DurationValue) -> Result<Self, Self::Error> {
+        Self::try_from(duration.to_seconds())
+    }
+}
+
 /// A recognized duration unit.
 ///
 /// Single source of truth for unit parsing, seconds conversion, and naming.
@@ -373,6 +387,28 @@ impl TryFrom<f64> for DurationSeconds {
     fn try_from(secs: f64) -> Result<Self, Self::Error> {
         secs.is_finite()
             .then_some(Self(secs))
+            .ok_or(DurationError::NonFiniteSeconds)
+    }
+}
+
+impl TryFrom<DurationSeconds> for TimeDelta {
+    type Error = DurationError;
+
+    /// Converts to a [`TimeDelta`], returning
+    /// [`DurationError::NonFiniteSeconds`] on arithmetic overflow.
+    #[inline]
+    fn try_from(seconds: DurationSeconds) -> Result<Self, Self::Error> {
+        let total = seconds.0;
+        let whole = total.trunc();
+        let frac = total.fract();
+        let (secs, nanos) = if frac < 0.0 {
+            (whole - 1.0, (frac + 1.0) * 1_000_000_000.0)
+        } else {
+            (whole, frac * 1_000_000_000.0)
+        };
+        secs.to_i64()
+            .zip(nanos.round().to_u32())
+            .and_then(|(s, n)| Self::new(s, n))
             .ok_or(DurationError::NonFiniteSeconds)
     }
 }
@@ -876,6 +912,32 @@ mod tests {
                     "roundtrip failed for {spelling}"
                 );
             }
+        }
+    }
+
+    mod time_delta_conversion {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn converts_whole_and_subsecond_durations() {
+            let dv = DurationValue::parse("1h").unwrap();
+            assert_eq!(TimeDelta::try_from(dv).unwrap(), TimeDelta::hours(1));
+            let ms = DurationValue::parse("500ms").unwrap();
+            assert_eq!(
+                TimeDelta::try_from(ms).unwrap(),
+                TimeDelta::milliseconds(500)
+            );
+        }
+
+        #[test]
+        fn delegates_to_duration_seconds() {
+            let dv = DurationValue::parse("30m").unwrap();
+            assert_eq!(
+                TimeDelta::try_from(dv).unwrap(),
+                TimeDelta::try_from(dv.to_seconds()).unwrap()
+            );
         }
     }
 }
