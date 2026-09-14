@@ -9,6 +9,48 @@ use std::{fmt, num::NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 
+/// A UTF-8 byte offset into source text.
+///
+/// Distinct from [`SourceLine`] so a line number can never be passed where a
+/// byte offset is expected, or vice versa.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
+)]
+pub(crate) struct ByteOffset(usize);
+
+impl ByteOffset {
+    /// Wraps `offset` as a byte offset.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(offset: usize) -> Self {
+        Self(offset)
+    }
+}
+
+impl From<usize> for ByteOffset {
+    #[inline]
+    fn from(offset: usize) -> Self {
+        Self::new(offset)
+    }
+}
+
+impl From<ByteOffset> for usize {
+    #[inline]
+    fn from(offset: ByteOffset) -> Self {
+        offset.0
+    }
+}
+
 /// A 1-indexed source line number.
 ///
 /// Distinct from `ByteOffset` so a byte offset can never be passed where a line
@@ -59,13 +101,6 @@ impl SourceLine {
     }
 }
 
-impl fmt::Display for SourceLine {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
 impl From<SourceLine> for u32 {
     #[inline]
     fn from(line: SourceLine) -> Self {
@@ -82,88 +117,37 @@ impl TryFrom<u32> for SourceLine {
     }
 }
 
-/// Error returned when converting a zero value to [`SourceLine`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SourceLineError;
-
-impl fmt::Display for SourceLineError {
+impl fmt::Display for SourceLine {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("source line number must be non-zero")
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
-impl std::error::Error for SourceLineError {}
-
-/// Serde support for [`SourceLine`].
-mod source_line_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    use super::{SourceLine, SourceLineError};
-
-    impl Serialize for SourceLine {
-        #[inline]
-        fn serialize<S: Serializer>(
-            &self,
-            serializer: S,
-        ) -> Result<S::Ok, S::Error> {
-            self.0.get().serialize(serializer)
-        }
-    }
-
-    impl<'de> Deserialize<'de> for SourceLine {
-        #[inline]
-        fn deserialize<D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Self, D::Error> {
-            let line = u32::deserialize(deserializer)?;
-            Self::new(line)
-                .ok_or_else(|| serde::de::Error::custom(SourceLineError))
-        }
-    }
-}
-
-/// A UTF-8 byte offset into source text.
-///
-/// Distinct from [`SourceLine`] so a line number can never be passed where a
-/// byte offset is expected, or vice versa.
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
-pub(crate) struct ByteOffset(usize);
-
-impl ByteOffset {
-    /// Wraps `offset` as a byte offset.
+impl Serialize for SourceLine {
     #[inline]
-    #[must_use]
-    pub(crate) const fn new(offset: usize) -> Self {
-        Self(offset)
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        self.0.get().serialize(serializer)
     }
 }
 
-impl From<usize> for ByteOffset {
+impl<'de> Deserialize<'de> for SourceLine {
     #[inline]
-    fn from(offset: usize) -> Self {
-        Self::new(offset)
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Self, D::Error> {
+        let line = u32::deserialize(deserializer)?;
+        Self::new(line).ok_or_else(|| serde::de::Error::custom(SourceLineError))
     }
 }
 
-impl From<ByteOffset> for usize {
-    #[inline]
-    fn from(offset: ByteOffset) -> Self {
-        offset.0
-    }
-}
+/// Error returned when converting a zero value to [`SourceLine`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("source line number must be non-zero")]
+pub struct SourceLineError;
 
 #[cfg(test)]
 mod tests {
