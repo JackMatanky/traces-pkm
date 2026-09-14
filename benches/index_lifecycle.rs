@@ -38,8 +38,8 @@
 use std::hint::black_box;
 
 use criterion::{
-    BatchSize, BenchmarkId, Criterion, Throughput, criterion_group,
-    criterion_main,
+    AxisScale, BatchSize, BenchmarkId, Criterion, PlotConfiguration,
+    Throughput, criterion_group, criterion_main,
 };
 use tempfile::TempDir;
 use traces_pkm::{
@@ -157,6 +157,9 @@ fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
 ///   algorithms in link graph construction or file path sorting.
 fn bench_file_index_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
@@ -200,6 +203,9 @@ fn bench_file_index_build(c: &mut Criterion) {
 ///   index subsystem to profile directly.
 fn bench_file_index_build_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build/profiles");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &shape in BUILD_PROFILE_SHAPES {
         for n in quick_file_counts() {
             group.throughput(Throughput::Elements(
@@ -248,6 +254,9 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
 ///   invalidation leaks or broken comparison logic.
 fn bench_file_index_refresh(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::refresh");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
@@ -339,35 +348,35 @@ fn bench_file_index_refresh(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the cold-read sync-and-query path
-/// ([`QueryService::sync_and_run`]) used by `traces list`/`table`/`task`
-/// when a query selects a small subset of a large vault: a persisted-store
-/// diff-and-persist step followed by a store-scoped query resolved through
-/// the `PATHS_BY_TAG` multimap, without ever materializing a full
-/// [`FileIndex`] or decoding a note the query doesn't match.
+/// Measures the cold-read sync-and-query path ([`QueryService::sync_and_run`])
+/// used by `traces list`/`table`/`task` when a query selects a small subset of
+/// a large vault: a persisted-store diff-and-persist step followed by a
+/// store-scoped query resolved through the `PATHS_BY_TAG` multimap, without
+/// ever materializing a full [`FileIndex`] or decoding a note the query doesn't
+/// match.
 ///
-/// Queries a tag unique to note `0` (`#rare_0`, see
-/// [`tagged_note_source`]), so exactly one note matches regardless of `n` -
-/// the "cold CLI query against a large vault, one match" shape Phase 8
-/// targets. Complements [`bench_file_index_refresh`]'s `FileIndex::refresh`
-/// group, which necessarily decodes every persisted Note to build a full
-/// `FileIndex` (that materialization is `refresh`'s documented contract, and
-/// its cost is expected to scale with `n` regardless of this change).
+/// Queries a tag unique to note `0` (`#rare_0`, see [`tagged_note_source`]), so
+/// exactly one note matches regardless of `n` - the "cold CLI query against a
+/// large vault, one match" shape Phase 8 targets. Complements
+/// [`bench_file_index_refresh`]'s `FileIndex::refresh` group, which necessarily
+/// decodes every persisted Note to build a full `FileIndex` (that
+/// materialization is `refresh`'s documented contract, and its cost is expected
+/// to scale with `n` regardless of this change).
 ///
 /// The "no-op" cost is *not* sub-millisecond, even for a tiny matching set:
 /// every call still re-scans the project's filesystem tree and diffs every
 /// persisted [`FileBase`] to detect whether anything changed - that scan and
-/// diff is O(vault size) by construction (there is no filesystem-watcher
-/// layer here) and dominates wall-clock time at scale (~74ms at 20,000
-/// files, matched almost exactly by `FileIndex::refresh/no-op`'s own cost).
-/// An earlier measurement of this floor reported ~1.1s: that number was a
-/// benchmark artifact, not a real cost - the "no-op"/"single-edit" routines
-/// previously took `(TempDir, IndexerService)` by value via `iter_batched`
-/// without returning it, so each iteration's `TempDir::drop` (recursively
-/// deleting the fixture's thousands of files) ran *inside* the timed call.
-/// Fixed by switching to `iter_batched_ref`, which never gives the routine
-/// ownership of the fixture. What this group isolates is the cost *above*
-/// that unavoidable scan-and-diff baseline.
+/// diff is O(vault size) by construction (there is no filesystem-watcher layer
+/// here) and dominates wall-clock time at scale (~74ms at 20,000 files, matched
+/// almost exactly by `FileIndex::refresh/no-op`'s own cost). An earlier
+/// measurement of this floor reported ~1.1s: that number was a benchmark
+/// artifact, not a real cost - the "no-op"/"single-edit" routines previously
+/// took `(TempDir, IndexerService)` by value via `iter_batched` without
+/// returning it, so each iteration's `TempDir::drop` (recursively deleting the
+/// fixture's thousands of files) ran *inside* the timed call. Fixed by
+/// switching to `iter_batched_ref`, which never gives the routine ownership of
+/// the fixture. What this group isolates is the cost *above* that unavoidable
+/// scan-and-diff baseline.
 ///
 /// Expected outcomes:
 /// - Single-note-edit cost stays within measurement noise of the no-op baseline
@@ -382,6 +391,9 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 ///   materialization snuck back into the sync or query path.
 fn bench_sync_and_run(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::sync_and_run");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     let service = QueryService::new("class");
     let one_match =
         || SourceSelector::parse("#rare_0").expect("valid tag selector");
@@ -494,6 +506,9 @@ fn setup_single_rich_delete(n: usize) -> (TempDir, IndexerService) {
 ///   scanning too much persisted state.
 fn bench_file_index_refresh_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::refresh/profiles");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for n in quick_file_counts() {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
@@ -585,6 +600,9 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
 ///   unbounded transaction size.
 fn bench_index_persist(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::persist");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
@@ -620,6 +638,9 @@ fn bench_index_persist(c: &mut Criterion) {
 ///   encoding or secondary-index write amplification.
 fn bench_index_persist_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::persist/profiles");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &shape in BUILD_PROFILE_SHAPES {
         for n in quick_file_counts() {
             group.throughput(Throughput::Elements(
@@ -662,6 +683,9 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
 ///   assembly overhead rather than raw row count.
 fn bench_index_load(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::load");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
@@ -670,7 +694,7 @@ fn bench_index_load(c: &mut Criterion) {
         if n >= 10_000 {
             group.sample_size(10);
         }
-        group.bench_with_input(BenchmarkId::new("plain", n), &n, |b, _| {
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter_with_large_drop(|| observe_load(black_box(&indexer)));
         });
     }

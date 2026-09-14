@@ -40,7 +40,8 @@
 use std::{hint::black_box, mem, path::PathBuf};
 
 use criterion::{
-    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput,
+    criterion_group, criterion_main,
 };
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PathWrapper {
@@ -383,6 +384,9 @@ fn bench_codec_batch(c: &mut Criterion) {
 ///   same-size blocks fast enough that buffer reuse isn't worth pursuing.
 fn bench_row_value_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("IndexStore::encode_row (Note)");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),

@@ -142,6 +142,32 @@ pub(crate) fn metadata_lookup_note_source(
     source
 }
 
+/// Returns note content with `rating` present on 7 of every 10 notes and
+/// omitted entirely on the remainder.
+///
+/// Used by sort benchmarks that need a field resolving to `SortKey::Null` on
+/// a meaningful fraction of rows, not synthetic `ProjectShape` variance.
+pub(crate) fn nullable_rating_note_source(note_index: usize) -> String {
+    if note_index % 10 < 7 {
+        plain_note_source(note_index)
+    } else {
+        format!("# Note {note_index}\nBody text for note {note_index}.\n")
+    }
+}
+
+/// Returns note content with one sortable duration-literal metadata field.
+///
+/// `estimate` values cycle through 1-12 hours and 0-59 minutes so
+/// `DurationValue::parse` sees varied, non-trivial literals.
+pub(crate) fn duration_field_note_source(note_index: usize) -> String {
+    format!(
+        "---\nestimate: {}h{}m\n---\n\n# Note {note_index}\nBody text for \
+         note {note_index}.\n",
+        (note_index % 12) + 1,
+        (note_index * 7) % 60,
+    )
+}
+
 /// Returns note content with `links_per_note` wikilinks into the same
 /// workspace.
 ///

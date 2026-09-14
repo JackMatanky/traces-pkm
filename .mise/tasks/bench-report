@@ -20,6 +20,12 @@ has_criterion_output() {
 
 #######################################
 # Count parameter sizes with results in a benchmark group.
+#
+# Handles both directory layouts: flat sweeps
+# (<group>/<size>/new/estimates.json, BenchmarkId::from_parameter) and
+# nested multi-function sweeps (<group>/<function>/<size>/new/estimates.json,
+# BenchmarkId::new(name, n)) are summed together so multi-function groups
+# aren't silently omitted from the printed summary.
 # Arguments:
 #   group_dir — path to the group directory
 # Outputs:
@@ -28,13 +34,20 @@ has_criterion_output() {
 count_sizes_with_results() {
   local group_dir="${1}"
   local count=0
-  local size_dir
+  local child_dir size_dir
 
-  for size_dir in "${group_dir}"*/; do
-    [[ -d "${size_dir}" ]] || continue
-    if [[ -f "${size_dir}/new/estimates.json" ]]; then
+  for child_dir in "${group_dir}"*/; do
+    [[ -d "${child_dir}" ]] || continue
+    if [[ -f "${child_dir}/new/estimates.json" ]]; then
       (( count += 1 ))
+      continue
     fi
+    for size_dir in "${child_dir}"*/; do
+      [[ -d "${size_dir}" ]] || continue
+      if [[ -f "${size_dir}/new/estimates.json" ]]; then
+        (( count += 1 ))
+      fi
+    done
   done
 
   echo "${count}"

@@ -35,7 +35,8 @@
 use std::{hint::black_box, sync::Arc};
 
 use criterion::{
-    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput,
+    criterion_group, criterion_main,
 };
 use tempfile::TempDir;
 use traces_pkm::{
@@ -126,6 +127,9 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 ///   template expansion or redundant index scans per row.
 fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     group.sample_size(10);
 
     for n in quick_file_counts() {

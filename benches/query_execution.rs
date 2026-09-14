@@ -31,8 +31,8 @@
 use std::hint::black_box;
 
 use criterion::{
-    BatchSize, BenchmarkId, Criterion, Throughput, criterion_group,
-    criterion_main,
+    AxisScale, BatchSize, BenchmarkId, Criterion, PlotConfiguration,
+    Throughput, criterion_group, criterion_main,
 };
 use traces_pkm::{QueryBuilder, QueryService, SourceSelector};
 
@@ -76,6 +76,9 @@ const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
 ///   redundant allocation per row.
 fn bench_run_pages(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
@@ -110,6 +113,9 @@ fn bench_run_pages(c: &mut Criterion) {
 ///   task parsing overhead or redundant regex evaluation.
 fn bench_run_tasks(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc_from_note_source(n, |i, _| {
             task_triplet_note_source(i)
@@ -160,7 +166,13 @@ fn bench_run_tasks(c: &mut Criterion) {
 ///   path introduces overhead not present in either half alone.
 fn bench_run_pages_by_metadata(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
+        if n >= 10_000 {
+            group.sample_size(10);
+        }
         let index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
@@ -258,14 +270,13 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 /// Measures the cost of cloning a `QuerySet`, swept over workspace
 /// size.
 ///
-/// `src/template/engine/query.rs`'s `Object::call_method` for
-/// `QuerySet` clones the entire outcome (`self.as_ref().clone()`) on
-/// every non-terminal chained call (`.where`/`.filter`/`.sort`/`.limit`/
-/// `.group_by`/`.flatten`). `QuerySet::base` is `Arc<Vec<QueryRow>>`, so
-/// `#[derive(Clone)]` clones an `Arc` pointer (and a short pending-plan
-/// `Vec`), not the row data; this benchmark confirms that claim directly,
-/// rather than through the `Vec<QueryRow>` proxy the pre-redesign version
-/// used.
+/// `src/template/engine/query.rs`'s `Object::call_method` for `QuerySet` clones
+/// the entire outcome (`self.as_ref().clone()`) on every non-terminal chained
+/// call (`.where`/`.filter`/`.sort`/`.limit`/ `.group_by`/`.flatten`).
+/// `QuerySet::base` is `Arc<Vec<QueryRow>>`, so `#[derive(Clone)]` clones an
+/// `Arc` pointer (and a short pending-plan `Vec`), not the row data; this
+/// benchmark confirms that claim directly, rather than through the
+/// `Vec<QueryRow>` proxy the pre-redesign version used.
 ///
 /// Expected outcomes:
 /// - Cost is small and roughly constant across workspace sizes (an `Arc`
@@ -276,6 +287,9 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 ///   `QuerySet::clone` is deep-copying rows somewhere.
 fn bench_clone_query_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/clone_query_set");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc(n, ProjectShape::Plain);
         let outcome = QueryService::new("class")
@@ -284,7 +298,7 @@ fn bench_clone_query_set(c: &mut Criterion) {
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
-            BenchmarkId::new("query_set_clone", n),
+            BenchmarkId::from_parameter(n),
             &outcome,
             |b, outcome| {
                 b.iter(|| black_box(outcome.clone()));
@@ -294,16 +308,16 @@ fn bench_clone_query_set(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the cost of `QuerySet`'s owned `IntoIterator::into_iter()`,
-/// swept over workspace size and row shape (page vs. task).
+/// Measures the cost of `QuerySet`'s owned `IntoIterator::into_iter()`, swept
+/// over workspace size and row shape (page vs. task).
 ///
 /// `QuerySet::into_iter()` (owned) reclaims the materialized rows without
 /// cloning when `self` is the sole owner of the cached `Arc<Vec<QueryRow>>`
-/// (via `Arc::try_unwrap`), falling back to a per-row clone only when
-/// another `QuerySet` branch still shares the same cached rows. Every
-/// iteration here calls `.into_iter()` on a freshly constructed, never-cloned
-/// `QuerySet`, so this measures the sole-owner fast path: an `O(1)` move out
-/// of the `Arc`, not an `O(n)` clone.
+/// (via `Arc::try_unwrap`), falling back to a per-row clone only when another
+/// `QuerySet` branch still shares the same cached rows. Every iteration here
+/// calls `.into_iter()` on a freshly constructed, never-cloned `QuerySet`, so
+/// this measures the sole-owner fast path: an `O(1)` move out of the `Arc`, not
+/// an `O(n)` clone.
 ///
 /// Expected outcomes:
 /// - Cost is small and roughly constant across workspace sizes (matching
@@ -317,6 +331,9 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///   `.into_iter()` runs.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/into_iter_owned");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         let page_index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(

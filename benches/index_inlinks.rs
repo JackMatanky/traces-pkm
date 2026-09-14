@@ -35,7 +35,8 @@
 use std::{hint::black_box, path::Path};
 
 use criterion::{
-    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput,
+    criterion_group, criterion_main,
 };
 use traces_pkm::InlinkMap;
 
@@ -78,6 +79,9 @@ use common::{
 ///   loops.
 fn bench_inlink_map_new(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::new");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
     for &n in WORKSPACE_FILE_COUNTS {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),

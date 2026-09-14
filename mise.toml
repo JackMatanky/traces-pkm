@@ -343,7 +343,7 @@ flag "-f --files <pattern>" {
 }
 flag "-m --mod <module>" {
   help "Run benchmarks for a specific module"
-  choices "hash" "index" "note" "query" "template"
+  choices "hash" "index" "note" "query" "template" "memory_footprint"
 }
 flag "-r --report [name]" value_optional=#true {
   help "Save a named baseline (default: auto-named from git branch+sha)"
@@ -359,7 +359,9 @@ flag "--no-report" {
   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 }
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
-flag "--model" help="Fit performance models (linear, n·ln(n)) after benchmarking"
+flag "--model" {
+  help "Fit performance models (linear, n·ln(n), combined) per series after benchmarking"
+}
 flag "-q --quick" {
   help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
 }
@@ -395,6 +397,7 @@ if [[ -n "${usage_mod:-}" ]]; then
     note)     bench_files=(note_parsing) ;;
     query)    bench_files=(query_execution query_parsing query_sort) ;;
     template) bench_files=(template_render) ;;
+    memory_footprint) bench_files=(memory_footprint) ;;
   esac
 elif [[ -n "${usage_files:-}" ]]; then
   for f in benches/*.rs; do
@@ -499,12 +502,6 @@ if [[ "${usage_model:-false}" == "true" ]]; then
   mise run bench-model
 fi
 '''
-
-[tasks.bench-compare]
-hide = true
-description = "Compare benchmark results against a baseline"
-usage = 'arg "<baseline>" help="Baseline name to compare against"'
-run = "critcmp ${usage_baseline?}"
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #

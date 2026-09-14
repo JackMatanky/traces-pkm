@@ -41,7 +41,7 @@
 //! before any filesystem write. Do not write benchmark fixtures into the repo
 //! checkout.
 
-#![allow(
+#![expect(
     clippy::expect_used,
     clippy::arithmetic_side_effects,
     reason = "shared benchmark fixture generation uses deterministic \

@@ -89,20 +89,20 @@ Mise skips execution when sources haven't changed.
 - **`bench-report`** (automatic): Runs after every bench via `depends_post`.
   Prints a summary of which groups were measured.
 
-- **`bench-compare`** (hidden): `mise run bench-compare <baseline>`.
-  Full `critcmp` comparison against a saved baseline.
-
 - **`bench-model`** (hidden): `mise run bench-model`.
-  Fits linear and n·ln(n) models to criterion JSON output.
-  Reports R² and extrapolated values for 50K/100K notes.
+  Fits linear, n·ln(n), and (with >=4 data points) combined
+  `a·n + b·n·ln(n) + c` models to criterion JSON output, per benchmark
+  series (a group's flat sweep, or `<group>/<function>` for a group
+  with multiple named sub-benchmarks, e.g. ascending vs. descending
+  sort).
+  Reports R² and extrapolated values for 50K/100K notes per series.
 
 ### Hidden Tasks
 
-`bench-compare`, `bench-report`, and `bench-model` are hidden from
-`mise tasks`. Run `mise tasks --hidden` to see them, or invoke directly:
+`bench-report` and `bench-model` are hidden from `mise tasks`. Run
+`mise tasks --hidden` to see them, or invoke directly:
 
 ```bash
-mise run bench-compare main-abc123
 mise run bench-model
 ```
 

@@ -219,6 +219,13 @@ unsafe_code = "deny"
 broken_intra_doc_links = "deny"
 private_intra_doc_links = "warn"
 
+[profile.bench]
+inherits = "release"
+opt-level = 3
+debug = true
+strip = false
+lto = "thin"
+
 # ------------------------------------------------------------- #
 #                        Build Profiles                         #
 # ------------------------------------------------------------- #
