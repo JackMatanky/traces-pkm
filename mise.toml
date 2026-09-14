@@ -165,16 +165,16 @@ fi
 # ------------------------------------------------------------- #
 
 [tasks.check]
-raw_args = true
 description = "Fast compile check, then hk project checks"
 alias = "c"
+raw_args = true
 outputs = []
 run = ["cargo check --workspace", "hk check"]
 
 [tasks.build]
-raw_args = true
 description = "Debug build"
 alias = "b"
+raw_args = true
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
 run = "cargo build"
@@ -203,8 +203,8 @@ cargo fmt "${args[@]}"
 '''
 
 [tasks.fix]
-raw_args = true
 description = "Auto-fix hk formatting issues"
+raw_args = true
 outputs = []
 run = "hk fix"
 
@@ -272,8 +272,8 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 '''
 
 [tasks.audit]
-raw_args = true
 description = "Run cargo deny audit"
+raw_args = true
 outputs = []
 run = "cargo deny check"
 
@@ -343,8 +343,8 @@ fi
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
 outputs = { auto = true }
-timeout = "15m"
 depends_post = ["bench-report"]
+timeout = "15m"
 usage = '''
 flag "-f --files <pattern>" {
   help "Select bench targets (benches/*.rs) by file-name substring"
@@ -541,8 +541,8 @@ cargo tarpaulin "${args[@]}"
 
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
-outputs = ["lcov.info"]
 sources = ["@group:rust", "tarpaulin.toml"]
+outputs = ["lcov.info"]
 run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 
 [tasks.mutants]
@@ -631,16 +631,16 @@ EOF
 # ------------------------------------------------------------- #
 
 [tasks.release]
-raw_args = true
 description = "Release build"
 alias = "r"
+raw_args = true
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
 run = "cargo build --release"
 
 [tasks.doc]
-raw_args = true
 description = "Build documentation (warnings as errors)"
+raw_args = true
 env = { RUSTDOCFLAGS = "-D warnings" }
 sources = ["@group:rust"]
 outputs = ["target/doc"]
