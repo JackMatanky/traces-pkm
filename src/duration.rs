@@ -14,35 +14,45 @@
 //! - [`DurationError`]: error type for parse and conversion failures.
 
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     fmt,
+    hash::Hash,
     ops::{Add, Mul, Sub},
     str::FromStr,
 };
 
 use chrono::TimeDelta;
 use num_traits::ToPrimitive as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A validated duration expression with its total seconds.
+/// A validated duration expression with its total seconds and original source
+/// spelling.
 ///
-/// Constructed exclusively via [`DurationValue::parse`] or the [`FromStr`]
-/// implementation. The stored seconds value is always finite.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct DurationValue {
+/// Constructed exclusively via [`DurationValue::parse`],
+/// [`DurationValue::parse_prefix`], [`DurationValue::from_seconds`], or the
+/// [`FromStr`] implementation. The stored seconds value is always finite.
+#[derive(Clone, Debug)]
+pub struct DurationValue {
     seconds: DurationSeconds,
+    raw: Box<str>,
 }
 
 impl DurationValue {
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
     /// Accepts one or more `<number><unit>` parts separated by whitespace or
-    /// commas. Returns a specific error for each failure mode.
+    /// commas. A leading `+` or `-` on the first part sets the sign of the
+    /// whole duration. A part after the first may repeat a redundant `+`
+    /// but never an explicit `-`.
+    /// Returns a specific error for each failure mode.
     ///
     /// # Errors
     ///
     /// - [`Empty`] if the input is empty or contains only separators.
     /// - [`MissingNumber`] if a unit appears without a preceding number.
-    /// - [`InvalidNumber`] if the number portion could not be parsed.
+    /// - [`InvalidNumber`] if the number portion could not be parsed, or a part
+    ///   after the first carries an explicit `-` sign.
     /// - [`MissingUnit`] if a number appears without a trailing unit.
     /// - [`UnknownUnit`] if the unit string is not recognized.
     /// - [`NonFiniteSeconds`] if the parsed total cannot be represented as a
@@ -55,11 +65,17 @@ impl DurationValue {
     /// [`UnknownUnit`]: DurationError::UnknownUnit
     /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
     pub(crate) fn parse(input: &str) -> Result<Self, DurationError> {
-        let bytes = input.as_bytes();
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err(DurationError::Empty);
+        }
+
+        let bytes = trimmed.as_bytes();
         let len = bytes.len();
         let mut pos = 0;
         let mut total = 0.0f64;
         let mut parsed_any = false;
+        let mut is_negative = false;
 
         while pos < len {
             Self::skip_separators(bytes, &mut pos);
@@ -68,15 +84,24 @@ impl DurationValue {
             }
 
             let (number, pos_after_number) =
-                Self::parse_number(bytes, pos, input)?;
+                Self::parse_number(bytes, pos, trimmed)?;
             pos = pos_after_number;
 
             Self::skip_whitespace(bytes, &mut pos);
 
-            let (kind, pos_after_unit) = Self::parse_unit(bytes, pos, input)?;
+            let (kind, pos_after_unit) = Self::parse_unit(bytes, pos, trimmed)?;
             pos = pos_after_unit;
 
-            total += number * kind.seconds();
+            if number.is_sign_negative() {
+                if parsed_any {
+                    return Err(DurationError::InvalidNumber {
+                        input: trimmed.to_owned(),
+                    });
+                }
+                is_negative = true;
+            }
+
+            total += number.abs() * kind.seconds();
             parsed_any = true;
         }
 
@@ -84,16 +109,190 @@ impl DurationValue {
             return Err(DurationError::Empty);
         }
 
+        if is_negative {
+            total = -total;
+        }
+
         Ok(Self {
             seconds: DurationSeconds::try_from(total)?,
+            raw: trimmed.into(),
         })
+    }
+
+    /// Parses a duration prefix from `input`, returning the parsed
+    /// [`DurationValue`] and the number of consumed bytes.
+    ///
+    /// Recognizes the same `<number><unit>` grammar as [`Self::parse`],
+    /// including the leading-sign rule: only the first part may carry an
+    /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if
+    /// `input` does not start with a valid duration segment, if no parts
+    /// could be parsed, or if a part after the first carries an explicit
+    /// `-` sign.
+    pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
+        let bytes = input.as_bytes();
+        let len = bytes.len();
+        if len == 0 || !Self::can_start_duration_segment(bytes, 0) {
+            return None;
+        }
+
+        let mut pos = 0;
+        let mut total = 0.0f64;
+        let mut parsed_any = false;
+        let mut is_negative = false;
+        let mut last_end = 0;
+
+        while pos < len {
+            let (number, pos_after_number) =
+                Self::parse_number(bytes, pos, input).ok()?;
+            pos = pos_after_number;
+
+            Self::skip_whitespace(bytes, &mut pos);
+
+            let (kind, pos_after_unit) =
+                Self::parse_unit(bytes, pos, input).ok()?;
+            pos = pos_after_unit;
+
+            if number.is_sign_negative() {
+                if parsed_any {
+                    return None;
+                }
+                is_negative = true;
+            }
+
+            total += number.abs() * kind.seconds();
+            parsed_any = true;
+            last_end = pos;
+
+            let mut next_pos = pos;
+            Self::skip_separators(bytes, &mut next_pos);
+            if next_pos < len
+                && Self::can_start_duration_segment(bytes, next_pos)
+            {
+                pos = next_pos;
+            } else {
+                break;
+            }
+        }
+
+        if !parsed_any {
+            return None;
+        }
+
+        if is_negative {
+            total = -total;
+        }
+
+        let seconds = DurationSeconds::try_from(total).ok()?;
+        let raw = input[..last_end].trim().into();
+        Some((
+            Self {
+                seconds,
+                raw,
+            },
+            last_end,
+        ))
+    }
+
+    /// Synthesizes a canonical [`DurationValue`] from a [`DurationSeconds`]
+    /// value.
+    ///
+    /// Greedily decomposes `seconds.0.abs()` into Weeks (604,800s), Days
+    /// (86,400s), Hours (3,600s), Minutes (60s), Seconds (1s), and
+    /// Milliseconds (0.001s). If `seconds.0 == 0.0`, produces `"0s"`.
+    /// Negative durations have a leading `"-"`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "part of DurationValue surface")
+    )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "unit_ms is non-zero (>= 1) and total_ms >= unit_ms, so \
+                  division and modulo never panic"
+    )]
+    pub(crate) fn from_seconds(seconds: DurationSeconds) -> Self {
+        let total_secs = seconds.0;
+        if total_secs == 0.0 {
+            return Self {
+                seconds,
+                raw: "0s".into(),
+            };
+        }
+
+        let is_negative = total_secs < 0.0;
+        let rem = total_secs.abs();
+        let mut total_ms = (rem * 1_000.0).round().to_u64().unwrap_or(0);
+        let units: &[(u64, &str)] = &[
+            (604_800_000, "w"),
+            (86_400_000, "d"),
+            (3_600_000, "h"),
+            (60_000, "m"),
+            (1_000, "s"),
+            (1, "ms"),
+        ];
+
+        let mut parts = Vec::new();
+        for &(unit_ms, suffix) in units {
+            if total_ms >= unit_ms {
+                let count = total_ms / unit_ms;
+                total_ms %= unit_ms;
+                parts.push(format!("{count}{suffix}"));
+            }
+        }
+
+        let raw: Box<str> = if parts.is_empty() {
+            "0s".into()
+        } else {
+            let combined = parts.join(" ");
+            if is_negative {
+                format!("-{combined}").into_boxed_str()
+            } else {
+                combined.into_boxed_str()
+            }
+        };
+
+        Self {
+            seconds,
+            raw,
+        }
+    }
+
+    /// Returns the raw duration text.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.raw
     }
 
     /// Returns the total duration as [`DurationSeconds`].
     #[inline]
     #[must_use]
-    pub(crate) const fn to_seconds(self) -> DurationSeconds {
+    pub(crate) const fn to_seconds(&self) -> DurationSeconds {
         self.seconds
+    }
+
+    /// Returns `true` if `bytes[pos]` can begin a numeric duration token.
+    fn can_start_duration_segment(bytes: &[u8], pos: usize) -> bool {
+        let Some(&b) = bytes.get(pos) else {
+            return false;
+        };
+        if b.is_ascii_digit() {
+            return true;
+        }
+        if b == b'.' {
+            return bytes
+                .get(pos.saturating_add(1))
+                .is_some_and(u8::is_ascii_digit);
+        }
+        if b == b'+' || b == b'-' {
+            let next = bytes.get(pos.saturating_add(1));
+            let next_next = bytes.get(pos.saturating_add(2));
+            return match next {
+                Some(c) if c.is_ascii_digit() => true,
+                Some(b'.') => next_next.is_some_and(u8::is_ascii_digit),
+                _ => false,
+            };
+        }
+        false
     }
 
     /// Advances `pos` past whitespace and commas.
@@ -124,13 +323,31 @@ impl DurationValue {
         }
     }
 
-    /// Parses a decimal number starting at `pos`.
+    /// Parses a decimal number starting at `pos`, supporting optional leading
+    /// `+` or `-`.
     fn parse_number(
         bytes: &[u8],
         mut pos: usize,
         input: &str,
     ) -> Result<(f64, usize), DurationError> {
         let num_start = pos;
+        if let Some(&b) = bytes.get(pos)
+            && (b == b'+' || b == b'-')
+        {
+            let next = bytes.get(pos.saturating_add(1));
+            let next_next = bytes.get(pos.saturating_add(2));
+            let is_valid_after_sign = match next {
+                Some(c) if c.is_ascii_digit() => true,
+                Some(b'.') => next_next.is_some_and(u8::is_ascii_digit),
+                _ => false,
+            };
+            if !is_valid_after_sign {
+                return Err(DurationError::InvalidNumber {
+                    input: input.to_owned(),
+                });
+            }
+            pos = pos.saturating_add(1);
+        }
         let mut has_decimal = false;
         while pos < bytes.len() {
             let Some(&b) = bytes.get(pos) else {
@@ -231,23 +448,6 @@ impl DurationValue {
     }
 }
 
-/// Enables `"1h 30m".parse::<DurationValue>()`.
-///
-/// Delegates to [`DurationValue::parse`].
-///
-/// # Errors
-///
-/// - [`Empty`] if `s` is empty or contains only separators.
-/// - [`MissingNumber`] if a unit appears without a preceding number.
-/// - [`InvalidNumber`] if the number portion could not be parsed.
-/// - [`MissingUnit`] if a number appears without a trailing unit.
-/// - [`UnknownUnit`] if the unit string is not recognized.
-///
-/// [`Empty`]: DurationError::Empty
-/// [`MissingNumber`]: DurationError::MissingNumber
-/// [`InvalidNumber`]: DurationError::InvalidNumber
-/// [`MissingUnit`]: DurationError::MissingUnit
-/// [`UnknownUnit`]: DurationError::UnknownUnit
 impl FromStr for DurationValue {
     type Err = DurationError;
 
@@ -264,6 +464,83 @@ impl TryFrom<DurationValue> for TimeDelta {
     #[inline]
     fn try_from(duration: DurationValue) -> Result<Self, Self::Error> {
         Self::try_from(duration.to_seconds())
+    }
+}
+
+impl TryFrom<&DurationValue> for TimeDelta {
+    type Error = DurationError;
+
+    /// Converts to a [`TimeDelta`] via the duration's total seconds, returning
+    /// a `NonFiniteSeconds` error on arithmetic overflow.
+    #[inline]
+    fn try_from(duration: &DurationValue) -> Result<Self, Self::Error> {
+        Self::try_from(duration.to_seconds())
+    }
+}
+
+impl fmt::Display for DurationValue {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.raw)
+    }
+}
+
+/// Compares by parsed [`DurationSeconds`], not raw spelling: `"1h 30m"` and
+/// `"90m"` are equal.
+impl PartialEq for DurationValue {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.seconds == other.seconds
+    }
+}
+
+impl Eq for DurationValue {}
+
+/// Orders by parsed [`DurationSeconds`], not raw spelling, consistent with
+/// [`PartialEq`].
+impl PartialOrd for DurationValue {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DurationValue {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.seconds.cmp(&other.seconds)
+    }
+}
+
+/// Hashes the parsed [`DurationSeconds`], not raw spelling, so equal values
+/// per [`PartialEq`] always hash identically.
+impl Hash for DurationValue {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.seconds.hash(state);
+    }
+}
+
+/// Serializes as the original raw spelling, not a canonical form: two equal
+/// values (e.g. `"1h 30m"` and `"90m"`) can serialize to different strings.
+impl Serialize for DurationValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+/// Deserializes via [`Self::parse`], so an unparseable string is a hard
+/// deserialization error rather than a lossy fallback.
+impl<'de> Deserialize<'de> for DurationValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::parse(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -439,6 +716,12 @@ impl fmt::Display for DurationSeconds {
     }
 }
 
+impl Hash for DurationSeconds {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
 impl Add for DurationSeconds {
     type Output = Self;
 
@@ -585,6 +868,24 @@ mod tests {
                 "0.5"
             );
         }
+
+        #[test]
+        fn hashes_equal_seconds_identically() {
+            use std::{
+                collections::hash_map::DefaultHasher,
+                hash::{Hash, Hasher},
+            };
+
+            fn hash_val<T: Hash>(val: &T) -> u64 {
+                let mut hasher = DefaultHasher::new();
+                val.hash(&mut hasher);
+                hasher.finish()
+            }
+
+            let a = DurationSeconds::try_from(100.0).unwrap();
+            let b = DurationSeconds::try_from(100.0).unwrap();
+            assert_eq!(hash_val(&a), hash_val(&b));
+        }
     }
 
     mod duration_value_parse {
@@ -615,6 +916,71 @@ mod tests {
                 d.to_seconds(),
                 DurationSeconds::try_from(5_400.0).unwrap()
             );
+        }
+
+        #[test]
+        fn parses_signed_durations_in_correct_order() {
+            let neg = DurationValue::parse("-15m").unwrap();
+            let zero = DurationValue::parse("0m").unwrap();
+            let pos = DurationValue::parse("+15m").unwrap();
+            assert!(neg < zero);
+            assert!(zero < pos);
+        }
+
+        #[test]
+        fn rejects_a_negative_sign_on_a_non_leading_component() {
+            let err = DurationValue::parse("1h -30m").unwrap_err();
+            assert!(matches!(err, DurationError::InvalidNumber { .. }));
+        }
+
+        #[test]
+        fn accepts_a_redundant_positive_sign_on_a_non_leading_component() {
+            let d = DurationValue::parse("1h +30m").unwrap();
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
+            );
+        }
+
+        #[test]
+        fn parses_a_signed_decimal_without_a_leading_digit() {
+            let d = DurationValue::parse("-.5h").unwrap();
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(-1_800.0).unwrap()
+            );
+        }
+
+        #[test]
+        fn equates_semantically_equivalent_spellings() {
+            let a = DurationValue::parse("1h 30m").unwrap();
+            let b = DurationValue::parse("90m").unwrap();
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn hashes_semantically_equivalent_spellings_identically() {
+            use std::{
+                collections::hash_map::DefaultHasher,
+                hash::{Hash, Hasher},
+            };
+
+            fn hash_val<T: Hash>(val: &T) -> u64 {
+                let mut hasher = DefaultHasher::new();
+                val.hash(&mut hasher);
+                hasher.finish()
+            }
+
+            let a = DurationValue::parse("1h 30m").unwrap();
+            let b = DurationValue::parse("90m").unwrap();
+            assert_eq!(hash_val(&a), hash_val(&b));
+        }
+
+        #[test]
+        fn preserves_display_fidelity_of_raw_spelling() {
+            let d = DurationValue::parse("4 yrs, 6 wks").unwrap();
+            assert_eq!(format!("{d}"), "4 yrs, 6 wks");
+            assert_eq!(d.as_str(), "4 yrs, 6 wks");
         }
 
         #[test]
@@ -987,10 +1353,145 @@ mod tests {
         #[test]
         fn delegates_to_duration_seconds() {
             let duration = DurationValue::parse("30m").expect("valid duration");
-            let converted = TimeDelta::try_from(duration).expect("in range");
+            let converted = TimeDelta::try_from(&duration).expect("in range");
             let via_seconds =
                 TimeDelta::try_from(duration.to_seconds()).expect("in range");
             assert_eq!(converted, via_seconds);
+        }
+    }
+
+    mod duration_value_prefix {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn parses_valid_prefix_and_advances_to_boundary() {
+            let (dv, consumed) =
+                DurationValue::parse_prefix("45m]").expect("prefix");
+            assert_eq!(consumed, 3);
+            assert_eq!(dv.as_str(), "45m");
+            assert_eq!(
+                dv.to_seconds(),
+                DurationSeconds::try_from(2_700.0).unwrap()
+            );
+        }
+
+        #[test]
+        fn parses_a_decimal_prefix_without_a_leading_digit() {
+            let (dv, consumed) =
+                DurationValue::parse_prefix(".5h remainder").expect("prefix");
+            assert_eq!(consumed, 3);
+            assert_eq!(dv.as_str(), ".5h");
+            assert_eq!(
+                dv.to_seconds(),
+                DurationSeconds::try_from(1_800.0).unwrap()
+            );
+        }
+
+        #[test]
+        fn parses_multi_part_prefix_without_trailing_separators() {
+            let (dv, consumed) =
+                DurationValue::parse_prefix("1h, 30m, extra").expect("prefix");
+            assert_eq!(consumed, 7);
+            assert_eq!(dv.as_str(), "1h, 30m");
+            assert_eq!(
+                dv.to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
+            );
+        }
+
+        #[test]
+        fn rejects_non_duration_prefix() {
+            assert!(DurationValue::parse_prefix("not a duration").is_none());
+        }
+
+        #[test]
+        fn rejects_hyphen_bullet_without_immediate_digit() {
+            assert!(DurationValue::parse_prefix("- 15m").is_none());
+        }
+
+        #[test]
+        fn rejects_a_negative_sign_on_a_non_leading_component() {
+            assert!(DurationValue::parse_prefix("1h -30m").is_none());
+        }
+    }
+
+    mod duration_value_synthesis {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[test]
+        fn synthesizes_zero_duration_as_0s() {
+            let zero = DurationSeconds::try_from(0.0).unwrap();
+            let dv = DurationValue::from_seconds(zero);
+            assert_eq!(dv.as_str(), "0s");
+            assert_eq!(dv.to_seconds(), zero);
+        }
+
+        #[test]
+        fn synthesizes_positive_decomposed_units() {
+            let secs = DurationSeconds::try_from(5_400.0).unwrap(); // 1h 30m
+            let dv = DurationValue::from_seconds(secs);
+            assert_eq!(dv.as_str(), "1h 30m");
+            assert_eq!(dv.to_seconds(), secs);
+        }
+
+        #[test]
+        fn synthesizes_negative_decomposed_units_with_leading_minus() {
+            let secs = DurationSeconds::try_from(-5_400.0).unwrap();
+            let dv = DurationValue::from_seconds(secs);
+            assert_eq!(dv.as_str(), "-1h 30m");
+            assert_eq!(dv.to_seconds(), secs);
+        }
+
+        #[rstest]
+        #[case::seconds(90.0)]
+        #[case::minutes(5_400.0)]
+        #[case::compound(604_800.0 + 86_400.0 + 3_600.0 + 60.0 + 1.0 + 0.5)]
+        #[case::negative(-5_400.0)]
+        #[case::negative_compound(-(86_400.0 + 3_600.0))]
+        fn roundtrips_synthesized_duration_through_parser(
+            #[case] raw_seconds: f64,
+        ) {
+            let secs = DurationSeconds::try_from(raw_seconds).unwrap();
+            let synthesized = DurationValue::from_seconds(secs);
+            let reparsed = DurationValue::parse(synthesized.as_str())
+                .expect("synthesized string must parse");
+            assert_eq!(reparsed.to_seconds(), secs);
+        }
+    }
+
+    mod duration_value_serde {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn serializes_to_raw_string() {
+            let dv = DurationValue::parse("1h 30m").unwrap();
+            let json = serde_json::to_string(&dv).unwrap();
+            assert_eq!(json, "\"1h 30m\"");
+        }
+
+        #[test]
+        fn deserializes_from_raw_string() {
+            let json = "\"4 yrs, 6 wks\"";
+            let dv: DurationValue = serde_json::from_str(json).unwrap();
+            assert_eq!(dv.as_str(), "4 yrs, 6 wks");
+            assert_eq!(
+                dv.to_seconds(),
+                DurationValue::parse("4 yrs, 6 wks").unwrap().to_seconds()
+            );
+        }
+
+        #[test]
+        fn rejects_deserializing_an_unparseable_duration_string() {
+            let json = "\"not a duration\"";
+            let err = serde_json::from_str::<DurationValue>(json).unwrap_err();
+            assert!(err.to_string().contains("no number before unit"));
         }
     }
 }

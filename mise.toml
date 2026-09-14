@@ -229,6 +229,7 @@ set -euo pipefail
 
 declare -a cargo_args=(--workspace --all-targets --all-features)
 declare -a clippy_args=()
+
 readonly -a default_fix_lints=(
   as_pointer_underscore
   as_underscore
@@ -249,6 +250,7 @@ readonly -a default_fix_lints=(
   use_self
   useless_conversion
 )
+
 if [[ "${usage_deny_warnings?}" == "true" ]]; then
   clippy_args+=(-D warnings)
 fi
@@ -316,6 +318,7 @@ set -euo pipefail
 
 declare -a nextest_args
 declare -a cargo_test_args
+
 if [[ "${usage_feature?}" == "all" ]]; then
   nextest_args=(-p traces-pkm --all-features)
   cargo_test_args=(--workspace --all-features)
@@ -547,39 +550,87 @@ run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
+sources = ["@group:rust"]
 outputs = []
+depends = ["test"]
+timeout = "1h"
 usage = '''
-flag "-j --jobs <jobs>" default="4" {
-  help "Number of cargo build/test jobs in parallel"
-}
 flag "-f --file <file>" help="Run mutants in a specific file only"
-flag "--iterate" negate="--no-iterate" default=#true {
-  help "Skip mutants that were caught in previous runs"
-}
 flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
+flag "-j --jobs <jobs>" default="4" {
+  help "Number of cargo build/test jobs in parallel"
+}
+flag "--check" {
+  help "Build-only: check mutants compile without running tests"
+}
+flag "-L --level <level>" {
+  help "Log verbosity"
+  choices "trace" "debug" "info" "warn" "error"
+}
+flag "--exclude <glob>" help="Exclude files matching glob"
+flag "--timeout <secs>" help="Override test timeout in seconds"
+flag "--json" { help "Emit machine-readable output" }
+flag "--no-config" { help "Ignore .cargo/mutants.toml" }
+flag "--iterate" negate="--no-iterate" default=#true {
+  help "Skip mutants caught in previous runs"
+}
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to cargo mutants"
+  long_help """
+  Forwarded to `cargo mutants`. Examples:
+
+    mise run mutants -- --list               # list available mutants
+    mise run mutants -m index -- --list      # narrow, then list
+  """
+}
 '''
 run = '''
 #!/bin/bash
+# shellcheck disable=SC2154
 set -euo pipefail
 
-declare -a args=()
-if [[ -n "${usage_jobs:-}" ]]; then
-  args+=(--jobs "${usage_jobs}")
-fi
-if [[ -n "${usage_file:-}" ]]; then
-  args+=(--file "${usage_file}")
-fi
-if [[ "${usage_iterate:-false}" == "true" ]]; then
-  args+=(--iterate)
-fi
-if [[ -n "${usage_mod:-}" ]]; then
-  args+=(--file "src/${usage_mod}/**/*.rs")
-fi
+base_args() {
+  local -n _args=$1
+  _args+=(
+    --jobs "${usage_jobs:-4}"
+    --baseline run
+    --cap-lints true
+    --build-timeout-multiplier 3
+  )
+}
 
-cargo mutants "${args[@]}"
+scope_args() {
+  local -n _args=$1
+  [[ "${usage_iterate:-true}" == "true" ]]    && _args+=(--iterate)
+  [[ -n "${usage_file:-}" ]]                  && _args+=(--file "${usage_file}")
+  [[ -n "${usage_mod:-}" ]]                   && _args+=(--file "src/${usage_mod}/**/*.rs")
+  [[ "${usage_check:-false}" == "true" ]]     && _args+=(--check)
+  [[ -n "${usage_level:-}" ]]                 && _args+=(--level "${usage_level}")
+  [[ -n "${usage_exclude:-}" ]]               && _args+=(--exclude "${usage_exclude}")
+  [[ -n "${usage_timeout:-}" ]]               && _args+=(--timeout "${usage_timeout}")
+  [[ "${usage_json:-false}" == "true" ]]      && _args+=(--json)
+  [[ "${usage_no_config:-false}" == "true" ]] && _args+=(--no-config)
+}
+
+passthrough_args() {
+  local -n _args=$1
+  local -a extra=()
+  eval "extra=(${usage_args:-})"
+  _args+=("${extra[@]+"${extra[@]}"}")
+}
+
+main() {
+  local -a args=()
+  base_args args
+  scope_args args
+  passthrough_args args
+  cargo mutants "${args[@]}"
+}
+
+main "$@"
 '''
 depends_post = ["mutants-report"]
 
@@ -596,34 +647,41 @@ flag "-o --output <output>" default="mutants-report.md" {
 '''
 run = '''
 #!/bin/bash
+# shellcheck disable=SC2154
 set -euo pipefail
 
-readonly missed_file="${usage_input:-mutants.out/missed.txt}"
-readonly report_file="${usage_output:-mutants-report.md}"
+main() {
+  local missed_file="${usage_input:-mutants.out/missed.txt}"
+  local report_file="${usage_output:-mutants-report.md}"
 
-if [[ ! -f "${missed_file}" ]] || [[ ! -s "${missed_file}" ]]; then
-  cat <<EOF > "${report_file}"
+  if [[ ! -s "${missed_file}" ]]; then
+    cat <<EOF > "${report_file}"
 # Mutation Testing Report
-**Status:** Completed successfully. All mutants were caught! 🎉
+**Status:** Completed successfully. All mutants were caught!
 **Next Action:** No action needed. Test suite coverage is robust.
 EOF
-  exit 0
-fi
+    exit 0
+  fi
 
-cat <<EOF > "${report_file}"
+  cat <<EOF > "${report_file}"
 # Mutation Testing Report
 **Status:** Completed. Surviving mutants detected.
 
 ## Instructions for Next Agent Session
 1. Read the list of surviving mutants below.
-2. For each mutant, examine the file and add targeted assertions/unit tests to catch it.
-3. Verify your fixes by running: \`cargo mutants --file <path-to-file>\`.
+2. For each mutant, examine the file and add targeted
+   assertions/unit tests to catch it.
+3. Verify your fixes by running:
+   \`cargo mutants --file <path-to-file>\`.
 
 ## Surviving Mutants List
 \`\`\`text
 $(cat "${missed_file}")
 \`\`\`
 EOF
+}
+
+main "$@"
 '''
 
 # ------------------------------------------------------------- #
