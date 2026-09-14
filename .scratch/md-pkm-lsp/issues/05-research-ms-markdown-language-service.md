@@ -17,10 +17,10 @@ This is the reference for **generic** (non-PKM) Markdown language-service capabi
 - Any wikilink or PKM-specific support (expect none/minimal — confirm and note the boundary precisely).
 - Source-range/position representation used internally (UTF-16 vs UTF-8 offsets — relevant since LSP wire protocol is UTF-16 by default).
 
-Write findings to `.scratch/md-pkm-lsp/research/ms-markdown-language-service.md`, citing each claim's source file/URL.
+Write findings to `.scratch/md-pkm-lsp/research/tool-ms-markdown-language-service.md`, citing each claim's source file/URL.
 
 ## Answer
 
 Canonical generic-Markdown baseline (what VS Code uses): folding/selection-ranges/symbols/document-links/hover/definition/references/rename/completion/diagnostics, but explicitly NO semantic tokens and NO CodeLens even in Microsoft's own implementation. Clean protocol-agnostic-library vs LSP-adapter split (IMdLanguageService vs server.ts) is a real, shipping precedent for that architecture. Zero wikilink/PKM support — pure generic baseline. UTF-16 positions, no positionEncoding negotiation.
 
-Full findings: [`research/ms-markdown-language-service.md`](../research/ms-markdown-language-service.md)
+Full findings: [`research/tool-ms-markdown-language-service.md`](../research/tool-ms-markdown-language-service.md)

@@ -33,4 +33,4 @@ Investigated four Rust-based LSPs with genuine speed reputations, reading actual
 
 **Zero precedent, across all four, for making the core analysis engine itself `async fn`** (ticket 09's option (c)) — every tool with a genuine speed reputation keeps parsing/analysis synchronous regardless of what the LSP transport layer does. The real split is between two viable shapes: fully synchronous end-to-end (`ty`/`ruff_server`, matching rust-analyzer) when the process has no non-trivial concurrent I/O beyond request/response, versus `tokio`+`tower-lsp-server` at the transport boundary with a synchronous core underneath (Biome) when the process does have real concurrent I/O to juggle — file-watch events, multi-client sessions, background scanning.
 
-Full findings, per-project detail, and source citations: [research/performant-rust-lsp-runtime-models.md](../research/performant-rust-lsp-runtime-models.md).
+Full findings, per-project detail, and source citations: [research/35-performant-rust-lsp-runtime-models.md](../research/35-performant-rust-lsp-runtime-models.md).

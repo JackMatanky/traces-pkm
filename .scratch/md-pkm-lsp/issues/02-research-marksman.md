@@ -19,10 +19,10 @@ Establish and cite for each:
 - Concurrency approach (F# async? threading model?).
 - Documented scope exclusions.
 
-Write findings to `.scratch/md-pkm-lsp/research/marksman.md`, citing each claim's source. Note documentation/source discrepancies explicitly.
+Write findings to `.scratch/md-pkm-lsp/research/tool-marksman.md`, citing each claim's source. Note documentation/source discrepancies explicitly.
 
 ## Answer
 
 F#/Markdig-based, actor-model (MailboxProcessor) concurrency, full re-parse per edited document with incremental workspace-index updates only. Wikilink resolution strategy (title vs filename) is user-configurable and changes rename outcomes. Duplicate-heading diagnostic is documented but not actually implemented standalone — only surfaces via AmbiguousLink's RelatedInformation.
 
-Full findings: [`research/marksman.md`](../research/marksman.md)
+Full findings: [`research/tool-marksman.md`](../research/tool-marksman.md)

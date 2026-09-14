@@ -18,10 +18,10 @@ A first pass already read `docs/digests/lsp_rvben-rumdl-docs-digest.txt:1885-205
 - rumdl's config file (`.rumdl.toml`) surface vs Traces' `.traces/config.toml` — any advertised interop or explicit non-interop.
 - Installation/registration model (`rumdl server`) so the map can describe a concrete "both servers registered for `markdown` filetype" client configuration.
 
-Write findings to `.scratch/md-pkm-lsp/research/rumdl-boundary.md`, citing each claim's source.
+Write findings to `.scratch/md-pkm-lsp/research/tool-rumdl-boundary.md`, citing each claim's source.
 
 ## Answer
 
 rumdl ships enableLinkCompletions/enableLinkNavigation/enableSymbols — three settings, not two — as its explicit coexistence contract for standard-Markdown-link completion/navigation and document/workspace symbols. Wikilinks are permanently, unconditionally out of rumdl's link-checking scope by design (no toggle needed). Link *diagnostics* (MD057/MD051) are NOT gated by those LSP settings — separate lint-rule toggle needed if Traces wants that territory too. Zero formatting overlap (wikilinks exempted from MD039).
 
-Full findings: [`research/rumdl-boundary.md`](../research/rumdl-boundary.md)
+Full findings: [`research/tool-rumdl-boundary.md`](../research/tool-rumdl-boundary.md)

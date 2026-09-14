@@ -18,10 +18,10 @@ Establish and cite for each:
 - Any incremental indexing or caching strategy documented.
 - Architecture notes on concurrency (zk is Go-based — goroutines/channels) only to the extent they inform a *product* decision (not to imitate Go idioms in Rust).
 
-Write findings to `.scratch/md-pkm-lsp/research/zk.md`, citing each claim's source.
+Write findings to `.scratch/md-pkm-lsp/research/tool-zk.md`, citing each claim's source.
 
 ## Answer
 
 Single-root "Notebook" model, no multi-root/nesting. No dedicated daily-note feature — composed from generic template groups + date-placeholder filenames + CLI aliases. Flat tag model with glob-matched slash-hierarchy simulation, not first-class hierarchical tags. SQLite-backed incremental indexing (diff-based, syncs with unsaved-buffer edits) is the closest precedent to Traces' own IndexDelta approach.
 
-Full findings: [`research/zk.md`](../research/zk.md)
+Full findings: [`research/tool-zk.md`](../research/tool-zk.md)

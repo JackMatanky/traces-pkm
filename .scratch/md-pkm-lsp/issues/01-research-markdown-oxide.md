@@ -23,10 +23,10 @@ Establish and cite (file/section) for each:
 - Deliberate scope exclusions the maintainers documented (things they decided NOT to do, and why, if stated).
 - Rust crates used for the LSP framework/JSON-RPC transport (crate name + version if visible in Cargo.toml within the digest).
 
-Write findings to `.scratch/md-pkm-lsp/research/markdown-oxide.md`, citing each claim's source (digest file + line range, or upstream URL). Where documentation and source code disagree, record the discrepancy explicitly.
+Write findings to `.scratch/md-pkm-lsp/research/tool-markdown-oxide.md`, citing each claim's source (digest file + line range, or upstream URL). Where documentation and source code disagree, record the discrepancy explicitly.
 
 ## Answer
 
 Regex-only (no AST), tower-lsp/tokio, rayon-parallel eager in-memory index, no persistence. Ambiguity deferred to client (Vec<Location>). Tag rename/references use hierarchical prefix match; go-to-definition uses exact match only — a deliberate split. Filesystem-watch rebuilds fully replace in-memory state, overriding unsaved buffers (a precedent to avoid, not follow).
 
-Full findings: [`research/markdown-oxide.md`](../research/markdown-oxide.md)
+Full findings: [`research/tool-markdown-oxide.md`](../research/tool-markdown-oxide.md)

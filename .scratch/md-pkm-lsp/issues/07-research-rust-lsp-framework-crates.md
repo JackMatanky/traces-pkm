@@ -14,7 +14,7 @@ Traces today has **zero async runtime dependency** (confirmed: no tokio/async-st
 - For each candidate: does adopting it force Traces to take on an async runtime dependency (tokio) for the *entire* LSP binary/crate, or can request handling stay synchronous with only the transport loop being async/threaded? This directly matters given Traces' current all-synchronous core (Index/Query/Schema/Template are all sync, and Template rendering synchronously blocks on interactive `DialogProvider` I/O — an async-locked-in framework would create an awkward sync-in-async boundary).
 - Cancellation-token propagation: how each framework surfaces `$/cancelRequest` to handler code, and whether that maps cleanly onto Rust's cooperative-cancellation limitations (no forced preemption).
 
-Write findings to `.scratch/md-pkm-lsp/research/rust-lsp-framework-crates.md`, citing rust-docs-mcp findings and crate versions precisely. This ticket answers "what exists and what it demands", not "which one to pick" — the pick is architecture ticket 09 (LSP framework & runtime model), which this ticket blocks.
+Write findings to `.scratch/md-pkm-lsp/research/07-rust-lsp-framework-crates.md`, citing rust-docs-mcp findings and crate versions precisely. This ticket answers "what exists and what it demands", not "which one to pick" — the pick is architecture ticket 09 (LSP framework & runtime model), which this ticket blocks.
 
 ## Answer
 
@@ -24,4 +24,4 @@ Two separate axes, not one. (1) Runtime demands, verified against crate source: 
 
 Neither axis alone picks a winner for ticket 09 — axis (1) favors `lsp-server` only if Traces' core stays synchronous; axis (2) favors `tower-lsp-server` regardless, and becomes decisive with no offsetting cost if the core moves to async.
 
-Full findings: [`research/rust-lsp-framework-crates.md`](../research/rust-lsp-framework-crates.md)
+Full findings: [`research/07-rust-lsp-framework-crates.md`](../research/07-rust-lsp-framework-crates.md)
