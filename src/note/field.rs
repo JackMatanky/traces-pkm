@@ -109,7 +109,7 @@ impl NoteFieldValue {
     }
 }
 
-/// Converts a [`FieldValueRef`] into a [`NoteFieldValue`].
+/// Converts a `FieldValueRef` into a [`NoteFieldValue`].
 ///
 /// Handles note-specific post-classification: empty strings become null,
 /// wikilink syntax becomes [`NoteFieldValue::Link`].

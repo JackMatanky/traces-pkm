@@ -26,9 +26,9 @@
 //!
 //! [`FxHashMap`] is used instead of [`HashMap`] for internal indexes. The keys
 //! are vault-internal file paths, not attacker-controlled input, so
-//! [`SipHash`]'s denial-of-service resistance is unnecessary.
+//! `SipHash`'s denial-of-service resistance is unnecessary.
 //! [`FxHashMap`] uses a simpler, non-cryptographic hash function that avoids
-//! the per-entry computational overhead of [`SipHash`], yielding measurable
+//! the per-entry computational overhead of `SipHash`, yielding measurable
 //! gains at the thousand-entry scale typical of vault path indexes.
 
 use std::{

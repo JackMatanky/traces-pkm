@@ -24,7 +24,7 @@
 //! - [`WriteMode`] - Choice between previewing rendered content and committing
 //!   it to disk.
 //! - [`WriteOutcome`] - Output produced by a write-mode decision.
-//! - [`CommitPolicy`] - Existing-file behavior for committed writes.
+//! - `CommitPolicy` - Existing-file behavior for committed writes.
 //!
 //! Submodules:
 //!
@@ -39,16 +39,16 @@
 //! - [`service`] coordinates the full pipeline for callers.
 //! - [`error`] defines template-level errors and render-error classification.
 
-mod engine;
-mod error;
-mod loader;
-mod path;
-mod service;
-mod writer;
-
 pub use error::{RenderFailureKind, TemplateError};
 pub use path::{TemplatePathError, TemplatePathInput};
 pub use service::TemplateService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use writer::CommitPolicy;
 pub use writer::{WriteMode, WriteOutcome};
+
+mod engine;
+mod error;
+mod loader;
+mod path;
+mod service;
+mod writer;

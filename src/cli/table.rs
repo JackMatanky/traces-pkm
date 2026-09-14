@@ -4,7 +4,7 @@
 //! selecting a source scope, applying the optional filter, and printing
 //! matching pages as a Markdown table.
 //!
-//! [`FileIndex`]: crate::FileIndex
+//! [`FileIndex`]: crate::index::FileIndex
 
 use clap::Args;
 
@@ -51,7 +51,7 @@ impl Table {
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::FileIndex
+    /// [`FileIndex`]: crate::index::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "table output is primary command output, not diagnostic \
@@ -79,7 +79,7 @@ impl Table {
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::FileIndex
+    /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let order = self.sort.resolve(root)?;

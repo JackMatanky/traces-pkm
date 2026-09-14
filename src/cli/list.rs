@@ -4,7 +4,7 @@
 //! selecting a source scope, applying the optional filter, and printing
 //! matching pages as a Markdown bullet list.
 //!
-//! [`FileIndex`]: crate::FileIndex
+//! [`FileIndex`]: crate::index::FileIndex
 
 use clap::Args;
 
@@ -52,7 +52,7 @@ impl List {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression or
     ///   `--sort` names a malformed field path.
     ///
-    /// [`FileIndex`]: crate::FileIndex
+    /// [`FileIndex`]: crate::index::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "list output is primary command output, not diagnostic text; \
@@ -79,7 +79,7 @@ impl List {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression or
     ///   `--sort` names a malformed field path.
     ///
-    /// [`FileIndex`]: crate::FileIndex
+    /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let order = self.sort.resolve(root)?;

@@ -1,6 +1,10 @@
 //! Source-position primitives shared across text-parsing domains.
 //!
-//! [`SourceLine`] and `ByteOffset` are distinct newtypes so a byte offset can
+//! Main types:
+//! - [`SourceLine`] - 1-indexed source line number.
+//! - [`SourceLineError`] - Error for invalid line-number conversions.
+//!
+//! [`SourceLine`] and [`ByteOffset`] are distinct newtypes so a byte offset can
 //! never be mistaken for a line number at compile time. Domain-specific parsers
 //! (Markdown notes, config files, templates) convert between the two with their
 //! own local tracking strategy; only the vocabulary lives here.
@@ -29,7 +33,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct ByteOffset(usize);
 
 impl ByteOffset {
-    /// Wraps `offset` as a byte offset.
+    /// Wraps `offset` as a UTF-8 byte offset into source text.
     #[inline]
     #[must_use]
     pub(crate) const fn new(offset: usize) -> Self {

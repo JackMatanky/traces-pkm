@@ -4,7 +4,7 @@
 //! [`FileIndex`], selecting task rows via optional source and filter
 //! expressions, and formatting matching tasks as Markdown checkbox lines.
 //!
-//! [`FileIndex`]: crate::FileIndex
+//! [`FileIndex`]: crate::index::FileIndex
 
 use clap::Args;
 
@@ -42,7 +42,7 @@ impl Task {
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     ///
-    /// [`FileIndex`]: crate::FileIndex
+    /// [`FileIndex`]: crate::index::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
@@ -70,7 +70,7 @@ impl Task {
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     ///
-    /// [`FileIndex`]: crate::FileIndex
+    /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let outcome = super::refresh_task_query(
