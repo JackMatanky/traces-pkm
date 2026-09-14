@@ -9,8 +9,8 @@
 //!
 //! - [`DateValue`]: a parsed calendar date.
 //! - [`DateTimeValue`]: a parsed UTC date-time.
-//! - [`DateTimeFormat`]: format grammar enum for date-time recognition.
 //! - [`DateFormat`]: format grammar enum for calendar date recognition.
+//! - [`DateTimeFormat`]: format grammar enum for date-time recognition.
 //! - [`DateError`]: error type for parse and formatting failures.
 
 use std::{fmt, str::FromStr, time::SystemTime};
@@ -20,11 +20,66 @@ use serde::{Deserialize, Serialize};
 
 use crate::duration::DurationValue;
 
+/// `DateValue`'s canonical output format: `2026-07-29`.
+pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
+
 /// `DateTimeValue`'s canonical output format: `2026-07-29T14:30:00`.
 pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
-/// `DateValue`'s canonical output format: `2026-07-29`.
-pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
+/// Recognized date input format shapes tried in order by
+/// [`DateValue::parse_iso`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DateFormat {
+    /// Full ISO date (e.g. `2026-07-29`).
+    Full,
+    /// Year-month reduced precision (e.g. `2026-07`), day defaults to 1.
+    YearMonth,
+}
+
+impl DateFormat {
+    /// Formats tried in order by [`DateValue::parse_iso`].
+    pub(crate) const ALL: [Self; 2] = [Self::Full, Self::YearMonth];
+
+    /// Returns the strftime pattern for this format, or `None` for
+    /// [`Self::YearMonth`] which parses year and month components directly.
+    #[must_use]
+    pub(crate) const fn pattern(self) -> Option<&'static str> {
+        match self {
+            Self::Full => Some(DEFAULT_DATE_FORMAT),
+            Self::YearMonth => None,
+        }
+    }
+
+    /// Attempts to parse `s` according to this format.
+    ///
+    /// # Errors
+    ///
+    /// - [`chrono::ParseError`] if `s` does not match this format's expected
+    ///   shape.
+    pub(crate) fn parse(
+        self,
+        s: &str,
+    ) -> Result<NaiveDate, chrono::ParseError> {
+        match self.pattern() {
+            Some(pat) => NaiveDate::parse_from_str(s, pat),
+            None => Self::parse_year_month(s)
+                .map_or_else(|| NaiveDate::parse_from_str(s, "%Y-%m"), Ok),
+        }
+    }
+
+    /// Parses `"YYYY-MM"`, defaulting day to 1. chrono's `%Y-%m` format string
+    /// alone fails with `NotEnough`, so this splits and parses the year and
+    /// month integers directly.
+    fn parse_year_month(s: &str) -> Option<NaiveDate> {
+        let (year_str, month_str) = s.split_once('-')?;
+        if year_str.len() != 4 || month_str.len() != 2 {
+            return None;
+        }
+        let year: i32 = year_str.parse().ok()?;
+        let month: u32 = month_str.parse().ok()?;
+        NaiveDate::from_ymd_opt(year, month, 1)
+    }
+}
 
 /// Recognized date-time input format shapes tried in order by
 /// [`DateTimeValue::parse_iso`].
@@ -90,58 +145,149 @@ impl DateTimeFormat {
     }
 }
 
-/// Recognized date input format shapes tried in order by
-/// [`DateValue::parse_iso`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DateFormat {
-    /// Full ISO date (e.g. `2026-07-29`).
-    Full,
-    /// Year-month reduced precision (e.g. `2026-07`), day defaults to 1.
-    YearMonth,
-}
+/// A parsed calendar date, no time-of-day component.
+#[repr(transparent)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
+)]
+pub struct DateValue(NaiveDate);
 
-impl DateFormat {
-    /// Formats tried in order by [`DateValue::parse_iso`].
-    pub(crate) const ALL: [Self; 2] = [Self::Full, Self::YearMonth];
-
-    /// Returns the strftime pattern for this format, or `None` for
-    /// [`Self::YearMonth`] which parses year and month components directly.
+impl DateValue {
+    /// Returns `true` if `s` begins with exactly 4 ASCII digits.
+    ///
+    /// Guards against chrono's lenient `%Y` specifier silently accepting a
+    /// short year (`"26-08-22"` parses as year 26 CE, not rejected).
+    /// Deliberately does not check what follows the digits: a well-formed
+    /// 4-digit year with an unrecognized separator (`"2026/08/22"`) should
+    /// reach the format cascade and fail as [`DateError::Unparseable`], not
+    /// be misclassified as [`DateError::InvalidYearDigits`].
     #[must_use]
-    pub(crate) const fn pattern(self) -> Option<&'static str> {
-        match self {
-            Self::Full => Some(DEFAULT_DATE_FORMAT),
-            Self::YearMonth => None,
-        }
+    pub(crate) fn has_four_digit_year(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
     }
 
-    /// Attempts to parse `s` according to this format.
+    /// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`
+    /// (ASCII digits and hyphens in the right positions).
+    ///
+    /// Fast non-allocating pre-check for note-parser call sites before
+    /// committing to [`DateValue::parse_iso`]. Does not validate calendar
+    /// values (`"9999-99-99"` passes this check but fails the real parse); the
+    /// real parse is always the authoritative decision.
+    #[must_use]
+    pub(crate) fn is_iso_shape(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.len() >= 10
+            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(4) == Some(&b'-')
+            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(7) == Some(&b'-')
+            && bytes
+                .get(8..10)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+    }
+
+    /// Parses an ISO-8601 date string (`YYYY-MM-DD` or `YYYY-MM`) using
+    /// [`DateFormat::ALL`].
     ///
     /// # Errors
     ///
-    /// - [`chrono::ParseError`] if `s` does not match this format's expected
-    ///   shape.
-    pub(crate) fn parse(
-        self,
-        s: &str,
-    ) -> Result<NaiveDate, chrono::ParseError> {
-        match self.pattern() {
-            Some(pat) => NaiveDate::parse_from_str(s, pat),
-            None => Self::parse_year_month(s)
-                .map_or_else(|| NaiveDate::parse_from_str(s, "%Y-%m"), Ok),
+    /// - [`DateError::InvalidYearDigits`] if the year segment is not exactly 4
+    ///   ASCII digits.
+    /// - [`DateError::Unparseable`] if no accepted shape matches.
+    pub(crate) fn parse_iso(s: &str) -> Result<Self, DateError> {
+        let trimmed = s.trim();
+        if !Self::has_four_digit_year(trimmed) {
+            return Err(DateError::InvalidYearDigits {
+                input: trimmed.into(),
+            });
         }
+        let [first, rest @ ..] = DateFormat::ALL;
+        let mut result = first.parse(trimmed);
+        for format in rest {
+            if result.is_ok() {
+                break;
+            }
+            result = format.parse(trimmed);
+        }
+        result.map(Self).map_err(|source| DateError::Unparseable {
+            input: trimmed.into(),
+            source,
+        })
     }
 
-    /// Parses `"YYYY-MM"`, defaulting day to 1. chrono's `%Y-%m` format string
-    /// alone fails with `NotEnough`, so this splits and parses the year and
-    /// month integers directly.
-    fn parse_year_month(s: &str) -> Option<NaiveDate> {
-        let (year_str, month_str) = s.split_once('-')?;
-        if year_str.len() != 4 || month_str.len() != 2 {
-            return None;
-        }
-        let year: i32 = year_str.parse().ok()?;
-        let month: u32 = month_str.parse().ok()?;
-        NaiveDate::from_ymd_opt(year, month, 1)
+    /// Formats this date as `YYYY-MM-DD`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_date_string(self) -> String {
+        self.to_string()
+    }
+
+    /// Formats this date with an arbitrary strftime `pattern`.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::InvalidPattern`] if `pattern` is not a strftime specifier
+    ///   this value can render.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API for future arbitrary-pattern template formatting, \
+                      mirrors DateTimeValue::format_with"
+        )
+    )]
+    pub(crate) fn format_with(
+        self,
+        pattern: &str,
+    ) -> Result<String, DateError> {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(pattern.len().max(32));
+        write!(out, "{}", self.0.format(pattern)).map_err(|_fmt_error| {
+            DateError::InvalidPattern {
+                pattern: pattern.into(),
+            }
+        })?;
+        Ok(out)
+    }
+
+    /// Returns the wrapped [`NaiveDate`].
+    #[must_use]
+    pub(crate) const fn into_inner(self) -> NaiveDate {
+        self.0
+    }
+}
+
+impl fmt::Display for DateValue {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.format(DEFAULT_DATE_FORMAT))
+    }
+}
+
+impl From<DateValue> for NaiveDate {
+    #[inline]
+    fn from(value: DateValue) -> Self {
+        value.into_inner()
+    }
+}
+
+impl FromStr for DateValue {
+    type Err = DateError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse_iso(s)
     }
 }
 
@@ -162,67 +308,6 @@ impl DateFormat {
     Serialize,
 )]
 pub struct DateTimeValue(DateTime<Utc>);
-
-impl fmt::Display for DateTimeValue {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use chrono::Timelike as _;
-        let format = if self.0.nanosecond() == 0 {
-            DEFAULT_DATETIME_FORMAT
-        } else {
-            "%Y-%m-%dT%H:%M:%S%.f"
-        };
-        write!(f, "{}", self.0.format(format))
-    }
-}
-
-/// A parsed calendar date, no time-of-day component.
-#[repr(transparent)]
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
-pub struct DateValue(NaiveDate);
-
-impl fmt::Display for DateValue {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.format(DEFAULT_DATE_FORMAT))
-    }
-}
-
-/// Reports why a date/date-time string, or a [`DateTimeValue::format_with`]/
-/// [`DateValue::format_with`] pattern, could not be parsed or formatted.
-#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
-pub enum DateError {
-    /// No accepted date/time shape matched `input`. Wraps the last-attempted
-    /// format's [`chrono::ParseError`].
-    #[error("`{input}` is not a recognized date/time: {source}")]
-    Unparseable {
-        input: Box<str>,
-        #[source]
-        source: chrono::ParseError,
-    },
-    /// `input`'s year segment is not exactly 4 ASCII digits (chrono's `%Y`
-    /// accepts fewer, silently misreading the year).
-    #[error("`{input}` does not have a 4-digit year")]
-    InvalidYearDigits {
-        input: Box<str>,
-    },
-    /// `pattern` is not a valid strftime specifier.
-    #[error("`{pattern}` is not a valid format pattern")]
-    InvalidPattern {
-        pattern: Box<str>,
-    },
-}
 
 impl DateTimeValue {
     /// Returns the current UTC date-time.
@@ -450,6 +535,19 @@ impl DateTimeValue {
     }
 }
 
+impl fmt::Display for DateTimeValue {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use chrono::Timelike as _;
+        let format = if self.0.nanosecond() == 0 {
+            DEFAULT_DATETIME_FORMAT
+        } else {
+            "%Y-%m-%dT%H:%M:%S%.f"
+        };
+        write!(f, "{}", self.0.format(format))
+    }
+}
+
 impl From<SystemTime> for DateTimeValue {
     #[inline]
     fn from(time: SystemTime) -> Self {
@@ -471,6 +569,14 @@ impl From<DateTimeValue> for DateTime<Utc> {
     }
 }
 
+/// Promotes a [`DateValue`] to a [`DateTimeValue`] at midnight UTC.
+impl From<DateValue> for DateTimeValue {
+    #[inline]
+    fn from(date: DateValue) -> Self {
+        Self(date.0.and_time(NaiveTime::MIN).and_utc())
+    }
+}
+
 impl FromStr for DateTimeValue {
     type Err = DateError;
 
@@ -480,135 +586,29 @@ impl FromStr for DateTimeValue {
     }
 }
 
-impl DateValue {
-    /// Returns `true` if `s` begins with exactly 4 ASCII digits.
-    ///
-    /// Guards against chrono's lenient `%Y` specifier silently accepting a
-    /// short year (`"26-08-22"` parses as year 26 CE, not rejected).
-    /// Deliberately does not check what follows the digits: a well-formed
-    /// 4-digit year with an unrecognized separator (`"2026/08/22"`) should
-    /// reach the format cascade and fail as [`DateError::Unparseable`], not
-    /// be misclassified as [`DateError::InvalidYearDigits`].
-    #[must_use]
-    pub(crate) fn has_four_digit_year(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-    }
-
-    /// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`
-    /// (ASCII digits and hyphens in the right positions).
-    ///
-    /// Fast non-allocating pre-check for note-parser call sites before
-    /// committing to [`DateValue::parse_iso`]. Does not validate calendar
-    /// values (`"9999-99-99"` passes this check but fails the real parse); the
-    /// real parse is always the authoritative decision.
-    #[must_use]
-    pub(crate) fn is_iso_shape(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.len() >= 10
-            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(4) == Some(&b'-')
-            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(7) == Some(&b'-')
-            && bytes
-                .get(8..10)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-    }
-
-    /// Parses an ISO-8601 date string (`YYYY-MM-DD` or `YYYY-MM`) using
-    /// [`DateFormat::ALL`].
-    ///
-    /// # Errors
-    ///
-    /// - [`DateError::InvalidYearDigits`] if the year segment is not exactly 4
-    ///   ASCII digits.
-    /// - [`DateError::Unparseable`] if no accepted shape matches.
-    pub(crate) fn parse_iso(s: &str) -> Result<Self, DateError> {
-        let trimmed = s.trim();
-        if !Self::has_four_digit_year(trimmed) {
-            return Err(DateError::InvalidYearDigits {
-                input: trimmed.into(),
-            });
-        }
-        let [first, rest @ ..] = DateFormat::ALL;
-        let mut result = first.parse(trimmed);
-        for format in rest {
-            if result.is_ok() {
-                break;
-            }
-            result = format.parse(trimmed);
-        }
-        result.map(Self).map_err(|source| DateError::Unparseable {
-            input: trimmed.into(),
-            source,
-        })
-    }
-
-    /// Formats this date as `YYYY-MM-DD`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_date_string(self) -> String {
-        self.to_string()
-    }
-
-    /// Formats this date with an arbitrary strftime `pattern`.
-    ///
-    /// # Errors
-    ///
-    /// - [`DateError::InvalidPattern`] if `pattern` is not a strftime specifier
-    ///   this value can render.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API for future arbitrary-pattern template formatting, \
-                      mirrors DateTimeValue::format_with"
-        )
-    )]
-    pub(crate) fn format_with(
-        self,
-        pattern: &str,
-    ) -> Result<String, DateError> {
-        use std::fmt::Write as _;
-        let mut out = String::with_capacity(pattern.len().max(32));
-        write!(out, "{}", self.0.format(pattern)).map_err(|_fmt_error| {
-            DateError::InvalidPattern {
-                pattern: pattern.into(),
-            }
-        })?;
-        Ok(out)
-    }
-
-    /// Returns the wrapped [`NaiveDate`].
-    #[must_use]
-    pub(crate) const fn into_inner(self) -> NaiveDate {
-        self.0
-    }
-}
-
-/// Promotes a [`DateValue`] to a [`DateTimeValue`] at midnight UTC.
-impl From<DateValue> for DateTimeValue {
-    #[inline]
-    fn from(date: DateValue) -> Self {
-        Self(date.0.and_time(NaiveTime::MIN).and_utc())
-    }
-}
-
-impl From<DateValue> for NaiveDate {
-    #[inline]
-    fn from(value: DateValue) -> Self {
-        value.into_inner()
-    }
-}
-
-impl FromStr for DateValue {
-    type Err = DateError;
-
-    #[inline]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse_iso(s)
-    }
+/// Reports why a date/date-time string, or a [`DateTimeValue::format_with`]/
+/// [`DateValue::format_with`] pattern, could not be parsed or formatted.
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+pub enum DateError {
+    /// No accepted date/time shape matched `input`. Wraps the last-attempted
+    /// format's [`chrono::ParseError`].
+    #[error("`{input}` is not a recognized date/time: {source}")]
+    Unparseable {
+        input: Box<str>,
+        #[source]
+        source: chrono::ParseError,
+    },
+    /// `input`'s year segment is not exactly 4 ASCII digits (chrono's `%Y`
+    /// accepts fewer, silently misreading the year).
+    #[error("`{input}` does not have a 4-digit year")]
+    InvalidYearDigits {
+        input: Box<str>,
+    },
+    /// `pattern` is not a valid strftime specifier.
+    #[error("`{pattern}` is not a valid format pattern")]
+    InvalidPattern {
+        pattern: Box<str>,
+    },
 }
 
 #[cfg(test)]
