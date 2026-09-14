@@ -251,8 +251,10 @@ impl QueryListValueRef<'_> {
 
 /// Applies filter equality semantics to metadata values.
 ///
-/// Exact structural equality wins; otherwise string-like values (`String`,
-/// `Duration`) compare by text so literals can match typed fields.
+/// Delegates to structural equality: [`NoteFieldValue::Duration`] compares by
+/// parsed seconds (so `1h 30m` equals `90m`), and every other variant by
+/// value. Does not cross-match a `String` against a typed `Duration`/`Date`
+/// literal by text; callers needing that fall back to `as_str()` comparison.
 fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b
 }

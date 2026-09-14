@@ -42,13 +42,16 @@ impl DurationValue {
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
     /// Accepts one or more `<number><unit>` parts separated by whitespace or
-    /// commas. Returns a specific error for each failure mode.
+    /// commas. A leading `+`/`-` on the first part sets the sign of the
+    /// whole duration; only that first part may carry an explicit sign.
+    /// Returns a specific error for each failure mode.
     ///
     /// # Errors
     ///
     /// - [`Empty`] if the input is empty or contains only separators.
     /// - [`MissingNumber`] if a unit appears without a preceding number.
-    /// - [`InvalidNumber`] if the number portion could not be parsed.
+    /// - [`InvalidNumber`] if the number portion could not be parsed, or a part
+    ///   after the first carries an explicit `+`/`-` sign.
     /// - [`MissingUnit`] if a number appears without a trailing unit.
     /// - [`UnknownUnit`] if the unit string is not recognized.
     /// - [`NonFiniteSeconds`] if the parsed total cannot be represented as a
@@ -60,7 +63,7 @@ impl DurationValue {
     /// [`MissingUnit`]: DurationError::MissingUnit
     /// [`UnknownUnit`]: DurationError::UnknownUnit
     /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
-    pub fn parse(input: &str) -> Result<Self, DurationError> {
+    pub(crate) fn parse(input: &str) -> Result<Self, DurationError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return Err(DurationError::Empty);
@@ -88,7 +91,12 @@ impl DurationValue {
             let (kind, pos_after_unit) = Self::parse_unit(bytes, pos, trimmed)?;
             pos = pos_after_unit;
 
-            if !parsed_any && number.is_sign_negative() {
+            if number.is_sign_negative() {
+                if parsed_any {
+                    return Err(DurationError::InvalidNumber {
+                        input: trimmed.to_owned(),
+                    });
+                }
                 is_negative = true;
             }
 
@@ -113,8 +121,11 @@ impl DurationValue {
     /// Parses a duration prefix from `input`, returning the parsed
     /// [`DurationValue`] and the number of consumed bytes.
     ///
-    /// Returns `None` if `input` does not start with a valid duration segment
-    /// or if no parts could be parsed.
+    /// Recognizes the same `<number><unit>` grammar as [`Self::parse`],
+    /// including the leading-sign rule: only the first part may carry an
+    /// explicit `+`/`-`. Returns `None` if `input` does not start with a
+    /// valid duration segment, if no parts could be parsed, or if a part
+    /// after the first carries an explicit sign.
     pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
         let bytes = input.as_bytes();
         let len = bytes.len();
@@ -139,7 +150,10 @@ impl DurationValue {
                 Self::parse_unit(bytes, pos, input).ok()?;
             pos = pos_after_unit;
 
-            if !parsed_any && number.is_sign_negative() {
+            if number.is_sign_negative() {
+                if parsed_any {
+                    return None;
+                }
                 is_negative = true;
             }
 
@@ -243,14 +257,14 @@ impl DurationValue {
     /// Returns the raw duration text.
     #[inline]
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.raw
     }
 
     /// Returns the total duration as [`DurationSeconds`].
     #[inline]
     #[must_use]
-    pub const fn to_seconds(&self) -> DurationSeconds {
+    pub(crate) const fn to_seconds(&self) -> DurationSeconds {
         self.seconds
     }
 
@@ -486,6 +500,8 @@ impl fmt::Display for DurationValue {
     }
 }
 
+/// Compares by parsed [`DurationSeconds`], not raw spelling: `"1h 30m"` and
+/// `"90m"` are equal.
 impl PartialEq for DurationValue {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -495,6 +511,8 @@ impl PartialEq for DurationValue {
 
 impl Eq for DurationValue {}
 
+/// Orders by parsed [`DurationSeconds`], not raw spelling, consistent with
+/// [`PartialEq`].
 impl PartialOrd for DurationValue {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -509,6 +527,8 @@ impl Ord for DurationValue {
     }
 }
 
+/// Hashes the parsed [`DurationSeconds`], not raw spelling, so equal values
+/// per [`PartialEq`] always hash identically.
 impl Hash for DurationValue {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -516,6 +536,8 @@ impl Hash for DurationValue {
     }
 }
 
+/// Serializes as the original raw spelling, not a canonical form: two equal
+/// values (e.g. `"1h 30m"` and `"90m"`) can serialize to different strings.
 impl Serialize for DurationValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -525,6 +547,8 @@ impl Serialize for DurationValue {
     }
 }
 
+/// Deserializes via [`Self::parse`], so an unparseable string is a hard
+/// deserialization error rather than a lossy fallback.
 impl<'de> Deserialize<'de> for DurationValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -647,7 +671,7 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 /// constructed through [`DurationValue::to_seconds`] or
 /// [`DurationSeconds::try_from`].
 #[derive(Copy, Clone, Debug)]
-pub struct DurationSeconds(pub(crate) f64);
+pub(crate) struct DurationSeconds(f64);
 
 impl TryFrom<f64> for DurationSeconds {
     type Error = DurationError;
@@ -916,6 +940,30 @@ mod tests {
             let pos = DurationValue::parse("+15m").unwrap();
             assert!(neg < zero);
             assert!(zero < pos);
+        }
+
+        #[test]
+        fn rejects_a_negative_sign_on_a_non_leading_component() {
+            let err = DurationValue::parse("1h -30m").unwrap_err();
+            assert!(matches!(err, DurationError::InvalidNumber { .. }));
+        }
+
+        #[test]
+        fn accepts_a_redundant_positive_sign_on_a_non_leading_component() {
+            let d = DurationValue::parse("1h +30m").unwrap();
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(5_400.0).unwrap()
+            );
+        }
+
+        #[test]
+        fn parses_a_signed_decimal_without_a_leading_digit() {
+            let d = DurationValue::parse("-.5h").unwrap();
+            assert_eq!(
+                d.to_seconds(),
+                DurationSeconds::try_from(-1_800.0).unwrap()
+            );
         }
 
         #[test]
@@ -1345,6 +1393,18 @@ mod tests {
         }
 
         #[test]
+        fn parses_a_decimal_prefix_without_a_leading_digit() {
+            let (dv, consumed) =
+                DurationValue::parse_prefix(".5h remainder").expect("prefix");
+            assert_eq!(consumed, 3);
+            assert_eq!(dv.as_str(), ".5h");
+            assert_eq!(
+                dv.to_seconds(),
+                DurationSeconds::try_from(1_800.0).unwrap()
+            );
+        }
+
+        #[test]
         fn parses_multi_part_prefix_without_trailing_separators() {
             let (dv, consumed) =
                 DurationValue::parse_prefix("1h, 30m, extra").expect("prefix");
@@ -1364,6 +1424,11 @@ mod tests {
         #[test]
         fn rejects_hyphen_bullet_without_immediate_digit() {
             assert!(DurationValue::parse_prefix("- 15m").is_none());
+        }
+
+        #[test]
+        fn rejects_a_negative_sign_on_a_non_leading_component() {
+            assert!(DurationValue::parse_prefix("1h -30m").is_none());
         }
     }
 
@@ -1435,6 +1500,13 @@ mod tests {
                 dv.to_seconds(),
                 DurationValue::parse("4 yrs, 6 wks").unwrap().to_seconds()
             );
+        }
+
+        #[test]
+        fn rejects_deserializing_an_unparseable_duration_string() {
+            let json = "\"not a duration\"";
+            let err = serde_json::from_str::<DurationValue>(json).unwrap_err();
+            assert!(err.to_string().contains("no number before unit"));
         }
     }
 }

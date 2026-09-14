@@ -204,8 +204,7 @@ impl<'a> InlineValueParser<'a> {
 
     /// Finds the end offset of a numeric token at `pos`: digits and the
     /// characters `+-.eE`, without validating that they form a valid `f64`.
-    /// Callers ([`Self::parse_number_at`], [`Self::parse_duration_part_end`])
-    /// check that separately.
+    /// [`Self::parse_number_at`] checks that separately.
     fn parse_number_end(&self, pos: usize) -> Option<usize> {
         self.source
             .from(pos)?

@@ -114,8 +114,11 @@ impl NoteFieldValue {
 
 /// Converts a borrowed field value into a [`NoteFieldValue`].
 ///
-/// Handles note-specific post-classification: empty strings become null,
-/// wikilink syntax becomes [`NoteFieldValue::Link`].
+/// Handles note-specific post-classification of scalar strings, applied
+/// recursively through lists and objects: empty strings become null,
+/// wikilink syntax becomes [`NoteFieldValue::Link`], and any remaining
+/// duration-shaped spelling (e.g. `4h15m`) becomes
+/// [`NoteFieldValue::Duration`].
 impl From<FieldValueRef<'_>> for NoteFieldValue {
     #[inline]
     fn from(value: FieldValueRef<'_>) -> Self {
@@ -307,6 +310,21 @@ mod tests {
                         ),
                     ),
                 ]))
+            );
+        }
+
+        #[test]
+        fn keeps_a_bare_number_string_as_string_not_duration() {
+            let yaml =
+                serde_yaml::from_str::<serde_yaml::Value>(r#"code: "42""#)
+                    .expect("valid yaml");
+
+            assert_eq!(
+                NoteFieldValue::from(FieldValueRef::from(yaml)),
+                NoteFieldValue::Object(IndexMap::from_iter([(
+                    "code".to_owned(),
+                    NoteFieldValue::String("42".to_owned())
+                )]))
             );
         }
     }
