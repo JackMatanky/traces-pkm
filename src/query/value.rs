@@ -471,6 +471,15 @@ mod tests {
                     .is_equal_to_literal(&NoteFieldValue::Number(1.0))
             );
         }
+        #[test]
+        fn matches_query_field_value_ref_duration_with_equivalent_literal() {
+            let dv = DurationValue::parse("1h 30m").expect("valid duration");
+            let qval = QueryFieldValueRef::Duration(&dv);
+            let literal = NoteFieldValue::Duration(
+                DurationValue::parse("90m").expect("valid duration"),
+            );
+            assert!(qval.is_equal_to_literal(&literal));
+        }
 
         #[test]
         fn returns_true_when_text_ref_contains_substring() {
@@ -640,16 +649,6 @@ mod tests {
                 DurationValue::parse("90m").expect("valid duration"),
             );
             assert!(is_field_equal(&a, &b));
-        }
-
-        #[test]
-        fn matches_query_field_value_ref_duration_with_equivalent_literal() {
-            let dv = DurationValue::parse("1h 30m").expect("valid duration");
-            let qval = QueryFieldValueRef::Duration(&dv);
-            let literal = NoteFieldValue::Duration(
-                DurationValue::parse("90m").expect("valid duration"),
-            );
-            assert!(qval.is_equal_to_literal(&literal));
         }
     }
 }

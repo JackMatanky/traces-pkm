@@ -42,8 +42,9 @@ impl DurationValue {
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
     /// Accepts one or more `<number><unit>` parts separated by whitespace or
-    /// commas. A leading `+`/`-` on the first part sets the sign of the
-    /// whole duration; only that first part may carry an explicit sign.
+    /// commas. A leading `+` or `-` on the first part sets the sign of the
+    /// whole duration. A part after the first may repeat a redundant `+`
+    /// but never an explicit `-`.
     /// Returns a specific error for each failure mode.
     ///
     /// # Errors
@@ -51,7 +52,7 @@ impl DurationValue {
     /// - [`Empty`] if the input is empty or contains only separators.
     /// - [`MissingNumber`] if a unit appears without a preceding number.
     /// - [`InvalidNumber`] if the number portion could not be parsed, or a part
-    ///   after the first carries an explicit `+`/`-` sign.
+    ///   after the first carries an explicit `-` sign.
     /// - [`MissingUnit`] if a number appears without a trailing unit.
     /// - [`UnknownUnit`] if the unit string is not recognized.
     /// - [`NonFiniteSeconds`] if the parsed total cannot be represented as a
@@ -123,9 +124,10 @@ impl DurationValue {
     ///
     /// Recognizes the same `<number><unit>` grammar as [`Self::parse`],
     /// including the leading-sign rule: only the first part may carry an
-    /// explicit `+`/`-`. Returns `None` if `input` does not start with a
-    /// valid duration segment, if no parts could be parsed, or if a part
-    /// after the first carries an explicit sign.
+    /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if
+    /// `input` does not start with a valid duration segment, if no parts
+    /// could be parsed, or if a part after the first carries an explicit
+    /// `-` sign.
     pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
         let bytes = input.as_bytes();
         let len = bytes.len();
@@ -446,23 +448,6 @@ impl DurationValue {
     }
 }
 
-/// Enables `"1h 30m".parse::<DurationValue>()`.
-///
-/// Delegates to [`DurationValue::parse`].
-///
-/// # Errors
-///
-/// - [`Empty`] if `s` is empty or contains only separators.
-/// - [`MissingNumber`] if a unit appears without a preceding number.
-/// - [`InvalidNumber`] if the number portion could not be parsed.
-/// - [`MissingUnit`] if a number appears without a trailing unit.
-/// - [`UnknownUnit`] if the unit string is not recognized.
-///
-/// [`Empty`]: DurationError::Empty
-/// [`MissingNumber`]: DurationError::MissingNumber
-/// [`InvalidNumber`]: DurationError::InvalidNumber
-/// [`MissingUnit`]: DurationError::MissingUnit
-/// [`UnknownUnit`]: DurationError::UnknownUnit
 impl FromStr for DurationValue {
     type Err = DurationError;
 
