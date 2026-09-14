@@ -2,7 +2,7 @@
 
 Type: grilling
 Blocked by: 39
-Status: claimed
+Status: resolved
 
 ## Question
 
@@ -25,3 +25,52 @@ LSP hover/definition/references/rename/completion-context-detection *all* requir
 - Whether the underlying `Note` parser itself stays a full single-pass re-parse on every edit (today's model, and — per the Markdown Oxide/Marksman/zk research — a genuinely accepted pattern even in mature PKM LSPs at note-collection scale, not just a legacy shortcut) or becomes incrementally re-parseable (e.g. a rope-based text representation like `ropey` plus incremental re-lex/re-parse of only the changed region, or a tree-sitter-style incremental grammar). This question was previously folded silently into ticket 14 as "full re-parse, debounced or not" without ever considering true parser-level incrementality as an option — decide it explicitly here, on performance merits (ticket 33) and implementation cost, not by default inheritance from today's CLI-batch parsing model.
 
 This has no research blocker — it's answerable from the existing codebase alone — but blocks 15 (links/references), 19 (frontmatter/inline-field intel), 26 (definition/references/hover/rename), and 13 (LSP persistence/caching).
+
+## Answer
+
+### 1. Spans on the AST — extend existing types, don't build a parallel index
+
+Add `Range<ByteOffset>` fields to `Link`, `Tag`, inline-field entries, and a new `Heading` AST node. Capture `range.end` from `pulldown-cmark`'s `into_offset_iter()` (currently discarded at `src/note/parser.rs:106`) and from `logos` token spans in `InlineTokenLexer`. This is additive — existing consumers that don't care about spans keep compiling unchanged.
+
+A parallel LSP-only span index was rejected: it duplicates the position-computation work the parser is already doing in the same pass, and violates the standing constraint "reuse existing services rather than building parallel LSP-only models."
+
+### 2. Heading node — flat list with `level: u8`
+
+Every studied peer (Marksman, Markdown Oxide, Microsoft's generic Markdown service) stores headings as flat lists with a level field, deriving hierarchy on demand. No peer builds a parent-child tree at parse time. A flat list is the smallest API surface, and tree structure can be built from it in O(n) by a stack-based algorithm whenever a consumer actually needs parent pointers (symbols view, heading-anchor links). No such consumer was identified that would materially benefit from a parse-time tree.
+
+### 3. ByteOffset width — `u32` with `From`/`TryFrom`
+
+`ByteOffset` narrows from `usize` to `u32` (4 GiB/file cap). `From<u32>` for infallible construction; `TryFrom<usize>` for narrowing from `usize` with `ByteOffsetError` on overflow (caller uses `.unwrap_or(ByteOffset::MAX)` at pulldown-cmark event boundaries). Consistent with `SourceLine(NonZeroU32)` — same width philosophy, same safety net.
+
+### 4. ByteTracker — move to `src/position.rs`, widen to `pub(crate)`
+
+`ByteTracker` relocates from `src/note/parser/line.rs` to `src/position.rs`. It has zero `note::parser` dependencies (imports only `ByteOffset` and `SourceLine`, both from `position.rs`), and its logic (count newlines, binary search line starts) is domain-general. Widened from `pub(super)` to `pub(crate)`. A `byte_to_utf16_cu(&self, offset: ByteOffset) -> u32` method is added — walks characters from the line start, sums `char::len_utf16()`.
+
+The module doc in `position.rs` updates from "only the vocabulary lives here" to "vocabulary and shared conversion infrastructure."
+
+### 5. Text-buffer conversion — two concrete functions, no trait
+
+The byte→LSP-position conversion happens at the LSP response serialization boundary, not in the core AST. Two concrete call patterns:
+
+- **File buffers** (closed notes, loaded from disk): `ByteTracker::line_at(offset)` + `tracker.byte_to_utf16_cu(offset)` — both now in `src/position.rs`
+- **Live buffers** (open editor buffers, backed by `ropey::Rope` per ticket 14): `rope.line_to_utf16_cu(rope.byte_to_line(offset))` — ropey's native API
+
+A `TextBuffer` trait was rejected: zero polymorphic call sites (each handler knows its text type from context), two implementations with no third on the horizon (violates the "Rule of Three" from `anti-over-abstraction`), and the trait would be shallower than the two concrete functions it wraps. The "single interface" preference doesn't apply here because the text type is determined by handler context, not by runtime dispatch.
+
+### 6. Frontmatter re-scanner — Level 2 depth
+
+A dedicated raw-text scanner walks `RawFrontmatter`'s preserved string (`src/note/metadata.rs:18`), mapping YAML keys to byte ranges at indent levels 0 and 2. This covers flat keys, one-level nested objects, and two-level nested objects (the schema/fileClass case) — every frontmatter shape `yaml_serde` currently parses in Traces.
+
+Interface: `fn scan_frontmatter_keys(raw: &str) -> Vec<(FieldKey, Range<ByteOffset>)>`. Level 2 is an implementation detail behind this interface; deeper nesting can be added later without changing the signature. `yaml_serde` has zero span capability (confirmed via `rust-docs-mcp`), so this scanner is the only path to frontmatter-field positions.
+
+### 7. Parser — stay on pulldown-cmark, full re-parse per edit
+
+Zero peer Markdown/PKM LSP (Markdown Oxide, Marksman, Microsoft's service) uses tree-sitter-markdown. Its ecosystem positioning is "editor highlighting/folding," explicitly not recommended where parsing correctness matters. `pulldown-cmark` is confirmed as "the industry standard in Rust" for CommonMark. Full re-parse per edit is the accepted pattern across every studied peer at note-collection scale. `ropey` is adopted for the live-buffer text representation (ticket 14), not for incremental parsing.
+
+### 8. Persistence — spans stay transient, never in redb
+
+Spans are cheap to recompute (re-parsing a file the LSP just read also re-derives every span in the same pass), invalidating on every edit (poor cache-hit shape), and persisting them triggers an avoidable index-format version bump. Only live-editing-session requests (hover, completion, rename) need spans, and those are against a file whose current text the LSP already has to touch.
+
+### 9. Ropey — scoped to live buffers (ticket 14), not universal
+
+`ropey::Rope` becomes the text representation for live open buffers. Closed/persisted notes stay as `&str` (today's model). The Note AST carries `Range<ByteOffset>` (protocol-agnostic); the LSP adapter converts using whichever text representation is in scope. Ropey-everywhere is not foreclosed architecturally but is not adopted now.
