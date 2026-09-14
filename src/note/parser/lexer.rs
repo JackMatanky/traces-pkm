@@ -311,7 +311,7 @@ fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::DurationValue;
     mod inline_fields {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -629,12 +629,13 @@ mod tests {
         ) {
             let fields = InlineTokenLexer::new(false).extract_fields(input);
 
+            let expected_dv =
+                DurationValue::parse(expected).expect("valid duration");
             assert_eq!(
                 fields.first().map(|(_, v)| v),
-                Some(&NoteFieldValue::Duration(expected.to_owned()))
+                Some(&NoteFieldValue::Duration(expected_dv))
             );
         }
-
         #[rstest]
         #[case::no_space("🗓️2026-07-30", "due", "2026-07-30")]
         #[case::single_space("🗓️ 2026-07-30", "due", "2026-07-30")]

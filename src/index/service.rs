@@ -745,7 +745,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            Tag,
+            DurationValue, Tag,
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
         };
 
@@ -909,7 +909,9 @@ mod tests {
                 .flat_map(|vals| vals.iter())
                 .collect();
             assert_eq!(values, [
-                &NoteFieldValue::Duration("7 hours".to_owned()),
+                &NoteFieldValue::Duration(
+                    DurationValue::parse("7 hours").expect("valid duration"),
+                ),
                 &NoteFieldValue::List(
                     vec![
                         NoteFieldValue::Number(1.0),

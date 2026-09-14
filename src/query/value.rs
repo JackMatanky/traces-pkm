@@ -3,7 +3,7 @@
 use std::{fmt::Write as _, path::PathBuf};
 
 use crate::{
-    DateTimeValue, DateValue, Tag,
+    DateTimeValue, DateValue, DurationValue, Tag,
     note::{Link, NoteFieldValue},
 };
 /// Borrowed field value resolved from a [`super::QueryRow`].
@@ -15,7 +15,7 @@ pub(super) enum QueryFieldValueRef<'a> {
     Link(&'a Link),
     Date(DateValue),
     DateTime(DateTimeValue),
-    Duration(&'a str),
+    Duration(&'a DurationValue),
     Object(&'a indexmap::IndexMap<String, NoteFieldValue>),
     List(QueryListValueRef<'a>),
     Owned(NoteFieldValue),
@@ -32,9 +32,7 @@ impl QueryFieldValueRef<'_> {
             Self::Link(value) => NoteFieldValue::Link((*value).clone()),
             Self::Date(value) => NoteFieldValue::Date(*value),
             Self::DateTime(value) => NoteFieldValue::DateTime(*value),
-            Self::Duration(value) => {
-                NoteFieldValue::Duration((*value).to_owned())
-            }
+            Self::Duration(value) => NoteFieldValue::Duration((*value).clone()),
             Self::Object(value) => NoteFieldValue::Object((*value).clone()),
             Self::List(value) => value.to_owned_value(),
             Self::Owned(value) => value.clone(),
@@ -54,7 +52,8 @@ impl QueryFieldValueRef<'_> {
             Self::Number(value) => {
                 let _ = write!(out, "{value}");
             }
-            Self::Text(value) | Self::Duration(value) => out.push_str(value),
+            Self::Text(value) => out.push_str(value),
+            Self::Duration(value) => out.push_str(value.as_str()),
             Self::Date(value) => {
                 let _ = write!(out, "{value}");
             }
@@ -89,7 +88,8 @@ impl QueryFieldValueRef<'_> {
 
     pub(super) fn as_str(&self) -> Option<&str> {
         match self {
-            Self::Text(value) | Self::Duration(value) => Some(value),
+            Self::Text(value) => Some(value),
+            Self::Duration(value) => Some(value.as_str()),
             Self::Owned(value) => value.as_str(),
             _ => None,
         }
@@ -126,21 +126,10 @@ impl QueryFieldValueRef<'_> {
                 NoteFieldValue::Date(other) => value.is_equal_to_date(*other),
                 _ => false,
             },
-            Self::Duration(value) => {
-                if let NoteFieldValue::Duration(other) = literal {
-                    match (
-                        crate::DurationValue::parse(value).ok(),
-                        crate::DurationValue::parse(other).ok(),
-                    ) {
-                        (Some(dv), Some(do_)) => {
-                            dv.to_seconds() == do_.to_seconds()
-                        }
-                        _ => *value == other,
-                    }
-                } else {
-                    false
-                }
-            }
+            Self::Duration(dv) => match literal {
+                NoteFieldValue::Duration(other) => *dv == other,
+                _ => false,
+            },
             Self::Object(value) => {
                 matches!(literal, NoteFieldValue::Object(other) if *value == other)
             }
@@ -265,7 +254,7 @@ impl QueryListValueRef<'_> {
 /// Exact structural equality wins; otherwise string-like values (`String`,
 /// `Duration`) compare by text so literals can match typed fields.
 fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
-    a == b || matches!((a.as_str(), b.as_str()), (Some(x), Some(y)) if x == y)
+    a == b
 }
 
 /// Matches exact tags and descendants, so `#book/fiction` satisfies `#book`.
@@ -319,8 +308,11 @@ fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
         NoteFieldValue::Number(value) => {
             let _ = write!(out, "{value}");
         }
-        NoteFieldValue::String(value) | NoteFieldValue::Duration(value) => {
+        NoteFieldValue::String(value) => {
             out.push_str(value);
+        }
+        NoteFieldValue::Duration(value) => {
+            out.push_str(value.as_str());
         }
         NoteFieldValue::Date(value) => {
             let _ = write!(out, "{value}");
@@ -635,6 +627,27 @@ mod tests {
                     DateValue::parse_iso("2024-01-01").expect("valid date")
                 )
             ));
+        }
+
+        #[test]
+        fn returns_true_for_semantically_equivalent_durations() {
+            let a = NoteFieldValue::Duration(
+                DurationValue::parse("1h 30m").expect("valid duration"),
+            );
+            let b = NoteFieldValue::Duration(
+                DurationValue::parse("90m").expect("valid duration"),
+            );
+            assert!(is_field_equal(&a, &b));
+        }
+
+        #[test]
+        fn matches_query_field_value_ref_duration_with_equivalent_literal() {
+            let dv = DurationValue::parse("1h 30m").expect("valid duration");
+            let qval = QueryFieldValueRef::Duration(&dv);
+            let literal = NoteFieldValue::Duration(
+                DurationValue::parse("90m").expect("valid duration"),
+            );
+            assert!(qval.is_equal_to_literal(&literal));
         }
     }
 }

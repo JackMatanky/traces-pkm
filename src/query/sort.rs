@@ -252,13 +252,7 @@ impl SortKey {
             QueryFieldValueRef::Date(value) => {
                 Self::DateTime(DateTimeValue::from(*value))
             }
-            QueryFieldValueRef::Duration(s) => {
-                if let Ok(dv) = crate::DurationValue::parse(s) {
-                    Self::Duration(dv.to_seconds())
-                } else {
-                    Self::Text((*s).into())
-                }
-            }
+            QueryFieldValueRef::Duration(dv) => Self::Duration(dv.to_seconds()),
             QueryFieldValueRef::Text(s) => Self::from_text(s),
             QueryFieldValueRef::Link(link) => Self::Text(link.target().into()),
             QueryFieldValueRef::Object(_) | QueryFieldValueRef::List(_) => {
@@ -280,13 +274,7 @@ impl SortKey {
             NoteFieldValue::Date(value) => {
                 Self::DateTime(DateTimeValue::from(*value))
             }
-            NoteFieldValue::Duration(s) => {
-                if let Ok(dv) = crate::DurationValue::parse(s) {
-                    Self::Duration(dv.to_seconds())
-                } else {
-                    Self::Text(s.as_str().into())
-                }
-            }
+            NoteFieldValue::Duration(dv) => Self::Duration(dv.to_seconds()),
             NoteFieldValue::String(s) => Self::from_text(s),
             NoteFieldValue::Link(link) => Self::Text(link.target().into()),
         }
@@ -634,7 +622,10 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::{QueryFieldValueRef, SortKey};
-        use crate::{DateTimeValue, DateValue, NoteFieldValue};
+        use crate::{
+            DateTimeValue, DateValue, DurationSeconds, DurationValue,
+            NoteFieldValue,
+        };
 
         fn date(s: &str) -> DateValue {
             DateValue::parse_iso(s).expect("valid date")
@@ -679,6 +670,27 @@ mod tests {
             let key =
                 SortKey::from_value_ref(&QueryFieldValueRef::Text("1h30m"));
             assert!(matches!(key, SortKey::Duration(_)));
+        }
+
+        #[test]
+        fn from_value_ref_extracts_duration_directly() {
+            let dv = DurationValue::parse("1h 30m").expect("valid duration");
+            let key =
+                SortKey::from_value_ref(&QueryFieldValueRef::Duration(&dv));
+            assert_eq!(
+                key,
+                SortKey::Duration(DurationSeconds::try_from(5_400.0).unwrap())
+            );
+        }
+
+        #[test]
+        fn from_owned_extracts_duration_directly() {
+            let dv = DurationValue::parse("1h 30m").expect("valid duration");
+            let key = SortKey::from_owned(&NoteFieldValue::Duration(dv));
+            assert_eq!(
+                key,
+                SortKey::Duration(DurationSeconds::try_from(5_400.0).unwrap())
+            );
         }
 
         #[test]
