@@ -67,7 +67,7 @@ bench = ["Cargo.toml", "Cargo.lock", "src/**/*.rs", "benches/**/*.rs"]
 [tasks.setup]
 description = "Install git hooks via hk"
 outputs = []
-run = "hk install --mise"
+run = "hk install --mise --quiet"
 
 [tasks.clean]
 description = "Clean Cargo artifacts and optional generated reports"
@@ -656,4 +656,4 @@ depends = ["check", "lint", "test"]
 # ------------------------------------------------------------- #
 
 [hooks]
-postinstall = '[ "${CI:-false}" = "true" ] || hk install --mise'
+postinstall = '[ "${CI:-false}" = "true" ] || hk install --mise --quiet'
