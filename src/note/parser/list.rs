@@ -432,6 +432,7 @@ fn parse_emoji_date(text: &str, emoji: &str) -> Option<NaiveDate> {
                 .next()
                 .is_none_or(|ch| !ch.is_alphanumeric());
             if next_char_valid
+                && DateValue::is_iso_shape(candidate)
                 && let Ok(value) = DateValue::parse_iso(candidate)
             {
                 return Some(value.into_inner());
@@ -588,7 +589,10 @@ fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
                     .chars()
                     .next()
                     .is_none_or(|ch| !ch.is_alphanumeric());
-                if next_char_valid && DateValue::parse_iso(candidate).is_ok() {
+                if next_char_valid
+                    && DateValue::is_iso_shape(candidate)
+                    && DateValue::parse_iso(candidate).is_ok()
+                {
                     let span_end = emoji_end
                         .saturating_add(var_len)
                         .saturating_add(ws_len)
@@ -1830,14 +1834,24 @@ mod tests {
         }
 
         #[test]
-        fn returns_none_for_invalid_or_missing_date() {
-            let input = "- [ ] Task 📅 2025-02-30 [start:: not-a-date]";
+        fn returns_none_for_an_invalid_calendar_date_in_emoji_syntax() {
+            let input = "- [ ] Task 📅 2025-02-30";
             let note = parse(input);
             let tasks: Vec<&ListItem> = note.tasks().collect();
             let task_item = tasks.first().expect("task present");
             let task = expect_task(task_item);
 
             assert_eq!(task.dates().due, None);
+        }
+
+        #[test]
+        fn returns_none_for_an_invalid_date_in_inline_field_syntax() {
+            let input = "- [ ] Task [start:: not-a-date]";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
             assert_eq!(task.dates().start, None);
         }
     }

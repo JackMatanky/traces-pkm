@@ -13,7 +13,7 @@
 //! - [`DateFormat`]: format grammar enum for calendar date recognition.
 //! - [`DateError`]: error type for parse and formatting failures.
 
-use std::{str::FromStr, time::SystemTime};
+use std::{fmt, str::FromStr, time::SystemTime};
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,7 @@ impl DateTimeFormat {
 
     /// Returns the strftime pattern for this format, or `None` for
     /// [`Self::Rfc3339`] which uses dedicated RFC 3339 parsing.
+    #[must_use]
     pub(crate) const fn pattern(self) -> Option<&'static str> {
         match self {
             Self::Rfc3339 => None,
@@ -73,8 +74,8 @@ impl DateTimeFormat {
     ///
     /// # Errors
     ///
-    /// Returns `chrono`'s [`chrono::ParseError`] if `s` does not match this
-    /// format's expected shape.
+    /// - [`chrono::ParseError`] if `s` does not match this format's expected
+    ///   shape.
     pub(crate) fn parse(
         self,
         s: &str,
@@ -105,6 +106,7 @@ impl DateFormat {
 
     /// Returns the strftime pattern for this format, or `None` for
     /// [`Self::YearMonth`] which parses year and month components directly.
+    #[must_use]
     pub(crate) const fn pattern(self) -> Option<&'static str> {
         match self {
             Self::Full => Some(DEFAULT_DATE_FORMAT),
@@ -116,8 +118,8 @@ impl DateFormat {
     ///
     /// # Errors
     ///
-    /// Returns `chrono`'s [`chrono::ParseError`] if `s` does not match this
-    /// format's expected shape.
+    /// - [`chrono::ParseError`] if `s` does not match this format's expected
+    ///   shape.
     pub(crate) fn parse(
         self,
         s: &str,
@@ -148,20 +150,58 @@ impl DateFormat {
 /// Relocated from `src/file.rs`'s `Timestamp`.
 #[repr(transparent)]
 #[derive(
-    Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
 )]
 pub struct DateTimeValue(DateTime<Utc>);
+
+impl fmt::Display for DateTimeValue {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use chrono::Timelike as _;
+        let format = if self.0.nanosecond() == 0 {
+            DEFAULT_DATETIME_FORMAT
+        } else {
+            "%Y-%m-%dT%H:%M:%S%.f"
+        };
+        write!(f, "{}", self.0.format(format))
+    }
+}
 
 /// A parsed calendar date, no time-of-day component.
 #[repr(transparent)]
 #[derive(
-    Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
 )]
 pub struct DateValue(NaiveDate);
 
+impl fmt::Display for DateValue {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.format(DEFAULT_DATE_FORMAT))
+    }
+}
+
 /// Reports why a date/date-time string, or a [`DateTimeValue::format_with`]/
 /// [`DateValue::format_with`] pattern, could not be parsed or formatted.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum DateError {
     /// No accepted date/time shape matched `input`. Wraps the last-attempted
     /// format's [`chrono::ParseError`].
@@ -255,13 +295,7 @@ impl DateTimeValue {
     #[inline]
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {
-        use chrono::Timelike as _;
-        let format = if self.0.nanosecond() == 0 {
-            DEFAULT_DATETIME_FORMAT
-        } else {
-            "%Y-%m-%dT%H:%M:%S%.f"
-        };
-        self.0.format(format).to_string()
+        self.to_string()
     }
 
     /// Formats this date-time as a bare date without time or offset.
@@ -340,7 +374,7 @@ impl DateTimeValue {
         pattern: &str,
     ) -> Result<String, DateError> {
         use std::fmt::Write as _;
-        let mut out = String::new();
+        let mut out = String::with_capacity(pattern.len().max(32));
         write!(out, "{}", self.0.format(pattern)).map_err(|_fmt_error| {
             DateError::InvalidPattern {
                 pattern: pattern.into(),
@@ -349,8 +383,10 @@ impl DateTimeValue {
         Ok(out)
     }
 
-    /// Adds `duration` to this date-time via `TryFrom<DurationValue> for
-    /// TimeDelta`. Returns `None` on overflow or a non-finite duration.
+    /// Adds `duration` to this date-time.
+    ///
+    /// Converts `duration` via [`TryFrom<DurationValue>`] for [`TimeDelta`].
+    /// Returns [`None`] on arithmetic overflow or a non-finite duration.
     #[cfg_attr(
         not(test),
         expect(
@@ -367,8 +403,10 @@ impl DateTimeValue {
         self.0.checked_add_signed(delta).map(Self)
     }
 
-    /// Subtracts `duration` from this date-time via `TryFrom<DurationValue>
-    /// for TimeDelta`. Returns `None` on overflow or a non-finite duration.
+    /// Subtracts `duration` from this date-time.
+    ///
+    /// Converts `duration` via [`TryFrom<DurationValue>`] for [`TimeDelta`].
+    /// Returns [`None`] on arithmetic overflow or a non-finite duration.
     #[cfg_attr(
         not(test),
         expect(
@@ -510,7 +548,7 @@ impl DateValue {
     #[inline]
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {
-        self.0.format(DEFAULT_DATE_FORMAT).to_string()
+        self.to_string()
     }
 
     /// Formats this date with an arbitrary strftime `pattern`.
@@ -533,7 +571,7 @@ impl DateValue {
         pattern: &str,
     ) -> Result<String, DateError> {
         use std::fmt::Write as _;
-        let mut out = String::new();
+        let mut out = String::with_capacity(pattern.len().max(32));
         write!(out, "{}", self.0.format(pattern)).map_err(|_fmt_error| {
             DateError::InvalidPattern {
                 pattern: pattern.into(),
@@ -701,8 +739,12 @@ mod tests {
         }
 
         #[test]
-        fn accepts_both_date_shapes() {
+        fn accepts_full_iso_date_shape() {
             assert!(DateValue::parse_iso("2026-07-29").is_ok());
+        }
+
+        #[test]
+        fn accepts_year_month_reduced_precision_date_shape() {
             let year_month =
                 DateValue::parse_iso("2026-08").expect("year-month parses");
             let expected = DateValue(
@@ -738,17 +780,15 @@ mod tests {
         }
 
         #[test]
-        fn rejects_a_short_year_with_invalid_year_digits() {
-            let date_result = DateValue::parse_iso("26-08-22");
-            let datetime_result = DateTimeValue::parse_iso("26-08-22T14:30:00");
-            assert!(matches!(
-                date_result,
-                Err(DateError::InvalidYearDigits { .. })
-            ));
-            assert!(matches!(
-                datetime_result,
-                Err(DateError::InvalidYearDigits { .. })
-            ));
+        fn date_value_rejects_a_short_year_with_invalid_year_digits() {
+            let result = DateValue::parse_iso("26-08-22");
+            assert!(matches!(result, Err(DateError::InvalidYearDigits { .. })));
+        }
+
+        #[test]
+        fn datetime_value_rejects_a_short_year_with_invalid_year_digits() {
+            let result = DateTimeValue::parse_iso("26-08-22T14:30:00");
+            assert!(matches!(result, Err(DateError::InvalidYearDigits { .. })));
         }
 
         #[rstest]
@@ -788,6 +828,14 @@ mod tests {
         }
 
         #[test]
+        fn renders_a_custom_pattern_in_datetime_value_format_with() {
+            let rendered = fixed_datetime()
+                .format_with("%d/%m/%Y %H:%M")
+                .expect("valid pattern");
+            assert_eq!(rendered, "29/07/2026 14:30");
+        }
+
+        #[test]
         fn rejects_an_invalid_pattern_in_date_value_format_with() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             let result = date.format_with("%Q");
@@ -795,15 +843,39 @@ mod tests {
         }
 
         #[test]
-        fn parses_via_the_fromstr_trait() {
+        fn date_value_parses_via_from_str() {
             let date: DateValue = "2026-07-29".parse().expect("valid date");
+            let expected =
+                DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert_eq!(date, expected);
+        }
+
+        #[test]
+        fn datetime_value_parses_via_from_str() {
             let datetime: DateTimeValue =
                 "2026-07-29T14:30:00".parse().expect("valid datetime");
-            assert_eq!(date, DateValue::parse_iso("2026-07-29").unwrap());
+            let expected = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert_eq!(datetime, expected);
+        }
+
+        #[test]
+        fn datetime_format_pattern_maps_each_variant_to_its_strftime_spec() {
+            assert_eq!(DateTimeFormat::Rfc3339.pattern(), None);
             assert_eq!(
-                datetime,
-                DateTimeValue::parse_iso("2026-07-29T14:30:00").unwrap()
+                DateTimeFormat::IsoTSeconds.pattern(),
+                Some("%Y-%m-%dT%H:%M:%S")
             );
+            assert_eq!(
+                DateTimeFormat::IsoSpaceMinute.pattern(),
+                Some("%Y-%m-%d %H:%M")
+            );
+        }
+
+        #[test]
+        fn date_format_pattern_maps_each_variant_to_its_strftime_spec() {
+            assert_eq!(DateFormat::Full.pattern(), Some(DEFAULT_DATE_FORMAT));
+            assert_eq!(DateFormat::YearMonth.pattern(), None);
         }
     }
 
@@ -813,12 +885,25 @@ mod tests {
         use super::*;
 
         #[test]
-        fn round_trips_checked_add_and_checked_sub() {
+        fn checked_add_advances_the_instant_by_the_duration() {
             let base = fixed_datetime();
             let one_hour = DurationValue::parse("1h").expect("valid duration");
             let forward = base.checked_add(one_hour).expect("no overflow");
-            let back = forward.checked_sub(one_hour).expect("no overflow");
-            assert_eq!(back, base);
+            assert_eq!(
+                forward,
+                DateTimeValue(base.into_inner() + TimeDelta::hours(1))
+            );
+        }
+
+        #[test]
+        fn checked_sub_rewinds_the_instant_by_the_duration() {
+            let base = fixed_datetime();
+            let one_hour = DurationValue::parse("1h").expect("valid duration");
+            let back = base.checked_sub(one_hour).expect("no overflow");
+            assert_eq!(
+                back,
+                DateTimeValue(base.into_inner() - TimeDelta::hours(1))
+            );
         }
 
         #[test]
@@ -838,7 +923,7 @@ mod tests {
         }
     }
 
-    mod cross_kind_comparison {
+    mod comparison {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -857,11 +942,27 @@ mod tests {
         }
 
         #[test]
-        fn coerces_the_date_to_midnight_in_cmp_date() {
+        fn cmp_date_reports_greater_when_the_instant_is_after_midnight() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             assert_eq!(
                 fixed_datetime().cmp_date(date),
                 std::cmp::Ordering::Greater
+            );
+        }
+
+        #[test]
+        fn cmp_date_reports_equal_at_exact_midnight() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let midnight = DateTimeValue::from(date);
+            assert_eq!(midnight.cmp_date(date), std::cmp::Ordering::Equal);
+        }
+
+        #[test]
+        fn cmp_date_reports_less_when_the_instant_is_before_midnight() {
+            let date = DateValue::parse_iso("2026-07-30").expect("valid date");
+            assert_eq!(
+                fixed_datetime().cmp_date(date),
+                std::cmp::Ordering::Less
             );
         }
     }
@@ -893,13 +994,26 @@ mod tests {
         }
 
         #[test]
-        fn converts_date_value_into_naive_date() {
+        fn promotes_a_date_to_midnight_utc_via_from_trait() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let promoted = DateTimeValue::from(date);
+            assert_eq!(promoted, fixed_datetime().start_of_day());
+        }
+
+        #[test]
+        fn converts_date_value_into_naive_date_via_from_trait() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             let naive: NaiveDate = date.into();
             assert_eq!(
                 naive,
                 NaiveDate::from_ymd_opt(2026, 7, 29).expect("valid date")
             );
+        }
+
+        #[test]
+        fn extracts_wrapped_naive_date_via_into_inner() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let naive: NaiveDate = date.into();
             assert_eq!(date.into_inner(), naive);
         }
     }
@@ -927,6 +1041,79 @@ mod tests {
             assert!(earlier < later);
             assert!(later > earlier);
             assert_eq!(earlier.cmp(&earlier), std::cmp::Ordering::Equal);
+        }
+    }
+
+    mod display_and_traits {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn displays_a_date_value_as_its_canonical_string() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert_eq!(date.to_string(), "2026-07-29");
+        }
+
+        #[test]
+        fn displays_a_datetime_value_as_its_canonical_string() {
+            assert_eq!(fixed_datetime().to_string(), "2026-07-29T14:30:05");
+        }
+
+        #[test]
+        fn displays_unparseable_error_naming_the_input_and_source() {
+            let err = DateValue::parse_iso("2026/08/22")
+                .expect_err("unrecognized shape");
+            assert_eq!(
+                err.to_string(),
+                "`2026/08/22` is not a recognized date/time: input contains \
+                 invalid characters"
+            );
+        }
+
+        #[test]
+        fn displays_invalid_year_digits_error_naming_the_input() {
+            let err = DateValue::parse_iso("26-08-22")
+                .expect_err("short year rejected");
+            assert_eq!(
+                err.to_string(),
+                "`26-08-22` does not have a 4-digit year"
+            );
+        }
+
+        #[test]
+        fn displays_invalid_pattern_error_naming_the_pattern() {
+            let err = fixed_datetime()
+                .format_with("%Q")
+                .expect_err("invalid strftime specifier");
+            assert_eq!(err.to_string(), "`%Q` is not a valid format pattern");
+        }
+
+        #[test]
+        fn round_trips_a_date_value_through_json() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let json = serde_json::to_string(&date).expect("serializable");
+            let restored: DateValue =
+                serde_json::from_str(&json).expect("deserializable");
+            assert_eq!(restored, date);
+        }
+
+        #[test]
+        fn round_trips_a_datetime_value_through_json() {
+            let json =
+                serde_json::to_string(&fixed_datetime()).expect("serializable");
+            let restored: DateTimeValue =
+                serde_json::from_str(&json).expect("deserializable");
+            assert_eq!(restored, fixed_datetime());
+        }
+
+        #[test]
+        fn is_usable_as_a_hash_set_key() {
+            let mut set = std::collections::HashSet::new();
+            set.insert(DateValue::parse_iso("2026-07-29").expect("valid date"));
+            set.insert(DateValue::parse_iso("2026-07-29").expect("valid date"));
+            set.insert(DateValue::parse_iso("2026-07-30").expect("valid date"));
+            assert_eq!(set.len(), 2);
         }
     }
 }

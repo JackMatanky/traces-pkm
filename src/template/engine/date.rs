@@ -1034,6 +1034,18 @@ mod tests {
         #[rstest]
         #[case::date_only("2026-07-23", "%d/%m/%Y", "23/07/2026")]
         #[case::datetime_input("2026-07-23 14:30", "%H:%M", "14:30")]
+        #[case::rfc3339_with_z_offset("2026-07-29T14:30:00Z", "%Y", "2026")]
+        #[case::rfc3339_with_numeric_offset(
+            "2026-07-29T14:30:00+02:00",
+            "%H:%M",
+            "12:30"
+        )]
+        #[case::fractional_seconds(
+            "2026-07-29T14:30:00.123",
+            "%H:%M:%S%.3f",
+            "14:30:00.123"
+        )]
+        #[case::year_month_reduced_precision("2026-08", "%Y-%m", "2026-08")]
         fn reformats_a_piped_date_string(
             #[case] input: &str,
             #[case] format: &str,

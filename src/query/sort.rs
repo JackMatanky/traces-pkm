@@ -298,11 +298,15 @@ impl SortKey {
     /// `DateValue`'s whole-string match, so trying it second never
     /// misclassifies.
     fn from_text(s: &str) -> Self {
-        if let Ok(value) = DateTimeValue::parse_iso(s) {
-            Self::DateTime(value)
-        } else if let Ok(value) = DateValue::parse_iso(s) {
-            Self::DateTime(DateTimeValue::from(value))
-        } else if let Ok(dv) = crate::DurationValue::parse(s) {
+        if DateValue::has_four_digit_year(s.trim()) {
+            if let Ok(value) = DateTimeValue::parse_iso(s) {
+                return Self::DateTime(value);
+            }
+            if let Ok(value) = DateValue::parse_iso(s) {
+                return Self::DateTime(DateTimeValue::from(value));
+            }
+        }
+        if let Ok(dv) = crate::DurationValue::parse(s) {
             Self::Duration(dv.to_seconds())
         } else {
             Self::Text(s.into())
@@ -575,21 +579,18 @@ mod tests {
         use std::cmp::Ordering;
 
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::super::SortKey;
         use crate::DurationSeconds;
 
-        #[test]
-        fn null_is_less_than_any_non_null() {
-            let null = SortKey::Null;
-            let number = SortKey::Number(1.0);
-            let text = SortKey::Text("hello".into());
-            let boolean = SortKey::Bool(true);
-
-            assert_eq!(null.total_cmp(&number), Ordering::Less);
-            assert_eq!(null.total_cmp(&text), Ordering::Less);
-            assert_eq!(null.total_cmp(&boolean), Ordering::Less);
-            assert_eq!(number.total_cmp(&null), Ordering::Greater);
+        #[rstest]
+        #[case::number(SortKey::Number(1.0))]
+        #[case::text(SortKey::Text("hello".into()))]
+        #[case::boolean(SortKey::Bool(true))]
+        fn null_sorts_below_every_non_null_key(#[case] non_null: SortKey) {
+            assert_eq!(SortKey::Null.total_cmp(&non_null), Ordering::Less);
+            assert_eq!(non_null.total_cmp(&SortKey::Null), Ordering::Greater);
         }
 
         #[test]
@@ -610,17 +611,108 @@ mod tests {
         }
 
         #[test]
-        fn sorts_non_finite_and_signed_zero_numbers_totally() {
+        fn nan_and_infinity_compare_via_total_cmp_not_partial_cmp() {
             let nan = SortKey::Number(f64::NAN);
             let infinity = SortKey::Number(f64::INFINITY);
-            let negative_zero = SortKey::Number(-0.0);
-            let zero = SortKey::Number(0.0);
-
             assert_eq!(
                 nan.total_cmp(&infinity),
                 f64::NAN.total_cmp(&f64::INFINITY)
             );
+        }
+
+        #[test]
+        fn negative_zero_sorts_below_positive_zero() {
+            let negative_zero = SortKey::Number(-0.0);
+            let zero = SortKey::Number(0.0);
             assert_eq!(negative_zero.total_cmp(&zero), Ordering::Less);
+        }
+    }
+
+    mod sort_key_normalization {
+        use std::cmp::Ordering;
+
+        use pretty_assertions::assert_eq;
+
+        use super::super::{QueryFieldValueRef, SortKey};
+        use crate::{DateTimeValue, DateValue, NoteFieldValue};
+
+        fn date(s: &str) -> DateValue {
+            DateValue::parse_iso(s).expect("valid date")
+        }
+
+        fn datetime(s: &str) -> DateTimeValue {
+            DateTimeValue::parse_iso(s).expect("valid datetime")
+        }
+
+        #[test]
+        fn from_value_ref_promotes_a_date_to_midnight_datetime() {
+            let key = SortKey::from_value_ref(&QueryFieldValueRef::Date(date(
+                "2026-07-29",
+            )));
+            assert_eq!(
+                key,
+                SortKey::DateTime(DateTimeValue::from(date("2026-07-29",)))
+            );
+        }
+
+        #[test]
+        fn from_value_ref_keeps_a_datetime_as_is() {
+            let value = datetime("2026-07-29T14:30:00");
+            let key =
+                SortKey::from_value_ref(&QueryFieldValueRef::DateTime(value));
+            assert_eq!(key, SortKey::DateTime(value));
+        }
+
+        #[test]
+        fn from_value_ref_sniffs_a_date_shaped_text_field() {
+            let key = SortKey::from_value_ref(&QueryFieldValueRef::Text(
+                "2026-07-29",
+            ));
+            assert_eq!(
+                key,
+                SortKey::DateTime(DateTimeValue::from(date("2026-07-29")))
+            );
+        }
+
+        #[test]
+        fn from_value_ref_sniffs_a_duration_shaped_text_field() {
+            let key =
+                SortKey::from_value_ref(&QueryFieldValueRef::Text("1h30m"));
+            assert!(matches!(key, SortKey::Duration(_)));
+        }
+
+        #[test]
+        fn from_value_ref_falls_back_to_text_for_plain_strings() {
+            let key =
+                SortKey::from_value_ref(&QueryFieldValueRef::Text("custom"));
+            assert_eq!(key, SortKey::Text("custom".into()));
+        }
+
+        #[test]
+        fn from_owned_promotes_a_date_to_midnight_datetime() {
+            let key =
+                SortKey::from_owned(&NoteFieldValue::Date(date("2026-07-29")));
+            assert_eq!(
+                key,
+                SortKey::DateTime(DateTimeValue::from(date("2026-07-29",)))
+            );
+        }
+
+        #[test]
+        fn from_owned_keeps_a_datetime_as_is() {
+            let value = datetime("2026-07-29T14:30:00");
+            let key = SortKey::from_owned(&NoteFieldValue::DateTime(value));
+            assert_eq!(key, SortKey::DateTime(value));
+        }
+
+        #[test]
+        fn a_date_key_sorts_before_a_same_day_afternoon_datetime_key() {
+            let date_key =
+                SortKey::from_owned(&NoteFieldValue::Date(date("2026-07-29")));
+            let datetime_key = SortKey::from_owned(&NoteFieldValue::DateTime(
+                datetime("2026-07-29T14:30:00"),
+            ));
+            assert_eq!(date_key.total_cmp(&datetime_key), Ordering::Less);
         }
     }
 }

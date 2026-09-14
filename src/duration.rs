@@ -936,6 +936,22 @@ mod tests {
         }
 
         #[test]
+        fn converts_a_zero_duration() {
+            let seconds =
+                DurationSeconds::try_from(0.0).expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::zero());
+        }
+
+        #[test]
+        fn converts_a_negative_whole_duration() {
+            let seconds =
+                DurationSeconds::try_from(-10.0).expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::seconds(-10));
+        }
+
+        #[test]
         fn converts_a_negative_fractional_duration() {
             let seconds =
                 DurationSeconds::try_from(-90.5).expect("finite seconds");
@@ -944,9 +960,26 @@ mod tests {
         }
 
         #[test]
+        fn rounds_a_sub_microsecond_duration_to_the_nearest_nanosecond() {
+            let seconds = DurationSeconds::try_from(0.000_000_001)
+                .expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::nanoseconds(1));
+        }
+
+        #[test]
         fn rejects_a_seconds_value_outside_the_representable_range() {
             let seconds =
                 DurationSeconds::try_from(1e300).expect("finite seconds");
+            let result = TimeDelta::try_from(seconds);
+            assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
+        }
+
+        #[test]
+        fn rejects_an_extreme_negative_seconds_value_outside_the_representable_range()
+         {
+            let seconds =
+                DurationSeconds::try_from(-1e300).expect("finite seconds");
             let result = TimeDelta::try_from(seconds);
             assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
         }

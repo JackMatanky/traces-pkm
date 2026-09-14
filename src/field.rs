@@ -842,7 +842,8 @@ impl From<serde_yaml::Value> for FieldValueRef<'static> {
 /// deserialization from JSON, YAML, or TOML.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum FormatParsePolicy {
-    /// Classify ISO date strings as [`FieldValueRef::Date`].
+    /// Classify ISO date and date-time strings as [`FieldValueRef::Date`] or
+    /// [`FieldValueRef::DateTime`].
     #[default]
     Classify,
     /// Treat all strings as plain text.
@@ -862,6 +863,7 @@ pub(crate) struct FieldStringValue<'a>(Cow<'a, str>);
 impl<'a> FieldStringValue<'a> {
     /// Wraps a string value for potential date/datetime classification.
     #[inline]
+    #[must_use]
     pub(crate) fn new(s: Cow<'a, str>) -> Self {
         Self(s)
     }
@@ -874,11 +876,14 @@ impl<'a> FieldStringValue<'a> {
     /// [`FieldValueRef::Date`], and all other strings become
     /// [`FieldValueRef::String`].
     #[inline]
+    #[must_use]
     pub(crate) fn classify(
         self,
         policy: FormatParsePolicy,
     ) -> FieldValueRef<'a> {
-        if policy == FormatParsePolicy::Classify {
+        if policy == FormatParsePolicy::Classify
+            && DateValue::has_four_digit_year(self.0.trim())
+        {
             if let Ok(value) = DateTimeValue::parse_iso(&self.0) {
                 return FieldValueRef::DateTime(value);
             }
@@ -1617,7 +1622,7 @@ mod tests {
         use crate::field::*;
 
         #[test]
-        fn classify_dates_becomes_date_variant() {
+        fn classifies_iso_date_string_as_date_variant() {
             let json = r#"{"d": "2026-07-29"}"#;
             let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
                 &mut serde_json::Deserializer::from_str(json),
@@ -1639,7 +1644,7 @@ mod tests {
         }
 
         #[test]
-        fn classify_datetimes_becomes_datetime_variant() {
+        fn classifies_iso_datetime_string_as_datetime_variant() {
             let json = r#"{"dt": "2026-07-29T14:30:00Z"}"#;
             let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
                 &mut serde_json::Deserializer::from_str(json),
@@ -1661,7 +1666,7 @@ mod tests {
         }
 
         #[test]
-        fn passthrough_keeps_dates_as_strings() {
+        fn preserves_date_strings_under_passthrough_policy() {
             let json = r#"{"d": "2026-07-29"}"#;
             let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
                 &mut serde_json::Deserializer::from_str(json),
