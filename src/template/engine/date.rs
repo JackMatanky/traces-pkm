@@ -18,8 +18,9 @@
 //!
 //! Date/time string parsing funnels through [`ParsedDate::parse`] and
 //! [`parse_date`]. A full datetime is tried first, falling back to a bare
-//! `%Y-%m-%d` date at midnight. Arithmetic filters re-serialize at the input's
-//! original precision via [`format_precise`].
+//! ISO date (`YYYY-MM-DD` or reduced-precision `YYYY-MM`) at midnight.
+//! Arithmetic filters re-serialize at the input's original precision via
+//! [`format_precise`].
 
 use std::{fmt::Write as _, sync::Arc};
 
@@ -33,7 +34,7 @@ use minijinja::{
 use num_traits::ToPrimitive as _;
 
 use super::error::TemplateEngineResult;
-use crate::DurationUnit;
+use crate::{DateTimeValue, DateValue, DurationUnit};
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///
@@ -44,19 +45,6 @@ const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 /// [`format_precise`]'s output shape for an input that carried a time
 /// component.
 const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-
-/// Formats [`ParsedDate::parse`] tries, in order, before falling back to a bare
-/// date.
-///
-/// Covers space-separated (`2026-07-23 14:30[:00]`) and `T`-separated ISO 8601
-/// inputs, with or without seconds/fractional seconds.
-const DATETIME_FORMATS: &[&str] = &[
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%d %H:%M",
-    "%Y-%m-%dT%H:%M:%S%.f",
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%dT%H:%M",
-];
 
 /// Method names `date` exposes, for [`DateOps::enumerate`].
 const METHODS: &[&str] =
@@ -192,23 +180,22 @@ struct ParsedDate {
 }
 
 impl ParsedDate {
-    /// Parses `s` as a date/time string. Tries each of [`DATETIME_FORMATS`] in
-    /// turn; on no match, falls back to a bare `%Y-%m-%d` date at midnight.
+    /// Parses `s` as a date/time string via [`DateTimeValue::parse_iso`],
+    /// falling back to [`DateValue::parse_iso`] at midnight.
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::InvalidOperation`] if `s` matches neither a
-    ///   [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
+    /// - [`ErrorKind::InvalidOperation`] if `s` matches neither parser.
     fn parse(s: &str) -> TemplateEngineResult<Self> {
-        if let Some(datetime) = try_parse_datetime(s) {
+        if let Ok(value) = DateTimeValue::parse_iso(s) {
             return Ok(Self {
-                datetime,
+                datetime: value.into_inner().naive_utc(),
                 precision: DatePrecision::DateTime,
             });
         }
-        NaiveDate::parse_from_str(s, DEFAULT_FORMAT)
+        DateValue::parse_iso(s)
             .ok()
-            .and_then(|date| date.and_hms_opt(0, 0, 0))
+            .and_then(|value| value.into_inner().and_hms_opt(0, 0, 0))
             .map(|datetime| Self {
                 datetime,
                 precision: DatePrecision::Date,
@@ -303,13 +290,6 @@ fn format_precise(
     precision: DatePrecision,
 ) -> TemplateEngineResult<String> {
     format_with(dt.format(precision.format()), precision.format())
-}
-
-/// Tries each of [`DATETIME_FORMATS`] in turn; `None` if none match.
-fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
-    DATETIME_FORMATS
-        .iter()
-        .find_map(|format| NaiveDateTime::parse_from_str(s, format).ok())
 }
 
 /// The shared date/time string parser every filter and test besides
@@ -1054,6 +1034,18 @@ mod tests {
         #[rstest]
         #[case::date_only("2026-07-23", "%d/%m/%Y", "23/07/2026")]
         #[case::datetime_input("2026-07-23 14:30", "%H:%M", "14:30")]
+        #[case::rfc3339_with_z_offset("2026-07-29T14:30:00Z", "%Y", "2026")]
+        #[case::rfc3339_with_numeric_offset(
+            "2026-07-29T14:30:00+02:00",
+            "%H:%M",
+            "12:30"
+        )]
+        #[case::fractional_seconds(
+            "2026-07-29T14:30:00.123",
+            "%H:%M:%S%.3f",
+            "14:30:00.123"
+        )]
+        #[case::year_month_reduced_precision("2026-08", "%Y-%m", "2026-08")]
         fn reformats_a_piped_date_string(
             #[case] input: &str,
             #[case] format: &str,

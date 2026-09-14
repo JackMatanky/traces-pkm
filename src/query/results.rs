@@ -203,16 +203,16 @@ impl QueryRow {
             )]
             FileField::Size => QueryFieldValueRef::Number(file.size() as f64),
             FileField::CreatedDateTime => {
-                QueryFieldValueRef::Timestamp(file.created_at_or_modified())
+                QueryFieldValueRef::DateTime(file.created_at_or_modified())
             }
-            FileField::CreatedDate => QueryFieldValueRef::Timestamp(
-                file.created_at_or_modified().start_of_day(),
-            ),
+            FileField::CreatedDate => {
+                QueryFieldValueRef::Date(file.created_at_or_modified().date())
+            }
             FileField::ModifiedDateTime => {
-                QueryFieldValueRef::Timestamp(file.modified_at())
+                QueryFieldValueRef::DateTime(file.modified_at())
             }
             FileField::ModifiedDate => {
-                QueryFieldValueRef::Timestamp(file.modified_at().start_of_day())
+                QueryFieldValueRef::Date(file.modified_at().date())
             }
         }
     }
@@ -487,14 +487,14 @@ impl QuerySet {
     ///
     /// # Errors
     ///
+    /// - [`FieldPath`] if a field path cannot be resolved.
     /// - [`TableColumnCountMismatch`] if table headers and columns differ in
     ///   length.
-    /// - [`FieldPath`] if a field path cannot be resolved.
     /// - [`TaskListRequiresTaskRows`] if task-list formatting runs on
     ///   page-level rows.
     ///
-    /// [`TableColumnCountMismatch`]: super::QueryError::TableColumnCountMismatch
     /// [`FieldPath`]: super::QueryError::FieldPath
+    /// [`TableColumnCountMismatch`]: super::QueryError::TableColumnCountMismatch
     /// [`TaskListRequiresTaskRows`]: super::QueryError::TaskListRequiresTaskRows
     pub(super) fn format(
         &self,
@@ -726,25 +726,19 @@ mod tests {
 
             assert_eq!(
                 row.field("file.mtime"),
-                Ok(NoteFieldValue::Date(
-                    file.modified_at().to_datetime_string()
-                ))
+                Ok(NoteFieldValue::DateTime(file.modified_at()))
             );
             assert_eq!(
                 row.field("file.mdate"),
-                Ok(NoteFieldValue::Date(file.modified_at().to_date_string()))
+                Ok(NoteFieldValue::Date(file.modified_at().date()))
             );
             assert_eq!(
                 row.field("file.ctime"),
-                Ok(NoteFieldValue::Date(
-                    file.created_at_or_modified().to_datetime_string()
-                ))
+                Ok(NoteFieldValue::DateTime(file.created_at_or_modified()))
             );
             assert_eq!(
                 row.field("file.cdate"),
-                Ok(NoteFieldValue::Date(
-                    file.created_at_or_modified().to_date_string()
-                ))
+                Ok(NoteFieldValue::Date(file.created_at_or_modified().date()))
             );
             assert_eq!(row.field("file.created_at"), row.field("file.ctime"));
             assert_eq!(row.field("file.modified_at"), row.field("file.mtime"));

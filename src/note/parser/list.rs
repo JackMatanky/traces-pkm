@@ -1,14 +1,14 @@
-//! Nested list and list-item tracking, marker classification, and task
-//! metadata extraction.
+//! Nested list and list-item tracking, marker classification, and task metadata
+//! extraction.
 //!
 //! [`ListTracker`] maintains explicit list and list-item stacks so nested
 //! Markdown structures never recurse through the call stack. [`ItemFrame`]
 //! drives the incremental [`ItemClassificationState`] state machine that
 //! detects leading task markers.
 //!
-//! Status-marked items are evaluated against configured tag filters to
-//! classify them as [`ListItemType::Task`] or [`ListItemType::Checkbox`],
-//! extracting dates, priorities, and normalized clean text.
+//! Status-marked items are evaluated against configured tag filters to classify
+//! them as [`ListItemType::Task`] or [`ListItemType::Checkbox`], extracting
+//! dates, priorities, and normalized clean text.
 use chrono::NaiveDate;
 use indexmap::IndexMap;
 
@@ -18,7 +18,7 @@ use super::{
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
 use crate::{
-    FieldKey, SourceLine, Tag, TaskStatusMap,
+    DateValue, FieldKey, SourceLine, Tag, TaskStatusMap,
     note::{
         List, ListItem, ListItemType, ListText, NoteFieldValue, TaskDates,
         TaskListItem, TaskPriority, lists::ListItemPosition,
@@ -268,8 +268,8 @@ impl ListTracker {
     }
 }
 
-/// Returns `true` if every descendant task under `children` is resolved
-/// (done or cancelled), or if there are no descendant tasks.
+/// Returns `true` if every descendant task under `children` is resolved (done
+/// or cancelled), or if there are no descendant tasks.
 ///
 /// Plain bullet items ([`ListItemType::Plain`]) and non-task checkboxes
 /// ([`ListItemType::Checkbox`]) are ignored and do not block completion.
@@ -432,10 +432,10 @@ fn parse_emoji_date(text: &str, emoji: &str) -> Option<NaiveDate> {
                 .next()
                 .is_none_or(|ch| !ch.is_alphanumeric());
             if next_char_valid
-                && let Ok(date) =
-                    NaiveDate::parse_from_str(candidate, "%Y-%m-%d")
+                && DateValue::is_iso_shape(candidate)
+                && let Ok(value) = DateValue::parse_iso(candidate)
             {
-                return Some(date);
+                return Some(value.into_inner());
             }
         }
         search_from = emoji_end.saturating_add(var_len);
@@ -590,7 +590,8 @@ fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
                     .next()
                     .is_none_or(|ch| !ch.is_alphanumeric());
                 if next_char_valid
-                    && NaiveDate::parse_from_str(candidate, "%Y-%m-%d").is_ok()
+                    && DateValue::is_iso_shape(candidate)
+                    && DateValue::parse_iso(candidate).is_ok()
                 {
                     let span_end = emoji_end
                         .saturating_add(var_len)
@@ -828,8 +829,8 @@ impl ItemFrame {
     /// Appends a line break to both the display text and scan buffer.
     ///
     /// A pending marker is decided first: the break terminates the marker's
-    /// trailing-whitespace slot (`- [x]` wrapped over two lines still carries
-    /// a marker).
+    /// trailing-whitespace slot (`- [x]` wrapped over two lines still carries a
+    /// marker).
     fn push_break(&mut self) {
         self.decide_pending_at_line_end();
         self.text_buffer.push('\n');
@@ -1833,14 +1834,24 @@ mod tests {
         }
 
         #[test]
-        fn returns_none_for_invalid_or_missing_date() {
-            let input = "- [ ] Task 📅 2025-02-30 [start:: not-a-date]";
+        fn returns_none_for_an_invalid_calendar_date_in_emoji_syntax() {
+            let input = "- [ ] Task 📅 2025-02-30";
             let note = parse(input);
             let tasks: Vec<&ListItem> = note.tasks().collect();
             let task_item = tasks.first().expect("task present");
             let task = expect_task(task_item);
 
             assert_eq!(task.dates().due, None);
+        }
+
+        #[test]
+        fn returns_none_for_an_invalid_date_in_inline_field_syntax() {
+            let input = "- [ ] Task [start:: not-a-date]";
+            let note = parse(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
             assert_eq!(task.dates().start, None);
         }
     }

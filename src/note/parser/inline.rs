@@ -6,7 +6,7 @@
 //! tags.
 
 use crate::{
-    field::FieldStringValue,
+    DateValue,
     note::{Link, NoteFieldValue, cursor::SourceText},
 };
 
@@ -225,8 +225,11 @@ impl<'a> InlineValueParser<'a> {
     fn parse_date_at(&self, pos: usize) -> Option<Atom> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
-        (FieldStringValue::is_date_str(date) && self.is_atom_boundary(end))
-            .then(|| (NoteFieldValue::Date(date.to_owned()), end))
+        if !(DateValue::is_iso_shape(date) && self.is_atom_boundary(end)) {
+            return None;
+        }
+        let value = DateValue::parse_iso(date).ok()?;
+        Some((NoteFieldValue::Date(value), end))
     }
 
     /// Parses a finite `f64` number atom at `pos`.
@@ -315,10 +318,10 @@ mod tests {
             let vp = InlineValueParser::new("null");
             let result = vp.parse_null_at(0);
 
-            assert!(result.is_some(), "null must be recognized");
-            let (value, end) = result.unwrap();
-            assert_eq!(value, NoteFieldValue::Null);
-            assert_eq!(end, 4);
+            assert!(
+                matches!(result, Some((NoteFieldValue::Null, 4))),
+                "null must be recognized"
+            );
         }
 
         #[test]
@@ -338,10 +341,13 @@ mod tests {
             let vp = InlineValueParser::new("#book");
             let result = vp.parse_tag_at(0);
 
-            assert!(result.is_some(), "#book must be parsed as a tag");
-            let (value, end) = result.unwrap();
-            assert_eq!(value, NoteFieldValue::String("#book".to_owned()));
-            assert_eq!(end, 5);
+            assert!(
+                matches!(
+                    &result,
+                    Some((NoteFieldValue::String(s), 5)) if s == "#book"
+                ),
+                "#book must be parsed as a tag"
+            );
         }
 
         #[test]
@@ -349,11 +355,13 @@ mod tests {
             let vp = InlineValueParser::new("#my-tag/project_a");
             let result = vp.parse_tag_at(0);
 
-            assert!(result.is_some(), "#my-tag/project_a must be parsed");
-            let (value, _) = result.unwrap();
-            assert_eq!(
-                value,
-                NoteFieldValue::String("#my-tag/project_a".to_owned())
+            assert!(
+                matches!(
+                    &result,
+                    Some((NoteFieldValue::String(s), _))
+                        if s == "#my-tag/project_a"
+                ),
+                "#my-tag/project_a must be parsed"
             );
         }
 
@@ -416,9 +424,14 @@ mod tests {
             let vp = InlineValueParser::new("1h 30m");
             let result = vp.parse_duration_at(0);
 
-            assert!(result.is_some(), "1h 30m must parse as duration");
-            let (value, _) = result.unwrap();
-            assert_eq!(value, NoteFieldValue::Duration("1h 30m".to_owned()));
+            assert!(
+                matches!(
+                    &result,
+                    Some((NoteFieldValue::Duration(s), _))
+                        if s == "1h 30m"
+                ),
+                "1h 30m must parse as duration"
+            );
         }
 
         #[test]
@@ -426,9 +439,62 @@ mod tests {
             let vp = InlineValueParser::new("1h30m");
             let result = vp.parse_duration_at(0);
 
-            assert!(result.is_some(), "1h30m must parse as duration");
-            let (value, _) = result.unwrap();
-            assert_eq!(value, NoteFieldValue::Duration("1h30m".to_owned()));
+            assert!(
+                matches!(
+                    &result,
+                    Some((NoteFieldValue::Duration(s), _))
+                        if s == "1h30m"
+                ),
+                "1h30m must parse as duration"
+            );
+        }
+    }
+
+    mod parse_date {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn parses_a_valid_date_atom() {
+            let vp = InlineValueParser::new("2026-07-29");
+            let result = vp.parse_date_at(0);
+
+            let expected =
+                DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert_eq!(result, Some((NoteFieldValue::Date(expected), 10)));
+        }
+
+        #[test]
+        fn rejects_a_date_immediately_followed_by_non_boundary_text() {
+            let vp = InlineValueParser::new("2026-07-29abc");
+            let result = vp.parse_date_at(0);
+
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn rejects_an_invalid_calendar_date_with_valid_iso_shape() {
+            let vp = InlineValueParser::new("9999-99-99");
+            let result = vp.parse_date_at(0);
+
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn rejects_text_shorter_than_an_iso_date() {
+            let vp = InlineValueParser::new("2026-07");
+            let result = vp.parse_date_at(0);
+
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn rejects_a_non_iso_date_shape() {
+            let vp = InlineValueParser::new("2026/07/29");
+            let result = vp.parse_date_at(0);
+
+            assert_eq!(result, None);
         }
     }
 }

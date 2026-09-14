@@ -22,24 +22,21 @@
 //!
 //! # Timestamps
 //!
-//! [`Timestamp`] wraps [`DateTime<Utc>`] to unify formatting and ordering
-//! across the index layer. It provides several format helpers for query field
-//! values (e.g., `ctime`, `mdate`).
-//!
-//! [`DateTime<Utc>`]: chrono::DateTime
-//! [`DateTime<Utc>`]: chrono::Utc
+//! [`FileBase`] stores metadata timestamps as [`crate::DateTimeValue`], the
+//! crate's single date/date-time type (see `src/date.rs`).
 
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::path::{FolderRef, RelativePath};
+use crate::{
+    DateTimeValue,
+    path::{FolderRef, RelativePath},
+};
 
 /// Metadata captured for one regular file under a project root.
 ///
@@ -53,8 +50,8 @@ pub struct FileBase {
     #[serde(with = "crate::index::path")]
     folder: PathBuf,
     format: FileFormat,
-    created_at: Option<Timestamp>,
-    modified_at: Timestamp,
+    created_at: Option<DateTimeValue>,
+    modified_at: DateTimeValue,
     size: u64,
 }
 
@@ -73,8 +70,8 @@ impl FileBase {
         metadata: &fs::Metadata,
     ) -> Result<Self, std::io::Error> {
         let relative = relative.into_path_buf();
-        let modified_at = metadata.modified().map(Timestamp::from)?;
-        let created_at = metadata.created().map(Timestamp::from).ok();
+        let modified_at = metadata.modified().map(DateTimeValue::from)?;
+        let created_at = metadata.created().map(DateTimeValue::from).ok();
         let file_name =
             FileName::try_from(relative.as_path()).unwrap_or_default();
         let name = BaseName::from(&file_name);
@@ -109,7 +106,7 @@ impl FileBase {
             folder,
             format,
             created_at: None,
-            modified_at: Timestamp::now(),
+            modified_at: DateTimeValue::now(),
             size: 10,
         }
     }
@@ -169,7 +166,7 @@ impl FileBase {
                       resolution uses"
         )
     )]
-    pub(crate) const fn created_at(&self) -> Option<Timestamp> {
+    pub(crate) const fn created_at(&self) -> Option<DateTimeValue> {
         self.created_at
     }
 
@@ -178,14 +175,14 @@ impl FileBase {
     /// or filesystem.
     #[inline]
     #[must_use]
-    pub(crate) fn created_at_or_modified(&self) -> Timestamp {
+    pub(crate) fn created_at_or_modified(&self) -> DateTimeValue {
         self.created_at.unwrap_or(self.modified_at)
     }
 
     /// Returns this file's last modification time.
     #[inline]
     #[must_use]
-    pub(crate) const fn modified_at(&self) -> Timestamp {
+    pub(crate) const fn modified_at(&self) -> DateTimeValue {
         self.modified_at
     }
 
@@ -321,183 +318,6 @@ impl FileFormat {
     }
 }
 
-/// UTC timestamp stored with indexed file metadata.
-///
-/// Wraps [`DateTime<Utc>`] so index code uses one formatting and ordering type
-/// instead of leaking filesystem clock details.
-///
-/// [`DateTime<Utc>`]: chrono::DateTime
-/// [`Utc`]: chrono::Utc
-#[derive(
-    Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
-)]
-pub(crate) struct Timestamp(DateTime<Utc>);
-
-impl Timestamp {
-    /// Returns the current UTC timestamp.
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; used only by \
-                      FileBase::new_test"
-        )
-    )]
-    #[inline]
-    #[must_use]
-    pub(crate) fn now() -> Self {
-        Self(Utc::now())
-    }
-
-    /// Formats this timestamp as an RFC 3339 date and time with a UTC offset.
-    ///
-    /// Produces values like `"2026-07-29T14:30:00+00:00"`. The offset is always
-    /// `+00:00` because [`Timestamp`] is always UTC, so prefer
-    /// [`Self::to_datetime_string`] unless the offset itself matters.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#05, split out alongside \
-                      to_datetime_string/to_date_string which field \
-                      resolution uses"
-        )
-    )]
-    pub(crate) fn to_offset_string(self) -> String {
-        self.0.to_rfc3339()
-    }
-
-    /// Formats this timestamp as a date and time without a UTC offset.
-    ///
-    /// Produces values like `"2026-07-29T14:30:00"` for the `ctime`/`mtime`
-    /// query field values, where offset text would break literal filter
-    /// matching.
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_datetime_string(self) -> String {
-        self.0.format("%Y-%m-%dT%H:%M:%S").to_string()
-    }
-
-    /// Formats this timestamp as a bare date without time or offset.
-    ///
-    /// Produces values like `"2026-07-29"` for the `cdate`/`mdate` query field
-    /// values.
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_date_string(self) -> String {
-        self.0.format("%Y-%m-%d").to_string()
-    }
-
-    /// Formats this timestamp as a bare time-of-day component without a date.
-    ///
-    /// Produces values like `"14:30:00"`.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#05, added alongside \
-                      to_datetime_string/to_date_string which field \
-                      resolution uses"
-        )
-    )]
-    pub(crate) fn to_time_string(self) -> String {
-        self.0.format("%H:%M:%S").to_string()
-    }
-
-    /// Returns a new timestamp truncated to the start of the UTC day (midnight,
-    /// 00:00:00).
-    #[inline]
-    #[must_use]
-    pub(crate) fn start_of_day(self) -> Self {
-        let naive = match self.0.date_naive().and_hms_opt(0, 0, 0) {
-            Some(midnight) => midnight,
-            None => self.0.naive_utc(),
-        };
-        Self(naive.and_utc())
-    }
-
-    /// Returns `true` if this timestamp has a non-zero time-of-day component.
-    #[inline]
-    #[must_use]
-    pub(crate) fn has_time_component(self) -> bool {
-        use chrono::Timelike as _;
-        self.0.hour() != 0
-            || self.0.minute() != 0
-            || self.0.second() != 0
-            || self.0.nanosecond() != 0
-    }
-
-    /// Formats this timestamp into `out`, using [`Self::to_datetime_string`]'s
-    /// form when it has a non-zero time-of-day component (see
-    /// [`Self::has_time_component`]), or [`Self::to_date_string`]'s bare-date
-    /// form otherwise. Writes directly into `out` with no intermediate `String`
-    /// allocation, unlike calling either formatter and pushing its result.
-    #[inline]
-    pub(crate) fn append_conditional(self, out: &mut String) {
-        use std::fmt::Write as _;
-        if self.has_time_component() {
-            let _ = write!(out, "{}", self.0.format("%Y-%m-%dT%H:%M:%S"));
-        } else {
-            let _ = write!(out, "{}", self.0.format("%Y-%m-%d"));
-        }
-    }
-
-    /// Formats this timestamp as an owned [`String`], using
-    /// [`Self::to_datetime_string`]'s form when it has a non-zero time-of-day
-    /// component, or [`Self::to_date_string`]'s bare-date form otherwise.
-    /// Prefer [`Self::append_conditional`] when writing into an existing
-    /// buffer.
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_conditional_string(self) -> String {
-        if self.has_time_component() {
-            self.to_datetime_string()
-        } else {
-            self.to_date_string()
-        }
-    }
-
-    /// Parses an ISO-8601, RFC 3339, or `YYYY-MM-DD` date string into a
-    /// `Timestamp`.
-    ///
-    /// When given a bare date `YYYY-MM-DD`, parses strictly as midnight UTC
-    /// (`00:00:00.000Z`).
-    pub(crate) fn parse_iso(input: &str) -> Option<Self> {
-        let trimmed = input.trim();
-        if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
-            return Some(Self(dt.with_timezone(&Utc)));
-        }
-        if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S")
-        {
-            return Some(Self(naive.and_utc()));
-        }
-        if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S")
-        {
-            return Some(Self(naive.and_utc()));
-        }
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
-        {
-            let midnight = date.and_hms_opt(0, 0, 0)?;
-            return Some(Self(midnight.and_utc()));
-        }
-        None
-    }
-}
-
-impl From<SystemTime> for Timestamp {
-    fn from(time: SystemTime) -> Self {
-        Self(DateTime::<Utc>::from(time))
-    }
-}
-
 /// Reports why a [`FileName`] could not be constructed.
 #[derive(Debug, Error)]
 pub(crate) enum FileNameError {
@@ -508,13 +328,15 @@ pub(crate) enum FileNameError {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::*;
 
     /// Builds a `FileBase` with `created_at`/`modified_at` set directly, for
     /// exercising timestamp accessor behavior without touching the filesystem.
     fn record_with(
-        created_at: Option<Timestamp>,
-        modified_at: Timestamp,
+        created_at: Option<DateTimeValue>,
+        modified_at: DateTimeValue,
     ) -> FileBase {
         FileBase {
             path: PathBuf::from("note.md"),
@@ -561,7 +383,7 @@ mod tests {
                 assert_eq!(record.folder().as_path(), Path::new("notes"));
                 assert_eq!(record.format(), FileFormat::Note);
                 assert_eq!(record.size(), 7);
-                assert!(record.modified_at().0 <= Utc::now());
+                assert!(record.modified_at().into_inner() <= Utc::now());
             }
 
             #[test]
@@ -591,16 +413,17 @@ mod tests {
 
             #[test]
             fn returns_none_when_creation_time_is_unsupported() {
-                let record = record_with(None, Timestamp::now());
+                let record = record_with(None, DateTimeValue::now());
 
                 assert_eq!(record.created_at(), None);
             }
 
             #[test]
             fn returns_some_when_creation_time_is_reported() {
-                let modified_at = Timestamp::now();
-                let reported =
-                    Timestamp(modified_at.0 - chrono::Duration::days(1));
+                let modified_at = DateTimeValue::now();
+                let reported = DateTimeValue::from(
+                    modified_at.into_inner() - chrono::Duration::days(1),
+                );
                 let record = record_with(Some(reported), modified_at);
 
                 assert_eq!(record.created_at(), Some(reported));
@@ -614,9 +437,10 @@ mod tests {
 
             #[test]
             fn returns_created_when_present() {
-                let modified_at = Timestamp::now();
-                let reported =
-                    Timestamp(modified_at.0 - chrono::Duration::days(1));
+                let modified_at = DateTimeValue::now();
+                let reported = DateTimeValue::from(
+                    modified_at.into_inner() - chrono::Duration::days(1),
+                );
                 let record = record_with(Some(reported), modified_at);
 
                 assert_eq!(record.created_at_or_modified(), reported);
@@ -624,7 +448,7 @@ mod tests {
 
             #[test]
             fn falls_back_to_modified_when_created_is_none() {
-                let modified_at = Timestamp::now();
+                let modified_at = DateTimeValue::now();
                 let record = record_with(None, modified_at);
 
                 assert_eq!(record.created_at_or_modified(), modified_at);
@@ -743,47 +567,6 @@ mod tests {
                 .expect("valid file name");
 
             assert_eq!(FileFormat::from_name(&name), expected);
-        }
-    }
-
-    mod timestamps {
-        use chrono::TimeZone;
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        fn fixed_timestamp() -> Timestamp {
-            Timestamp(
-                Utc.with_ymd_and_hms(2026, 7, 29, 14, 30, 5).single().expect(
-                    "2026-07-29 14:30:05 UTC is a valid, unambiguous instant",
-                ),
-            )
-        }
-
-        #[test]
-        fn to_offset_string_includes_the_utc_offset() {
-            assert_eq!(
-                fixed_timestamp().to_offset_string(),
-                "2026-07-29T14:30:05+00:00"
-            );
-        }
-
-        #[test]
-        fn to_datetime_string_omits_the_offset() {
-            assert_eq!(
-                fixed_timestamp().to_datetime_string(),
-                "2026-07-29T14:30:05"
-            );
-        }
-
-        #[test]
-        fn to_date_string_omits_the_time() {
-            assert_eq!(fixed_timestamp().to_date_string(), "2026-07-29");
-        }
-
-        #[test]
-        fn to_time_string_omits_the_date() {
-            assert_eq!(fixed_timestamp().to_time_string(), "14:30:05");
         }
     }
 }

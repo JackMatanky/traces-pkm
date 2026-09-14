@@ -15,9 +15,7 @@
 use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
-use crate::{
-    DelimiterType, FieldKey, Tag, field::FieldStringValue, note::NoteFieldValue,
-};
+use crate::{DateValue, DelimiterType, FieldKey, Tag, note::NoteFieldValue};
 
 /// Extracts inline fields and tags from a parser scan buffer.
 ///
@@ -43,9 +41,8 @@ impl InlineTokenLexer {
     /// Extracts inline fields from `text` in encounter order.
     ///
     /// Recognizes `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`. When
-    /// `has_marker` is `true`, also recognizes task emoji shorthand fields
-    /// such as `🗓️2026-01-01`. `text` must already exclude code spans and
-    /// blocks.
+    /// `has_marker` is `true`, also recognizes task emoji shorthand fields such
+    /// as `🗓️2026-01-01`. `text` must already exclude code spans and blocks.
     #[inline]
     #[must_use]
     pub(super) fn extract_fields(
@@ -256,14 +253,17 @@ fn task_field_callback(
     let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
         return Filter::Skip;
     };
-    if !FieldStringValue::is_date_str(candidate) {
+    if !DateValue::is_iso_shape(candidate) {
         return Filter::Skip;
     }
+    let Ok(value) = DateValue::parse_iso(candidate) else {
+        return Filter::Skip;
+    };
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
     lex.bump(var_len.saturating_add(ws_end).saturating_add(ISO_DATE_LEN));
-    Filter::Emit((key, NoteFieldValue::Date(candidate.to_owned())))
+    Filter::Emit((key, NoteFieldValue::Date(value)))
 }
 
 /// Token stream for Markdown tags in free-form text.
@@ -367,8 +367,10 @@ mod tests {
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().and_then(|(_, v)| v.as_str()),
-                Some("2024-01-01")
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso("2024-01-01").expect("valid date")
+                ))
             );
         }
 
@@ -408,7 +410,12 @@ mod tests {
         #[case::true_value("flag:: true", NoteFieldValue::Bool(true))]
         #[case::false_value("flag:: false", NoteFieldValue::Bool(false))]
         #[case::number("score:: 4.5", NoteFieldValue::Number(4.5))]
-        #[case::date("due:: 2026-07-29", NoteFieldValue::Date("2026-07-29".to_owned()))]
+        #[case::date(
+            "due:: 2026-07-29",
+            NoteFieldValue::Date(
+                DateValue::parse_iso("2026-07-29").expect("valid date")
+            )
+        )]
         #[case::non_finite_number("score:: NaN", NoteFieldValue::String("NaN".to_owned()))]
         fn parses_inline_value_types(
             #[case] input: &str,
@@ -646,7 +653,9 @@ mod tests {
             );
             assert_eq!(
                 fields.first().map(|(_, v)| v),
-                Some(&NoteFieldValue::Date(expected_date.to_owned()))
+                Some(&NoteFieldValue::Date(
+                    DateValue::parse_iso(expected_date).expect("valid date")
+                ))
             );
         }
         #[test]

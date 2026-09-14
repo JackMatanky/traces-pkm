@@ -3,8 +3,7 @@
 use std::{fmt::Write as _, path::PathBuf};
 
 use crate::{
-    Tag,
-    file::Timestamp,
+    DateTimeValue, DateValue, Tag,
     note::{Link, NoteFieldValue},
 };
 /// Borrowed field value resolved from a [`super::QueryRow`].
@@ -14,17 +13,16 @@ pub(super) enum QueryFieldValueRef<'a> {
     Number(f64),
     Text(&'a str),
     Link(&'a Link),
-    Date(&'a str),
+    Date(DateValue),
+    DateTime(DateTimeValue),
     Duration(&'a str),
-    Timestamp(Timestamp),
     Object(&'a indexmap::IndexMap<String, NoteFieldValue>),
     List(QueryListValueRef<'a>),
     Owned(NoteFieldValue),
 }
 
 impl QueryFieldValueRef<'_> {
-    /// Materializes this resolved value as metadata, converting `Timestamp` to
-    /// date text.
+    /// Materializes this resolved value as metadata.
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -32,12 +30,10 @@ impl QueryFieldValueRef<'_> {
             Self::Number(value) => NoteFieldValue::Number(*value),
             Self::Text(value) => NoteFieldValue::String((*value).to_owned()),
             Self::Link(value) => NoteFieldValue::Link((*value).clone()),
-            Self::Date(value) => NoteFieldValue::Date((*value).to_owned()),
+            Self::Date(value) => NoteFieldValue::Date(*value),
+            Self::DateTime(value) => NoteFieldValue::DateTime(*value),
             Self::Duration(value) => {
                 NoteFieldValue::Duration((*value).to_owned())
-            }
-            Self::Timestamp(ts) => {
-                NoteFieldValue::Date(ts.to_conditional_string())
             }
             Self::Object(value) => NoteFieldValue::Object((*value).clone()),
             Self::List(value) => value.to_owned_value(),
@@ -58,10 +54,13 @@ impl QueryFieldValueRef<'_> {
             Self::Number(value) => {
                 let _ = write!(out, "{value}");
             }
-            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
-                out.push_str(value);
+            Self::Text(value) | Self::Duration(value) => out.push_str(value),
+            Self::Date(value) => {
+                let _ = write!(out, "{value}");
             }
-            Self::Timestamp(ts) => ts.append_conditional(out),
+            Self::DateTime(value) => {
+                let _ = write!(out, "{value}");
+            }
             Self::Link(link) => out.push_str(link.target()),
             Self::Object(fields) => {
                 for (idx, (key, field)) in fields.iter().enumerate() {
@@ -90,9 +89,7 @@ impl QueryFieldValueRef<'_> {
 
     pub(super) fn as_str(&self) -> Option<&str> {
         match self {
-            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
-                Some(value)
-            }
+            Self::Text(value) | Self::Duration(value) => Some(value),
             Self::Owned(value) => value.as_str(),
             _ => None,
         }
@@ -117,27 +114,18 @@ impl QueryFieldValueRef<'_> {
             Self::Link(value) => {
                 matches!(literal, NoteFieldValue::Link(other) if *value == other)
             }
-            Self::Timestamp(ts) => {
-                if let NoteFieldValue::Date(lit_s) = literal
-                    && let Some(lit_ts) = Timestamp::parse_iso(lit_s)
-                {
-                    return ts == &lit_ts;
+            Self::Date(value) => match literal {
+                NoteFieldValue::Date(other) => value == other,
+                NoteFieldValue::DateTime(other) => {
+                    other.is_equal_to_date(*value)
                 }
-                false
-            }
-            Self::Date(value) => {
-                if let NoteFieldValue::Date(other) = literal {
-                    match (
-                        Timestamp::parse_iso(value),
-                        Timestamp::parse_iso(other),
-                    ) {
-                        (Some(tx), Some(ty)) => tx == ty,
-                        _ => *value == other,
-                    }
-                } else {
-                    false
-                }
-            }
+                _ => false,
+            },
+            Self::DateTime(value) => match literal {
+                NoteFieldValue::DateTime(other) => value == other,
+                NoteFieldValue::Date(other) => value.is_equal_to_date(*other),
+                _ => false,
+            },
             Self::Duration(value) => {
                 if let NoteFieldValue::Duration(other) = literal {
                     match (
@@ -168,9 +156,9 @@ impl QueryFieldValueRef<'_> {
     /// substring containment.
     pub(super) fn is_containing(&self, target: &NoteFieldValue) -> bool {
         match self {
-            Self::List(items) => is_list_containing(items, target),
+            Self::List(items) => items.is_containing(target),
             Self::Owned(NoteFieldValue::List(items)) => {
-                is_list_containing(&QueryListValueRef::Values(items), target)
+                QueryListValueRef::Values(items).is_containing(target)
             }
             _ => match (self.as_str(), target.as_str()) {
                 (Some(haystack), Some(needle)) => haystack.contains(needle),
@@ -187,7 +175,8 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
             NoteFieldValue::Bool(value) => Self::Bool(*value),
             NoteFieldValue::Number(value) => Self::Number(*value),
             NoteFieldValue::String(value) => Self::Text(value),
-            NoteFieldValue::Date(value) => Self::Date(value),
+            NoteFieldValue::Date(value) => Self::Date(*value),
+            NoteFieldValue::DateTime(value) => Self::DateTime(*value),
             NoteFieldValue::Duration(value) => Self::Duration(value),
             NoteFieldValue::Link(value) => Self::Link(value),
             NoteFieldValue::List(value) => {
@@ -222,6 +211,33 @@ impl QueryListValueRef<'_> {
         }
     }
 
+    /// Returns `true` if `target` matches an exact value or descendant tag
+    /// in this list.
+    pub(super) fn is_containing(&self, target: &NoteFieldValue) -> bool {
+        let target_str = target.as_str();
+        match self {
+            Self::Values(items) => items
+                .iter()
+                .any(|item| is_tag_or_value_matching(item, target, target_str)),
+            Self::Tags(tags) => {
+                let Some(target_str) = target_str else {
+                    return false;
+                };
+                tags.iter()
+                    .any(|tag| is_tag_str_matching(tag.as_str(), target_str))
+            }
+            Self::Inlinks(paths) => {
+                let Some(target_str) = target_str else {
+                    return false;
+                };
+                paths.iter().any(|path| {
+                    let path = path.to_string_lossy();
+                    is_tag_str_matching(&path, target_str)
+                })
+            }
+        }
+    }
+
     fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Values(values) => NoteFieldValue::List((*values).into()),
@@ -247,7 +263,7 @@ impl QueryListValueRef<'_> {
 /// Applies filter equality semantics to metadata values.
 ///
 /// Exact structural equality wins; otherwise string-like values (`String`,
-/// `Date`, `Duration`) compare by text so literals can match typed fields.
+/// `Duration`) compare by text so literals can match typed fields.
 fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || matches!((a.as_str(), b.as_str()), (Some(x), Some(y)) if x == y)
 }
@@ -276,33 +292,6 @@ fn is_tag_or_value_matching(
         && Tag::parse(item_str).is_ok_and(|tag| tag.is_contained_in(target_str))
 }
 
-pub(super) fn is_list_containing(
-    items: &QueryListValueRef<'_>,
-    target: &NoteFieldValue,
-) -> bool {
-    let target_str = target.as_str();
-    match items {
-        QueryListValueRef::Values(items) => items
-            .iter()
-            .any(|item| is_tag_or_value_matching(item, target, target_str)),
-        QueryListValueRef::Tags(tags) => {
-            let Some(target_str) = target_str else {
-                return false;
-            };
-            tags.iter().any(|tag| is_tag_str_matching(tag.as_str(), target_str))
-        }
-        QueryListValueRef::Inlinks(paths) => {
-            let Some(target_str) = target_str else {
-                return false;
-            };
-            paths.iter().any(|path| {
-                let path = path.to_string_lossy();
-                is_tag_str_matching(&path, target_str)
-            })
-        }
-    }
-}
-
 fn append_joined<T>(
     out: &mut String,
     values: &[T],
@@ -320,11 +309,25 @@ fn append_joined<T>(
 fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
     match value {
         NoteFieldValue::Null => {}
-        NoteFieldValue::Bool(value) => out.push_str(&value.to_string()),
-        NoteFieldValue::Number(value) => out.push_str(&value.to_string()),
-        NoteFieldValue::String(value)
-        | NoteFieldValue::Date(value)
-        | NoteFieldValue::Duration(value) => out.push_str(value),
+        NoteFieldValue::Bool(value) => {
+            out.push_str(if *value {
+                "true"
+            } else {
+                "false"
+            });
+        }
+        NoteFieldValue::Number(value) => {
+            let _ = write!(out, "{value}");
+        }
+        NoteFieldValue::String(value) | NoteFieldValue::Duration(value) => {
+            out.push_str(value);
+        }
+        NoteFieldValue::Date(value) => {
+            let _ = write!(out, "{value}");
+        }
+        NoteFieldValue::DateTime(value) => {
+            let _ = write!(out, "{value}");
+        }
         NoteFieldValue::Link(link) => out.push_str(link.target()),
         NoteFieldValue::List(items) => {
             append_joined(out, items, append_owned_field_text);
@@ -388,6 +391,90 @@ mod tests {
             assert!(
                 QueryFieldValueRef::Number(5.0)
                     .is_equal_to_literal(&NoteFieldValue::Number(5.0))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_date_ref_to_matching_date_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert!(
+                QueryFieldValueRef::Date(date)
+                    .is_equal_to_literal(&NoteFieldValue::Date(date))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_date_ref_to_midnight_datetime_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let midnight_datetime = DateTimeValue::from(date);
+            assert!(QueryFieldValueRef::Date(date).is_equal_to_literal(
+                &NoteFieldValue::DateTime(midnight_datetime)
+            ));
+        }
+
+        #[test]
+        fn returns_false_when_comparing_date_ref_to_non_midnight_datetime_literal()
+         {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let non_midnight = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert!(
+                !QueryFieldValueRef::Date(date).is_equal_to_literal(
+                    &NoteFieldValue::DateTime(non_midnight)
+                )
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_datetime_ref_to_midnight_date_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let midnight_datetime = DateTimeValue::from(date);
+            assert!(
+                QueryFieldValueRef::DateTime(midnight_datetime)
+                    .is_equal_to_literal(&NoteFieldValue::Date(date))
+            );
+        }
+
+        #[test]
+        fn returns_false_when_comparing_date_ref_to_a_non_date_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert!(
+                !QueryFieldValueRef::Date(date)
+                    .is_equal_to_literal(&NoteFieldValue::Number(1.0))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_datetime_ref_to_matching_datetime_literal()
+         {
+            let value = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert!(
+                QueryFieldValueRef::DateTime(value)
+                    .is_equal_to_literal(&NoteFieldValue::DateTime(value))
+            );
+        }
+
+        #[test]
+        fn returns_false_when_comparing_datetime_ref_to_mismatched_datetime_literal()
+         {
+            let value = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            let other = DateTimeValue::parse_iso("2026-07-29T09:00:00")
+                .expect("valid datetime");
+            assert!(
+                !QueryFieldValueRef::DateTime(value)
+                    .is_equal_to_literal(&NoteFieldValue::DateTime(other))
+            );
+        }
+
+        #[test]
+        fn returns_false_when_comparing_datetime_ref_to_a_non_date_literal() {
+            let value = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert!(
+                !QueryFieldValueRef::DateTime(value)
+                    .is_equal_to_literal(&NoteFieldValue::Number(1.0))
             );
         }
 
@@ -457,6 +544,68 @@ mod tests {
             QueryFieldValueRef::Text("hello").append_text(&mut out);
             assert_eq!(out, "hello");
         }
+
+        #[test]
+        fn formats_date_as_yyyy_mm_dd() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let mut out = String::new();
+            QueryFieldValueRef::Date(date).append_text(&mut out);
+            assert_eq!(out, "2026-07-29");
+        }
+
+        #[test]
+        fn formats_datetime_without_offset() {
+            let value = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            let mut out = String::new();
+            QueryFieldValueRef::DateTime(value).append_text(&mut out);
+            assert_eq!(out, "2026-07-29T14:30:00");
+        }
+    }
+
+    mod conversions {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn to_owned_value_preserves_a_typed_date() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let owned = QueryFieldValueRef::Date(date).to_owned_value();
+            assert_eq!(owned, NoteFieldValue::Date(date));
+        }
+
+        #[test]
+        fn to_owned_value_preserves_a_typed_datetime() {
+            let value = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            let owned = QueryFieldValueRef::DateTime(value).to_owned_value();
+            assert_eq!(owned, NoteFieldValue::DateTime(value));
+        }
+
+        #[test]
+        fn as_str_returns_none_for_date_and_datetime_variants() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let datetime = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert_eq!(QueryFieldValueRef::Date(date).as_str(), None);
+            assert_eq!(QueryFieldValueRef::DateTime(datetime).as_str(), None);
+        }
+
+        #[test]
+        fn from_note_field_value_preserves_typed_date_and_datetime() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let datetime = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert!(matches!(
+                QueryFieldValueRef::from(&NoteFieldValue::Date(date)),
+                QueryFieldValueRef::Date(d) if d == date
+            ));
+            assert!(matches!(
+                QueryFieldValueRef::from(&NoteFieldValue::DateTime(datetime)),
+                QueryFieldValueRef::DateTime(d) if d == datetime
+            ));
+        }
     }
 
     mod equality {
@@ -479,10 +628,12 @@ mod tests {
         }
 
         #[test]
-        fn returns_true_for_cross_kind_string_and_date_equality() {
-            assert!(is_field_equal(
+        fn returns_false_for_a_string_literal_against_a_typed_date_field() {
+            assert!(!is_field_equal(
                 &NoteFieldValue::String("2024-01-01".into()),
-                &NoteFieldValue::Date("2024-01-01".into())
+                &NoteFieldValue::Date(
+                    DateValue::parse_iso("2024-01-01").expect("valid date")
+                )
             ));
         }
     }

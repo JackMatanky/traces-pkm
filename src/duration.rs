@@ -20,6 +20,9 @@ use std::{
     str::FromStr,
 };
 
+use chrono::TimeDelta;
+use num_traits::ToPrimitive as _;
+
 /// A validated duration expression with its total seconds.
 ///
 /// Constructed exclusively via [`DurationValue::parse`] or the [`FromStr`]
@@ -253,6 +256,17 @@ impl FromStr for DurationValue {
     }
 }
 
+impl TryFrom<DurationValue> for TimeDelta {
+    type Error = DurationError;
+
+    /// Converts to a [`TimeDelta`] via [`DurationValue::to_seconds`], returning
+    /// [`DurationError::NonFiniteSeconds`] on arithmetic overflow.
+    #[inline]
+    fn try_from(duration: DurationValue) -> Result<Self, Self::Error> {
+        Self::try_from(duration.to_seconds())
+    }
+}
+
 /// A recognized duration unit.
 ///
 /// Single source of truth for unit parsing, seconds conversion, and naming.
@@ -373,6 +387,28 @@ impl TryFrom<f64> for DurationSeconds {
     fn try_from(secs: f64) -> Result<Self, Self::Error> {
         secs.is_finite()
             .then_some(Self(secs))
+            .ok_or(DurationError::NonFiniteSeconds)
+    }
+}
+
+impl TryFrom<DurationSeconds> for TimeDelta {
+    type Error = DurationError;
+
+    /// Converts to a [`TimeDelta`], returning
+    /// [`DurationError::NonFiniteSeconds`] on arithmetic overflow.
+    #[inline]
+    fn try_from(seconds: DurationSeconds) -> Result<Self, Self::Error> {
+        let total = seconds.0;
+        let whole = total.trunc();
+        let frac = total.fract();
+        let (secs, nanos) = if frac < 0.0 {
+            (whole - 1.0, (frac + 1.0) * 1_000_000_000.0)
+        } else {
+            (whole, frac * 1_000_000_000.0)
+        };
+        secs.to_i64()
+            .zip(nanos.round().to_u32())
+            .and_then(|(s, n)| Self::new(s, n))
             .ok_or(DurationError::NonFiniteSeconds)
     }
 }
@@ -876,6 +912,85 @@ mod tests {
                     "roundtrip failed for {spelling}"
                 );
             }
+        }
+    }
+
+    mod time_delta_conversion {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn converts_a_whole_second_duration() {
+            let duration = DurationValue::parse("1h").expect("valid duration");
+            let converted = TimeDelta::try_from(duration).expect("in range");
+            assert_eq!(converted, TimeDelta::hours(1));
+        }
+
+        #[test]
+        fn converts_a_subsecond_duration() {
+            let duration =
+                DurationValue::parse("500ms").expect("valid duration");
+            let converted = TimeDelta::try_from(duration).expect("in range");
+            assert_eq!(converted, TimeDelta::milliseconds(500));
+        }
+
+        #[test]
+        fn converts_a_zero_duration() {
+            let seconds =
+                DurationSeconds::try_from(0.0).expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::zero());
+        }
+
+        #[test]
+        fn converts_a_negative_whole_duration() {
+            let seconds =
+                DurationSeconds::try_from(-10.0).expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::seconds(-10));
+        }
+
+        #[test]
+        fn converts_a_negative_fractional_duration() {
+            let seconds =
+                DurationSeconds::try_from(-90.5).expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::milliseconds(-90_500));
+        }
+
+        #[test]
+        fn rounds_a_sub_microsecond_duration_to_the_nearest_nanosecond() {
+            let seconds = DurationSeconds::try_from(0.000_000_001)
+                .expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::nanoseconds(1));
+        }
+
+        #[test]
+        fn rejects_a_seconds_value_outside_the_representable_range() {
+            let seconds =
+                DurationSeconds::try_from(1e300).expect("finite seconds");
+            let result = TimeDelta::try_from(seconds);
+            assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
+        }
+
+        #[test]
+        fn rejects_an_extreme_negative_seconds_value_outside_the_representable_range()
+         {
+            let seconds =
+                DurationSeconds::try_from(-1e300).expect("finite seconds");
+            let result = TimeDelta::try_from(seconds);
+            assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
+        }
+
+        #[test]
+        fn delegates_to_duration_seconds() {
+            let duration = DurationValue::parse("30m").expect("valid duration");
+            let converted = TimeDelta::try_from(duration).expect("in range");
+            let via_seconds =
+                TimeDelta::try_from(duration.to_seconds()).expect("in range");
+            assert_eq!(converted, via_seconds);
         }
     }
 }
