@@ -259,8 +259,8 @@ impl FromStr for DurationValue {
 impl TryFrom<DurationValue> for TimeDelta {
     type Error = DurationError;
 
-    /// Converts to a [`TimeDelta`] via [`DurationValue::to_seconds`], returning
-    /// [`DurationError::NonFiniteSeconds`] on arithmetic overflow.
+    /// Converts to a [`TimeDelta`] via the duration's total seconds, returning
+    /// a `NonFiniteSeconds` error on arithmetic overflow.
     #[inline]
     fn try_from(duration: DurationValue) -> Result<Self, Self::Error> {
         Self::try_from(duration.to_seconds())
@@ -394,8 +394,8 @@ impl TryFrom<f64> for DurationSeconds {
 impl TryFrom<DurationSeconds> for TimeDelta {
     type Error = DurationError;
 
-    /// Converts to a [`TimeDelta`], returning
-    /// [`DurationError::NonFiniteSeconds`] on arithmetic overflow.
+    /// Converts to a [`TimeDelta`], returning a `NonFiniteSeconds` error on
+    /// arithmetic overflow.
     #[inline]
     fn try_from(seconds: DurationSeconds) -> Result<Self, Self::Error> {
         let total = seconds.0;

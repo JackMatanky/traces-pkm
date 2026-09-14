@@ -1,17 +1,17 @@
-//! Date and date-time parsing, formatting, and arithmetic.
+//! ISO-8601 and RFC-3339 date and date-time parsing, formatting, and
+//! arithmetic.
 //!
-//! Single owner of ISO-8601/RFC-3339 date and date-time recognition, parsing,
-//! and formatting across the crate. Consolidates six previously independent,
-//! disagreeing implementations (see
-//! `docs/digests/temporal-metadata-redesign-scope.md`).
+//! Single owner of date/time recognition, parsing, and formatting across the
+//! crate. Every date-shaped string funnels through [`DateValue::parse_iso`];
+//! every date-time-shaped string through [`DateTimeValue::parse_iso`].
 //!
 //! # Key types
 //!
-//! - [`DateValue`]: a parsed calendar date.
-//! - [`DateTimeValue`]: a parsed UTC date-time.
-//! - [`DateFormat`]: format grammar enum for calendar date recognition.
-//! - [`DateTimeFormat`]: format grammar enum for date-time recognition.
-//! - [`DateError`]: error type for parse and formatting failures.
+//! - [`DateValue`] - Parsed calendar date with no time-of-day component.
+//! - [`DateTimeValue`] - Parsed UTC date-time instant.
+//! - [`DateFormat`] - Format grammar for calendar date recognition.
+//! - [`DateTimeFormat`] - Format grammar for date-time recognition.
+//! - [`DateError`] - Error type for parse and formatting failures.
 
 use std::{fmt, str::FromStr, time::SystemTime};
 
@@ -20,19 +20,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::duration::DurationValue;
 
-/// `DateValue`'s canonical output format: `2026-07-29`.
+/// [`DateValue`]'s canonical output format: `2026-07-29`.
 pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// `DateTimeValue`'s canonical output format: `2026-07-29T14:30:00`.
+/// [`DateTimeValue`]'s canonical output format: `2026-07-29T14:30:00`.
 pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// Recognized date input format shapes tried in order by
 /// [`DateValue::parse_iso`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DateFormat {
-    /// Full ISO date (e.g. `2026-07-29`).
+    /// Full ISO date: `2026-07-29`.
     Full,
-    /// Year-month reduced precision (e.g. `2026-07`), day defaults to 1.
+    /// Year-month reduced precision: `2026-07`. Day defaults to 1.
     YearMonth,
 }
 
@@ -67,9 +67,10 @@ impl DateFormat {
         }
     }
 
-    /// Parses `"YYYY-MM"`, defaulting day to 1. chrono's `%Y-%m` format string
-    /// alone fails with `NotEnough`, so this splits and parses the year and
-    /// month integers directly.
+    /// Parses `"YYYY-MM"`, defaulting day to 1.
+    ///
+    /// chrono's `%Y-%m` format string alone fails with `NotEnough`, so this
+    /// splits and parses the year and month integers directly.
     fn parse_year_month(s: &str) -> Option<NaiveDate> {
         let (year_str, month_str) = s.split_once('-')?;
         if year_str.len() != 4 || month_str.len() != 2 {
@@ -85,17 +86,17 @@ impl DateFormat {
 /// [`DateTimeValue::parse_iso`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DateTimeFormat {
-    /// RFC 3339 format with offset (e.g. `2026-07-29T14:30:00Z`).
+    /// RFC 3339 format with offset: `2026-07-29T14:30:00Z`.
     Rfc3339,
-    /// `T`-separated with fractional seconds (e.g. `2026-07-29T14:30:00.123`).
+    /// `T`-separated with fractional seconds: `2026-07-29T14:30:00.123`.
     IsoTFractional,
-    /// `T`-separated with whole seconds (e.g. `2026-07-29T14:30:00`).
+    /// `T`-separated with whole seconds: `2026-07-29T14:30:00`.
     IsoTSeconds,
-    /// `T`-separated minute-only precision (e.g. `2026-07-29T14:30`).
+    /// `T`-separated minute-only precision: `2026-07-29T14:30`.
     IsoTMinute,
-    /// Space-separated with whole seconds (e.g. `2026-07-29 14:30:00`).
+    /// Space-separated with whole seconds: `2026-07-29 14:30:00`.
     IsoSpaceSeconds,
-    /// Space-separated minute-only precision (e.g. `2026-07-29 14:30`).
+    /// Space-separated minute-only precision: `2026-07-29 14:30`.
     IsoSpaceMinute,
 }
 
@@ -145,7 +146,11 @@ impl DateTimeFormat {
     }
 }
 
-/// A parsed calendar date, no time-of-day component.
+/// Parsed calendar date with no time-of-day component.
+///
+/// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition through
+/// [`DateValue::parse_iso`]. All four-digit years are accepted; two-digit years
+/// are rejected to prevent chrono's silent century misinterpretation.
 #[repr(transparent)]
 #[derive(
     Copy,
@@ -168,8 +173,8 @@ impl DateValue {
     /// short year (`"26-08-22"` parses as year 26 CE, not rejected).
     /// Deliberately does not check what follows the digits: a well-formed
     /// 4-digit year with an unrecognized separator (`"2026/08/22"`) should
-    /// reach the format cascade and fail as [`DateError::Unparseable`], not
-    /// be misclassified as [`DateError::InvalidYearDigits`].
+    /// reach the format cascade and fail as [`DateError::Unparseable`], not be
+    /// misclassified as [`DateError::InvalidYearDigits`].
     #[must_use]
     pub(crate) fn has_four_digit_year(s: &str) -> bool {
         let bytes = s.as_bytes();
@@ -291,9 +296,11 @@ impl FromStr for DateValue {
     }
 }
 
-/// A parsed UTC date-time.
+/// Parsed UTC date-time instant.
 ///
-/// Relocated from `src/file.rs`'s `Timestamp`.
+/// Wraps [`DateTime<Utc>`] as a newtype, enforcing ISO-8601/RFC-3339
+/// recognition through [`DateTimeValue::parse_iso`]. All values are
+/// UTC-normalized; offset-bearing input is converted to UTC at parse time.
 #[repr(transparent)]
 #[derive(
     Copy,
@@ -505,8 +512,7 @@ impl DateTimeValue {
         self.0.checked_sub_signed(delta).map(Self)
     }
 
-    /// Compares this date-time against `date`, coercing `date` to midnight
-    /// UTC.
+    /// Compares this date-time against `date`, coercing `date` to midnight UTC.
     #[cfg_attr(
         not(test),
         expect(
@@ -586,20 +592,24 @@ impl FromStr for DateTimeValue {
     }
 }
 
-/// Reports why a date/date-time string, or a [`DateTimeValue::format_with`]/
-/// [`DateValue::format_with`] pattern, could not be parsed or formatted.
+/// Error type for date/date-time parse and formatting failures.
+///
+/// Returned by [`DateValue::parse_iso`], [`DateTimeValue::parse_iso`],
+/// [`DateValue::format_with`], and [`DateTimeValue::format_with`].
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum DateError {
-    /// No accepted date/time shape matched `input`. Wraps the last-attempted
-    /// format's [`chrono::ParseError`].
+    /// No accepted date/time shape matched `input`.
+    ///
+    /// Wraps the last-attempted format's [`chrono::ParseError`].
     #[error("`{input}` is not a recognized date/time: {source}")]
     Unparseable {
         input: Box<str>,
         #[source]
         source: chrono::ParseError,
     },
-    /// `input`'s year segment is not exactly 4 ASCII digits (chrono's `%Y`
-    /// accepts fewer, silently misreading the year).
+    /// `input`'s year segment is not exactly 4 ASCII digits.
+    ///
+    /// chrono's `%Y` accepts fewer digits, silently misreading the year.
     #[error("`{input}` does not have a 4-digit year")]
     InvalidYearDigits {
         input: Box<str>,
@@ -787,9 +797,8 @@ mod tests {
         #[test]
         fn accepts_a_five_digit_year_prefix_as_having_four_digits() {
             // has_four_digit_year only checks the first 4 bytes; a longer
-            // numeric prefix still passes this guard and is rejected later,
-            // by the format cascade, as Unparseable rather than
-            // InvalidYearDigits.
+            // numeric prefix still passes this guard and is rejected later, by
+            // the format cascade, as Unparseable rather than InvalidYearDigits.
             assert!(DateValue::has_four_digit_year("20265-01-01"));
             assert!(matches!(
                 DateValue::parse_iso("20265-01-01"),
