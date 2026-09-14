@@ -46,6 +46,8 @@ pub enum NoteFieldValue {
     /// ISO `YYYY-MM-DDThh:mm:ss` date-time.
     DateTime(DateTimeValue),
     /// Duration literal in source spelling, such as `4h15m` or `4 yrs, 6 wks`.
+    /// Equality and ordering compare by total parsed seconds, not source
+    /// spelling.
     Duration(DurationValue),
     /// A link parsed from wikilink or Markdown link syntax.
     Link(Link),
@@ -326,6 +328,49 @@ mod tests {
                     NoteFieldValue::String("42".to_owned())
                 )]))
             );
+        }
+    }
+
+    mod equality {
+        use pretty_assertions::{assert_eq, assert_ne};
+
+        use super::*;
+
+        #[test]
+        fn returns_true_for_identical_note_field_values() {
+            assert_eq!(
+                NoteFieldValue::Number(1.0),
+                NoteFieldValue::Number(1.0)
+            );
+        }
+
+        #[test]
+        fn returns_false_for_different_note_field_values() {
+            assert_ne!(
+                NoteFieldValue::Number(1.0),
+                NoteFieldValue::Number(2.0)
+            );
+        }
+
+        #[test]
+        fn returns_false_for_a_string_literal_against_a_typed_date_field() {
+            assert_ne!(
+                NoteFieldValue::String("2024-01-01".into()),
+                NoteFieldValue::Date(
+                    DateValue::parse_iso("2024-01-01").expect("valid date")
+                )
+            );
+        }
+
+        #[test]
+        fn returns_true_for_semantically_equivalent_durations() {
+            let a = NoteFieldValue::Duration(
+                DurationValue::parse("1h 30m").expect("valid duration"),
+            );
+            let b = NoteFieldValue::Duration(
+                DurationValue::parse("90m").expect("valid duration"),
+            );
+            assert_eq!(a, b);
         }
     }
 

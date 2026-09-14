@@ -133,9 +133,7 @@ impl QueryFieldValueRef<'_> {
             Self::Object(value) => {
                 matches!(literal, NoteFieldValue::Object(other) if *value == other)
             }
-            Self::List(_) | Self::Owned(_) => {
-                is_field_equal(&self.to_owned_value(), literal)
-            }
+            Self::List(_) | Self::Owned(_) => self.to_owned_value() == *literal,
         }
     }
 
@@ -249,16 +247,6 @@ impl QueryListValueRef<'_> {
     }
 }
 
-/// Applies filter equality semantics to metadata values.
-///
-/// Delegates to structural equality: [`NoteFieldValue::Duration`] compares by
-/// parsed seconds (so `1h 30m` equals `90m`), and every other variant by
-/// value. Does not cross-match a `String` against a typed `Duration`/`Date`
-/// literal by text; callers needing that fall back to `as_str()` comparison.
-fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
-    a == b
-}
-
 /// Matches exact tags and descendants, so `#book/fiction` satisfies `#book`.
 fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
     item == target_str
@@ -272,7 +260,7 @@ fn is_tag_or_value_matching(
     target: &NoteFieldValue,
     target_str: Option<&str>,
 ) -> bool {
-    if is_field_equal(item, target) {
+    if item == target {
         return true;
     }
     let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
@@ -608,47 +596,6 @@ mod tests {
                 QueryFieldValueRef::from(&NoteFieldValue::DateTime(datetime)),
                 QueryFieldValueRef::DateTime(d) if d == datetime
             ));
-        }
-    }
-
-    mod equality {
-
-        use super::*;
-        #[test]
-        fn returns_true_for_identical_note_field_values() {
-            assert!(is_field_equal(
-                &NoteFieldValue::Number(1.0),
-                &NoteFieldValue::Number(1.0)
-            ));
-        }
-
-        #[test]
-        fn returns_false_for_different_note_field_values() {
-            assert!(!is_field_equal(
-                &NoteFieldValue::Number(1.0),
-                &NoteFieldValue::Number(2.0)
-            ));
-        }
-
-        #[test]
-        fn returns_false_for_a_string_literal_against_a_typed_date_field() {
-            assert!(!is_field_equal(
-                &NoteFieldValue::String("2024-01-01".into()),
-                &NoteFieldValue::Date(
-                    DateValue::parse_iso("2024-01-01").expect("valid date")
-                )
-            ));
-        }
-
-        #[test]
-        fn returns_true_for_semantically_equivalent_durations() {
-            let a = NoteFieldValue::Duration(
-                DurationValue::parse("1h 30m").expect("valid duration"),
-            );
-            let b = NoteFieldValue::Duration(
-                DurationValue::parse("90m").expect("valid duration"),
-            );
-            assert!(is_field_equal(&a, &b));
         }
     }
 }

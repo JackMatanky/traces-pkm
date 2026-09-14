@@ -962,12 +962,11 @@ mod tests {
             let spellings: Vec<String> = grouped
                 .iter()
                 .map(|row| {
-                    let NoteFieldValue::Duration(dv) =
-                        row.field("spent").expect("valid path")
-                    else {
-                        panic!("expected a duration field");
-                    };
-                    dv.as_str().to_owned()
+                    row.field("spent")
+                        .expect("valid path")
+                        .as_str()
+                        .expect("duration field has text")
+                        .to_owned()
                 })
                 .collect();
             assert_eq!(spellings, ["10m", "1h 30m", "90m"]);
