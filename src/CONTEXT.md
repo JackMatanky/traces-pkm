@@ -51,6 +51,14 @@ A parsed, always UTC-normalized date-time instant. Shares `src/date.rs`'s
 parser with Date and compares across it by coercing a Date to midnight UTC.
 *Avoid*: Timestamp, instant
 
+#### Duration
+
+A parsed elapsed-time span (`4h15m`, `4 yrs, 6 wks`) carrying both its total
+seconds and original source spelling. `src/duration.rs` is the crate's single
+owner of duration recognition, parsing, and unit registry; compares and hashes
+by total seconds, not spelling, so `1h 30m` and `90m` are the same value.
+*Avoid*: elapsed time, time span, interval
+
 ### Traversal & State
 
 #### Directory Tree
