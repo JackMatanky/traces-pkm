@@ -38,6 +38,19 @@ The universal filesystem metadata captured for every regular file in a project:
 relative path, size, timestamps, and format classification.
 *Avoid*: fs entry, file metadata, file record
 
+#### Date
+
+A parsed calendar date with no time-of-day component. `src/date.rs` is the
+crate's single owner of ISO-8601 date recognition, parsing, and formatting;
+every date-shaped string funnels through it.
+*Avoid*: NaiveDate, calendar value
+
+#### Date-Time
+
+A parsed, always UTC-normalized date-time instant. Shares `src/date.rs`'s
+parser with Date and compares across it by coercing a Date to midnight UTC.
+*Avoid*: Timestamp, instant
+
 ### Traversal & State
 
 #### Directory Tree

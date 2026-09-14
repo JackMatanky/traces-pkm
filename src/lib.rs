@@ -89,7 +89,9 @@ pub mod cli;
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use config::{Config, ConfigService, TaskConfig, TrustRequest};
-pub(crate) use date::{DateTimeValue, DateValue};
+pub(crate) use date::{
+    DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
+};
 pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,

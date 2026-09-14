@@ -51,7 +51,7 @@ HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
 
 [task_config]
-global_inputs = ["mise.toml"]
+global_inputs = ["mise.toml", "Cargo.lock"]
 
 [task_config.cache]
 enabled = true
@@ -66,10 +66,12 @@ bench = ["Cargo.toml", "Cargo.lock", "src/**/*.rs", "benches/**/*.rs"]
 
 [tasks.setup]
 description = "Install git hooks via hk"
+outputs = []
 run = "hk install --mise"
 
 [tasks.clean]
 description = "Clean Cargo artifacts and optional generated reports"
+outputs = []
 confirm = "Clean Cargo artifacts and reports?"
 usage = '''
 flag "--dry-run" help="Show what would be deleted"
@@ -166,18 +168,20 @@ fi
 raw_args = true
 description = "Fast compile check, then hk project checks"
 alias = "c"
+outputs = []
 run = ["cargo check --workspace", "hk check"]
 
 [tasks.build]
 raw_args = true
 description = "Debug build"
 alias = "b"
-run = "cargo build"
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
+run = "cargo build"
 
 [tasks.watch]
 description = "Watch Cargo check/test on changes"
+outputs = []
 run = "cargo watch -x check -x test"
 
 # ------------------------------------------------------------- #
@@ -187,6 +191,7 @@ run = "cargo watch -x check -x test"
 [tasks.fmt]
 description = "Format all Rust code (nightly)"
 alias = "f"
+outputs = []
 usage = 'flag "--check" help="Check formatting without modifying files"'
 run = '''
 #!/bin/bash
@@ -200,12 +205,15 @@ cargo fmt "${args[@]}"
 [tasks.fix]
 raw_args = true
 description = "Auto-fix hk formatting issues"
+outputs = []
 run = "hk fix"
 
 [tasks.lint]
 description = "Strict clippy: workspace, all targets, all features. Auto-fixes 18 common lints unless --no-fix."
 alias = "l"
 depends = ["fmt"]
+sources = ["@group:rust"]
+outputs = []
 usage = '''
 flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
 flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
@@ -266,6 +274,7 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 [tasks.audit]
 raw_args = true
 description = "Run cargo deny audit"
+outputs = []
 run = "cargo deny check"
 
 # ------------------------------------------------------------- #
@@ -275,6 +284,8 @@ run = "cargo deny check"
 [tasks.test]
 description = "Run tests with nextest (+ doc-tests by default)"
 alias = "t"
+sources = ["@group:rust"]
+outputs = []
 usage = '''
 flag "--feature <feature>" help="Enable a specific feature" default="all"
 flag "--docs" negate="--no-docs" default=#true {
@@ -509,6 +520,8 @@ fi
 
 [tasks.coverage]
 description = "Code coverage with tarpaulin (outputs tarpaulin-report.html)"
+sources = ["@group:rust", "tarpaulin.toml"]
+outputs = ["tarpaulin-report.html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
@@ -525,17 +538,16 @@ if [[ -n "${usage_mod:-}" ]]; then
 fi
 cargo tarpaulin "${args[@]}"
 '''
-sources = ["@group:rust"]
-outputs = ["tarpaulin-report.html"]
 
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
-run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 outputs = ["lcov.info"]
 sources = ["@group:rust", "tarpaulin.toml"]
+run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
+outputs = []
 usage = '''
 flag "-j --jobs <jobs>" default="4" {
   help "Number of cargo build/test jobs in parallel"
@@ -573,6 +585,7 @@ depends_post = ["mutants-report"]
 
 [tasks.mutants-report]
 description = "Generate a structured Markdown report from missed mutants"
+outputs = []
 usage = '''
 flag "-i --input <input>" default="mutants.out/missed.txt" {
   help "Path to missed.txt input file"
@@ -621,17 +634,17 @@ EOF
 raw_args = true
 description = "Release build"
 alias = "r"
-run = "cargo build --release"
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
+run = "cargo build --release"
 
 [tasks.doc]
 raw_args = true
 description = "Build documentation (warnings as errors)"
 env = { RUSTDOCFLAGS = "-D warnings" }
-run = "cargo doc --no-deps"
 sources = ["@group:rust"]
 outputs = ["target/doc"]
+run = "cargo doc --no-deps"
 
 [tasks.verify]
 description = "Full verification gate: check, lint, all tests"

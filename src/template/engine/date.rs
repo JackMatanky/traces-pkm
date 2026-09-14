@@ -34,17 +34,10 @@ use minijinja::{
 use num_traits::ToPrimitive as _;
 
 use super::error::TemplateEngineResult;
-use crate::{DateTimeValue, DateValue, DurationUnit};
-
-/// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
-///
-/// This is an ISO-8601-style date (`YYYY-MM-DD`) and the default output shape
-/// [`format_precise`] uses for a date-only input.
-const DEFAULT_FORMAT: &str = "%Y-%m-%d";
-
-/// [`format_precise`]'s output shape for an input that carried a time
-/// component.
-const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+use crate::{
+    DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
+    DurationUnit,
+};
 
 /// Method names `date` exposes, for [`DateOps::enumerate`].
 const METHODS: &[&str] =
@@ -163,7 +156,7 @@ enum DatePrecision {
 impl DatePrecision {
     const fn format(self) -> &'static str {
         match self {
-            Self::Date => DEFAULT_FORMAT,
+            Self::Date => DEFAULT_DATE_FORMAT,
             Self::DateTime => DEFAULT_DATETIME_FORMAT,
         }
     }
@@ -210,8 +203,8 @@ impl ParsedDate {
 }
 
 /// Extracts the shared `format="..."` kwarg every `date.*` namespace method
-/// takes, defaulting to [`DEFAULT_FORMAT`], and rejects any other kwarg via
-/// [`Kwargs::assert_all_used`].
+/// takes, defaulting to [`DEFAULT_DATE_FORMAT`], and rejects any other kwarg
+/// via [`Kwargs::assert_all_used`].
 ///
 /// This is the one place all five
 /// `now`/`today`/`tomorrow`/`yesterday`/`from_timestamp` closures decide how
@@ -225,7 +218,7 @@ impl ParsedDate {
 ///   `format`.
 fn format_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<&str> {
     let format =
-        kwargs.get::<Option<&str>>("format")?.unwrap_or(DEFAULT_FORMAT);
+        kwargs.get::<Option<&str>>("format")?.unwrap_or(DEFAULT_DATE_FORMAT);
     kwargs.assert_all_used()?;
     Ok(format)
 }
@@ -276,15 +269,16 @@ fn format_with(
 /// Re-serializes `dt` at the given `precision`.
 ///
 /// Uses [`DEFAULT_DATETIME_FORMAT`] when the original input carried a time
-/// component, [`DEFAULT_FORMAT`] otherwise. Every arithmetic filter uses this
-/// for its output, so a date-only string never grows a fabricated `00:00:00`,
-/// and a datetime string never silently loses its time-of-day.
+/// component, [`DEFAULT_DATE_FORMAT`] otherwise. Every arithmetic filter uses
+/// this for its output, so a date-only string never grows a fabricated
+/// `00:00:00`, and a datetime string never silently loses its time-of-day.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if formatting unexpectedly fails. This is
-///   unreachable in practice because the format is always [`DEFAULT_FORMAT`] or
-///   [`DEFAULT_DATETIME_FORMAT`], both valid strftime specifiers.
+///   unreachable in practice because the format is always
+///   [`DEFAULT_DATE_FORMAT`] or [`DEFAULT_DATETIME_FORMAT`], both valid
+///   strftime specifiers.
 fn format_precise(
     dt: NaiveDateTime,
     precision: DatePrecision,
@@ -1143,7 +1137,7 @@ mod tests {
         #[case::preserves_the_time_component(
             "2026-07-23 14:30",
             "add_days(1)",
-            "2026-07-24 14:30:00"
+            "2026-07-24T14:30:00"
         )]
         fn shifts_a_piped_date(
             #[case] input: &str,
@@ -1266,7 +1260,7 @@ mod tests {
         #[case::end_of_month_preserves_the_time_component(
             "2024-02-15 10:00",
             "end_of_month",
-            "2024-02-29 10:00:00"
+            "2024-02-29T10:00:00"
         )]
         fn shifts_a_piped_date(
             #[case] input: &str,
@@ -1502,7 +1496,7 @@ mod tests {
                 )
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "2026-08-26-2028-07-26-2026-07-26 15:00:00");
+            assert_eq!(rendered, "2026-08-26-2028-07-26-2026-07-26T15:00:00");
         }
 
         #[test]

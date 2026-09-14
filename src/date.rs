@@ -21,10 +21,10 @@ use serde::{Deserialize, Serialize};
 use crate::duration::DurationValue;
 
 /// `DateTimeValue`'s canonical output format: `2026-07-29T14:30:00`.
-const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
+pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// `DateValue`'s canonical output format: `2026-07-29`.
-const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
+pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
 
 /// Recognized date-time input format shapes tried in order by
 /// [`DateTimeValue::parse_iso`].
