@@ -6,7 +6,7 @@
 //! tags.
 
 use crate::{
-    DateValue,
+    DateValue, DurationValue,
     note::{Link, NoteFieldValue, cursor::SourceText},
 };
 
@@ -147,53 +147,14 @@ impl<'a> InlineValueParser<'a> {
 
     /// Parses a duration atom at `pos`.
     ///
-    /// Recognizes one or more `<number><unit>` parts, such as `4h15m` or
-    /// `4 yrs, 6 wks`. Parts are validated by [`Self::parse_duration_part_end`]
-    /// and may be comma- and whitespace-separated. Returns the raw matched text
-    /// as [`NoteFieldValue::Duration`].
+    /// Recognizes one or more `<number><unit>` parts via
+    /// [`DurationValue::parse_prefix`] and returns
+    /// [`NoteFieldValue::Duration`].
     fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
-        let mut end = self.parse_duration_part_end(pos)?;
-        loop {
-            let separator = self.skip_whitespace(end);
-            if separator == self.source.len() {
-                let raw = self.source.get(pos..end)?;
-                return Some((NoteFieldValue::Duration(raw.to_owned()), end));
-            }
-            let next = if self.source.from(separator)?.starts_with(',') {
-                self.skip_whitespace(self.source.advance(separator, 1))
-            } else {
-                separator
-            };
-            if let Some(part_end) = self.parse_duration_part_end(next) {
-                end = part_end;
-            } else if separator == end {
-                let raw = self.source.get(pos..end)?;
-                return Some((NoteFieldValue::Duration(raw.to_owned()), end));
-            } else {
-                return None;
-            }
-        }
-    }
-
-    /// Finds the end offset of one `<number><unit>` duration part at `pos`.
-    ///
-    /// Returns `None` if `pos` is not a number followed by a recognized
-    /// duration unit.
-    fn parse_duration_part_end(&self, pos: usize) -> Option<usize> {
-        let number_end = self.parse_number_end(pos)?;
-        let unit_start = self.skip_whitespace(number_end);
-        if unit_start == self.source.len() {
-            return None;
-        }
-        let unit_end = self
-            .source
-            .from(unit_start)?
-            .char_indices()
-            .take_while(|(_, ch)| ch.is_ascii_alphabetic())
-            .map(|(offset, ch)| self.source.token_end(unit_start, offset, ch))
-            .last()?;
-        let unit = self.source.get(unit_start..unit_end)?;
-        crate::DurationUnit::parse(unit).is_some().then_some(unit_end)
+        let tail = self.source.from(pos)?;
+        let (dv, consumed) = DurationValue::parse_prefix(tail)?;
+        let end = self.source.advance(pos, consumed);
+        Some((NoteFieldValue::Duration(dv), end))
     }
 
     /// Parses a case-insensitive `true`/`false` keyword atom at `pos`.
@@ -243,8 +204,7 @@ impl<'a> InlineValueParser<'a> {
 
     /// Finds the end offset of a numeric token at `pos`: digits and the
     /// characters `+-.eE`, without validating that they form a valid `f64`.
-    /// Callers ([`Self::parse_number_at`], [`Self::parse_duration_part_end`])
-    /// check that separately.
+    /// [`Self::parse_number_at`] checks that separately.
     fn parse_number_end(&self, pos: usize) -> Option<usize> {
         self.source
             .from(pos)?
@@ -427,8 +387,8 @@ mod tests {
             assert!(
                 matches!(
                     &result,
-                    Some((NoteFieldValue::Duration(s), _))
-                        if s == "1h 30m"
+                    Some((NoteFieldValue::Duration(dv), _))
+                        if dv.as_str() == "1h 30m"
                 ),
                 "1h 30m must parse as duration"
             );
@@ -442,8 +402,8 @@ mod tests {
             assert!(
                 matches!(
                     &result,
-                    Some((NoteFieldValue::Duration(s), _))
-                        if s == "1h30m"
+                    Some((NoteFieldValue::Duration(dv), _))
+                        if dv.as_str() == "1h30m"
                 ),
                 "1h30m must parse as duration"
             );

@@ -702,6 +702,18 @@ mod tests {
         }
 
         #[test]
+        fn matches_duration_equality_across_differing_spellings() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nspent: 90m\n---"),
+                ("b.md", "---\nspent: 45m\n---"),
+            ]);
+            let filtered =
+                outcome.filter("spent == \"1h 30m\"").expect("valid filter");
+            assert_eq!(names(&filtered), ["a"]);
+        }
+
+        #[test]
         fn evaluates_date_only_literal_at_midnight_utc() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let p1 = temp.path().join("jan1.md");

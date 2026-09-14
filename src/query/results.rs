@@ -948,6 +948,31 @@ mod tests {
         }
 
         #[test]
+        fn clusters_semantically_equivalent_durations_despite_differing_spelling()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nspent: 1h 30m\n---"),
+                ("b.md", "---\nspent: 10m\n---"),
+                ("c.md", "---\nspent: 90m\n---"),
+            ]);
+
+            let grouped = outcome.group_by("spent").expect("valid group_by");
+
+            let spellings: Vec<String> = grouped
+                .iter()
+                .map(|row| {
+                    row.field("spent")
+                        .expect("valid path")
+                        .as_str()
+                        .expect("duration field has text")
+                        .to_owned()
+                })
+                .collect();
+            assert_eq!(spellings, ["10m", "1h 30m", "90m"]);
+        }
+
+        #[test]
         fn rejects_malformed_field_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for(temp.path(), "body");

@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::Link;
-use crate::{DateTimeValue, DateValue, field::FieldValueRef};
+use crate::{DateTimeValue, DateValue, DurationValue, field::FieldValueRef};
 
 /// A metadata value parsed from YAML frontmatter or inline field text.
 ///
@@ -46,7 +46,9 @@ pub enum NoteFieldValue {
     /// ISO `YYYY-MM-DDThh:mm:ss` date-time.
     DateTime(DateTimeValue),
     /// Duration literal in source spelling, such as `4h15m` or `4 yrs, 6 wks`.
-    Duration(String),
+    /// Equality and ordering compare by total parsed seconds, not source
+    /// spelling.
+    Duration(DurationValue),
     /// A link parsed from wikilink or Markdown link syntax.
     Link(Link),
     /// Ordered list value.
@@ -74,7 +76,8 @@ impl NoteFieldValue {
     #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Self::String(s) | Self::Duration(s) => Some(s),
+            Self::String(s) => Some(s),
+            Self::Duration(dv) => Some(dv.as_str()),
             _ => None,
         }
     }
@@ -113,8 +116,11 @@ impl NoteFieldValue {
 
 /// Converts a borrowed field value into a [`NoteFieldValue`].
 ///
-/// Handles note-specific post-classification: empty strings become null,
-/// wikilink syntax becomes [`NoteFieldValue::Link`].
+/// Handles note-specific post-classification of scalar strings, applied
+/// recursively through lists and objects: empty strings become null,
+/// wikilink syntax becomes [`NoteFieldValue::Link`], and any remaining
+/// duration-shaped spelling (e.g. `4h15m`) becomes
+/// [`NoteFieldValue::Duration`].
 impl From<FieldValueRef<'_>> for NoteFieldValue {
     #[inline]
     fn from(value: FieldValueRef<'_>) -> Self {
@@ -137,6 +143,8 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
                     Self::Null
                 } else if let Some(link) = Link::parse_wikilink(trimmed) {
                     Self::Link(link)
+                } else if let Ok(dv) = DurationValue::parse(trimmed) {
+                    Self::Duration(dv)
                 } else {
                     Self::String(s.into_owned())
                 }
@@ -254,6 +262,116 @@ mod tests {
                 )]))
             );
         }
+
+        #[test]
+        fn converts_duration_strings_into_duration_values() {
+            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+                "
+                scalar: 1h 30m
+                list: [1h, 30m]
+                map:
+                  dev: 4h
+                ",
+            )
+            .expect("valid yaml");
+
+            assert_eq!(
+                NoteFieldValue::from(FieldValueRef::from(yaml)),
+                NoteFieldValue::Object(IndexMap::from_iter([
+                    (
+                        "list".to_owned(),
+                        NoteFieldValue::List(
+                            vec![
+                                NoteFieldValue::Duration(
+                                    DurationValue::parse("1h")
+                                        .expect("valid duration"),
+                                ),
+                                NoteFieldValue::Duration(
+                                    DurationValue::parse("30m")
+                                        .expect("valid duration"),
+                                ),
+                            ]
+                            .into(),
+                        ),
+                    ),
+                    (
+                        "map".to_owned(),
+                        NoteFieldValue::Object(IndexMap::from_iter([(
+                            "dev".to_owned(),
+                            NoteFieldValue::Duration(
+                                DurationValue::parse("4h")
+                                    .expect("valid duration"),
+                            ),
+                        )])),
+                    ),
+                    (
+                        "scalar".to_owned(),
+                        NoteFieldValue::Duration(
+                            DurationValue::parse("1h 30m")
+                                .expect("valid duration"),
+                        ),
+                    ),
+                ]))
+            );
+        }
+
+        #[test]
+        fn keeps_a_bare_number_string_as_string_not_duration() {
+            let yaml =
+                serde_yaml::from_str::<serde_yaml::Value>(r#"code: "42""#)
+                    .expect("valid yaml");
+
+            assert_eq!(
+                NoteFieldValue::from(FieldValueRef::from(yaml)),
+                NoteFieldValue::Object(IndexMap::from_iter([(
+                    "code".to_owned(),
+                    NoteFieldValue::String("42".to_owned())
+                )]))
+            );
+        }
+    }
+
+    mod equality {
+        use pretty_assertions::{assert_eq, assert_ne};
+
+        use super::*;
+
+        #[test]
+        fn returns_true_for_identical_note_field_values() {
+            assert_eq!(
+                NoteFieldValue::Number(1.0),
+                NoteFieldValue::Number(1.0)
+            );
+        }
+
+        #[test]
+        fn returns_false_for_different_note_field_values() {
+            assert_ne!(
+                NoteFieldValue::Number(1.0),
+                NoteFieldValue::Number(2.0)
+            );
+        }
+
+        #[test]
+        fn returns_false_for_a_string_literal_against_a_typed_date_field() {
+            assert_ne!(
+                NoteFieldValue::String("2024-01-01".into()),
+                NoteFieldValue::Date(
+                    DateValue::parse_iso("2024-01-01").expect("valid date")
+                )
+            );
+        }
+
+        #[test]
+        fn returns_true_for_semantically_equivalent_durations() {
+            let a = NoteFieldValue::Duration(
+                DurationValue::parse("1h 30m").expect("valid duration"),
+            );
+            let b = NoteFieldValue::Duration(
+                DurationValue::parse("90m").expect("valid duration"),
+            );
+            assert_eq!(a, b);
+        }
     }
 
     mod accessors {
@@ -269,7 +387,9 @@ mod tests {
 
         #[test]
         fn as_str_returns_inner_str_for_duration_variant() {
-            let dur_val = NoteFieldValue::Duration("4h".to_owned());
+            let dur_val = NoteFieldValue::Duration(
+                DurationValue::parse("4h").expect("valid duration"),
+            );
             assert_eq!(dur_val.as_str(), Some("4h"));
         }
 
