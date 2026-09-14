@@ -70,6 +70,11 @@ impl DateTimeFormat {
     }
 
     /// Attempts to parse `s` according to this format.
+    ///
+    /// # Errors
+    ///
+    /// Returns `chrono`'s [`chrono::ParseError`] if `s` does not match this
+    /// format's expected shape.
     pub(crate) fn parse(
         self,
         s: &str,
@@ -108,6 +113,11 @@ impl DateFormat {
     }
 
     /// Attempts to parse `s` according to this format.
+    ///
+    /// # Errors
+    ///
+    /// Returns `chrono`'s [`chrono::ParseError`] if `s` does not match this
+    /// format's expected shape.
     pub(crate) fn parse(
         self,
         s: &str,
@@ -155,7 +165,7 @@ pub struct DateValue(NaiveDate);
 pub enum DateError {
     /// No accepted date/time shape matched `input`. Wraps the last-attempted
     /// format's [`chrono::ParseError`].
-    #[error("'{input}' is not a recognized date/time: {source}")]
+    #[error("`{input}` is not a recognized date/time: {source}")]
     Unparseable {
         input: Box<str>,
         #[source]
@@ -163,12 +173,12 @@ pub enum DateError {
     },
     /// `input`'s year segment is not exactly 4 ASCII digits (chrono's `%Y`
     /// accepts fewer, silently misreading the year).
-    #[error("'{input}' does not have a 4-digit year")]
+    #[error("`{input}` does not have a 4-digit year")]
     InvalidYearDigits {
         input: Box<str>,
     },
     /// `pattern` is not a valid strftime specifier.
-    #[error("'{pattern}' is not a valid format pattern")]
+    #[error("`{pattern}` is not a valid format pattern")]
     InvalidPattern {
         pattern: Box<str>,
     },
@@ -226,9 +236,10 @@ impl DateTimeValue {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#05, split out alongside \
-                      to_datetime_string/to_date_string which field \
-                      resolution uses"
+                      API in index-query#05; to_datetime_string (used by \
+                      field resolution's DateTime variant) and \
+                      DateValue::to_date_string (used by field resolution's \
+                      Date variant) cover the shipping formatting paths"
         )
     )]
     #[inline]
@@ -276,9 +287,10 @@ impl DateTimeValue {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#05, added alongside \
-                      to_datetime_string/to_date_string which field \
-                      resolution uses"
+                      API in index-query#05; to_datetime_string (used by \
+                      field resolution's DateTime variant) and \
+                      DateValue::to_date_string (used by field resolution's \
+                      Date variant) cover the shipping formatting paths"
         )
     )]
     #[inline]
@@ -324,7 +336,7 @@ impl DateTimeValue {
         )
     )]
     pub(crate) fn format_with(
-        &self,
+        self,
         pattern: &str,
     ) -> Result<String, DateError> {
         use std::fmt::Write as _;
@@ -349,7 +361,8 @@ impl DateTimeValue {
                       note); kept for future direct-arithmetic callers"
         )
     )]
-    pub(crate) fn checked_add(&self, duration: DurationValue) -> Option<Self> {
+    #[must_use]
+    pub(crate) fn checked_add(self, duration: DurationValue) -> Option<Self> {
         let delta = TimeDelta::try_from(duration).ok()?;
         self.0.checked_add_signed(delta).map(Self)
     }
@@ -363,7 +376,8 @@ impl DateTimeValue {
             reason = "no current caller outside tests; see checked_add"
         )
     )]
-    pub(crate) fn checked_sub(&self, duration: DurationValue) -> Option<Self> {
+    #[must_use]
+    pub(crate) fn checked_sub(self, duration: DurationValue) -> Option<Self> {
         let delta = TimeDelta::try_from(duration).ok()?;
         self.0.checked_sub_signed(delta).map(Self)
     }
@@ -380,16 +394,19 @@ impl DateTimeValue {
                       Date/DateTime directly"
         )
     )]
-    pub(crate) fn cmp_date(&self, date: DateValue) -> std::cmp::Ordering {
+    #[must_use]
+    pub(crate) fn cmp_date(self, date: DateValue) -> std::cmp::Ordering {
         self.0.cmp(&Self::from(date).0)
     }
 
     /// Returns `true` if this date-time is exactly midnight UTC on `date`.
-    pub(crate) fn is_equal_to_date(&self, date: DateValue) -> bool {
+    #[must_use]
+    pub(crate) fn is_equal_to_date(self, date: DateValue) -> bool {
         self.0 == Self::from(date).0
     }
 
     /// Returns the wrapped [`DateTime<Utc>`].
+    #[must_use]
     pub(crate) const fn into_inner(self) -> DateTime<Utc> {
         self.0
     }
@@ -434,6 +451,7 @@ impl DateValue {
     /// 4-digit year with an unrecognized separator (`"2026/08/22"`) should
     /// reach the format cascade and fail as [`DateError::Unparseable`], not
     /// be misclassified as [`DateError::InvalidYearDigits`].
+    #[must_use]
     pub(crate) fn has_four_digit_year(s: &str) -> bool {
         let bytes = s.as_bytes();
         bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
@@ -446,6 +464,7 @@ impl DateValue {
     /// committing to [`DateValue::parse_iso`]. Does not validate calendar
     /// values (`"9999-99-99"` passes this check but fails the real parse); the
     /// real parse is always the authoritative decision.
+    #[must_use]
     pub(crate) fn is_iso_shape(s: &str) -> bool {
         let bytes = s.as_bytes();
         bytes.len() >= 10
@@ -524,6 +543,7 @@ impl DateValue {
     }
 
     /// Returns the wrapped [`NaiveDate`].
+    #[must_use]
     pub(crate) const fn into_inner(self) -> NaiveDate {
         self.0
     }
@@ -565,6 +585,19 @@ mod tests {
                 "2026-07-29 14:30:05 UTC is a valid, unambiguous instant",
             ),
         )
+    }
+
+    mod constructor {
+        use super::*;
+
+        #[test]
+        fn now_produces_an_instant_close_to_the_system_clock() {
+            let before = Utc::now();
+            let produced = DateTimeValue::now();
+            let after = Utc::now();
+            assert!(produced.into_inner() >= before);
+            assert!(produced.into_inner() <= after);
+        }
     }
 
     mod formatting {
@@ -619,10 +652,19 @@ mod tests {
                 )
             );
         }
+
+        #[test]
+        fn extracts_the_calendar_date_discarding_time_of_day() {
+            let extracted = fixed_datetime().date();
+            let expected =
+                DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert_eq!(extracted, expected);
+        }
     }
 
     mod parsing {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -643,33 +685,30 @@ mod tests {
             assert!(!DateValue::is_iso_shape("2026/07/29"));
         }
 
-        #[test]
-        fn accepts_all_six_datetime_shapes() {
-            for input in [
-                "2026-07-29T14:30:00Z",
-                "2026-07-29T14:30:00+00:00",
-                "2026-07-29T14:30:00.123",
-                "2026-07-29T14:30:00",
-                "2026-07-29T14:30",
-                "2026-07-29 14:30:00",
-            ] {
-                assert!(
-                    DateTimeValue::parse_iso(input).is_ok(),
-                    "{input} should parse"
-                );
-            }
-            assert!(DateTimeValue::parse_iso("2026-07-29 14:30").is_ok());
+        #[rstest]
+        #[case::has_offset_z("2026-07-29T14:30:00Z")]
+        #[case::has_numeric_offset("2026-07-29T14:30:00+00:00")]
+        #[case::has_fractional_seconds("2026-07-29T14:30:00.123")]
+        #[case::t_separated_with_seconds("2026-07-29T14:30:00")]
+        #[case::t_separated_minute_only("2026-07-29T14:30")]
+        #[case::space_separated_with_seconds("2026-07-29 14:30:00")]
+        #[case::space_separated_minute_only("2026-07-29 14:30")]
+        fn accepts_every_datetime_shape(#[case] input: &str) {
+            assert!(
+                DateTimeValue::parse_iso(input).is_ok(),
+                "{input} should parse"
+            );
         }
 
         #[test]
         fn accepts_both_date_shapes() {
             assert!(DateValue::parse_iso("2026-07-29").is_ok());
-            assert_eq!(
-                DateValue::parse_iso("2026-08").expect("year-month parses"),
-                DateValue(
-                    NaiveDate::from_ymd_opt(2026, 8, 1).expect("valid date")
-                )
+            let year_month =
+                DateValue::parse_iso("2026-08").expect("year-month parses");
+            let expected = DateValue(
+                NaiveDate::from_ymd_opt(2026, 8, 1).expect("valid date"),
             );
+            assert_eq!(year_month, expected);
         }
 
         #[test]
@@ -677,40 +716,93 @@ mod tests {
             assert!(DateValue::parse_iso("2026-8-22").is_ok());
         }
 
-        #[test]
-        fn rejects_a_short_year_with_invalid_year_digits() {
-            assert!(matches!(
-                DateValue::parse_iso("26-08-22"),
-                Err(DateError::InvalidYearDigits { .. })
-            ));
-            assert!(matches!(
-                DateTimeValue::parse_iso("26-08-22T14:30:00"),
-                Err(DateError::InvalidYearDigits { .. })
-            ));
+        #[rstest]
+        #[case::too_short("202")]
+        #[case::empty("")]
+        #[case::non_digit_year("abcd-01-01")]
+        fn rejects_a_missing_four_digit_year(#[case] input: &str) {
+            assert!(!DateValue::has_four_digit_year(input));
         }
 
         #[test]
-        fn rejects_an_unrecognized_shape_as_unparseable() {
+        fn accepts_a_five_digit_year_prefix_as_having_four_digits() {
+            // has_four_digit_year only checks the first 4 bytes; a longer
+            // numeric prefix still passes this guard and is rejected later,
+            // by the format cascade, as Unparseable rather than
+            // InvalidYearDigits.
+            assert!(DateValue::has_four_digit_year("20265-01-01"));
             assert!(matches!(
-                DateValue::parse_iso("2026/08/22"),
+                DateValue::parse_iso("20265-01-01"),
                 Err(DateError::Unparseable { .. })
             ));
         }
 
         #[test]
-        fn rejects_an_invalid_pattern_in_format_with() {
+        fn rejects_a_short_year_with_invalid_year_digits() {
+            let date_result = DateValue::parse_iso("26-08-22");
+            let datetime_result = DateTimeValue::parse_iso("26-08-22T14:30:00");
             assert!(matches!(
-                fixed_datetime().format_with("%Q"),
-                Err(DateError::InvalidPattern { .. })
+                date_result,
+                Err(DateError::InvalidYearDigits { .. })
+            ));
+            assert!(matches!(
+                datetime_result,
+                Err(DateError::InvalidYearDigits { .. })
+            ));
+        }
+
+        #[rstest]
+        #[case::invalid_month_number("2026-13")]
+        #[case::non_numeric_month("2026-ab")]
+        #[case::single_digit_month("2026-7")]
+        fn rejects_a_malformed_year_month_as_unparseable(#[case] input: &str) {
+            assert!(matches!(
+                DateValue::parse_iso(input),
+                Err(DateError::Unparseable { .. })
             ));
         }
 
         #[test]
-        fn date_value_format_with_renders_a_custom_pattern() {
+        fn rejects_an_unrecognized_date_shape_as_unparseable() {
+            let result = DateValue::parse_iso("2026/08/22");
+            assert!(matches!(result, Err(DateError::Unparseable { .. })));
+        }
+
+        #[test]
+        fn rejects_an_unrecognized_datetime_shape_as_unparseable() {
+            let result = DateTimeValue::parse_iso("2026-07-29Tinvalid");
+            assert!(matches!(result, Err(DateError::Unparseable { .. })));
+        }
+
+        #[test]
+        fn rejects_an_invalid_pattern_in_datetime_value_format_with() {
+            let result = fixed_datetime().format_with("%Q");
+            assert!(matches!(result, Err(DateError::InvalidPattern { .. })));
+        }
+
+        #[test]
+        fn renders_a_custom_pattern_in_date_value_format_with() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let rendered = date.format_with("%d/%m/%Y").expect("valid pattern");
+            assert_eq!(rendered, "29/07/2026");
+        }
+
+        #[test]
+        fn rejects_an_invalid_pattern_in_date_value_format_with() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let result = date.format_with("%Q");
+            assert!(matches!(result, Err(DateError::InvalidPattern { .. })));
+        }
+
+        #[test]
+        fn parses_via_the_fromstr_trait() {
+            let date: DateValue = "2026-07-29".parse().expect("valid date");
+            let datetime: DateTimeValue =
+                "2026-07-29T14:30:00".parse().expect("valid datetime");
+            assert_eq!(date, DateValue::parse_iso("2026-07-29").unwrap());
             assert_eq!(
-                date.format_with("%d/%m/%Y").expect("valid pattern"),
-                "29/07/2026"
+                datetime,
+                DateTimeValue::parse_iso("2026-07-29T14:30:00").unwrap()
             );
         }
     }
@@ -735,6 +827,14 @@ mod tests {
             let one_second =
                 DurationValue::parse("1s").expect("valid duration");
             assert_eq!(near_max.checked_add(one_second), None);
+        }
+
+        #[test]
+        fn underflows_near_the_representable_range_in_checked_sub() {
+            let near_min = DateTimeValue(DateTime::<Utc>::MIN_UTC);
+            let one_second =
+                DurationValue::parse("1s").expect("valid duration");
+            assert_eq!(near_min.checked_sub(one_second), None);
         }
     }
 
@@ -763,6 +863,70 @@ mod tests {
                 fixed_datetime().cmp_date(date),
                 std::cmp::Ordering::Greater
             );
+        }
+    }
+
+    mod conversions {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn converts_from_system_time() {
+            let system_time = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(1_000);
+            let converted = DateTimeValue::from(system_time);
+            assert_eq!(
+                converted,
+                DateTimeValue::parse_iso("1970-01-01T00:16:40")
+                    .expect("valid datetime")
+            );
+        }
+
+        #[test]
+        fn round_trips_through_chrono_date_time_utc() {
+            let chrono_dt = fixed_datetime().into_inner();
+            let converted = DateTimeValue::from(chrono_dt);
+            assert_eq!(converted, fixed_datetime());
+            let back: DateTime<Utc> = converted.into();
+            assert_eq!(back, chrono_dt);
+        }
+
+        #[test]
+        fn converts_date_value_into_naive_date() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let naive: NaiveDate = date.into();
+            assert_eq!(
+                naive,
+                NaiveDate::from_ymd_opt(2026, 7, 29).expect("valid date")
+            );
+            assert_eq!(date.into_inner(), naive);
+        }
+    }
+
+    mod ordering {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn compares_dates_chronologically() {
+            let earlier =
+                DateValue::parse_iso("2026-01-01").expect("valid date");
+            let later = DateValue::parse_iso("2026-12-31").expect("valid date");
+            assert!(earlier < later);
+            assert!(later > earlier);
+            assert_eq!(earlier.cmp(&earlier), std::cmp::Ordering::Equal);
+        }
+
+        #[test]
+        fn compares_datetimes_chronologically() {
+            let earlier = DateTimeValue::parse_iso("2026-01-01T00:00:00")
+                .expect("valid datetime");
+            let later = fixed_datetime();
+            assert!(earlier < later);
+            assert!(later > earlier);
+            assert_eq!(earlier.cmp(&earlier), std::cmp::Ordering::Equal);
         }
     }
 }

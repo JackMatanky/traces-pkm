@@ -56,9 +56,8 @@ pub enum NoteFieldValue {
 }
 
 impl NoteFieldValue {
-    /// Returns the inner text for [`NoteFieldValue::String`],
-    /// [`NoteFieldValue::Date`], and [`NoteFieldValue::Duration`] variants,
-    /// or `None` for any other kind.
+    /// Returns the inner text for [`NoteFieldValue::String`] and
+    /// [`NoteFieldValue::Duration`] variants, or `None` for any other kind.
     ///
     /// # Examples
     ///
@@ -81,8 +80,9 @@ impl NoteFieldValue {
     }
 
     /// Returns the parsed calendar date if this value is
-    /// [`NoteFieldValue::Date`] or a [`NoteFieldValue::String`] beginning
-    /// with a valid `YYYY-MM-DD` ISO date, or `None` otherwise.
+    /// [`NoteFieldValue::Date`], [`NoteFieldValue::DateTime`], or a
+    /// [`NoteFieldValue::String`] beginning with a valid `YYYY-MM-DD` ISO
+    /// date, or `None` otherwise.
     ///
     /// # Examples
     ///
@@ -101,6 +101,7 @@ impl NoteFieldValue {
     pub fn as_date(&self) -> Option<chrono::NaiveDate> {
         match self {
             Self::Date(value) => Some(value.into_inner()),
+            Self::DateTime(value) => Some(value.date().into_inner()),
             Self::String(s) if s.len() >= 10 => {
                 chrono::NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok()
             }
@@ -281,6 +282,38 @@ mod tests {
             assert_eq!(NoteFieldValue::Number(42.0).as_str(), None);
             assert_eq!(NoteFieldValue::List(Box::default()).as_str(), None);
             assert_eq!(NoteFieldValue::Object(IndexMap::new()).as_str(), None);
+        }
+
+        #[test]
+        fn as_date_extracts_the_calendar_date_from_a_typed_date_field() {
+            let date_val = NoteFieldValue::Date(
+                DateValue::parse_iso("2026-09-02").expect("valid date"),
+            );
+            assert_eq!(
+                date_val.as_date(),
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 2)
+            );
+        }
+
+        #[test]
+        fn as_date_extracts_the_calendar_date_from_a_typed_datetime_field() {
+            let datetime_val = NoteFieldValue::DateTime(
+                DateTimeValue::parse_iso("2026-09-02T14:30:00")
+                    .expect("valid datetime"),
+            );
+            assert_eq!(
+                datetime_val.as_date(),
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 2)
+            );
+        }
+
+        #[test]
+        fn as_date_returns_none_for_non_date_variants() {
+            assert_eq!(NoteFieldValue::Null.as_date(), None);
+            assert_eq!(
+                NoteFieldValue::String("not-a-date".to_owned()).as_date(),
+                None
+            );
         }
     }
 }

@@ -921,23 +921,43 @@ mod tests {
         use super::*;
 
         #[test]
-        fn converts_whole_and_subsecond_durations() {
-            let dv = DurationValue::parse("1h").unwrap();
-            assert_eq!(TimeDelta::try_from(dv).unwrap(), TimeDelta::hours(1));
-            let ms = DurationValue::parse("500ms").unwrap();
-            assert_eq!(
-                TimeDelta::try_from(ms).unwrap(),
-                TimeDelta::milliseconds(500)
-            );
+        fn converts_a_whole_second_duration() {
+            let duration = DurationValue::parse("1h").expect("valid duration");
+            let converted = TimeDelta::try_from(duration).expect("in range");
+            assert_eq!(converted, TimeDelta::hours(1));
+        }
+
+        #[test]
+        fn converts_a_subsecond_duration() {
+            let duration =
+                DurationValue::parse("500ms").expect("valid duration");
+            let converted = TimeDelta::try_from(duration).expect("in range");
+            assert_eq!(converted, TimeDelta::milliseconds(500));
+        }
+
+        #[test]
+        fn converts_a_negative_fractional_duration() {
+            let seconds =
+                DurationSeconds::try_from(-90.5).expect("finite seconds");
+            let converted = TimeDelta::try_from(seconds).expect("in range");
+            assert_eq!(converted, TimeDelta::milliseconds(-90_500));
+        }
+
+        #[test]
+        fn rejects_a_seconds_value_outside_the_representable_range() {
+            let seconds =
+                DurationSeconds::try_from(1e300).expect("finite seconds");
+            let result = TimeDelta::try_from(seconds);
+            assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
         }
 
         #[test]
         fn delegates_to_duration_seconds() {
-            let dv = DurationValue::parse("30m").unwrap();
-            assert_eq!(
-                TimeDelta::try_from(dv).unwrap(),
-                TimeDelta::try_from(dv.to_seconds()).unwrap()
-            );
+            let duration = DurationValue::parse("30m").expect("valid duration");
+            let converted = TimeDelta::try_from(duration).expect("in range");
+            let via_seconds =
+                TimeDelta::try_from(duration.to_seconds()).expect("in range");
+            assert_eq!(converted, via_seconds);
         }
     }
 }

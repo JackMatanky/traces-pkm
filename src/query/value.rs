@@ -232,7 +232,7 @@ impl QueryListValueRef<'_> {
 /// Applies filter equality semantics to metadata values.
 ///
 /// Exact structural equality wins; otherwise string-like values (`String`,
-/// `Date`, `Duration`) compare by text so literals can match typed fields.
+/// `Duration`) compare by text so literals can match typed fields.
 fn is_field_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || matches!((a.as_str(), b.as_str()), (Some(x), Some(y)) if x == y)
 }
@@ -377,6 +377,56 @@ mod tests {
             assert!(
                 QueryFieldValueRef::Number(5.0)
                     .is_equal_to_literal(&NoteFieldValue::Number(5.0))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_date_ref_to_matching_date_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert!(
+                QueryFieldValueRef::Date(date)
+                    .is_equal_to_literal(&NoteFieldValue::Date(date))
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_date_ref_to_midnight_datetime_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let midnight_datetime = DateTimeValue::from(date);
+            assert!(QueryFieldValueRef::Date(date).is_equal_to_literal(
+                &NoteFieldValue::DateTime(midnight_datetime)
+            ));
+        }
+
+        #[test]
+        fn returns_false_when_comparing_date_ref_to_non_midnight_datetime_literal()
+         {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let non_midnight = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
+            assert!(
+                !QueryFieldValueRef::Date(date).is_equal_to_literal(
+                    &NoteFieldValue::DateTime(non_midnight)
+                )
+            );
+        }
+
+        #[test]
+        fn returns_true_when_comparing_datetime_ref_to_midnight_date_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let midnight_datetime = DateTimeValue::from(date);
+            assert!(
+                QueryFieldValueRef::DateTime(midnight_datetime)
+                    .is_equal_to_literal(&NoteFieldValue::Date(date))
+            );
+        }
+
+        #[test]
+        fn returns_false_when_comparing_date_ref_to_a_non_date_literal() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert!(
+                !QueryFieldValueRef::Date(date)
+                    .is_equal_to_literal(&NoteFieldValue::Number(1.0))
             );
         }
 
