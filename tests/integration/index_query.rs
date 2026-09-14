@@ -36,6 +36,42 @@ fn page_query_returns_real_indexed_notes() {
     ]);
 }
 
+/// Checks a date-typed frontmatter field, parsed through the real note
+/// index (not a hand-built [`traces_pkm::NoteFieldValue`]), sorts
+/// chronologically through the public sort API. Mixes a bare ISO date with
+/// an RFC 3339 datetime carrying a `Z` offset, proving both accepted shapes
+/// resolve to the same comparable field through the full pipeline.
+#[test]
+fn sorts_pages_by_a_typed_date_frontmatter_field() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    fs::write(
+        temp.path().join("late.md"),
+        "---\ndue: 2026-07-29T14:30:00Z\n---\n",
+    )
+    .expect("write late.md");
+    fs::write(temp.path().join("early.md"), "---\ndue: 2026-01-01\n---\n")
+        .expect("write early.md");
+    fs::write(temp.path().join("none.md"), "no frontmatter")
+        .expect("write none.md");
+    let index = Arc::new(
+        IndexerService::new(temp.path()).build().expect("build index"),
+    );
+    let query = QueryBuilder::pages(SourceSelector::All)
+        .sort("due", false)
+        .expect("valid sort");
+    let sorted = QueryService::new("class").run(&index, query);
+    let paths: Vec<_> = (&sorted)
+        .into_iter()
+        .map(|row| row.file().path().to_path_buf())
+        .collect();
+
+    assert_eq!(paths, [
+        Path::new("none.md"),
+        Path::new("early.md"),
+        Path::new("late.md")
+    ]);
+}
+
 /// Checks task queries flatten two tasks in one note into two rows, each with
 /// the correct completion state.
 ///

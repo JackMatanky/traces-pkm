@@ -500,19 +500,19 @@ fn bench_sort_by_text(c: &mut Criterion) {
 /// Measures sort cost by a built-in date field (`file.mtime`), swept over
 /// workspace size.
 ///
-/// Exercises `SortKey::Date`'s `Timestamp` comparator, unmeasured elsewhere in
-/// this file. Fixture notes are all written within the same benchmark setup
-/// call, so their modification timestamps cluster within the same second or
-/// two; this benchmark measures resolution + comparator cost, not a
-/// meaningfully discriminating sort order.
+/// Exercises `SortKey::DateTime`'s `DateTimeValue` comparator, unmeasured
+/// elsewhere in this file. Fixture notes are all written within the same
+/// benchmark setup call, so their modification timestamps cluster within the
+/// same second or two; this benchmark measures resolution + comparator cost,
+/// not a meaningfully discriminating sort order.
 ///
 /// Expected outcomes:
 /// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
 ///   `n`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating `Timestamp` resolution
-///   or comparison is more expensive than `f64::total_cmp`.
+/// - Cost significantly exceeds `sort_only`, indicating `DateTimeValue`
+///   resolution or comparison is more expensive than `f64::total_cmp`.
 fn bench_sort_by_date(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_date");
     group.plot_config(

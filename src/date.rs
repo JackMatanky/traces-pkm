@@ -698,6 +698,24 @@ mod tests {
                 DateValue::parse_iso("2026-07-29").expect("valid date");
             assert_eq!(extracted, expected);
         }
+
+        #[test]
+        fn round_trips_a_date_value_through_to_date_string_and_parse_iso() {
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+            let reparsed = DateValue::parse_iso(&date.to_date_string())
+                .expect("formatted output re-parses");
+            assert_eq!(reparsed, date);
+        }
+
+        #[test]
+        fn round_trips_a_datetime_value_through_to_datetime_string_and_parse_iso()
+         {
+            let value = fixed_datetime();
+            let reparsed =
+                DateTimeValue::parse_iso(&value.to_datetime_string())
+                    .expect("formatted output re-parses");
+            assert_eq!(reparsed, value);
+        }
     }
 
     mod parsing {
