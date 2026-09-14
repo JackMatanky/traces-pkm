@@ -1,12 +1,17 @@
-//! Duration parsing, validation, and computation.
+//! Duration parsing, validation, and arithmetic.
 //!
-//! The primary type callers interact with is [`DurationUnit`], which carries
-//! all unit knowledge (parsing, seconds, naming). [`DurationValue`] wraps a
-//! parsed duration with its total seconds. [`DurationSeconds`] is
-//! a typed `f64` with [`Ord`], [`Add`], [`Sub`], [`Mul`].
+//! Accepts human-readable duration strings like `"1h 30m"` or `"4 yrs, 6 wks"`
+//! and converts them to a total seconds value. Parts are `<number><unit>`
+//! pairs separated by whitespace or commas.
 //!
-//! All duration unit knowledge lives in [`DurationUnit`]. Callers should not
-//! maintain their own unit registries.
+//! # Key types
+//!
+//! - [`DurationUnit`]: unit registry (parsing, seconds conversion, naming).
+//!   Single source of truth; callers should not maintain their own registries.
+//! - [`DurationValue`]: a parsed duration carrying its total seconds.
+//! - [`DurationSeconds`]: a finite `f64` newtype with [`Ord`], [`Add`],
+//!   [`Sub`], and [`Mul`].
+//! - [`DurationError`]: error type for parse and conversion failures.
 
 use std::{
     cmp::Ordering,
@@ -15,10 +20,10 @@ use std::{
     str::FromStr,
 };
 
-/// A validated duration expression.
+/// A validated duration expression with its total seconds.
 ///
-/// Constructed only via [`DurationValue::parse`]. Stores the parsed total
-/// seconds.
+/// Constructed exclusively via [`DurationValue::parse`] or the [`FromStr`]
+/// implementation. The stored seconds value is always finite.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DurationValue {
     seconds: DurationSeconds,
@@ -140,7 +145,7 @@ impl DurationValue {
         Self::parsed_number(bytes, num_start, pos, input)
     }
 
-    /// Converts a parsed number byte span into `f64`.
+    /// Validates and converts a parsed number byte span into `f64`.
     fn parsed_number(
         bytes: &[u8],
         start: usize,
@@ -192,7 +197,7 @@ impl DurationValue {
         Self::parsed_unit(bytes, unit_start, pos, input)
     }
 
-    /// Converts a parsed unit byte span into [`DurationUnit`].
+    /// Validates and converts a parsed unit byte span into [`DurationUnit`].
     fn parsed_unit(
         bytes: &[u8],
         start: usize,
@@ -225,9 +230,21 @@ impl DurationValue {
 
 /// Enables `"1h 30m".parse::<DurationValue>()`.
 ///
+/// Delegates to [`DurationValue::parse`].
+///
 /// # Errors
 ///
-/// - [`DurationError`] if [`DurationValue::parse`] rejects `s`.
+/// - [`Empty`] if `s` is empty or contains only separators.
+/// - [`MissingNumber`] if a unit appears without a preceding number.
+/// - [`InvalidNumber`] if the number portion could not be parsed.
+/// - [`MissingUnit`] if a number appears without a trailing unit.
+/// - [`UnknownUnit`] if the unit string is not recognized.
+///
+/// [`Empty`]: DurationError::Empty
+/// [`MissingNumber`]: DurationError::MissingNumber
+/// [`InvalidNumber`]: DurationError::InvalidNumber
+/// [`MissingUnit`]: DurationError::MissingUnit
+/// [`UnknownUnit`]: DurationError::UnknownUnit
 impl FromStr for DurationValue {
     type Err = DurationError;
 
@@ -239,8 +256,8 @@ impl FromStr for DurationValue {
 /// A recognized duration unit.
 ///
 /// Single source of truth for unit parsing, seconds conversion, and naming.
-/// Callers that need type-safe dispatch should match on `DurationUnit`
-/// directly rather than converting to strings.
+/// Match on [`DurationUnit`] directly for type-safe dispatch rather than
+/// converting to strings.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub(crate) enum DurationUnit {
     Millisecond,
@@ -256,8 +273,8 @@ pub(crate) enum DurationUnit {
 impl DurationUnit {
     /// Case-insensitive lookup of a unit string.
     ///
-    /// Accepts strings up to 16 bytes. Returns `None` for empty strings,
-    /// strings longer than 16 bytes, or unrecognized unit names.
+    /// Accepts strings up to 16 bytes. Returns `None` if the string is empty,
+    /// exceeds 16 bytes, or does not match a known unit name.
     #[must_use]
     pub(crate) fn parse(unit: &str) -> Option<Self> {
         let mut buf = [0u8; 16];
@@ -299,7 +316,11 @@ impl DurationUnit {
     }
 }
 
-/// Case-insensitive unit string → [`DurationUnit`].
+/// Case-insensitive unit string to [`DurationUnit`] mapping.
+///
+/// Contains all accepted abbreviations and full names. Keys are stored
+/// lowercase; lookup in [`DurationUnit::parse`] lowercases the input before
+/// matching.
 static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
     "ms" => DurationUnit::Millisecond,
     "millisecond" => DurationUnit::Millisecond,
@@ -340,8 +361,9 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 
 /// A duration measured in seconds.
 ///
-/// Wraps `f64` with NaN-safe ordering and arithmetic traits. Always finite when
-/// constructed through [`DurationValue::to_seconds`].
+/// Wraps `f64` with NaN-safe ordering and arithmetic. Always finite when
+/// constructed through [`DurationValue::to_seconds`] or
+/// [`DurationSeconds::try_from`].
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(f64);
 
@@ -416,8 +438,9 @@ impl Mul<DurationSeconds> for f64 {
 
 /// Error returned when a duration operation fails.
 ///
-/// Raised when duration text cannot be parsed or raw duration seconds cannot
-/// be represented safely.
+/// Covers two failure domains: parsing human-readable duration text (via
+/// [`DurationValue::parse`]) and converting raw seconds into a
+/// [`DurationSeconds`].
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DurationError {
     /// Input is empty or contains only separators.
