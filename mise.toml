@@ -575,6 +575,9 @@ flag "-L --level <level>" {
 }
 flag "--exclude <glob>" help="Exclude files matching glob"
 flag "--timeout <secs>" help="Override test timeout in seconds"
+flag "-v --caught" { help "Also print mutants caught by tests" }
+flag "-V --unviable" { help "Also print mutants that failed to build" }
+flag "--all-logs" { help "Print all Cargo output to stdout" }
 flag "--json" { help "Emit machine-readable output" }
 flag "--no-config" { help "Ignore .cargo/mutants.toml" }
 flag "--iterate" negate="--no-iterate" default=#true {
@@ -612,6 +615,9 @@ declare -a args=(
 [[ -n "${usage_level:-}" ]]                 && args+=(--level "${usage_level}")
 [[ -n "${usage_exclude:-}" ]]               && args+=(--exclude "${usage_exclude}")
 [[ -n "${usage_timeout:-}" ]]               && args+=(--timeout "${usage_timeout}")
+[[ "${usage_caught:-false}" == "true" ]]    && args+=(--caught)
+[[ "${usage_unviable:-false}" == "true" ]]  && args+=(--unviable)
+[[ "${usage_all_logs:-false}" == "true" ]]  && args+=(--all-logs)
 [[ "${usage_json:-false}" == "true" ]]      && args+=(--json)
 [[ "${usage_no_config:-false}" == "true" ]] && args+=(--no-config)
 
