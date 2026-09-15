@@ -63,6 +63,7 @@ use common::{
 // ----------------------------------------------------------- //
 
 const SORT_STRESS_FILE_COUNTS: &[usize] = &[5_000, 10_000, 20_000, 40_000];
+const TOPK_LIMITS: &[i64] = &[10, 100, 1_000];
 
 /// Replica of `SortKey::cmp`'s Number-vs-Number match arm, extracted to keep
 /// [`bench_sort_note_field_value_replica`]'s closure nesting within clippy's
@@ -194,7 +195,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 /// Measures `QueryPlan`'s `Sort`+`Limit(k)` -> `TopK` fusion cost across limit
 /// sizes and workspace sizes.
 ///
-/// Parameters: varies limit `k` in `{10, 100, 1000}` and note count in
+/// Parameters: varies [`TOPK_LIMITS`] and note count in
 /// [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
 /// Fixture: [`ProjectShape::Plain`] index built outside timing; timed work runs
@@ -230,7 +231,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        for limit in [10_i64, 100, 1000] {
+        for &limit in TOPK_LIMITS {
             group.bench_with_input(
                 BenchmarkId::new(format!("topk_limit_{limit}"), n),
                 &n,

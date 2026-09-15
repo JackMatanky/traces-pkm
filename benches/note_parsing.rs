@@ -56,6 +56,8 @@ use common::{
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
+const NESTING_DEPTHS: &[u8] = &[1, 5, 20, 50];
+const LINE_LENGTHS: &[usize] = &[10, 50, 200, 1_000];
 #[inline]
 fn parse_fixture(path: &std::path::Path, src: &str) -> Note {
     parse_note(path, src)
@@ -374,7 +376,7 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
 /// Measures full-parse sensitivity to list nesting depth at a fixed 200-item
 /// count.
 ///
-/// Parameters: varies maximum depth over `{1, 5, 20, 50}`; reports item
+/// Parameters: varies [`NESTING_DEPTHS`]; reports item
 /// throughput. Deeper fixtures also contain more indentation bytes.
 ///
 /// Fixture: nested-list source is built outside timing and parsed at fixed path
@@ -392,7 +394,7 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
     let path = std::path::Path::new("note.md");
     let total_items = 200_usize;
 
-    for max_depth in [1_u8, 5, 20, 50] {
+    for &max_depth in NESTING_DEPTHS {
         let source = nested_items_source(total_items, max_depth);
         group.throughput(Throughput::Elements(
             u64::try_from(total_items).expect("item count fits u64"),
@@ -413,7 +415,7 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
 /// Measures full-parser sensitivity to newline density by varying line length
 /// while targeting at least `50 KiB` of source text.
 ///
-/// Parameters: varies line length over `{10, 50, 200, 1000}`; reports actual
+/// Parameters: varies [`LINE_LENGTHS`]; reports actual
 /// source-byte throughput. Fixture generation is outside timing.
 ///
 /// Expected outcomes:
@@ -428,7 +430,7 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
     let path = std::path::Path::new("note.md");
     let target_bytes = 51_200_usize;
 
-    for line_length in [10_usize, 50, 200, 1_000] {
+    for &line_length in LINE_LENGTHS {
         let source = line_density_source(target_bytes, line_length);
         group.throughput(Throughput::Bytes(
             u64::try_from(source.len()).expect("byte length fits u64"),

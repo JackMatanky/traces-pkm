@@ -58,6 +58,8 @@ use common::{
     },
 };
 
+const SAME_STEM_CANDIDATE_COUNTS: &[usize] = &[2, 10, 100];
+
 // ----------------------------------------------------------- //
 //               Benchmarks: InlinkMap Compilation             //
 // ----------------------------------------------------------- //
@@ -198,8 +200,8 @@ fn bench_inlink_map_new(c: &mut Criterion) {
 /// Measures same-stem resolution cost across candidate target counts while full
 /// map construction cost is held fixed.
 ///
-/// Parameters: holds note count at 10,000; varies same-stem candidates over
-/// `{2, 10, 100}`; reports wall-clock time and note throughput.
+/// Parameters: holds note count at 10,000; varies same-stem candidates in
+/// [`SAME_STEM_CANDIDATE_COUNTS`]; reports wall-clock time and note throughput.
 ///
 /// Fixture: ambiguous-target notes and matching file records are built outside
 /// timing; timed work constructs the whole [`InlinkMap`], including resolver
@@ -220,7 +222,7 @@ fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
         u64::try_from(n).expect("note count fits u64"),
     ));
 
-    for candidates in [2_usize, 10, 100] {
+    for &candidates in SAME_STEM_CANDIDATE_COUNTS {
         group.bench_with_input(
             BenchmarkId::new("same_stem_candidates", candidates),
             &candidates,

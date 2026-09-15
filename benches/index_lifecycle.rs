@@ -79,6 +79,7 @@ const BUILD_PROFILE_SHAPES: &[ProjectShape] = &[
     ProjectShape::RichRealistic,
     ProjectShape::AttachmentProject,
 ];
+const CHANGED_FILE_COUNTS: &[usize] = &[10, 100];
 
 fn observe_index(index: &FileIndex) {
     let entries = index.entries();
@@ -482,8 +483,8 @@ fn bench_sync_and_run(c: &mut Criterion) {
 /// APIs.
 ///
 /// Parameters: varies quick note counts and scenario (`no-op-rich`,
-/// `single-tag-upsert`, requested `many-upsert-10`/`many-upsert-100` capped at
-/// `n`, `single-rich-delete`, `attachment-target-present`); reports note
+/// `single-tag-upsert`, requested [`CHANGED_FILE_COUNTS`] many-upserts capped
+/// at `n`, `single-rich-delete`, `attachment-target-present`); reports note
 /// throughput. Fixture setup and mutations are outside timing.
 ///
 /// Expected outcomes:
@@ -530,7 +531,7 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
             },
         );
 
-        for changed in [10_usize, 100] {
+        for &changed in CHANGED_FILE_COUNTS {
             group.bench_with_input(
                 BenchmarkId::new(format!("many-upsert-{changed}"), n),
                 &n,
