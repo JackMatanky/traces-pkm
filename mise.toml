@@ -592,45 +592,28 @@ run = '''
 # shellcheck disable=SC2154
 set -euo pipefail
 
-base_args() {
-  local -n _args=$1
-  _args+=(
-    --jobs "${usage_jobs:-4}"
-    --baseline run
-    --cap-lints true
-    --build-timeout-multiplier 3
-  )
-}
+declare -a args=(
+  --jobs "${usage_jobs:-4}"
+  --baseline run
+  --cap-lints true
+  --build-timeout-multiplier 3
+)
 
-scope_args() {
-  local -n _args=$1
-  [[ "${usage_iterate:-true}" == "true" ]]    && _args+=(--iterate)
-  [[ -n "${usage_file:-}" ]]                  && _args+=(--file "${usage_file}")
-  [[ -n "${usage_mod:-}" ]]                   && _args+=(--file "src/${usage_mod}/**/*.rs")
-  [[ "${usage_check:-false}" == "true" ]]     && _args+=(--check)
-  [[ -n "${usage_level:-}" ]]                 && _args+=(--level "${usage_level}")
-  [[ -n "${usage_exclude:-}" ]]               && _args+=(--exclude "${usage_exclude}")
-  [[ -n "${usage_timeout:-}" ]]               && _args+=(--timeout "${usage_timeout}")
-  [[ "${usage_json:-false}" == "true" ]]      && _args+=(--json)
-  [[ "${usage_no_config:-false}" == "true" ]] && _args+=(--no-config)
-}
+# Scope
+[[ "${usage_iterate:-true}" == "true" ]]    && args+=(--iterate)
+[[ -n "${usage_file:-}" ]]                  && args+=(--file "${usage_file}")
+[[ -n "${usage_mod:-}" ]]                   && args+=(--file "src/${usage_mod}/**/*.rs")
+[[ "${usage_check:-false}" == "true" ]]     && args+=(--check)
+[[ -n "${usage_level:-}" ]]                 && args+=(--level "${usage_level}")
+[[ -n "${usage_exclude:-}" ]]               && args+=(--exclude "${usage_exclude}")
+[[ -n "${usage_timeout:-}" ]]               && args+=(--timeout "${usage_timeout}")
+[[ "${usage_json:-false}" == "true" ]]      && args+=(--json)
+[[ "${usage_no_config:-false}" == "true" ]] && args+=(--no-config)
 
-passthrough_args() {
-  local -n _args=$1
-  local -a extra=()
-  eval "extra=(${usage_args:-})"
-  _args+=("${extra[@]+"${extra[@]}"}")
-}
+# Passthrough
+eval "args+=(${usage_args:-})"
 
-main() {
-  local -a args=()
-  base_args args
-  scope_args args
-  passthrough_args args
-  cargo mutants "${args[@]}"
-}
-
-main "$@"
+cargo mutants "${args[@]}"
 '''
 depends_post = ["mutants-report"]
 
@@ -650,20 +633,19 @@ run = '''
 # shellcheck disable=SC2154
 set -euo pipefail
 
-main() {
-  local missed_file="${usage_input:-mutants.out/missed.txt}"
-  local report_file="${usage_output:-mutants-report.md}"
+missed_file="${usage_input:-mutants.out/missed.txt}"
+report_file="${usage_output:-mutants-report.md}"
 
-  if [[ ! -s "${missed_file}" ]]; then
-    cat <<EOF > "${report_file}"
+if [[ ! -s "${missed_file}" ]]; then
+  cat <<EOF > "${report_file}"
 # Mutation Testing Report
 **Status:** Completed successfully. All mutants were caught!
 **Next Action:** No action needed. Test suite coverage is robust.
 EOF
-    exit 0
-  fi
+  exit 0
+fi
 
-  cat <<EOF > "${report_file}"
+cat <<EOF > "${report_file}"
 # Mutation Testing Report
 **Status:** Completed. Surviving mutants detected.
 
@@ -679,9 +661,6 @@ EOF
 $(cat "${missed_file}")
 \`\`\`
 EOF
-}
-
-main "$@"
 '''
 
 # ------------------------------------------------------------- #
