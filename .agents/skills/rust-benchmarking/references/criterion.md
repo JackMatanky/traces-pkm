@@ -1,16 +1,16 @@
 # Criterion
 
-> Use `criterion` for benchmarking. It provides warmup, multiple iterations, outlier detection, and statistical comparison between runs that a bare `Instant::now()` timer can't.
-
-## Why It Matters
-
-A one-off `Instant::now()` timing is noisy: it's affected by CPU frequency scaling, cache state, and OS scheduling, and gives you no way to tell whether a change made things measurably faster or just got lucky once. `criterion` runs many iterations, applies statistical analysis, and can compare against a saved baseline, turning "feels faster" into a number with a confidence interval.
+> Use `criterion` for benchmarking. It provides warmup, multiple iterations,
+  outlier detection, and statistical comparison between runs that a bare
+  `Instant::now()` timer can't.
 
 ## When to Use
 
-Benchmark after you have a correctness-verified implementation and a specific reason to measure performance: a suspected hot path, a decision between two implementations, or tracking a regression. Don't benchmark speculatively; profile first to find out where time actually goes, then benchmark the specific thing you're optimizing.
-
-Benchmark representative inputs, not toy values that fit only the example. Keep setup outside the measured loop unless setup cost is the thing being measured.
+Benchmark after you have a correctness-verified implementation and a specific
+reason to measure: a suspected hot path, a decision between two implementations,
+or tracking a regression. Profile first to find where time actually goes, then
+benchmark the specific thing you're optimizing. Benchmark representative inputs,
+not toy values that fit only the example.
 
 ## Setup
 
@@ -27,7 +27,9 @@ harness = false
 
 ```rust
 // benches/my_benchmark.rs
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 
 fn fibonacci(n: u64) -> u64 {
     match n {
@@ -45,24 +47,58 @@ criterion_group!(benches, bench_fibonacci);
 criterion_main!(benches);
 ```
 
-## `black_box` Is Not Optional
+## black_box Is Not Optional
 
-Use `black_box` unless Criterion already black-boxes the input for the API being used. Exclude setup from measurement where possible.
-
-Without it, the compiler may see the result is unused and optimize the whole computation away, benchmarking nothing:
+Without it, the compiler may prove the result is unused and eliminate the whole
+computation — benchmarking nothing. Since criterion 0.6 it always delegates to
+`std::hint::black_box`; the old `criterion::black_box` path is a compatibility
+alias, so import from `std::hint`:
 
 ```rust
+use std::hint::black_box;
+
 // Bad: result unused, may be eliminated entirely by the optimizer
 b.iter(|| fibonacci(20));
 
-// Good: black_box prevents the optimizer from proving the value is unused
-b.iter(|| fibonacci(black_box(20)));
-
-// Wrap the result too if it would otherwise be dropped and optimized away
+// Good: black_box on input blocks constant folding, on output blocks dead-code elimination
 b.iter(|| black_box(fibonacci(black_box(20))));
 ```
 
-If benchmark output changes unexpectedly, first check whether the benchmark measures real work: result used, setup excluded, inputs representative, and no async runtime or I/O noise accidentally included.
+`bench_with_input` passes its input through `black_box` for you, so benchmarks
+that get their input from the closure parameter need no extra wrapping.
+
+If benchmark output changes unexpectedly, first check whether the benchmark
+measures real work: result used, setup excluded, inputs representative, no async
+runtime or I/O noise accidentally included.
+
+## Timing Loops
+
+Pick the loop by what the routine needs (criterion's own decision table for
+`Bencher`):
+
+- `iter` — default; near-zero measurement overhead.
+- `iter_batched` / `iter_batched_ref` — per-iteration setup that must stay
+  untimed. Use `iter_batched_ref` when the setup value implements `Drop` and its
+  drop must not be timed.
+- `iter_with_large_drop` — no per-iteration setup, but the return value has an
+  expensive `drop`.
+- `iter_custom` — you drive iteration and timing yourself (e.g. delegating to
+  another process).
+
+```rust
+use criterion::{BatchSize, black_box};
+
+b.iter_batched(
+    || build_input(),                  // untimed setup
+    |input| expensive(black_box(&input)),
+    BatchSize::SmallInput,             // default choice; ~500ps overhead
+);
+```
+
+`BatchSize::SmallInput` fits almost everything. `LargeInput` trades measurement
+overhead (~750ps) for memory; `PerIteration` costs ~350ns of overhead per
+measurement and is for inputs too large or too resource-bound to hold many in
+memory.
 
 ## Comparing Implementations
 
@@ -71,7 +107,10 @@ fn bench_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("String concat");
     let data = "hello";
 
-    group.bench_function("format!", |b| b.iter(|| format!("{}{}", black_box(data), " world")));
+    group.bench_function(
+        "format!",
+        |b| b.iter(|| format!("{}{}", black_box(data), " world")),
+    );
     group.bench_function("push_str", |b| {
         b.iter(|| {
             let mut s = String::from(black_box(data));
@@ -111,6 +150,9 @@ fn bench_vec_push(c: &mut Criterion) {
 
 ## Throughput Measurement
 
+When one iteration processes a known amount of data, set `Throughput` so
+criterion reports bytes/elements per second alongside time:
+
 ```rust
 use criterion::Throughput;
 
@@ -125,6 +167,39 @@ fn bench_parse(c: &mut Criterion) {
 }
 ```
 
+Variants: `Bytes`, `Elements`, `Bits`, `BytesDecimal` (decimal KB/MB units), `ElementsAndBytes`.
+
+## Tuning and Interpreting
+
+Per-group (or on the `Criterion` builder): `sample_size`, `warm_up_time`,
+`measurement_time`, `noise_threshold`, `confidence_level`. Raise
+`measurement_time` or `sample_size` when the confidence interval is too wide
+to answer the question; leave defaults otherwise.
+
+Criterion compares each run against the previous run (or `--baseline`) and
+labels the change: improved, regressed, no change detected, or change within
+noise threshold. Trust the label only when the result reproduces across runs
+on a quiet machine (no concurrent builds or heavy I/O); a single sample full
+of outliers is a measurement problem, not a regression signal.
+
+## Async
+
+```rust
+// Cargo.toml: criterion = { version = "0.8", features = ["async_tokio"] }
+b.to_async(tokio::runtime::Runtime::new().unwrap())
+    .iter(|| async { client.request(black_box(&payload)).await });
+```
+
+Build the runtime outside the loop; a `tokio::runtime::Handle` works too (0.6+).
+`smol`/`async-std` have their own feature flags.
+
+## Profiling
+
+```bash
+# attach perf/other profiler; no statistics
+cargo bench -- --profile-time 5 --bench my_benchmark fib
+```
+
 ## Running
 
 ```bash
@@ -132,9 +207,14 @@ cargo bench                              # all benchmarks
 cargo bench -- fib                       # filter by name
 cargo bench -- --save-baseline main      # save a baseline for comparison
 cargo bench -- --baseline main           # compare against a saved baseline
+cargo bench -- --quick                   # fewer samples, faster feedback
 ```
 
 ## See Also
 
-- `../../rust-testing/references/concurrency.md` - verify concurrent code with `loom` before benchmarking it.
-- `rust-skills` `perf-profile-first`, `anti-premature-optimize` - profile before you optimize or benchmark.
+Optional enrichment; this skill's workflow does not depend on it. Where the
+`rust-skills` collection is installed: `perf-profile-first` and
+`anti-premature-optimize` expand on profiling before benchmarking, and
+`perf-black-box-bench` on black_box mechanics. Where `rust-testing` is
+installed, its `references/concurrency.md` covers verifying concurrent code
+with `loom` before benchmarking it.
