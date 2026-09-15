@@ -376,6 +376,7 @@ fn bench_codec_batch(c: &mut Criterion) {
 ///
 /// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and `BenchmarkId`
 /// `fresh_allocvec` vs. `reused_buffer`; reports note throughput.
+///
 /// Fixture: parsed sparse-link notes (one ring link per note) are built outside
 /// timing. Timed work serializes each `Note` value directly through postcard;
 /// no redb transaction or table insertion is included.

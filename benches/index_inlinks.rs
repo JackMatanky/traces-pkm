@@ -26,11 +26,10 @@
 //! `test-utils`-gated public surface is only reachable with `--features
 //! test-utils`.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::arithmetic_side_effects,
-    reason = "bench fixture/harness code uses deterministic arithmetic and \
-              should panic immediately on broken fixtures"
+    reason = "bench fixture/harness code; a failed .expect() here means the \
+              fixture itself is broken and should panic immediately"
 )]
 
 use std::{hint::black_box, path::Path};
@@ -41,7 +40,7 @@ use criterion::{
 };
 use traces_pkm::InlinkMap;
 
-#[allow(
+#[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
               target; this target uses only the in-memory inlink helpers"
@@ -217,7 +216,7 @@ fn bench_inlink_map_new(c: &mut Criterion) {
 fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::new/collisions");
     let n = 10_000_usize;
-    group.sample_size(10);
+    group.sample_size(25);
     group.throughput(Throughput::Elements(
         u64::try_from(n).expect("note count fits u64"),
     ));

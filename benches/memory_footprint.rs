@@ -25,7 +25,7 @@ use traces_pkm::{
     SourceSelector, parse_markdown,
 };
 
-#[allow(
+#[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
               target; this target uses only allocation fixtures"
@@ -35,7 +35,7 @@ mod common;
 use common::{
     FRONTMATTER_FIELD_COUNTS, LIST_ITEM_COUNTS, WORKSPACE_FILE_COUNTS,
     content::{ProjectShape, frontmatter_fields_source, list_items_source},
-    project::{create_project, setup_persisted_project},
+    project::{build_index_arc, create_project, setup_persisted_project},
 };
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -231,6 +231,83 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
             });
         }
     }
+    group.finish();
+}
+
+const QUERY_FOOTPRINT_COUNTS: &[usize] = &[100, 1_000, 10_000];
+
+/// Measures gross allocated bytes and allocation calls for query execution
+/// paths.
+///
+/// Parameters: sweeps `{100, 1_000, 10_000}` notes for unfiltered page
+/// selection and metadata-sorted selection (`sort("rating")`).
+///
+/// Fixture: [`ProjectShape::Plain`] in-memory indexes are built outside both
+/// the allocation region and timing loops.
+///
+/// Expected outcomes:
+/// - `pages` allocation scales linearly with selected row count ($O(n)$).
+/// - `sort` adds indexed-permutation vector allocation and comparator buffers
+///   proportional to $n$.
+///
+/// Unexpected outcomes:
+/// - Sorting allocating super-linearly or cloning row bodies during comparator
+///   evaluation.
+fn bench_query_execution_footprint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("memory/query_execution");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(1));
+    group.warm_up_time(Duration::from_millis(500));
+    let service = QueryService::new("class");
+
+    for &n in QUERY_FOOTPRINT_COUNTS {
+        let index = build_index_arc(n, ProjectShape::Plain);
+
+        let region = Region::new(GLOBAL);
+        let outcome = black_box(
+            service.run(&index, QueryBuilder::pages(SourceSelector::All)),
+        );
+        let pages_stats = region.change();
+        drop(outcome);
+
+        let sort_query = QueryBuilder::pages(SourceSelector::All)
+            .sort("rating", false)
+            .expect("valid sort");
+        let sort_region = Region::new(GLOBAL);
+        let sorted_outcome = black_box(service.run(&index, sort_query));
+        let sort_stats = sort_region.change();
+        drop(sorted_outcome);
+
+        eprintln!(
+            "[memory] query_pages({n}): gross {} bytes, {} allocs; \
+             query_pages_sorted({n}): gross {} bytes, {} allocs",
+            pages_stats.bytes_allocated,
+            pages_stats.allocations,
+            sort_stats.bytes_allocated,
+            sort_stats.allocations,
+        );
+
+        if n <= 1_000 {
+            group.bench_function(format!("pages_{n}"), |b| {
+                b.iter_batched(
+                    || QueryBuilder::pages(SourceSelector::All),
+                    |q| black_box(service.run(&index, q)),
+                    BatchSize::SmallInput,
+                );
+            });
+            group.bench_function(format!("pages_sorted_{n}"), |b| {
+                b.iter_batched(
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .sort("rating", false)
+                            .expect("valid sort")
+                    },
+                    |q| black_box(service.run(&index, q)),
+                    BatchSize::SmallInput,
+                );
+            });
+        }
+    }
 
     group.finish();
 }
@@ -239,6 +316,7 @@ criterion_group!(
     benches,
     bench_note_construction_allocation,
     bench_file_index_footprint,
-    bench_sync_and_run_footprint
+    bench_sync_and_run_footprint,
+    bench_query_execution_footprint
 );
 criterion_main!(benches);

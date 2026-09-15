@@ -45,7 +45,7 @@ use traces_pkm::{
     write_note, write_template,
 };
 
-#[allow(
+#[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
               target; this target uses only the quick size sweep"
@@ -113,25 +113,29 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 
 /// Measures end-to-end template render latency in [`WriteMode::DryRun`].
 ///
-/// Parameters: varies note count and template shape (`list`, `table_filtered`);
-/// reports note throughput.
+/// Parameters: varies note count and benchmark shape (`refresh_floor`, `list`,
+/// `table_filtered`); reports note throughput.
 ///
 /// Fixture projects, config, dialog provider, service, and template path inputs
 /// are built outside timing.
 ///
-/// Timed work still resolves/reads the template source and runs each template's
-/// `query.from()`, whose render-scoped refresh scans the persisted project.
-/// `DryRun` excludes output-file resolution and writes only.
+/// Runs `refresh_floor` before template rendering to isolate the persisted
+/// project refresh prelude.
+///
+/// Subtraction formula:
+/// - `list - refresh_floor`: Isolates template parsing, AST execution, and
+///   output formatting from the ~12.5 ms project refresh prelude.
 ///
 /// Expected outcomes:
-/// - `list` scales with rendering `n` paths; `table_filtered` adds filter,
-///   sort, table formatting, and renders roughly the matching half of the
-///   notes.
+/// - `refresh_floor` accounts for the common filesystem scan and database
+///   reconciliation.
+/// - `list - refresh_floor` scales with rendering `n` paths.
+/// - `table_filtered` adds filter predicate evaluation, sort permutation, and
+///   Markdown table generation.
 ///
 /// Unexpected outcomes:
-/// - Render cost scales super-linearly or the relationship between list and
-///   table shapes reverses without row/output-count justification, indicating
-///   template reads, refresh/query work, or per-row expansion needs inspection.
+/// - Template rendering overhead dominating the refresh prelude unexpectedly,
+///   or `table_filtered` growing super-linearly relative to `list`.
 fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
     group.plot_config(
@@ -148,6 +152,20 @@ fn bench_render(c: &mut Criterion) {
         let service = TemplateService::new(&config, dialog)
             .expect("valid schema directory");
 
+        let indexer = IndexerService::new(config.root());
+        group.bench_with_input(
+            BenchmarkId::new("refresh_floor", n),
+            &n,
+            |b, _| {
+                b.iter_with_large_drop(|| {
+                    let (index, report) = indexer
+                        .refresh_with_report()
+                        .expect("refresh succeeded");
+                    black_box((index, report))
+                });
+            },
+        );
+
         let list_input =
             TemplatePathInput::parse(std::path::Path::new("list_report"))
                 .expect("valid template input");
@@ -163,7 +181,6 @@ fn bench_render(c: &mut Criterion) {
                 });
             },
         );
-
         let table_input =
             TemplatePathInput::parse(std::path::Path::new("table_report"))
                 .expect("valid template input");

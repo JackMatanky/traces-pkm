@@ -39,7 +39,7 @@ use criterion::{
 };
 use traces_pkm::Note;
 
-#[allow(
+#[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
               target; this target uses only parser input fixtures"
@@ -57,7 +57,7 @@ use common::{
 // ----------------------------------------------------------- //
 
 const NESTING_DEPTHS: &[u8] = &[1, 5, 20, 50];
-const LINE_LENGTHS: &[usize] = &[10, 50, 200, 1_000];
+const LINE_LENGTHS: &[usize] = &[10, 50, 200, 1_000, 2_000, 4_000];
 #[inline]
 fn parse_fixture(path: &std::path::Path, src: &str) -> Note {
     parse_note(path, src)
@@ -142,6 +142,41 @@ fn dense_frontmatter() -> String {
     source
 }
 
+fn dense_frontmatter_dates() -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("---\ntitle: Date Dense\n");
+    for i in 0..50 {
+        let day = (i % 28) + 1;
+        let month = (i % 12) + 1;
+        let _ = writeln!(source, "date_{i}: 2026-{month:02}-{day:02}");
+    }
+    source.push_str("---\n\n# Dates Body\n");
+    source
+}
+
+fn dense_frontmatter_durations() -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("---\ntitle: Duration Dense\n");
+    for i in 0..50 {
+        let _ =
+            writeln!(source, "duration_{i}: {}h {}m", (i % 8) + 1, (i % 60));
+    }
+    source.push_str("---\n\n# Durations Body\n");
+    source
+}
+
+fn dense_frontmatter_numbers() -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::from("---\ntitle: Number Dense\n");
+    for i in 0..50 {
+        let _ = writeln!(source, "num_{i}: {}", i * 42);
+    }
+    source.push_str("---\n\n# Numbers Body\n");
+    source
+}
 fn dense_wikilinks_only() -> String {
     use std::fmt::Write as _;
 
@@ -294,18 +329,22 @@ fn bench_parse_markdown(c: &mut Criterion) {
 }
 
 /// Measures parsing cost across varied real-world PKM document topologies: code
-/// blocks, heavy frontmatter, dense wikilinks, and isolated task checklists.
+/// blocks, heavy frontmatter across value types (strings, ISO dates, duration
+/// literals, integers), dense wikilinks, and isolated task checklists.
 ///
 /// Expected outcomes:
 /// - Code-block and dense-wikilink cases stay in the same cost class for
 ///   similar byte sizes; this parser extracts link syntax but does not resolve
 ///   targets.
+/// - Frontmatter conversion costs remain comparable across dates, durations,
+///   and numbers.
 /// - Dense task lists cost more than prose but scale linearly with task count.
 ///
 /// Unexpected outcomes:
-/// - Dense frontmatter dominates similarly sized workloads, indicating YAML
-///   field extraction or metadata conversion has become the parse bottleneck.
-/// - Dense task parsing dominates similarly sized workloads, indicating
+/// - Specific frontmatter value types (such as dates or durations) dominating
+///   parse time, indicating date/duration regex parsing or chrono/duration
+///   allocation overhead.
+/// - Dense task parsing dominating similarly sized workloads, indicating
 ///   repeated marker/status resolution or per-task allocation.
 fn bench_parse_markdown_workloads(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::workloads");
@@ -314,10 +353,12 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     let workloads = [
         ("prose_code", prose_with_code_blocks()),
         ("dense_frontmatter", dense_frontmatter()),
+        ("dense_frontmatter_dates", dense_frontmatter_dates()),
+        ("dense_frontmatter_durations", dense_frontmatter_durations()),
+        ("dense_frontmatter_numbers", dense_frontmatter_numbers()),
         ("dense_wikilinks", dense_wikilinks_only()),
         ("dense_tasks", list_items_source(50)),
     ];
-
     for (label, source) in workloads {
         group.throughput(Throughput::Bytes(
             u64::try_from(source.len()).expect("byte length fits u64"),

@@ -236,6 +236,9 @@ debug = true
 strip = false
 lto = "thin"
 
+# ------------------------------------------------------------- #
+#                        Build Profiles                         #
+# ------------------------------------------------------------- #
 [profile.release]
 opt-level = "z"
 strip = true
@@ -243,9 +246,6 @@ lto = true
 panic = "abort"
 codegen-units = 1
 
-# ------------------------------------------------------------- #
-#                        Build Profiles                         #
-# ------------------------------------------------------------- #
 [profile.mutants]
 inherits = "test"
 opt-level = 1

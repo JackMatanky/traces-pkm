@@ -108,8 +108,8 @@ pub(crate) fn create_project(
     }
     temp
 }
-/// Builds an in-memory [`FileIndex`] for a `ProjectShape` without touching
-/// the filesystem.
+/// Builds an in-memory [`FileIndex`] for a `ProjectShape` without touching the
+/// filesystem.
 ///
 /// - Notes are parsed on the heap via `FileIndex::new_test`.
 /// - File records carry each source's exact byte length.
@@ -209,8 +209,8 @@ fn write_attachment_files(root: &Path) {
 /// **Criterion trap**: never consume this tuple by value inside a
 /// `b.iter_batched` routine without returning it. If `routine` destructures
 /// `(TempDir, IndexerService)` and drops the `TempDir` internally, that drop
-/// (recursively deleting every fixture file) runs *inside* the timed call.
-/// Use `b.iter_batched_ref` so the routine only ever borrows `&mut (TempDir,
+/// (recursively deleting every fixture file) runs *inside* the timed call. Use
+/// `b.iter_batched_ref` so the routine only ever borrows `&mut (TempDir,
 /// IndexerService)`, deferring the drop to after the batch is timed.
 ///
 /// # Panics

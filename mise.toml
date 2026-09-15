@@ -433,9 +433,8 @@ fi
 [tasks.bench]
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
-outputs = { auto = true }
 depends_post = ["bench-report"]
-timeout = "15m"
+timeout = "20m"
 usage = '''
 flag "-f --files <pattern>" {
   help "Select bench targets (benches/*.rs) by file-name substring"
@@ -467,6 +466,9 @@ flag "--model" {
 flag "-q --quick" {
   help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
 }
+flag "-t --test" {
+  help "Smoke-test benchmarks: run each once without measurement"
+}
 arg "[args]" var=#true {
   help "Extra arguments forwarded to cargo bench"
   long_help """
@@ -495,7 +497,7 @@ declare -a bench_files=()
 if [[ -n "${usage_mod:-}" ]]; then
   case "${usage_mod}" in
     hash)     bench_files=(hash) ;;
-    index)    bench_files=(index_codec index_inlinks index_lifecycle) ;;
+    index)    bench_files=(index_codec index_inlinks index_build index_refresh index_store) ;;
     note)     bench_files=(note_parsing) ;;
     query)    bench_files=(query_execution query_parsing query_sort) ;;
     template) bench_files=(template_render) ;;
@@ -527,6 +529,12 @@ if [[ "${usage_quick:-false}" == "true" ]]; then
   has_criterion_args=true
 fi
 
+# --- Smoke test mode ---
+if [[ "${usage_test:-false}" == "true" ]]; then
+  criterion_args+=(--test)
+  has_criterion_args=true
+fi
+
 # --- Extra args ---
 # extra_args is populated by eval below; mise pre-quotes each usage_args
 # token specifically for this reconstruction (see docs/refs/mise_tasks/
@@ -542,7 +550,7 @@ criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 # --baseline/--baseline-lenient/--discard-baseline/--load-baseline
 # (criterion rejects combining those with --save-baseline).
 resolve_baseline_name() {
-  if [[ "${usage_no_report:-false}" == "true" ]]; then
+  if [[ "${usage_no_report:-false}" == "true" || "${usage_test:-false}" == "true" ]]; then
     return
   fi
 
@@ -582,18 +590,37 @@ if [[ -n "${baseline}" ]]; then
   has_criterion_args=true
 fi
 
-# --- Build and run every selected bench target in a single cargo
-# invocation: cargo accepts repeated --bench flags, so this shares one
-# build/link pass across all targets instead of paying N separate cargo
-# startup + fingerprint-check costs in a loop. ---
+# --- Phase 1: Compile all selected bench targets in a single parallel pass ---
+declare -a compile_targets=()
+total_targets=0
 for bf in "${bench_files[@]}"; do
-  bench_args+=(--bench "${bf}")
+  compile_targets+=(--bench "${bf}")
+  total_targets=$((total_targets + 1))
 done
-if [[ "${has_criterion_args}" == "true" ]]; then
-  bench_args+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
-fi
-cargo "${bench_args[@]}"
+printf '==> Compiling %d benchmark target(s)...\n' "${total_targets}"
+cargo bench --no-run --features test-utils "${compile_targets[@]}"
 
+# --- Phase 2: Execute each benchmark binary in an isolated loop ---
+declare -a failed_targets=()
+current_idx=0
+
+for bf in "${bench_files[@]}"; do
+  current_idx=$((current_idx + 1))
+  printf '\n[%d/%d] Running benchmark target: %s\n' "${current_idx}" "${total_targets}" "${bf}"
+  declare -a run_cmd=(cargo bench --bench "${bf}" --features test-utils)
+  if [[ "${has_criterion_args}" == "true" ]]; then
+    run_cmd+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
+  fi
+  if ! "${run_cmd[@]}"; then
+    printf 'Error: Benchmark target %s failed\n' "${bf}" >&2
+    failed_targets+=("${bf}")
+  fi
+done
+
+if [[ -n "${failed_targets[*]:-}" ]]; then
+  printf '\nBenchmark run failed. Failed targets: %s\n' "${failed_targets[*]}" >&2
+  exit 1
+fi
 # --- Compare ---
 if [[ -n "${usage_compare:-}" ]]; then
   critcmp "${usage_compare}"

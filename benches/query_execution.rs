@@ -58,6 +58,7 @@ use common::{
 
 const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
 const TASK_DENSITY_COUNTS: &[usize] = &[1, 3, 10, 20];
+
 // ----------------------------------------------------------- //
 //                Benchmarks: General Execution                //
 // ----------------------------------------------------------- //
@@ -203,6 +204,9 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//                 Benchmarks: Isolated Filter                 //
 // ----------------------------------------------------------- //
 /// Measures end-to-end filter cost by frontmatter field count at a fixed
 /// 20,000-note workspace size.
@@ -323,6 +327,8 @@ fn bench_run_tasks_density(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
 /// Measures one `QuerySet::clone()` over result sets of varying source size.
@@ -365,6 +371,7 @@ fn bench_clone_query_set(c: &mut Criterion) {
     }
     group.finish();
 }
+
 /// rather than cloning them.
 ///
 /// Expected outcomes:
