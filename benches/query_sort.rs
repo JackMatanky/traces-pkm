@@ -125,27 +125,26 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 //                  Benchmarks: Isolated Sort                  //
 // ----------------------------------------------------------- //
 
-/// Measures sort-only cost by frontmatter metadata, swept over workspace size.
+/// Measures metadata sort cost over plain in-memory page rows.
 ///
-/// Isolated from the `TopK` fusion benchmarks below (which measure a
-/// `Sort`+`Limit` pipeline, not a bare sort) so a regression in
-/// `SortOrder::sort_rows`'s comparison or permutation cost is distinguishable
-/// from a regression in filter evaluation or field resolution. The size sweep
-/// (not a single point) exists so the result can be fit as `A·n + B·n·log₂(n)`:
-/// the linear term isolates per-row key resolution/materialization, the `n·log
-/// n` term isolates comparator + permutation cost. Single-point measurements
-/// cannot separate the two.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// Also runs `sort_only_desc` (identical query, `descending: true`) to exercise
-/// `compare_keys`'s `Ordering::reverse()` branch, otherwise unmeasured.
+/// Fixture indexes are built outside timing. Timed work builds a
+/// `sort("rating")` query and runs source-row construction, metadata key
+/// resolution, precomputed-key comparison, and row permutation.
+/// `sort_only_desc` exercises reverse ordering.
+///
+/// The size sweep can distinguish aggregate linear work from comparison-shaped
+/// growth, but it does not isolate individual subsystems by itself.
 ///
 /// Expected outcomes:
-/// - Cost dominated by the `n·log n` term if comparator dispatch dominates; by
-///   the linear term if per-row key materialization dominates.
+/// - Cost follows a row-construction/key-resolution plus `n log n` sort shape;
+///   descending and ascending stay in the same cost class.
 ///
 /// Unexpected outcomes:
-/// - Cost dominated by the linear term at all sizes, indicating key
-///   materialization dominates and comparator dispatch is not the bottleneck.
+/// - Cost grows faster than `n log n` or descending is much slower than
+///   ascending, indicating key materialization, comparison, or permutation work
+///   needs inspection.
 fn bench_sort_by_metadata(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_metadata");
     group.plot_config(
@@ -192,61 +191,32 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //             Benchmarks: Sort Plan Optimization              //
 // ----------------------------------------------------------- //
-
-/// Measures `QueryPlan`'s `Sort`+`Limit(n)` -> `TopK` fusion cost across three
-/// limit sizes, swept over workspace size.
+/// Measures `QueryPlan`'s `Sort`+`Limit(k)` -> `TopK` fusion cost across limit
+/// sizes and workspace sizes.
 ///
-/// ### How fusion works
+/// Parameters: varies limit `k` in `{10, 100, 1000}` and note count in
+/// [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// `QueryBuilder::sort(...).limit(...)` executed through `QueryService::run`
-/// always passes through `QueryPlan::run`, which fuses an adjacent `Sort` +
-/// `Limit` pair into one `TopK` step:
+/// Fixture: [`ProjectShape::Plain`] index built outside timing; timed work runs
+/// `QueryBuilder::pages(...).sort(...).limit(...)` through
+/// [`QueryService::run`].
 ///
-/// 1. `select_nth_unstable_by` partitions rows in `O(n)`.
-/// 2. The selected `k`-sized slice is truncated and sorted in `O(k log k)`.
+/// Compares against [`bench_sort_by_metadata`]'s `sort_only` numbers under the
+/// same `n` and fixture.
 ///
-/// Total cost is `O(n + k log k)`, not pure `O(n)`. For `k` in
-/// `{10, 100, 1000}` against `n` in `[5000, 40000]`, the tail term is
-/// negligible relative to the partition.
+/// `TopK` still pays source-row construction, key extraction, indexed-vector
+/// allocation, `O(n)` selection, and an `O(k log k)` selected-slice sort.
 ///
-/// ### What is measured vs. compared externally
+/// Expected outcomes:
+/// - For `n` materially larger than `k`, `topk_limit_10` beats full sort and
+///   the gap widens as `n` grows.
+/// - Larger `k` trends toward full-sort cost through selected-slice sorting.
 ///
-/// - The fused `TopK` step is measured here for three limit sizes.
-/// - The unfused full sort is *not* re-measured: it is identical to
-///   [`bench_sort_by_metadata`]'s `sort_only` (same query, same
-///   [`ProjectShape::Plain`] fixture, same sizes). Compare against that
-///   benchmark's numbers externally (HTML report or `critcmp`).
-///
-/// A chained `.sort(...).limit(...)` on a `QuerySet` (the shape the template
-/// `tasks`/`query` namespaces use) reaches the same fusion, deferred into the
-/// same `QueryPlan` and flushed once on read, so this benchmark guards the
-/// general cost of `TopK` fusion rather than any one caller. The chained
-/// `QuerySet` path itself is not benchmarked here: `QuerySet::sort`/`limit`
-/// are crate-private, unreachable from an external bench crate. Their
-/// correctness is covered by the `cte_chaining` unit tests in
-/// `src/query/results.rs`.
-///
-/// Sweeping over sizes (not a single point) lets the fusion's advantage be
-/// checked against its `O(n + k log k)` vs. `O(n log n)` prediction: the gap
-/// between `topk_limit_10` and the full sort should widen as `n` grows, not
-/// stay flat. The three limit sizes check whether
-/// `select_nth_unstable_by`'s selection advantage holds as `k` grows
-/// relative to `n`.
-///
-/// ### Expected outcomes
-///
-/// - `topk_limit_10` costs meaningfully less than [`bench_sort_by_metadata`]'s
-///   `sort_only` at every size, and the gap widens as `n` grows.
-/// - `topk_limit_100` and `topk_limit_1000` cost more than `topk_limit_10` but
-///   still less than the full sort, tracking `k`'s share of `n`.
-///
-/// ### Unexpected outcomes
-///
-/// - `topk_limit_10`'s cost is comparable to the full sort, indicating `TopK`'s
-///   key-materialization pass (paid regardless of `k`) dominates over the
-///   selection it avoids.
-/// - `topk_limit_1000`'s cost is comparable to `topk_limit_10`'s, indicating
-///   `select_nth_unstable_by`'s cost is not growing with `k` as expected.
+/// Unexpected outcomes:
+/// - Small-`k` cost matches full sort, indicating fixed key/materialization
+///   work dominates the saved permutation.
+/// - Large-`k` cost exceeds full sort, indicating partition/truncation overhead
+///   outweighs the comparison savings.
 fn bench_topk_vs_full_sort(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/topk_fusion");
     group.plot_config(
@@ -286,35 +256,24 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //               Benchmarks: Sort Decomposition                //
 // ----------------------------------------------------------- //
-
-/// Measures bare `QueryRow` move/permutation cost, isolated from all comparison
-/// and field resolution, swept over workspace size.
+/// Measures synthetic `QueryRow` inline move/permutation cost, isolated from
+/// comparisons and field resolution.
 ///
-/// Decomposition of [`bench_sort_by_metadata`]: if a full Fisher-Yates shuffle
-/// (n moves of `QueryRow`, each carrying its `Arc<FileIndex>` + `RowIndex` +
-/// overlay fields) costs a small fraction of the real sort at every size,
-/// element-move cost is ruled out as the dominant component and the cost must
-/// live in the comparator or key materialization. Swept over the same sizes as
-/// [`bench_sort_by_metadata`] (not a single point) so the permutation share of
-/// sort cost can be checked at each `n`, not projected from one measurement: a
-/// linear-cost operation's *share* of an `n log n` operation shrinks as `n`
-/// grows, so a single point cannot confirm the share stays small at scale.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports inline
+/// `size_of::<QueryRow>() * n` bytes moved by the shuffle.
 ///
-/// Records are produced through the public query API (`run` then
-/// `QuerySet::get` + clone); no internals are reached.
+/// Fixture rows are produced through the public query API outside timing.
 ///
-/// Reports `Throughput::Bytes` (not `Elements`): this benchmark measures
-/// data-movement cost, and bytes/second is the meaningful unit for `QueryRow`'s
-/// actual in-memory size, unlike an elements/second count that hides
-/// per-element cost.
+/// This does not measure total row memory footprint or the full sort
+/// reassembly path; it isolates the Fisher-Yates swap cost for cloned rows.
 ///
 /// Expected outcomes:
-/// - Shuffle cost is a small fraction of sort-only cost at every size, ruling
-///   out element-move as the dominant sort component.
+/// - Shuffle cost remains a small contextual component relative to sort-only
+///   cost at the same `n`.
 ///
 /// Unexpected outcomes:
-/// - Shuffle cost comparable to sort-only cost, indicating element-move
-///   dominates and `QueryRow` size should be reduced.
+/// - Shuffle cost approaches sort-only cost, indicating inline row size or row
+///   movement deserves inspection before comparator work.
 fn bench_permute_query_rows(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/permute_records");
     group.plot_config(
@@ -352,25 +311,23 @@ fn bench_permute_query_rows(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the floor: sorting `n` bare `f64` keys with `total_cmp`, swept over
-/// workspace size.
+/// Measures a synthetic comparator baseline: sorting `n` shuffled bare `f64`
+/// keys with `total_cmp`.
 ///
-/// Reference lower bound for `n·log n` comparisons with no enum dispatch, no
-/// `SortKey` wrapping, and no `QueryRow` permutation. The gap between this
-/// floor and [`bench_sort_by_metadata`] is what the replica and permutation
-/// benchmarks attribute. Swept over the same sizes as
-/// [`bench_sort_by_metadata`] (not a single point) so the floor's `n log n`
-/// scaling can be checked directly against the real sort's fitted curve at each
-/// `n`, not assumed from one measurement.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports key count.
+///
+/// Fixture keys are generated outside timing with deterministic shuffled
+/// ratings.
+///
+/// This is not a production lower bound: production sort also resolves keys,
+/// normalizes values, builds order/reassembly buffers, and permutes rows.
 ///
 /// Expected outcomes:
-/// - Cost is lower than sort-only and replica benchmarks at every size,
-///   confirming enum dispatch and `QueryRow` permutation add measurable
-///   overhead.
+/// - Cost provides a stable broad anchor for raw numeric comparison work.
 ///
 /// Unexpected outcomes:
-/// - Cost matching sort-only or replica benchmarks, indicating overhead beyond
-///   raw comparison dominates and the floor is not the bottleneck.
+/// - Cost converges with production sort, indicating non-comparison overhead
+///   has shrunk or this synthetic floor no longer separates the paths.
 fn bench_sort_f64_floor(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_f64_floor");
     group.plot_config(
@@ -398,26 +355,22 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures comparator dispatch cost on `NoteFieldValue` values with a replica
-/// of `SortKey::cmp`'s shape, swept over workspace size.
+/// Measures a simplified synthetic `NoteFieldValue::Number` comparator shape.
 ///
-/// The production comparator, `SortKey::cmp`, is `pub(crate)` in
-/// `src/query/sort.rs` and unreachable from an external bench crate, so this
-/// replicates the exact arm structure the Number-vs-Number path exercises (enum
-/// `match` on both operands, then `f64::total_cmp`, with the `descending`
-/// branch) against real `NoteFieldValue` values. It measures what a comparator
-/// of this shape costs, not the production function itself; conclusions must
-/// treat it as a shape-equivalent upper bound on dispatch cost. Swept over the
-/// same sizes as [`bench_sort_by_metadata`] (not a single point) so dispatch
-/// overhead can be checked against the f64 floor at each `n`.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports value count. Fixture
+/// values are generated outside timing from shuffled ratings.
+///
+/// The closure matches two `NoteFieldValue::Number` variants and calls
+/// `f64::total_cmp`; it is intentionally not the production `SortKey::cmp`
+/// implementation, which has normalization and sort-order plumbing.
 ///
 /// Expected outcomes:
-/// - Cost is close to the f64 floor at every size, confirming enum dispatch
-///   overhead is small relative to comparator + permutation cost.
+/// - Cost stays near the bare-f64 anchor if enum matching adds little overhead
+///   in this synthetic path.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeding the f64 floor, indicating enum dispatch in
-///   the real comparator is a meaningful cost contributor.
+/// - Cost significantly exceeds the f64 anchor, indicating this synthetic enum
+///   match path deserves inspection before attributing production sort cost.
 fn bench_sort_note_field_value_replica(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_value_replica");
     group.plot_config(
@@ -454,25 +407,21 @@ fn bench_sort_note_field_value_replica(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //            Benchmarks: Sort Key Type Coverage               //
 // ----------------------------------------------------------- //
-
-/// Measures sort cost by a built-in text field (`file.name`), swept over
-/// workspace size.
+/// Measures sort cost by a built-in text field (`file.name`) over plain page
+/// rows.
 ///
-/// [`bench_sort_by_metadata`] only exercises `SortKey::Number`; every other
-/// `SortKey` variant (`Text`, `Date`, `Duration`, `Bool`, `Null`) goes
-/// unmeasured elsewhere in this file. `file.name` resolves through
-/// `FileField::Name`, a different code path than frontmatter metadata
-/// resolution, and lands on `SortKey::Text` after `SortKey::from_value_ref`'s
-/// date/duration parsing fallback fails to match a filename.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
+///
+/// Fixture indexes are built outside timing. Timed work sorts by `file.name`,
+/// exercising file-field resolution and `SortKey::Text`
+/// classification/comparison.
 ///
 /// Expected outcomes:
-/// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
-///   `n`; `str::cmp` is not meaningfully more expensive than `f64::total_cmp`.
+/// - Cost stays in the broad range of the numeric sort anchor for the same `n`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating the date/duration
-///   parsing fallback in `SortKey::from_value_ref` is not short-circuiting
-///   cheaply for non-matching text.
+/// - Cost significantly exceeds the numeric anchor, indicating text-key field
+///   resolution, classification, or string comparison needs inspection.
 fn bench_sort_by_text(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_text");
     group.plot_config(
@@ -501,22 +450,21 @@ fn bench_sort_by_text(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures sort cost by a frontmatter text field (`title`), swept over
-/// workspace size.
+/// Measures sort cost by a frontmatter text field (`title`) over page rows.
 ///
-/// Mirrors [`bench_sort_by_text`] (which sorts by `file.name`, a `FileField`
-/// resolution path) for the frontmatter-`Metadata` resolution path. Both land
-/// on `SortKey::Text` after `SortKey::from_value_ref`'s date/duration parsing
-/// fallback fails to match the text.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
+///
+/// Fixture indexes are built outside timing from `title_field_note_source`,
+/// whose title values are pseudorandomized so the sort does not start already
+/// ordered.
 ///
 /// Expected outcomes:
-/// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
-///   `n`; `str::cmp` is not meaningfully more expensive than `f64::total_cmp`.
+/// - Cost stays in the broad range of the numeric sort anchor for the same `n`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating the date/duration
-///   parsing fallback in `SortKey::from_value_ref` is not short-circuiting
-///   cheaply for non-matching text.
+/// - Cost significantly exceeds the numeric anchor, indicating metadata
+///   resolution, `SortKey::from_text` classification, borrowing/allocation, or
+///   string comparison needs inspection.
 fn bench_sort_by_title(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_title");
     group.plot_config(
@@ -547,22 +495,22 @@ fn bench_sort_by_title(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures sort cost by a built-in date field (`file.mtime`), swept over
-/// workspace size.
+/// Measures sort cost by a built-in date field (`file.mtime`) over page rows.
 ///
-/// Exercises `SortKey::DateTime`'s `DateTimeValue` comparator, unmeasured
-/// elsewhere in this file. Fixture notes are all written within the same
-/// benchmark setup call, so their modification timestamps cluster within the
-/// same second or two; this benchmark measures resolution + comparator cost,
-/// not a meaningfully discriminating sort order.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
+///
+/// Fixture indexes are built in memory outside timing; synthetic [`FileBase`]
+/// timestamps are created during fixture setup rather than by writing files.
+///
+/// This is a DateTime-key resolution and tie-heavy comparison path, not a
+/// deterministic varied-timestamp ordering benchmark.
 ///
 /// Expected outcomes:
-/// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
-///   `n`.
+/// - Cost stays in the broad range of the numeric sort anchor for the same `n`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating `DateTimeValue`
-///   resolution or comparison is more expensive than `f64::total_cmp`.
+/// - Cost significantly exceeds the numeric anchor, indicating `DateTime` key
+///   resolution, null/tie handling, or comparison needs inspection.
 fn bench_sort_by_date(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_date");
     group.plot_config(
@@ -591,26 +539,25 @@ fn bench_sort_by_date(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures composite two-term sort cost (`class, rating`) against
-/// [`ProjectShape::Classified`]'s four-value `class` field, swept over
-/// workspace size.
+/// Measures composite two-term sort cost (`class, rating`) over classified page
+/// rows.
 ///
-/// [`ProjectShape::Classified`] assigns one of four `class` values
-/// (`Project`/`Area`/`Resource`/`Archive`) cyclically, so roughly a quarter of
-/// rows tie on the first sort term at every `n`. Ties force
-/// `SortOrder::compare_keys`'s tie-break loop into the second term (`rating`),
-/// exercising multi-term composite sorting - unmeasured by any other benchmark
-/// in this file, which sorts by exactly one field.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
+///
+/// Fixture indexes are built outside timing from [`ProjectShape::Classified`],
+/// whose four class values are assigned cyclically.
+///
+/// The second term is reached only when `class` ties; under uniform random
+/// comparison this is roughly one quarter of pairs, though actual sort
+/// comparator frequency depends on input order.
 ///
 /// Expected outcomes:
-/// - Cost scales similarly to a single-term sort at the same `n`; the tie-break
-///   loop adds a second comparison only for the roughly 75% of adjacent pairs
-///   that tie on `class`.
+/// - Cost increases over one-term sort but stays consistent with a two-term
+///   comparison where most comparisons decide on `class`.
 ///
 /// Unexpected outcomes:
-/// - Cost meaningfully exceeds twice [`bench_sort_by_metadata`]'s `sort_only`,
-///   indicating `compare_keys`'s per-term loop has more than the expected
-///   linear-in-terms overhead.
+/// - Cost grows disproportionately, indicating term-loop work or unexpectedly
+///   frequent second-term comparisons needs inspection.
 fn bench_sort_composite(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_composite");
     group.plot_config(
@@ -639,24 +586,23 @@ fn bench_sort_composite(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures sort cost over a field that is `Null` on 30% of rows, swept over
-/// workspace size.
+/// Measures sort cost over a numeric field that is `Null` on 30% of rows.
 ///
-/// `SortKey::cmp` sorts `Null` below every other value; every other benchmark
-/// in this file resolves `rating` from frontmatter that always sets it, so the
-/// `Null`-sorts-below branch never fires at scale. This uses
-/// [`nullable_rating_note_source`], which omits the `rating` key entirely on 3
-/// of every 10 notes, forcing that branch on a meaningful fraction of
-/// comparisons.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
+///
+/// Fixture indexes are built outside timing from
+/// [`nullable_rating_note_source`], which omits `rating` on 3 of every 10
+/// notes.
+///
+/// This exercises `SortOrder::compare_keys` null-placement logic for numeric
+/// rating sorts.
 ///
 /// Expected outcomes:
-/// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
-///   `n`; the `Null` branch is a cheap `Ordering::Less`/`Greater`
-///   short-circuit.
+/// - Cost stays near the always-present numeric rating sort for the same `n`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating null resolution
-///   (missing-key lookup) is more expensive than a present-key lookup.
+/// - Cost significantly exceeds the numeric anchor, indicating missing-key
+///   resolution or null-placement comparison needs inspection.
 fn bench_sort_nullable(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_nullable");
     group.plot_config(
@@ -687,21 +633,22 @@ fn bench_sort_nullable(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures sort cost by a duration-literal metadata field (`estimate`), swept
-/// over workspace size.
+/// Measures sort cost by a duration-literal metadata field (`estimate`) over
+/// page rows.
 ///
-/// Exercises `SortKey::Duration`'s `DurationSeconds` comparator. In Phase 1,
-/// duration metadata fields are parsed once at note ingestion into
-/// `NoteFieldValue::Duration(DurationValue)`, so sort-key extraction performs
-/// an O(1) `to_seconds()` conversion without string reparsing.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
+///
+/// Fixture indexes are built outside timing from
+/// [`duration_field_note_source`]. Source strings are parsed during fixture
+/// construction, so timed key extraction calls `DurationValue::to_seconds()`
+/// without reparsing strings.
 ///
 /// Expected outcomes:
-/// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
-///   `n` because duration comparison is an O(1) f64 `total_cmp`.
+/// - Cost stays in the broad range of the numeric sort anchor for the same `n`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating duration sort-key
-///   extraction has unexpected overhead relative to numeric fields.
+/// - Cost significantly exceeds the numeric anchor, indicating duration key
+///   extraction or comparison needs inspection.
 fn bench_sort_by_duration(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_duration");
     group.plot_config(
@@ -732,24 +679,21 @@ fn bench_sort_by_duration(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures sort cost on task rows by `task.completed` (`SortKey::Bool`), swept
-/// over workspace size.
+/// Measures sort cost on task rows by `task.completed` (`SortKey::Bool`).
 ///
-/// Every other benchmark in this file sorts page rows; task rows resolve fields
-/// through `QueryRow::resolve_ref`'s `RowKind::Task` branch
-/// (`src/query/results.rs`), a different path than page-row
-/// frontmatter/file-field resolution. This also exercises `SortKey::Bool`, the
-/// only `SortKey` variant no other benchmark in this file reaches.
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports task rows (`3 * n`).
+///
+/// Fixture indexes are built outside timing from [`task_triplet_note_source`],
+/// so timed work expands pre-parsed tasks, resolves `task.completed`, and sorts
+/// task rows.
 ///
 /// Expected outcomes:
-/// - Cost scales with total task count (`n * 3`, from
-///   [`task_triplet_note_source`]'s three tasks per note), similar in shape to
-///   [`bench_sort_by_metadata`]'s per-row cost.
+/// - Cost scales with total task count and stays comparable per output row to
+///   page-row sort cost.
 ///
 /// Unexpected outcomes:
-/// - Cost per task row significantly exceeds [`bench_sort_by_metadata`]'s cost
-///   per page row, indicating task-row field resolution is more expensive than
-///   page-row resolution.
+/// - Cost per task row significantly exceeds page-row sort cost, indicating
+///   task-row field resolution or Bool comparison needs inspection.
 fn bench_sort_task_rows(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_task_rows");
     group.plot_config(

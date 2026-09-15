@@ -1,7 +1,7 @@
-//! Memory footprint and allocation benchmark suite.
+//! Memory allocation benchmark suite.
 //!
-//! Measures net heap bytes and allocation counts for `parse_markdown` and
-//! `IndexerService::build` across representative corpus sizes.
+//! Reports gross allocated bytes and allocation counts for `parse_markdown`,
+//! `IndexerService::build`, and persisted query/refresh paths.
 //!
 //! ### Data Flow Diagram
 //!
@@ -40,16 +40,22 @@ use common::{
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
-/// Measures net heap bytes and allocation counts for `parse_markdown` across
-/// list-item and frontmatter-field fixture sizes, printed to stderr per size.
+/// Measures gross allocated bytes and allocation calls for `parse_markdown`,
+/// printed to stderr for each list-item and frontmatter-field size.
+///
+/// Parameters: varies `LIST_ITEM_COUNTS` through `list_items_source` and
+/// `FRONTMATTER_FIELD_COUNTS` through `frontmatter_fields_source`.
+///
+/// Fixture strings and [`MarkdownParserInput`] values are built outside both
+/// the allocation region and Criterion timing loops.
 ///
 /// Expected outcomes:
-/// - Net bytes and allocation counts scale linearly with fixture size.
+/// - Gross allocated bytes and allocation calls grow roughly proportionally
+///   within each series.
 ///
 /// Unexpected outcomes:
-/// - A size tier jumping disproportionately in bytes or allocation count,
-///   indicating an unexpected buffer duplication or per-item allocation in the
-///   parser.
+/// - A tier jumping disproportionately in bytes or allocation count, indicating
+///   buffer duplication or per-item/per-field allocation in the parser.
 fn bench_note_construction_allocation(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory/note_construction");
     group.sample_size(10);
@@ -66,7 +72,8 @@ fn bench_note_construction_allocation(c: &mut Criterion) {
         drop(note);
 
         eprintln!(
-            "[memory] parse_markdown list_items({n}): net {} bytes, {} allocs",
+            "[memory] parse_markdown list_items({n}): gross {} bytes, {} \
+             allocs",
             stats.bytes_allocated, stats.allocations
         );
 
@@ -86,7 +93,7 @@ fn bench_note_construction_allocation(c: &mut Criterion) {
         drop(note);
 
         eprintln!(
-            "[memory] parse_markdown frontmatter_fields({n}): net {} bytes, \
+            "[memory] parse_markdown frontmatter_fields({n}): gross {} bytes, \
              {} allocs",
             stats.bytes_allocated, stats.allocations
         );
@@ -99,15 +106,22 @@ fn bench_note_construction_allocation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures net heap bytes and allocation counts for `IndexerService::build`
-/// across workspace sizes, printed to stderr per size.
+/// Measures gross allocated bytes and allocation calls for one
+/// `IndexerService::build` over plain-project workspace sizes.
+///
+/// Parameters: varies note count; reports allocation bytes, allocation calls,
+/// and sampled build latency for tiers up to 1,000 notes.
+///
+/// Fixture: temporary [`ProjectShape::Plain`] projects are created before the
+/// allocation probe. The measured build includes filesystem scan/read, parsing,
+/// inlink construction, and [`FileIndex`] assembly.
 ///
 /// Expected outcomes:
-/// - Net bytes scale roughly linearly with note count.
+/// - Allocation bytes and calls grow roughly linearly with note count.
 ///
 /// Unexpected outcomes:
-/// - Bytes growing super-linearly with note count, indicating duplicated note
-///   storage or unbounded intermediate collections during indexing.
+/// - Allocations growing super-linearly with note count, indicating duplicated
+///   note storage or unbounded intermediate collections during indexing.
 fn bench_file_index_footprint(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory/file_index_build");
     group.sample_size(10);
@@ -123,7 +137,7 @@ fn bench_file_index_footprint(c: &mut Criterion) {
         drop(index);
 
         eprintln!(
-            "[memory] FileIndex::build({n}): net {} bytes, {} allocs",
+            "[memory] FileIndex::build({n}): gross {} bytes, {} allocs",
             stats.bytes_allocated, stats.allocations
         );
 
@@ -141,31 +155,29 @@ fn bench_file_index_footprint(c: &mut Criterion) {
     group.finish();
 }
 
-/// Compares net allocation cost of a cold, narrow store-scoped query
-/// ([`QueryService::sync_and_run`]) against a full [`FileIndex`]
-/// -materializing refresh ([`IndexerService::refresh_with_report`]) at
-/// matching vault sizes.
+/// Measures gross allocation cost across vault sizes for a narrow
+/// [`QueryService::sync_and_run`] query vs. a full [`FileIndex`]-materializing
+/// refresh.
 ///
-/// `sync_and_run` queries a tag unique to note `0` (`#rare_0`, see
-/// `tagged_note_source`), so exactly one note matches regardless of `n`.
-/// `refresh_with_report` must decode and materialize every persisted note
-/// into a `FileEntry`/`FileIndex` row; nothing changes on disk between the
-/// two calls, so both take their respective no-op path.
+/// Parameters: varies note count; holds one matching `#rare_0` tag selector
+/// fixed; reports gross allocated bytes and allocation calls.
 ///
-/// Both allocation counts still grow with `n`: `scan()` and the
-/// `FileBase`-diff step are O(vault size) by construction (there is no
-/// filesystem-watcher layer here), and both paths pay that cost. What
-/// differs is the decode step layered on top of it.
+/// Fixture: each persisted tagged project contains exactly one `#rare_0` note;
+/// project creation and persistence occur outside the measured regions.
+///
+/// Compares `sync_and_run` against [`IndexerService::refresh_with_report`] on a
+/// no-op filesystem state: both include scan/sync work, while `sync_and_run`
+/// resolves and decodes matching stored records and `refresh_with_report`
+/// materializes every persisted file, note, and inlink.
 ///
 /// Expected outcomes:
-/// - `sync_and_run` allocates roughly a third of `refresh_with_report`'s count
-///   at every scale (observed: ~142k vs ~443k allocations at 20,000 files) - it
-///   decodes and materializes the one matching `Note`, not all `n`.
+/// - One-match `sync_and_run` allocation stays below full-refresh allocation
+///   and does not grow like every persisted note is decoded.
 ///
 /// Unexpected outcomes:
 /// - `sync_and_run`'s allocation count converging toward
-///   `refresh_with_report`'s as `n` grows, indicating a full `FileIndex` snuck
-///   back into the cold-read path.
+///   `refresh_with_report`'s as `n` grows, indicating a full [`FileIndex`] or
+///   full-note read snuck back into the store-query path.
 fn bench_sync_and_run_footprint(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory/sync_and_run");
     group.sample_size(10);
@@ -195,8 +207,8 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
         drop(index);
 
         eprintln!(
-            "[memory] sync_and_run/one-match({n}): net {} bytes, {} allocs; \
-             refresh_with_report({n}): net {} bytes, {} allocs",
+            "[memory] sync_and_run/one-match({n}): gross {} bytes, {} allocs; \
+             refresh_with_report({n}): gross {} bytes, {} allocs",
             sync_stats.bytes_allocated,
             sync_stats.allocations,
             refresh_stats.bytes_allocated,

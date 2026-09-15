@@ -61,22 +61,27 @@ use common::{
 //               Benchmarks: InlinkMap Compilation             //
 // ----------------------------------------------------------- //
 
-/// Measures in-memory link graph compilation across varying graph densities and
+/// Measures in-memory link graph compilation across workspace sizes and link
 /// topologies.
 ///
-/// Evaluates path resolution, stem index lookups, proximity tie-breaking,
-/// duplicate-edge deduplication, hub source grouping, and attachment path
-/// resolution in isolation from disk and database serialization overhead.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and topology (`sparse`,
+/// `dense`, `single_hub`, `duplicate_links`, `deep_paths`, `ambiguous`,
+/// `attachments`); reports note throughput.
+///
+/// Fixture: parsed notes and matching file records are built outside timing;
+/// timed work is only [`InlinkMap::new`] resolution, global edge sort/dedup,
+/// and grouping.
 ///
 /// Expected outcomes:
-/// - Linear or near-linear scaling for sparse, dense, hub, duplicate,
-///   deep-path, and attachment graphs.
-/// - Stable scaling under stem ambiguity without combinatorial degradation.
+/// - Cost tracks edge count for each topology; the global edge sort may add `E
+///   log E` shape without candidate-resolution blowups.
+/// - Ambiguous same-stem resolution stays bounded by candidate count, not by a
+///   full workspace scan per link.
 ///
 /// Unexpected outcomes:
-/// - Super-linear scaling under dense, duplicate, deep-path, or ambiguous
-///   graphs, indicating redundant allocations or pathological tie-breaking
-///   loops.
+/// - Dense, duplicate, deep-path, or ambiguous graphs grow beyond their edge
+///   count plus sort cost, indicating redundant allocation, repeated candidate
+///   scans, or pathological tie-breaking loops.
 fn bench_inlink_map_new(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::new");
     group.plot_config(
@@ -189,19 +194,23 @@ fn bench_inlink_map_new(c: &mut Criterion) {
 //             Benchmarks: Collision Candidate Count            //
 // ----------------------------------------------------------- //
 
-/// Measures same-stem resolution as the number of candidate targets grows.
+/// Measures same-stem resolution cost across candidate target counts while full
+/// map construction cost is held fixed.
 ///
-/// Keeps total note count fixed and varies only the number of same-stem
-/// candidates, isolating folder-proximity tie-breaking from workspace-size
-/// scaling.
+/// Parameters: holds note count at 10,000; varies same-stem candidates over
+/// `{2, 10, 100}`; reports wall-clock time and note throughput.
+///
+/// Fixture: ambiguous-target notes and matching file records are built outside
+/// timing; timed work constructs the whole [`InlinkMap`], including resolver
+/// creation, all source resolution, global edge sort/dedup, and grouping.
 ///
 /// Expected outcomes:
-/// - Cost grows with candidate count but stays bounded by the number of
-///   same-stem candidates, not total workspace size.
+/// - The incremental delta from 2 to 10 to 100 candidates stays proportional to
+///   candidate count on top of the fixed full-map construction cost.
 ///
 /// Unexpected outcomes:
 /// - Cost jumps disproportionately from 10 to 100 candidates, indicating
-///   repeated full-workspace scans instead of stem-indexed candidate lookup.
+///   repeated candidate scans or workspace-wide lookup inside tie-breaking.
 fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::new/collisions");
     let n = 10_000_usize;
@@ -233,19 +242,29 @@ fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
 //               Benchmarks: InlinkMap Accessors               //
 // ----------------------------------------------------------- //
 
-/// Measures point-lookup and iteration performance over an assembled inlink
-/// graph. Evaluates direct slice returns via [`InlinkMap::inlinks_of`],
-/// presence tests via [`InlinkMap::has_target`], target-row traversal via
-/// [`InlinkMap::iter`], and full source-edge traversal over every inlink slice.
+/// Measures point-lookup and iteration performance over one fixed assembled
+/// inlink graph.
+///
+/// Parameters: holds a 1,000-note dense-link graph fixed (20 outgoing links per
+/// note); varies hit/miss `inlinks_of`, hit/miss `has_target`, target-row
+/// iteration, and source-edge counting.
+///
+/// Fixture: parsed notes, file records, and [`InlinkMap`] are built outside
+/// timing; hit target is `note-500.md`, miss target is `nonexistent.md`.
 ///
 /// Expected outcomes:
-/// - Sub-microsecond latency for point lookups with zero heap allocation.
-/// - Target-row iteration scales with unique targets.
-/// - Source-edge iteration scales with total inbound edges.
+/// - Point lookups stay much cheaper than full traversal because they are one
+///   `HashMap` lookup returning a borrowed slice or boolean.
+/// - Target-row iteration visits map rows only; source-edge counting
+///   additionally sums each row's borrowed source slice.
 ///
 /// Unexpected outcomes:
-/// - Microsecond or higher point-lookup latencies, indicating unexpected
-///   hashing overhead or heap allocations.
+/// - Point-lookup cost diverges between hits and misses or approaches traversal
+///   cost, indicating unexpected hashing, path comparison, or allocation work.
+/// - Target-row iteration approaches source-edge traversal, indicating row
+///   iteration is cloning or flattening source slices.
+/// - Source-edge counting grows expensive for this fixed map, indicating nested
+///   re-walks or per-edge allocation.
 fn bench_inlink_map_accessors(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::accessors");
     let n = 1_000;

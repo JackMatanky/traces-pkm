@@ -65,19 +65,20 @@ const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
 //                Benchmarks: General Execution                //
 // ----------------------------------------------------------- //
 
-/// Measures page-row construction and filtering, swept over workspace size.
+/// Measures unfiltered page-row selection/materialization over plain in-memory
+/// indexes.
 ///
-/// Every `traces query` invocation pays this path, and regressions here
-/// directly degrade CLI responsiveness, so isolating page queries catches
-/// regressions in filter logic or row materialization that a correctness test
-/// would miss.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports page-row throughput.
+///
+/// Fixture: [`ProjectShape::Plain`] indexes are built outside timing through
+/// `FileIndex::new_test`. Timed work runs `QueryService::run(All pages)`.
 ///
 /// Expected outcomes:
-/// - Linear O(n) execution with note count (~4.7 ns per row materialization).
+/// - Cost scales linearly with indexed entries.
 ///
 /// Unexpected outcomes:
-/// - Super-linear scaling with note count, indicating unindexed scans or
-///   redundant allocation per row.
+/// - Super-linear scaling with note count, indicating row materialization or
+///   source iteration does redundant work.
 fn bench_run_pages(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
     group.plot_config(
@@ -102,19 +103,20 @@ fn bench_run_pages(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures task-row construction, swept over workspace size, with three tasks
-/// per note.
+/// Measures pre-parsed task-row expansion/materialization over in-memory
+/// indexes, with three tasks per note.
 ///
-/// This captures task-row parsing and materialization independently from
-/// filesystem indexing, isolating the cost of checkbox extraction and task
-/// metadata assembly.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports task-row throughput
+/// (`3 * n` rows). Fixture parsing happens outside timing through
+/// `task_triplet_note_source` and `FileIndex::new_test`.
 ///
 /// Expected outcomes:
-/// - Task queries scale proportionally to total task count.
+/// - Task queries scale proportionally to output task rows and stay comparable
+///   per output row to [`bench_run_pages`].
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds page-query cost for same note count, indicating
-///   task parsing overhead or redundant regex evaluation.
+/// - Per-task-row cost significantly exceeds page-row cost, indicating task-row
+///   field resolution or row assembly does extra per-task work.
 fn bench_run_tasks(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
     group.plot_config(
@@ -144,30 +146,27 @@ fn bench_run_tasks(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //              Benchmarks: Combined Filter+Sort               //
 // ----------------------------------------------------------- //
-
 /// Measures page-row filtering and sorting by frontmatter metadata combined,
 /// swept over workspace size.
 ///
-/// Distinct from [`bench_run_pages`], which never touches a
-/// `FieldPath::Metadata`/`Tags` field and would not catch regressions in
-/// per-record Note metadata resolution. Combining filter and sort here cannot
-/// attribute a regression to either one; see
-/// [`bench_filter_by_metadata_field_count`] and [`bench_sort_by_metadata`] for
-/// the isolated halves.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports input note throughput.
 ///
-/// Measured finding (20,000 rows): sort accounts for the large majority of this
-/// benchmark's cost (~4.7 ms of ~5.2 ms combined), not field lookup (~1.8 ms
-/// filter-only, ~141 µs unfiltered baseline): `sort_by_cached_key` over 20,000
-/// `QueryRow`s dominates, not metadata resolution.
+/// Fixture: [`ProjectShape::Plain`] in-memory indexes are built outside timing.
+/// Timed work builds and runs `All pages -> filter("rating > 2") ->
+/// sort("rating")`.
+///
+/// This group covers the combined end-to-end path only. The filter-width and
+/// sort-only benchmarks are diagnostic context, but they are not a controlled
+/// subtraction because their fixtures and setup boundaries differ.
 ///
 /// Expected outcomes:
-/// - Cost tracks [`bench_sort_by_metadata`]'s sort-only cost plus
-///   [`bench_filter_by_metadata_field_count`]'s filter-only cost, not a
-///   disproportionate combination of the two.
+/// - Cost scales with row construction, filtered-row count, and full-sort work
+///   for the plain fixture.
 ///
 /// Unexpected outcomes:
-/// - Cost exceeding the sum of the isolated halves, indicating the combined
-///   path introduces overhead not present in either half alone.
+/// - Cost grows beyond the filter-plus-sort shape for this fixture, indicating
+///   combined-path overhead in query construction, filtering, key extraction,
+///   or sorting.
 fn bench_run_pages_by_metadata(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
     group.plot_config(
@@ -208,32 +207,24 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //                 Benchmarks: Isolated Filter                 //
 // ----------------------------------------------------------- //
-
-/// Measures filter-only cost by frontmatter field count per note, isolated from
-/// sorting, at a fixed 20,000-note workspace size.
+/// Measures end-to-end filter cost by frontmatter field count at a fixed
+/// 20,000-note workspace size.
 ///
-/// `FieldPath::parse` (the crate-internal query field-path parser)
-/// canonicalizes a query's metadata field name once at parse time, not per row:
-/// every row a query touches calls `Frontmatter::get`/`Note::get` with an
-/// already-canonical candidate, so the allocating canonicalize-on-mismatch
-/// fallback inside metadata field lookup is unreachable from the query engine;
-/// it only matters for direct `Frontmatter`/`Note` callers outside a query,
-/// already covered by `src/field.rs`'s own unit tests. Do not add a
-/// "case-mismatched query candidate" benchmark here expecting it to exercise
-/// that fallback: it cannot, by construction.
+/// Parameters: varies metadata field count over `{1, 5, 10, 20}`; reports
+/// 20,000 input rows per iteration. Fixture indexes are built outside timing by
+/// `metadata_lookup_note_source`, which places `rating` after the synthetic
+/// fields so accidental linear metadata lookup is visible.
 ///
-/// Distinct from [`bench_run_pages_by_metadata`], which combines filter and
-/// sort and never varies field count, so it cannot distinguish a filter
-/// regression from a sort regression, or an O(K)-scan regression from a flat
-/// O(1) lookup at any field count.
+/// Timed work parses and runs the fixed `rating > 2` filter; it also constructs
+/// page rows, so this is not a pure lookup microbenchmark.
 ///
 /// Expected outcomes:
-/// - Flat cost across field counts: metadata lookup is O(1) (hash-keyed), not
-///   O(K) (linear-scanned).
+/// - Cost remains broadly flat across field counts because query field paths
+///   use canonical hash-keyed lookup.
 ///
 /// Unexpected outcomes:
-/// - Cost growing with field count indicates a regression back to an O(K)
-///   linear scan per lookup.
+/// - Cost grows with field count, signaling metadata lookup/key-resolution or
+///   field-width-sensitive row work needs inspection.
 fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("QueryService::run/filter_by_field_count");
@@ -270,23 +261,23 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
-
-/// Measures the cost of cloning a `QuerySet`, swept over workspace size.
+/// Measures one `QuerySet::clone()` over result sets of varying source size.
 ///
-/// `src/template/engine/query.rs`'s `Object::call_method` for `QuerySet` clones
-/// the entire outcome (`self.as_ref().clone()`) on every non-terminal chained
-/// call (`.where`/`.filter`/`.sort`/`.limit`/ `.group_by`/`.flatten`).
-/// `QuerySet::base` is `Arc<Vec<QueryRow>>`, so `#[derive(Clone)]` clones an
-/// `Arc` pointer (and a short pending-plan `Vec`), not the row data. This
-/// benchmark confirms that claim directly against the live type.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; `n` is a size-sensitivity
+/// probe, not processed work inside the timed clone.
+///
+/// Fixture: a plain in-memory index and unmaterialized no-transform
+/// [`QuerySet`] are built outside timing.
+///
+/// `QuerySet::base` is `Arc<Vec<QueryRow>>`, so cloning should copy the `Arc`
+/// and empty plan state, not row data.
 ///
 /// Expected outcomes:
-/// - Cost is small and roughly constant across workspace sizes (an `Arc`
-///   refcount bump, not proportional to `n`).
+/// - Clone time is small and roughly constant across workspace sizes.
 ///
 /// Unexpected outcomes:
-/// - Cost scales with `n`, indicating `base` is no longer `Arc`-backed, or
-///   `QuerySet::clone` is deep-copying rows somewhere.
+/// - Clone time scales with `n`, indicating `base` is no longer `Arc`-backed or
+///   clone materializes/deep-copies rows.
 fn bench_clone_query_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/clone_query_set");
     group.plot_config(
@@ -310,27 +301,23 @@ fn bench_clone_query_set(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the cost of `QuerySet`'s owned `IntoIterator::into_iter()`, swept
-/// over workspace size and row shape (page vs. task).
+/// Measures `QuerySet`'s owned `IntoIterator::into_iter()` sole-owner path,
+/// swept over workspace size and row shape.
 ///
-/// `QuerySet::into_iter()` (owned) reclaims the materialized rows without
-/// cloning when `self` is the sole owner of the cached `Arc<Vec<QueryRow>>`
-/// (via `Arc::try_unwrap`), falling back to a per-row clone only when another
-/// `QuerySet` branch still shares the same cached rows. Every iteration here
-/// calls `.into_iter()` on a freshly constructed, never-cloned `QuerySet`, so
-/// this measures the sole-owner fast path: an `O(1)` move out of the `Arc`, not
-/// an `O(n)` clone.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and shape (`pages`, `tasks`);
+/// reports output rows (`n` or `3 * n`). Query construction happens in
+/// Criterion setup; timed work is only `outcome.into_iter().count()`.
+///
+/// The fresh, never-cloned setup lets `Arc::try_unwrap` reclaim cached rows
+/// rather than cloning them.
 ///
 /// Expected outcomes:
-/// - Cost is small and roughly constant across workspace sizes (matching
-///   [`bench_clone_query_set`]'s `Arc`-bump-only cost), for both `pages` and
-///   `tasks` shapes.
+/// - Cost stays close to iterator consumption and does not deep-copy row data.
 ///
 /// Unexpected outcomes:
-/// - Cost scales linearly with `n`, indicating `Arc::try_unwrap` is taking the
-///   `Err` (shared) branch and falling back to a full clone; check that nothing
-///   retains an extra reference to the outcome's cached rows before
-///   `.into_iter()` runs.
+/// - Cost scales beyond simple row consumption, indicating shared-cache
+///   fallback, row cloning, or iterator materialization overhead needs
+///   inspection.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/into_iter_owned");
     group.plot_config(
@@ -384,35 +371,26 @@ fn bench_into_iter_owned(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures `QueryService::sync_and_run` latency for two source selectors over
-/// a persisted redb store:
+/// Measures [`QueryService::sync_and_run`] latency across source-selector
+/// selectivity over a persisted redb store.
 ///
-/// - `single_tag_point_lookup`: a `#rare_0` tag selector that matches exactly
-///   one note, exercising the `PATHS_BY_TAG` inverted index and batch reads of
-///   a single row.
-/// - `full_vault_scan`: `SourceSelector::All`, exercising batch reads of every
-///   indexed row.
+/// Parameters: varies selector (`single_tag_point_lookup` vs.
+/// `full_vault_scan`) and note count; throughput is indexed entries traversed
+/// during sync, not output rows for the one-tag query.
 ///
-/// Unlike in-memory `QueryService::run`, this exercises the real CLI command
-/// path: inverted-index lookup, `NOTES`/`FILES`/`LINKS` batch reads, and
-/// `FileIndex::assemble`. For a single-edit variant of the same path, see
-/// `index_lifecycle.rs`'s `QueryService::sync_and_run` group, which differs by
-/// keeping the fixture setup outside the timed call and measuring edit deltas.
+/// Fixture: persisted tagged project is built outside timing. Each timed call
+/// runs the real persisted command path: sync/scan first, then store-backed
+/// query reads and row materialization.
 ///
-/// ### Expected outcomes
+/// Expected outcomes:
+/// - Both shapes include the shared O(n) sync prelude; after that,
+///   `single_tag_point_lookup` reads/materializes one matching note and
+///   `full_vault_scan` reads/materializes all notes.
 ///
-/// - `single_tag_point_lookup` cost stays roughly flat as `n` grows: the
-///   inverted index narrows to one path regardless of vault size.
-/// - `full_vault_scan` cost scales linearly with `n`: batch reads touch every
-///   indexed row.
-///
-/// ### Unexpected outcomes
-///
-/// - `single_tag_point_lookup` cost growing with `n`, indicating the tag
-///   selector resolving by full-table scan instead of the `PATHS_BY_TAG`
-///   multimap.
-/// - `full_vault_scan` cost growing super-linearly, indicating repeated
-///   per-path transactions instead of one batch read per table.
+/// Unexpected outcomes:
+/// - The one-tag path widens beyond the shared sync baseline as `n` grows,
+///   indicating `PATHS_BY_TAG` candidate lookup, store reads, or row
+///   materialization has regressed toward full-vault behavior.
 fn bench_sync_and_run_selectors(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::sync_and_run_selectors");
     group.plot_config(

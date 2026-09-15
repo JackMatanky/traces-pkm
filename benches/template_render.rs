@@ -3,9 +3,8 @@
 //! Exposes and monitors the CPU cost of [`TemplateService::render_to_file`] in
 //! [`WriteMode::DryRun`] (excludes disk-write cost) against pre-built,
 //! pre-persisted projects swept up to 1000 notes, exercising `template` +
-//! `index` + `note` together the way every `traces template`/`traces -i`
-//! render does.
-//! Regressions here directly degrade render latency for template-driven
+//! `index` + `note` together the way every `traces template`/`traces -i` render
+//! does. Regressions here directly degrade render latency for template-driven
 //! workflows.
 //!
 //! ### Data Flow Diagram
@@ -58,8 +57,8 @@ use common::quick_file_counts;
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
-/// Builds a temporary project fixture populated with `n` synthetic notes,
-/// an indexed database, and test templates.
+/// Builds a temporary project fixture populated with `n` synthetic notes, an
+/// indexed database, and test templates.
 ///
 /// Returns `(TempDir, PathBuf, Config)` where `TempDir` owns the lifetime of
 /// the project on disk.
@@ -111,20 +110,27 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 //                         Benchmarks                          //
 // ----------------------------------------------------------- //
 
-/// Measures template rendering cost swept over workspace size (up to 1000
-/// notes, see [`quick_file_counts`]), in `WriteMode::DryRun`.
+/// Measures end-to-end template render latency in [`WriteMode::DryRun`].
 ///
-/// The render path every `traces template`/`-i` invocation pays (see module
-/// docs); `DryRun` isolates render cost from disk-write cost so a regression
-/// here is unambiguous rather than muddied by I/O variance.
+/// Parameters: varies note count and template shape (`list`, `table_filtered`);
+/// reports note throughput.
+///
+/// Fixture projects, config, dialog provider, service, and template path inputs
+/// are built outside timing.
+///
+/// Timed work still resolves/reads the template source and runs each template's
+/// `query.from()`, whose render-scoped refresh scans the persisted project.
+/// `DryRun` excludes output-file resolution and writes only.
 ///
 /// Expected outcomes:
-/// - Render time is dominated by index query + template expansion, not fixture
-///   setup or cleanup.
+/// - `list` scales with rendering `n` paths; `table_filtered` adds filter,
+///   sort, table formatting, and renders roughly the matching half of the
+///   notes.
 ///
 /// Unexpected outcomes:
-/// - Render cost scales super-linearly with note count, indicating unbounded
-///   template expansion or redundant index scans per row.
+/// - Render cost scales super-linearly or the relationship between list and
+///   table shapes reverses without row/output-count justification, indicating
+///   template reads, refresh/query work, or per-row expansion needs inspection.
 fn bench_render(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemplateService::render_to_file");
     group.plot_config(

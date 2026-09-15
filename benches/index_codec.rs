@@ -1,12 +1,12 @@
 //! Performance benchmark suite for the path serialization codec.
 //!
 //! Exposes and monitors the CPU latency of path serialization and
-//! deserialization. The path codec is invoked for every single record read from
-//! or written to the `FILES`, `NOTES`, and `LINKS` database tables.
+//! deserialization for path-bearing `FILES` and `NOTES` postcard values.
+//! `LINKS` stores raw index path-key bytes rather than this serde helper.
 //!
-//! Because database transactions are highly dependent on serialization
-//! efficiency, regressions in this codec directly degrade the performance of
-//! full index builds and incremental refreshes.
+//! Because database transactions are highly dependent on path value
+//! serialization efficiency, regressions in this codec directly degrade full
+//! index builds and persisted-index reads.
 //!
 //! ### Data Flow Diagram
 //!
@@ -14,18 +14,17 @@
 //! [PathBuf] ──(Serialize)──► [postcard bytes] ──(Deserialize)──► [PathBuf]
 //!
 //! Serialize variants:
-//!   allocating ── postcard::to_allocvec   (heap per call)
-//!   slice      ── postcard::to_slice      (zero-alloc, fixed buffer)
+//!   allocating ── postcard::to_allocvec   (fresh output Vec per call)
+//!   slice      ── postcard::to_slice      (caller-owned output buffer)
 //!
-//! Variant selection (Raw/Wide) is automatic based on path content;
-//! benchmarks do not isolate it.
+//! Raw bytes vs. wide units are selected by target platform at compile time.
 //! ```
 //!
 //! ### Profiling Integration
 //!
 //! To profile serialization/deserialization CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench index_codec -- --bench "path_codec::serialize/long"
+//! cargo flamegraph --bench index_codec -- --bench "path_codec::serialize_alloc/long"
 //! ```
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
@@ -62,9 +61,9 @@ use common::{WORKSPACE_FILE_COUNTS, notes::generate_sparse_link_notes};
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
-/// Generates a test path that contains invalid UTF-8 bytes for the current
-/// target OS, ensuring the non-Unicode fallback/exact code paths are fully
-/// exercised.
+/// Generates a non-Unicode/native-path fixture where the target platform can
+/// represent one. Unix and Windows exercise non-Unicode paths; unsupported
+/// targets fall back to a Unicode path and do not test non-Unicode behavior.
 fn non_unicode_path() -> PathBuf {
     #[cfg(unix)]
     {
@@ -88,19 +87,21 @@ fn non_unicode_path() -> PathBuf {
 //                  Benchmarks: Serialization                  //
 // ----------------------------------------------------------- //
 
-/// Measures serialization cost for paths using the target-specific binary
-/// representation.
+/// Measures allocating serialization cost for three path fixtures.
 ///
-/// This determines the CPU overhead of converting path strings or native OS
-/// arrays into raw serialized bytes.
+/// Parameters: varies `short`, `long`, and `non-unicode`; reports serialized
+/// byte throughput. [`PathWrapper`] fixtures and throughput-size probes are
+/// prepared outside timing. Each timed call uses [`postcard::to_allocvec`],
+/// allocating a fresh output buffer whose drop is deferred by Criterion.
 ///
 /// Expected outcomes:
-/// - Serialization scales with path length without unexpected allocation churn.
-/// - Target-specific path conversion remains correct for non-Unicode paths.
+/// - Serialization cost tracks serialized byte length and platform path
+///   conversion work for these fixtures.
 ///
 /// Unexpected outcomes:
-/// - Excessive memory allocations or high latency, indicating performance
-///   regressions in OS-native conversions or serialization boundaries.
+/// - A fixture's latency jumps disproportionately, indicating postcard
+///   encoding, path-codec conversion, or fresh output allocation/copy needs
+///   inspection.
 fn bench_codec_serialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::serialize_alloc");
 
@@ -138,18 +139,19 @@ fn bench_codec_serialize(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures zero-allocation buffer serialization cost for paths.
+/// Measures caller-owned-buffer serialization cost for three path fixtures.
 ///
-/// Isolates the CPU encoding throughput from system memory allocator latency
-/// (`malloc`/`free`).
+/// Uses [`postcard::to_slice`] with one reused 1024-byte output buffer. On Unix
+/// this avoids output-buffer allocation; on Windows, platform path conversion
+/// can still allocate temporary wide units before writing to the caller buffer.
 ///
 /// Expected outcomes:
-/// - Slice serialization is faster than allocating serialization, confirming
-///   the allocator is a measurable cost component.
+/// - Slice serialization improves over [`bench_codec_serialize`] when fresh
+///   output allocation dominates.
 ///
 /// Unexpected outcomes:
-/// - Slice and allocating serialization cost comparable, indicating the codec
-///   itself dominates and the allocator is not the bottleneck.
+/// - Slice and allocating serialization converge, indicating codec conversion,
+///   platform path conversion, or allocator behavior needs inspection.
 fn bench_codec_serialize_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::serialize_slice");
 
@@ -188,25 +190,22 @@ fn bench_codec_serialize_slice(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures reused-buffer serialization cost for paths via
-/// [`postcard::to_extend`] — the middle ground between a fresh heap allocation
-/// per call ([`bench_codec_serialize`]) and a fixed-size caller-owned slice
-/// ([`bench_codec_serialize_slice`]).
+/// Measures reused-output-buffer serialization cost for paths via
+/// [`postcard::to_extend`].
 ///
-/// Isolates the specific buffer-reuse pattern `IndexStore`'s private
-/// `encode_row` would need to adopt to avoid a fresh allocation per row: clear
-/// a `Vec<u8>` and extend into it, rather than allocate fresh or require a
-/// fixed-capacity slice.
+/// Parameters: varies `short`, `long`, and `non-unicode`; reports serialized
+/// byte throughput. The output `Vec` is created per Criterion benchmark
+/// invocation, then cleared and reused inside the iteration loop.
 ///
 /// Expected outcomes:
-/// - Faster than `bench_codec_serialize` once the buffer's capacity has grown
-///   to fit (no further allocation needed).
-/// - Slower than `bench_codec_serialize_slice` (still writes through a `Vec`'s
-///   `Extend` impl rather than a raw pointer into a fixed buffer).
+/// - After warmup, reused-buffer serialization avoids output-buffer capacity
+///   growth and should sit between fresh allocation and caller-owned slice when
+///   output allocation is material.
 ///
 /// Unexpected outcomes:
-/// - No measurable gap versus fresh allocation, indicating the allocator
-///   already recycles same-size blocks fast enough that reuse isn't worth it.
+/// - No measurable difference from fresh allocation, or worse-than-slice cost,
+///   indicating `to_extend`, buffer growth, platform conversion, or allocator
+///   behavior needs inspection.
 fn bench_codec_serialize_reused_buffer(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::serialize_reused_buffer");
 
@@ -250,19 +249,21 @@ fn bench_codec_serialize_reused_buffer(c: &mut Criterion) {
 //                 Benchmarks: Deserialization                 //
 // ----------------------------------------------------------- //
 
-/// Measures deserialization cost for paths from the target-specific binary
-/// representation.
+/// Measures deserialization cost for three pre-encoded path fixtures.
 ///
-/// This isolates the overhead of decoding binary/wide-character arrays back
-/// into standard Rust `PathBuf` structures.
+/// Parameters: varies `short`, `long`, and `non-unicode`; reports serialized
+/// byte throughput. Input bytes are encoded once outside timing. Each timed
+/// call uses [`postcard::from_bytes`] and constructs an owned decoded
+/// [`PathWrapper`].
 ///
 /// Expected outcomes:
-/// - Non-Unicode paths deserialize byte-exactly through the target-specific
-///   codec.
+/// - Deserialization cost roughly tracks serialized byte length and platform
+///   path reconstruction work for these fixtures.
 ///
 /// Unexpected outcomes:
-/// - Parsing latency spikes, indicating inefficient memory allocation or
-///   validation logic bottlenecks.
+/// - A fixture deviates strongly from its byte-size trend, indicating postcard
+///   decode or path reconstruction needs inspection beyond normal per-decode
+///   allocation.
 fn bench_codec_deserialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::deserialize");
 
@@ -303,16 +304,22 @@ fn bench_codec_deserialize(c: &mut Criterion) {
 //                Benchmarks: Batch Round-Trip                 //
 // ----------------------------------------------------------- //
 
-/// Measures batch serialization and deserialization over 100 paths,
-/// representative of bulk database transactions during workspace indexing.
+/// Measures two fixed 100-path postcard loops: allocating serialize and owned
+/// deserialize.
+///
+/// Parameters: fixed synthetic corpus `notes/subfolder/topic_{i}/note_{i}.md`;
+/// reports total serialized-byte throughput. Path fixtures and pre-encoded
+/// deserialize bytes are created outside timing. Each timed variant allocates a
+/// result batch with capacity 100 and defers its drop.
 ///
 /// Expected outcomes:
-/// - Batch cost is roughly 100× single-path cost, with no per-iteration
-///   overhead scaling.
+/// - Per-100-path cost stays consistent with the direct per-path codec loops
+///   after accounting for the corpus's path lengths.
 ///
 /// Unexpected outcomes:
-/// - Batch cost exceeding 100× single-path cost, indicating per-path allocation
-///   or validation overhead in the batch path.
+/// - Batch-loop cost grows disproportionately, indicating direct postcard-loop
+///   overhead, output allocation, or decoded-path construction needs
+///   inspection.
 fn bench_codec_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_codec::batch_100");
 
@@ -364,24 +371,23 @@ fn bench_codec_batch(c: &mut Criterion) {
 //              Benchmarks: Row Value Encoding                 //
 // ----------------------------------------------------------- //
 
-/// Measures whether reusing one scratch buffer across row serializations
-/// (`postcard::to_extend` into a cleared `Vec<u8>`) beats a fresh heap
-/// allocation per row (`postcard::to_allocvec`, what `IndexStore`'s private
-/// `encode_row` currently does for every `FILES`/`NOTES` row).
+/// Measures direct `Note` row serialization with fresh vs. reused output
+/// buffers.
 ///
-/// `encode_row` itself is `pub(super)` and unreachable from this external bench
-/// crate; this measures the same two postcard entry points directly against
-/// realistic `Note` payloads, sized like an actual `NOTES` table row rather
-/// than `PathWrapper`'s bare path.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and `BenchmarkId`
+/// `fresh_allocvec` vs. `reused_buffer`; reports note throughput.
+/// Fixture: parsed sparse-link notes (one ring link per note) are built outside
+/// timing. Timed work serializes each `Note` value directly through postcard;
+/// no redb transaction or table insertion is included.
 ///
 /// Expected outcomes:
-/// - Reused-buffer serialization is faster per row, with the gap in
-///   nanoseconds-per-row terms staying roughly flat across `n` (allocator
-///   overhead is per-call, not per-byte).
+/// - Reused-buffer serialization reduces output-buffer allocation work when
+///   that cost is material for `NOTES`-row sized payloads.
 ///
 /// Unexpected outcomes:
-/// - No measurable gap at any `n`, indicating the allocator already recycles
-///   same-size blocks fast enough that buffer reuse isn't worth pursuing.
+/// - The gap disappears or reverses across sizes, indicating direct postcard
+///   serialization, output-buffer reuse, or allocator behavior needs inspection
+///   before changing `IndexStore` internals.
 fn bench_row_value_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("IndexStore::encode_row (Note)");
     group.plot_config(

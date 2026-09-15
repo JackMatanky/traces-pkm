@@ -177,8 +177,8 @@ fn line_density_source(target_bytes: usize, line_length: usize) -> String {
     source
 }
 
-/// Builds a task-list note with `count` items whose markers cycle through
-/// the default symbol set plus an unknown marker, exercising every marker
+/// Builds a task-list note with `count` items whose markers cycle through the
+/// default symbol set plus an unknown marker, exercising every marker
 /// resolution path (`TaskStatusMap` hits and the incomplete-todo fallback).
 fn marker_variety_source(count: usize) -> String {
     use std::fmt::Write as _;
@@ -211,8 +211,8 @@ fn task_metadata_source(count: usize) -> String {
 //                         Benchmarks                          //
 // ----------------------------------------------------------- //
 
-/// Measures pure prose parsing cost across byte sizes, serving as a baseline
-/// subtracted from composite note parsing costs.
+/// Measures prose-only parsing cost across byte sizes, serving as the parser's
+/// byte-scanning floor for comparison with structured-note workloads.
 ///
 /// Expected outcomes:
 /// - Cost scales linearly with byte count (throughput roughly flat in bytes/s).
@@ -243,14 +243,21 @@ fn bench_parse_markdown_prose_floor(c: &mut Criterion) {
     group.finish();
 }
 
-/// Parses small, medium, and large synthetic notes through `parse_markdown`.
+/// Measures `parse_markdown` cost across small, medium, and large synthetic
+/// note shapes.
 ///
-/// Every indexed note passes through this lexer (see module docs); scaling by
-/// field/task density, not just byte count, catches a cost regression that a
-/// correctness test — which only checks the parsed result — would miss.
+/// Parameters: varies note size and metadata/task density; reports byte
+/// throughput.
+///
+/// Fixture: synthetic Markdown strings built outside timing; timed work parses
+/// one note with [`parse_fixture`].
+///
+/// Compares against [`bench_parse_markdown_prose_floor`], isolating structured
+/// field and task parsing from plain prose scanning.
 ///
 /// Expected outcomes:
-/// - Cost scales with note complexity, not just byte count.
+/// - Cost scales with note complexity and byte count, not fixed per-call
+///   overhead.
 ///
 /// Unexpected outcomes:
 /// - Small notes costing disproportionately more than large, indicating fixed
@@ -284,12 +291,16 @@ fn bench_parse_markdown(c: &mut Criterion) {
 /// blocks, heavy frontmatter, dense wikilinks, and isolated task checklists.
 ///
 /// Expected outcomes:
-/// - Code-block-heavy notes parse faster than wikilink-heavy notes, since
-///   wikilinks require per-link resolution.
+/// - Code-block and dense-wikilink cases stay in the same cost class for
+///   similar byte sizes; this parser extracts link syntax but does not resolve
+///   targets.
+/// - Dense task lists cost more than prose but scale linearly with task count.
 ///
 /// Unexpected outcomes:
-/// - Dense frontmatter parsing exceeding wikilink parsing, indicating
-///   frontmatter lexer regression.
+/// - Dense frontmatter dominates similarly sized workloads, indicating YAML
+///   field extraction or metadata conversion has become the parse bottleneck.
+/// - Dense task parsing dominates similarly sized workloads, indicating
+///   repeated marker/status resolution or per-task allocation.
 fn bench_parse_markdown_workloads(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::workloads");
     let path = std::path::Path::new("note.md");
@@ -318,17 +329,22 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures parsing cost scaled by [`LIST_ITEM_COUNTS`].
+/// Measures full-parse cost for top-level checkbox lists scaled by
+/// [`LIST_ITEM_COUNTS`].
 ///
-/// Isolates per-item position-tracking overhead (`ByteTracker::byte_to_line`,
-/// `ListItemPosition` construction) from prose/frontmatter bulk.
+/// Parameters: varies item count; reports item throughput.
+///
+/// Fixture: `list_items_source(count)` is built outside timing and parsed at
+/// fixed path `note.md`. Timed work is one full [`parse_fixture`] call.
 ///
 /// Expected outcomes:
-/// - Cost scales linearly with item count; per-item overhead stays flat.
+/// - Elapsed time grows with item/source size without a disproportionate
+///   time-per-item jump across the sweep.
 ///
 /// Unexpected outcomes:
-/// - Super-linear scaling with item count, indicating position lookups
-///   re-scanning the document per item instead of tracking incrementally.
+/// - Time per item rises sharply with count, indicating repeated document
+///   scans, list-position bookkeeping overhead, or avoidable per-item
+///   allocation.
 fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::list_item_scaling");
     let path = std::path::Path::new("note.md");
@@ -351,17 +367,22 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures parsing cost across nesting depths for a fixed 200-item list.
+/// Measures full-parse sensitivity to list nesting depth at a fixed 200-item
+/// count.
 ///
-/// Confirms that `ListItemPosition.parent` remains O(1) stack-top access
-/// regardless of list nesting depth.
+/// Parameters: varies maximum depth over `{1, 5, 20, 50}`; reports item
+/// throughput. Deeper fixtures also contain more indentation bytes.
+///
+/// Fixture: nested-list source is built outside timing and parsed at fixed path
+/// `note.md`; timed work is one full [`parse_fixture`] call.
 ///
 /// Expected outcomes:
-/// - Cost is roughly flat across depths 1 through 50 at a fixed item count.
+/// - Depth-associated cost grows no faster than the added indentation and stack
+///   bookkeeping should explain.
 ///
 /// Unexpected outcomes:
-/// - Cost growing with nesting depth, indicating parent lookup walking the
-///   ancestor chain instead of reading the stack top.
+/// - Cost rises disproportionately with depth, indicating nested-list stack,
+///   position bookkeeping, or event handling is walking ancestor chains.
 fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::nesting_depth");
     let path = std::path::Path::new("note.md");
@@ -385,16 +406,19 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures `ByteTracker`'s `match_indices('\n')` scan and line-start table
-/// construction by varying line length at a fixed 50KB total document size.
+/// Measures full-parser sensitivity to newline density by varying line length
+/// while targeting at least `50 KiB` of source text.
+///
+/// Parameters: varies line length over `{10, 50, 200, 1000}`; reports actual
+/// source-byte throughput. Fixture generation is outside timing.
 ///
 /// Expected outcomes:
-/// - Cost is roughly flat across line lengths (total bytes are constant, so the
-///   newline scan dominates identically).
+/// - Throughput stays in the same range after accounting for actual byte
+///   length.
 ///
 /// Unexpected outcomes:
-/// - Long lines costing disproportionately more, indicating per-character
-///   processing instead of a bulk byte scan.
+/// - A material throughput drop correlated with line length, indicating line
+///   tracking, Markdown event emission, or text buffering needs inspection.
 fn bench_parse_markdown_line_density(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::line_density");
     let path = std::path::Path::new("note.md");
@@ -418,19 +442,24 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures task-marker overhead against an identical plain-bullet list, and
-/// across marker resolutions: plain bullets skip the scanner entirely, `- [ ]`
-/// hits the todo entry, mixed symbols cycle `TaskStatusMap` hits plus the
-/// unknown-symbol todo fallback, and emoji/inline-field tasks add the
-/// `has_marker` lexer pass.
+/// Measures task-marker overhead across four representative 1,000-item list
+/// sources.
+///
+/// Parameters: compares `plain_bullets`, `plain_tasks`, `mixed_markers`, and
+/// `task_metadata`; reports item throughput.
+///
+/// Fixture: sources are built outside timing and parsed at fixed path
+/// `note.md`. Plain bullets take the early marker-rejection path; status-marked
+/// tasks use marker-aware inline lexing; `task_metadata` also exercises emoji
+/// shorthand dates and one inline field per item.
 ///
 /// Expected outcomes:
-/// - Plain bullets are cheapest; marker overhead per item is small and roughly
-///   constant across symbol kinds.
+/// - Status-marked workloads are slower than plain bullets, but the gap stays
+///   bounded for these fixed 1,000-item fixtures.
 ///
 /// Unexpected outcomes:
-/// - Task-marker items costing multiples of plain bullets, indicating the
-///   per-chunk marker re-classification dominating.
+/// - Task-marker workloads costing multiples of plain bullets, indicating
+///   marker classification, metadata lexing, or per-task allocation dominates.
 fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::task_marker_variants");
     let path = std::path::Path::new("note.md");
@@ -477,17 +506,23 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures task-marker parsing cost scaled by [`LIST_ITEM_COUNTS`].
+/// Measures full-parse cost for mixed task markers scaled by
+/// [`LIST_ITEM_COUNTS`].
 ///
-/// Isolates the per-item leading-marker scan (per-chunk classification until
-/// the marker decides) from prose/frontmatter bulk.
+/// Parameters: varies marker/item count; reports element throughput. The marker
+/// cycle covers the default symbols plus an unknown-symbol fallback.
+///
+/// Fixture: `marker_variety_source(count)` is built outside timing and parsed
+/// at fixed path `note.md`.
 ///
 /// Expected outcomes:
-/// - Cost scales linearly with marker count; per-marker overhead stays flat.
+/// - Elapsed time grows with marker/source size without a disproportionate
+///   time-per-marker jump across the sweep.
 ///
 /// Unexpected outcomes:
-/// - Super-linear scaling with marker count, indicating marker classification
-///   re-processing earlier items or re-lexing the whole document.
+/// - Time per marker rises sharply with count, indicating repeated
+///   full-document marker scans, repeated lexer passes, or avoidable per-item
+///   allocation.
 fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::task_marker_scaling");
     let path = std::path::Path::new("note.md");
@@ -510,17 +545,22 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures YAML frontmatter parsing cost scaled by
+/// Measures frontmatter field-width parsing cost scaled by
 /// [`FRONTMATTER_FIELD_COUNTS`].
 ///
-/// Isolates YAML field parsing from body text processing.
+/// Parameters: varies YAML field count; reports field throughput. Source bytes
+/// rise with field count.
+///
+/// Fixture: `frontmatter_fields_source(count)` is built outside timing and
+/// parsed at fixed path `note.md`; the body is intentionally small but the full
+/// Markdown parser still runs.
 ///
 /// Expected outcomes:
-/// - Cost scales linearly with field count; per-field overhead stays flat.
+/// - Time per field stays broadly stable across the field-count sweep.
 ///
 /// Unexpected outcomes:
-/// - Super-linear scaling with field count, indicating per-field re-parsing of
-///   the frontmatter block or quadratic map growth.
+/// - Time per field rises sharply, indicating YAML deserialization,
+///   frontmatter-field conversion, or map growth needs inspection.
 fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("parse_markdown::frontmatter_field_scaling");

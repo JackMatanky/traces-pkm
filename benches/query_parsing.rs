@@ -35,17 +35,23 @@ use traces_pkm::{QueryBuilder, SourceSelector};
 //                     Benchmarks: Parsing                     //
 // ----------------------------------------------------------- //
 
-/// Measures query parsing latency for source selectors and filter expressions.
+/// Measures parsing latency for source selectors and filter expressions.
 ///
-/// Isolates the tokenizer and boolean expression parser from index traversal
-/// and row materialization.
+/// Parameters: varies `simple_filter`, `complex_boolean_filter`, and
+/// `source_selector`; reports DSL input-byte throughput.
+///
+/// Fixture: static query strings are built outside timing. Timed work parses
+/// the filter/source DSL and constructs the corresponding builder or selector
+/// value; index traversal and row materialization are excluded.
 ///
 /// Expected outcomes:
-/// - Parsing cost is negligible relative to execution benchmarks.
+/// - Parsing remains small in absolute terms and stable for these fixed
+///   strings.
 ///
 /// Unexpected outcomes:
-/// - Parsing cost comparable to execution benchmarks, indicating tokenizer or
-///   parser regressions.
+/// - Complex expressions costing disproportionately more than their byte
+///   length, indicating lexer allocation or boolean-parser traversal needs
+///   inspection.
 fn bench_query_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryGrammar::parse");
 

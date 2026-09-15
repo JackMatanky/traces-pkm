@@ -9,10 +9,8 @@
 //!
 //! ### Data Flow Diagram
 //!
-//! ```text
-//! [Path] ──(Blake3FileHash::try_from)──► [u128 file hash]
-//! [Path] ──(Blake3PathHash::from)───────► [u128 path hash]
-//! ```
+//! [`Path`] ──(`Blake3FileHash::try_from`)──► [BLAKE3-256 file digest]
+//! [`Path`] ──(`Blake3PathHash::from`)───────► [64-byte hex path digest]
 //!
 //! ### Profiling Integration
 //!
@@ -41,20 +39,21 @@ use traces_pkm::{Blake3FileHash, Blake3PathHash};
 //                         Benchmarks                          //
 // ----------------------------------------------------------- //
 
-/// Measures file-content hashing cost for small (1KB) and large (1MB) files.
+/// Measures file-content hashing cost for small (`1 KiB`) and large (`1 MiB`)
+/// pre-created temp files.
 ///
-/// Every trust check and tracked-config lookup hashes a file through this path
-/// (see module docs); scaling by size catches a regression from fixed overhead
-/// to something that grows with file size, either of which a correctness test
-/// would miss.
+/// Parameters: varies `BenchmarkId` `1kb` vs. `1mb`; reports byte throughput.
+/// Fixture files are zero-filled and written outside timing. Timed work is
+/// [`Blake3FileHash::try_from`]: open, read into a fresh buffer, hash, and
+/// return a digest. OS page-cache state is not controlled.
 ///
 /// Expected outcomes:
-/// - 1MB hashing is roughly proportional to 1KB (I/O dominates at large sizes).
-/// - No unexpected allocation spikes per size tier.
+/// - `1 MiB` cost is higher than `1 KiB` cost but byte throughput improves as
+///   fixed open/read/finalize overhead is amortized.
 ///
 /// Unexpected outcomes:
-/// - 1MB hashing significantly exceeds 1000x the 1KB cost, indicating excessive
-///   per-chunk allocation or missing buffering in the hasher.
+/// - `1 MiB` throughput fails to improve over `1 KiB`, indicating filesystem
+///   read, allocation/copy, or hashing work needs investigation.
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
     group.sample_size(10);
@@ -81,17 +80,20 @@ fn bench_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures pure in-memory BLAKE3 CPU hashing throughput over byte buffers.
+/// Measures BLAKE3 hashing over preallocated in-memory byte buffers.
 ///
-/// Isolates the CPU SIMD hashing pipeline from filesystem read syscalls and OS
-/// page-cache lookups.
+/// Parameters: varies buffer size over `1kb`, `64kb`, and `1mb`; reports byte
+/// throughput. Fixture buffers are allocated outside timing. Timed work
+/// constructs a [`blake3::Hasher`], updates it with the buffer, and finalizes
+/// it.
 ///
 /// Expected outcomes:
-/// - Cost scales proportionally with buffer size.
+/// - Cost is nondecreasing with buffer size and throughput stays broadly stable
+///   once fixed init/finalize overhead is amortized.
 ///
 /// Unexpected outcomes:
-/// - Cost exceeding linear scaling, indicating hasher overhead beyond raw SIMD
-///   throughput.
+/// - Size-specific throughput degradation, indicating cache/memory hierarchy,
+///   update, or finalize behavior needs investigation.
 fn bench_memory_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("blake3::memory_buffer");
     for (label, size) in
@@ -117,17 +119,19 @@ fn bench_memory_hash(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures path-bytes hashing cost across varied path depths.
+/// Measures path-hash cost over coupled short, medium, and deep path fixtures.
 ///
-/// Evaluates path hash latency for short relative paths, standard project
-/// configs, and deeply-nested file paths.
+/// Parameters: varies static path fixture; reports encoded path-byte
+/// throughput. Timed work is [`Blake3PathHash::from`], including encoded-byte
+/// hashing, digest hex encoding, and copy into the `[u8; 64]` storage.
 ///
 /// Expected outcomes:
-/// - Cost scales with path byte length, not depth.
+/// - Cost remains small for these path fixtures and broadly tracks encoded byte
+///   length plus the fixed hex/copy cost.
 ///
 /// Unexpected outcomes:
-/// - Cost growing faster than byte length, indicating per-segment allocation or
-///   iteration overhead.
+/// - One fixture regresses disproportionately, indicating encoded-byte access,
+///   BLAKE3 hashing, or digest hex/copy work needs inspection.
 fn bench_path_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3PathHash::from");
 

@@ -142,19 +142,19 @@ fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
 //                   Benchmarks: Index Build                   //
 // ----------------------------------------------------------- //
 
-/// Measures compile time for building the index over the baseline plain-note
-/// fixture.
+/// Measures wall-clock index build time over the baseline plain-note fixture.
 ///
 /// Runs the raw build operation on a temporary directory, excluding fixture
 /// creation from the measured loop via Criterion batched setup.
 ///
 /// Expected outcomes:
-/// - Linear O(n) scaling where doubling the note count roughly doubles
-///   compilation time.
+/// - Linear O(n) scaling where doubling the note count roughly doubles scan,
+///   parse, sort, and inlink compilation time.
 ///
 /// Unexpected outcomes:
-/// - Superlinear scaling, indicating memory leaks, nested iterations, or poor
-///   algorithms in link graph construction or file path sorting.
+/// - Superlinear scaling, indicating nested iterations, repeated full-vault
+///   scans, or avoidable intermediate collections in link graph construction or
+///   file path sorting.
 fn bench_file_index_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build");
     group.plot_config(
@@ -188,7 +188,7 @@ fn bench_file_index_build(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures build cost across richer fixture profiles at suite-friendly sizes.
+/// Measures build cost across richer fixture profiles at bounded suite sizes.
 ///
 /// These profiles cover tag extraction, File Class frontmatter, dense link
 /// graphs, list persistence, nested folders, and real non-Markdown attachments
@@ -199,8 +199,9 @@ fn bench_file_index_build(c: &mut Criterion) {
 ///   note count.
 ///
 /// Unexpected outcomes:
-/// - A single rich profile dominates disproportionately, identifying the next
-///   index subsystem to profile directly.
+/// - One profile grows much faster than the others as `n` increases, indicating
+///   shape-specific repeated scans or allocation churn in extraction, link
+///   resolution, list capture, or attachment indexing.
 fn bench_file_index_build_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build/profiles");
     group.plot_config(
@@ -238,20 +239,26 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
 //                  Benchmarks: Index Refresh                  //
 // ----------------------------------------------------------- //
 
-/// Measures the refresh lifecycle path across baseline filesystem states.
+/// Measures [`IndexerService::refresh_with_report`] across baseline filesystem
+/// states.
 ///
-/// Refresh is run implicitly on every query command. A regression in the no-op
-/// path directly degrades general CLI responsiveness, while regressions in
-/// upserts or deletions increase edit-to-view latency.
+/// Parameters: varies note count and scenario (`no-op`, `single-upsert`,
+/// `single-delete`, `linked-single-upsert`); reports note throughput.
+///
+/// Fixture: persisted projects and mutations are created outside timing. Every
+/// timed refresh includes store open, full tree scan/diff, reconciliation, and
+/// full [`FileIndex`] materialization.
 ///
 /// Expected outcomes:
-/// - No-op refresh avoids reparsing and unnecessary writes.
-/// - Single-file changes are proportional to parsing one note and committing
-///   its observable delta.
+/// - No-op refresh avoids note reparsing and persisted writes after the common
+///   scan/diff.
+/// - Content-only updates add one-note parsing and patching; deletes may
+///   trigger path-set/inlink rebuild work.
 ///
 /// Unexpected outcomes:
-/// - High execution times in the "no-op" scenario, indicating cache
-///   invalidation leaks or broken comparison logic.
+/// - No-op cost grows beyond the shared scan/diff/materialization floor, or
+///   content-only updates approach delete cost, indicating broken delta
+///   detection, unnecessary writes, or avoidable full-vault recomputation.
 fn bench_file_index_refresh(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::refresh");
     group.plot_config(
@@ -263,8 +270,8 @@ fn bench_file_index_refresh(c: &mut Criterion) {
         ));
         if n >= 10_000 {
             // 10,000+ note refreshes do real per-iteration disk I/O; bound
-            // total suite runtime with criterion's minimum valid
-            // sample size (10) instead of the default 100.
+            // total suite runtime with criterion's minimum valid sample size
+            // (10) instead of the default 100.
             group.sample_size(10);
         }
 
@@ -348,55 +355,27 @@ fn bench_file_index_refresh(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the cold-read sync-and-query path ([`QueryService::sync_and_run`])
-/// used by `traces list`/`table`/`task` when a query selects a small subset of
-/// a large vault.
+/// Measures persisted-store [`QueryService::sync_and_run`] cost across vault
+/// sizes and no-op vs. single-edit states.
 ///
-/// Each call performs:
+/// Parameters: varies note count and state (`no-op`, `single-edit`); holds one
+/// matching `#rare_0` tag selector fixed and reports note throughput.
 ///
-/// - A persisted-store diff-and-persist step (no-op or single-edit).
-/// - A store-scoped query resolved through the `PATHS_BY_TAG` multimap.
+/// Fixture: persisted tagged project and optional edit are created outside
+/// timing. The timed call runs [`IndexerService::sync`] and then a store-backed
+/// page query through `PATHS_BY_TAG`; it does not materialize a full
+/// [`FileIndex`] unless the query path regresses.
 ///
-/// The query never materializes a full [`FileIndex`] and never decodes a note
-/// the query does not match.
+/// Every call still performs the full filesystem scan/diff prelude needed to
+/// detect changes. [`bench_file_index_refresh`] is only an external contrast
+/// for the full-index materialization path, not a decomposed floor.
 ///
-/// ### Setup
+/// Expected outcomes:
+/// - A content-only single edit stays close to the no-op state after the shared
+///   scan/diff work, without adding full-table reads or full-index assembly.
 ///
-/// Queries a tag unique to note `0` (`#rare_0`, see [`tagged_note_source`]), so
-/// exactly one note matches regardless of `n`. Complements
-/// [`bench_file_index_refresh`]'s `FileIndex::refresh` group, which necessarily
-/// decodes every persisted note to build a full [`FileIndex`].
-///
-/// ### Known Cost Floor
-///
-/// The "no-op" cost is *not* sub-millisecond, even for a tiny matching set.
-/// Every call re-scans the project's filesystem tree and diffs every persisted
-/// [`FileBase`] to detect whether anything changed. That scan and diff is
-/// O(vault size) by construction (there is no filesystem-watcher layer here)
-/// and dominates wall-clock time at scale (~74ms at 20,000 files, matched
-/// almost exactly by `FileIndex::refresh/no-op`'s own cost).
-///
-/// An earlier measurement of this floor reported ~1.1s. That number was a
-/// benchmark artifact, not a real cost: the "no-op"/"single-edit" routines
-/// previously took `(TempDir, IndexerService)` by value via `iter_batched`
-/// without returning it, so each iteration's `TempDir::drop` (recursively
-/// deleting the fixture's thousands of files) ran *inside* the timed call.
-/// `iter_batched_ref` fixes this by never giving the routine ownership of the
-/// fixture.
-///
-/// What this group isolates is the cost *above* that unavoidable scan-and-diff
-/// baseline.
-///
-/// ### Expected outcomes
-///
-/// - Single-note-edit cost stays within measurement noise of the no-op baseline
-///   at every scale (observed: ~3% overhead at 20,000 notes). This proves
-///   inlink/tag/class maintenance for the edited note does not scan the whole
-///   vault, and the narrow query itself does not decode notes it did not match.
-///
-/// ### Unexpected outcomes
-///
-/// - Single-edit cost growing measurably faster than the no-op baseline as `n`
+/// Unexpected outcomes:
+/// - Single-edit cost grows measurably faster than the no-op state as `n`
 ///   grows, indicating a full recompute, full-table scan, or full [`FileIndex`]
 ///   materialization snuck back into the sync or query path.
 fn bench_sync_and_run(c: &mut Criterion) {
@@ -502,18 +481,21 @@ fn setup_single_rich_delete(n: usize) -> (TempDir, IndexerService) {
 /// Measures refresh cost for richer mutation shapes using only public lifecycle
 /// APIs.
 ///
-/// This group is a public proxy for internal store cleanup, secondary index
-/// updates, inlink recomputation, and many-note merge behavior without exposing
-/// `IndexStore`, redb tables, or delta structs.
+/// Parameters: varies quick note counts and scenario (`no-op-rich`,
+/// `single-tag-upsert`, requested `many-upsert-10`/`many-upsert-100` capped at
+/// `n`, `single-rich-delete`, `attachment-target-present`); reports note
+/// throughput. Fixture setup and mutations are outside timing.
 ///
 /// Expected outcomes:
-/// - Rich no-op refresh remains near the plain no-op path.
-/// - Many-note updates scale with changed notes plus one full inlink recompute,
-///   not quadratically with total persisted notes.
+/// - Rich no-op refresh remains near the plain no-op path from
+///   [`bench_file_index_refresh`].
+/// - Content-only updates scale with modified-note parsing and patching on top
+///   of the shared scan/diff; the delete case is the full inlink-rebuild shape.
 ///
 /// Unexpected outcomes:
-/// - Rich delete or tag updates dominate, suggesting secondary-index cleanup is
-///   scanning too much persisted state.
+/// - Tag/content updates approach delete cost or attachment no-op dominates,
+///   suggesting secondary-index cleanup, patching, or store reads are scanning
+///   too much persisted state.
 fn bench_file_index_refresh_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::refresh/profiles");
     group.plot_config(
@@ -600,14 +582,18 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
 
 /// Measures full database persistence transaction overhead for plain notes.
 ///
-/// Isolates the serialization and disk-write cost of a full index rewrite.
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports note throughput.
+///
+/// Fixture: `setup_unpersisted_project` creates files and builds the complete
+/// in-memory [`FileIndex`] outside timing. Timed work persists that existing
+/// index.
 ///
 /// Expected outcomes:
 /// - Cost scales linearly with note count.
 ///
 /// Unexpected outcomes:
-/// - Cost scaling super-linearly, indicating redundant serialization or
-///   unbounded transaction size.
+/// - Cost scaling super-linearly, indicating redundant row serialization,
+///   excessive secondary-index writes, or unbounded transaction growth.
 fn bench_index_persist(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::persist");
     group.plot_config(
@@ -637,15 +623,21 @@ fn bench_index_persist(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures full persistence cost for richer note shapes at suite-friendly
+/// Measures full persistence cost for richer note shapes at bounded suite
 /// sizes.
 ///
+/// Parameters: varies `BUILD_PROFILE_SHAPES` and `quick_file_counts`; reports
+/// note throughput. Fixture creation and full in-memory index build happen
+/// outside timing.
+/// Compares externally with [`bench_index_persist`] for the plain-note anchor.
+///
 /// Expected outcomes:
-/// - Rich persistence is slower than plain but scales with rows written.
+/// - Persistence cost tracks each profile's stored payload: links, lists,
+///   nested paths, and fixed attachment file rows.
 ///
 /// Unexpected outcomes:
-/// - List-heavy or rich persistence grows disproportionately, indicating row
-///   encoding or secondary-index write amplification.
+/// - List-heavy or rich persistence grows beyond its row/payload shape,
+///   indicating row encoding or secondary-index write amplification.
 fn bench_index_persist_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::persist/profiles");
     group.plot_config(
@@ -681,16 +673,20 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
 
 /// Measures public persisted index load/materialization cost.
 ///
-/// This is the public visibility-safe proxy for the internal `IndexStore` full
-/// read path. Fixture setup is outside the measured loop; each iteration opens
-/// the persisted index and materializes a [`FileIndex`].
+/// Parameters: sweeps plain projects over [`WORKSPACE_FILE_COUNTS`] and
+/// rich/attachment projects over `quick_file_counts`; reports note throughput.
+///
+/// Fixture persistence is outside timing. Each timed iteration opens the store,
+/// reads all persisted files/notes/inlinks, assembles a [`FileIndex`], and
+/// observes it.
 ///
 /// Expected outcomes:
-/// - Load cost scales linearly with stored files, notes, and inlink rows.
+/// - Load cost scales with stored files, notes, inlink rows, and fixture
+///   payload size.
 ///
 /// Unexpected outcomes:
-/// - Rich or attachment loads dominate plain loads, indicating decode or
-///   assembly overhead rather than raw row count.
+/// - Rich or attachment loads exceed what their additional rows/payload
+///   explain, indicating decode or assembly overhead.
 fn bench_index_load(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::load");
     group.plot_config(
@@ -733,8 +729,10 @@ fn bench_index_load(c: &mut Criterion) {
 
 /// Measures public list-table reads over persisted list-heavy projects.
 ///
-/// This keeps list persistence visible without exposing
-/// `IndexStore::read_all_lists`.
+/// Parameters: varies `quick_file_counts`; each [`ProjectShape::ListHeavy`]
+/// note contributes 20 list rows, so throughput is reported as `20 * n` rows.
+/// Fixture persistence is outside timing. Timed work opens the store and reads
+/// all list rows through [`IndexerService::read_lists`].
 ///
 /// Expected outcomes:
 /// - Read cost scales linearly with persisted list rows.
@@ -766,15 +764,23 @@ fn bench_read_lists(c: &mut Criterion) {
 //              Benchmarks: Concurrent Operations              //
 // ----------------------------------------------------------- //
 
-/// Benchmarks concurrent loading of independent project indexes.
+/// Measures concurrent persisted-index load cost for four independent 250-note
+/// projects.
+///
+/// Parameters: holds total loaded notes at 1,000; reports wall-clock time.
+///
+/// Fixture: four persisted plain projects are built outside timing; timed work
+/// loads each project on one scoped thread.
 ///
 /// Expected outcomes:
-/// - Parallel loads complete faster than serial loads, dominated by
-///   thread-spawn and per-project I/O cost.
+/// - Concurrent load remains stable across revisions for this fixed
+///   four-project workload.
 ///
 /// Unexpected outcomes:
-/// - Parallel loads slower than serial, indicating OS-level resource contention
-///   (disk I/O, page cache) rather than application-level lock.
+/// - A regression relative to this benchmark's own history indicates possible
+///   global locking, redb open contention, page-cache contention, or thread
+///   scheduling overhead. Compare with an input-matched serial baseline before
+///   claiming one-vs-four-project speedup.
 fn bench_concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::concurrent");
     let n = 250_usize;
