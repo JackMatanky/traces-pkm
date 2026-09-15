@@ -36,7 +36,7 @@ use criterion::{
 };
 use traces_pkm::{QueryBuilder, QueryService, SourceSelector};
 
-#[allow(
+#[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
               target; this target uses only query index fixtures"
@@ -46,13 +46,10 @@ mod common;
 use common::{
     WORKSPACE_FILE_COUNTS,
     content::{
-        ProjectShape, metadata_lookup_note_source, task_triplet_note_source,
+        ProjectShape, metadata_lookup_note_source, task_note_source,
+        task_triplet_note_source,
     },
-    project::{
-        build_index_arc, build_index_arc_from_note_source,
-        setup_persisted_project,
-    },
-    quick_file_counts,
+    project::{build_index_arc, build_index_arc_from_note_source},
 };
 
 // ----------------------------------------------------------- //
@@ -60,7 +57,7 @@ use common::{
 // ----------------------------------------------------------- //
 
 const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
-
+const TASK_DENSITY_COUNTS: &[usize] = &[1, 3, 10, 20];
 // ----------------------------------------------------------- //
 //                Benchmarks: General Execution                //
 // ----------------------------------------------------------- //
@@ -84,6 +81,7 @@ fn bench_run_pages(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
@@ -93,7 +91,7 @@ fn bench_run_pages(c: &mut Criterion) {
             b.iter_batched(
                 || index.clone(),
                 |index| {
-                    QueryService::new("class")
+                    service
                         .run(&index, QueryBuilder::pages(SourceSelector::All))
                 },
                 BatchSize::SmallInput,
@@ -122,6 +120,7 @@ fn bench_run_tasks(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc_from_note_source(n, |i, _| {
             task_triplet_note_source(i)
@@ -133,7 +132,7 @@ fn bench_run_tasks(c: &mut Criterion) {
             b.iter_batched(
                 || index.clone(),
                 |index| {
-                    QueryService::new("class")
+                    service
                         .run(&index, QueryBuilder::tasks(SourceSelector::All))
                 },
                 BatchSize::SmallInput,
@@ -172,6 +171,7 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in WORKSPACE_FILE_COUNTS {
         if n >= 10_000 {
             group.sample_size(10);
@@ -187,7 +187,7 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
                 b.iter_batched(
                     || index.clone(),
                     |index| {
-                        QueryService::new("class").run(
+                        service.run(
                             &index,
                             QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
@@ -203,82 +203,6 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
     }
     group.finish();
 }
-
-/// Measures [`QueryService::sync_and_run`] latency across source-selector
-/// selectivity over a persisted redb store.
-///
-/// Parameters: varies selector (`single_tag_point_lookup` vs.
-/// `full_vault_scan`) and note count; throughput is indexed entries traversed
-/// during sync, not output rows for the one-tag query.
-///
-/// Fixture: persisted tagged project is built outside timing. Each timed call
-/// runs the real persisted command path: sync/scan first, then store-backed
-/// query reads and row materialization.
-///
-/// Expected outcomes:
-/// - Both shapes include the shared O(n) sync prelude; after that,
-///   `single_tag_point_lookup` reads/materializes one matching note and
-///   `full_vault_scan` reads/materializes all notes.
-///
-/// Unexpected outcomes:
-/// - The one-tag path widens beyond the shared sync baseline as `n` grows,
-///   indicating `PATHS_BY_TAG` candidate lookup, store reads, or row
-///   materialization has regressed toward full-vault behavior.
-fn bench_sync_and_run_selectors(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::sync_and_run_selectors");
-    group.plot_config(
-        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
-    );
-    let service = QueryService::new("class");
-    let single_tag =
-        || SourceSelector::parse("#rare_0").expect("valid tag selector");
-    let all_pages = || SourceSelector::All;
-
-    for n in quick_file_counts() {
-        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
-        group.throughput(Throughput::Elements(
-            u64::try_from(n).expect("note count fits u64"),
-        ));
-        group.bench_with_input(
-            BenchmarkId::new("single_tag_point_lookup", n),
-            &n,
-            |b, _| {
-                b.iter_batched(
-                    || QueryBuilder::pages(single_tag()),
-                    |query| {
-                        black_box(
-                            service
-                                .sync_and_run(&indexer, query)
-                                .expect("sync_and_run succeeds"),
-                        )
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("full_vault_scan", n),
-            &n,
-            |b, _| {
-                b.iter_batched(
-                    || QueryBuilder::pages(all_pages()),
-                    |query| {
-                        black_box(
-                            service
-                                .sync_and_run(&indexer, query)
-                                .expect("sync_and_run succeeds"),
-                        )
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-    }
-    group.finish();
-}
-
-// ----------------------------------------------------------- //
-//                 Benchmarks: Isolated Filter                 //
 // ----------------------------------------------------------- //
 /// Measures end-to-end filter cost by frontmatter field count at a fixed
 /// 20,000-note workspace size.
@@ -288,19 +212,25 @@ fn bench_sync_and_run_selectors(c: &mut Criterion) {
 /// `metadata_lookup_note_source`, which places `rating` after the synthetic
 /// fields so accidental linear metadata lookup is visible.
 ///
-/// Timed work parses and runs the fixed `rating > 2` filter; it also constructs
-/// page rows, so this is not a pure lookup microbenchmark.
+/// Runs `rows_floor` (unfiltered page selection across varied field width)
+/// alongside `filter` (`rating > 2`).
+///
+/// Subtraction formula:
+/// - `filter - rows_floor`: Isolates filter predicate evaluation from
+///   field-width note row construction.
 ///
 /// Expected outcomes:
-/// - Cost remains broadly flat across field counts because query field paths
-///   use canonical hash-keyed lookup.
+/// - `rows_floor` reflects field-width row extraction cost.
+/// - `filter - rows_floor` remains broadly flat across field counts because
+///   query field paths use canonical hash-keyed lookup.
 ///
 /// Unexpected outcomes:
-/// - Cost grows with field count, signaling metadata lookup/key-resolution or
-///   field-width-sensitive row work needs inspection.
+/// - Predicate evaluation cost growing with field count, signaling metadata
+///   lookup or key-resolution regressions.
 fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("QueryService::run/filter_by_field_count");
+    let service = QueryService::new("class");
     let n = 20_000_usize;
     for &fields in QUERY_METADATA_FIELD_COUNTS {
         let index = build_index_arc_from_note_source(n, |i, _| {
@@ -310,13 +240,29 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
-            BenchmarkId::new("fields", fields),
+            BenchmarkId::new("rows_floor", fields),
             &fields,
             |b, _| {
                 b.iter_batched(
                     || index.clone(),
                     |index| {
-                        QueryService::new("class").run(
+                        service.run(
+                            &index,
+                            QueryBuilder::pages(SourceSelector::All),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("filter", fields),
+            &fields,
+            |b, _| {
+                b.iter_batched(
+                    || index.clone(),
+                    |index| {
+                        service.run(
                             &index,
                             QueryBuilder::pages(SourceSelector::All)
                                 .filter("rating > 2")
@@ -331,7 +277,52 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
     group.finish();
 }
 
-// ----------------------------------------------------------- //
+/// Measures task expansion throughput across varied tasks-per-note density.
+///
+/// Holds notes fixed at 1,000 and sweeps tasks per note over `{1, 3, 10, 20}`.
+/// Isolates per-task expansion cost from fixed per-note iteration.
+///
+/// Expected outcomes:
+/// - Execution time scales linearly with total expanded task rows ($n \times
+///   \text{tasks\_per\_note}$).
+///
+/// Unexpected outcomes:
+/// - Super-linear growth with task density, indicating per-note allocation
+///   churn or unbounded vector resizing during task row extraction.
+fn bench_run_tasks_density(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run/tasks_density");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    let note_count = 1_000_usize;
+    for &tasks_per_note in TASK_DENSITY_COUNTS {
+        let index = build_index_arc_from_note_source(note_count, |i, _| {
+            task_note_source(i, tasks_per_note)
+        });
+        let total_tasks = note_count.saturating_mul(tasks_per_note);
+        group.throughput(Throughput::Elements(
+            u64::try_from(total_tasks).expect("task count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("tasks", tasks_per_note),
+            &tasks_per_note,
+            |b, _| {
+                b.iter_batched(
+                    || index.clone(),
+                    |index| {
+                        service.run(
+                            &index,
+                            QueryBuilder::tasks(SourceSelector::All),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
 /// Measures one `QuerySet::clone()` over result sets of varying source size.
@@ -356,10 +347,11 @@ fn bench_clone_query_set(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc(n, ProjectShape::Plain);
-        let outcome = QueryService::new("class")
-            .run(&index, QueryBuilder::pages(SourceSelector::All));
+        let outcome =
+            service.run(&index, QueryBuilder::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
@@ -373,15 +365,6 @@ fn bench_clone_query_set(c: &mut Criterion) {
     }
     group.finish();
 }
-
-/// Measures `QuerySet`'s owned `IntoIterator::into_iter()` sole-owner path,
-/// swept over workspace size and row shape.
-///
-/// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and shape (`pages`, `tasks`);
-/// reports output rows (`n` or `3 * n`). Query construction happens in
-/// Criterion setup; timed work is only `outcome.into_iter().count()`.
-///
-/// The fresh, never-cloned setup lets `Arc::try_unwrap` reclaim cached rows
 /// rather than cloning them.
 ///
 /// Expected outcomes:
@@ -396,6 +379,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in WORKSPACE_FILE_COUNTS {
         let page_index = build_index_arc(n, ProjectShape::Plain);
         group.throughput(Throughput::Elements(
@@ -407,7 +391,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
             |b, index| {
                 b.iter_batched(
                     || {
-                        QueryService::new("class").run(
+                        service.run(
                             index,
                             QueryBuilder::pages(SourceSelector::All),
                         )
@@ -430,7 +414,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
             |b, index| {
                 b.iter_batched(
                     || {
-                        QueryService::new("class").run(
+                        service.run(
                             index,
                             QueryBuilder::tasks(SourceSelector::All),
                         )
@@ -448,8 +432,8 @@ criterion_group!(
     benches,
     bench_run_pages,
     bench_run_tasks,
+    bench_run_tasks_density,
     bench_run_pages_by_metadata,
-    bench_sync_and_run_selectors,
     bench_filter_by_metadata_field_count,
     bench_clone_query_set,
     bench_into_iter_owned

@@ -240,11 +240,26 @@ pub(crate) fn list_heavy_note_source(note_index: usize) -> String {
     content
 }
 
+/// Returns a note with `task_count` task items.
+pub(crate) fn task_note_source(note_index: usize, task_count: usize) -> String {
+    let mut source = String::new();
+    for task_index in 0..task_count {
+        let marker = if task_index % 3 == 2 {
+            'x'
+        } else {
+            ' '
+        };
+        let _ = writeln!(
+            source,
+            "- [{marker}] task {task_index} in note {note_index}"
+        );
+    }
+    source
+}
+
 /// Returns a note with exactly three task rows.
 pub(crate) fn task_triplet_note_source(note_index: usize) -> String {
-    format!(
-        "# Task Note {note_index}\n\n- [ ] first\n- [x] second\n- [ ] third\n"
-    )
+    task_note_source(note_index, 3)
 }
 
 /// Returns a task-list note with `item_count` top-level checkbox items.

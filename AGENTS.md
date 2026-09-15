@@ -22,7 +22,7 @@ Multi-context — `CONTEXT-MAP.md` + per-module `CONTEXT.md` under `src/`. See `
 ### Always Do
 
 - Check `mise://tasks` before assuming how to build/test/lint; check `mise://tools` on environment issues.
-- Prefer `run_task` over raw `cargo`/`hk`/`gitleaks`/build/test/lint/fmt — only raw shell when no task covers it.
+- Prefer `run_task` over raw `cargo`/`gitleaks`/build/test/lint/fmt — only raw shell when no task covers it.
 
 ### Never Do
 
@@ -48,24 +48,28 @@ Multi-context — `CONTEXT-MAP.md` + per-module `CONTEXT.md` under `src/`. See `
 
 | Task | Alias | Use for |
 | ---- | ----- | ------- |
-| `check` | `c` | Cargo compile check + hk project checks — run after every edit |
 | `test` | `t` | Prove it works; scope with `-- --lib <module>`, `-- --test <file>`, or a name substring |
 | `bench` | — | Criterion benchmarks; scope with `-m <module>`/`-f <pattern>`; auto-tags a comparable git baseline, `--compare <name>` diffs via critcmp |
 | `lint` | `l` | Strict clippy: workspace, all targets, all features. `--fix` applies known lints; depends on `fmt` |
 | `fmt` | `f` | Format before diffing/committing |
-| `fix` | — | Auto-fix hygiene/formatting `hk` catches; `-- --unstaged` scopes to files just edited |
 | `verify` | `v` | Full gate (fmt→lint→clippy→test --all) — run before yielding/committing non-trivial changes |
-
 <!-- mise:end -->
 
 <!-- hk:start -->
 ## hk
 
-- Before changing files, inspect the project with `hk mcp` or `hk run check --safe --format json`.
+- Before changing files, inspect the project with `hk mcp` or `hk check --safe --format json`.
 - Scope checks to the files you changed. For exact filenames, write a NUL-delimited list and use `--files0-from`; use `--cd` instead of changing hk's process-wide directory.
 - Inspect each planned command's effect. Prefer `--safe`; never run an unknown or destructive command without explicit user approval.
 - Consume normalized diagnostics from JSON/JSONL, preserve raw tool output for debugging, and review the resulting diff after fixes.
-- Use `hk run check --safe --format jsonl` for streaming lifecycle events. A final summary is emitted even when a step fails.
+- Use `hk check --safe --format jsonl` for streaming lifecycle events. A final summary is emitted even when a step fails.
+
+### Commands
+
+| Command | Use for |
+| ------- | ------- |
+| `hk check --safe --format jsonl` | Run project checks after every edit |
+| `hk fix --safe --no-stage --unstaged` | Apply safe fixes without staging |
 <!-- hk:end -->
 
 <!-- codegraph:start -->
@@ -104,5 +108,4 @@ Best practices: AI-created ADRs start as `proposed` — review before accepting.
 | `adrs new "Title"` | Write: `create_adr`, `update_status`, `link_adrs`, `update_content` |
 | `adrs list` | Analyse: `validate_adr`, `compare_adrs`, `suggest_tags` |
 | `adrs get 1` |  |
-
 <!-- adrs:end -->

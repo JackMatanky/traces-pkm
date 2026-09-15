@@ -290,12 +290,6 @@ declare -a args=(--all)
 cargo fmt "${args[@]}"
 '''
 
-[tasks.fix]
-description = "Auto-fix hk formatting issues"
-raw_args = true
-outputs = []
-run = "hk fix"
-
 [tasks.lint]
 description = "Strict clippy: workspace, all targets, all features. Auto-fixes 18 common lints unless --no-fix."
 alias = "l"

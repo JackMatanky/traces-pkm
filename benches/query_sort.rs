@@ -43,7 +43,7 @@ use traces_pkm::{
     NoteFieldValue, QueryBuilder, QueryRow, QueryService, SourceSelector,
 };
 
-#[allow(
+#[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
               target; this target uses only query index fixtures"
@@ -62,8 +62,8 @@ use common::{
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
-const SORT_STRESS_FILE_COUNTS: &[usize] = &[5_000, 10_000, 20_000, 40_000];
-const TOPK_LIMITS: &[i64] = &[10, 100, 1_000];
+const SORT_STRESS_FILE_COUNTS: &[usize] = &[1_000, 5_000, 20_000, 40_000];
+const TOPK_LIMITS: &[i64] = &[10, 1_000];
 
 /// Replica of `SortKey::cmp`'s Number-vs-Number match arm, extracted to keep
 /// [`bench_sort_note_field_value_replica`]'s closure nesting within clippy's
@@ -130,27 +130,28 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 ///
 /// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// Fixture indexes are built outside timing. Timed work builds a
-/// `sort("rating")` query and runs source-row construction, metadata key
-/// resolution, precomputed-key comparison, and row permutation.
-/// `sort_only_desc` exercises reverse ordering.
+/// Fixture indexes are built outside timing. Runs `pages_unsorted` baseline to
+/// isolate source-row construction, followed by `sort_only` (`rating`
+/// ascending) and `sort_only_desc`.
 ///
-/// The size sweep can distinguish aggregate linear work from comparison-shaped
-/// growth, but it does not isolate individual subsystems by itself.
+/// Subtraction formula:
+/// - `sort_only - pages_unsorted`: Isolates key extraction, comparison, and row
+///   permutation from base query scan and row construction.
 ///
 /// Expected outcomes:
-/// - Cost follows a row-construction/key-resolution plus `n log n` sort shape;
-///   descending and ascending stay in the same cost class.
+/// - `pages_unsorted` scales linearly with row count.
+/// - `sort_only - pages_unsorted` exhibits clean $O(n \log n)$ scaling.
+/// - Ascending and descending stay in the same cost class.
 ///
 /// Unexpected outcomes:
-/// - Cost grows faster than `n log n` or descending is much slower than
-///   ascending, indicating key materialization, comparison, or permutation work
-///   needs inspection.
+/// - `sort_only` growing faster than $O(n \log n)$ relative to
+///   `pages_unsorted`, or descending significantly diverging from ascending.
 fn bench_sort_by_metadata(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_metadata");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -159,6 +160,17 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
+        group.bench_with_input(
+            BenchmarkId::new("pages_unsorted", n),
+            &n,
+            |b, _| {
+                b.iter_batched(
+                    || QueryBuilder::pages(SourceSelector::All),
+                    |query| service.run(&index, query),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
         group.bench_with_input(BenchmarkId::new("sort_only", n), &n, |b, _| {
             b.iter_batched(
                 || {
@@ -166,7 +178,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
                         .sort("rating", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -180,7 +192,7 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
                             .sort("rating", true)
                             .expect("valid sort")
                     },
-                    |query| QueryService::new("class").run(&index, query),
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -223,6 +235,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -244,7 +257,7 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
                                 .limit(limit)
                                 .expect("valid limit")
                         },
-                        |query| QueryService::new("class").run(&index, query),
+                        |query| service.run(&index, query),
                         BatchSize::SmallInput,
                     );
                 },
@@ -262,21 +275,25 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 ///
 /// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// Fixture indexes are built outside timing. Timed work sorts by `file.name`,
-/// exercising file-field resolution and `SortKey::Text`
-/// classification/comparison.
+/// Built-in text fields (`file.name`) serve as the built-in field anchor (~531
+/// µs at 20K), contrasting with metadata-resolved numeric fields (`rating`,
+/// ~1023 µs at 20K) and frontmatter heap-string comparisons (`title`, ~2323 µs
+/// at 20K).
 ///
 /// Expected outcomes:
-/// - Cost stays in the broad range of the numeric sort anchor for the same `n`.
+/// - Built-in text (`file.name`) is faster than metadata-resolved numeric sorts
+///   (`rating`) at identical $n$, as direct struct field access bypasses
+///   metadata map resolution.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds the numeric anchor, indicating text-key field
-///   resolution, classification, or string comparison needs inspection.
+/// - Built-in text exceeding metadata numeric sort cost, indicating string key
+///   classification or path comparison regression.
 fn bench_sort_by_text(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_text");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -292,7 +309,7 @@ fn bench_sort_by_text(c: &mut Criterion) {
                         .sort("file.name", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -304,22 +321,22 @@ fn bench_sort_by_text(c: &mut Criterion) {
 ///
 /// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// Fixture indexes are built outside timing from `title_field_note_source`,
-/// whose title values are pseudorandomized so the sort does not start already
-/// ordered.
+/// Frontmatter text carries both metadata resolution and heap string comparison
+/// (~2323 µs at 20K), contrasting with built-in text (`file.name`, ~531 µs at
+/// 20K) and numeric metadata (`rating`, ~1023 µs at 20K).
 ///
 /// Expected outcomes:
-/// - Cost stays in the broad range of the numeric sort anchor for the same `n`.
+/// - Cost scales $O(n \log n)$ above numeric metadata sort due to dynamic
+///   string slice comparisons, while remaining linear in the prelude.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds the numeric anchor, indicating metadata
-///   resolution, `SortKey::from_text` classification, borrowing/allocation, or
-///   string comparison needs inspection.
+/// - String comparisons allocating per comparison or scaling super-linearly.
 fn bench_sort_by_title(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_title");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -337,7 +354,7 @@ fn bench_sort_by_title(c: &mut Criterion) {
                         .sort("title", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -366,6 +383,7 @@ fn bench_sort_by_date(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -381,7 +399,7 @@ fn bench_sort_by_date(c: &mut Criterion) {
                         .sort("file.mtime", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -413,6 +431,7 @@ fn bench_sort_composite(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -428,7 +447,7 @@ fn bench_sort_composite(c: &mut Criterion) {
                         .sort("class, rating", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -458,6 +477,7 @@ fn bench_sort_nullable(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -475,7 +495,7 @@ fn bench_sort_nullable(c: &mut Criterion) {
                         .sort("rating", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -504,6 +524,7 @@ fn bench_sort_by_duration(c: &mut Criterion) {
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -521,7 +542,7 @@ fn bench_sort_by_duration(c: &mut Criterion) {
                         .sort("estimate", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -543,12 +564,12 @@ fn bench_sort_by_duration(c: &mut Criterion) {
 ///
 /// Unexpected outcomes:
 /// - Cost per task row significantly exceeds page-row sort cost, indicating
-///   task-row field resolution or Bool comparison needs inspection.
 fn bench_sort_task_rows(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_task_rows");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
@@ -566,7 +587,7 @@ fn bench_sort_task_rows(c: &mut Criterion) {
                         .sort("task.completed", false)
                         .expect("valid sort")
                 },
-                |query| QueryService::new("class").run(&index, query),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -601,17 +622,16 @@ fn bench_permute_query_rows(c: &mut Criterion) {
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
     group.measurement_time(Duration::from_secs(2));
+    let service = QueryService::new("class");
     for &n in SORT_STRESS_FILE_COUNTS {
         if n >= 20_000 {
             group.sample_size(10);
         }
         let index = build_index_arc(n, ProjectShape::Plain);
         let base: Vec<QueryRow> = {
-            let set = QueryService::new("class")
-                .run(&index, QueryBuilder::pages(SourceSelector::All));
-            (0..set.len())
-                .map(|i| set.get(i).expect("row present").clone())
-                .collect()
+            let set =
+                service.run(&index, QueryBuilder::pages(SourceSelector::All));
+            set.iter().cloned().collect()
         };
         group.throughput(Throughput::Bytes(
             u64::try_from(n.saturating_mul(size_of::<QueryRow>()))

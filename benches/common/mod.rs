@@ -57,12 +57,14 @@ pub(crate) mod project;
 
 /// File-count sweep shared by workspace-scale benchmarks.
 ///
-/// Near-perfect log-spacing: 50→20K, 9 points, ~2x effective ratio.
-/// Covers small personal wikis (50–200 notes) through full-scale
-/// vaults (10K–20K notes), with a 20K anchor for reliable
-/// extrapolation to 50K/100K via the `bench-model` script.
-pub const WORKSPACE_FILE_COUNTS: &[usize] =
-    &[50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000];
+/// Five log-spaced points spanning 50 to 20,000 notes with a steady 4x to 5x
+/// ratio. Covers small personal wikis (50–200 notes), standard vaults (1K),
+/// large vaults (5K), and a 20K anchor for reliable extrapolation.
+pub const WORKSPACE_FILE_COUNTS: &[usize] = &[50, 200, 1_000, 5_000, 20_000];
+
+/// File-count sweep for multi-shape profile benchmarks across two orders of
+/// magnitude.
+pub const PROFILE_CONTRAST_COUNTS: &[usize] = &[200, 1_000, 5_000];
 
 /// Returns the bounded file-count sweep for expensive benchmark matrices.
 #[inline]

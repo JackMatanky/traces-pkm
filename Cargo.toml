@@ -36,12 +36,22 @@ required-features = ["test-utils"]
 
 [[bench]]
 harness = false
-name = "index_lifecycle"
+name = "index_inlinks"
 required-features = ["test-utils"]
 
 [[bench]]
 harness = false
-name = "index_inlinks"
+name = "index_build"
+required-features = ["test-utils"]
+
+[[bench]]
+harness = false
+name = "index_refresh"
+required-features = ["test-utils"]
+
+[[bench]]
+harness = false
+name = "index_store"
 required-features = ["test-utils"]
 
 [[bench]]
