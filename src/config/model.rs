@@ -182,11 +182,11 @@ impl Config {
         output: PathBuf,
     ) -> Self {
         Self {
+            root,
             templates: TemplateConfig::new(local, global, output),
             schemas: SchemasConfig::default(),
             frontmatter: FrontmatterConfig::default(),
             tasks: TaskConfig::default(),
-            root,
         }
     }
 

@@ -32,6 +32,7 @@ max-struct-bools = 2
 max-trait-bounds = 3
 enum-variant-size-threshold = 128
 large-error-threshold = 128
+check-inconsistent-struct-field-initializers = true
 
 # Project Metadata
 msrv = "1.96"

@@ -51,14 +51,14 @@ HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
 
 [task_config]
-global_inputs = ["mise.toml", "Cargo.lock"]
+global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 
 [task_config.cache]
 enabled = true
 
 [task_config.input_groups]
-rust = ["Cargo.toml", "Cargo.lock", "src/**/*.rs"]
-bench = ["Cargo.toml", "Cargo.lock", "src/**/*.rs", "benches/**/*.rs"]
+rust = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "tests/**/*.rs"]
+bench = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "benches/**/*.rs"]
 
 # ------------------------------------------------------------- #
 #                      Setup & Maintenance                      #
@@ -333,7 +333,11 @@ fi
 
 if [[ -n "${usage_mod:-}" ]]; then
   nextest_args+=(-E "test(/^${usage_mod}::/)")
-  cargo_test_args=(-p traces-pkm --features "${usage_feature?}")
+  if [[ "${usage_feature?}" == "all" ]]; then
+    cargo_test_args=(-p traces-pkm --all-features)
+  else
+    cargo_test_args=(-p traces-pkm --features "${usage_feature?}")
+  fi
 fi
 
 eval "nextest_extra=(${usage_args:-})"

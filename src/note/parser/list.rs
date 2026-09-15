@@ -161,13 +161,13 @@ impl ListTracker {
         let parent =
             self.item_stack.last().and_then(|item| item.position.line());
         self.item_stack.push(ItemFrame {
-            classification: ItemClassificationState::Pending,
             text_buffer: String::new(),
             scan_buffer: String::new(),
             fields: IndexMap::new(),
             tags: Vec::new(),
             children: Vec::new(),
             position: ListItemPosition::new(line, depth, parent),
+            classification: ItemClassificationState::Pending,
         });
     }
 

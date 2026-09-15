@@ -34,8 +34,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// [`FromStr`] implementation. The stored seconds value is always finite.
 #[derive(Clone, Debug)]
 pub struct DurationValue {
-    seconds: DurationSeconds,
     raw: Box<str>,
+    seconds: DurationSeconds,
 }
 
 impl DurationValue {
@@ -115,8 +115,8 @@ impl DurationValue {
         }
 
         Ok(Self {
-            seconds: DurationSeconds::try_from(total)?,
             raw: trimmed.into(),
+            seconds: DurationSeconds::try_from(total)?,
         })
     }
 
@@ -186,8 +186,8 @@ impl DurationValue {
         let raw = input[..last_end].trim().into();
         Some((
             Self {
-                seconds,
                 raw,
+                seconds,
             },
             last_end,
         ))
@@ -213,8 +213,8 @@ impl DurationValue {
         let total_secs = seconds.0;
         if total_secs == 0.0 {
             return Self {
-                seconds,
                 raw: "0s".into(),
+                seconds,
             };
         }
 
@@ -251,8 +251,8 @@ impl DurationValue {
         };
 
         Self {
-            seconds,
             raw,
+            seconds,
         }
     }
 
