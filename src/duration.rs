@@ -1,8 +1,8 @@
 //! Duration parsing, validation, and arithmetic.
 //!
 //! Accepts human-readable duration strings like `"1h 30m"` or `"4 yrs, 6 wks"`
-//! and converts them to a total seconds value. Parts are `<number><unit>`
-//! pairs separated by whitespace or commas.
+//! and converts them to a total seconds value. Parts are `<number><unit>` pairs
+//! separated by whitespace or commas.
 //!
 //! # Key types
 //!
@@ -43,8 +43,9 @@ impl DurationValue {
     ///
     /// Accepts one or more `<number><unit>` parts separated by whitespace or
     /// commas. A leading `+` or `-` on the first part sets the sign of the
-    /// whole duration. A part after the first may repeat a redundant `+`
-    /// but never an explicit `-`.
+    /// whole duration. A part after the first may repeat a redundant `+` but
+    /// never an explicit `-`.
+    ///
     /// Returns a specific error for each failure mode.
     ///
     /// # Errors
@@ -125,9 +126,8 @@ impl DurationValue {
     /// Recognizes the same `<number><unit>` grammar as [`Self::parse`],
     /// including the leading-sign rule: only the first part may carry an
     /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if
-    /// `input` does not start with a valid duration segment, if no parts
-    /// could be parsed, or if a part after the first carries an explicit
-    /// `-` sign.
+    /// `input` does not start with a valid duration segment, if no parts could
+    /// be parsed, or if a part after the first carries an explicit `-` sign.
     pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
         let bytes = input.as_bytes();
         let len = bytes.len();
@@ -197,9 +197,9 @@ impl DurationValue {
     /// value.
     ///
     /// Greedily decomposes `seconds.0.abs()` into Weeks (604,800s), Days
-    /// (86,400s), Hours (3,600s), Minutes (60s), Seconds (1s), and
-    /// Milliseconds (0.001s). If `seconds.0 == 0.0`, produces `"0s"`.
-    /// Negative durations have a leading `"-"`.
+    /// (86,400s), Hours (3,600s), Minutes (60s), Seconds (1s), and Milliseconds
+    /// (0.001s). If `seconds.0 == 0.0`, produces `"0s"`. Negative durations
+    /// have a leading `"-"`.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "part of DurationValue surface")
@@ -512,8 +512,8 @@ impl Ord for DurationValue {
     }
 }
 
-/// Hashes the parsed [`DurationSeconds`], not raw spelling, so equal values
-/// per [`PartialEq`] always hash identically.
+/// Hashes the parsed [`DurationSeconds`], not raw spelling, so equal values per
+/// [`PartialEq`] always hash identically.
 impl Hash for DurationValue {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -803,764 +803,633 @@ pub enum DurationError {
 mod tests {
     use super::*;
 
-    mod parse {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
+    mod value {
         use super::*;
 
-        #[rstest]
-        #[case::milliseconds("500ms", 0.5)]
-        #[case::seconds("90s", 90.0)]
-        #[case::minutes("30m", 1_800.0)]
-        #[case::hours("1h", 3_600.0)]
-        #[case::days("2d", 172_800.0)]
-        #[case::weeks("1w", 604_800.0)]
-        #[case::months("3mo", 7_776_000.0)]
-        #[case::years("1y", 31_536_000.0)]
-        fn parses_single_unit(#[case] input: &str, #[case] expected: f64) {
-            assert_eq!(
-                DurationValue::parse(input).unwrap().to_seconds(),
-                DurationSeconds::try_from(expected).unwrap()
-            );
-        }
+        mod parse {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
 
-        #[test]
-        fn parses_multi_part_with_space() {
-            let d = DurationValue::parse("1h 30m").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
+            use super::*;
 
-        #[test]
-        fn parses_multi_part_with_comma() {
-            let d = DurationValue::parse("4 yrs, 6 wks").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(4.0 * 31_536_000.0 + 6.0 * 604_800.0)
-                    .unwrap()
-            );
-        }
+            #[rstest]
+            #[case::milliseconds("500ms", 0.5)]
+            #[case::seconds("90s", 90.0)]
+            #[case::minutes("30m", 1_800.0)]
+            #[case::hours("1h", 3_600.0)]
+            #[case::days("2d", 172_800.0)]
+            #[case::weeks("1w", 604_800.0)]
+            #[case::months("3mo", 7_776_000.0)]
+            #[case::years("1y", 31_536_000.0)]
+            fn parses_single_unit(#[case] input: &str, #[case] expected: f64) {
+                assert_eq!(
+                    DurationValue::parse(input).unwrap().to_seconds(),
+                    DurationSeconds::try_from(expected).unwrap()
+                );
+            }
 
-        #[test]
-        fn parses_multi_part_without_separator() {
-            assert_eq!(
-                DurationValue::parse("1h30m").unwrap().to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
+            #[rstest]
+            #[case::with_space("1h 30m")]
+            #[case::with_comma("1h, 30m")]
+            #[case::without_separator("1h30m")]
+            #[case::consecutive_separators("1  h  30  m")]
+            fn parses_multi_part(#[case] input: &str) {
+                assert_eq!(
+                    DurationValue::parse(input).unwrap().to_seconds(),
+                    DurationSeconds::try_from(5_400.0).unwrap()
+                );
+            }
 
-        #[test]
-        fn parses_multi_part_with_consecutive_separators() {
-            let d = DurationValue::parse("1  h  30  m").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
+            #[rstest]
+            #[case::unsigned("1.5h", 5_400.0)]
+            #[case::without_leading_digit(".5h", 1_800.0)]
+            #[case::negative_without_leading_digit("-.5h", -1_800.0)]
+            #[case::positive_with_leading_plus("+.5h", 1_800.0)]
+            fn parses_decimal(#[case] input: &str, #[case] expected: f64) {
+                assert_eq!(
+                    DurationValue::parse(input).unwrap().to_seconds(),
+                    DurationSeconds::try_from(expected).unwrap()
+                );
+            }
 
-        #[test]
-        fn orders_signed_durations_correctly() {
-            let neg = DurationValue::parse("-15m").unwrap();
-            let zero = DurationValue::parse("0m").unwrap();
-            let pos = DurationValue::parse("+15m").unwrap();
-            assert!(neg < zero);
-            assert!(zero < pos);
-        }
+            #[test]
+            fn trims_leading_trailing_whitespace() {
+                let d = DurationValue::parse(" 1h ").unwrap();
+                assert_eq!(
+                    d.to_seconds(),
+                    DurationSeconds::try_from(3_600.0).unwrap()
+                );
+            }
 
-        #[test]
-        fn rejects_negative_on_non_leading_part() {
-            let err = DurationValue::parse("1h -30m").unwrap_err();
-            assert!(matches!(err, DurationError::InvalidNumber { .. }));
-        }
+            #[rstest]
+            #[case::trailing_space("1h ")]
+            #[case::trailing_comma("1h,")]
+            fn accepts_trailing_separator(#[case] input: &str) {
+                let d = DurationValue::parse(input).unwrap();
+                assert_eq!(
+                    d.to_seconds(),
+                    DurationSeconds::try_from(3_600.0).unwrap()
+                );
+            }
 
-        #[test]
-        fn accepts_redundant_plus_on_non_leading_part() {
-            let d = DurationValue::parse("1h +30m").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
+            #[test]
+            fn accepts_redundant_plus_on_non_leading_part() {
+                let d = DurationValue::parse("1h +30m").unwrap();
+                assert_eq!(
+                    d.to_seconds(),
+                    DurationSeconds::try_from(5_400.0).unwrap()
+                );
+            }
 
-        #[test]
-        fn parses_signed_decimal_without_leading_digit() {
-            let d = DurationValue::parse("-.5h").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(-1_800.0).unwrap()
-            );
-        }
+            mod error {
+                use pretty_assertions::assert_eq;
+                use rstest::rstest;
 
-        #[test]
-        fn parses_leading_plus_with_decimal() {
-            let d = DurationValue::parse("+.5h").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(1_800.0).unwrap()
-            );
-        }
+                use super::*;
 
-        #[test]
-        fn parses_decimal_numbers() {
-            assert_eq!(
-                DurationValue::parse("1.5h").unwrap().to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
+                #[rstest]
+                #[case::empty("")]
+                #[case::whitespace_only("   ")]
+                #[case::separator_only(",")]
+                fn rejects_empty_input(#[case] input: &str) {
+                    assert!(matches!(
+                        DurationValue::parse(input),
+                        Err(DurationError::Empty)
+                    ));
+                }
 
-        #[test]
-        fn parses_decimal_without_leading_digit() {
-            assert_eq!(
-                DurationValue::parse(".5h").unwrap().to_seconds(),
-                DurationSeconds::try_from(1_800.0).unwrap()
-            );
-        }
+                #[rstest]
+                #[case::positive_sign("+h")]
+                #[case::negative_sign("-h")]
+                fn rejects_sign_without_digit(#[case] input: &str) {
+                    let err = DurationValue::parse(input).unwrap_err();
+                    assert!(matches!(err, DurationError::InvalidNumber { .. }));
+                }
 
-        #[test]
-        fn trims_leading_trailing_whitespace() {
-            let d = DurationValue::parse(" 1h ").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(3_600.0).unwrap()
-            );
-        }
+                #[test]
+                fn rejects_negative_on_non_leading_part() {
+                    let err = DurationValue::parse("1h -30m").unwrap_err();
+                    assert!(matches!(err, DurationError::InvalidNumber { .. }));
+                }
 
-        #[test]
-        fn accepts_trailing_space() {
-            let d = DurationValue::parse("1h ").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(3_600.0).unwrap()
-            );
-        }
+                #[rstest]
+                #[case::bare_unit("h")]
+                #[case::unit_without_number(", h")]
+                fn rejects_unit_without_number(#[case] input: &str) {
+                    assert!(matches!(
+                        DurationValue::parse(input),
+                        Err(DurationError::MissingNumber { .. })
+                    ));
+                }
 
-        #[test]
-        fn accepts_trailing_comma() {
-            let d = DurationValue::parse("1h,").unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(3_600.0).unwrap()
-            );
-        }
+                #[rstest]
+                #[case::double_decimal("1.2.3h")]
+                #[case::bare_number("1")]
+                fn rejects_number_without_unit(#[case] input: &str) {
+                    assert!(matches!(
+                        DurationValue::parse(input),
+                        Err(DurationError::MissingUnit { .. })
+                    ));
+                }
 
-        #[test]
-        fn accepts_trailing_separator_only() {
-            assert!(matches!(
-                DurationValue::parse(","),
-                Err(DurationError::Empty)
-            ));
-        }
+                #[rstest]
+                #[case::unknown_unit("1x")]
+                #[case::longer_than_16_bytes("1aaaaaaaaaaaaaaaaa")]
+                fn rejects_unknown_or_long_unit(#[case] input: &str) {
+                    assert!(DurationValue::parse(input).is_err());
+                }
 
-        #[test]
-        fn rejects_sign_without_digit() {
-            let err = DurationValue::parse("+h").unwrap_err();
-            assert!(matches!(err, DurationError::InvalidNumber { .. }));
-        }
+                #[rstest]
+                #[case("1fortnight", "unknown unit in `1fortnight`")]
+                #[case("hours", "no number before unit in `hours`")]
+                #[case("42", "no unit after number in `42`")]
+                fn returns_error_message(
+                    #[case] input: &str,
+                    #[case] expected: &str,
+                ) {
+                    let err = DurationValue::parse(input).unwrap_err();
+                    assert_eq!(err.to_string(), expected);
+                }
+            }
 
-        #[test]
-        fn rejects_negative_sign_without_digit() {
-            let err = DurationValue::parse("-h").unwrap_err();
-            assert!(matches!(err, DurationError::InvalidNumber { .. }));
-        }
+            mod prefix {
+                use pretty_assertions::assert_eq;
+                use rstest::rstest;
 
-        #[rstest]
-        #[case::empty("")]
-        #[case::whitespace_only("   ")]
-        fn rejects_empty_input(#[case] input: &str) {
-            assert!(matches!(
-                DurationValue::parse(input),
-                Err(DurationError::Empty)
-            ));
-        }
+                use super::*;
 
-        #[rstest]
-        #[case::bare_unit("h")]
-        #[case::unit_without_number(", h")]
-        fn rejects_unit_without_number(#[case] input: &str) {
-            assert!(matches!(
-                DurationValue::parse(input),
-                Err(DurationError::MissingNumber { .. })
-            ));
-        }
+                #[rstest]
+                #[case::simple("45m]", 3, "45m", 2_700.0)]
+                #[case::decimal(".5h remainder", 3, ".5h", 1_800.0)]
+                #[case::multi_part("1h, 30m, extra", 7, "1h, 30m", 5_400.0)]
+                #[case::negative("-15m extra", 4, "-15m", -900.0)]
+                #[case::positive("+15m extra", 4, "+15m", 900.0)]
+                #[case::decimal_after_sign("-.5h rest", 4, "-.5h", -1_800.0)]
+                #[case::exact_end("1h", 2, "1h", 3_600.0)]
+                fn parses_valid_prefix(
+                    #[case] input: &str,
+                    #[case] expected_consumed: usize,
+                    #[case] expected_str: &str,
+                    #[case] expected_secs: f64,
+                ) {
+                    let (dv, consumed) =
+                        DurationValue::parse_prefix(input).expect("prefix");
+                    assert_eq!(consumed, expected_consumed);
+                    assert_eq!(dv.as_str(), expected_str);
+                    assert_eq!(
+                        dv.to_seconds(),
+                        DurationSeconds::try_from(expected_secs).unwrap()
+                    );
+                }
 
-        #[test]
-        fn rejects_malformed_number() {
-            assert!(matches!(
-                DurationValue::parse("1.2.3h"),
-                Err(DurationError::MissingUnit { .. })
-            ));
-        }
-
-        #[test]
-        fn rejects_number_without_unit() {
-            assert!(matches!(
-                DurationValue::parse("1"),
-                Err(DurationError::MissingUnit { .. })
-            ));
-        }
-
-        #[test]
-        fn rejects_unknown_unit() {
-            assert!(matches!(
-                DurationValue::parse("1x"),
-                Err(DurationError::UnknownUnit { .. })
-            ));
-        }
-
-        #[test]
-        fn error_message_for_unknown_unit() {
-            let err = DurationValue::parse("1fortnight").unwrap_err();
-            assert_eq!(err.to_string(), "unknown unit in `1fortnight`");
-        }
-
-        #[test]
-        fn error_message_for_missing_number() {
-            let err = DurationValue::parse("hours").unwrap_err();
-            assert_eq!(err.to_string(), "no number before unit in `hours`");
-        }
-
-        #[test]
-        fn error_message_for_missing_unit() {
-            let err = DurationValue::parse("42").unwrap_err();
-            assert_eq!(err.to_string(), "no unit after number in `42`");
-        }
-
-        #[test]
-        fn rejects_unit_longer_than_16_bytes() {
-            let long_unit = "a".repeat(17);
-            let input = format!("1{long_unit}");
-            assert!(DurationValue::parse(&input).is_err());
-        }
-    }
-
-    mod parse_prefix {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn parses_valid_prefix_and_advances_to_boundary() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix("45m]").expect("prefix");
-            assert_eq!(consumed, 3);
-            assert_eq!(dv.as_str(), "45m");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(2_700.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn parses_decimal_prefix_without_leading_digit() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix(".5h remainder").expect("prefix");
-            assert_eq!(consumed, 3);
-            assert_eq!(dv.as_str(), ".5h");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(1_800.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn parses_multi_part_prefix_without_trailing_separators() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix("1h, 30m, extra").expect("prefix");
-            assert_eq!(consumed, 7);
-            assert_eq!(dv.as_str(), "1h, 30m");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn rejects_non_duration_prefix() {
-            assert!(DurationValue::parse_prefix("not a duration").is_none());
-        }
-
-        #[test]
-        fn rejects_hyphen_bullet_without_immediate_digit() {
-            assert!(DurationValue::parse_prefix("- 15m").is_none());
-        }
-
-        #[test]
-        fn rejects_non_leading_negative_sign() {
-            assert!(DurationValue::parse_prefix("1h -30m").is_none());
-        }
-
-        #[test]
-        fn returns_none_for_empty_input() {
-            assert!(DurationValue::parse_prefix("").is_none());
-        }
-
-        #[test]
-        fn parses_negative_signed_prefix() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix("-15m extra").expect("prefix");
-            assert_eq!(consumed, 4);
-            assert_eq!(dv.as_str(), "-15m");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(-900.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn parses_positive_signed_prefix() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix("+15m extra").expect("prefix");
-            assert_eq!(consumed, 4);
-            assert_eq!(dv.as_str(), "+15m");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(900.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn parses_decimal_after_sign() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix("-.5h rest").expect("prefix");
-            assert_eq!(consumed, 4);
-            assert_eq!(dv.as_str(), "-.5h");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(-1_800.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn parses_unit_at_exact_input_end() {
-            let (dv, consumed) =
-                DurationValue::parse_prefix("1h").expect("prefix");
-            assert_eq!(consumed, 2);
-            assert_eq!(dv.as_str(), "1h");
-        }
-    }
-
-    mod from_seconds {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[test]
-        fn synthesizes_zero_as_0s() {
-            let zero = DurationSeconds::try_from(0.0).unwrap();
-            let dv = DurationValue::from_seconds(zero);
-            assert_eq!(dv.as_str(), "0s");
-            assert_eq!(dv.to_seconds(), zero);
-        }
-
-        #[test]
-        fn synthesizes_positive_decomposed_units() {
-            let secs = DurationSeconds::try_from(5_400.0).unwrap();
-            let dv = DurationValue::from_seconds(secs);
-            assert_eq!(dv.as_str(), "1h 30m");
-            assert_eq!(dv.to_seconds(), secs);
-        }
-
-        #[test]
-        fn synthesizes_negative_with_leading_minus() {
-            let secs = DurationSeconds::try_from(-5_400.0).unwrap();
-            let dv = DurationValue::from_seconds(secs);
-            assert_eq!(dv.as_str(), "-1h 30m");
-            assert_eq!(dv.to_seconds(), secs);
-        }
-
-        #[test]
-        fn handles_negative_zero() {
-            let secs = DurationSeconds::try_from(-0.0).unwrap();
-            let dv = DurationValue::from_seconds(secs);
-            assert_eq!(dv.as_str(), "0s");
-        }
-
-        #[test]
-        fn handles_sub_second_values() {
-            let secs = DurationSeconds::try_from(0.5).unwrap();
-            let dv = DurationValue::from_seconds(secs);
-            assert_eq!(dv.as_str(), "500ms");
-        }
-
-        #[test]
-        fn handles_large_compound_value() {
-            let raw = 604_800.0 + 86_400.0 + 3_600.0 + 60.0 + 1.0 + 0.5;
-            let secs = DurationSeconds::try_from(raw).unwrap();
-            let dv = DurationValue::from_seconds(secs);
-            assert_eq!(dv.as_str(), "1w 1d 1h 1m 1s 500ms");
-        }
-
-        #[rstest]
-        #[case::seconds(90.0)]
-        #[case::minutes(5_400.0)]
-        #[case::compound(604_800.0 + 86_400.0 + 3_600.0 + 60.0 + 1.0 + 0.5)]
-        #[case::negative(-5_400.0)]
-        #[case::negative_compound(-(86_400.0 + 3_600.0))]
-        fn roundtrips_through_parser(#[case] raw_seconds: f64) {
-            let secs = DurationSeconds::try_from(raw_seconds).unwrap();
-            let synthesized = DurationValue::from_seconds(secs);
-            let reparsed = DurationValue::parse(synthesized.as_str())
-                .expect("synthesized string must parse");
-            assert_eq!(reparsed.to_seconds(), secs);
-        }
-    }
-
-    mod unit_parse {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::single_upper("H", DurationUnit::Hour)]
-        #[case::all_upper("HOUR", DurationUnit::Hour)]
-        #[case::lower_plural("hours", DurationUnit::Hour)]
-        fn is_case_insensitive(
-            #[case] input: &str,
-            #[case] expected: DurationUnit,
-        ) {
-            assert_eq!(DurationUnit::parse(input).unwrap(), expected);
-        }
-
-        #[rstest]
-        #[case::ms("ms", DurationUnit::Millisecond)]
-        #[case::millisecond("millisecond", DurationUnit::Millisecond)]
-        #[case::milliseconds("milliseconds", DurationUnit::Millisecond)]
-        #[case::s("s", DurationUnit::Second)]
-        #[case::sec("sec", DurationUnit::Second)]
-        #[case::secs("secs", DurationUnit::Second)]
-        #[case::second("second", DurationUnit::Second)]
-        #[case::seconds("seconds", DurationUnit::Second)]
-        #[case::m("m", DurationUnit::Minute)]
-        #[case::min("min", DurationUnit::Minute)]
-        #[case::mins("mins", DurationUnit::Minute)]
-        #[case::minute("minute", DurationUnit::Minute)]
-        #[case::minutes("minutes", DurationUnit::Minute)]
-        #[case::h("h", DurationUnit::Hour)]
-        #[case::hr("hr", DurationUnit::Hour)]
-        #[case::hrs("hrs", DurationUnit::Hour)]
-        #[case::hour("hour", DurationUnit::Hour)]
-        #[case::hours("hours", DurationUnit::Hour)]
-        #[case::d("d", DurationUnit::Day)]
-        #[case::day("day", DurationUnit::Day)]
-        #[case::days("days", DurationUnit::Day)]
-        #[case::w("w", DurationUnit::Week)]
-        #[case::wk("wk", DurationUnit::Week)]
-        #[case::wks("wks", DurationUnit::Week)]
-        #[case::week("week", DurationUnit::Week)]
-        #[case::weeks("weeks", DurationUnit::Week)]
-        #[case::mo("mo", DurationUnit::Month)]
-        #[case::mos("mos", DurationUnit::Month)]
-        #[case::month("month", DurationUnit::Month)]
-        #[case::months("months", DurationUnit::Month)]
-        #[case::y("y", DurationUnit::Year)]
-        #[case::yr("yr", DurationUnit::Year)]
-        #[case::yrs("yrs", DurationUnit::Year)]
-        #[case::year("year", DurationUnit::Year)]
-        #[case::years("years", DurationUnit::Year)]
-        fn parses_all_units_and_abbreviations(
-            #[case] input: &str,
-            #[case] expected: DurationUnit,
-        ) {
-            assert_eq!(DurationUnit::parse(input).unwrap(), expected);
-        }
-
-        #[test]
-        fn rejects_unknown() {
-            assert!(DurationUnit::parse("foo").is_none());
-        }
-
-        #[test]
-        fn rejects_string_exactly_16_bytes() {
-            let exactly_16 = "a".repeat(16);
-            assert!(DurationUnit::parse(&exactly_16).is_none());
-        }
-
-        #[test]
-        fn rejects_string_longer_than_16_bytes() {
-            let long = "a".repeat(17);
-            assert!(DurationUnit::parse(&long).is_none());
-        }
-
-        #[test]
-        fn rejects_empty_string() {
-            assert!(DurationUnit::parse("").is_none());
-        }
-
-        #[test]
-        fn seconds_are_positive_for_all_variants() {
-            for entry in UNIT_MAP.entries() {
-                assert!(entry.1.seconds() > 0.0);
+                #[rstest]
+                #[case::non_duration("not a duration")]
+                #[case::hyphen_bullet("- 15m")]
+                #[case::non_leading_negative("1h -30m")]
+                #[case::empty("")]
+                fn rejects_invalid_prefix(#[case] input: &str) {
+                    assert!(DurationValue::parse_prefix(input).is_none());
+                }
             }
         }
 
-        #[test]
-        fn seconds_i64_matches_seconds_for_each_variant() {
-            let units = [
-                (DurationUnit::Millisecond, None),
-                (DurationUnit::Second, Some(1)),
-                (DurationUnit::Minute, Some(60)),
-                (DurationUnit::Hour, Some(3_600)),
-                (DurationUnit::Day, Some(86_400)),
-                (DurationUnit::Week, Some(604_800)),
-                (DurationUnit::Month, Some(2_592_000)),
-                (DurationUnit::Year, Some(31_536_000)),
-            ];
-            for (unit, expected) in units {
-                assert_eq!(unit.seconds_i64(), expected);
+        mod constructor {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::*;
+
+            #[rstest]
+            #[case::zero(0.0, "0s")]
+            #[case::positive(5_400.0, "1h 30m")]
+            #[case::negative(-5_400.0, "-1h 30m")]
+            fn synthesizes(#[case] raw_secs: f64, #[case] expected_str: &str) {
+                let secs = DurationSeconds::try_from(raw_secs).unwrap();
+                let dv = DurationValue::from_seconds(secs);
+                assert_eq!(dv.as_str(), expected_str);
+                assert_eq!(dv.to_seconds(), secs);
+            }
+
+            #[rstest]
+            #[case::negative_zero(-0.0, "0s")]
+            #[case::sub_second(0.5, "500ms")]
+            #[case::large_compound(
+                604_800.0 + 86_400.0 + 3_600.0 + 60.0 + 1.0 + 0.5,
+                "1w 1d 1h 1m 1s 500ms"
+            )]
+            fn handles(#[case] raw_secs: f64, #[case] expected_str: &str) {
+                let secs = DurationSeconds::try_from(raw_secs).unwrap();
+                let dv = DurationValue::from_seconds(secs);
+                assert_eq!(dv.as_str(), expected_str);
+            }
+
+            #[rstest]
+            #[case::seconds(90.0)]
+            #[case::minutes(5_400.0)]
+            #[case::compound(
+                604_800.0 + 86_400.0 + 3_600.0 + 60.0 + 1.0 + 0.5
+            )]
+            #[case::negative(-5_400.0)]
+            #[case::negative_compound(-(86_400.0 + 3_600.0))]
+            fn roundtrips_through_parser(#[case] raw_seconds: f64) {
+                let secs = DurationSeconds::try_from(raw_seconds).unwrap();
+                let synthesized = DurationValue::from_seconds(secs);
+                let reparsed = DurationValue::parse(synthesized.as_str())
+                    .expect("synthesized string must parse");
+                assert_eq!(reparsed.to_seconds(), secs);
+            }
+        }
+
+        mod equality {
+            use super::*;
+
+            #[test]
+            fn equates_semantically_equivalent_spellings() {
+                let a = DurationValue::parse("1h 30m").unwrap();
+                let b = DurationValue::parse("90m").unwrap();
+                assert_eq!(a, b);
+            }
+
+            #[test]
+            fn distinguishes_different_durations() {
+                let a = DurationValue::parse("1h").unwrap();
+                let b = DurationValue::parse("2h").unwrap();
+                assert_ne!(a, b);
+            }
+        }
+
+        mod ordering {
+            use super::*;
+
+            #[test]
+            fn partial_ord_matches_ord() {
+                let a = DurationValue::parse("30m").unwrap();
+                let b = DurationValue::parse("1h").unwrap();
+                assert!(a < b);
+                assert!(b > a);
+            }
+
+            #[test]
+            fn orders_signed_durations_correctly() {
+                let neg = DurationValue::parse("-15m").unwrap();
+                let zero = DurationValue::parse("0m").unwrap();
+                let pos = DurationValue::parse("+15m").unwrap();
+                assert!(neg < zero);
+                assert!(zero < pos);
+            }
+        }
+
+        mod hashing {
+            use std::{
+                collections::hash_map::DefaultHasher,
+                hash::{Hash, Hasher},
+            };
+
+            use rstest::rstest;
+
+            use super::*;
+
+            fn hash_val<T: Hash>(val: &T) -> u64 {
+                let mut hasher = DefaultHasher::new();
+                val.hash(&mut hasher);
+                hasher.finish()
+            }
+
+            #[rstest]
+            #[case::equal("1h 30m", "90m", true)]
+            #[case::different("1h", "2h", false)]
+            fn duration_value_hash(
+                #[case] a: &str,
+                #[case] b: &str,
+                #[case] should_match: bool,
+            ) {
+                let a = DurationValue::parse(a).unwrap();
+                let b = DurationValue::parse(b).unwrap();
+                if should_match {
+                    assert_eq!(hash_val(&a), hash_val(&b));
+                } else {
+                    assert_ne!(hash_val(&a), hash_val(&b));
+                }
+            }
+
+            #[rstest]
+            #[case::equal(100.0, 100.0, true)]
+            #[case::different(100.0, 200.0, false)]
+            fn seconds_hash(
+                #[case] a: f64,
+                #[case] b: f64,
+                #[case] should_match: bool,
+            ) {
+                let a = DurationSeconds::try_from(a).unwrap();
+                let b = DurationSeconds::try_from(b).unwrap();
+                if should_match {
+                    assert_eq!(hash_val(&a), hash_val(&b));
+                } else {
+                    assert_ne!(hash_val(&a), hash_val(&b));
+                }
+            }
+        }
+
+        mod formatting {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn returns_raw_spelling_for_duration_value() {
+                let d = DurationValue::parse("4 yrs, 6 wks").unwrap();
+                assert_eq!(format!("{d}"), "4 yrs, 6 wks");
+                assert_eq!(d.as_str(), "4 yrs, 6 wks");
+            }
+
+            #[test]
+            fn seconds_displays_as_number() {
+                assert_eq!(
+                    DurationSeconds::try_from(3600.0).unwrap().to_string(),
+                    "3600"
+                );
+                assert_eq!(
+                    DurationSeconds::try_from(0.5).unwrap().to_string(),
+                    "0.5"
+                );
+            }
+        }
+
+        mod serialization {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn serializes_to_raw_string() {
+                let dv = DurationValue::parse("1h 30m").unwrap();
+                let json = serde_json::to_string(&dv).unwrap();
+                assert_eq!(json, "\"1h 30m\"");
+            }
+        }
+
+        mod deserialization {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn deserializes_from_raw_string() {
+                let json = "\"4 yrs, 6 wks\"";
+                let dv: DurationValue = serde_json::from_str(json).unwrap();
+                assert_eq!(dv.as_str(), "4 yrs, 6 wks");
+                assert_eq!(
+                    dv.to_seconds(),
+                    DurationValue::parse("4 yrs, 6 wks").unwrap().to_seconds()
+                );
+            }
+
+            #[test]
+            fn rejects_unparseable_duration_string() {
+                let json = "\"not a duration\"";
+                let err =
+                    serde_json::from_str::<DurationValue>(json).unwrap_err();
+                assert!(err.to_string().contains("no number before unit"));
+            }
+        }
+
+        mod conversions {
+            use super::*;
+
+            #[test]
+            fn roundtrips_valid_input() {
+                let d: DurationValue = "1h 30m".parse().unwrap();
+                assert_eq!(
+                    d.to_seconds(),
+                    DurationSeconds::try_from(5_400.0).unwrap()
+                );
+            }
+
+            #[test]
+            fn returns_error_for_invalid_input() {
+                let err =
+                    "not a duration".parse::<DurationValue>().unwrap_err();
+                assert!(matches!(err, DurationError::MissingNumber { .. }));
             }
         }
     }
 
-    mod seconds_ops {
-        use pretty_assertions::assert_eq;
-
+    mod unit {
         use super::*;
 
-        #[test]
-        fn add_combines_seconds() {
-            let a = DurationSeconds::try_from(100.0).unwrap();
-            let b = DurationSeconds::try_from(200.0).unwrap();
-            assert_eq!(a + b, DurationSeconds::try_from(300.0).unwrap());
+        mod parse {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::*;
+
+            #[rstest]
+            #[case::single_upper("H", DurationUnit::Hour)]
+            #[case::all_upper("HOUR", DurationUnit::Hour)]
+            #[case::lower_plural("hours", DurationUnit::Hour)]
+            fn is_case_insensitive(
+                #[case] input: &str,
+                #[case] expected: DurationUnit,
+            ) {
+                assert_eq!(DurationUnit::parse(input).unwrap(), expected);
+            }
+
+            #[rstest]
+            #[case::ms("ms", DurationUnit::Millisecond)]
+            #[case::millisecond("millisecond", DurationUnit::Millisecond)]
+            #[case::milliseconds("milliseconds", DurationUnit::Millisecond)]
+            #[case::s("s", DurationUnit::Second)]
+            #[case::sec("sec", DurationUnit::Second)]
+            #[case::secs("secs", DurationUnit::Second)]
+            #[case::second("second", DurationUnit::Second)]
+            #[case::seconds("seconds", DurationUnit::Second)]
+            #[case::m("m", DurationUnit::Minute)]
+            #[case::min("min", DurationUnit::Minute)]
+            #[case::mins("mins", DurationUnit::Minute)]
+            #[case::minute("minute", DurationUnit::Minute)]
+            #[case::minutes("minutes", DurationUnit::Minute)]
+            #[case::h("h", DurationUnit::Hour)]
+            #[case::hr("hr", DurationUnit::Hour)]
+            #[case::hrs("hrs", DurationUnit::Hour)]
+            #[case::hour("hour", DurationUnit::Hour)]
+            #[case::hours("hours", DurationUnit::Hour)]
+            #[case::d("d", DurationUnit::Day)]
+            #[case::day("day", DurationUnit::Day)]
+            #[case::days("days", DurationUnit::Day)]
+            #[case::w("w", DurationUnit::Week)]
+            #[case::wk("wk", DurationUnit::Week)]
+            #[case::wks("wks", DurationUnit::Week)]
+            #[case::week("week", DurationUnit::Week)]
+            #[case::weeks("weeks", DurationUnit::Week)]
+            #[case::mo("mo", DurationUnit::Month)]
+            #[case::mos("mos", DurationUnit::Month)]
+            #[case::month("month", DurationUnit::Month)]
+            #[case::months("months", DurationUnit::Month)]
+            #[case::y("y", DurationUnit::Year)]
+            #[case::yr("yr", DurationUnit::Year)]
+            #[case::yrs("yrs", DurationUnit::Year)]
+            #[case::year("year", DurationUnit::Year)]
+            #[case::years("years", DurationUnit::Year)]
+            fn parses_all_units_and_abbreviations(
+                #[case] input: &str,
+                #[case] expected: DurationUnit,
+            ) {
+                assert_eq!(DurationUnit::parse(input).unwrap(), expected);
+            }
+
+            #[rstest]
+            #[case::unknown("foo")]
+            #[case::exactly_16_bytes("aaaaaaaaaaaaaaaa")]
+            #[case::longer_than_16_bytes("aaaaaaaaaaaaaaaaa")]
+            #[case::empty("")]
+            fn rejects_unit(#[case] input: &str) {
+                assert!(DurationUnit::parse(input).is_none());
+            }
         }
 
-        #[test]
-        fn sub_subtracts_seconds() {
-            let a = DurationSeconds::try_from(300.0).unwrap();
-            let b = DurationSeconds::try_from(100.0).unwrap();
-            assert_eq!(a - b, DurationSeconds::try_from(200.0).unwrap());
-        }
+        mod seconds {
+            use super::*;
 
-        #[test]
-        fn mul_scales_seconds() {
-            let a = DurationSeconds::try_from(100.0).unwrap();
-            assert_eq!(a * 3.0, DurationSeconds::try_from(300.0).unwrap());
-            assert_eq!(3.0 * a, DurationSeconds::try_from(300.0).unwrap());
-        }
+            #[test]
+            fn seconds_are_positive_for_all_variants() {
+                for entry in UNIT_MAP.entries() {
+                    assert!(entry.1.seconds() > 0.0);
+                }
+            }
 
-        #[test]
-        fn orders_by_total_cmp() {
-            let a = DurationSeconds::try_from(100.0).unwrap();
-            let b = DurationSeconds::try_from(200.0).unwrap();
-            assert!(a < b);
-            assert!(b > a);
-            assert_eq!(a, DurationSeconds::try_from(100.0).unwrap());
-        }
-
-        #[test]
-        fn try_from_rejects_nan() {
-            assert!(DurationSeconds::try_from(f64::NAN).is_err());
-        }
-
-        #[test]
-        fn try_from_rejects_infinity() {
-            assert!(DurationSeconds::try_from(f64::INFINITY).is_err());
-            assert!(DurationSeconds::try_from(f64::NEG_INFINITY).is_err());
-        }
-
-        #[test]
-        fn converts_from_duration_value() {
-            let dv = DurationValue::parse("1h").unwrap();
-            assert_eq!(
-                dv.to_seconds(),
-                DurationSeconds::try_from(3_600.0).unwrap()
-            );
+            #[test]
+            fn seconds_i64_matches_seconds_for_each_variant() {
+                let units = [
+                    (DurationUnit::Millisecond, None),
+                    (DurationUnit::Second, Some(1)),
+                    (DurationUnit::Minute, Some(60)),
+                    (DurationUnit::Hour, Some(3_600)),
+                    (DurationUnit::Day, Some(86_400)),
+                    (DurationUnit::Week, Some(604_800)),
+                    (DurationUnit::Month, Some(2_592_000)),
+                    (DurationUnit::Year, Some(31_536_000)),
+                ];
+                for (unit, expected) in units {
+                    assert_eq!(unit.seconds_i64(), expected);
+                }
+            }
         }
     }
 
-    mod equality {
+    mod seconds {
         use super::*;
 
-        #[test]
-        fn equates_semantically_equivalent_spellings() {
-            let a = DurationValue::parse("1h 30m").unwrap();
-            let b = DurationValue::parse("90m").unwrap();
-            assert_eq!(a, b);
+        mod arithmetic {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn add_combines_seconds() {
+                let a = DurationSeconds::try_from(100.0).unwrap();
+                let b = DurationSeconds::try_from(200.0).unwrap();
+                assert_eq!(a + b, DurationSeconds::try_from(300.0).unwrap());
+            }
+
+            #[test]
+            fn sub_subtracts_seconds() {
+                let a = DurationSeconds::try_from(300.0).unwrap();
+                let b = DurationSeconds::try_from(100.0).unwrap();
+                assert_eq!(a - b, DurationSeconds::try_from(200.0).unwrap());
+            }
+
+            #[test]
+            fn mul_scales_seconds() {
+                let a = DurationSeconds::try_from(100.0).unwrap();
+                assert_eq!(a * 3.0, DurationSeconds::try_from(300.0).unwrap());
+                assert_eq!(3.0 * a, DurationSeconds::try_from(300.0).unwrap());
+            }
         }
 
-        #[test]
-        fn distinguishes_different_durations() {
-            let a = DurationValue::parse("1h").unwrap();
-            let b = DurationValue::parse("2h").unwrap();
-            assert_ne!(a, b);
+        mod ordering {
+            use super::*;
+
+            #[test]
+            fn orders_by_total_cmp() {
+                let a = DurationSeconds::try_from(100.0).unwrap();
+                let b = DurationSeconds::try_from(200.0).unwrap();
+                assert!(a < b);
+                assert!(b > a);
+                assert_eq!(a, DurationSeconds::try_from(100.0).unwrap());
+            }
         }
 
-        #[test]
-        fn partial_ord_matches_ord() {
-            let a = DurationValue::parse("30m").unwrap();
-            let b = DurationValue::parse("1h").unwrap();
-            assert!(a < b);
-            assert!(b > a);
-        }
-    }
+        mod conversions {
+            use pretty_assertions::assert_eq;
 
-    mod hashing {
-        use std::{
-            collections::hash_map::DefaultHasher,
-            hash::{Hash, Hasher},
-        };
+            use super::*;
 
-        use super::*;
+            #[test]
+            fn try_from_rejects_nan() {
+                assert!(DurationSeconds::try_from(f64::NAN).is_err());
+            }
 
-        fn hash_val<T: Hash>(val: &T) -> u64 {
-            let mut hasher = DefaultHasher::new();
-            val.hash(&mut hasher);
-            hasher.finish()
-        }
+            #[test]
+            fn try_from_rejects_infinity() {
+                assert!(DurationSeconds::try_from(f64::INFINITY).is_err());
+                assert!(DurationSeconds::try_from(f64::NEG_INFINITY).is_err());
+            }
 
-        #[test]
-        fn equal_duration_values_hash_identically() {
-            let a = DurationValue::parse("1h 30m").unwrap();
-            let b = DurationValue::parse("90m").unwrap();
-            assert_eq!(hash_val(&a), hash_val(&b));
-        }
-
-        #[test]
-        fn different_duration_values_hash_differently() {
-            let a = DurationValue::parse("1h").unwrap();
-            let b = DurationValue::parse("2h").unwrap();
-            assert_ne!(hash_val(&a), hash_val(&b));
-        }
-
-        #[test]
-        fn equal_seconds_hash_identically() {
-            let a = DurationSeconds::try_from(100.0).unwrap();
-            let b = DurationSeconds::try_from(100.0).unwrap();
-            assert_eq!(hash_val(&a), hash_val(&b));
-        }
-
-        #[test]
-        fn different_seconds_hash_differently() {
-            let a = DurationSeconds::try_from(100.0).unwrap();
-            let b = DurationSeconds::try_from(200.0).unwrap();
-            assert_ne!(hash_val(&a), hash_val(&b));
-        }
-    }
-
-    mod formatting {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn duration_value_preserves_raw_spelling() {
-            let d = DurationValue::parse("4 yrs, 6 wks").unwrap();
-            assert_eq!(format!("{d}"), "4 yrs, 6 wks");
-            assert_eq!(d.as_str(), "4 yrs, 6 wks");
-        }
-
-        #[test]
-        fn seconds_displays_as_number() {
-            assert_eq!(
-                DurationSeconds::try_from(3600.0).unwrap().to_string(),
-                "3600"
-            );
-            assert_eq!(
-                DurationSeconds::try_from(0.5).unwrap().to_string(),
-                "0.5"
-            );
-        }
-    }
-
-    mod serde {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn serializes_to_raw_string() {
-            let dv = DurationValue::parse("1h 30m").unwrap();
-            let json = serde_json::to_string(&dv).unwrap();
-            assert_eq!(json, "\"1h 30m\"");
-        }
-
-        #[test]
-        fn deserializes_from_raw_string() {
-            let json = "\"4 yrs, 6 wks\"";
-            let dv: DurationValue = serde_json::from_str(json).unwrap();
-            assert_eq!(dv.as_str(), "4 yrs, 6 wks");
-            assert_eq!(
-                dv.to_seconds(),
-                DurationValue::parse("4 yrs, 6 wks").unwrap().to_seconds()
-            );
-        }
-
-        #[test]
-        fn rejects_unparseable_duration_string() {
-            let json = "\"not a duration\"";
-            let err = serde_json::from_str::<DurationValue>(json).unwrap_err();
-            assert!(err.to_string().contains("no number before unit"));
+            #[test]
+            fn extracts_seconds_from_duration_value() {
+                let dv = DurationValue::parse("1h").unwrap();
+                assert_eq!(
+                    dv.to_seconds(),
+                    DurationSeconds::try_from(3_600.0).unwrap()
+                );
+            }
         }
     }
 
     mod time_delta_conversion {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn converts_whole_second_duration() {
-            let duration = DurationValue::parse("1h").expect("valid duration");
+        #[rstest]
+        #[case::whole_second("1h", TimeDelta::hours(1))]
+        #[case::subsecond("500ms", TimeDelta::milliseconds(500))]
+        fn converts_duration_value(
+            #[case] input: &str,
+            #[case] expected: TimeDelta,
+        ) {
+            let duration = DurationValue::parse(input).expect("valid duration");
             let converted = TimeDelta::try_from(duration).expect("in range");
-            assert_eq!(converted, TimeDelta::hours(1));
+            assert_eq!(converted, expected);
         }
 
-        #[test]
-        fn converts_subsecond_duration() {
-            let duration =
-                DurationValue::parse("500ms").expect("valid duration");
-            let converted = TimeDelta::try_from(duration).expect("in range");
-            assert_eq!(converted, TimeDelta::milliseconds(500));
-        }
-
-        #[test]
-        fn converts_zero_duration() {
+        #[rstest]
+        #[case::zero(0.0, TimeDelta::zero())]
+        #[case::negative_whole(-10.0, TimeDelta::seconds(-10))]
+        #[case::negative_fractional(
+            -90.5,
+            TimeDelta::milliseconds(-90_500)
+        )]
+        #[case::sub_microsecond(0.000_000_001, TimeDelta::nanoseconds(1))]
+        fn converts_duration_seconds(
+            #[case] input_secs: f64,
+            #[case] expected: TimeDelta,
+        ) {
             let seconds =
-                DurationSeconds::try_from(0.0).expect("finite seconds");
+                DurationSeconds::try_from(input_secs).expect("finite seconds");
             let converted = TimeDelta::try_from(seconds).expect("in range");
-            assert_eq!(converted, TimeDelta::zero());
+            assert_eq!(converted, expected);
         }
 
-        #[test]
-        fn converts_negative_whole_duration() {
+        #[rstest]
+        #[case::extreme_positive(1e300)]
+        #[case::extreme_negative(-1e300)]
+        fn rejects_seconds_outside_representable_range(
+            #[case] input_secs: f64,
+        ) {
             let seconds =
-                DurationSeconds::try_from(-10.0).expect("finite seconds");
-            let converted = TimeDelta::try_from(seconds).expect("in range");
-            assert_eq!(converted, TimeDelta::seconds(-10));
-        }
-
-        #[test]
-        fn converts_negative_fractional_duration() {
-            let seconds =
-                DurationSeconds::try_from(-90.5).expect("finite seconds");
-            let converted = TimeDelta::try_from(seconds).expect("in range");
-            assert_eq!(converted, TimeDelta::milliseconds(-90_500));
-        }
-
-        #[test]
-        fn rounds_sub_microsecond_to_nearest_nanosecond() {
-            let seconds = DurationSeconds::try_from(0.000_000_001)
-                .expect("finite seconds");
-            let converted = TimeDelta::try_from(seconds).expect("in range");
-            assert_eq!(converted, TimeDelta::nanoseconds(1));
-        }
-
-        #[test]
-        fn rejects_seconds_outside_representable_range() {
-            let seconds =
-                DurationSeconds::try_from(1e300).expect("finite seconds");
-            let result = TimeDelta::try_from(seconds);
-            assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
-        }
-
-        #[test]
-        fn rejects_extreme_negative_seconds_outside_representable_range() {
-            let seconds =
-                DurationSeconds::try_from(-1e300).expect("finite seconds");
+                DurationSeconds::try_from(input_secs).expect("finite seconds");
             let result = TimeDelta::try_from(seconds);
             assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
         }
@@ -1572,25 +1441,6 @@ mod tests {
             let via_seconds =
                 TimeDelta::try_from(duration.to_seconds()).expect("in range");
             assert_eq!(converted, via_seconds);
-        }
-    }
-
-    mod from_str {
-        use super::*;
-
-        #[test]
-        fn roundtrips_valid_input() {
-            let d: DurationValue = "1h 30m".parse().unwrap();
-            assert_eq!(
-                d.to_seconds(),
-                DurationSeconds::try_from(5_400.0).unwrap()
-            );
-        }
-
-        #[test]
-        fn returns_error_for_invalid_input() {
-            let err = "not a duration".parse::<DurationValue>().unwrap_err();
-            assert!(matches!(err, DurationError::MissingNumber { .. }));
         }
     }
 }
