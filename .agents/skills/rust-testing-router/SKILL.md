@@ -1,5 +1,5 @@
 ---
-name: rust-testing
+name: rust-testing-router
 description: >
   Rust testing router. Use when the user asks broadly about Rust testing,
   asks which Rust testing approach or skill applies, or mentions multiple

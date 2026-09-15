@@ -215,6 +215,6 @@ cargo bench -- --quick                   # fewer samples, faster feedback
 Optional enrichment; this skill's workflow does not depend on it. Where the
 `rust-skills` collection is installed: `perf-profile-first` and
 `anti-premature-optimize` expand on profiling before benchmarking, and
-`perf-black-box-bench` on black_box mechanics. Where `rust-testing` is
+`perf-black-box-bench` on black_box mechanics. Where `rust-testing-router` is
 installed, its `references/concurrency.md` covers verifying concurrent code
 with `loom` before benchmarking it.

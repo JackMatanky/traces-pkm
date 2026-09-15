@@ -7,7 +7,7 @@ description: >
 license: MIT
 metadata:
   version: "1.0.0"
-  companion_to: rust-testing
+  companion_to: rust-testing-router
 ---
 
 # Rust Unit Testing
@@ -58,7 +58,7 @@ For non-trivial units, enumerate happy paths, boundary conditions, failure paths
 
 ## Shared References
 
-Use `../rust-testing/references/assertions.md`, `../rust-testing/references/raii-cleanup.md`, `../rust-testing/references/table-driven.md`, `../rust-testing/references/property-based.md`, `../rust-testing/references/mocks.md`, `../rust-testing/references/snapshots.md`, `../rust-testing/references/async.md`, `../rust-testing/references/concurrency.md`, and `../rust-testing/references/commands.md` when a workflow reaches that branch.
+Use `../rust-testing-router/references/assertions.md`, `../rust-testing-router/references/raii-cleanup.md`, `../rust-testing-router/references/table-driven.md`, `../rust-testing-router/references/property-based.md`, `../rust-testing-router/references/mocks.md`, `../rust-testing-router/references/snapshots.md`, `../rust-testing-router/references/async.md`, `../rust-testing-router/references/concurrency.md`, and `../rust-testing-router/references/commands.md` when a workflow reaches that branch.
 
 ## Completion
 

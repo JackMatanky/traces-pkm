@@ -140,7 +140,7 @@ pub struct UniqueHandle { /* ... */ }
 
 `cargo nextest run` does not run doctests. Use `cargo test --doc` whenever doctests are relevant.
 
-Doctests run under plain `cargo test`, **but not under `cargo nextest run`** — nextest doesn't execute them. If your project uses nextest as the default runner (see [`../../rust-testing/references/commands.md`](../../rust-testing/references/commands.md)), doctests need a separate invocation:
+Doctests run under plain `cargo test`, **but not under `cargo nextest run`** — nextest doesn't execute them. If your project uses nextest as the default runner (see [`../../rust-testing-router/references/commands.md`](../../rust-testing-router/references/commands.md)), doctests need a separate invocation:
 
 ```bash
 cargo test --doc              # all doctests
@@ -149,6 +149,6 @@ cargo test --doc my_function  # doctests for one item
 
 ## See Also
 
-- [`../../rust-testing/references/assertions.md`](../../rust-testing/references/assertions.md) — assertion style applies inside doctests too
-- [`../../rust-testing/references/boundaries.md`](../../rust-testing/references/boundaries.md) — choosing doctest vs integration boundaries
-- [`../../rust-testing/references/commands.md`](../../rust-testing/references/commands.md) — why `cargo nextest run` alone isn't enough
+- [`../../rust-testing-router/references/assertions.md`](../../rust-testing-router/references/assertions.md) — assertion style applies inside doctests too
+- [`../../rust-testing-router/references/boundaries.md`](../../rust-testing-router/references/boundaries.md) — choosing doctest vs integration boundaries
+- [`../../rust-testing-router/references/commands.md`](../../rust-testing-router/references/commands.md) — why `cargo nextest run` alone isn't enough

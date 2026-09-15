@@ -7,7 +7,7 @@ description: >
 license: MIT
 metadata:
   version: "1.0.0"
-  companion_to: rust-testing
+  companion_to: rust-testing-router
 ---
 
 # Rust Integration Testing
@@ -20,7 +20,7 @@ Integration suites verify public behavior from outside the crate.
 2. For each boundary, choose strategy: real, fake, mock, temp-local, container, or out-of-scope with reason.
 3. Map each workflow row to a `tests/` case or explicitly mark out of scope.
 4. For CLI cases, state how the binary is invoked.
-5. Run the smallest relevant command from `../rust-testing/references/commands.md` or state why not run.
+5. Run the smallest relevant command from `../rust-testing-router/references/commands.md` or state why not run.
 
 ## Completion
 

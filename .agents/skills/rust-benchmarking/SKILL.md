@@ -6,7 +6,7 @@ description: >
 license: MIT
 metadata:
   version: "1.1.0"
-  companion_to: rust-testing
+  companion_to: rust-testing-router
 ---
 
 # Rust Benchmarking

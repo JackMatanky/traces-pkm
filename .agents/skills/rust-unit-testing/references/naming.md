@@ -197,4 +197,4 @@ mod tests {
 ## See Also
 
 - [`../SKILL.md`](../SKILL.md#unit-suite-basics) — where these named tests live and how they're structured
-- [`../../rust-testing/references/table-driven.md`](../../rust-testing/references/table-driven.md) — naming table-driven cases specifically
+- [`../../rust-testing-router/references/table-driven.md`](../../rust-testing-router/references/table-driven.md) — naming table-driven cases specifically

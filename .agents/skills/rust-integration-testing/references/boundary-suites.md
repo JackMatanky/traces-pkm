@@ -132,5 +132,5 @@ Do **not** put here what a unit test already covers -- integration tests are slo
 
 ## See Also
 
-- [`../../rust-testing/references/boundaries.md`](../../rust-testing/references/boundaries.md) -- choosing unit vs integration boundaries
-- [`../../rust-testing/references/commands.md`](../../rust-testing/references/commands.md) -- commands and CI wiring
+- [`../../rust-testing-router/references/boundaries.md`](../../rust-testing-router/references/boundaries.md) -- choosing unit vs integration boundaries
+- [`../../rust-testing-router/references/commands.md`](../../rust-testing-router/references/commands.md) -- commands and CI wiring
