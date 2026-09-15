@@ -10,7 +10,7 @@ rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
   "clippy",
   "rustfmt",
 ] }
-hk = "1.58.1"
+hk = "2.0.0"
 
 # -- Data formats --
 taplo = "latest"

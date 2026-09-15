@@ -1,5 +1,5 @@
-amends "package://github.com/jdx/hk/releases/download/v1.58.1/hk@1.58.1#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.58.1/hk@1.58.1#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v2.0.0/hk@2.0.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.0.0/hk@2.0.0#/Builtins.pkl"
 
 fail_fast = false
 
@@ -22,33 +22,23 @@ local hygiene = new Mapping<String, Step> {
     ["mixed-line-ending"] = Builtins.mixed_line_ending
 }
 
+local ryl_rules = "{extends: default, rules: {line-length: {level: warning}}}"
+
 local data_formats = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
     ["check-yaml"] = (Builtins.ryl) {
         check_after_diff = false
-        check = new CommandSpec {
-            command = new Command {
-                argv = List("ryl", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
-            }
-            effect = "read"
+        check = new Command {
+            argv = List("ryl", "-d", ryl_rules, "{{files}}")
         }
-        check_diff = new CommandSpec {
-            command = new Command {
-                argv = List("ryl", "--diff", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
-            }
-            effect = "read"
+        check_diff = new Command {
+            argv = List("ryl", "--diff", "-d", ryl_rules, "{{files}}")
         }
-        check_list_files = new CommandSpec {
-            command = new Command {
-                argv = List("ryl", "--list-files", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
-            }
-            effect = "read"
+        check_list_files = new Command {
+            argv = List("ryl", "--list-files", "-d", ryl_rules, "{{files}}")
         }
-        fix = new CommandSpec {
-            command = new Command {
-                argv = List("ryl", "--fix", "-d", "{extends: default, rules: {line-length: {level: warning}}}", "{{files}}")
-            }
-            effect = "write"
+        fix = new Command {
+            argv = List("ryl", "--fix", "-d", ryl_rules, "{{files}}")
         }
     }
     ["tombi-format"] = Builtins.tombi_format
@@ -66,49 +56,30 @@ local security = new Mapping<String, Step> {
     ["detect-private-key"] = Builtins.detect_private_key
     ["cargo-audit"] = new Step {
         glob = List("**/Cargo.lock")
-        check = new CommandSpec {
-            command = new Command {
-                argv = List("cargo", "audit")
-            }
-            effect = "read"
+        check = new Command {
+            argv = List("cargo", "audit")
         }
     }
     ["gitleaks"] = (Builtins.gitleaks) {
-        check = new CommandSpec {
-            command = "for file in {{files}}; do gitleaks dir --redact --no-banner --log-level error \"$file\" || exit $?; done"
-            effect = "read"
-        }
+        check = "for file in {{files}}; do gitleaks dir --redact --no-banner --log-level error \"$file\" || exit $?; done"
     }
 }
 
 local rust = new Mapping<String, Step> {
     ["cargo-fmt"] = Builtins.cargo_fmt
-    ["cargo-clippy"] = Builtins.cargo_clippy
-    ["cargo-test"] = new Step {
-        glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
-        check = new CommandSpec {
-            command = new Command {
-                argv = List("cargo", "test", "--workspace", "--features", "test-utils")
-            }
-            effect = "write"
-        }
-    }
     ["cargo-deny"] = Builtins.cargo_deny
     ["cargo-sweep"] = new Step {
         step_condition = "exec('test -d target')"
-        check = new CommandSpec {
-            command = """
-                size_kib=$(du -sk target 2>/dev/null | cut -f1)
-                if [ "$size_kib" -gt 12000000 ]; then
-                  latest=$(ls -dt target/debug/incremental/*/ 2>/dev/null | head -1)
-                  find target/debug/incremental -maxdepth 1 -mindepth 1 -type d ! -name "$(basename "$latest")" -exec rm -rf {} + 2>/dev/null
-                  echo "sweep: removed stale incremental sessions"
-                else
-                  echo "sweep: target under threshold, skipping"
-                fi
-                """
-            effect = "destructive"
-        }
+        check = """
+            size_kib=$(du -sk target 2>/dev/null | cut -f1)
+            if [ "$size_kib" -gt 12000000 ]; then
+              latest=$(ls -dt target/debug/incremental/*/ 2>/dev/null | head -1)
+              find target/debug/incremental -maxdepth 1 -mindepth 1 -type d ! -name "$(basename "$latest")" -exec rm -rf {} + 2>/dev/null
+              echo "sweep: removed stale incremental sessions"
+            else
+              echo "sweep: target under threshold, skipping"
+            fi
+            """
     }
 }
 
@@ -124,17 +95,14 @@ local prose = new Mapping<String, Step> {
         glob = List("**/*.rs", "**/*.md")
         exclude = List(".rust-docs/**", ".agents/**")
         profiles = List("prose")
-        check = new CommandSpec {
-            command = new Command {
-                argv = List(
-                    "harper-cli",
-                    "lint",
-                    "--user-dict-path",
-                    "dictionary.txt",
-                    "{{files}}",
-                )
-            }
-            effect = "read"
+        check = new Command {
+            argv = List(
+                "harper-cli",
+                "lint",
+                "--user-dict-path",
+                "dictionary.txt",
+                "{{files}}",
+            )
         }
     }
 }
@@ -146,12 +114,21 @@ local validation =
         ["tombi"] = Builtins.tombi
     }
 
-local quality =
-    new Mapping<String, Step> {
-        ["cargo-clippy"] = rust["cargo-clippy"]
-        ["cargo-test"] = rust["cargo-test"]
-        ["cargo-deny"] = rust["cargo-deny"]
+local quality = new Mapping<String, Step> {
+    ["cargo-clippy"] = new Step {
+        glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock", "clippy.toml")
+        check = "mise run lint --no-fix"
     }
+    ["cargo-test"] = new Step {
+        glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
+        check = "mise run test"
+    }
+    ["cargo-doc"] = new Step {
+        glob = List("**/*.rs", "**/Cargo.toml")
+        check = "mise run doc"
+    }
+    ["cargo-deny"] = rust["cargo-deny"]
+}
 
 hooks {
     ["pre-commit"] {
@@ -175,11 +152,8 @@ hooks {
     ["commit-msg"] {
         steps = new Mapping<String, Step> {
             ["conventional-commit"] = (Builtins.check_conventional_commit) {
-                check = new CommandSpec {
-                    command = new Command {
-                        argv = List("hk", "util", "check-conventional-commit", "--verbose", "{{commit_msg_file}}")
-                    }
-                    effect = "read"
+                check = new Command {
+                    argv = List("hk", "util", "check-conventional-commit", "--verbose", "{{commit_msg_file}}")
                 }
             }
         }
