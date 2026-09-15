@@ -18,7 +18,7 @@ use crate::{
     query::{
         QueryRow,
         error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
-        sort::{TextShape, classify_text_shape},
+        sort::TextShape,
         value::QueryFieldValueRef,
     },
 };
@@ -164,32 +164,35 @@ impl ComparisonExpr {
         Self {
             field,
             op,
-            literal: classify_filter_literal(literal),
+            literal: Self::classify_literal(literal),
         }
     }
 
+    /// Returns `true` if `row`'s field at `self.field` satisfies `self.op`
+    /// against `self.literal`.
     pub(super) fn is_matching(&self, row: &QueryRow) -> bool {
         self.op.is_satisfied_by(&row.resolve_ref(&self.field), &self.literal)
     }
-}
 
-/// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
-/// `Duration` when its text has that shape, once, at query-build time --
-/// not per row. Only `NoteFieldValue::String` needs inspection: the filter
-/// grammar's `Literal` token never produces `Date`/`DateTime`/`Duration`/
-/// `Link`/`List`/`Object` directly (`Null`/`Bool`/`Number`/`String` are its
-/// only literal shapes). Reuses [`classify_text_shape`] -- the same
-/// heuristic `SortKey::from_text` uses -- so filter literals and sort-key
-/// text classify identically, not via a second hand-rolled copy.
-fn classify_filter_literal(literal: NoteFieldValue) -> NoteFieldValue {
-    let NoteFieldValue::String(text) = &literal else {
-        return literal;
-    };
-    match classify_text_shape(text) {
-        TextShape::DateTime(value) => NoteFieldValue::DateTime(value),
-        TextShape::Date(value) => NoteFieldValue::Date(value),
-        TextShape::Duration(value) => NoteFieldValue::Duration(value),
-        TextShape::Plain => literal,
+    /// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
+    /// `Duration` when its text has that shape, once, at query-build time
+    /// -- not per row. Only `NoteFieldValue::String` needs inspection: the
+    /// filter grammar's `Literal` token never produces `Date`/`DateTime`/
+    /// `Duration`/`Link`/`List`/`Object` directly (`Null`/`Bool`/`Number`/
+    /// `String` are its only literal shapes). Reuses [`TextShape::classify`]
+    /// -- the same heuristic `SortKey::from_text` uses -- so filter
+    /// literals and sort-key text classify identically, not via a second
+    /// hand-rolled copy.
+    fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
+        let NoteFieldValue::String(text) = &literal else {
+            return literal;
+        };
+        match TextShape::classify(text) {
+            TextShape::DateTime(value) => NoteFieldValue::DateTime(value),
+            TextShape::Date(value) => NoteFieldValue::Date(value),
+            TextShape::Duration(value) => NoteFieldValue::Duration(value),
+            TextShape::Plain => literal,
+        }
     }
 }
 
@@ -706,17 +709,25 @@ mod tests {
         }
 
         #[test]
-        fn filters_with_null_literal() {
+        fn equal_null_matches_rows_with_a_null_field() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = rated_outcome(temp.path());
 
-            let with_null =
-                outcome.clone().filter("rating == null").expect("valid filter");
-            let without_null =
+            let filtered =
+                outcome.filter("rating == null").expect("valid filter");
+
+            assert_eq!(names(&filtered), ["unrated"]);
+        }
+
+        #[test]
+        fn not_equal_null_matches_rows_with_a_non_null_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered =
                 outcome.filter("rating != null").expect("valid filter");
 
-            assert_eq!(names(&with_null), ["unrated"]);
-            assert_eq!(names(&without_null), ["high", "low"]);
+            assert_eq!(names(&filtered), ["high", "low"]);
         }
 
         #[test]
@@ -1004,33 +1015,6 @@ mod tests {
                 .filter("contains(tags, \"#book\")")
                 .expect("valid filter");
             assert_eq!(names(&tag_match), ["book"]);
-        }
-    }
-
-    mod is_containing {
-        use pretty_assertions::assert_eq;
-
-        use crate::{
-            NoteFieldValue, NoteFieldValueRef, query::value::QueryFieldValueRef,
-        };
-
-        #[test]
-        fn matches_identically_for_borrowed_and_owned_list_values() {
-            // Regression: Owned(List) must delegate to the same list
-            // containment logic as borrowed lists.
-            let items =
-                vec![NoteFieldValue::String("#book/fiction".to_owned())];
-            let target = NoteFieldValue::String("#book".to_owned());
-
-            let borrowed =
-                QueryFieldValueRef::Note(NoteFieldValueRef::List(&items))
-                    .is_containing(&target);
-            let owned =
-                QueryFieldValueRef::Owned(NoteFieldValue::List(items.into()))
-                    .is_containing(&target);
-
-            assert_eq!(borrowed, owned);
-            assert!(borrowed, "#book must match #book/fiction by tag prefix");
         }
     }
 }

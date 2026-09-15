@@ -500,5 +500,47 @@ mod tests {
                 .collect();
             assert_eq!(limited_ratings, sorted_ratings);
         }
+
+        #[test]
+        fn topk_limit_equal_to_row_count_returns_a_full_sort() {
+            use std::fs;
+
+            use crate::{
+                IndexerService, QueryService,
+                query::{QueryBuilder, SourceSelector},
+            };
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            for i in 0..5 {
+                fs::write(
+                    temp.path().join(format!("note-{i}.md")),
+                    format!("---\nrating: {}\n---\n", 4 - i),
+                )
+                .expect("write note");
+            }
+            let index = std::sync::Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let limited = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort")
+                .limit(5)
+                .expect("valid limit");
+            let sorted = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort");
+            let limited_ratings: Vec<_> = limited
+                .iter()
+                .map(|r| r.field("rating").expect("valid field"))
+                .collect();
+            let sorted_ratings: Vec<_> = sorted
+                .iter()
+                .map(|r| r.field("rating").expect("valid field"))
+                .collect();
+            assert_eq!(limited_ratings, sorted_ratings);
+            assert_eq!(limited_ratings.len(), 5);
+        }
     }
 }

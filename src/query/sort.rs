@@ -18,6 +18,7 @@ pub(crate) struct SortOrder {
 }
 
 impl SortOrder {
+    /// Builds a single-term sort order from one field path and direction.
     #[inline]
     #[must_use]
     pub(super) fn single(path: FieldPath, direction: SortDirection) -> Self {
@@ -37,6 +38,11 @@ impl SortOrder {
     }
 
     /// Builds one row-major [`SortKeys`] buffer for `rows`.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if `self.terms` is empty; callers must guard non-empty terms
+    ///   before calling (`sort_rows` does this).
     #[expect(
         clippy::expect_used,
         reason = "caller guarantees non-empty terms via sort_rows guard"
@@ -202,6 +208,7 @@ impl SortTerm {
         &self.path
     }
 
+    /// Returns this term's sort direction.
     #[inline]
     #[must_use]
     pub(super) const fn direction(&self) -> SortDirection {
@@ -214,7 +221,9 @@ impl SortTerm {
 /// Defaults to [`Self::Descending`] to match unprefixed CLI and template terms.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum SortDirection {
+    /// Smallest value first.
     Ascending,
+    /// Largest value first (default, matching unprefixed CLI/template terms).
     #[default]
     Descending,
 }
@@ -244,9 +253,12 @@ impl SortDirection {
     )
 )]
 pub(crate) enum NullPlacement {
+    /// Null sorts first ascending, last descending (the Dataview default).
     #[default]
     Auto,
+    /// Null always sorts before every non-null value.
     First,
+    /// Null always sorts after every non-null value.
     Last,
 }
 
@@ -278,11 +290,17 @@ impl<'a> SortKeys<'a> {
 /// `SortKey`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SortKey<'a> {
+    /// Missing or unindexable value; sorts below every other kind.
     Null,
+    /// Boolean value.
     Bool(bool),
+    /// Numeric value.
     Number(f64),
+    /// Date or date-time value, normalized to a date-time.
     DateTime(DateTimeValue),
+    /// Duration value, normalized to seconds.
     Duration(DurationSeconds),
+    /// Text value, borrowed where possible.
     Text(Cow<'a, str>),
 }
 
@@ -330,7 +348,7 @@ impl<'a> SortKey<'a> {
     /// path and the rare owned fallback share one classification instead of
     /// two copies of the same match.
     fn from_text(s: Cow<'a, str>) -> Self {
-        match classify_text_shape(&s) {
+        match TextShape::classify(&s) {
             TextShape::DateTime(value) => Self::DateTime(value),
             TextShape::Date(value) => {
                 Self::DateTime(DateTimeValue::from(value))
@@ -391,40 +409,46 @@ fn normalize_zero(n: f64) -> f64 {
 }
 
 /// Result of inspecting free text for a date, date-time, or duration shape.
-/// Shared by [`SortKey::from_text`] and `filter::classify_filter_literal` so
-/// both call one classifier, not two copies of the same date/duration
-/// heuristic.
+/// Shared by [`SortKey::from_text`] and
+/// `filter::ComparisonExpr::classify_literal` so both call one classifier,
+/// not two copies of the same date/duration heuristic.
 pub(super) enum TextShape {
+    /// Text parsed as an ISO date-time.
     DateTime(DateTimeValue),
+    /// Text parsed as an ISO date with no time component.
     Date(DateValue),
+    /// Text parsed as a duration such as `1h30m`.
     Duration(crate::DurationValue),
+    /// Text with none of the above shape; kept as plain text.
     Plain,
 }
 
-/// Inspects free text for a date, date-time, or duration shape.
-///
-/// Tries [`DateTimeValue::parse_iso`] before [`DateValue::parse_iso`]: a
-/// full date-time string always fails `DateValue`'s whole-string match, so
-/// trying it second never misclassifies. Duration parsing is guarded by
-/// [`DurationValue::can_start`], an `O(1)` leading-character check, so
-/// non-duration-shaped text (e.g. a plain title) never pays for
-/// `DurationValue::parse`'s allocating error path.
-pub(super) fn classify_text_shape(s: &str) -> TextShape {
-    let trimmed = s.trim();
-    if DateValue::has_four_digit_year(trimmed) {
-        if let Ok(value) = DateTimeValue::parse_iso(s) {
-            return TextShape::DateTime(value);
+impl TextShape {
+    /// Inspects free text for a date, date-time, or duration shape.
+    ///
+    /// Tries [`DateTimeValue::parse_iso`] before [`DateValue::parse_iso`]: a
+    /// full date-time string always fails `DateValue`'s whole-string match,
+    /// so trying it second never misclassifies. Duration parsing is guarded
+    /// by [`crate::DurationValue::can_start`], an `O(1)` leading-character
+    /// check, so non-duration-shaped text (e.g. a plain title) never pays
+    /// for `DurationValue::parse`'s allocating error path.
+    pub(super) fn classify(s: &str) -> Self {
+        let trimmed = s.trim();
+        if DateValue::has_four_digit_year(trimmed) {
+            if let Ok(value) = DateTimeValue::parse_iso(s) {
+                return Self::DateTime(value);
+            }
+            if let Ok(value) = DateValue::parse_iso(s) {
+                return Self::Date(value);
+            }
         }
-        if let Ok(value) = DateValue::parse_iso(s) {
-            return TextShape::Date(value);
+        if crate::DurationValue::can_start(trimmed)
+            && let Ok(dv) = crate::DurationValue::parse(s)
+        {
+            return Self::Duration(dv);
         }
+        Self::Plain
     }
-    if crate::DurationValue::can_start(trimmed)
-        && let Ok(dv) = crate::DurationValue::parse(s)
-    {
-        return TextShape::Duration(dv);
-    }
-    TextShape::Plain
 }
 
 #[cfg(test)]
@@ -863,13 +887,17 @@ mod tests {
         }
 
         #[test]
-        fn from_value_ref_maps_tags_and_inlinks_to_null() {
+        fn from_value_ref_maps_tags_to_null() {
             let tags = [Tag::parse("#book").expect("valid tag")];
-            let inlinks = [PathBuf::from("notes/a.md")];
             assert_eq!(
                 SortKey::from_value_ref(QueryFieldValueRef::Tags(&tags)),
                 SortKey::Null
             );
+        }
+
+        #[test]
+        fn from_value_ref_maps_inlinks_to_null() {
+            let inlinks = [PathBuf::from("notes/a.md")];
             assert_eq!(
                 SortKey::from_value_ref(QueryFieldValueRef::Inlinks(&inlinks)),
                 SortKey::Null
@@ -877,15 +905,19 @@ mod tests {
         }
 
         #[test]
-        fn from_value_ref_maps_object_and_list_to_null() {
+        fn from_value_ref_maps_list_to_null() {
             let list = [NoteFieldValue::Number(1.0)];
-            let object = indexmap::IndexMap::new();
             assert_eq!(
                 SortKey::from_value_ref(QueryFieldValueRef::Note(
                     NoteFieldValueRef::List(&list)
                 )),
                 SortKey::Null
             );
+        }
+
+        #[test]
+        fn from_value_ref_maps_object_to_null() {
+            let object = indexmap::IndexMap::new();
             assert_eq!(
                 SortKey::from_value_ref(QueryFieldValueRef::Note(
                     NoteFieldValueRef::Object(&object)

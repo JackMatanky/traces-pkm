@@ -13,11 +13,14 @@ use crate::{
 
 /// Borrowed field value resolved from a [`super::QueryRow`].
 pub(super) enum QueryFieldValueRef<'a> {
+    /// Borrowed metadata field from note-domain storage.
     Note(NoteFieldValueRef<'a>),
     /// Freshly allocated fallback for non-UTF8 paths, which have no
     /// long-lived backing store to borrow from.
     Owned(NoteFieldValue),
+    /// Borrowed note tags.
     Tags(&'a [Tag]),
+    /// Borrowed incoming links.
     Inlinks(&'a [PathBuf]),
 }
 
@@ -101,9 +104,27 @@ impl QueryFieldValueRef<'_> {
         match self {
             Self::Note(note_ref) => note_ref.is_equal_to_literal(literal),
             Self::Owned(value) => value.as_ref().is_equal_to_literal(literal),
-            Self::Tags(_) | Self::Inlinks(_) => {
-                self.to_owned_value() == *literal
-            }
+            Self::Tags(tags) => match literal {
+                NoteFieldValue::List(items) => {
+                    tags.len() == items.len()
+                        && tags.iter().zip(items.iter()).all(|(tag, item)| {
+                            item.as_str() == Some(tag.as_str())
+                        })
+                }
+                _ => false,
+            },
+            Self::Inlinks(inlinks) => match literal {
+                NoteFieldValue::List(items) => {
+                    inlinks.len() == items.len()
+                        && inlinks.iter().zip(items.iter()).all(
+                            |(path, item)| {
+                                item.as_str()
+                                    == Some(path.to_string_lossy().as_ref())
+                            },
+                        )
+                }
+                _ => false,
+            },
         }
     }
 
@@ -143,9 +164,7 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
 
 /// Matches exact tags and descendants, so `#book/fiction` satisfies `#book`.
 fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
-    item == target_str
-        || (item.starts_with('#') && target_str.starts_with('#'))
-            && Tag::parse(item).is_ok_and(|tag| tag.is_contained_in(target_str))
+    item == target_str || Tag::is_hierarchical_match(item, target_str)
 }
 
 fn append_joined<T>(
@@ -350,6 +369,25 @@ mod tests {
             ));
             assert!(list.is_containing(&NoteFieldValue::String("a".into())));
         }
+
+        #[test]
+        fn matches_identically_for_borrowed_and_owned_list_values() {
+            // Regression: Owned(List) must delegate to the same list
+            // containment logic as borrowed lists.
+            let items =
+                vec![NoteFieldValue::String("#book/fiction".to_owned())];
+            let target = NoteFieldValue::String("#book".to_owned());
+
+            let borrowed =
+                QueryFieldValueRef::Note(NoteFieldValueRef::List(&items))
+                    .is_containing(&target);
+            let owned =
+                QueryFieldValueRef::Owned(NoteFieldValue::List(items.into()))
+                    .is_containing(&target);
+
+            assert_eq!(borrowed, owned);
+            assert!(borrowed, "#book must match #book/fiction by tag prefix");
+        }
     }
 
     mod formatting {
@@ -432,15 +470,19 @@ mod tests {
         }
 
         #[test]
-        fn as_str_returns_none_for_date_and_datetime_variants() {
+        fn as_str_returns_none_for_the_date_variant() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let datetime = DateTimeValue::parse_iso("2026-07-29T14:30:00")
-                .expect("valid datetime");
             assert_eq!(
                 QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
                     .as_str(),
                 None
             );
+        }
+
+        #[test]
+        fn as_str_returns_none_for_the_datetime_variant() {
+            let datetime = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
             assert_eq!(
                 QueryFieldValueRef::Note(NoteFieldValueRef::DateTime(datetime))
                     .as_str(),
@@ -449,14 +491,18 @@ mod tests {
         }
 
         #[test]
-        fn from_note_field_value_preserves_typed_date_and_datetime() {
+        fn from_note_field_value_preserves_a_typed_date() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let datetime = DateTimeValue::parse_iso("2026-07-29T14:30:00")
-                .expect("valid datetime");
             assert!(matches!(
                 QueryFieldValueRef::from(&NoteFieldValue::Date(date)),
                 QueryFieldValueRef::Note(NoteFieldValueRef::Date(d)) if d == date
             ));
+        }
+
+        #[test]
+        fn from_note_field_value_preserves_a_typed_datetime() {
+            let datetime = DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                .expect("valid datetime");
             assert!(matches!(
                 QueryFieldValueRef::from(&NoteFieldValue::DateTime(datetime)),
                 QueryFieldValueRef::Note(NoteFieldValueRef::DateTime(d))
@@ -489,23 +535,31 @@ mod tests {
         }
 
         #[test]
-        fn as_note_ref_returns_none_for_tags_and_inlinks() {
+        fn as_note_ref_returns_none_for_tags() {
             let tags = [Tag::parse("#book").expect("valid tag")];
-            let inlinks = [PathBuf::from("notes/a.md")];
             assert!(QueryFieldValueRef::Tags(&tags).as_note_ref().is_none());
+        }
+
+        #[test]
+        fn as_note_ref_returns_none_for_inlinks() {
+            let inlinks = [PathBuf::from("notes/a.md")];
             assert!(
                 QueryFieldValueRef::Inlinks(&inlinks).as_note_ref().is_none()
             );
         }
 
         #[test]
-        fn as_note_ref_returns_some_for_note_and_owned() {
-            let value = NoteFieldValue::Number(1.0);
+        fn as_note_ref_returns_some_for_note() {
             assert!(
                 QueryFieldValueRef::Note(NoteFieldValueRef::Number(1.0))
                     .as_note_ref()
                     .is_some()
             );
+        }
+
+        #[test]
+        fn as_note_ref_returns_some_for_owned() {
+            let value = NoteFieldValue::Number(1.0);
             assert!(QueryFieldValueRef::Owned(value).as_note_ref().is_some());
         }
     }

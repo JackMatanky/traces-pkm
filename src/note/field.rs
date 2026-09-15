@@ -1,8 +1,9 @@
 //! Metadata field values parsed from YAML frontmatter and inline field text.
 //!
-//! This module provides [`NoteFieldValue`], which represents strongly typed
-//! metadata values extracted from Markdown notes, including scalars (booleans,
-//! numbers, strings, dates, durations), links, lists, and objects.
+//! This module provides [`NoteFieldValue`] and [`NoteFieldValueRef`], the
+//! owned and borrowed representations of strongly typed metadata values
+//! extracted from Markdown notes, including scalars (booleans, numbers,
+//! strings, dates, durations), links, lists, and objects.
 //!
 //! # Examples
 //!
@@ -177,9 +178,13 @@ pub enum NoteFieldValueRef<'a> {
 /// [`NoteFieldType::rank`], so they cannot drift from each other.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NoteFieldType {
+    /// No value, or a missing field.
     Null,
+    /// A boolean scalar.
     Bool,
+    /// A numeric scalar.
     Number,
+    /// A duration such as `1h30m`.
     Duration,
     /// Covers both [`NoteFieldValueRef::Date`] and
     /// [`NoteFieldValueRef::DateTime`]: the same comparable temporal domain at
@@ -188,9 +193,13 @@ pub(crate) enum NoteFieldType {
     /// separate ranks would silently coarsen that into "different kind, never
     /// equal".
     Temporal,
+    /// Free text.
     Text,
+    /// A Markdown or wikilink.
     Link,
+    /// An ordered list.
     List,
+    /// A keyed object.
     Object,
 }
 
@@ -260,7 +269,10 @@ impl NoteFieldValueRef<'_> {
             (Self::Link(a), Self::Link(b)) => {
                 a.target().cmp(b.target()).then_with(|| a.text().cmp(b.text()))
             }
-            (Self::List(a), Self::List(b)) => compare_lists(a, b),
+            (Self::List(a), Self::List(b)) => a
+                .iter()
+                .map(NoteFieldValue::as_ref)
+                .cmp(b.iter().map(NoteFieldValue::as_ref)),
             (Self::Object(a), Self::Object(b)) => compare_objects(a, b),
             _ => self.rank().cmp(&other.rank()),
         }
@@ -268,8 +280,7 @@ impl NoteFieldValueRef<'_> {
 }
 
 impl NoteFieldValueRef<'_> {
-    /// Appends the shared query-display text used by list joins, table cells,
-    /// and text output.
+    /// Appends the plain-text representation of this field value to `out`.
     pub(crate) fn append_text(&self, out: &mut String) {
         match self {
             Self::Null => {}
@@ -417,9 +428,7 @@ fn is_tag_or_value_matching(
     let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
         return false;
     };
-    item_str.starts_with('#')
-        && target_str.starts_with('#')
-        && Tag::parse(item_str).is_ok_and(|tag| tag.is_contained_in(target_str))
+    Tag::is_hierarchical_match(item_str, target_str)
 }
 
 impl PartialEq for NoteFieldValueRef<'_> {
@@ -430,6 +439,24 @@ impl PartialEq for NoteFieldValueRef<'_> {
 }
 impl Eq for NoteFieldValueRef<'_> {}
 
+/// Delegates to [`NoteFieldValueRef::compare`]: `NoteFieldValueRef` has a
+/// total order, so it implements the standard comparison traits alongside
+/// its own named [`NoteFieldValueRef::compare`] method (kept as the
+/// primary, most-discoverable entry point since every internal caller in
+/// this crate already spells it that way).
+impl PartialOrd for NoteFieldValueRef<'_> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+impl Ord for NoteFieldValueRef<'_> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.compare(other)
+    }
+}
+
 /// `-0.0` and `0.0` both normalize to `0.0` before `total_cmp`, so signed zero
 /// does not affect ordering.
 fn normalize_zero(n: f64) -> f64 {
@@ -438,21 +465,6 @@ fn normalize_zero(n: f64) -> f64 {
     } else {
         n
     }
-}
-
-/// Element-wise comparison; the shorter list is `Less` when every shared
-/// element compares equal.
-fn compare_lists(
-    a: &[NoteFieldValue],
-    b: &[NoteFieldValue],
-) -> std::cmp::Ordering {
-    for (x, y) in a.iter().zip(b.iter()) {
-        let ord = x.as_ref().compare(&y.as_ref());
-        if ord != std::cmp::Ordering::Equal {
-            return ord;
-        }
-    }
-    a.len().cmp(&b.len())
 }
 
 /// Sorted key lists first (`Vec<&str>: Ord` already gives exactly the list rule
@@ -885,6 +897,7 @@ mod tests {
                 NoteFieldValueRef::Number(1.0),
                 NoteFieldValueRef::Duration(&duration_a),
                 NoteFieldValueRef::Date(date("2026-01-01")),
+                NoteFieldValueRef::DateTime(datetime("2026-01-02T00:00:00")),
                 NoteFieldValueRef::String("a"),
                 NoteFieldValueRef::Link(&link),
                 NoteFieldValueRef::List(&list_items),
@@ -949,6 +962,28 @@ mod tests {
         }
 
         #[test]
+        fn a_midnight_datetime_compares_equal_to_the_same_bare_date() {
+            let d = date("2026-07-29");
+            let dt = datetime("2026-07-29T00:00:00");
+            assert_eq!(
+                NoteFieldValueRef::DateTime(dt)
+                    .compare(&NoteFieldValueRef::Date(d)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn an_afternoon_datetime_orders_after_the_same_day_bare_date() {
+            let d = date("2026-07-29");
+            let dt = datetime("2026-07-29T14:30:00");
+            assert_eq!(
+                NoteFieldValueRef::DateTime(dt)
+                    .compare(&NoteFieldValueRef::Date(d)),
+                Ordering::Greater
+            );
+        }
+
+        #[test]
         fn list_prefix_orders_below_its_longer_extension() {
             let short = [NoteFieldValue::Number(1.0)];
             let long =
@@ -961,7 +996,7 @@ mod tests {
         }
 
         #[test]
-        fn link_compares_by_target_then_text() {
+        fn compares_links_by_target() {
             let a =
                 Link::new("target-a", "text", crate::note::LinkType::Markdown);
             let b =
@@ -971,15 +1006,17 @@ mod tests {
                     .compare(&NoteFieldValueRef::Link(&b)),
                 Ordering::Less
             );
+        }
 
-            // Equal targets fall through to the text tiebreak.
-            let same_target_a =
+        #[test]
+        fn compares_links_with_equal_target_by_text_tiebreak() {
+            let a =
                 Link::new("target", "alias-a", crate::note::LinkType::Markdown);
-            let same_target_b =
+            let b =
                 Link::new("target", "alias-b", crate::note::LinkType::Markdown);
             assert_eq!(
-                NoteFieldValueRef::Link(&same_target_a)
-                    .compare(&NoteFieldValueRef::Link(&same_target_b)),
+                NoteFieldValueRef::Link(&a)
+                    .compare(&NoteFieldValueRef::Link(&b)),
                 Ordering::Less
             );
         }
@@ -997,6 +1034,23 @@ mod tests {
             assert_eq!(
                 NoteFieldValueRef::Object(&a)
                     .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn objects_with_a_key_set_prefix_order_the_shorter_set_first() {
+            let short = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let long = IndexMap::from_iter([
+                ("a".to_owned(), NoteFieldValue::Number(1.0)),
+                ("b".to_owned(), NoteFieldValue::Number(2.0)),
+            ]);
+            assert_eq!(
+                NoteFieldValueRef::Object(&short)
+                    .compare(&NoteFieldValueRef::Object(&long)),
                 Ordering::Less
             );
         }

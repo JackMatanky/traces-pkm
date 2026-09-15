@@ -120,6 +120,25 @@ impl Tag {
                 || self.0.as_bytes().get(prefix.len()) == Some(&b'/'))
     }
 
+    /// Returns `true` if `item` and `target` are both valid tags where
+    /// `item` is `target` or a hierarchical sub-tag of it (e.g.
+    /// `#book/fiction` matches `#book`).
+    ///
+    /// Pure hierarchy check: unlike [`Self::is_contained_in`], `item` and
+    /// `target` are raw strings that may not be `#`-prefixed at all, in
+    /// which case this returns `false` without attempting to parse either.
+    /// Callers wanting an exact-string shortcut too (`item == target`
+    /// regardless of tag shape) must add that check themselves -- baking it
+    /// in here would let non-tag values with a coincidentally matching
+    /// string collide.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_hierarchical_match(item: &str, target: &str) -> bool {
+        item.starts_with('#')
+            && target.starts_with('#')
+            && Self::parse(item).is_ok_and(|tag| tag.is_contained_in(target))
+    }
+
     /// Returns `true` if `self` and `other` are the exact same tag.
     ///
     /// Unlike [`Self::is_contained_in`], this performs no hierarchical

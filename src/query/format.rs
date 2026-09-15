@@ -105,14 +105,13 @@ impl QueryDisplayFormat {
             .collect::<Result<Vec<_>, _>>()?;
         let mut table = comfy_table::Table::new();
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
-        table
-            .set_header(headers.iter().map(|header| escape_table_text(header)));
+        table.set_header(
+            headers.iter().map(|header| Self::escape_table_cell(header)),
+        );
         for row in rows {
-            table.add_row(
-                paths.iter().map(|path| {
-                    escape_table_text(&row.resolve_ref(path).text())
-                }),
-            );
+            table.add_row(paths.iter().map(|path| {
+                Self::escape_table_cell(&row.resolve_ref(path).text())
+            }));
         }
         let mut out = table.to_string();
         out.push('\n');
@@ -159,36 +158,45 @@ impl QueryDisplayFormat {
         }
         Ok(out)
     }
-}
 
-/// Escapes Markdown table cell text by replacing newlines with spaces and
-/// escaping pipes.
-pub(super) fn escape_table_text(text: &str) -> String {
-    text.replace('\n', " ").replace('|', "\\|")
+    /// Escapes Markdown table cell text by replacing newlines with spaces
+    /// and escaping pipes.
+    fn escape_table_cell(text: &str) -> String {
+        text.replace('\n', " ").replace('|', "\\|")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    mod escape_table_text {
+    mod escape_table_cell {
         use pretty_assertions::assert_eq;
 
-        use super::escape_table_text;
+        use super::QueryDisplayFormat;
 
         #[test]
         fn escapes_pipe_characters_in_table_cells() {
-            assert_eq!(escape_table_text("A | B"), "A \\| B");
+            assert_eq!(
+                QueryDisplayFormat::escape_table_cell("A | B"),
+                "A \\| B"
+            );
         }
 
         #[test]
         fn replaces_newlines_with_spaces_in_table_cells() {
-            assert_eq!(escape_table_text("line1\nline2"), "line1 line2");
+            assert_eq!(
+                QueryDisplayFormat::escape_table_cell("line1\nline2"),
+                "line1 line2"
+            );
         }
 
         #[test]
         fn passes_plain_text_unmodified() {
-            assert_eq!(escape_table_text("hello world"), "hello world");
+            assert_eq!(
+                QueryDisplayFormat::escape_table_cell("hello world"),
+                "hello world"
+            );
         }
     }
 }

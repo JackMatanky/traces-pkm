@@ -1429,6 +1429,51 @@ mod tests {
         }
     }
 
+    mod duration_value_can_start {
+        use super::*;
+
+        #[test]
+        fn accepts_a_leading_digit() {
+            assert!(DurationValue::can_start("1h"));
+        }
+
+        #[test]
+        fn accepts_a_leading_decimal_point_followed_by_a_digit() {
+            assert!(DurationValue::can_start(".5h"));
+        }
+
+        #[test]
+        fn accepts_a_leading_sign_followed_by_a_digit() {
+            assert!(DurationValue::can_start("+1h"));
+            assert!(DurationValue::can_start("-30m"));
+        }
+
+        #[test]
+        fn accepts_a_leading_sign_followed_by_a_decimal_digit() {
+            assert!(DurationValue::can_start("+.5h"));
+        }
+
+        #[test]
+        fn rejects_a_non_numeric_leading_character() {
+            assert!(!DurationValue::can_start("hello"));
+        }
+
+        #[test]
+        fn rejects_an_empty_string() {
+            assert!(!DurationValue::can_start(""));
+        }
+
+        #[test]
+        fn rejects_a_lone_sign_with_no_following_digit() {
+            assert!(!DurationValue::can_start("+"));
+        }
+
+        #[test]
+        fn rejects_a_lone_decimal_point_with_no_following_digit() {
+            assert!(!DurationValue::can_start("."));
+        }
+    }
+
     mod duration_value_synthesis {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
