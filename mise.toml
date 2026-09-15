@@ -434,7 +434,7 @@ fi
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
 depends_post = ["bench-report"]
-timeout = "20m"
+timeout = "60m"
 usage = '''
 flag "-f --files <pattern>" {
   help "Select bench targets (benches/*.rs) by file-name substring"
