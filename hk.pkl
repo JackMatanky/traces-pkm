@@ -69,17 +69,7 @@ local rust = new Mapping<String, Step> {
     ["cargo-fmt"] = Builtins.cargo_fmt
     ["cargo-deny"] = Builtins.cargo_deny
     ["cargo-sweep"] = new Step {
-        step_condition = "exec('test -d target')"
-        check = """
-            size_kib=$(du -sk target 2>/dev/null | cut -f1)
-            if [ "$size_kib" -gt 12000000 ]; then
-              latest=$(ls -dt target/debug/incremental/*/ 2>/dev/null | head -1)
-              find target/debug/incremental -maxdepth 1 -mindepth 1 -type d ! -name "$(basename "$latest")" -exec rm -rf {} + 2>/dev/null
-              echo "sweep: removed stale incremental sessions"
-            else
-              echo "sweep: target under threshold, skipping"
-            fi
-            """
+        check = "mise run sweep"
     }
 }
 

@@ -160,6 +160,63 @@ if [[ "${clean_reports}" == "true" ]]; then
 fi
 '''
 
+[tasks.sweep]
+description = "Prune stale Cargo incremental sessions (newest kept) when target exceeds --max-gib GiB (default 10)"
+outputs = []
+cache = { enabled = false }
+usage = '''
+flag "--max-gib <gib>" help="Only sweep when target exceeds this size in GiB" default="10"
+'''
+run = '''
+#!/bin/bash
+# shellcheck disable=SC2154  # usage_max_gib is injected by mise
+set -euo pipefail
+
+readonly INCREMENTAL_DIR="target/debug/incremental"
+readonly LIMIT_KIB=$(( usage_max_gib * 1024 * 1024 ))
+
+main() {
+  local size_kib newest="" count=0
+  local -a stale=()
+
+  if [[ ! -d "target" ]]; then
+    echo "sweep: no target directory, skipping"
+    return 0
+  fi
+
+  size_kib="$(du -sk target | cut -f1)"
+  if (( size_kib <= LIMIT_KIB )); then
+    echo "sweep: target under threshold, skipping"
+    return 0
+  fi
+
+  local dir
+  for dir in "${INCREMENTAL_DIR}"/*/; do
+    [[ -d "${dir}" ]] || continue
+    if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
+      if [[ -n "${newest}" ]]; then
+        stale+=("${newest}")
+        count=$(( count + 1 ))
+      fi
+      newest="${dir}"
+    else
+      stale+=("${dir}")
+      count=$(( count + 1 ))
+    fi
+  done
+
+  if (( count == 0 )); then
+    echo "sweep: no stale incremental sessions found"
+    return 0
+  fi
+
+  rm -rf "${stale[@]}"
+  echo "sweep: removed stale incremental sessions"
+}
+
+main
+'''
+
 # ------------------------------------------------------------- #
 #                   Development & Compilation                   #
 # ------------------------------------------------------------- #
