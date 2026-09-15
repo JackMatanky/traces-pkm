@@ -43,7 +43,8 @@ mod metadata;
 mod model;
 mod parser;
 
-pub use field::NoteFieldValue;
+pub(crate) use field::NoteFieldType;
+pub use field::{NoteFieldValue, NoteFieldValueRef};
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
     List, ListItem, ListItemIter, ListItemType, ListText, TaskDates,

@@ -109,9 +109,9 @@ impl QueryDisplayFormat {
             .set_header(headers.iter().map(|header| escape_table_text(header)));
         for row in rows {
             table.add_row(
-                paths
-                    .iter()
-                    .map(|path| row.resolve_ref(path).table_cell_text()),
+                paths.iter().map(|path| {
+                    escape_table_text(&row.resolve_ref(path).text())
+                }),
             );
         }
         let mut out = table.to_string();

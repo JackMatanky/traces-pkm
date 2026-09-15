@@ -1,12 +1,15 @@
 //! Sort-key utilities and total-order comparison for resolved field values.
 
-use std::{cmp::Ordering, num::NonZeroUsize};
+use std::{borrow::Cow, cmp::Ordering, num::NonZeroUsize};
 
 use super::{
     QueryRow, error::QueryBuilderError, grammar::FieldPath,
     value::QueryFieldValueRef,
 };
-use crate::{DateTimeValue, DateValue, DurationSeconds, NoteFieldValue};
+use crate::{
+    DateTimeValue, DateValue, DurationSeconds, NoteFieldType, NoteFieldValue,
+    NoteFieldValueRef,
+};
 
 /// Composite ordering clause made of one or more [`SortTerm`] values.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,7 +41,7 @@ impl SortOrder {
         clippy::expect_used,
         reason = "caller guarantees non-empty terms via sort_rows guard"
     )]
-    pub(super) fn keys_for(&self, rows: &[QueryRow]) -> SortKeys {
+    pub(super) fn keys_for<'a>(&self, rows: &'a [QueryRow]) -> SortKeys<'a> {
         let stride = NonZeroUsize::new(self.terms.len())
             .expect("caller guards non-empty");
         let mut flat =
@@ -46,7 +49,7 @@ impl SortOrder {
         for row in rows {
             for term in &self.terms {
                 let val_ref = row.resolve_ref(&term.path);
-                flat.push(SortKey::from_value_ref(&val_ref));
+                flat.push(SortKey::from_value_ref(val_ref));
             }
         }
         SortKeys {
@@ -57,23 +60,34 @@ impl SortOrder {
 
     /// Compares key slices term-by-term.
     ///
-    /// Applies each term's direction. Shared by full sorting and top-k
-    /// selection so both execution paths keep identical ordering semantics.
+    /// Applies each term's direction and null placement. Shared by full
+    /// sorting and top-k selection so both execution paths keep identical
+    /// ordering semantics.
     #[must_use]
     pub(super) fn compare_keys(
         &self,
-        a_keys: &[SortKey],
-        b_keys: &[SortKey],
+        a_keys: &[SortKey<'_>],
+        b_keys: &[SortKey<'_>],
     ) -> Ordering {
         for (i, term) in self.terms.iter().enumerate() {
             let (Some(a_k), Some(b_k)) = (a_keys.get(i), b_keys.get(i)) else {
                 continue;
             };
-            let ord = a_k.total_cmp(b_k);
-            let ord = if term.direction().is_descending() {
-                ord.reverse()
-            } else {
-                ord
+            let descending = term.direction().is_descending();
+            let ord = match (a_k, b_k, term.null_placement) {
+                (SortKey::Null, SortKey::Null, _) => Ordering::Equal,
+                (SortKey::Null, _, NullPlacement::First) => Ordering::Less,
+                (SortKey::Null, _, NullPlacement::Last)
+                | (_, SortKey::Null, NullPlacement::First) => Ordering::Greater,
+                (_, SortKey::Null, NullPlacement::Last) => Ordering::Less,
+                _ => {
+                    let base = a_k.cmp(b_k);
+                    if descending {
+                        base.reverse()
+                    } else {
+                        base
+                    }
+                }
             };
             if ord != Ordering::Equal {
                 return ord;
@@ -167,6 +181,7 @@ impl SortOrder {
 pub(super) struct SortTerm {
     path: FieldPath,
     direction: SortDirection,
+    null_placement: NullPlacement,
 }
 
 impl SortTerm {
@@ -176,6 +191,7 @@ impl SortTerm {
         Self {
             path,
             direction,
+            null_placement: NullPlacement::Auto,
         }
     }
 
@@ -211,18 +227,41 @@ impl SortDirection {
     }
 }
 
+/// Controls where a missing (null) field value lands in sort order.
+///
+/// Dataview treats `null` unconditionally as the smallest value, which
+/// [`Self::Auto`] reproduces (first ascending, last descending). No current
+/// query syntax constructs [`Self::First`] or [`Self::Last`] -- this is a
+/// seam for a future `sort field asc nulls last` grammar addition, wired
+/// through [`SortOrder::compare_keys`] with zero behavior change today.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "seam for future nulls first/last grammar; variants First \
+                  and Last are exercised in unit tests"
+    )
+)]
+pub(crate) enum NullPlacement {
+    #[default]
+    Auto,
+    First,
+    Last,
+}
+
 /// Row-major buffer of precomputed sort keys.
-pub(super) struct SortKeys {
-    flat: Vec<SortKey>,
+pub(super) struct SortKeys<'a> {
+    flat: Vec<SortKey<'a>>,
     stride: NonZeroUsize,
 }
 
-impl SortKeys {
+impl<'a> SortKeys<'a> {
     /// Returns the key slice for `row_idx`, or an empty slice when out of
     /// range.
     #[inline]
     #[must_use]
-    pub(super) fn get(&self, row_idx: usize) -> &[SortKey] {
+    pub(super) fn get(&self, row_idx: usize) -> &[SortKey<'a>] {
         let stride = self.stride.get();
         let start = row_idx.saturating_mul(stride);
         let end = start.saturating_add(stride);
@@ -231,81 +270,99 @@ impl SortKeys {
 }
 
 /// Normalized scalar used for row-order comparisons.
+///
+/// Reduced projection of [`NoteFieldValueRef`]'s rank order for cheap,
+/// precomputed sort comparisons: `List` and `Object` collapse to `Null`,
+/// `Link` collapses to `Text` by its target. Values needing full fidelity
+/// compare via [`NoteFieldValueRef::compare`] directly, not through
+/// `SortKey`.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum SortKey {
+pub(super) enum SortKey<'a> {
     Null,
     Bool(bool),
     Number(f64),
     DateTime(DateTimeValue),
     Duration(DurationSeconds),
-    Text(Box<str>),
+    Text(Cow<'a, str>),
 }
 
-impl SortKey {
-    /// Normalizes a borrowed field value into a comparable scalar.
-    pub(super) fn from_value_ref(val: &QueryFieldValueRef<'_>) -> Self {
+impl<'a> SortKey<'a> {
+    /// Normalizes a resolved field value into a comparable scalar. Takes
+    /// `val` by value (not by reference) so the rare `Owned` fallback can
+    /// move its already-allocated `String` into `Text` with no extra clone,
+    /// and so the common case can copy out `&'a str`/`&'a Link` fields tied
+    /// to the caller's own `'a`, not a shorter local borrow.
+    pub(super) fn from_value_ref(val: QueryFieldValueRef<'a>) -> Self {
         match val {
-            QueryFieldValueRef::Null => Self::Null,
-            QueryFieldValueRef::Bool(b) => Self::Bool(*b),
-            QueryFieldValueRef::Number(n) => Self::Number(*n),
-            QueryFieldValueRef::DateTime(value) => Self::DateTime(*value),
-            QueryFieldValueRef::Date(value) => {
-                Self::DateTime(DateTimeValue::from(*value))
+            QueryFieldValueRef::Note(note_ref) => Self::from_note_ref(note_ref),
+            QueryFieldValueRef::Owned(NoteFieldValue::String(text)) => {
+                Self::from_text(Cow::Owned(text))
             }
-            QueryFieldValueRef::Duration(dv) => Self::Duration(dv.to_seconds()),
-            QueryFieldValueRef::Text(s) => Self::from_text(s),
-            QueryFieldValueRef::Link(link) => Self::Text(link.target().into()),
-            QueryFieldValueRef::Object(_) | QueryFieldValueRef::List(_) => {
+            QueryFieldValueRef::Owned(_) => Self::Null,
+            QueryFieldValueRef::Tags(_) | QueryFieldValueRef::Inlinks(_) => {
                 Self::Null
             }
-            QueryFieldValueRef::Owned(owned) => Self::from_owned(owned),
         }
     }
 
-    /// Normalizes an owned note field value into a comparable scalar.
-    pub(super) fn from_owned(owned: &NoteFieldValue) -> Self {
-        match owned {
-            NoteFieldValue::Null
-            | NoteFieldValue::List(_)
-            | NoteFieldValue::Object(_) => Self::Null,
-            NoteFieldValue::Bool(b) => Self::Bool(*b),
-            NoteFieldValue::Number(n) => Self::Number(*n),
-            NoteFieldValue::DateTime(value) => Self::DateTime(*value),
-            NoteFieldValue::Date(value) => {
-                Self::DateTime(DateTimeValue::from(*value))
+    fn from_note_ref(val: NoteFieldValueRef<'a>) -> Self {
+        match val {
+            NoteFieldValueRef::Null => Self::Null,
+            NoteFieldValueRef::Bool(b) => Self::Bool(b),
+            NoteFieldValueRef::Number(n) => Self::Number(n),
+            NoteFieldValueRef::DateTime(value) => Self::DateTime(value),
+            NoteFieldValueRef::Date(value) => {
+                Self::DateTime(DateTimeValue::from(value))
             }
-            NoteFieldValue::Duration(dv) => Self::Duration(dv.to_seconds()),
-            NoteFieldValue::String(s) => Self::from_text(s),
-            NoteFieldValue::Link(link) => Self::Text(link.target().into()),
+            NoteFieldValueRef::Duration(dv) => Self::Duration(dv.to_seconds()),
+            NoteFieldValueRef::String(s) => Self::from_text(Cow::Borrowed(s)),
+            NoteFieldValueRef::Link(link) => {
+                Self::Text(Cow::Borrowed(link.target()))
+            }
+            NoteFieldValueRef::Object(_) | NoteFieldValueRef::List(_) => {
+                Self::Null
+            }
         }
     }
 
-    /// Opportunistically classifies a plain string as a date-time, date, or
-    /// duration, falling back to text. Tries [`DateTimeValue::parse_iso`]
-    /// before [`DateValue::parse_iso`]: a full date-time string always fails
-    /// `DateValue`'s whole-string match, so trying it second never
-    /// misclassifies.
-    fn from_text(s: &str) -> Self {
-        if DateValue::has_four_digit_year(s.trim()) {
-            if let Ok(value) = DateTimeValue::parse_iso(s) {
-                return Self::DateTime(value);
+    /// Opportunistically classifies free text as a date-time, date, or
+    /// duration, falling back to text. Takes `Cow` so the common borrowed
+    /// path and the rare owned fallback share one classification instead of
+    /// two copies of the same match.
+    fn from_text(s: Cow<'a, str>) -> Self {
+        match classify_text_shape(&s) {
+            TextShape::DateTime(value) => Self::DateTime(value),
+            TextShape::Date(value) => {
+                Self::DateTime(DateTimeValue::from(value))
             }
-            if let Ok(value) = DateValue::parse_iso(s) {
-                return Self::DateTime(DateTimeValue::from(value));
-            }
+            TextShape::Duration(dv) => Self::Duration(dv.to_seconds()),
+            TextShape::Plain => Self::Text(s),
         }
-        if let Ok(dv) = crate::DurationValue::parse(s) {
-            Self::Duration(dv.to_seconds())
-        } else {
-            Self::Text(s.into())
+    }
+
+    const fn kind(&self) -> NoteFieldType {
+        match self {
+            Self::Null => NoteFieldType::Null,
+            Self::Bool(_) => NoteFieldType::Bool,
+            Self::Number(_) => NoteFieldType::Number,
+            Self::Duration(_) => NoteFieldType::Duration,
+            Self::DateTime(_) => NoteFieldType::Temporal,
+            Self::Text(_) => NoteFieldType::Text,
         }
+    }
+
+    /// Rank via the same [`NoteFieldType`] table [`NoteFieldValueRef::compare`]
+    /// uses, so this can never diverge from its ordering for the kinds they
+    /// share.
+    const fn rank(&self) -> u8 {
+        self.kind().rank()
     }
 
     /// Compares two normalized sort keys.
     ///
-    /// Null sorts below all values; like variants compare by value; unlike
-    /// non-null variants compare equal.
-    pub(super) fn total_cmp(&self, other: &Self) -> Ordering {
+    /// Null sorts below all values; like kinds compare by value; unlike
+    /// non-null kinds order by rank.
+    pub(super) fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::Null, Self::Null) => Ordering::Equal,
             (Self::Null, _) => Ordering::Less,
@@ -315,9 +372,42 @@ impl SortKey {
             (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
             (Self::DateTime(a), Self::DateTime(b)) => a.cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
-            _ => Ordering::Equal,
+            _ => self.rank().cmp(&other.rank()),
         }
     }
+}
+
+/// Result of inspecting free text for a date, date-time, or duration shape.
+/// Shared by [`SortKey::from_text`] and `filter::classify_filter_literal` so
+/// both call one classifier, not two copies of the same date/duration
+/// heuristic.
+pub(super) enum TextShape {
+    DateTime(DateTimeValue),
+    Date(DateValue),
+    Duration(crate::DurationValue),
+    Plain,
+}
+
+/// Tries [`DateTimeValue::parse_iso`] before [`DateValue::parse_iso`]: a
+/// full date-time string always fails `DateValue`'s whole-string match, so
+/// trying it second never misclassifies.
+pub(super) fn classify_text_shape(s: &str) -> TextShape {
+    let trimmed = s.trim();
+    if DateValue::has_four_digit_year(trimmed) {
+        if let Ok(value) = DateTimeValue::parse_iso(s) {
+            return TextShape::DateTime(value);
+        }
+        if let Ok(value) = DateValue::parse_iso(s) {
+            return TextShape::Date(value);
+        }
+    }
+    let can_start_duration = trimmed.as_bytes().first().is_some_and(|&b| {
+        b.is_ascii_digit() || b == b'+' || b == b'-' || b == b'.'
+    });
+    if can_start_duration && let Ok(dv) = crate::DurationValue::parse(s) {
+        return TextShape::Duration(dv);
+    }
+    TextShape::Plain
 }
 
 #[cfg(test)]
@@ -563,22 +653,26 @@ mod tests {
         }
     }
 
-    mod sort_key_total_cmp {
-        use std::cmp::Ordering;
+    mod sort_key_cmp {
+        use std::{borrow::Cow, cmp::Ordering};
 
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
-        use super::super::SortKey;
-        use crate::DurationSeconds;
+        use super::super::{
+            NullPlacement, SortDirection, SortKey, SortOrder, SortTerm,
+        };
+        use crate::{DurationSeconds, query::grammar::FieldPath};
 
         #[rstest]
         #[case::number(SortKey::Number(1.0))]
-        #[case::text(SortKey::Text("hello".into()))]
+        #[case::text(SortKey::Text(Cow::Borrowed("hello")))]
         #[case::boolean(SortKey::Bool(true))]
-        fn null_sorts_below_every_non_null_key(#[case] non_null: SortKey) {
-            assert_eq!(SortKey::Null.total_cmp(&non_null), Ordering::Less);
-            assert_eq!(non_null.total_cmp(&SortKey::Null), Ordering::Greater);
+        fn null_sorts_below_every_non_null_key(
+            #[case] non_null: SortKey<'static>,
+        ) {
+            assert_eq!(SortKey::Null.cmp(&non_null), Ordering::Less);
+            assert_eq!(non_null.cmp(&SortKey::Null), Ordering::Greater);
         }
 
         #[test]
@@ -587,32 +681,58 @@ mod tests {
                 SortKey::Duration(DurationSeconds::try_from(3_600.0).unwrap());
             let thirty_mins =
                 SortKey::Duration(DurationSeconds::try_from(1_800.0).unwrap());
-            assert_eq!(one_hour.total_cmp(&thirty_mins), Ordering::Greater);
-            assert_eq!(thirty_mins.total_cmp(&one_hour), Ordering::Less);
+            assert_eq!(one_hour.cmp(&thirty_mins), Ordering::Greater);
+            assert_eq!(thirty_mins.cmp(&one_hour), Ordering::Less);
         }
 
         #[test]
-        fn cross_variant_comparison_yields_equal() {
+        fn unlike_kinds_order_by_rank() {
             let number = SortKey::Number(100.0);
-            let text = SortKey::Text("abc".into());
-            assert_eq!(number.total_cmp(&text), Ordering::Equal);
+            let text = SortKey::Text(Cow::Borrowed("abc"));
+            assert_eq!(number.cmp(&text), Ordering::Less);
         }
 
         #[test]
         fn nan_and_infinity_compare_via_total_cmp_not_partial_cmp() {
             let nan = SortKey::Number(f64::NAN);
             let infinity = SortKey::Number(f64::INFINITY);
-            assert_eq!(
-                nan.total_cmp(&infinity),
-                f64::NAN.total_cmp(&f64::INFINITY)
-            );
+            assert_eq!(nan.cmp(&infinity), f64::NAN.total_cmp(&f64::INFINITY));
         }
 
         #[test]
         fn negative_zero_sorts_below_positive_zero() {
             let negative_zero = SortKey::Number(-0.0);
             let zero = SortKey::Number(0.0);
-            assert_eq!(negative_zero.total_cmp(&zero), Ordering::Less);
+            assert_eq!(negative_zero.cmp(&zero), Ordering::Less);
+        }
+
+        #[test]
+        fn null_placement_seam_controls_null_ordering_in_compare_keys() {
+            let path = FieldPath::parse("rating").unwrap();
+            let first_order = SortOrder {
+                terms: Box::new([SortTerm {
+                    path: path.clone(),
+                    direction: SortDirection::Ascending,
+                    null_placement: NullPlacement::First,
+                }]),
+            };
+            let last_order = SortOrder {
+                terms: Box::new([SortTerm {
+                    path,
+                    direction: SortDirection::Ascending,
+                    null_placement: NullPlacement::Last,
+                }]),
+            };
+            let null_key = [SortKey::Null];
+            let num_key = [SortKey::Number(5.0)];
+            assert_eq!(
+                first_order.compare_keys(&null_key, &num_key),
+                Ordering::Less
+            );
+            assert_eq!(
+                last_order.compare_keys(&null_key, &num_key),
+                Ordering::Greater
+            );
         }
     }
 
@@ -624,7 +744,7 @@ mod tests {
         use super::super::{QueryFieldValueRef, SortKey};
         use crate::{
             DateTimeValue, DateValue, DurationSeconds, DurationValue,
-            NoteFieldValue,
+            NoteFieldValue, NoteFieldValueRef,
         };
 
         fn date(s: &str) -> DateValue {
@@ -637,27 +757,28 @@ mod tests {
 
         #[test]
         fn from_value_ref_promotes_a_date_to_midnight_datetime() {
-            let key = SortKey::from_value_ref(&QueryFieldValueRef::Date(date(
-                "2026-07-29",
-            )));
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::Date(date("2026-07-29")),
+            ));
             assert_eq!(
                 key,
-                SortKey::DateTime(DateTimeValue::from(date("2026-07-29",)))
+                SortKey::DateTime(DateTimeValue::from(date("2026-07-29")))
             );
         }
 
         #[test]
         fn from_value_ref_keeps_a_datetime_as_is() {
             let value = datetime("2026-07-29T14:30:00");
-            let key =
-                SortKey::from_value_ref(&QueryFieldValueRef::DateTime(value));
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::DateTime(value),
+            ));
             assert_eq!(key, SortKey::DateTime(value));
         }
 
         #[test]
         fn from_value_ref_sniffs_a_date_shaped_text_field() {
-            let key = SortKey::from_value_ref(&QueryFieldValueRef::Text(
-                "2026-07-29",
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::String("2026-07-29"),
             ));
             assert_eq!(
                 key,
@@ -667,26 +788,18 @@ mod tests {
 
         #[test]
         fn from_value_ref_sniffs_a_duration_shaped_text_field() {
-            let key =
-                SortKey::from_value_ref(&QueryFieldValueRef::Text("1h30m"));
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::String("1h30m"),
+            ));
             assert!(matches!(key, SortKey::Duration(_)));
         }
 
         #[test]
         fn from_value_ref_extracts_duration_directly() {
             let dv = DurationValue::parse("1h 30m").expect("valid duration");
-            let key =
-                SortKey::from_value_ref(&QueryFieldValueRef::Duration(&dv));
-            assert_eq!(
-                key,
-                SortKey::Duration(DurationSeconds::try_from(5_400.0).unwrap())
-            );
-        }
-
-        #[test]
-        fn from_owned_extracts_duration_directly() {
-            let dv = DurationValue::parse("1h 30m").expect("valid duration");
-            let key = SortKey::from_owned(&NoteFieldValue::Duration(dv));
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::Duration(&dv),
+            ));
             assert_eq!(
                 key,
                 SortKey::Duration(DurationSeconds::try_from(5_400.0).unwrap())
@@ -695,36 +808,68 @@ mod tests {
 
         #[test]
         fn from_value_ref_falls_back_to_text_for_plain_strings() {
-            let key =
-                SortKey::from_value_ref(&QueryFieldValueRef::Text("custom"));
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::String("custom"),
+            ));
             assert_eq!(key, SortKey::Text("custom".into()));
         }
 
         #[test]
-        fn from_owned_promotes_a_date_to_midnight_datetime() {
-            let key =
-                SortKey::from_owned(&NoteFieldValue::Date(date("2026-07-29")));
-            assert_eq!(
-                key,
-                SortKey::DateTime(DateTimeValue::from(date("2026-07-29",)))
-            );
-        }
-
-        #[test]
-        fn from_owned_keeps_a_datetime_as_is() {
-            let value = datetime("2026-07-29T14:30:00");
-            let key = SortKey::from_owned(&NoteFieldValue::DateTime(value));
-            assert_eq!(key, SortKey::DateTime(value));
+        fn from_value_ref_classifies_an_owned_fallback_string() {
+            let owned = QueryFieldValueRef::Owned(NoteFieldValue::String(
+                "1h30m".to_owned(),
+            ));
+            let key = SortKey::from_value_ref(owned);
+            assert!(matches!(key, SortKey::Duration(_)));
         }
 
         #[test]
         fn a_date_key_sorts_before_a_same_day_afternoon_datetime_key() {
-            let date_key =
-                SortKey::from_owned(&NoteFieldValue::Date(date("2026-07-29")));
-            let datetime_key = SortKey::from_owned(&NoteFieldValue::DateTime(
-                datetime("2026-07-29T14:30:00"),
+            let date_key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::Date(date("2026-07-29")),
             ));
-            assert_eq!(date_key.total_cmp(&datetime_key), Ordering::Less);
+            let datetime_key = SortKey::from_value_ref(
+                QueryFieldValueRef::Note(NoteFieldValueRef::DateTime(
+                    datetime("2026-07-29T14:30:00"),
+                )),
+            );
+            assert_eq!(date_key.cmp(&datetime_key), Ordering::Less);
+        }
+
+        #[test]
+        fn sort_key_and_note_field_value_ref_agree_on_shared_kinds() {
+            let dv1 = DurationValue::parse("1h").unwrap();
+            let dv2 = DurationValue::parse("2h").unwrap();
+            let pairs: &[(NoteFieldValueRef<'_>, NoteFieldValueRef<'_>)] = &[
+                (NoteFieldValueRef::Null, NoteFieldValueRef::Bool(true)),
+                (NoteFieldValueRef::Bool(false), NoteFieldValueRef::Bool(true)),
+                (
+                    NoteFieldValueRef::Number(1.0),
+                    NoteFieldValueRef::Number(2.0),
+                ),
+                (
+                    NoteFieldValueRef::Duration(&dv1),
+                    NoteFieldValueRef::Duration(&dv2),
+                ),
+                (
+                    NoteFieldValueRef::Date(date("2026-01-01")),
+                    NoteFieldValueRef::DateTime(datetime(
+                        "2026-06-01T00:00:00",
+                    )),
+                ),
+                (
+                    NoteFieldValueRef::String("a"),
+                    NoteFieldValueRef::String("b"),
+                ),
+            ];
+            for (a, b) in pairs {
+                let note_ord = a.compare(b);
+                let sort_ord = SortKey::from_value_ref(
+                    QueryFieldValueRef::Note(*a),
+                )
+                .cmp(&SortKey::from_value_ref(QueryFieldValueRef::Note(*b)));
+                assert_eq!(note_ord, sort_ord, "diverged for {a:?} vs {b:?}");
+            }
         }
     }
 }

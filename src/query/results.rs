@@ -6,13 +6,13 @@ use super::{
     format::{QueryDisplayFormat, TaskPathStyle},
     grammar::{FieldPath, FileField, TaskField},
     sort::{SortDirection, SortOrder},
-    value::{QueryFieldValueRef, QueryListValueRef},
+    value::QueryFieldValueRef,
 };
 use crate::{
     TaskStatus,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
-    note::{ListItem, ListItemType, Note, NoteFieldValue},
+    note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -141,17 +141,15 @@ impl QueryRow {
             FieldPath::Task(field) => self.resolve_task_ref(*field),
             FieldPath::Tags => {
                 let tags = self.note().map_or(&[][..], Note::tags);
-                QueryFieldValueRef::List(QueryListValueRef::Tags(tags))
+                QueryFieldValueRef::Tags(tags)
             }
-            FieldPath::Inlinks => QueryFieldValueRef::List(
-                QueryListValueRef::Inlinks(self.inlinks()),
-            ),
+            FieldPath::Inlinks => QueryFieldValueRef::Inlinks(self.inlinks()),
             FieldPath::Metadata(key) => self
                 .note()
                 .and_then(|note| {
                     note.get(key.as_str()).map(QueryFieldValueRef::from)
                 })
-                .unwrap_or(QueryFieldValueRef::Null),
+                .unwrap_or(QueryFieldValueRef::Note(NoteFieldValueRef::Null)),
         }
     }
 
@@ -184,16 +182,18 @@ impl QueryRow {
                         file.path().to_string_lossy().into_owned(),
                     ))
                 },
-                QueryFieldValueRef::Text,
+                |s| QueryFieldValueRef::Note(NoteFieldValueRef::String(s)),
             ),
-            FileField::Name => QueryFieldValueRef::Text(file.name().as_str()),
+            FileField::Name => QueryFieldValueRef::Note(
+                NoteFieldValueRef::String(file.name().as_str()),
+            ),
             FileField::Folder => file.folder().as_path().to_str().map_or_else(
                 || {
                     QueryFieldValueRef::Owned(NoteFieldValue::String(
                         file.folder().as_path().to_string_lossy().into_owned(),
                     ))
                 },
-                QueryFieldValueRef::Text,
+                |s| QueryFieldValueRef::Note(NoteFieldValueRef::String(s)),
             ),
             #[expect(
                 clippy::as_conversions,
@@ -201,34 +201,40 @@ impl QueryRow {
                 reason = "file sizes stay well under 2^53 bytes for PKM-scale \
                           projects, so f64 keeps exact byte counts"
             )]
-            FileField::Size => QueryFieldValueRef::Number(file.size() as f64),
-            FileField::CreatedDateTime => {
-                QueryFieldValueRef::DateTime(file.created_at_or_modified())
-            }
-            FileField::CreatedDate => {
-                QueryFieldValueRef::Date(file.created_at_or_modified().date())
-            }
-            FileField::ModifiedDateTime => {
-                QueryFieldValueRef::DateTime(file.modified_at())
-            }
-            FileField::ModifiedDate => {
-                QueryFieldValueRef::Date(file.modified_at().date())
-            }
+            FileField::Size => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Number(file.size() as f64),
+            ),
+            FileField::CreatedDateTime => QueryFieldValueRef::Note(
+                NoteFieldValueRef::DateTime(file.created_at_or_modified()),
+            ),
+            FileField::CreatedDate => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Date(file.created_at_or_modified().date()),
+            ),
+            FileField::ModifiedDateTime => QueryFieldValueRef::Note(
+                NoteFieldValueRef::DateTime(file.modified_at()),
+            ),
+            FileField::ModifiedDate => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Date(file.modified_at().date()),
+            ),
         }
     }
 
-    /// Resolves a `task.*` field, or [`QueryFieldValueRef::Null`] for page
+    /// Resolves a `task.*` field, or [`NoteFieldValueRef::Null`] for page
     /// rows.
     fn resolve_task_ref(&self, field: TaskField) -> QueryFieldValueRef<'_> {
         let RowKind::Task(task) = &self.kind else {
-            return QueryFieldValueRef::Null;
+            return QueryFieldValueRef::Note(NoteFieldValueRef::Null);
         };
         match field {
             TaskField::Completed => match task.status.kind().completed() {
-                Some(completed) => QueryFieldValueRef::Bool(completed),
-                None => QueryFieldValueRef::Null,
+                Some(completed) => {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Bool(completed))
+                }
+                None => QueryFieldValueRef::Note(NoteFieldValueRef::Null),
             },
-            TaskField::Text => QueryFieldValueRef::Text(&task.text),
+            TaskField::Text => {
+                QueryFieldValueRef::Note(NoteFieldValueRef::String(&task.text))
+            }
         }
     }
 }

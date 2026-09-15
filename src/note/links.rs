@@ -128,14 +128,6 @@ impl Link {
     /// Returns the display text, or alias text for a wikilink.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Link accessor \
-                      symmetry with its fields"
-        )
-    )]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
