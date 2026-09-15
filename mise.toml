@@ -169,6 +169,7 @@ description = "Fast compile check, then hk project checks"
 alias = "c"
 raw_args = true
 outputs = []
+cache = { enabled = false }
 run = ["cargo check --workspace", "hk check"]
 
 [tasks.build]
@@ -192,6 +193,7 @@ run = "cargo watch -x check -x test"
 description = "Format all Rust code (nightly)"
 alias = "f"
 outputs = []
+cache = { enabled = false }
 usage = 'flag "--check" help="Check formatting without modifying files"'
 run = '''
 #!/bin/bash
@@ -214,6 +216,7 @@ alias = "l"
 depends = ["fmt"]
 sources = ["@group:rust"]
 outputs = []
+cache = { enabled = false }
 usage = '''
 flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
 flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
@@ -288,6 +291,7 @@ description = "Run tests with nextest (+ doc-tests by default)"
 alias = "t"
 sources = ["@group:rust"]
 outputs = []
+cache = { enabled = false }
 usage = '''
 flag "--feature <feature>" help="Enable a specific feature" default="all"
 flag "--docs" negate="--no-docs" default=#true {
