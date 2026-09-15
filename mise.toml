@@ -95,7 +95,7 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
-target_dir="${usage_target_dir?}"
+readonly TARGET_DIR="${usage_target_dir?}"
 clean_target=true
 clean_reports=false
 
@@ -108,21 +108,29 @@ if [[ "${usage_all:-false}" == "true" ]]; then
   clean_target=true
 fi
 
-if [[ -n "${usage_if_over_gib:-}" && -d "${target_dir}" ]]; then
-  target_kib="$(du -sk "${target_dir}" | cut -f1)"
-  limit_kib="$(( usage_if_over_gib * 1024 * 1024 ))"
+if [[ -n "${usage_if_over_gib:-}" && -d "${TARGET_DIR}" ]]; then
+  [[ "${usage_if_over_gib}" =~ ^[0-9]+$ ]] || {
+    printf "clean: --if-over-gib must be a non-negative integer, got '%s'\n" \
+      "${usage_if_over_gib}" >&2
+    exit 2
+  }
+  TARGET_KIB="$(du -sk "${TARGET_DIR}" | cut -f1)"
+  readonly TARGET_KIB
+  # 10# forces base 10; a leading zero would otherwise read as octal.
+  readonly LIMIT_KIB="$(( 10#${usage_if_over_gib} * 1024 * 1024 ))"
 
-  if (( target_kib <= limit_kib )); then
-    target_gib="$(awk "BEGIN { print ${target_kib} / 1024 / 1024 }")"
+  if (( TARGET_KIB <= LIMIT_KIB )); then
+    TARGET_GIB="$(awk "BEGIN { print ${TARGET_KIB} / 1024 / 1024 }")"
+    readonly TARGET_GIB
     printf 'target is %.1f GiB; below %s GiB, skipping target clean\n' \
-      "${target_gib}" "${usage_if_over_gib}"
+      "${TARGET_GIB}" "${usage_if_over_gib}"
     clean_target=false
   fi
 fi
 
 if [[ "${clean_target}" == "true" ]]; then
   if [[ -n "${usage_sweep_days:-}" || -n "${usage_sweep_max_size:-}" ]]; then
-    if [[ "${target_dir}" != "target" ]]; then
+    if [[ "${TARGET_DIR}" != "target" ]]; then
       printf '%s\n' "--target-dir is not supported with cargo-sweep mode" >&2
       exit 2
     fi
@@ -135,7 +143,7 @@ if [[ "${clean_target}" == "true" ]]; then
       && sweep_args+=(--maxsize "${usage_sweep_max_size}")
     cargo sweep "${sweep_args[@]}"
   else
-    declare -a cargo_args=(clean --target-dir "${target_dir}")
+    declare -a cargo_args=(clean --target-dir "${TARGET_DIR}")
     [[ "${usage_dry_run:-false}" == "true" ]] && cargo_args+=(--dry-run)
     [[ "${usage_release:-false}" == "true" ]] && cargo_args+=(--release)
     [[ "${usage_doc:-false}" == "true" ]] && cargo_args+=(--doc)
@@ -178,10 +186,13 @@ set -euo pipefail
 [[ "${usage_max_gib}" =~ ^[0-9]+$ ]] || {
   printf "sweep: --max-gib must be a non-negative integer, got '%s'\n" \
     "${usage_max_gib}" >&2
-  exit 1
+  exit 2
 }
 
-readonly INCREMENTAL_DIR="target/debug/incremental"
+# The tree whose size gates the sweep is the tree whose incrementals get
+# pruned; TARGET_DIR is the single source of that coupling.
+readonly TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+readonly INCREMENTAL_DIR="${TARGET_DIR}/debug/incremental"
 # 10# forces base 10; a leading zero would otherwise read as octal.
 readonly LIMIT_KIB=$(( 10#${usage_max_gib} * 1024 * 1024 ))
 
@@ -195,12 +206,12 @@ main() {
   local size_kib newest="" count=0
   local -a stale=()
 
-  if [[ ! -d "target" ]]; then
+  if [[ ! -d "${TARGET_DIR}" ]]; then
     echo "sweep: no target directory, skipping"
     return 0
   fi
 
-  size_kib="$(du -sk target | cut -f1)"
+  size_kib="$(du -sk "${TARGET_DIR}" | cut -f1)"
   if (( size_kib <= LIMIT_KIB )); then
     echo "sweep: target under threshold, skipping"
     return 0
@@ -511,7 +522,7 @@ fi
 
 if [[ -z "${bench_files[*]:-}" ]]; then
   printf 'no benchmark files match\n' >&2
-  exit 1
+  exit 2
 fi
 
 # --- Quick mode ---
