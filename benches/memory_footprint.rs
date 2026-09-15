@@ -9,8 +9,16 @@
 //! [Markdown / Files] ──► [Instrumented System Allocator] ──► [Region Stats]
 //! ```
 //!
-//! Run via `cargo bench --bench memory_footprint --features test-utils`.
-
+//! ### Profiling Integration
+//!
+//! To profile allocation CPU/memory bottlenecks:
+//! ```bash
+//! cargo flamegraph --bench memory_footprint -- --bench "memory/file_index_build/build_1000"
+//! ```
+//!
+//! Run via `mise run bench -f memory_footprint` (or `mise run bench -m
+//! memory_footprint`): this crate's `test-utils`-gated public surface is only
+//! reachable with `--features test-utils`, which the mise task supplies.
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; reporting allocation statistics"
@@ -39,6 +47,10 @@ use common::{
 };
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+
+// ----------------------------------------------------------- //
+//          Benchmarks: Note Construction Allocation           //
+// ----------------------------------------------------------- //
 
 /// Measures gross allocated bytes and allocation calls for `parse_markdown`,
 /// printed to stderr for each list-item and frontmatter-field size.
@@ -106,6 +118,10 @@ fn bench_note_construction_allocation(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//              Benchmarks: Index Build Footprint              //
+// ----------------------------------------------------------- //
+
 /// Measures gross allocated bytes and allocation calls for one
 /// `IndexerService::build` over plain-project workspace sizes.
 ///
@@ -154,6 +170,10 @@ fn bench_file_index_footprint(c: &mut Criterion) {
 
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//              Benchmarks: Sync and Run Footprint             //
+// ----------------------------------------------------------- //
 
 /// Measures gross allocation cost across vault sizes for a narrow
 /// [`QueryService::sync_and_run`] query vs. a full [`FileIndex`]-materializing
@@ -233,6 +253,10 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//            Benchmarks: Query Execution Footprint            //
+// ----------------------------------------------------------- //
 
 const QUERY_FOOTPRINT_COUNTS: &[usize] = &[100, 1_000, 10_000];
 

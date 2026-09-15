@@ -8,7 +8,9 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [Disk Files] ──(mtime / diff)──► [Store Txn / Updates] ──(Reconcile)──► [FileIndex]
+//! [Disk Files] ──(mtime / diff)──► [Store Txn / Updates]
+//!                                          │
+//!                                          └──(Reconcile)──► [FileIndex]
 //! ```
 //!
 //! ### Profiling Integration
@@ -17,7 +19,10 @@
 //! ```bash
 //! cargo flamegraph --bench index_refresh -- --bench "FileIndex::refresh/no-op/1000"
 //! ```
-
+//!
+//! Run via `mise run bench -f index_refresh` (or `mise run bench -m index`):
+//! this crate's `test-utils`-gated public surface is only reachable with
+//! `--features test-utils`, which the mise task supplies.
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \
@@ -150,10 +155,12 @@ fn bench_sync_and_run_scenario<F>(
 /// Measures [`IndexerService::refresh_with_report`] across baseline filesystem
 /// states.
 ///
-/// Sweeps baseline no-op refresh across all [`WORKSPACE_FILE_COUNTS`]. Mutation
-/// scenarios (`single-upsert`, `single-delete`, `linked-single-upsert`) are
-/// anchored at 1,000 and 5,000 notes to verify that incremental patching does
-/// not trigger full-vault recomputation.
+/// Parameters: varies note count across [`WORKSPACE_FILE_COUNTS`] for baseline
+/// no-op, and mutation scenarios (`single-upsert`, `single-delete`,
+/// `linked-single-upsert`) across [`MUTATION_ANCHOR_COUNTS`] (`[1_000,
+/// 5_000]`); reports note throughput. Fixture: persisted project created
+/// outside timing. Timed work scans mtimes, reconciles deltas, and updates the
+/// in-memory [`FileIndex`].
 ///
 /// Expected outcomes:
 /// - No-op refresh scales with directory scan/diff without note parsing or
@@ -344,9 +351,11 @@ fn bench_sync_and_run(c: &mut Criterion) {
 
 /// Measures refresh cost for richer mutation shapes at anchor contrast sizes.
 ///
-/// Sweeps rich realistic note mutations across [`MUTATION_ANCHOR_COUNTS`]
-/// (`[1_000, 5_000]`) covering no-op, single-tag upsert, multi-note upsert, and
-/// single note deletion.
+/// Parameters: sweeps rich realistic note mutations across
+/// [`MUTATION_ANCHOR_COUNTS`] (`[1_000, 5_000]`) covering no-op, single-tag
+/// upsert, multi-note upsert, and single note deletion; reports note
+/// throughput. Fixture: persisted [`ProjectShape::RichRealistic`] or
+/// delete-heavy project created and mutated outside timing.
 ///
 /// Expected outcomes:
 /// - Rich no-op refresh scales with scan/diff without reparsing unchanged

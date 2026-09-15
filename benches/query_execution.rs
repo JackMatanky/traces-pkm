@@ -19,10 +19,9 @@
 //! cargo flamegraph --bench query_execution -- --bench "QueryService::run pages"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface is only reachable with
+//! Run via `mise run bench -f query_execution` (or `mise run bench -m query`):
+//! this crate's `test-utils`-gated public surface is only reachable with
 //! `--features test-utils`, which the mise task supplies.
-
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \
@@ -372,6 +371,14 @@ fn bench_clone_query_set(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures `QuerySet`'s owned `IntoIterator::into_iter()` sole-owner path,
+/// swept over workspace size and row shape.
+///
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and shape (`pages`, `tasks`);
+/// reports output rows (`n` or `3 * n`). Query construction happens in
+/// Criterion setup; timed work is only `outcome.into_iter().count()`.
+///
+/// The fresh, never-cloned setup lets `Arc::try_unwrap` reclaim cached rows
 /// rather than cloning them.
 ///
 /// Expected outcomes:

@@ -8,7 +8,7 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [FileIndex] ──(Persist Txn)──► [redb Tables: files, notes, inlinks, lists]
+//! [FileIndex] ──(Persist Txn)──► [redb Database Tables]
 //!                                      │
 //! [FileIndex] ◄──(Load Tables)─────────┘
 //! ```
@@ -19,7 +19,10 @@
 //! ```bash
 //! cargo flamegraph --bench index_store -- --bench "FileIndex::load/1000"
 //! ```
-
+//!
+//! Run via `mise run bench -f index_store` (or `mise run bench -m index`): this
+//! crate's `test-utils`-gated public surface is only reachable with `--features
+//! test-utils`, which the mise task supplies.
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \
@@ -101,8 +104,10 @@ fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
 
 /// Measures full database persistence transaction overhead for plain notes.
 ///
-/// Timed work persists a pre-built in-memory [`FileIndex`] into a fresh redb
-/// database. Disk sync and fsync incur a fixed transaction commit floor (~34
+/// Parameters: varies note count across [`WORKSPACE_FILE_COUNTS`]; reports note
+/// throughput. Fixture: [`FileIndex`] compiled in-memory outside timing; timed
+/// work persists that index into a fresh redb database in a temporary
+/// directory. Disk sync and fsync incur a fixed transaction commit floor (~34
 /// ms) for small vaults (< 1,000 notes) before scaling linearly with table row
 /// volume.
 ///
@@ -141,9 +146,12 @@ fn bench_index_persist(c: &mut Criterion) {
     }
     group.finish();
 }
-
 /// Measures full persistence cost across contrasting note shapes.
 ///
+/// Parameters: varies note shape across [`PERSIST_CONTRAST_SHAPES`] and size
+/// across [`PROFILE_CONTRAST_COUNTS`]; reports note throughput.
+/// Fixture: [`FileIndex`] compiled in-memory outside timing; timed work
+/// persists that index into a fresh redb database.
 /// Evaluates row encoding and secondary table write costs for dense links, rich
 /// frontmatter, and list items across [`PROFILE_CONTRAST_COUNTS`].
 ///
@@ -195,6 +203,12 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
 
 /// Measures public persisted index load and full in-memory materialization
 /// cost.
+///
+/// Parameters: sweeps plain projects over [`WORKSPACE_FILE_COUNTS`] and
+/// rich/attachment shapes over [`PROFILE_CONTRAST_COUNTS`]; reports note
+/// throughput. Fixture: persisted project created outside timing. Timed work
+/// opens the store, reads all files/notes/inlinks, and assembles the complete
+/// [`FileIndex`].
 ///
 /// Opening the redb store and reading all table keys introduces a fixed
 /// open/iteration floor of ~14.5 ms. Above this floor, load time scales
@@ -256,8 +270,11 @@ fn bench_index_load(c: &mut Criterion) {
 
 /// Measures public list-table reads over persisted list-heavy projects.
 ///
-/// Sweeps [`PROFILE_CONTRAST_COUNTS`]. Each [`ProjectShape::ListHeavy`] note
-/// contributes 20 list rows, reporting throughput as `20 * n` rows.
+/// Parameters: varies note count across [`PROFILE_CONTRAST_COUNTS`]; reports
+/// list row throughput. Fixture: persisted list-heavy project created outside
+/// timing. Each [`ProjectShape::ListHeavy`] note contributes 20 list rows,
+/// reporting throughput as `20 * n` rows. Timed work reads all persisted list
+/// items via [`IndexerService::read_lists`].
 ///
 /// Expected outcomes:
 /// - Read cost scales linearly with persisted list row count.
@@ -298,8 +315,10 @@ fn bench_read_lists(c: &mut Criterion) {
 /// Measures concurrent persisted-index load cost for four independent 250-note
 /// projects.
 ///
-/// Total loaded notes held fixed at 1,000; tests concurrent database handle
-/// initialization and table read throughput across scoped worker threads.
+/// Parameters: holds total loaded notes fixed at 1,000 across 4 projects;
+/// reports note throughput. Fixture: four independent persisted plain projects
+/// created outside timing. Timed work loads each project concurrently on scoped
+/// worker threads.
 ///
 /// Expected outcomes:
 /// - Stable execution time without thread starvation or file lock contention.

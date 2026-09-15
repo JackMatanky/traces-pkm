@@ -22,10 +22,10 @@
 //! cargo flamegraph --bench template_render -- --bench "TemplateService::render_to_file"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface (`TemplateService`, `Config`, the
-//! `test_support` fixtures) is only reachable with `--features test-utils`,
-//! which the mise task supplies.
+//! Run via `mise run bench -f template_render` (or `mise run bench -m
+//! template`): this crate's `test-utils`-gated public surface
+//! (`TemplateService`, `Config`, the `test_support` fixtures) is only reachable
+//! with `--features test-utils`, which the mise task supplies.
 
 #![expect(
     clippy::expect_used,
