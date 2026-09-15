@@ -240,7 +240,7 @@ impl SortDirection {
 ///
 /// Dataview treats `null` unconditionally as the smallest value, which
 /// [`Self::Auto`] reproduces (first ascending, last descending). No current
-/// query syntax constructs [`Self::First`] or [`Self::Last`] -- this is a
+/// query syntax constructs [`Self::First`] or [`Self::Last`]; this is a
 /// seam for a future `sort field asc nulls last` grammar addition, wired
 /// through [`SortOrder::compare_keys`] with zero behavior change today.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -797,10 +797,42 @@ mod tests {
                 Ordering::Equal
             );
         }
+
+        #[test]
+        fn auto_placement_puts_null_first_ascending_and_last_descending() {
+            let path = FieldPath::parse("rating").unwrap();
+            let asc_order = SortOrder {
+                terms: Box::new([SortTerm {
+                    path: path.clone(),
+                    direction: SortDirection::Ascending,
+                    null_placement: NullPlacement::Auto,
+                }]),
+            };
+            let desc_order = SortOrder {
+                terms: Box::new([SortTerm {
+                    path,
+                    direction: SortDirection::Descending,
+                    null_placement: NullPlacement::Auto,
+                }]),
+            };
+            let null_key = [SortKey::Null];
+            let num_key = [SortKey::Number(5.0)];
+
+            // Ascending: Null sorts first (Less).
+            assert_eq!(
+                asc_order.compare_keys(&null_key, &num_key),
+                Ordering::Less
+            );
+            // Descending: Null sorts last (Less before reversal -> Greater).
+            assert_eq!(
+                desc_order.compare_keys(&null_key, &num_key),
+                Ordering::Greater
+            );
+        }
     }
 
     mod sort_key_normalization {
-        use std::{cmp::Ordering, path::PathBuf};
+        use std::{borrow::Cow, cmp::Ordering, path::PathBuf};
 
         use pretty_assertions::assert_eq;
 
@@ -884,6 +916,28 @@ mod tests {
             ));
             let key = SortKey::from_value_ref(owned);
             assert!(matches!(key, SortKey::Duration(_)));
+        }
+
+        #[test]
+        fn from_value_ref_borrows_text_for_note_string() {
+            let note_str = "hello";
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::String(note_str),
+            ));
+            assert!(
+                matches!(key, SortKey::Text(Cow::Borrowed(s)) if s == "hello")
+            );
+        }
+
+        #[test]
+        fn from_value_ref_owns_text_for_fallback_string() {
+            let owned_str = "hello".to_owned();
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Owned(
+                NoteFieldValue::String(owned_str),
+            ));
+            assert!(
+                matches!(key, SortKey::Text(Cow::Owned(ref s)) if s == "hello")
+            );
         }
 
         #[test]
@@ -1000,6 +1054,52 @@ mod tests {
                 .cmp(&SortKey::from_value_ref(QueryFieldValueRef::Note(*b)));
                 assert_eq!(note_ord, sort_ord, "diverged for {a:?} vs {b:?}");
             }
+        }
+    }
+
+    mod text_shape {
+        use super::super::TextShape;
+
+        #[test]
+        fn classifies_iso_datetime_string() {
+            let shape = TextShape::classify("2026-07-29T14:30:00");
+            assert!(matches!(shape, TextShape::DateTime(_)));
+        }
+
+        #[test]
+        fn classifies_iso_date_string() {
+            let shape = TextShape::classify("2026-07-29");
+            assert!(matches!(shape, TextShape::Date(_)));
+        }
+
+        #[test]
+        fn classifies_duration_string() {
+            let shape = TextShape::classify("1h30m");
+            assert!(matches!(shape, TextShape::Duration(_)));
+        }
+
+        #[test]
+        fn classifies_plain_string() {
+            let shape = TextShape::classify("custom title");
+            assert!(matches!(shape, TextShape::Plain));
+        }
+
+        #[test]
+        fn classifies_bare_number_string_as_plain() {
+            let shape = TextShape::classify("42");
+            assert!(matches!(shape, TextShape::Plain));
+        }
+
+        #[test]
+        fn classifies_invalid_date_as_plain() {
+            let shape = TextShape::classify("2026-99-99");
+            assert!(matches!(shape, TextShape::Plain));
+        }
+
+        #[test]
+        fn classifies_empty_string_as_plain() {
+            let shape = TextShape::classify("");
+            assert!(matches!(shape, TextShape::Plain));
         }
     }
 }

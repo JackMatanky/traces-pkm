@@ -687,9 +687,9 @@ fn bench_sort_nullable(c: &mut Criterion) {
 ///
 /// Exercises `SortKey::Duration`'s `DurationSeconds` comparator, reached only
 /// after `SortKey::from_value_ref` fails an ISO-date parse and succeeds a
-/// `DurationValue::parse` on the field text - a different resolution
-/// path than the numeric `rating` field every other sort benchmark in this file
-/// uses.
+/// `DurationValue::parse` on the field text (a different resolution path
+/// than the numeric `rating` field every other sort benchmark in this file
+/// uses).
 ///
 /// Expected outcomes:
 /// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same

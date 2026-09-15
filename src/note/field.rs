@@ -467,8 +467,8 @@ fn normalize_zero(n: f64) -> f64 {
     }
 }
 
-/// Sorted key lists first (`Vec<&str>: Ord` already gives exactly the list rule
-/// -- element-wise, shorter-is-less-when-prefix), then values in that
+/// Sorted key lists first (`Vec<&str>: Ord` already gives exactly the list
+/// rule: element-wise, shorter-is-less-when-prefix), then values in that
 /// sorted-key order.
 fn compare_objects(
     a: &IndexMap<String, NoteFieldValue>,
@@ -1081,6 +1081,101 @@ mod tests {
                     .compare(&NoteFieldValueRef::List(&b)),
                 Ordering::Less
             );
+        }
+
+        #[test]
+        fn identical_lists_compare_equal() {
+            let a = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            let b = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            assert_eq!(
+                NoteFieldValueRef::List(&a)
+                    .compare(&NoteFieldValueRef::List(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn empty_lists_compare_equal() {
+            let a: [NoteFieldValue; 0] = [];
+            let b: [NoteFieldValue; 0] = [];
+            assert_eq!(
+                NoteFieldValueRef::List(&a)
+                    .compare(&NoteFieldValueRef::List(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn identical_objects_compare_equal() {
+            let a = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let b = a.clone();
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn empty_objects_compare_equal() {
+            let a: IndexMap<String, NoteFieldValue> = IndexMap::new();
+            let b: IndexMap<String, NoteFieldValue> = IndexMap::new();
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Equal
+            );
+        }
+    }
+
+    mod ordering {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn ord_cmp_delegates_to_compare() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(2.0);
+            assert_eq!(Ord::cmp(&a, &b), a.compare(&b));
+        }
+
+        #[test]
+        fn partial_ord_partial_cmp_delegates_to_ord_cmp() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(2.0);
+            assert_eq!(a.partial_cmp(&b), Some(Ord::cmp(&a, &b)));
+        }
+
+        #[test]
+        fn less_than_operator_holds_for_a_lower_ranked_kind() {
+            let number = NoteFieldValueRef::Number(100.0);
+            let text = NoteFieldValueRef::String("abc");
+            assert!(number < text);
+        }
+
+        #[test]
+        fn greater_than_operator_holds_for_a_higher_ranked_kind() {
+            let number = NoteFieldValueRef::Number(100.0);
+            let text = NoteFieldValueRef::String("abc");
+            assert!(text > number);
+        }
+
+        #[test]
+        fn less_equal_operator_holds_for_equal_values() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(1.0);
+            assert!(a <= b);
+        }
+
+        #[test]
+        fn greater_equal_operator_holds_for_equal_values() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(1.0);
+            assert!(a >= b);
         }
     }
 

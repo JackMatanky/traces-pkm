@@ -176,11 +176,11 @@ impl ComparisonExpr {
 
     /// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
     /// `Duration` when its text has that shape, once, at query-build time
-    /// -- not per row. Only `NoteFieldValue::String` needs inspection: the
+    /// (not per row). Only `NoteFieldValue::String` needs inspection: the
     /// filter grammar's `Literal` token never produces `Date`/`DateTime`/
     /// `Duration`/`Link`/`List`/`Object` directly (`Null`/`Bool`/`Number`/
     /// `String` are its only literal shapes). Reuses [`TextShape::classify`]
-    /// -- the same heuristic `SortKey::from_text` uses -- so filter
+    /// (the same heuristic `SortKey::from_text` uses), so filter
     /// literals and sort-key text classify identically, not via a second
     /// hand-rolled copy.
     fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
@@ -1015,6 +1015,54 @@ mod tests {
                 .filter("contains(tags, \"#book\")")
                 .expect("valid filter");
             assert_eq!(names(&tag_match), ["book"]);
+        }
+    }
+
+    mod classify_literal {
+        use super::super::{ComparisonExpr, NoteFieldValue};
+
+        #[test]
+        fn promotes_iso_date_string_to_date_value() {
+            let lit = NoteFieldValue::String("2026-07-29".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert!(matches!(classified, NoteFieldValue::Date(_)));
+        }
+
+        #[test]
+        fn promotes_iso_datetime_string_to_datetime_value() {
+            let lit = NoteFieldValue::String("2026-07-29T14:30:00".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert!(matches!(classified, NoteFieldValue::DateTime(_)));
+        }
+
+        #[test]
+        fn promotes_duration_string_to_duration_value() {
+            let lit = NoteFieldValue::String("1h30m".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert!(matches!(classified, NoteFieldValue::Duration(_)));
+        }
+
+        #[test]
+        fn preserves_plain_string_literal() {
+            let lit = NoteFieldValue::String("active".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert_eq!(classified, NoteFieldValue::String("active".to_owned()));
+        }
+
+        #[test]
+        fn preserves_non_string_literals_unmodified() {
+            assert_eq!(
+                ComparisonExpr::classify_literal(NoteFieldValue::Number(42.0)),
+                NoteFieldValue::Number(42.0)
+            );
+            assert_eq!(
+                ComparisonExpr::classify_literal(NoteFieldValue::Bool(true)),
+                NoteFieldValue::Bool(true)
+            );
+            assert_eq!(
+                ComparisonExpr::classify_literal(NoteFieldValue::Null),
+                NoteFieldValue::Null
+            );
         }
     }
 }

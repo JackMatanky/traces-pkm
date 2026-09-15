@@ -102,19 +102,18 @@ impl QueryPlan {
         let mut fused = Vec::with_capacity(self.ops.len());
         let mut items = self.ops.into_iter().peekable();
         while let Some(item) = items.next() {
-            if let QueryTransform::Sort {
-                order,
-            } = &item
-                && let Some(QueryTransform::Limit(n)) = items.peek()
-            {
-                let n = *n;
-                fused.push(QueryTransform::TopK {
-                    order: order.clone(),
-                    n,
-                });
-                items.next();
-            } else {
-                fused.push(item);
+            match item {
+                QueryTransform::Sort {
+                    order,
+                } if matches!(items.peek(), Some(QueryTransform::Limit(_))) => {
+                    if let Some(QueryTransform::Limit(n)) = items.next() {
+                        fused.push(QueryTransform::TopK {
+                            order,
+                            n,
+                        });
+                    }
+                }
+                other => fused.push(other),
             }
         }
         self.ops = fused;

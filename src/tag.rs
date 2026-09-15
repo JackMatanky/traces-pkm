@@ -128,7 +128,7 @@ impl Tag {
     /// `target` are raw strings that may not be `#`-prefixed at all, in
     /// which case this returns `false` without attempting to parse either.
     /// Callers wanting an exact-string shortcut too (`item == target`
-    /// regardless of tag shape) must add that check themselves -- baking it
+    /// regardless of tag shape) must add that check themselves; baking it
     /// in here would let non-tag values with a coincidentally matching
     /// string collide.
     #[inline]
@@ -339,6 +339,45 @@ mod tests {
             let a = Tag::parse("#task").unwrap();
             let b = Tag::parse("#todo").unwrap();
             assert!(!a.is_exact_match(&b));
+        }
+    }
+
+    mod is_hierarchical_match {
+        use super::*;
+
+        #[test]
+        fn returns_true_for_subtag_matching_parent() {
+            assert!(Tag::is_hierarchical_match("#book/fiction", "#book"));
+        }
+
+        #[test]
+        fn returns_true_for_identical_tag_strings() {
+            assert!(Tag::is_hierarchical_match("#book", "#book"));
+        }
+
+        #[test]
+        fn returns_false_when_parent_tested_against_child() {
+            assert!(!Tag::is_hierarchical_match("#book", "#book/fiction"));
+        }
+
+        #[test]
+        fn returns_false_for_prefix_collision_without_slash() {
+            assert!(!Tag::is_hierarchical_match("#bookworm", "#book"));
+        }
+
+        #[test]
+        fn returns_false_when_item_lacks_hash_prefix() {
+            assert!(!Tag::is_hierarchical_match("book", "#book"));
+        }
+
+        #[test]
+        fn returns_false_when_target_lacks_hash_prefix() {
+            assert!(!Tag::is_hierarchical_match("#book", "book"));
+        }
+
+        #[test]
+        fn returns_false_for_invalid_tag_syntax() {
+            assert!(!Tag::is_hierarchical_match("#1invalid", "#book"));
         }
     }
 

@@ -160,9 +160,22 @@ impl QueryDisplayFormat {
     }
 
     /// Escapes Markdown table cell text by replacing newlines with spaces
-    /// and escaping pipes.
+    /// and escaping pipes. Short-circuits to a plain copy when neither
+    /// character is present, avoiding the two intermediate allocations a
+    /// chained `.replace().replace()` would otherwise cost every cell.
     fn escape_table_cell(text: &str) -> String {
-        text.replace('\n', " ").replace('|', "\\|")
+        if !text.contains(['\n', '|']) {
+            return text.to_owned();
+        }
+        let mut out = String::with_capacity(text.len());
+        for ch in text.chars() {
+            match ch {
+                '\n' => out.push(' '),
+                '|' => out.push_str("\\|"),
+                other => out.push(other),
+            }
+        }
+        out
     }
 }
 
@@ -197,6 +210,24 @@ mod tests {
                 QueryDisplayFormat::escape_table_cell("hello world"),
                 "hello world"
             );
+        }
+
+        #[test]
+        fn escapes_pipes_and_newlines_together() {
+            assert_eq!(
+                QueryDisplayFormat::escape_table_cell("A\n| B\n"),
+                "A \\| B "
+            );
+        }
+
+        #[test]
+        fn escapes_consecutive_pipes() {
+            assert_eq!(QueryDisplayFormat::escape_table_cell("||"), "\\|\\|");
+        }
+
+        #[test]
+        fn passes_empty_string_unmodified() {
+            assert_eq!(QueryDisplayFormat::escape_table_cell(""), "");
         }
     }
 }

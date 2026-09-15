@@ -140,17 +140,13 @@ impl QueryFieldValueRef<'_> {
                 let Some(target_str) = target.as_str() else {
                     return false;
                 };
-                tags.iter()
-                    .any(|tag| is_tag_str_matching(tag.as_str(), target_str))
+                tags.iter().any(|tag| tag.is_contained_in(target_str))
             }
             Self::Inlinks(paths) => {
                 let Some(target_str) = target.as_str() else {
                     return false;
                 };
-                paths.iter().any(|path| {
-                    let path = path.to_string_lossy();
-                    is_tag_str_matching(&path, target_str)
-                })
+                paths.iter().any(|path| path.to_string_lossy() == target_str)
             }
         }
     }
@@ -160,11 +156,6 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
     fn from(value: &'a NoteFieldValue) -> Self {
         Self::Note(value.as_ref())
     }
-}
-
-/// Matches exact tags and descendants, so `#book/fiction` satisfies `#book`.
-fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
-    item == target_str || Tag::is_hierarchical_match(item, target_str)
 }
 
 fn append_joined<T>(
