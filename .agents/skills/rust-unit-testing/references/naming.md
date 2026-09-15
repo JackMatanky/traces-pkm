@@ -90,7 +90,7 @@ Use the first row that matches test intent. Don't invent a new module name if a 
 | `state` | state transitions and lifecycle behavior |
 | `accessors` | getters and derived reads |
 | `borrowing` | zero-copy / borrowed-view behavior |
-| `conversions` | `From`/`TryFrom`/`Into` behavior |
+| `conversions` | `From`/`TryFrom`/`Into`/`FromStr` behavior |
 | `formatting` | `Display`/`Debug` rendering |
 | `equality` | `Eq`/`PartialEq` behavior |
 | `ordering` | `Ord`/`PartialOrd` behavior |
