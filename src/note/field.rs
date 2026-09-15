@@ -1,8 +1,9 @@
 //! Metadata field values parsed from YAML frontmatter and inline field text.
 //!
-//! This module provides [`NoteFieldValue`], which represents strongly typed
-//! metadata values extracted from Markdown notes, including scalars (booleans,
-//! numbers, strings, dates, durations), links, lists, and objects.
+//! This module provides [`NoteFieldValue`] and [`NoteFieldValueRef`], the
+//! owned and borrowed representations of strongly typed metadata values
+//! extracted from Markdown notes, including scalars (booleans, numbers,
+//! strings, dates, durations), links, lists, and objects.
 //!
 //! # Examples
 //!
@@ -12,11 +13,15 @@
 //! let val = NoteFieldValue::String("value".to_owned());
 //! assert_eq!(val.as_str(), Some("value"));
 //! ```
+use std::fmt::Write as _;
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::Link;
-use crate::{DateTimeValue, DateValue, DurationValue, field::FieldValueRef};
+use crate::{
+    DateTimeValue, DateValue, DurationValue, Tag, field::FieldValueRef,
+};
 
 /// A metadata value parsed from YAML frontmatter or inline field text.
 ///
@@ -112,15 +117,389 @@ impl NoteFieldValue {
             _ => None,
         }
     }
+
+    /// Borrows this value as a [`NoteFieldValueRef`] without cloning.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{NoteFieldValue, NoteFieldValueRef};
+    ///
+    /// let owned = NoteFieldValue::Number(42.0);
+    /// assert_eq!(owned.as_ref(), NoteFieldValueRef::Number(42.0));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn as_ref(&self) -> NoteFieldValueRef<'_> {
+        match self {
+            Self::Null => NoteFieldValueRef::Null,
+            Self::Bool(v) => NoteFieldValueRef::Bool(*v),
+            Self::Number(v) => NoteFieldValueRef::Number(*v),
+            Self::String(v) => NoteFieldValueRef::String(v),
+            Self::Date(v) => NoteFieldValueRef::Date(*v),
+            Self::DateTime(v) => NoteFieldValueRef::DateTime(*v),
+            Self::Duration(v) => NoteFieldValueRef::Duration(v),
+            Self::Link(v) => NoteFieldValueRef::Link(v),
+            Self::List(v) => NoteFieldValueRef::List(v),
+            Self::Object(v) => NoteFieldValueRef::Object(v),
+        }
+    }
+}
+
+/// Borrowed mirror of [`NoteFieldValue`], resolved without allocation from a
+/// note's parsed metadata.
+#[derive(Copy, Clone, Debug)]
+pub enum NoteFieldValueRef<'a> {
+    /// Empty or missing value.
+    Null,
+    /// Boolean value.
+    Bool(bool),
+    /// Numeric value.
+    Number(f64),
+    /// Borrowed text.
+    String(&'a str),
+    /// ISO `YYYY-MM-DD` date.
+    Date(DateValue),
+    /// ISO `YYYY-MM-DDThh:mm:ss` date-time.
+    DateTime(DateTimeValue),
+    /// Borrowed duration.
+    Duration(&'a DurationValue),
+    /// Borrowed link.
+    Link(&'a Link),
+    /// Borrowed ordered list.
+    List(&'a [NoteFieldValue]),
+    /// Borrowed keyed object.
+    Object(&'a IndexMap<String, NoteFieldValue>),
+}
+
+/// Discriminant-only companion to the canonical rank order. The single place
+/// the rank numbers are written down; [`NoteFieldValueRef::rank`] and
+/// `SortKey::rank` (`src/query/sort.rs`) both delegate to
+/// [`NoteFieldType::rank`], so they cannot drift from each other.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum NoteFieldType {
+    /// No value, or a missing field.
+    Null,
+    /// A boolean scalar.
+    Bool,
+    /// A numeric scalar.
+    Number,
+    /// A duration such as `1h30m`.
+    Duration,
+    /// Covers both [`NoteFieldValueRef::Date`] and
+    /// [`NoteFieldValueRef::DateTime`]: the same comparable temporal domain at
+    /// different precision. [`NoteFieldValueRef::is_equal_to_literal`] already
+    /// treats a bare `Date` and a midnight-UTC `DateTime` as equal; giving them
+    /// separate ranks would silently coarsen that into "different kind, never
+    /// equal".
+    Temporal,
+    /// Free text.
+    Text,
+    /// A Markdown or wikilink.
+    Link,
+    /// An ordered list.
+    List,
+    /// A keyed object.
+    Object,
+}
+
+impl NoteFieldType {
+    /// `Null < Bool < Number < Duration < Temporal < Text < Link < List <
+    /// Object`.
+    pub(crate) const fn rank(self) -> u8 {
+        match self {
+            Self::Null => 0,
+            Self::Bool => 1,
+            Self::Number => 2,
+            Self::Duration => 3,
+            Self::Temporal => 4,
+            Self::Text => 5,
+            Self::Link => 6,
+            Self::List => 7,
+            Self::Object => 8,
+        }
+    }
+}
+
+impl NoteFieldValueRef<'_> {
+    const fn kind(&self) -> NoteFieldType {
+        match self {
+            Self::Null => NoteFieldType::Null,
+            Self::Bool(_) => NoteFieldType::Bool,
+            Self::Number(_) => NoteFieldType::Number,
+            Self::Duration(_) => NoteFieldType::Duration,
+            Self::Date(_) | Self::DateTime(_) => NoteFieldType::Temporal,
+            Self::String(_) => NoteFieldType::Text,
+            Self::Link(_) => NoteFieldType::Link,
+            Self::List(_) => NoteFieldType::List,
+            Self::Object(_) => NoteFieldType::Object,
+        }
+    }
+
+    /// Ordinal rank of this value's kind in the canonical total order.
+    const fn rank(&self) -> u8 {
+        self.kind().rank()
+    }
+
+    /// Canonical total order across all field kinds: `Null < Bool < Number <
+    /// Duration < Temporal (Date/DateTime) < Text < Link < List < Object`.
+    /// Kinds compare by rank except where a pair has an explicit arm below
+    /// (same-kind comparisons, and the Date/DateTime cross-kind case, which
+    /// share one rank).
+    #[inline]
+    #[must_use]
+    pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Self::Null, Self::Null) => Ordering::Equal,
+            (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
+            (Self::Number(a), Self::Number(b)) => {
+                normalize_zero(*a).total_cmp(&normalize_zero(*b))
+            }
+            (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
+            (Self::Date(a), Self::Date(b)) => a.cmp(b),
+            (Self::DateTime(a), Self::DateTime(b)) => a.cmp(b),
+            (Self::Date(a), Self::DateTime(b)) => {
+                DateTimeValue::from(*a).cmp(b)
+            }
+            (Self::DateTime(a), Self::Date(b)) => {
+                a.cmp(&DateTimeValue::from(*b))
+            }
+            (Self::String(a), Self::String(b)) => a.cmp(b),
+            (Self::Link(a), Self::Link(b)) => {
+                a.target().cmp(b.target()).then_with(|| a.text().cmp(b.text()))
+            }
+            (Self::List(a), Self::List(b)) => a
+                .iter()
+                .map(NoteFieldValue::as_ref)
+                .cmp(b.iter().map(NoteFieldValue::as_ref)),
+            (Self::Object(a), Self::Object(b)) => compare_objects(a, b),
+            _ => self.rank().cmp(&other.rank()),
+        }
+    }
+}
+
+impl NoteFieldValueRef<'_> {
+    /// Appends the plain-text representation of this field value to `out`.
+    pub(crate) fn append_text(&self, out: &mut String) {
+        match self {
+            Self::Null => {}
+            Self::Bool(value) => {
+                out.push_str(if *value {
+                    "true"
+                } else {
+                    "false"
+                });
+            }
+            Self::Number(value) => {
+                let _ = write!(out, "{value}");
+            }
+            Self::String(value) => out.push_str(value),
+            Self::Duration(value) => out.push_str(value.as_str()),
+            Self::Date(value) => {
+                let _ = write!(out, "{value}");
+            }
+            Self::DateTime(value) => {
+                let _ = write!(out, "{value}");
+            }
+            Self::Link(link) => out.push_str(link.target()),
+            Self::Object(fields) => {
+                for (idx, (key, field)) in fields.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(key);
+                    out.push_str(": ");
+                    field.as_ref().append_text(out);
+                }
+            }
+            Self::List(values) => {
+                for (idx, value) in values.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(", ");
+                    }
+                    value.as_ref().append_text(out);
+                }
+            }
+        }
+    }
+
+    /// Returns the borrowed string for [`Self::String`] or the duration's
+    /// source spelling for [`Self::Duration`], or `None` for any other kind.
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(value) => Some(value),
+            Self::Duration(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Converts this borrowed value into an owned [`NoteFieldValue`],
+    /// cloning only what the source kind requires.
+    pub(crate) fn to_owned_value(self) -> NoteFieldValue {
+        match self {
+            Self::Null => NoteFieldValue::Null,
+            Self::Bool(value) => NoteFieldValue::Bool(value),
+            Self::Number(value) => NoteFieldValue::Number(value),
+            Self::String(value) => NoteFieldValue::String(value.to_owned()),
+            Self::Date(value) => NoteFieldValue::Date(value),
+            Self::DateTime(value) => NoteFieldValue::DateTime(value),
+            Self::Duration(value) => NoteFieldValue::Duration((*value).clone()),
+            Self::Link(value) => NoteFieldValue::Link((*value).clone()),
+            Self::List(values) => NoteFieldValue::List(values.into()),
+            Self::Object(value) => NoteFieldValue::Object((*value).clone()),
+        }
+    }
+
+    /// Applies filter equality semantics (`==`, `!=`) to `literal`.
+    #[expect(
+        clippy::float_cmp,
+        reason = "query numeric equality intentionally uses exact parsed \
+                  metadata equality; ordering uses compare()"
+    )]
+    pub(crate) fn is_equal_to_literal(&self, literal: &NoteFieldValue) -> bool {
+        match self {
+            Self::Null => matches!(literal, NoteFieldValue::Null),
+            Self::Bool(value) => {
+                matches!(literal, NoteFieldValue::Bool(other) if value == other)
+            }
+            Self::Number(value) => {
+                matches!(literal, NoteFieldValue::Number(other) if value == other)
+            }
+            Self::String(value) => literal.as_str() == Some(value),
+            Self::Link(value) => {
+                matches!(literal, NoteFieldValue::Link(other) if *value == other)
+            }
+            Self::Date(value) => match literal {
+                NoteFieldValue::Date(other) => value == other,
+                NoteFieldValue::DateTime(other) => {
+                    other.is_equal_to_date(*value)
+                }
+                _ => false,
+            },
+            Self::DateTime(value) => match literal {
+                NoteFieldValue::DateTime(other) => value == other,
+                NoteFieldValue::Date(other) => value.is_equal_to_date(*other),
+                _ => false,
+            },
+            Self::Duration(dv) => match literal {
+                NoteFieldValue::Duration(other) => *dv == other,
+                _ => false,
+            },
+            Self::Object(value) => {
+                matches!(literal, NoteFieldValue::Object(other) if *value == other)
+            }
+            Self::List(items) => matches!(
+                literal,
+                NoteFieldValue::List(other) if *items == other.as_ref()
+            ),
+        }
+    }
+
+    /// Evaluates `contains(field_val, target)`.
+    ///
+    /// Lists match exact values or descendant tags; string-like fields use
+    /// substring containment.
+    pub(crate) fn is_containing(&self, target: &NoteFieldValue) -> bool {
+        match self {
+            Self::List(items) => {
+                let target_str = target.as_str();
+                items.iter().any(|item| {
+                    is_tag_or_value_matching(item, target, target_str)
+                })
+            }
+            _ => match (self.as_str(), target.as_str()) {
+                (Some(haystack), Some(needle)) => haystack.contains(needle),
+                _ => false,
+            },
+        }
+    }
+}
+
+/// Matches exact values, or tag descendants when both values stringify to tags.
+fn is_tag_or_value_matching(
+    item: &NoteFieldValue,
+    target: &NoteFieldValue,
+    target_str: Option<&str>,
+) -> bool {
+    if item == target {
+        return true;
+    }
+    let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
+        return false;
+    };
+    Tag::is_hierarchical_match(item_str, target_str)
+}
+
+impl PartialEq for NoteFieldValueRef<'_> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.compare(other) == std::cmp::Ordering::Equal
+    }
+}
+impl Eq for NoteFieldValueRef<'_> {}
+
+/// Delegates to [`NoteFieldValueRef::compare`]: `NoteFieldValueRef` has a
+/// total order, so it implements the standard comparison traits alongside
+/// its own named [`NoteFieldValueRef::compare`] method (kept as the
+/// primary, most-discoverable entry point since every internal caller in
+/// this crate already spells it that way).
+impl PartialOrd for NoteFieldValueRef<'_> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+impl Ord for NoteFieldValueRef<'_> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.compare(other)
+    }
+}
+
+/// `-0.0` and `0.0` both normalize to `0.0` before `total_cmp`, so signed zero
+/// does not affect ordering.
+fn normalize_zero(n: f64) -> f64 {
+    if n == 0.0 {
+        0.0
+    } else {
+        n
+    }
+}
+
+/// Sorted key lists first (`Vec<&str>: Ord` already gives exactly the list
+/// rule: element-wise, shorter-is-less-when-prefix), then values in that
+/// sorted-key order.
+fn compare_objects(
+    a: &IndexMap<String, NoteFieldValue>,
+    b: &IndexMap<String, NoteFieldValue>,
+) -> std::cmp::Ordering {
+    let mut a_keys: Vec<&str> = a.keys().map(String::as_str).collect();
+    let mut b_keys: Vec<&str> = b.keys().map(String::as_str).collect();
+    a_keys.sort_unstable();
+    b_keys.sort_unstable();
+    let key_order = a_keys.cmp(&b_keys);
+    if key_order != std::cmp::Ordering::Equal {
+        return key_order;
+    }
+    for key in a_keys {
+        let (Some(x), Some(y)) = (a.get(key), b.get(key)) else {
+            continue;
+        };
+        let ord = x.as_ref().compare(&y.as_ref());
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 /// Converts a borrowed field value into a [`NoteFieldValue`].
 ///
 /// Handles note-specific post-classification of scalar strings, applied
-/// recursively through lists and objects: empty strings become null,
-/// wikilink syntax becomes [`NoteFieldValue::Link`], and any remaining
-/// duration-shaped spelling (e.g. `4h15m`) becomes
-/// [`NoteFieldValue::Duration`].
+/// recursively through lists and objects: empty strings become null, wikilink
+/// syntax becomes [`NoteFieldValue::Link`], and any remaining duration-shaped
+/// spelling (e.g. `4h15m`) becomes [`NoteFieldValue::Duration`].
 impl From<FieldValueRef<'_>> for NoteFieldValue {
     #[inline]
     fn from(value: FieldValueRef<'_>) -> Self {
@@ -480,6 +859,349 @@ mod tests {
                 NoteFieldValue::String("not-a-date".to_owned()).as_date(),
                 None
             );
+        }
+    }
+
+    mod compare {
+        use std::cmp::Ordering;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn date(s: &str) -> DateValue {
+            DateValue::parse_iso(s).expect("valid date")
+        }
+
+        fn datetime(s: &str) -> DateTimeValue {
+            DateTimeValue::parse_iso(s).expect("valid datetime")
+        }
+
+        fn duration(s: &str) -> DurationValue {
+            DurationValue::parse(s).expect("valid duration")
+        }
+
+        #[test]
+        fn orders_every_kind_by_ascending_rank() {
+            let link =
+                Link::new("target", "text", crate::note::LinkType::Markdown);
+            let list_items = [NoteFieldValue::Number(1.0)];
+            let object_map = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let duration_a = duration("1h");
+            let ordered = [
+                NoteFieldValueRef::Null,
+                NoteFieldValueRef::Bool(false),
+                NoteFieldValueRef::Number(1.0),
+                NoteFieldValueRef::Duration(&duration_a),
+                NoteFieldValueRef::Date(date("2026-01-01")),
+                NoteFieldValueRef::DateTime(datetime("2026-01-02T00:00:00")),
+                NoteFieldValueRef::String("a"),
+                NoteFieldValueRef::Link(&link),
+                NoteFieldValueRef::List(&list_items),
+                NoteFieldValueRef::Object(&object_map),
+            ];
+            for pair in ordered.windows(2) {
+                let (Some(a), Some(b)) =
+                    (pair.first().copied(), pair.get(1).copied())
+                else {
+                    continue;
+                };
+                assert_eq!(a.compare(&b), Ordering::Less, "{a:?} vs {b:?}");
+                assert_eq!(b.compare(&a), Ordering::Greater, "{b:?} vs {a:?}");
+            }
+        }
+
+        #[test]
+        fn two_nan_numbers_compare_equal() {
+            let a = NoteFieldValueRef::Number(f64::NAN);
+            let b = NoteFieldValueRef::Number(f64::NAN);
+            assert_eq!(a.compare(&b), Ordering::Equal);
+        }
+
+        #[test]
+        fn negative_zero_and_positive_zero_compare_equal() {
+            let a = NoteFieldValueRef::Number(-0.0);
+            let b = NoteFieldValueRef::Number(0.0);
+            assert_eq!(a.compare(&b), Ordering::Equal);
+        }
+
+        #[test]
+        fn durations_with_different_spelling_compare_equal() {
+            let a = duration("1h");
+            let b = duration("60m");
+            assert_eq!(
+                NoteFieldValueRef::Duration(&a)
+                    .compare(&NoteFieldValueRef::Duration(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn a_bare_date_compares_equal_to_a_midnight_datetime_on_the_same_day() {
+            let d = date("2026-07-29");
+            let dt = datetime("2026-07-29T00:00:00");
+            assert_eq!(
+                NoteFieldValueRef::Date(d)
+                    .compare(&NoteFieldValueRef::DateTime(dt)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn a_bare_date_orders_before_an_afternoon_datetime_on_the_same_day() {
+            let d = date("2026-07-29");
+            let dt = datetime("2026-07-29T14:30:00");
+            assert_eq!(
+                NoteFieldValueRef::Date(d)
+                    .compare(&NoteFieldValueRef::DateTime(dt)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn a_midnight_datetime_compares_equal_to_the_same_bare_date() {
+            let d = date("2026-07-29");
+            let dt = datetime("2026-07-29T00:00:00");
+            assert_eq!(
+                NoteFieldValueRef::DateTime(dt)
+                    .compare(&NoteFieldValueRef::Date(d)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn an_afternoon_datetime_orders_after_the_same_day_bare_date() {
+            let d = date("2026-07-29");
+            let dt = datetime("2026-07-29T14:30:00");
+            assert_eq!(
+                NoteFieldValueRef::DateTime(dt)
+                    .compare(&NoteFieldValueRef::Date(d)),
+                Ordering::Greater
+            );
+        }
+
+        #[test]
+        fn list_prefix_orders_below_its_longer_extension() {
+            let short = [NoteFieldValue::Number(1.0)];
+            let long =
+                [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            assert_eq!(
+                NoteFieldValueRef::List(&short)
+                    .compare(&NoteFieldValueRef::List(&long)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn compares_links_by_target() {
+            let a =
+                Link::new("target-a", "text", crate::note::LinkType::Markdown);
+            let b =
+                Link::new("target-b", "text", crate::note::LinkType::Markdown);
+            assert_eq!(
+                NoteFieldValueRef::Link(&a)
+                    .compare(&NoteFieldValueRef::Link(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn compares_links_with_equal_target_by_text_tiebreak() {
+            let a =
+                Link::new("target", "alias-a", crate::note::LinkType::Markdown);
+            let b =
+                Link::new("target", "alias-b", crate::note::LinkType::Markdown);
+            assert_eq!(
+                NoteFieldValueRef::Link(&a)
+                    .compare(&NoteFieldValueRef::Link(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn objects_with_differing_key_sets_order_by_sorted_keys() {
+            let a = IndexMap::from_iter([
+                ("a".to_owned(), NoteFieldValue::Number(1.0)),
+                ("b".to_owned(), NoteFieldValue::Number(2.0)),
+            ]);
+            let b = IndexMap::from_iter([
+                ("a".to_owned(), NoteFieldValue::Number(1.0)),
+                ("c".to_owned(), NoteFieldValue::Number(3.0)),
+            ]);
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn objects_with_a_key_set_prefix_order_the_shorter_set_first() {
+            let short = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let long = IndexMap::from_iter([
+                ("a".to_owned(), NoteFieldValue::Number(1.0)),
+                ("b".to_owned(), NoteFieldValue::Number(2.0)),
+            ]);
+            assert_eq!(
+                NoteFieldValueRef::Object(&short)
+                    .compare(&NoteFieldValueRef::Object(&long)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn objects_with_matching_keys_order_by_differing_values() {
+            let a = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let b = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(2.0),
+            )]);
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn lists_with_matching_length_order_by_differing_elements() {
+            let a = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            let b = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(3.0)];
+            assert_eq!(
+                NoteFieldValueRef::List(&a)
+                    .compare(&NoteFieldValueRef::List(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn identical_lists_compare_equal() {
+            let a = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            let b = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            assert_eq!(
+                NoteFieldValueRef::List(&a)
+                    .compare(&NoteFieldValueRef::List(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn empty_lists_compare_equal() {
+            let a: [NoteFieldValue; 0] = [];
+            let b: [NoteFieldValue; 0] = [];
+            assert_eq!(
+                NoteFieldValueRef::List(&a)
+                    .compare(&NoteFieldValueRef::List(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn identical_objects_compare_equal() {
+            let a = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let b = a.clone();
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Equal
+            );
+        }
+
+        #[test]
+        fn empty_objects_compare_equal() {
+            let a: IndexMap<String, NoteFieldValue> = IndexMap::new();
+            let b: IndexMap<String, NoteFieldValue> = IndexMap::new();
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Equal
+            );
+        }
+    }
+
+    mod ordering {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn ord_cmp_delegates_to_compare() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(2.0);
+            assert_eq!(Ord::cmp(&a, &b), a.compare(&b));
+        }
+
+        #[test]
+        fn partial_ord_partial_cmp_delegates_to_ord_cmp() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(2.0);
+            assert_eq!(a.partial_cmp(&b), Some(Ord::cmp(&a, &b)));
+        }
+
+        #[test]
+        fn less_than_operator_holds_for_a_lower_ranked_kind() {
+            let number = NoteFieldValueRef::Number(100.0);
+            let text = NoteFieldValueRef::String("abc");
+            assert!(number < text);
+        }
+
+        #[test]
+        fn greater_than_operator_holds_for_a_higher_ranked_kind() {
+            let number = NoteFieldValueRef::Number(100.0);
+            let text = NoteFieldValueRef::String("abc");
+            assert!(text > number);
+        }
+
+        #[test]
+        fn less_equal_operator_holds_for_equal_values() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(1.0);
+            assert!(a <= b);
+        }
+
+        #[test]
+        fn greater_equal_operator_holds_for_equal_values() {
+            let a = NoteFieldValueRef::Number(1.0);
+            let b = NoteFieldValueRef::Number(1.0);
+            assert!(a >= b);
+        }
+    }
+
+    mod formatting {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn formats_a_multi_element_list_joined_by_commas() {
+            let items =
+                [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            let mut out = String::new();
+            NoteFieldValueRef::List(&items).append_text(&mut out);
+            assert_eq!(out, "1, 2");
+        }
+
+        #[test]
+        fn formats_an_object_as_key_colon_value_pairs_joined_by_commas() {
+            let fields = IndexMap::from_iter([
+                ("a".to_owned(), NoteFieldValue::Number(1.0)),
+                ("b".to_owned(), NoteFieldValue::String("x".to_owned())),
+            ]);
+            let mut out = String::new();
+            NoteFieldValueRef::Object(&fields).append_text(&mut out);
+            assert_eq!(out, "a: 1, b: x");
         }
     }
 }

@@ -102,19 +102,18 @@ impl QueryPlan {
         let mut fused = Vec::with_capacity(self.ops.len());
         let mut items = self.ops.into_iter().peekable();
         while let Some(item) = items.next() {
-            if let QueryTransform::Sort {
-                order,
-            } = &item
-                && let Some(QueryTransform::Limit(n)) = items.peek()
-            {
-                let n = *n;
-                fused.push(QueryTransform::TopK {
-                    order: order.clone(),
-                    n,
-                });
-                items.next();
-            } else {
-                fused.push(item);
+            match item {
+                QueryTransform::Sort {
+                    order,
+                } if matches!(items.peek(), Some(QueryTransform::Limit(_))) => {
+                    if let Some(QueryTransform::Limit(n)) = items.next() {
+                        fused.push(QueryTransform::TopK {
+                            order,
+                            n,
+                        });
+                    }
+                }
+                other => fused.push(other),
             }
         }
         self.ops = fused;
@@ -287,10 +286,14 @@ impl QueryTransform {
                 indexed.truncate(n);
                 indexed.sort_unstable_by(cmp);
 
+                let mut opt_rows: Vec<Option<QueryRow>> =
+                    rows.into_iter().map(Some).collect();
                 let mut out = Vec::with_capacity(n);
                 for (row_idx, _) in indexed {
-                    if let Some(row) = rows.get(row_idx) {
-                        out.push(row.clone());
+                    if let Some(row) =
+                        opt_rows.get_mut(row_idx).and_then(Option::take)
+                    {
+                        out.push(row);
                     }
                 }
                 out
@@ -425,6 +428,118 @@ mod tests {
             let paths2: Vec<_> =
                 rows2.iter().map(|r| r.file().path().to_path_buf()).collect();
             assert_eq!(paths1, paths2);
+        }
+
+        #[test]
+        fn topk_limit_zero_returns_no_rows() {
+            use std::fs;
+
+            use crate::{
+                IndexerService, QueryService,
+                query::{QueryBuilder, SourceSelector},
+            };
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            for i in 0..5 {
+                fs::write(
+                    temp.path().join(format!("note-{i}.md")),
+                    format!("---\nrating: {i}\n---\n"),
+                )
+                .expect("write note");
+            }
+            let index = std::sync::Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let rows = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort")
+                .limit(0)
+                .expect("valid limit");
+            assert!(rows.is_empty());
+        }
+
+        #[test]
+        fn topk_limit_at_or_above_row_count_returns_a_full_sort() {
+            use std::fs;
+
+            use crate::{
+                IndexerService, QueryService,
+                query::{QueryBuilder, SourceSelector},
+            };
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            for i in 0..5 {
+                fs::write(
+                    temp.path().join(format!("note-{i}.md")),
+                    format!("---\nrating: {}\n---\n", 4 - i),
+                )
+                .expect("write note");
+            }
+            let index = std::sync::Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let limited = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort")
+                .limit(100)
+                .expect("valid limit");
+            let sorted = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort");
+            let limited_ratings: Vec<_> = limited
+                .iter()
+                .map(|r| r.field("rating").expect("valid field"))
+                .collect();
+            let sorted_ratings: Vec<_> = sorted
+                .iter()
+                .map(|r| r.field("rating").expect("valid field"))
+                .collect();
+            assert_eq!(limited_ratings, sorted_ratings);
+        }
+
+        #[test]
+        fn topk_limit_equal_to_row_count_returns_a_full_sort() {
+            use std::fs;
+
+            use crate::{
+                IndexerService, QueryService,
+                query::{QueryBuilder, SourceSelector},
+            };
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            for i in 0..5 {
+                fs::write(
+                    temp.path().join(format!("note-{i}.md")),
+                    format!("---\nrating: {}\n---\n", 4 - i),
+                )
+                .expect("write note");
+            }
+            let index = std::sync::Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let limited = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort")
+                .limit(5)
+                .expect("valid limit");
+            let sorted = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All))
+                .sort("rating", false)
+                .expect("valid sort");
+            let limited_ratings: Vec<_> = limited
+                .iter()
+                .map(|r| r.field("rating").expect("valid field"))
+                .collect();
+            let sorted_ratings: Vec<_> = sorted
+                .iter()
+                .map(|r| r.field("rating").expect("valid field"))
+                .collect();
+            assert_eq!(limited_ratings, sorted_ratings);
+            assert_eq!(limited_ratings.len(), 5);
         }
     }
 }

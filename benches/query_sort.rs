@@ -53,7 +53,7 @@ mod common;
 use common::{
     content::{
         ProjectShape, duration_field_note_source, nullable_rating_note_source,
-        task_triplet_note_source,
+        task_triplet_note_source, title_field_note_source,
     },
     project::{build_index_arc, build_index_arc_from_note_source},
 };
@@ -64,8 +64,7 @@ use common::{
 
 const SORT_STRESS_FILE_COUNTS: &[usize] = &[5_000, 10_000, 20_000, 40_000];
 
-/// Replica of `SortKey::total_cmp`'s Number-vs-Number match arm, extracted to
-/// keep
+/// Replica of `SortKey::cmp`'s Number-vs-Number match arm, extracted to keep
 /// [`bench_sort_note_field_value_replica`]'s closure nesting within clippy's
 /// `excessive_nesting` threshold.
 fn replica_cmp(
@@ -395,9 +394,9 @@ fn bench_sort_f64_floor(c: &mut Criterion) {
 }
 
 /// Measures comparator dispatch cost on `NoteFieldValue` values with a replica
-/// of `SortKey::total_cmp`'s shape, swept over workspace size.
+/// of `SortKey::cmp`'s shape, swept over workspace size.
 ///
-/// The production comparator, `SortKey::total_cmp`, is `pub(crate)` in
+/// The production comparator, `SortKey::cmp`, is `pub(crate)` in
 /// `src/query/sort.rs` and unreachable from an external bench crate, so this
 /// replicates the exact arm structure the Number-vs-Number path exercises (enum
 /// `match` on both operands, then `f64::total_cmp`, with the `descending`
@@ -487,6 +486,52 @@ fn bench_sort_by_text(c: &mut Criterion) {
                 || {
                     QueryBuilder::pages(SourceSelector::All)
                         .sort("file.name", false)
+                        .expect("valid sort")
+                },
+                |query| QueryService::new("class").run(&index, query),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Measures sort cost by a frontmatter text field (`title`), swept over
+/// workspace size.
+///
+/// Mirrors [`bench_sort_by_text`] (which sorts by `file.name`, a `FileField`
+/// resolution path) for the frontmatter-`Metadata` resolution path. Both
+/// land on `SortKey::Text` after `SortKey::from_value_ref`'s date/duration
+/// parsing fallback fails to match the text.
+///
+/// Expected outcomes:
+/// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
+///   `n`; `str::cmp` is not meaningfully more expensive than `f64::total_cmp`.
+///
+/// Unexpected outcomes:
+/// - Cost significantly exceeds `sort_only`, indicating the date/duration
+///   parsing fallback in `SortKey::from_value_ref` is not short-circuiting
+///   cheaply for non-matching text.
+fn bench_sort_by_title(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run/sort_by_title");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            title_field_note_source(i)
+        });
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    QueryBuilder::pages(SourceSelector::All)
+                        .sort("title", false)
                         .expect("valid sort")
                 },
                 |query| QueryService::new("class").run(&index, query),
@@ -592,7 +637,7 @@ fn bench_sort_composite(c: &mut Criterion) {
 /// Measures sort cost over a field that is `Null` on 30% of rows, swept over
 /// workspace size.
 ///
-/// [`SortKey::total_cmp`] sorts `Null` below every other value; every other
+/// `SortKey::cmp` sorts `Null` below every other value; every other
 /// benchmark in this file resolves `rating` from frontmatter that always sets
 /// it, so the `Null`-sorts-below branch never fires at scale. This uses
 /// [`nullable_rating_note_source`], which omits the `rating` key entirely on 3
@@ -641,10 +686,10 @@ fn bench_sort_nullable(c: &mut Criterion) {
 /// over workspace size.
 ///
 /// Exercises `SortKey::Duration`'s `DurationSeconds` comparator, reached only
-/// after `SortKey::from_value_ref`/`from_owned` fail an ISO-date parse and
-/// succeed a `DurationValue::parse` on the field text - a different resolution
-/// path than the numeric `rating` field every other sort benchmark in this file
-/// uses.
+/// after `SortKey::from_value_ref` fails an ISO-date parse and succeeds a
+/// `DurationValue::parse` on the field text (a different resolution path
+/// than the numeric `rating` field every other sort benchmark in this file
+/// uses).
 ///
 /// Expected outcomes:
 /// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
@@ -739,6 +784,7 @@ criterion_group!(
     bench_sort_f64_floor,
     bench_sort_note_field_value_replica,
     bench_sort_by_text,
+    bench_sort_by_title,
     bench_sort_by_date,
     bench_sort_composite,
     bench_sort_nullable,

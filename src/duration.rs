@@ -270,6 +270,18 @@ impl DurationValue {
         self.seconds
     }
 
+    /// Returns `true` if `s` can begin a duration segment (a digit, or a
+    /// `+`/`-`/`.` immediately followed by one).
+    ///
+    /// `O(1)`: inspects at most the first three bytes. Lets callers skip
+    /// [`Self::parse`]'s allocating error path for text that plainly can't
+    /// be a duration, without duplicating the character-set rule it shares
+    /// with [`Self::parse`] and [`Self::parse_prefix`].
+    #[must_use]
+    pub(crate) fn can_start(s: &str) -> bool {
+        Self::can_start_duration_segment(s.as_bytes(), 0)
+    }
+
     /// Returns `true` if `bytes[pos]` can begin a numeric duration token.
     fn can_start_duration_segment(bytes: &[u8], pos: usize) -> bool {
         let Some(&b) = bytes.get(pos) else {
@@ -989,6 +1001,31 @@ mod tests {
                 #[case::empty("")]
                 fn rejects_invalid_prefix(#[case] input: &str) {
                     assert!(DurationValue::parse_prefix(input).is_none());
+                }
+            }
+
+            mod can_start {
+                use rstest::rstest;
+
+                use super::*;
+
+                #[rstest]
+                #[case::digit("1h")]
+                #[case::decimal_point(".5h")]
+                #[case::plus_sign("+1h")]
+                #[case::minus_sign("-30m")]
+                #[case::sign_with_decimal("+.5h")]
+                fn accepts_valid_start(#[case] input: &str) {
+                    assert!(DurationValue::can_start(input));
+                }
+
+                #[rstest]
+                #[case::non_numeric("hello")]
+                #[case::empty("")]
+                #[case::lone_sign("+")]
+                #[case::lone_decimal_point(".")]
+                fn rejects_invalid_start(#[case] input: &str) {
+                    assert!(!DurationValue::can_start(input));
                 }
             }
         }

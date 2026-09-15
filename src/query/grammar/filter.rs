@@ -13,12 +13,12 @@ use super::{
     },
 };
 use crate::{
-    LexError, LexTokenStream, LexedToken, NoteFieldValue, TokenSpec,
-    lexical_unquote,
+    LexError, LexTokenStream, LexedToken, NoteFieldValue, NoteFieldValueRef,
+    TokenSpec, lexical_unquote,
     query::{
         QueryRow,
         error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
-        sort::SortKey,
+        sort::TextShape,
         value::QueryFieldValueRef,
     },
 };
@@ -145,37 +145,54 @@ impl FilterFunction {
     }
 }
 
-/// Field comparison with a precomputed literal sort key.
+/// Field comparison against a literal value.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComparisonExpr {
     field: FieldPath,
     op: CompareOp,
-    key: SortKey,
     literal: NoteFieldValue,
 }
 
 impl ComparisonExpr {
-    /// Precomputes `literal`'s [`SortKey`] once for row evaluation.
+    /// Pre-classifies `literal`'s date/duration shape once, so `is_matching`
+    /// never re-runs text classification per row.
     pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
         literal: NoteFieldValue,
     ) -> Self {
-        let key = SortKey::from_owned(&literal);
         Self {
             field,
             op,
-            key,
-            literal,
+            literal: Self::classify_literal(literal),
         }
     }
 
+    /// Returns `true` if `row`'s field at `self.field` satisfies `self.op`
+    /// against `self.literal`.
     pub(super) fn is_matching(&self, row: &QueryRow) -> bool {
-        self.op.is_satisfied_by(
-            &row.resolve_ref(&self.field),
-            &self.key,
-            &self.literal,
-        )
+        self.op.is_satisfied_by(&row.resolve_ref(&self.field), &self.literal)
+    }
+
+    /// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
+    /// `Duration` when its text has that shape, once, at query-build time
+    /// (not per row). Only `NoteFieldValue::String` needs inspection: the
+    /// filter grammar's `Literal` token never produces `Date`/`DateTime`/
+    /// `Duration`/`Link`/`List`/`Object` directly (`Null`/`Bool`/`Number`/
+    /// `String` are its only literal shapes). Reuses [`TextShape::classify`]
+    /// (the same heuristic `SortKey::from_text` uses), so filter
+    /// literals and sort-key text classify identically, not via a second
+    /// hand-rolled copy.
+    fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
+        let NoteFieldValue::String(text) = &literal else {
+            return literal;
+        };
+        match TextShape::classify(text) {
+            TextShape::DateTime(value) => NoteFieldValue::DateTime(value),
+            TextShape::Date(value) => NoteFieldValue::Date(value),
+            TextShape::Duration(value) => NoteFieldValue::Duration(value),
+            TextShape::Plain => literal,
+        }
     }
 }
 
@@ -197,37 +214,37 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Applies ordering only when both sides have non-null matching sort-key
-    /// kinds; equality otherwise uses literal comparison.
+    /// `Eq`/`Ne` use `is_equal_to_literal`'s existing cross-kind coercion
+    /// (e.g. a `Date` field against a `DateTime` literal at midnight UTC).
+    /// `Lt`/`Le`/`Gt`/`Ge` use [`NoteFieldValueRef::compare`]'s full rank
+    /// order directly; a `Null` on either side never satisfies an ordering
+    /// comparison (matches today's behavior: a missing field never passes a
+    /// numeric/date threshold).
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
-        lit_key: &SortKey,
         literal: &NoteFieldValue,
     ) -> bool {
-        let val_key = SortKey::from_value_ref(field);
-        let comparable = val_key != SortKey::Null
-            && *lit_key != SortKey::Null
-            && std::mem::discriminant(&val_key)
-                == std::mem::discriminant(lit_key);
-        match self {
-            Self::Eq if !comparable => field.is_equal_to_literal(literal),
-            Self::Eq => val_key == *lit_key,
-            Self::Ne if !comparable => !field.is_equal_to_literal(literal),
-            Self::Ne => val_key != *lit_key,
-            _ if !comparable => false,
-            Self::Lt => val_key.total_cmp(lit_key) == std::cmp::Ordering::Less,
-            Self::Gt => {
-                val_key.total_cmp(lit_key) == std::cmp::Ordering::Greater
-            }
-            Self::Le => matches!(
-                val_key.total_cmp(lit_key),
-                std::cmp::Ordering::Less | std::cmp::Ordering::Equal
-            ),
-            Self::Ge => matches!(
-                val_key.total_cmp(lit_key),
-                std::cmp::Ordering::Greater | std::cmp::Ordering::Equal
-            ),
+        if matches!(self, Self::Eq | Self::Ne) {
+            let equal = field.is_equal_to_literal(literal);
+            return if matches!(self, Self::Eq) {
+                equal
+            } else {
+                !equal
+            };
+        }
+        let Some(field_ref) = field.as_note_ref() else {
+            return false;
+        };
+        if matches!(field_ref, NoteFieldValueRef::Null)
+            || matches!(literal, NoteFieldValue::Null)
+        {
+            return false;
+        }
+        match field_ref.compare(&literal.as_ref()) {
+            std::cmp::Ordering::Less => matches!(self, Self::Lt | Self::Le),
+            std::cmp::Ordering::Equal => matches!(self, Self::Le | Self::Ge),
+            std::cmp::Ordering::Greater => matches!(self, Self::Gt | Self::Ge),
         }
     }
 }
@@ -631,13 +648,39 @@ mod tests {
         }
 
         #[test]
-        fn type_mismatch_never_matches_ordering_or_equality() {
+        fn cross_kind_ordering_follows_canonical_rank() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = rated_outcome(temp.path());
 
-            let filtered = outcome.filter("status > 5").expect("valid filter");
+            // Text (rank 5) is greater than Number 5 (rank 2).
+            let filtered =
+                outcome.clone().filter("status > 5").expect("valid filter");
+            assert_eq!(names(&filtered), ["high", "low", "unrated"]);
 
-            assert!(filtered.is_empty());
+            // Number 5 is not greater than Text, so status < 5 matches nothing.
+            let below = outcome.filter("status < 5").expect("valid filter");
+            assert!(below.is_empty());
+        }
+
+        #[test]
+        fn mixed_kind_column_ordering_matches_sort_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("num_low.md", "---\nrating: 3\n---"),
+                ("num_high.md", "---\nrating: 7\n---"),
+                ("text.md", "---\nrating: gold\n---"),
+            ]);
+
+            // In canonical rank: Number < Text.
+            // rating > 5 matches num_high (7 > 5) and text ("gold" > 5 by
+            // rank).
+            let filtered =
+                outcome.clone().filter("rating > 5").expect("valid filter");
+            assert_eq!(names(&filtered), ["num_high", "text"]);
+
+            // sort rating asc orders: num_low (3), num_high (7), text ("gold").
+            let sorted = outcome.sort("rating", false).expect("valid sort");
+            assert_eq!(names(&sorted), ["num_low", "num_high", "text"]);
         }
 
         #[test]
@@ -666,17 +709,25 @@ mod tests {
         }
 
         #[test]
-        fn filters_with_null_literal() {
+        fn equal_null_matches_rows_with_a_null_field() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = rated_outcome(temp.path());
 
-            let with_null =
-                outcome.clone().filter("rating == null").expect("valid filter");
-            let without_null =
+            let filtered =
+                outcome.filter("rating == null").expect("valid filter");
+
+            assert_eq!(names(&filtered), ["unrated"]);
+        }
+
+        #[test]
+        fn not_equal_null_matches_rows_with_a_non_null_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered =
                 outcome.filter("rating != null").expect("valid filter");
 
-            assert_eq!(names(&with_null), ["unrated"]);
-            assert_eq!(names(&without_null), ["high", "low"]);
+            assert_eq!(names(&filtered), ["high", "low"]);
         }
 
         #[test]
@@ -967,31 +1018,51 @@ mod tests {
         }
     }
 
-    mod is_containing {
-        use pretty_assertions::assert_eq;
-
-        use crate::{
-            NoteFieldValue,
-            query::value::{QueryFieldValueRef, QueryListValueRef},
-        };
+    mod classify_literal {
+        use super::super::{ComparisonExpr, NoteFieldValue};
 
         #[test]
-        fn matches_identically_for_borrowed_and_owned_list_values() {
-            // Regression: Owned(List) must delegate to the same list
-            // containment logic as borrowed lists.
-            let items =
-                vec![NoteFieldValue::String("#book/fiction".to_owned())];
-            let target = NoteFieldValue::String("#book".to_owned());
+        fn promotes_iso_date_string_to_date_value() {
+            let lit = NoteFieldValue::String("2026-07-29".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert!(matches!(classified, NoteFieldValue::Date(_)));
+        }
 
-            let borrowed =
-                QueryFieldValueRef::List(QueryListValueRef::Values(&items))
-                    .is_containing(&target);
-            let owned =
-                QueryFieldValueRef::Owned(NoteFieldValue::List(items.into()))
-                    .is_containing(&target);
+        #[test]
+        fn promotes_iso_datetime_string_to_datetime_value() {
+            let lit = NoteFieldValue::String("2026-07-29T14:30:00".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert!(matches!(classified, NoteFieldValue::DateTime(_)));
+        }
 
-            assert_eq!(borrowed, owned);
-            assert!(borrowed, "#book must match #book/fiction by tag prefix");
+        #[test]
+        fn promotes_duration_string_to_duration_value() {
+            let lit = NoteFieldValue::String("1h30m".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert!(matches!(classified, NoteFieldValue::Duration(_)));
+        }
+
+        #[test]
+        fn preserves_plain_string_literal() {
+            let lit = NoteFieldValue::String("active".to_owned());
+            let classified = ComparisonExpr::classify_literal(lit);
+            assert_eq!(classified, NoteFieldValue::String("active".to_owned()));
+        }
+
+        #[test]
+        fn preserves_non_string_literals_unmodified() {
+            assert_eq!(
+                ComparisonExpr::classify_literal(NoteFieldValue::Number(42.0)),
+                NoteFieldValue::Number(42.0)
+            );
+            assert_eq!(
+                ComparisonExpr::classify_literal(NoteFieldValue::Bool(true)),
+                NoteFieldValue::Bool(true)
+            );
+            assert_eq!(
+                ComparisonExpr::classify_literal(NoteFieldValue::Null),
+                NoteFieldValue::Null
+            );
         }
     }
 }

@@ -121,10 +121,11 @@ pub use index::{
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
 };
+pub(crate) use note::NoteFieldType;
 pub use note::{
     List, ListItem, ListItemIter, ListItemType, ListText, MarkdownParserInput,
-    Note, NoteFieldValue, TaskDates, TaskListItem, TaskPriority,
-    parse_markdown,
+    Note, NoteFieldValue, NoteFieldValueRef, TaskDates, TaskListItem,
+    TaskPriority, parse_markdown,
 };
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;

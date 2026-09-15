@@ -168,6 +168,18 @@ pub(crate) fn duration_field_note_source(note_index: usize) -> String {
     )
 }
 
+/// Returns note content with one sortable frontmatter text field (`title`).
+///
+/// Titles use pseudo-randomized index order matching `plain_note_source`'s
+/// shuffle so timsort does not measure near-linear sorted input.
+pub(crate) fn title_field_note_source(note_index: usize) -> String {
+    format!(
+        "---\ntitle: Note {:06}\n---\n\n# Note {note_index}\nBody text for \
+         note {note_index}.\n",
+        (note_index.wrapping_mul(7).wrapping_add(3)) % 1_000_000
+    )
+}
+
 /// Returns note content with `links_per_note` wikilinks into the same
 /// workspace.
 ///
