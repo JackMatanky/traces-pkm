@@ -254,157 +254,6 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 }
 
 // ----------------------------------------------------------- //
-//               Benchmarks: Sort Decomposition                //
-// ----------------------------------------------------------- //
-/// Measures synthetic `QueryRow` inline move/permutation cost, isolated from
-/// comparisons and field resolution.
-///
-/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports inline
-/// `size_of::<QueryRow>() * n` bytes moved by the shuffle.
-///
-/// Fixture rows are produced through the public query API outside timing.
-///
-/// This does not measure total row memory footprint or the full sort
-/// reassembly path; it isolates the Fisher-Yates swap cost for cloned rows.
-///
-/// Expected outcomes:
-/// - Shuffle cost remains a small contextual component relative to sort-only
-///   cost at the same `n`.
-///
-/// Unexpected outcomes:
-/// - Shuffle cost approaches sort-only cost, indicating inline row size or row
-///   movement deserves inspection before comparator work.
-fn bench_permute_query_rows(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::run/permute_records");
-    group.plot_config(
-        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
-    );
-    group.measurement_time(Duration::from_secs(2));
-    for &n in SORT_STRESS_FILE_COUNTS {
-        if n >= 20_000 {
-            group.sample_size(10);
-        }
-        let index = build_index_arc(n, ProjectShape::Plain);
-        let base: Vec<QueryRow> = {
-            let set = QueryService::new("class")
-                .run(&index, QueryBuilder::pages(SourceSelector::All));
-            (0..set.len())
-                .map(|i| set.get(i).expect("row present").clone())
-                .collect()
-        };
-        group.throughput(Throughput::Bytes(
-            u64::try_from(n.saturating_mul(size_of::<QueryRow>()))
-                .expect("byte length fits u64"),
-        ));
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter_batched_ref(
-                || base.clone(),
-                |records| {
-                    let mut state = 0x853c_49e6_748f_ea9b_u64;
-                    lcg_shuffle(records, &mut state);
-                    black_box(&*records);
-                },
-                BatchSize::LargeInput,
-            );
-        });
-    }
-    group.finish();
-}
-
-/// Measures a synthetic comparator baseline: sorting `n` shuffled bare `f64`
-/// keys with `total_cmp`.
-///
-/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports key count.
-///
-/// Fixture keys are generated outside timing with deterministic shuffled
-/// ratings.
-///
-/// This is not a production lower bound: production sort also resolves keys,
-/// normalizes values, builds order/reassembly buffers, and permutes rows.
-///
-/// Expected outcomes:
-/// - Cost provides a stable broad anchor for raw numeric comparison work.
-///
-/// Unexpected outcomes:
-/// - Cost converges with production sort, indicating non-comparison overhead
-///   has shrunk or this synthetic floor no longer separates the paths.
-fn bench_sort_f64_floor(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::run/sort_f64_floor");
-    group.plot_config(
-        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
-    );
-    group.measurement_time(Duration::from_secs(2));
-    for &n in SORT_STRESS_FILE_COUNTS {
-        if n >= 20_000 {
-            group.sample_size(10);
-        }
-        group.throughput(Throughput::Elements(
-            u64::try_from(n).expect("note count fits u64"),
-        ));
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched_ref(
-                || shuffled_ratings(n),
-                |keys| {
-                    keys.sort_by(f64::total_cmp);
-                    black_box(&*keys);
-                },
-                BatchSize::SmallInput,
-            );
-        });
-    }
-    group.finish();
-}
-
-/// Measures a simplified synthetic `NoteFieldValue::Number` comparator shape.
-///
-/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports value count. Fixture
-/// values are generated outside timing from shuffled ratings.
-///
-/// The closure matches two `NoteFieldValue::Number` variants and calls
-/// `f64::total_cmp`; it is intentionally not the production `SortKey::cmp`
-/// implementation, which has normalization and sort-order plumbing.
-///
-/// Expected outcomes:
-/// - Cost stays near the bare-f64 anchor if enum matching adds little overhead
-///   in this synthetic path.
-///
-/// Unexpected outcomes:
-/// - Cost significantly exceeds the f64 anchor, indicating this synthetic enum
-///   match path deserves inspection before attributing production sort cost.
-fn bench_sort_note_field_value_replica(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::run/sort_value_replica");
-    group.plot_config(
-        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
-    );
-    group.measurement_time(Duration::from_secs(2));
-    let descending = false;
-    for &n in SORT_STRESS_FILE_COUNTS {
-        if n >= 20_000 {
-            group.sample_size(10);
-        }
-        group.throughput(Throughput::Elements(
-            u64::try_from(n).expect("note count fits u64"),
-        ));
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched_ref(
-                || {
-                    shuffled_ratings(n)
-                        .into_iter()
-                        .map(NoteFieldValue::Number)
-                        .collect::<Vec<_>>()
-                },
-                |keys| {
-                    keys.sort_by(|lhs, rhs| replica_cmp(lhs, rhs, descending));
-                    black_box(&*keys);
-                },
-                BatchSize::SmallInput,
-            );
-        });
-    }
-    group.finish();
-}
-
-// ----------------------------------------------------------- //
 //            Benchmarks: Sort Key Type Coverage               //
 // ----------------------------------------------------------- //
 /// Measures sort cost by a built-in text field (`file.name`) over plain page
@@ -724,19 +573,170 @@ fn bench_sort_task_rows(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//               Benchmarks: Sort Decomposition                //
+// ----------------------------------------------------------- //
+/// Measures synthetic `QueryRow` inline move/permutation cost, isolated from
+/// comparisons and field resolution.
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports inline
+/// `size_of::<QueryRow>() * n` bytes moved by the shuffle.
+///
+/// Fixture rows are produced through the public query API outside timing.
+///
+/// This does not measure total row memory footprint or the full sort reassembly
+/// path; it isolates the Fisher-Yates swap cost for cloned rows.
+///
+/// Expected outcomes:
+/// - Shuffle cost remains a small contextual component relative to sort-only
+///   cost at the same `n`.
+///
+/// Unexpected outcomes:
+/// - Shuffle cost approaches sort-only cost, indicating inline row size or row
+///   movement deserves inspection before comparator work.
+fn bench_permute_query_rows(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run/permute_records");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    group.measurement_time(Duration::from_secs(2));
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        let index = build_index_arc(n, ProjectShape::Plain);
+        let base: Vec<QueryRow> = {
+            let set = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
+            (0..set.len())
+                .map(|i| set.get(i).expect("row present").clone())
+                .collect()
+        };
+        group.throughput(Throughput::Bytes(
+            u64::try_from(n.saturating_mul(size_of::<QueryRow>()))
+                .expect("byte length fits u64"),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched_ref(
+                || base.clone(),
+                |records| {
+                    let mut state = 0x853c_49e6_748f_ea9b_u64;
+                    lcg_shuffle(records, &mut state);
+                    black_box(&*records);
+                },
+                BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Measures a synthetic comparator baseline: sorting `n` shuffled bare `f64`
+/// keys with `total_cmp`.
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports key count.
+///
+/// Fixture keys are generated outside timing with deterministic shuffled
+/// ratings.
+///
+/// This is not a production lower bound: production sort also resolves keys,
+/// normalizes values, builds order/reassembly buffers, and permutes rows.
+///
+/// Expected outcomes:
+/// - Cost provides a stable broad anchor for raw numeric comparison work.
+///
+/// Unexpected outcomes:
+/// - Cost converges with production sort, indicating non-comparison overhead
+///   has shrunk or this synthetic floor no longer separates the paths.
+fn bench_sort_f64_floor(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run/sort_f64_floor");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    group.measurement_time(Duration::from_secs(2));
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            b.iter_batched_ref(
+                || shuffled_ratings(n),
+                |keys| {
+                    keys.sort_by(f64::total_cmp);
+                    black_box(&*keys);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Measures a simplified synthetic `NoteFieldValue::Number` comparator shape.
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports value count. Fixture
+/// values are generated outside timing from shuffled ratings.
+///
+/// The closure matches two `NoteFieldValue::Number` variants and calls
+/// `f64::total_cmp`; it is intentionally not the production `SortKey::cmp`
+/// implementation, which has normalization and sort-order plumbing.
+///
+/// Expected outcomes:
+/// - Cost stays near the bare-f64 anchor if enum matching adds little overhead
+///   in this synthetic path.
+///
+/// Unexpected outcomes:
+/// - Cost significantly exceeds the f64 anchor, indicating this synthetic enum
+///   match path deserves inspection before attributing production sort cost.
+fn bench_sort_note_field_value_replica(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run/sort_value_replica");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    group.measurement_time(Duration::from_secs(2));
+    let descending = false;
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            b.iter_batched_ref(
+                || {
+                    shuffled_ratings(n)
+                        .into_iter()
+                        .map(NoteFieldValue::Number)
+                        .collect::<Vec<_>>()
+                },
+                |keys| {
+                    keys.sort_by(|lhs, rhs| replica_cmp(lhs, rhs, descending));
+                    black_box(&*keys);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sort_by_metadata,
     bench_topk_vs_full_sort,
-    bench_permute_query_rows,
-    bench_sort_f64_floor,
-    bench_sort_note_field_value_replica,
     bench_sort_by_text,
     bench_sort_by_title,
     bench_sort_by_date,
     bench_sort_composite,
     bench_sort_nullable,
     bench_sort_by_duration,
-    bench_sort_task_rows
+    bench_sort_task_rows,
+    bench_permute_query_rows,
+    bench_sort_f64_floor,
+    bench_sort_note_field_value_replica
 );
 criterion_main!(benches);

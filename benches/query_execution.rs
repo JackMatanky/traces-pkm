@@ -204,6 +204,79 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures [`QueryService::sync_and_run`] latency across source-selector
+/// selectivity over a persisted redb store.
+///
+/// Parameters: varies selector (`single_tag_point_lookup` vs.
+/// `full_vault_scan`) and note count; throughput is indexed entries traversed
+/// during sync, not output rows for the one-tag query.
+///
+/// Fixture: persisted tagged project is built outside timing. Each timed call
+/// runs the real persisted command path: sync/scan first, then store-backed
+/// query reads and row materialization.
+///
+/// Expected outcomes:
+/// - Both shapes include the shared O(n) sync prelude; after that,
+///   `single_tag_point_lookup` reads/materializes one matching note and
+///   `full_vault_scan` reads/materializes all notes.
+///
+/// Unexpected outcomes:
+/// - The one-tag path widens beyond the shared sync baseline as `n` grows,
+///   indicating `PATHS_BY_TAG` candidate lookup, store reads, or row
+///   materialization has regressed toward full-vault behavior.
+fn bench_sync_and_run_selectors(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::sync_and_run_selectors");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    let single_tag =
+        || SourceSelector::parse("#rare_0").expect("valid tag selector");
+    let all_pages = || SourceSelector::All;
+
+    for n in quick_file_counts() {
+        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("single_tag_point_lookup", n),
+            &n,
+            |b, _| {
+                b.iter_batched(
+                    || QueryBuilder::pages(single_tag()),
+                    |query| {
+                        black_box(
+                            service
+                                .sync_and_run(&indexer, query)
+                                .expect("sync_and_run succeeds"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("full_vault_scan", n),
+            &n,
+            |b, _| {
+                b.iter_batched(
+                    || QueryBuilder::pages(all_pages()),
+                    |query| {
+                        black_box(
+                            service
+                                .sync_and_run(&indexer, query)
+                                .expect("sync_and_run succeeds"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 // ----------------------------------------------------------- //
 //                 Benchmarks: Isolated Filter                 //
 // ----------------------------------------------------------- //
@@ -371,87 +444,14 @@ fn bench_into_iter_owned(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures [`QueryService::sync_and_run`] latency across source-selector
-/// selectivity over a persisted redb store.
-///
-/// Parameters: varies selector (`single_tag_point_lookup` vs.
-/// `full_vault_scan`) and note count; throughput is indexed entries traversed
-/// during sync, not output rows for the one-tag query.
-///
-/// Fixture: persisted tagged project is built outside timing. Each timed call
-/// runs the real persisted command path: sync/scan first, then store-backed
-/// query reads and row materialization.
-///
-/// Expected outcomes:
-/// - Both shapes include the shared O(n) sync prelude; after that,
-///   `single_tag_point_lookup` reads/materializes one matching note and
-///   `full_vault_scan` reads/materializes all notes.
-///
-/// Unexpected outcomes:
-/// - The one-tag path widens beyond the shared sync baseline as `n` grows,
-///   indicating `PATHS_BY_TAG` candidate lookup, store reads, or row
-///   materialization has regressed toward full-vault behavior.
-fn bench_sync_and_run_selectors(c: &mut Criterion) {
-    let mut group = c.benchmark_group("QueryService::sync_and_run_selectors");
-    group.plot_config(
-        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
-    );
-    let service = QueryService::new("class");
-    let single_tag =
-        || SourceSelector::parse("#rare_0").expect("valid tag selector");
-    let all_pages = || SourceSelector::All;
-
-    for n in quick_file_counts() {
-        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
-        group.throughput(Throughput::Elements(
-            u64::try_from(n).expect("note count fits u64"),
-        ));
-        group.bench_with_input(
-            BenchmarkId::new("single_tag_point_lookup", n),
-            &n,
-            |b, _| {
-                b.iter_batched(
-                    || QueryBuilder::pages(single_tag()),
-                    |query| {
-                        black_box(
-                            service
-                                .sync_and_run(&indexer, query)
-                                .expect("sync_and_run succeeds"),
-                        )
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("full_vault_scan", n),
-            &n,
-            |b, _| {
-                b.iter_batched(
-                    || QueryBuilder::pages(all_pages()),
-                    |query| {
-                        black_box(
-                            service
-                                .sync_and_run(&indexer, query)
-                                .expect("sync_and_run succeeds"),
-                        )
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_run_pages,
     bench_run_tasks,
     bench_run_pages_by_metadata,
+    bench_sync_and_run_selectors,
     bench_filter_by_metadata_field_count,
     bench_clone_query_set,
-    bench_into_iter_owned,
-    bench_sync_and_run_selectors
+    bench_into_iter_owned
 );
 criterion_main!(benches);

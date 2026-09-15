@@ -8,7 +8,11 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [raw markdown bytes] ──(parse_markdown)──► [Note { frontmatter, body, tasks }]
+//! [raw markdown bytes]
+//!   └──(parse_markdown)──► [Note]
+//!                           ├── frontmatter
+//!                           ├── body
+//!                           └── tasks
 //! ```
 //!
 //! ### Profiling Integration

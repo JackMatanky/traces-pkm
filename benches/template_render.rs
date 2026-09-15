@@ -10,8 +10,9 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [FileIndex] + [Template] + [Note] ──(TemplateService::render_to_file)──► [rendered output]
-//!                                         (DryRun — no disk write)
+//! [FileIndex] + [Template] + [Note]
+//!   └──(TemplateService::render_to_file)──► [rendered output]
+//!       (DryRun — no disk write)
 //! ```
 //!
 //! ### Profiling Integration

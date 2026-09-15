@@ -80,45 +80,6 @@ fn bench_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures BLAKE3 hashing over preallocated in-memory byte buffers.
-///
-/// Parameters: varies buffer size over `1kb`, `64kb`, and `1mb`; reports byte
-/// throughput. Fixture buffers are allocated outside timing. Timed work
-/// constructs a [`blake3::Hasher`], updates it with the buffer, and finalizes
-/// it.
-///
-/// Expected outcomes:
-/// - Cost is nondecreasing with buffer size and throughput stays broadly stable
-///   once fixed init/finalize overhead is amortized.
-///
-/// Unexpected outcomes:
-/// - Size-specific throughput degradation, indicating cache/memory hierarchy,
-///   update, or finalize behavior needs investigation.
-fn bench_memory_hash(c: &mut Criterion) {
-    let mut group = c.benchmark_group("blake3::memory_buffer");
-    for (label, size) in
-        [("1kb", 1024_usize), ("64kb", 64 * 1024), ("1mb", 1024 * 1024)]
-    {
-        group.throughput(Throughput::Bytes(
-            u64::try_from(size).expect("byte length fits u64"),
-        ));
-        let data = vec![0xAB_u8; size];
-        group.bench_with_input(
-            BenchmarkId::from_parameter(label),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(black_box(data));
-                    let hash = hasher.finalize();
-                    black_box(hash);
-                });
-            },
-        );
-    }
-    group.finish();
-}
-
 /// Measures path-hash cost over coupled short, medium, and deep path fixtures.
 ///
 /// Parameters: varies static path fixture; reports encoded path-byte
@@ -164,6 +125,44 @@ fn bench_path_hash(c: &mut Criterion) {
     }
     group.finish();
 }
+/// Measures BLAKE3 hashing over preallocated in-memory byte buffers.
+///
+/// Parameters: varies buffer size over `1kb`, `64kb`, and `1mb`; reports byte
+/// throughput. Fixture buffers are allocated outside timing. Timed work
+/// constructs a [`blake3::Hasher`], updates it with the buffer, and finalizes
+/// it.
+///
+/// Expected outcomes:
+/// - Cost is nondecreasing with buffer size and throughput stays broadly stable
+///   once fixed init/finalize overhead is amortized.
+///
+/// Unexpected outcomes:
+/// - Size-specific throughput degradation, indicating cache/memory hierarchy,
+///   update, or finalize behavior needs investigation.
+fn bench_memory_hash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("blake3::memory_buffer");
+    for (label, size) in
+        [("1kb", 1024_usize), ("64kb", 64 * 1024), ("1mb", 1024 * 1024)]
+    {
+        group.throughput(Throughput::Bytes(
+            u64::try_from(size).expect("byte length fits u64"),
+        ));
+        let data = vec![0xAB_u8; size];
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &data,
+            |b, data| {
+                b.iter(|| {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(black_box(data));
+                    let hash = hasher.finalize();
+                    black_box(hash);
+                });
+            },
+        );
+    }
+    group.finish();
+}
 
-criterion_group!(benches, bench_file_hash, bench_memory_hash, bench_path_hash);
+criterion_group!(benches, bench_file_hash, bench_path_hash, bench_memory_hash);
 criterion_main!(benches);

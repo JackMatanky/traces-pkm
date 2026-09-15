@@ -11,7 +11,8 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [Parsed Notes + Files] ──(InlinkMap::new)──► [InlinkMap] ──(.inlinks_of)──► [Box<[PathBuf]>]
+//! [Parsed Notes + Files] ──(InlinkMap::new)──► [InlinkMap]
+//! [InlinkMap] ──(.inlinks_of)──► [Box<[PathBuf]>]
 //! ```
 //!
 //! ### Profiling Integration

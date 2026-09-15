@@ -138,6 +138,34 @@ fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
     })
 }
 
+fn setup_single_tag_upsert(n: usize) -> (TempDir, IndexerService) {
+    let (temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
+    let mut content = tagged_note_source(0);
+    content.push_str("\nAdded #common #topic/updated #new_tag.\n");
+    rewrite_note(temp.path(), ProjectShape::Tagged, 0, n, &content);
+    (temp, indexer)
+}
+
+fn setup_many_rich_upserts(
+    n: usize,
+    changed: usize,
+) -> (TempDir, IndexerService) {
+    let (temp, indexer) =
+        setup_persisted_project(n, ProjectShape::RichRealistic);
+    for i in 0..changed.min(n) {
+        let mut content = rich_note_source(i, n);
+        content.push_str("\nChanged in many-upsert benchmark.\n");
+        rewrite_note(temp.path(), ProjectShape::RichRealistic, i, n, &content);
+    }
+    (temp, indexer)
+}
+
+fn setup_single_rich_delete(n: usize) -> (TempDir, IndexerService) {
+    let (temp, indexer) = setup_persisted_project(n, ProjectShape::DeleteHeavy);
+    remove_note(temp.path(), ProjectShape::DeleteHeavy, 0);
+    (temp, indexer)
+}
+
 // ----------------------------------------------------------- //
 //                   Benchmarks: Index Build                   //
 // ----------------------------------------------------------- //
@@ -448,34 +476,6 @@ fn bench_sync_and_run(c: &mut Criterion) {
         );
     }
     group.finish();
-}
-
-fn setup_single_tag_upsert(n: usize) -> (TempDir, IndexerService) {
-    let (temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
-    let mut content = tagged_note_source(0);
-    content.push_str("\nAdded #common #topic/updated #new_tag.\n");
-    rewrite_note(temp.path(), ProjectShape::Tagged, 0, n, &content);
-    (temp, indexer)
-}
-
-fn setup_many_rich_upserts(
-    n: usize,
-    changed: usize,
-) -> (TempDir, IndexerService) {
-    let (temp, indexer) =
-        setup_persisted_project(n, ProjectShape::RichRealistic);
-    for i in 0..changed.min(n) {
-        let mut content = rich_note_source(i, n);
-        content.push_str("\nChanged in many-upsert benchmark.\n");
-        rewrite_note(temp.path(), ProjectShape::RichRealistic, i, n, &content);
-    }
-    (temp, indexer)
-}
-
-fn setup_single_rich_delete(n: usize) -> (TempDir, IndexerService) {
-    let (temp, indexer) = setup_persisted_project(n, ProjectShape::DeleteHeavy);
-    remove_note(temp.path(), ProjectShape::DeleteHeavy, 0);
-    (temp, indexer)
 }
 
 /// Measures refresh cost for richer mutation shapes using only public lifecycle
