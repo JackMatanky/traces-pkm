@@ -48,14 +48,14 @@ use common::{
     notes::parse_note,
 };
 
-#[inline]
-fn bench_parse(path: &std::path::Path, src: &str) -> Note {
-    parse_note(path, src)
-}
-
 // ----------------------------------------------------------- //
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
+
+#[inline]
+fn parse_fixture(path: &std::path::Path, src: &str) -> Note {
+    parse_note(path, src)
+}
 
 const SMALL: &str = "# Title\n\nA short note with one paragraph.\n";
 
@@ -213,6 +213,13 @@ fn task_metadata_source(count: usize) -> String {
 
 /// Measures pure prose parsing cost across byte sizes, serving as a baseline
 /// subtracted from composite note parsing costs.
+///
+/// Expected outcomes:
+/// - Cost scales linearly with byte count (throughput roughly flat in bytes/s).
+///
+/// Unexpected outcomes:
+/// - Super-linear scaling with byte count, indicating quadratic text scanning
+///   or per-line allocation growth in the lexer.
 fn bench_parse_markdown_prose_floor(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::prose_floor");
     let path = std::path::Path::new("note.md");
@@ -228,7 +235,7 @@ fn bench_parse_markdown_prose_floor(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -265,7 +272,7 @@ fn bench_parse_markdown(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -273,9 +280,8 @@ fn bench_parse_markdown(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures parsing cost across varied real-world PKM document topologies:
-/// code blocks, heavy frontmatter, dense wikilinks, and isolated task
-/// checklists.
+/// Measures parsing cost across varied real-world PKM document topologies: code
+/// blocks, heavy frontmatter, dense wikilinks, and isolated task checklists.
 ///
 /// Expected outcomes:
 /// - Code-block-heavy notes parse faster than wikilink-heavy notes, since
@@ -304,7 +310,7 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -316,6 +322,13 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
 ///
 /// Isolates per-item position-tracking overhead (`ByteTracker::byte_to_line`,
 /// `ListItemPosition` construction) from prose/frontmatter bulk.
+///
+/// Expected outcomes:
+/// - Cost scales linearly with item count; per-item overhead stays flat.
+///
+/// Unexpected outcomes:
+/// - Super-linear scaling with item count, indicating position lookups
+///   re-scanning the document per item instead of tracking incrementally.
 fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::list_item_scaling");
     let path = std::path::Path::new("note.md");
@@ -330,7 +343,7 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -342,6 +355,13 @@ fn bench_parse_markdown_list_item_scaling(c: &mut Criterion) {
 ///
 /// Confirms that `ListItemPosition.parent` remains O(1) stack-top access
 /// regardless of list nesting depth.
+///
+/// Expected outcomes:
+/// - Cost is roughly flat across depths 1 through 50 at a fixed item count.
+///
+/// Unexpected outcomes:
+/// - Cost growing with nesting depth, indicating parent lookup walking the
+///   ancestor chain instead of reading the stack top.
 fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::nesting_depth");
     let path = std::path::Path::new("note.md");
@@ -357,7 +377,7 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -367,6 +387,14 @@ fn bench_parse_markdown_nesting_depth(c: &mut Criterion) {
 
 /// Measures `ByteTracker`'s `match_indices('\n')` scan and line-start table
 /// construction by varying line length at a fixed 50KB total document size.
+///
+/// Expected outcomes:
+/// - Cost is roughly flat across line lengths (total bytes are constant, so the
+///   newline scan dominates identically).
+///
+/// Unexpected outcomes:
+/// - Long lines costing disproportionately more, indicating per-character
+///   processing instead of a bulk byte scan.
 fn bench_parse_markdown_line_density(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::line_density");
     let path = std::path::Path::new("note.md");
@@ -382,7 +410,7 @@ fn bench_parse_markdown_line_density(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -441,7 +469,7 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -456,6 +484,10 @@ fn bench_parse_markdown_task_marker_variants(c: &mut Criterion) {
 ///
 /// Expected outcomes:
 /// - Cost scales linearly with marker count; per-marker overhead stays flat.
+///
+/// Unexpected outcomes:
+/// - Super-linear scaling with marker count, indicating marker classification
+///   re-processing earlier items or re-lexing the whole document.
 fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown::task_marker_scaling");
     let path = std::path::Path::new("note.md");
@@ -470,7 +502,7 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );
@@ -482,6 +514,13 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
 /// [`FRONTMATTER_FIELD_COUNTS`].
 ///
 /// Isolates YAML field parsing from body text processing.
+///
+/// Expected outcomes:
+/// - Cost scales linearly with field count; per-field overhead stays flat.
+///
+/// Unexpected outcomes:
+/// - Super-linear scaling with field count, indicating per-field re-parsing of
+///   the frontmatter block or quadratic map growth.
 fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("parse_markdown::frontmatter_field_scaling");
@@ -497,7 +536,7 @@ fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
             &source,
             |b, source| {
                 b.iter_with_large_drop(|| {
-                    black_box(bench_parse(black_box(path), black_box(source)))
+                    black_box(parse_fixture(black_box(path), black_box(source)))
                 });
             },
         );

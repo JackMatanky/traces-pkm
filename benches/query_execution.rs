@@ -48,7 +48,11 @@ use common::{
     content::{
         ProjectShape, metadata_lookup_note_source, task_triplet_note_source,
     },
-    project::{build_index_arc, build_index_arc_from_note_source},
+    project::{
+        build_index_arc, build_index_arc_from_note_source,
+        setup_persisted_project,
+    },
+    quick_file_counts,
 };
 
 // ----------------------------------------------------------- //
@@ -69,10 +73,10 @@ const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
 /// would miss.
 ///
 /// Expected outcomes:
-/// - Constant-time execution regardless of index size (all notes match).
+/// - Linear O(n) execution with note count (~4.7 ns per row materialization).
 ///
 /// Unexpected outcomes:
-/// - Linear or worse scaling with note count, indicating unindexed scans or
+/// - Super-linear scaling with note count, indicating unindexed scans or
 ///   redundant allocation per row.
 fn bench_run_pages(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run");
@@ -218,8 +222,8 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
 /// "case-mismatched query candidate" benchmark here expecting it to exercise
 /// that fallback: it cannot, by construction.
 ///
-/// Distinct from [`bench_run_pages_by_metadata`], which combines filter
-/// and sort and never varies field count, so it cannot distinguish a filter
+/// Distinct from [`bench_run_pages_by_metadata`], which combines filter and
+/// sort and never varies field count, so it cannot distinguish a filter
 /// regression from a sort regression, or an O(K)-scan regression from a flat
 /// O(1) lookup at any field count.
 ///
@@ -267,16 +271,14 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 //             Benchmarks: Template Chain Overhead             //
 // ----------------------------------------------------------- //
 
-/// Measures the cost of cloning a `QuerySet`, swept over workspace
-/// size.
+/// Measures the cost of cloning a `QuerySet`, swept over workspace size.
 ///
 /// `src/template/engine/query.rs`'s `Object::call_method` for `QuerySet` clones
 /// the entire outcome (`self.as_ref().clone()`) on every non-terminal chained
 /// call (`.where`/`.filter`/`.sort`/`.limit`/ `.group_by`/`.flatten`).
 /// `QuerySet::base` is `Arc<Vec<QueryRow>>`, so `#[derive(Clone)]` clones an
-/// `Arc` pointer (and a short pending-plan `Vec`), not the row data; this
-/// benchmark confirms that claim directly, rather than through the
-/// `Vec<QueryRow>` proxy the pre-redesign version used.
+/// `Arc` pointer (and a short pending-plan `Vec`), not the row data. This
+/// benchmark confirms that claim directly against the live type.
 ///
 /// Expected outcomes:
 /// - Cost is small and roughly constant across workspace sizes (an `Arc`
@@ -382,6 +384,88 @@ fn bench_into_iter_owned(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures `QueryService::sync_and_run` latency for two source selectors over
+/// a persisted redb store:
+///
+/// - `single_tag_point_lookup`: a `#rare_0` tag selector that matches exactly
+///   one note, exercising the `PATHS_BY_TAG` inverted index and batch reads of
+///   a single row.
+/// - `full_vault_scan`: `SourceSelector::All`, exercising batch reads of every
+///   indexed row.
+///
+/// Unlike in-memory `QueryService::run`, this exercises the real CLI command
+/// path: inverted-index lookup, `NOTES`/`FILES`/`LINKS` batch reads, and
+/// `FileIndex::assemble`. For a single-edit variant of the same path, see
+/// `index_lifecycle.rs`'s `QueryService::sync_and_run` group, which differs by
+/// keeping the fixture setup outside the timed call and measuring edit deltas.
+///
+/// ### Expected outcomes
+///
+/// - `single_tag_point_lookup` cost stays roughly flat as `n` grows: the
+///   inverted index narrows to one path regardless of vault size.
+/// - `full_vault_scan` cost scales linearly with `n`: batch reads touch every
+///   indexed row.
+///
+/// ### Unexpected outcomes
+///
+/// - `single_tag_point_lookup` cost growing with `n`, indicating the tag
+///   selector resolving by full-table scan instead of the `PATHS_BY_TAG`
+///   multimap.
+/// - `full_vault_scan` cost growing super-linearly, indicating repeated
+///   per-path transactions instead of one batch read per table.
+fn bench_sync_and_run_selectors(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::sync_and_run_selectors");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    let single_tag =
+        || SourceSelector::parse("#rare_0").expect("valid tag selector");
+    let all_pages = || SourceSelector::All;
+
+    for n in quick_file_counts() {
+        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("single_tag_point_lookup", n),
+            &n,
+            |b, _| {
+                b.iter_batched(
+                    || QueryBuilder::pages(single_tag()),
+                    |query| {
+                        black_box(
+                            service
+                                .sync_and_run(&indexer, query)
+                                .expect("sync_and_run succeeds"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("full_vault_scan", n),
+            &n,
+            |b, _| {
+                b.iter_batched(
+                    || QueryBuilder::pages(all_pages()),
+                    |query| {
+                        black_box(
+                            service
+                                .sync_and_run(&indexer, query)
+                                .expect("sync_and_run succeeds"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_run_pages,
@@ -389,6 +473,7 @@ criterion_group!(
     bench_run_pages_by_metadata,
     bench_filter_by_metadata_field_count,
     bench_clone_query_set,
-    bench_into_iter_owned
+    bench_into_iter_owned,
+    bench_sync_and_run_selectors
 );
 criterion_main!(benches);

@@ -1,14 +1,17 @@
-//! Temporary project and index fixtures for filesystem benchmarks.
+//! Temporary project fixtures for filesystem benchmarks, plus in-memory index
+//! fixtures for query benchmarks.
 //!
-//! Use this module only when the measured path needs a real directory tree,
-//! scanner output, persisted `index.redb`, or filesystem-backed attachments.
-//! For pure parser/link-graph benchmarks, use [`super::content`] and
-//! [`super::notes`] so the benchmark setup stays cheaper and clearer.
+//! Two fixture families live here:
 //!
-//! Every public helper that returns a [`TempDir`] expects the caller to keep it
-//! alive for the full measured operation. Helpers that return only a
-//! [`FileIndex`] intentionally drop the temporary project after indexing; use
-//! those when query execution should not include filesystem lifetime concerns.
+//! - **Filesystem fixtures** (`create_project`, `setup_persisted_project`,
+//!   `setup_unpersisted_project`): a real directory tree, scanner output, and
+//!   persisted `index.redb`. Use these only when the measured path needs disk.
+//!   Every helper returning a [`TempDir`] expects the caller to keep it alive
+//!   for the full measured operation.
+//! - **In-memory fixtures** (`build_index`, `build_index_arc`,
+//!   `build_index_arc_from_note_source`): a [`FileIndex`] assembled entirely on
+//!   the heap via `FileIndex::new_test`, with zero disk I/O. Use these for
+//!   query, sort, and filter benchmarks.
 //!
 //! Do not add ad-hoc path-writing helpers. All writes must flow through
 //! `write_text_file` or `write_binary_file`, which reject absolute paths and
@@ -105,49 +108,37 @@ pub(crate) fn create_project(
     }
     temp
 }
-/// Creates a temporary project from generated note content.
+/// Builds an in-memory [`FileIndex`] for a `ProjectShape` without touching
+/// the filesystem.
 ///
-/// `note_source` receives `(note_index, note_count)` and must return full
-/// Markdown note content. Notes are written as `note-{i}.md` under the returned
-/// [`TempDir`].
+/// - Notes are parsed on the heap via `FileIndex::new_test`.
+/// - File records carry each source's exact byte length.
+/// - Inbound links are compiled in-process.
 ///
-/// # Panics
-///
-/// Panics if the temporary directory cannot be created or a fixture note cannot
-/// be written.
-fn create_project_from_note_source(
-    note_count: usize,
-    note_source: impl Fn(usize, usize) -> String,
-) -> TempDir {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    for i in 0..note_count {
-        let path = PathBuf::from(format!("note-{i}.md"));
-        write_text_file(temp.path(), &path, &note_source(i, note_count));
-    }
-    temp
-}
-
-/// Builds an in-memory [`FileIndex`] from a temporary project.
-///
-/// Use this for query benchmarks that do not need the project directory after
-/// the index has been constructed.
-///
-/// # Panics
-///
-/// Panics if the temporary project cannot be created or indexed.
+/// Use this for query, sort, and filter benchmarks. Fixture setup is excluded
+/// from measurements: call this once before the benchmark loop and clone the
+/// returned `Arc` inside iterations.
 pub(crate) fn build_index(note_count: usize, shape: ProjectShape) -> FileIndex {
-    let temp = create_project(note_count, shape);
-    IndexerService::new(temp.path()).build().expect("build index")
+    let pairs: Vec<(String, String)> = (0..note_count)
+        .map(|i| {
+            (
+                note_path(shape, i).display().to_string(),
+                note_source(shape, i, note_count),
+            )
+        })
+        .collect();
+    let refs: Vec<(&str, &str)> =
+        pairs.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    FileIndex::new_test(&refs)
 }
-
-/// Builds a shareable [`FileIndex`] from a temporary project.
+/// Builds a shareable, in-memory [`FileIndex`] for a `ProjectShape`.
 ///
-/// The temporary project is deleted after the index is built; clone the
-/// returned [`Arc`] inside Criterion iterations.
+/// Clone the returned [`Arc`] inside Criterion iterations to exclude fixture
+/// setup from the measurement.
 ///
 /// # Panics
 ///
-/// Panics if the temporary project cannot be created or indexed.
+/// Panics if a generated note path or source is malformed.
 pub(crate) fn build_index_arc(
     note_count: usize,
     shape: ProjectShape,
@@ -157,28 +148,28 @@ pub(crate) fn build_index_arc(
 
 /// Builds an in-memory [`FileIndex`] from generated note content.
 ///
-/// `note_source` receives `(note_index, note_count)`. The temporary project is
-/// deleted after the index is built.
-///
-/// # Panics
-///
-/// Panics if the temporary project cannot be created or indexed.
+/// `note_source` receives `(note_index, note_count)` and must return full
+/// Markdown content. Notes are written as `note-{i}.md` in memory only.
 fn build_index_from_note_source(
     note_count: usize,
     note_source: impl Fn(usize, usize) -> String,
 ) -> FileIndex {
-    let temp = create_project_from_note_source(note_count, note_source);
-    IndexerService::new(temp.path()).build().expect("build index")
+    let pairs: Vec<(String, String)> = (0..note_count)
+        .map(|i| (format!("note-{i}.md"), note_source(i, note_count)))
+        .collect();
+    let refs: Vec<(&str, &str)> =
+        pairs.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    FileIndex::new_test(&refs)
 }
 
-/// Builds a shareable [`FileIndex`] from generated note content.
+/// Builds a shareable, in-memory [`FileIndex`] from generated note content.
 ///
 /// Clone the returned [`Arc`] inside Criterion iterations to exclude fixture
 /// setup from the measurement.
 ///
 /// # Panics
 ///
-/// Panics if the temporary project cannot be created or indexed.
+/// Panics if a generated note path or source is malformed.
 pub(crate) fn build_index_arc_from_note_source(
     note_count: usize,
     note_source: impl Fn(usize, usize) -> String,

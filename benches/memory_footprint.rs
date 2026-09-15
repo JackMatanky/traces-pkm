@@ -40,6 +40,16 @@ use common::{
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
+/// Measures net heap bytes and allocation counts for `parse_markdown` across
+/// list-item and frontmatter-field fixture sizes, printed to stderr per size.
+///
+/// Expected outcomes:
+/// - Net bytes and allocation counts scale linearly with fixture size.
+///
+/// Unexpected outcomes:
+/// - A size tier jumping disproportionately in bytes or allocation count,
+///   indicating an unexpected buffer duplication or per-item allocation in the
+///   parser.
 fn bench_note_construction_allocation(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory/note_construction");
     group.sample_size(10);
@@ -89,6 +99,15 @@ fn bench_note_construction_allocation(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures net heap bytes and allocation counts for `IndexerService::build`
+/// across workspace sizes, printed to stderr per size.
+///
+/// Expected outcomes:
+/// - Net bytes scale roughly linearly with note count.
+///
+/// Unexpected outcomes:
+/// - Bytes growing super-linearly with note count, indicating duplicated note
+///   storage or unbounded intermediate collections during indexing.
 fn bench_file_index_footprint(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory/file_index_build");
     group.sample_size(10);

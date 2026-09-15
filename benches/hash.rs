@@ -83,8 +83,8 @@ fn bench_file_hash(c: &mut Criterion) {
 
 /// Measures pure in-memory BLAKE3 CPU hashing throughput over byte buffers.
 ///
-/// Isolates the CPU SIMD hashing pipeline from filesystem read syscalls and
-/// OS page-cache lookups.
+/// Isolates the CPU SIMD hashing pipeline from filesystem read syscalls and OS
+/// page-cache lookups.
 ///
 /// Expected outcomes:
 /// - Cost scales proportionally with buffer size.

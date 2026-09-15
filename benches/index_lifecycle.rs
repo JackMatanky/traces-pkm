@@ -350,44 +350,54 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 
 /// Measures the cold-read sync-and-query path ([`QueryService::sync_and_run`])
 /// used by `traces list`/`table`/`task` when a query selects a small subset of
-/// a large vault: a persisted-store diff-and-persist step followed by a
-/// store-scoped query resolved through the `PATHS_BY_TAG` multimap, without
-/// ever materializing a full [`FileIndex`] or decoding a note the query doesn't
-/// match.
+/// a large vault.
+///
+/// Each call performs:
+///
+/// - A persisted-store diff-and-persist step (no-op or single-edit).
+/// - A store-scoped query resolved through the `PATHS_BY_TAG` multimap.
+///
+/// The query never materializes a full [`FileIndex`] and never decodes a note
+/// the query does not match.
+///
+/// ### Setup
 ///
 /// Queries a tag unique to note `0` (`#rare_0`, see [`tagged_note_source`]), so
-/// exactly one note matches regardless of `n` - the "cold CLI query against a
-/// large vault, one match" shape Phase 8 targets. Complements
+/// exactly one note matches regardless of `n`. Complements
 /// [`bench_file_index_refresh`]'s `FileIndex::refresh` group, which necessarily
-/// decodes every persisted Note to build a full `FileIndex` (that
-/// materialization is `refresh`'s documented contract, and its cost is expected
-/// to scale with `n` regardless of this change).
+/// decodes every persisted note to build a full [`FileIndex`].
 ///
-/// The "no-op" cost is *not* sub-millisecond, even for a tiny matching set:
-/// every call still re-scans the project's filesystem tree and diffs every
-/// persisted [`FileBase`] to detect whether anything changed - that scan and
-/// diff is O(vault size) by construction (there is no filesystem-watcher layer
-/// here) and dominates wall-clock time at scale (~74ms at 20,000 files, matched
-/// almost exactly by `FileIndex::refresh/no-op`'s own cost). An earlier
-/// measurement of this floor reported ~1.1s: that number was a benchmark
-/// artifact, not a real cost - the "no-op"/"single-edit" routines previously
-/// took `(TempDir, IndexerService)` by value via `iter_batched` without
-/// returning it, so each iteration's `TempDir::drop` (recursively deleting the
-/// fixture's thousands of files) ran *inside* the timed call. Fixed by
-/// switching to `iter_batched_ref`, which never gives the routine ownership of
-/// the fixture. What this group isolates is the cost *above* that unavoidable
-/// scan-and-diff baseline.
+/// ### Known Cost Floor
 ///
-/// Expected outcomes:
+/// The "no-op" cost is *not* sub-millisecond, even for a tiny matching set.
+/// Every call re-scans the project's filesystem tree and diffs every persisted
+/// [`FileBase`] to detect whether anything changed. That scan and diff is
+/// O(vault size) by construction (there is no filesystem-watcher layer here)
+/// and dominates wall-clock time at scale (~74ms at 20,000 files, matched
+/// almost exactly by `FileIndex::refresh/no-op`'s own cost).
+///
+/// An earlier measurement of this floor reported ~1.1s. That number was a
+/// benchmark artifact, not a real cost: the "no-op"/"single-edit" routines
+/// previously took `(TempDir, IndexerService)` by value via `iter_batched`
+/// without returning it, so each iteration's `TempDir::drop` (recursively
+/// deleting the fixture's thousands of files) ran *inside* the timed call.
+/// `iter_batched_ref` fixes this by never giving the routine ownership of the
+/// fixture.
+///
+/// What this group isolates is the cost *above* that unavoidable scan-and-diff
+/// baseline.
+///
+/// ### Expected outcomes
+///
 /// - Single-note-edit cost stays within measurement noise of the no-op baseline
-///   at every scale (observed: ~3% overhead at 20,000 notes), proving
+///   at every scale (observed: ~3% overhead at 20,000 notes). This proves
 ///   inlink/tag/class maintenance for the edited note does not scan the whole
-///   vault, and the narrow query itself does not decode or return notes it
-///   didn't match.
+///   vault, and the narrow query itself does not decode notes it did not match.
 ///
-/// Unexpected outcomes:
+/// ### Unexpected outcomes
+///
 /// - Single-edit cost growing measurably faster than the no-op baseline as `n`
-///   grows, indicating a full recompute, full-table scan, or full `FileIndex`
+///   grows, indicating a full recompute, full-table scan, or full [`FileIndex`]
 ///   materialization snuck back into the sync or query path.
 fn bench_sync_and_run(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::sync_and_run");

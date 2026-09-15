@@ -120,6 +120,21 @@ impl FileBase {
         Self::new_test(path, folder, FileFormat::Note)
     }
 
+    /// Builds a [`FileBase`] for a Markdown note with custom paths and byte
+    /// size for test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn new_note_with_size_test(
+        path: PathBuf,
+        folder: PathBuf,
+        size: u64,
+    ) -> Self {
+        let mut file = Self::new_test(path, folder, FileFormat::Note);
+        file.size = size;
+        file
+    }
+
     /// Returns the file's path, relative to the project root.
     #[inline]
     #[must_use]

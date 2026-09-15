@@ -243,8 +243,9 @@ fn bench_inlink_map_collision_candidates(c: &mut Criterion) {
 /// - Target-row iteration scales with unique targets.
 /// - Source-edge iteration scales with total inbound edges.
 ///
-/// Unexpected outcomes: Microsecond or higher point-lookup latencies,
-/// indicating unexpected hashing overhead or heap allocations.
+/// Unexpected outcomes:
+/// - Microsecond or higher point-lookup latencies, indicating unexpected
+///   hashing overhead or heap allocations.
 fn bench_inlink_map_accessors(c: &mut Criterion) {
     let mut group = c.benchmark_group("InlinkMap::accessors");
     let n = 1_000;

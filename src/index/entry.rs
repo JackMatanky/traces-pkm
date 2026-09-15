@@ -31,7 +31,67 @@ impl FileIndex {
     }
 
     /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn assemble(
+        files: Vec<FileBase>,
+        notes: Vec<Note>,
+        inlinks: InlinkMap,
+    ) -> Self {
+        Self::assemble_internal(files, notes, inlinks)
+    }
+
+    /// Builds an in-memory index from `(path, markdown_source)` pairs for test
+    /// fixtures.
+    ///
+    /// Available in unit tests and under the `test-utils` feature for
+    /// integration tests/benches.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn new_test(notes: &[(&str, &str)]) -> Self {
+        let mut items = Vec::with_capacity(notes.len());
+        items.extend(notes.iter().map(|(path_str, src)| {
+            let p = std::path::Path::new(path_str);
+            let note = crate::parse_markdown(
+                &crate::MarkdownParserInput::for_test(p, src),
+            );
+            let size = u64::try_from(src.len()).unwrap_or(u64::MAX);
+            (note, size)
+        }));
+        items.sort_by(|(a, _), (b, _)| a.path().cmp(b.path()));
+
+        let mut parsed = Vec::with_capacity(items.len());
+        let mut files = Vec::with_capacity(items.len());
+        for (note, size) in items {
+            files.push(FileBase::new_note_with_size_test(
+                note.path().to_path_buf(),
+                note.path()
+                    .parent()
+                    .map_or_else(PathBuf::new, std::path::Path::to_path_buf),
+                size,
+            ));
+            parsed.push(note);
+        }
+
+        let inlinks = InlinkMap::new(&parsed, &files);
+        Self::assemble(files, parsed, inlinks)
+    }
+
+    /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
+    #[cfg(not(any(test, feature = "test-utils")))]
+    #[inline]
+    #[must_use]
     pub(crate) fn assemble(
+        files: Vec<FileBase>,
+        notes: Vec<Note>,
+        inlinks: InlinkMap,
+    ) -> Self {
+        Self::assemble_internal(files, notes, inlinks)
+    }
+
+    fn assemble_internal(
         files: Vec<FileBase>,
         notes: Vec<Note>,
         inlinks: InlinkMap,
@@ -467,6 +527,43 @@ mod tests {
                 postcard::from_bytes(&bytes).expect("deserialize list entry");
 
             assert_eq!(decoded, entry);
+        }
+    }
+
+    mod new_test {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn assembles_index_from_note_tuples() {
+            let index = FileIndex::new_test(&[
+                ("a.md", "# A\nLink to [[b]]"),
+                ("b.md", "# B"),
+            ]);
+
+            assert_eq!(index.entries().len(), 2);
+            let a = index.entry_at(RowIndex::new(0));
+            assert_eq!(a.file().name().as_str(), "a");
+            assert!(a.note().is_some());
+
+            let b = index.entry_at(RowIndex::new(1));
+            assert_eq!(b.file().name().as_str(), "b");
+            assert_eq!(b.inlinks().len(), 1);
+        }
+        #[test]
+        fn creates_no_files_on_disk() {
+            let count_entries =
+                || std::fs::read_dir(".").map_or(0, std::iter::Iterator::count);
+            let before = count_entries();
+            let _index = FileIndex::new_test(&[(
+                "ephemeral_test_note.md",
+                "# Ephemeral\ncontent with [[link]]",
+            )]);
+            assert!(!std::path::Path::new("ephemeral_test_note.md").exists());
+            assert!(!std::path::Path::new(".traces/index.redb").exists());
+            let after = count_entries();
+            assert_eq!(before, after);
         }
     }
 }

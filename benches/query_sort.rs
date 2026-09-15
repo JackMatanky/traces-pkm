@@ -7,8 +7,8 @@
 //!
 //! `QuerySet::sort` pushes a `QueryTransform::Sort` step onto the pending
 //! `QueryPlan`. `QueryPlan::run` rewrites a `Sort` immediately followed by a
-//! `Limit` into one `QueryTransform::TopK` step (`O(n)` quickselect instead
-//! of `O(n log n)` full sort):
+//! `Limit` into one `QueryTransform::TopK` step (`O(n)` quickselect instead of
+//! `O(n log n)` full sort):
 //!
 //! ```text
 //! [QuerySet] ──(.sort)──► [QueryTransform::Sort]
@@ -85,8 +85,8 @@ fn replica_cmp(
 
 /// Deterministic Linear Congruential Generator (LCG): `state = state * a + c`
 /// mod 2^64. One multiply and one add per element, with no dependency on
-/// `rand`, reproducible across runs so regression detection isn't confounded
-/// by different shuffle order.
+/// `rand`, reproducible across runs so regression detection isn't confounded by
+/// different shuffle order.
 fn lcg_next(state: &mut u64) -> u64 {
     *state = state
         .wrapping_mul(6_364_136_223_846_793_005)
@@ -108,10 +108,10 @@ fn lcg_shuffle<T>(items: &mut [T], state: &mut u64) {
     }
 }
 
-/// Returns `n` rating values (0-9, matching `plain_note_source`'s
-/// frontmatter) in LCG-shuffled order, so downstream sort benchmarks do not
-/// start from nearly-sorted input (timsort is near-linear on sorted input,
-/// which would understate comparator cost).
+/// Returns `n` rating values (0-9, matching `plain_note_source`'s frontmatter)
+/// in LCG-shuffled order, so downstream sort benchmarks do not start from
+/// nearly-sorted input (timsort is near-linear on sorted input, which would
+/// understate comparator cost).
 fn shuffled_ratings(n: usize) -> Vec<f64> {
     let mut state = 0x243f_6a88_85a3_08d3_u64;
     let mut keys: Vec<f64> = (0..n)
@@ -136,9 +136,8 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 /// n` term isolates comparator + permutation cost. Single-point measurements
 /// cannot separate the two.
 ///
-/// Also runs `sort_only_desc` (identical query, `descending: true`) to
-/// exercise `compare_keys`'s `Ordering::reverse()` branch, otherwise
-/// unmeasured.
+/// Also runs `sort_only_desc` (identical query, `descending: true`) to exercise
+/// `compare_keys`'s `Ordering::reverse()` branch, otherwise unmeasured.
 ///
 /// Expected outcomes:
 /// - Cost dominated by the `n·log n` term if comparator dispatch dominates; by
@@ -197,46 +196,52 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 /// Measures `QueryPlan`'s `Sort`+`Limit(n)` -> `TopK` fusion cost across three
 /// limit sizes, swept over workspace size.
 ///
+/// ### How fusion works
+///
 /// `QueryBuilder::sort(...).limit(...)` executed through `QueryService::run`
-/// always passes through `QueryPlan::run` (`src/query/service.rs`:
-/// `plan.run(records)`), which fuses an adjacent `Sort`+`Limit` into one `TopK`
-/// step: `select_nth_unstable_by` partitions in `O(n)`, then the resulting
-/// `k`-sized slice is `truncate`d and `sort_unstable_by`'d (`O(k log k)`),
-/// total `O(n + k log k)` — not pure `O(n)`. For `k` in `{10, 100, 1000}`
-/// against `n` in `[5000, 40000]` here, the tail term is negligible relative
-/// to the partition, but the claim below is stated precisely for clarity.
-/// The fused `TopK` step overall is compared against a full permutation
-/// sort via `SortOrder::sort_rows` (`O(n log n)`). Since the
-/// `QuerySet` CTE redesign, `.sort(...).limit(...)` chained directly on a
-/// `QuerySet` (the shape the template `tasks`/`query` namespaces use) reaches
-/// the same fusion (deferred into the same `QueryPlan`, flushed once on read),
-/// so this gap is no longer template-specific; it's the general cost of `TopK`
-/// fusion vs. a full sort, still worth guarding against regression. The
-/// chained-`QuerySet` path itself isn't benchmarked here:
-/// `QuerySet::sort`/`limit` are `pub(crate)`, unreachable from this external
-/// bench crate even under `test-utils`; its correctness (not performance) is
-/// proven by `src/query/results.rs`'s
-/// `cte_chaining::chained_sort_then_limit_matches_full_sort_order_for_tied_keys`
-/// unit test. Swept over the same sizes as [`bench_sort_by_metadata`] (not a
-/// single point) so the fusion's advantage can be checked against its `O(n)`
-/// vs. `O(n log n)` prediction: the ratio between `topk_limit_10` and the full
-/// sort should widen as `n` grows, not stay flat.
+/// always passes through `QueryPlan::run`, which fuses an adjacent `Sort` +
+/// `Limit` pair into one `TopK` step:
 ///
-/// Does not re-measure the unfused full sort directly: it is identical to
-/// [`bench_sort_by_metadata`]'s `sort_only` (same query, same
-/// [`ProjectShape::Plain`] fixture, same sizes), so compare against that
-/// benchmark's numbers externally (HTML report or `critcmp`) rather than
-/// duplicating the measurement here. Three limit sizes (10, 100, 1000) check
-/// whether `select_nth_unstable_by`'s `O(n)` selection advantage holds as `k`
-/// grows relative to `n`.
+/// 1. `select_nth_unstable_by` partitions rows in `O(n)`.
+/// 2. The selected `k`-sized slice is truncated and sorted in `O(k log k)`.
 ///
-/// Expected outcomes:
+/// Total cost is `O(n + k log k)`, not pure `O(n)`. For `k` in
+/// `{10, 100, 1000}` against `n` in `[5000, 40000]`, the tail term is
+/// negligible relative to the partition.
+///
+/// ### What is measured vs. compared externally
+///
+/// - The fused `TopK` step is measured here for three limit sizes.
+/// - The unfused full sort is *not* re-measured: it is identical to
+///   [`bench_sort_by_metadata`]'s `sort_only` (same query, same
+///   [`ProjectShape::Plain`] fixture, same sizes). Compare against that
+///   benchmark's numbers externally (HTML report or `critcmp`).
+///
+/// A chained `.sort(...).limit(...)` on a `QuerySet` (the shape the template
+/// `tasks`/`query` namespaces use) reaches the same fusion, deferred into the
+/// same `QueryPlan` and flushed once on read, so this benchmark guards the
+/// general cost of `TopK` fusion rather than any one caller. The chained
+/// `QuerySet` path itself is not benchmarked here: `QuerySet::sort`/`limit`
+/// are crate-private, unreachable from an external bench crate. Their
+/// correctness is covered by the `cte_chaining` unit tests in
+/// `src/query/results.rs`.
+///
+/// Sweeping over sizes (not a single point) lets the fusion's advantage be
+/// checked against its `O(n + k log k)` vs. `O(n log n)` prediction: the gap
+/// between `topk_limit_10` and the full sort should widen as `n` grows, not
+/// stay flat. The three limit sizes check whether
+/// `select_nth_unstable_by`'s selection advantage holds as `k` grows
+/// relative to `n`.
+///
+/// ### Expected outcomes
+///
 /// - `topk_limit_10` costs meaningfully less than [`bench_sort_by_metadata`]'s
 ///   `sort_only` at every size, and the gap widens as `n` grows.
 /// - `topk_limit_100` and `topk_limit_1000` cost more than `topk_limit_10` but
 ///   still less than the full sort, tracking `k`'s share of `n`.
 ///
-/// Unexpected outcomes:
+/// ### Unexpected outcomes
+///
 /// - `topk_limit_10`'s cost is comparable to the full sort, indicating `TopK`'s
 ///   key-materialization pass (paid regardless of `k`) dominates over the
 ///   selection it avoids.
@@ -282,8 +287,8 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 //               Benchmarks: Sort Decomposition                //
 // ----------------------------------------------------------- //
 
-/// Measures bare `QueryRow` move/permutation cost, isolated from all
-/// comparison and field resolution, swept over workspace size.
+/// Measures bare `QueryRow` move/permutation cost, isolated from all comparison
+/// and field resolution, swept over workspace size.
 ///
 /// Decomposition of [`bench_sort_by_metadata`]: if a full Fisher-Yates shuffle
 /// (n moves of `QueryRow`, each carrying its `Arc<FileIndex>` + `RowIndex` +
@@ -291,8 +296,8 @@ fn bench_topk_vs_full_sort(c: &mut Criterion) {
 /// element-move cost is ruled out as the dominant component and the cost must
 /// live in the comparator or key materialization. Swept over the same sizes as
 /// [`bench_sort_by_metadata`] (not a single point) so the permutation share of
-/// sort cost can be checked at each `n`, not projected from one measurement:
-/// a linear-cost operation's *share* of an `n log n` operation shrinks as `n`
+/// sort cost can be checked at each `n`, not projected from one measurement: a
+/// linear-cost operation's *share* of an `n log n` operation shrinks as `n`
 /// grows, so a single point cannot confirm the share stays small at scale.
 ///
 /// Records are produced through the public query API (`run` then
@@ -500,9 +505,9 @@ fn bench_sort_by_text(c: &mut Criterion) {
 /// workspace size.
 ///
 /// Mirrors [`bench_sort_by_text`] (which sorts by `file.name`, a `FileField`
-/// resolution path) for the frontmatter-`Metadata` resolution path. Both
-/// land on `SortKey::Text` after `SortKey::from_value_ref`'s date/duration
-/// parsing fallback fails to match the text.
+/// resolution path) for the frontmatter-`Metadata` resolution path. Both land
+/// on `SortKey::Text` after `SortKey::from_value_ref`'s date/duration parsing
+/// fallback fails to match the text.
 ///
 /// Expected outcomes:
 /// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
@@ -637,9 +642,9 @@ fn bench_sort_composite(c: &mut Criterion) {
 /// Measures sort cost over a field that is `Null` on 30% of rows, swept over
 /// workspace size.
 ///
-/// `SortKey::cmp` sorts `Null` below every other value; every other
-/// benchmark in this file resolves `rating` from frontmatter that always sets
-/// it, so the `Null`-sorts-below branch never fires at scale. This uses
+/// `SortKey::cmp` sorts `Null` below every other value; every other benchmark
+/// in this file resolves `rating` from frontmatter that always sets it, so the
+/// `Null`-sorts-below branch never fires at scale. This uses
 /// [`nullable_rating_note_source`], which omits the `rating` key entirely on 3
 /// of every 10 notes, forcing that branch on a meaningful fraction of
 /// comparisons.
@@ -685,19 +690,18 @@ fn bench_sort_nullable(c: &mut Criterion) {
 /// Measures sort cost by a duration-literal metadata field (`estimate`), swept
 /// over workspace size.
 ///
-/// Exercises `SortKey::Duration`'s `DurationSeconds` comparator, reached only
-/// after `SortKey::from_value_ref` fails an ISO-date parse and succeeds a
-/// `DurationValue::parse` on the field text (a different resolution path
-/// than the numeric `rating` field every other sort benchmark in this file
-/// uses).
+/// Exercises `SortKey::Duration`'s `DurationSeconds` comparator. In Phase 1,
+/// duration metadata fields are parsed once at note ingestion into
+/// `NoteFieldValue::Duration(DurationValue)`, so sort-key extraction performs
+/// an O(1) `to_seconds()` conversion without string reparsing.
 ///
 /// Expected outcomes:
 /// - Cost is comparable to [`bench_sort_by_metadata`]'s `sort_only` at the same
-///   `n`.
+///   `n` because duration comparison is an O(1) f64 `total_cmp`.
 ///
 /// Unexpected outcomes:
-/// - Cost significantly exceeds `sort_only`, indicating `DurationValue::parse`
-///   is a meaningful per-row cost at scale.
+/// - Cost significantly exceeds `sort_only`, indicating duration sort-key
+///   extraction has unexpected overhead relative to numeric fields.
 fn bench_sort_by_duration(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/sort_by_duration");
     group.plot_config(
