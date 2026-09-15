@@ -560,11 +560,14 @@ flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
-flag "-j --jobs <jobs>" default="4" {
+flag "-j --jobs <jobs>" default="2" {
   help "Number of cargo build/test jobs in parallel"
 }
 flag "--check" {
   help "Build-only: check mutants compile without running tests"
+}
+flag "--in-place" {
+  help "Mutate source in-place instead of copying the tree"
 }
 flag "-L --level <level>" {
   help "Log verbosity"
@@ -593,10 +596,12 @@ run = '''
 set -euo pipefail
 
 declare -a args=(
-  --jobs "${usage_jobs:-4}"
+  --jobs "${usage_jobs:-2}"
   --baseline run
   --cap-lints true
   --build-timeout-multiplier 3
+  --in-place
+  --profile mutants
 )
 
 # Scope
