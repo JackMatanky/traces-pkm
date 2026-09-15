@@ -83,9 +83,9 @@ jobs:
         with:
           shared-key: "hk-ubuntu"
       - run: mise install --locked taplo tombi gitleaks cargo:ryl cargo-deny cargo:cargo-audit
-      - run: mise install hk
+      - run: mise install --locked hk
       - run: mise exec -- hk validate
-      - run: mise exec -- hk check --all --no-fail-fast --format jsonl --skip-step cargo-clippy --skip-step cargo-test
+      - run: mise exec -- hk check --all --no-fail-fast --skip-step cargo-clippy --skip-step cargo-test --skip-step cargo-doc
 
   # -- Docs & compatibility --
   docs:
