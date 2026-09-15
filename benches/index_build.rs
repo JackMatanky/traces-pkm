@@ -24,14 +24,13 @@
               fixture itself is broken and should panic immediately"
 )]
 
-use std::{hint::black_box, time::Duration};
+use std::hint::black_box;
 
 use criterion::{
-    AxisScale, BatchSize, BenchmarkId, Criterion, PlotConfiguration,
-    Throughput, criterion_group, criterion_main,
+    AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput,
+    criterion_group, criterion_main,
 };
 use traces_pkm::{FileIndex, IndexerService};
-
 #[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
@@ -90,23 +89,16 @@ fn bench_file_index_build(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        if n >= 5_000 {
-            group.measurement_time(Duration::from_secs(2));
-            group.sample_size(15);
-        }
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            b.iter_batched_ref(
-                || create_project(n, ProjectShape::Plain),
-                |temp| {
-                    let index = IndexerService::new(temp.path())
-                        .build()
-                        .expect("build index");
-                    observe_index(&index);
-                    black_box(temp.path());
-                    index
-                },
-                BatchSize::LargeInput,
-            );
+        let temp = create_project(n, ProjectShape::Plain);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter(|| {
+                let index = IndexerService::new(temp.path())
+                    .build()
+                    .expect("build index");
+                observe_index(&index);
+                black_box(temp.path());
+                index
+            });
         });
     }
     group.finish();
@@ -138,26 +130,19 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
             group.throughput(Throughput::Elements(
                 u64::try_from(n).expect("note count fits u64"),
             ));
-            if n >= 5_000 {
-                group.measurement_time(Duration::from_secs(2));
-                group.sample_size(15);
-            }
+            let temp = create_project(n, shape);
             group.bench_with_input(
                 BenchmarkId::new(shape.name(), n),
                 &n,
-                |b, &n| {
-                    b.iter_batched_ref(
-                        || create_project(n, shape),
-                        |temp| {
-                            let index = IndexerService::new(temp.path())
-                                .build()
-                                .expect("build index");
-                            observe_index(&index);
-                            black_box(temp.path());
-                            index
-                        },
-                        BatchSize::LargeInput,
-                    );
+                |b, _| {
+                    b.iter(|| {
+                        let index = IndexerService::new(temp.path())
+                            .build()
+                            .expect("build index");
+                        observe_index(&index);
+                        black_box(temp.path());
+                        index
+                    });
                 },
             );
         }

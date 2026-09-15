@@ -175,17 +175,9 @@ fn bench_file_index_refresh(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        if n >= 5_000 {
-            group.measurement_time(Duration::from_secs(2));
-            group.sample_size(15);
-        }
-
-        group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, &n| {
-            b.iter_batched_ref(
-                || setup_persisted_project(n, ProjectShape::Plain),
-                |(_temp, indexer)| observe_refresh(indexer),
-                BatchSize::LargeInput,
-            );
+        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Plain);
+        group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, _| {
+            b.iter(|| observe_refresh(&indexer));
         });
     }
 
@@ -312,27 +304,14 @@ fn bench_sync_and_run(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        if n >= 5_000 {
-            group.measurement_time(Duration::from_secs(2));
-            group.sample_size(15);
-        }
+        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
 
-        bench_sync_and_run_scenario(
-            &mut group,
-            "zero-row",
-            n,
-            &service,
-            || {
-                let (temp, indexer) =
-                    setup_persisted_project(n, ProjectShape::Tagged);
-                (temp, indexer, zero_match())
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("zero-row", n), &n, |b, _| {
+            b.iter(|| observe_sync_and_run(&service, &indexer, zero_match()));
+        });
 
-        bench_sync_and_run_scenario(&mut group, "no-op", n, &service, || {
-            let (temp, indexer) =
-                setup_persisted_project(n, ProjectShape::Tagged);
-            (temp, indexer, one_match())
+        group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, _| {
+            b.iter(|| observe_sync_and_run(&service, &indexer, one_match()));
         });
 
         bench_sync_and_run_scenario(
@@ -341,20 +320,22 @@ fn bench_sync_and_run(c: &mut Criterion) {
             n,
             &service,
             || {
-                let (temp, indexer) = setup_single_edit(n);
-                (temp, indexer, one_match())
+                let (temp, edit_indexer) = setup_single_edit(n);
+                (temp, edit_indexer, one_match())
             },
         );
 
-        bench_sync_and_run_scenario(
-            &mut group,
-            "full_vault_scan",
-            n,
-            &service,
-            || {
-                let (temp, indexer) =
-                    setup_persisted_project(n, ProjectShape::Tagged);
-                (temp, indexer, SourceSelector::All)
+        group.bench_with_input(
+            BenchmarkId::new("full_vault_scan", n),
+            &n,
+            |b, _| {
+                b.iter(|| {
+                    observe_sync_and_run(
+                        &service,
+                        &indexer,
+                        SourceSelector::All,
+                    )
+                });
             },
         );
     }

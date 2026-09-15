@@ -434,7 +434,7 @@ fi
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
 depends_post = ["bench-report"]
-timeout = "60m"
+timeout = "20m"
 usage = '''
 flag "-f --files <pattern>" {
   help "Select bench targets (benches/*.rs) by file-name substring"
@@ -521,17 +521,21 @@ if [[ -z "${bench_files[*]:-}" ]]; then
   exit 2
 fi
 
-# --- Quick mode ---
-if [[ "${usage_quick:-false}" == "true" ]]; then
-  criterion_args+=(
-    --sample-size 10 --measurement-time 1 --warm-up-time 1 --noplot
-  )
-  has_criterion_args=true
-fi
-
-# --- Smoke test mode ---
+# --- Execution mode defaults ---
 if [[ "${usage_test:-false}" == "true" ]]; then
   criterion_args+=(--test)
+  has_criterion_args=true
+elif [[ "${usage_quick:-false}" == "true" ]]; then
+  # Quick mode: ultra-fast iteration for local development loops (~60s full, ~25s module)
+  criterion_args+=(
+    --sample-size 10 --measurement-time 0.5 --warm-up-time 0.2 --noplot
+  )
+  has_criterion_args=true
+else
+  # Normal mode: fast, responsive developer defaults (~3-4m full) instead of Criterion's 8s/bench
+  criterion_args+=(
+    --sample-size 20 --measurement-time 1.0 --warm-up-time 0.5 --noplot
+  )
   has_criterion_args=true
 fi
 

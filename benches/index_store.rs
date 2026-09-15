@@ -45,7 +45,7 @@ mod common;
 use common::{
     PROFILE_CONTRAST_COUNTS, WORKSPACE_FILE_COUNTS,
     content::ProjectShape,
-    project::{setup_persisted_project, setup_unpersisted_project},
+    project::{build_index, setup_persisted_project},
 };
 
 // ----------------------------------------------------------- //
@@ -123,15 +123,16 @@ fn bench_index_persist(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        if n >= 5_000 {
-            group.measurement_time(Duration::from_secs(2));
-            group.sample_size(15);
-        }
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+        let index = build_index(n, ProjectShape::Plain);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter_batched_ref(
-                || setup_unpersisted_project(n, ProjectShape::Plain),
-                |(_temp, indexer, index)| {
-                    indexer.persist(index).expect("persist index");
+                || {
+                    let temp = tempfile::tempdir().expect("create temp dir");
+                    let indexer = IndexerService::new(temp.path());
+                    (temp, indexer)
+                },
+                |(_temp, indexer)| {
+                    indexer.persist(&index).expect("persist index");
                     black_box(index.entries().len());
                 },
                 BatchSize::LargeInput,
@@ -163,18 +164,20 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
             group.throughput(Throughput::Elements(
                 u64::try_from(n).expect("note count fits u64"),
             ));
-            if n >= 5_000 {
-                group.measurement_time(Duration::from_secs(2));
-                group.sample_size(15);
-            }
+            let index = build_index(n, shape);
             group.bench_with_input(
                 BenchmarkId::new(shape.name(), n),
                 &n,
-                |b, &n| {
+                |b, _| {
                     b.iter_batched_ref(
-                        || setup_unpersisted_project(n, shape),
-                        |(_temp, indexer, index)| {
-                            indexer.persist(index).expect("persist index");
+                        || {
+                            let temp =
+                                tempfile::tempdir().expect("create temp dir");
+                            let indexer = IndexerService::new(temp.path());
+                            (temp, indexer)
+                        },
+                        |(_temp, indexer)| {
+                            indexer.persist(&index).expect("persist index");
                             black_box(index.entries().len());
                         },
                         BatchSize::LargeInput,
