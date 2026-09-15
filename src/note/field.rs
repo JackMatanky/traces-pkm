@@ -117,7 +117,16 @@ impl NoteFieldValue {
         }
     }
 
-    /// Borrows this value without cloning.
+    /// Borrows this value as a [`NoteFieldValueRef`] without cloning.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::{NoteFieldValue, NoteFieldValueRef};
+    ///
+    /// let owned = NoteFieldValue::Number(42.0);
+    /// assert_eq!(owned.as_ref(), NoteFieldValueRef::Number(42.0));
+    /// ```
     #[inline]
     #[must_use]
     pub fn as_ref(&self) -> NoteFieldValueRef<'_> {
@@ -304,6 +313,8 @@ impl NoteFieldValueRef<'_> {
         }
     }
 
+    /// Returns the borrowed string for [`Self::String`] or the duration's
+    /// source spelling for [`Self::Duration`], or `None` for any other kind.
     pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(value) => Some(value),
@@ -312,6 +323,8 @@ impl NoteFieldValueRef<'_> {
         }
     }
 
+    /// Converts this borrowed value into an owned [`NoteFieldValue`],
+    /// cloning only what the source kind requires.
     pub(crate) fn to_owned_value(self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -365,7 +378,10 @@ impl NoteFieldValueRef<'_> {
             Self::Object(value) => {
                 matches!(literal, NoteFieldValue::Object(other) if *value == other)
             }
-            Self::List(_) => self.to_owned_value() == *literal,
+            Self::List(items) => matches!(
+                literal,
+                NoteFieldValue::List(other) if *items == other.as_ref()
+            ),
         }
     }
 
@@ -955,6 +971,17 @@ mod tests {
                     .compare(&NoteFieldValueRef::Link(&b)),
                 Ordering::Less
             );
+
+            // Equal targets fall through to the text tiebreak.
+            let same_target_a =
+                Link::new("target", "alias-a", crate::note::LinkType::Markdown);
+            let same_target_b =
+                Link::new("target", "alias-b", crate::note::LinkType::Markdown);
+            assert_eq!(
+                NoteFieldValueRef::Link(&same_target_a)
+                    .compare(&NoteFieldValueRef::Link(&same_target_b)),
+                Ordering::Less
+            );
         }
 
         #[test]
@@ -972,6 +999,60 @@ mod tests {
                     .compare(&NoteFieldValueRef::Object(&b)),
                 Ordering::Less
             );
+        }
+
+        #[test]
+        fn objects_with_matching_keys_order_by_differing_values() {
+            let a = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(1.0),
+            )]);
+            let b = IndexMap::from_iter([(
+                "a".to_owned(),
+                NoteFieldValue::Number(2.0),
+            )]);
+            assert_eq!(
+                NoteFieldValueRef::Object(&a)
+                    .compare(&NoteFieldValueRef::Object(&b)),
+                Ordering::Less
+            );
+        }
+
+        #[test]
+        fn lists_with_matching_length_order_by_differing_elements() {
+            let a = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            let b = [NoteFieldValue::Number(1.0), NoteFieldValue::Number(3.0)];
+            assert_eq!(
+                NoteFieldValueRef::List(&a)
+                    .compare(&NoteFieldValueRef::List(&b)),
+                Ordering::Less
+            );
+        }
+    }
+
+    mod formatting {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn formats_a_multi_element_list_joined_by_commas() {
+            let items =
+                [NoteFieldValue::Number(1.0), NoteFieldValue::Number(2.0)];
+            let mut out = String::new();
+            NoteFieldValueRef::List(&items).append_text(&mut out);
+            assert_eq!(out, "1, 2");
+        }
+
+        #[test]
+        fn formats_an_object_as_key_colon_value_pairs_joined_by_commas() {
+            let fields = IndexMap::from_iter([
+                ("a".to_owned(), NoteFieldValue::Number(1.0)),
+                ("b".to_owned(), NoteFieldValue::String("x".to_owned())),
+            ]);
+            let mut out = String::new();
+            NoteFieldValueRef::Object(&fields).append_text(&mut out);
+            assert_eq!(out, "a: 1, b: x");
         }
     }
 }

@@ -32,7 +32,8 @@
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
 //!   or raw text.
-//! - [`NoteFieldValue`]: Body metadata values parsed from `Key:: Value` syntax.
+//! - [`NoteFieldValue`], [`NoteFieldValueRef`]: Owned and borrowed metadata
+//!   values parsed from YAML frontmatter and inline `Key:: Value` syntax.
 //! - [`Tag`](crate::Tag): Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;

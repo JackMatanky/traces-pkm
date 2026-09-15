@@ -1,4 +1,8 @@
-//! Zero-copy resolved field values.
+//! Zero-copy and fallback resolved field values for query evaluation.
+//!
+//! [`QueryFieldValueRef`] borrows directly from note metadata, tags, and
+//! inlinks without allocation in the common case, with an owned fallback for
+//! non-UTF8 file paths.
 
 use std::path::PathBuf;
 
@@ -18,6 +22,7 @@ pub(super) enum QueryFieldValueRef<'a> {
 }
 
 impl QueryFieldValueRef<'_> {
+    /// Converts this resolved reference into an owned [`NoteFieldValue`].
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Note(note_ref) => note_ref.to_owned_value(),
@@ -57,12 +62,15 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
+    /// Materializes the full display text into a newly allocated [`String`].
     pub(super) fn text(&self) -> String {
         let mut out = String::new();
         self.append_text(&mut out);
         out
     }
 
+    /// Returns the borrowed string for string/duration-typed fields, or
+    /// `None` for non-textual variants.
     #[cfg_attr(
         not(test),
         expect(
@@ -454,6 +462,51 @@ mod tests {
                 QueryFieldValueRef::Note(NoteFieldValueRef::DateTime(d))
                     if d == datetime
             ));
+        }
+
+        #[test]
+        fn to_owned_value_converts_tags_into_a_string_list() {
+            let tags = [Tag::parse("#book").expect("valid tag")];
+            let owned = QueryFieldValueRef::Tags(&tags).to_owned_value();
+            assert_eq!(
+                owned,
+                NoteFieldValue::List(Box::from([NoteFieldValue::String(
+                    "#book".to_owned()
+                )]))
+            );
+        }
+
+        #[test]
+        fn to_owned_value_converts_inlinks_into_a_string_list() {
+            let inlinks = [PathBuf::from("notes/a.md")];
+            let owned = QueryFieldValueRef::Inlinks(&inlinks).to_owned_value();
+            assert_eq!(
+                owned,
+                NoteFieldValue::List(Box::from([NoteFieldValue::String(
+                    "notes/a.md".to_owned()
+                )]))
+            );
+        }
+
+        #[test]
+        fn as_note_ref_returns_none_for_tags_and_inlinks() {
+            let tags = [Tag::parse("#book").expect("valid tag")];
+            let inlinks = [PathBuf::from("notes/a.md")];
+            assert!(QueryFieldValueRef::Tags(&tags).as_note_ref().is_none());
+            assert!(
+                QueryFieldValueRef::Inlinks(&inlinks).as_note_ref().is_none()
+            );
+        }
+
+        #[test]
+        fn as_note_ref_returns_some_for_note_and_owned() {
+            let value = NoteFieldValue::Number(1.0);
+            assert!(
+                QueryFieldValueRef::Note(NoteFieldValueRef::Number(1.0))
+                    .as_note_ref()
+                    .is_some()
+            );
+            assert!(QueryFieldValueRef::Owned(value).as_note_ref().is_some());
         }
     }
 }

@@ -368,12 +368,25 @@ impl<'a> SortKey<'a> {
             (Self::Null, _) => Ordering::Less,
             (_, Self::Null) => Ordering::Greater,
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
-            (Self::Number(a), Self::Number(b)) => a.total_cmp(b),
+            (Self::Number(a), Self::Number(b)) => {
+                normalize_zero(*a).total_cmp(&normalize_zero(*b))
+            }
             (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
             (Self::DateTime(a), Self::DateTime(b)) => a.cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
             _ => self.rank().cmp(&other.rank()),
         }
+    }
+}
+
+/// `-0.0` and `0.0` both normalize to `0.0` before `total_cmp`, matching
+/// [`NoteFieldValueRef::compare`]'s signed-zero handling so `SortKey::cmp`
+/// and `NoteFieldValueRef::compare` never disagree on a `Number` pair.
+fn normalize_zero(n: f64) -> f64 {
+    if n == 0.0 {
+        0.0
+    } else {
+        n
     }
 }
 
@@ -388,9 +401,14 @@ pub(super) enum TextShape {
     Plain,
 }
 
+/// Inspects free text for a date, date-time, or duration shape.
+///
 /// Tries [`DateTimeValue::parse_iso`] before [`DateValue::parse_iso`]: a
 /// full date-time string always fails `DateValue`'s whole-string match, so
-/// trying it second never misclassifies.
+/// trying it second never misclassifies. Duration parsing is guarded by
+/// [`DurationValue::can_start`], an `O(1)` leading-character check, so
+/// non-duration-shaped text (e.g. a plain title) never pays for
+/// `DurationValue::parse`'s allocating error path.
 pub(super) fn classify_text_shape(s: &str) -> TextShape {
     let trimmed = s.trim();
     if DateValue::has_four_digit_year(trimmed) {
@@ -401,10 +419,9 @@ pub(super) fn classify_text_shape(s: &str) -> TextShape {
             return TextShape::Date(value);
         }
     }
-    let can_start_duration = trimmed.as_bytes().first().is_some_and(|&b| {
-        b.is_ascii_digit() || b == b'+' || b == b'-' || b == b'.'
-    });
-    if can_start_duration && let Ok(dv) = crate::DurationValue::parse(s) {
+    if crate::DurationValue::can_start(trimmed)
+        && let Ok(dv) = crate::DurationValue::parse(s)
+    {
         return TextShape::Duration(dv);
     }
     TextShape::Plain
@@ -700,10 +717,10 @@ mod tests {
         }
 
         #[test]
-        fn negative_zero_sorts_below_positive_zero() {
+        fn negative_zero_and_positive_zero_compare_equal() {
             let negative_zero = SortKey::Number(-0.0);
             let zero = SortKey::Number(0.0);
-            assert_eq!(negative_zero.cmp(&zero), Ordering::Less);
+            assert_eq!(negative_zero.cmp(&zero), Ordering::Equal);
         }
 
         #[test]
@@ -725,6 +742,8 @@ mod tests {
             };
             let null_key = [SortKey::Null];
             let num_key = [SortKey::Number(5.0)];
+
+            // Null on the left.
             assert_eq!(
                 first_order.compare_keys(&null_key, &num_key),
                 Ordering::Less
@@ -733,18 +752,38 @@ mod tests {
                 last_order.compare_keys(&null_key, &num_key),
                 Ordering::Greater
             );
+
+            // Null on the right (symmetric).
+            assert_eq!(
+                first_order.compare_keys(&num_key, &null_key),
+                Ordering::Greater
+            );
+            assert_eq!(
+                last_order.compare_keys(&num_key, &null_key),
+                Ordering::Less
+            );
+
+            // Null on both sides is always Equal, regardless of placement.
+            assert_eq!(
+                first_order.compare_keys(&null_key, &null_key),
+                Ordering::Equal
+            );
+            assert_eq!(
+                last_order.compare_keys(&null_key, &null_key),
+                Ordering::Equal
+            );
         }
     }
 
     mod sort_key_normalization {
-        use std::cmp::Ordering;
+        use std::{cmp::Ordering, path::PathBuf};
 
         use pretty_assertions::assert_eq;
 
         use super::super::{QueryFieldValueRef, SortKey};
         use crate::{
             DateTimeValue, DateValue, DurationSeconds, DurationValue,
-            NoteFieldValue, NoteFieldValueRef,
+            NoteFieldValue, NoteFieldValueRef, Tag,
         };
 
         fn date(s: &str) -> DateValue {
@@ -824,6 +863,51 @@ mod tests {
         }
 
         #[test]
+        fn from_value_ref_maps_tags_and_inlinks_to_null() {
+            let tags = [Tag::parse("#book").expect("valid tag")];
+            let inlinks = [PathBuf::from("notes/a.md")];
+            assert_eq!(
+                SortKey::from_value_ref(QueryFieldValueRef::Tags(&tags)),
+                SortKey::Null
+            );
+            assert_eq!(
+                SortKey::from_value_ref(QueryFieldValueRef::Inlinks(&inlinks)),
+                SortKey::Null
+            );
+        }
+
+        #[test]
+        fn from_value_ref_maps_object_and_list_to_null() {
+            let list = [NoteFieldValue::Number(1.0)];
+            let object = indexmap::IndexMap::new();
+            assert_eq!(
+                SortKey::from_value_ref(QueryFieldValueRef::Note(
+                    NoteFieldValueRef::List(&list)
+                )),
+                SortKey::Null
+            );
+            assert_eq!(
+                SortKey::from_value_ref(QueryFieldValueRef::Note(
+                    NoteFieldValueRef::Object(&object)
+                )),
+                SortKey::Null
+            );
+        }
+
+        #[test]
+        fn from_value_ref_maps_link_to_text_by_target() {
+            let link = crate::note::Link::new(
+                "target",
+                "text",
+                crate::note::LinkType::Markdown,
+            );
+            let key = SortKey::from_value_ref(QueryFieldValueRef::Note(
+                NoteFieldValueRef::Link(&link),
+            ));
+            assert_eq!(key, SortKey::Text("target".into()));
+        }
+
+        #[test]
         fn a_date_key_sorts_before_a_same_day_afternoon_datetime_key() {
             let date_key = SortKey::from_value_ref(QueryFieldValueRef::Note(
                 NoteFieldValueRef::Date(date("2026-07-29")),
@@ -860,6 +944,20 @@ mod tests {
                 (
                     NoteFieldValueRef::String("a"),
                     NoteFieldValueRef::String("b"),
+                ),
+                // Cross-kind pairs across each adjacent shared rank boundary.
+                (NoteFieldValueRef::Bool(true), NoteFieldValueRef::Number(0.0)),
+                (
+                    NoteFieldValueRef::Number(100.0),
+                    NoteFieldValueRef::Duration(&dv1),
+                ),
+                (
+                    NoteFieldValueRef::Duration(&dv1),
+                    NoteFieldValueRef::Date(date("2026-01-01")),
+                ),
+                (
+                    NoteFieldValueRef::Date(date("2026-01-01")),
+                    NoteFieldValueRef::String("a"),
                 ),
             ];
             for (a, b) in pairs {

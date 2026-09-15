@@ -637,7 +637,7 @@ fn bench_sort_composite(c: &mut Criterion) {
 /// Measures sort cost over a field that is `Null` on 30% of rows, swept over
 /// workspace size.
 ///
-/// [`SortKey::cmp`] sorts `Null` below every other value; every other
+/// `SortKey::cmp` sorts `Null` below every other value; every other
 /// benchmark in this file resolves `rating` from frontmatter that always sets
 /// it, so the `Null`-sorts-below branch never fires at scale. This uses
 /// [`nullable_rating_note_source`], which omits the `rating` key entirely on 3
@@ -686,8 +686,8 @@ fn bench_sort_nullable(c: &mut Criterion) {
 /// over workspace size.
 ///
 /// Exercises `SortKey::Duration`'s `DurationSeconds` comparator, reached only
-/// after `SortKey::from_value_ref`/`from_owned` fail an ISO-date parse and
-/// succeed a `DurationValue::parse` on the field text - a different resolution
+/// after `SortKey::from_value_ref` fails an ISO-date parse and succeeds a
+/// `DurationValue::parse` on the field text - a different resolution
 /// path than the numeric `rating` field every other sort benchmark in this file
 /// uses.
 ///
