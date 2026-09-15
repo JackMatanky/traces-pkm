@@ -160,22 +160,38 @@ if [[ "${clean_reports}" == "true" ]]; then
 fi
 '''
 
+# bash-only by design (no run_windows): macOS dev + Linux CI only.
 [tasks.sweep]
 description = "Prune stale Cargo incremental sessions (newest kept) when target exceeds --max-gib GiB (default 10)"
 outputs = []
 cache = { enabled = false }
 usage = '''
-flag "--max-gib <gib>" help="Only sweep when target exceeds this size in GiB" default="10"
+flag "--max-gib <gib>" help="Only sweep when target exceeds this size in GiB (non-negative integer)" default="10"
 '''
 run = '''
 #!/bin/bash
 # shellcheck disable=SC2154  # usage_max_gib is injected by mise
 set -euo pipefail
 
-readonly INCREMENTAL_DIR="target/debug/incremental"
-readonly LIMIT_KIB=$(( usage_max_gib * 1024 * 1024 ))
+# Fail fast with a clear message when run outside mise's usage injection.
+: "${usage_max_gib?}"
+[[ "${usage_max_gib}" =~ ^[0-9]+$ ]] || {
+  printf "sweep: --max-gib must be a non-negative integer, got '%s'\n" \
+    "${usage_max_gib}" >&2
+  exit 1
+}
 
+readonly INCREMENTAL_DIR="target/debug/incremental"
+# 10# forces base 10; a leading zero would otherwise read as octal.
+readonly LIMIT_KIB=$(( 10#${usage_max_gib} * 1024 * 1024 ))
+
+# Prune stale cargo incremental sessions once target exceeds LIMIT_KIB,
+# always keeping the most recently touched session. Reads
+# INCREMENTAL_DIR and LIMIT_KIB; writes status lines to stdout.
 main() {
+  # count replaces the bash array-length expansion: mise renders TOML
+  # run bodies as Tera, which would parse that form as a comment
+  # opener (docs/refs/mise_tasks/04_toml_tasks.md).
   local size_kib newest="" count=0
   local -a stale=()
 
@@ -193,6 +209,8 @@ main() {
   local dir
   for dir in "${INCREMENTAL_DIR}"/*/; do
     [[ -d "${dir}" ]] || continue
+    # -nt sees directory mtimes, which update on direct-child
+    # create/delete; equal mtimes keep the lexicographically first.
     if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
       if [[ -n "${newest}" ]]; then
         stale+=("${newest}")
