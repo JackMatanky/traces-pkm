@@ -561,6 +561,14 @@ impl From<SystemTime> for DateTimeValue {
     }
 }
 
+impl From<SystemTime> for DateValue {
+    #[inline]
+    fn from(time: SystemTime) -> Self {
+        let dt: DateTime<Utc> = time.into();
+        Self(dt.date_naive())
+    }
+}
+
 impl From<DateTime<Utc>> for DateTimeValue {
     #[inline]
     fn from(dt: DateTime<Utc>) -> Self {
@@ -1008,6 +1016,17 @@ mod tests {
                 converted,
                 DateTimeValue::parse_iso("1970-01-01T00:16:40")
                     .expect("valid datetime")
+            );
+        }
+
+        #[test]
+        fn converts_from_system_time_to_date_value() {
+            let system_time = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(1_000);
+            let converted = DateValue::from(system_time);
+            assert_eq!(
+                converted,
+                DateValue::parse_iso("1970-01-01").expect("valid date")
             );
         }
 
