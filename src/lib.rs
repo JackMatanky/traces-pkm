@@ -262,13 +262,12 @@ mod test_support {
     /// Panics if the path escapes `root` or the note cannot be written.
     /// Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
-    #[expect(
-        clippy::must_use_candidate,
-        reason = "the fs::write side effect is the point; the returned path \
-                  is a convenience that fixtures routinely ignore"
-    )]
-    pub fn write_note(root: &Path, rel_path: &str, content: &str) -> PathBuf {
-        let path = resolve_safe_path(root, Path::new(rel_path));
+    pub fn write_note<P: AsRef<Path>>(
+        root: &Path,
+        rel_path: P,
+        content: &str,
+    ) -> PathBuf {
+        let path = resolve_safe_path(root, rel_path.as_ref());
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create note parent dir");
         }
@@ -284,15 +283,14 @@ mod test_support {
     /// Panics if the path escapes `root` or the template cannot be written.
     /// Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
-    #[expect(
-        clippy::must_use_candidate,
-        reason = "the fs::write side effect is the point; the returned path \
-                  is a convenience that fixtures routinely ignore"
-    )]
-    pub fn write_template(root: &Path, name: &str, source: &str) -> PathBuf {
+    pub fn write_template<P: AsRef<Path>>(
+        root: &Path,
+        name: P,
+        source: &str,
+    ) -> PathBuf {
         let path = resolve_safe_path(
             root,
-            &Path::new(DEFAULT_TEMPLATES_DIR).join(name),
+            &Path::new(DEFAULT_TEMPLATES_DIR).join(name.as_ref()),
         );
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create templates dir");
@@ -309,15 +307,15 @@ mod test_support {
     /// Panics if the path escapes `root` or the schema cannot be written.
     /// Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
-    #[expect(
-        clippy::must_use_candidate,
-        reason = "the fs::write side effect is the point; the returned path \
-                  is a convenience that fixtures routinely ignore"
-    )]
-    pub fn write_schema(root: &Path, name: &str, toml: &str) -> PathBuf {
+    pub fn write_schema<P: AsRef<Path>>(
+        root: &Path,
+        name: P,
+        toml: &str,
+    ) -> PathBuf {
+        let file_name = format!("{}.toml", name.as_ref().display());
         let path = resolve_safe_path(
             root,
-            &Path::new(DEFAULT_SCHEMAS_DIR).join(format!("{name}.toml")),
+            &Path::new(DEFAULT_SCHEMAS_DIR).join(file_name),
         );
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create schemas dir");
@@ -534,18 +532,14 @@ mod test_support {
         /// Writes a template file under `templates/`.
         ///
         /// # Panics
-        ///
-        /// Panics if the path escapes `root` or the template cannot be written.
-        /// Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
-        #[expect(
-            clippy::must_use_candidate,
-            reason = "the fs::write side effect is the point; the returned \
-                      path is a convenience that fixtures routinely ignore"
-        )]
-        pub fn write_template(&self, name: &str, content: &str) -> PathBuf {
+        pub fn write_template<P: AsRef<Path>>(
+            &self,
+            name: P,
+            content: &str,
+        ) -> PathBuf {
             self.write_file(
-                Path::new(DEFAULT_TEMPLATES_DIR).join(name),
+                Path::new(DEFAULT_TEMPLATES_DIR).join(name.as_ref()),
                 content,
             )
         }
@@ -553,18 +547,15 @@ mod test_support {
         /// Writes a schema file under `.traces/schemas/`.
         ///
         /// # Panics
-        ///
-        /// Panics if the path escapes `root` or the schema cannot be written.
-        /// Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
-        #[expect(
-            clippy::must_use_candidate,
-            reason = "the fs::write side effect is the point; the returned \
-                      path is a convenience that fixtures routinely ignore"
-        )]
-        pub fn write_schema(&self, name: &str, toml: &str) -> PathBuf {
+        pub fn write_schema<P: AsRef<Path>>(
+            &self,
+            name: P,
+            toml: &str,
+        ) -> PathBuf {
+            let file_name = format!("{}.toml", name.as_ref().display());
             self.write_file(
-                Path::new(DEFAULT_SCHEMAS_DIR).join(format!("{name}.toml")),
+                Path::new(DEFAULT_SCHEMAS_DIR).join(file_name),
                 toml,
             )
         }
