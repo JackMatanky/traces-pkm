@@ -9,7 +9,7 @@ use super::{
     value::QueryFieldValueRef,
 };
 use crate::{
-    TaskStatus,
+    DateTimeValue, DateValue, TaskStatus,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
@@ -204,17 +204,27 @@ impl QueryRow {
             FileField::Size => QueryFieldValueRef::Note(
                 NoteFieldValueRef::Number(file.size() as f64),
             ),
-            FileField::CreatedDateTime => QueryFieldValueRef::Note(
-                NoteFieldValueRef::DateTime(file.created_at_or_modified()),
-            ),
-            FileField::CreatedDate => QueryFieldValueRef::Note(
-                NoteFieldValueRef::Date(file.created_at_or_modified().date()),
-            ),
-            FileField::ModifiedDateTime => QueryFieldValueRef::Note(
-                NoteFieldValueRef::DateTime(file.modified_at()),
-            ),
+            FileField::CreatedDateTime => {
+                let ts =
+                    file.created_at().unwrap_or_else(|| file.modified_at());
+                QueryFieldValueRef::Note(NoteFieldValueRef::DateTime(
+                    DateTimeValue::from(ts),
+                ))
+            }
+            FileField::CreatedDate => {
+                let ts =
+                    file.created_at().unwrap_or_else(|| file.modified_at());
+                QueryFieldValueRef::Note(NoteFieldValueRef::Date(
+                    DateValue::from(ts),
+                ))
+            }
+            FileField::ModifiedDateTime => {
+                QueryFieldValueRef::Note(NoteFieldValueRef::DateTime(
+                    DateTimeValue::from(file.modified_at()),
+                ))
+            }
             FileField::ModifiedDate => QueryFieldValueRef::Note(
-                NoteFieldValueRef::Date(file.modified_at().date()),
+                NoteFieldValueRef::Date(DateValue::from(file.modified_at())),
             ),
         }
     }
@@ -577,6 +587,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        DateTimeValue, DateValue,
         index::IndexerService,
         note::NoteFieldValue,
         query::{
@@ -730,21 +741,28 @@ mod tests {
             let row = outcome.get(0).expect("row");
             let file = row.file();
 
+            let modified_dt = DateTimeValue::from(file.modified_at());
+            let modified_date = DateValue::from(file.modified_at());
+            let created_ts =
+                file.created_at().unwrap_or_else(|| file.modified_at());
+            let created_dt = DateTimeValue::from(created_ts);
+            let created_date = DateValue::from(created_ts);
+
             assert_eq!(
                 row.field("file.mtime"),
-                Ok(NoteFieldValue::DateTime(file.modified_at()))
+                Ok(NoteFieldValue::DateTime(modified_dt))
             );
             assert_eq!(
                 row.field("file.mdate"),
-                Ok(NoteFieldValue::Date(file.modified_at().date()))
+                Ok(NoteFieldValue::Date(modified_date))
             );
             assert_eq!(
                 row.field("file.ctime"),
-                Ok(NoteFieldValue::DateTime(file.created_at_or_modified()))
+                Ok(NoteFieldValue::DateTime(created_dt))
             );
             assert_eq!(
                 row.field("file.cdate"),
-                Ok(NoteFieldValue::Date(file.created_at_or_modified().date()))
+                Ok(NoteFieldValue::Date(created_date))
             );
             assert_eq!(row.field("file.created_at"), row.field("file.ctime"));
             assert_eq!(row.field("file.modified_at"), row.field("file.mtime"));
