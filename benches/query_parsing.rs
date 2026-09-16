@@ -17,8 +17,8 @@
 //! cargo flamegraph --bench query_parsing -- --bench "QueryGrammar::parse"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface is only reachable with
+//! Run via `mise run bench -f query_parsing` (or `mise run bench -m query`):
+//! this crate's `test-utils`-gated public surface is only reachable with
 //! `--features test-utils`, which the mise task supplies.
 
 #![expect(

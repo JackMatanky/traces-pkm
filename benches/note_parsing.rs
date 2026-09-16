@@ -22,9 +22,9 @@
 //! cargo flamegraph --bench note_parsing -- --bench "parse_markdown/large"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface (`parse_markdown` included) is only
-//! reachable with `--features test-utils`, which the mise task supplies.
+//! Run via `mise run bench -f note_parsing` (or `mise run bench -m note`): this
+//! crate's `test-utils`-gated public surface (`parse_markdown` included) is
+//! only reachable with `--features test-utils`, which the mise task supplies.
 
 #![expect(
     clippy::expect_used,
@@ -328,6 +328,10 @@ fn bench_parse_markdown(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//                Benchmarks: Parser Workloads                 //
+// ----------------------------------------------------------- //
+
 /// Measures parsing cost across varied real-world PKM document topologies: code
 /// blocks, heavy frontmatter across value types (strings, ISO dates, duration
 /// literals, integers), dense wikilinks, and isolated task checklists.
@@ -375,6 +379,10 @@ fn bench_parse_markdown_workloads(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//                 Benchmarks: Item Scaling                    //
+// ----------------------------------------------------------- //
 
 /// Measures full-parse cost for top-level checkbox lists scaled by
 /// [`LIST_ITEM_COUNTS`].
@@ -591,6 +599,10 @@ fn bench_parse_markdown_task_marker_scaling(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//              Benchmarks: Frontmatter Scaling                //
+// ----------------------------------------------------------- //
 
 /// Measures frontmatter field-width parsing cost scaled by
 /// [`FRONTMATTER_FIELD_COUNTS`].

@@ -27,9 +27,9 @@
 //! cargo flamegraph --bench index_codec -- --bench "path_codec::serialize_alloc/long"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface is only reachable with `--features
-//! test-utils`.
+//! Run via `mise run bench -f index_codec` (or `mise run bench -m index`): this
+//! crate's `test-utils`-gated public surface is only reachable with `--features
+//! test-utils`, which the mise task supplies.
 
 #![expect(
     clippy::expect_used,

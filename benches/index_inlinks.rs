@@ -22,9 +22,9 @@
 //! cargo flamegraph --bench index_inlinks -- --bench "InlinkMap::new/dense/1000"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface is only reachable with `--features
-//! test-utils`.
+//! Run via `mise run bench -f index_inlinks` (or `mise run bench -m index`):
+//! this crate's `test-utils`-gated public surface is only reachable with
+//! `--features test-utils`, which the mise task supplies.
 
 #![expect(
     clippy::expect_used,

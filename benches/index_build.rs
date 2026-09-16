@@ -8,7 +8,9 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [Files on Disk] ──(WalkDir Scan)──► [FileBase / Notes] ──(Index Compilation)──► [FileIndex]
+//! [Files on Disk] ──(WalkDir Scan)──► [FileBase / Notes]
+//!                                             │
+//!                                             └──(Compile)──► [FileIndex]
 //! ```
 //!
 //! ### Profiling Integration
@@ -17,7 +19,10 @@
 //! ```bash
 //! cargo flamegraph --bench index_build -- --bench "FileIndex::build/1000"
 //! ```
-
+//!
+//! Run via `mise run bench -f index_build` (or `mise run bench -m index`): this
+//! crate's `test-utils`-gated public surface is only reachable with `--features
+//! test-utils`, which the mise task supplies.
 #![expect(
     clippy::expect_used,
     reason = "bench fixture/harness code; a failed .expect() here means the \
@@ -68,9 +73,13 @@ fn observe_index(index: &FileIndex) {
 
 /// Measures wall-clock index build time over the baseline plain-note fixture.
 ///
-/// Runs the raw build operation on a temporary directory, excluding fixture
-/// creation from the measured loop via Criterion batched setup. Path sorting
-/// adds an $n \cdot \ln(n)$ component to the linear scan and parse baseline.
+/// Parameters: varies note count across [`WORKSPACE_FILE_COUNTS`]; reports note
+/// throughput.
+///
+/// Fixture: temporary plain-note project created once per tier outside timing.
+/// Timed work scans the filesystem, parses notes, extracts tags, resolves
+/// links, and compiles inlinks into a complete [`FileIndex`]. Path sorting adds
+/// an $n \cdot \ln(n)$ component to the linear scan and parse baseline.
 ///
 /// Expected outcomes:
 /// - Near-linear $O(n \log n)$ scaling governed primarily by single-pass note
@@ -107,10 +116,14 @@ fn bench_file_index_build(c: &mut Criterion) {
 /// Measures build cost across contrasting fixture profiles at two orders of
 /// magnitude.
 ///
+/// Parameters: varies shape across [`BUILD_CONTRAST_SHAPES`] and size across
+/// [`PROFILE_CONTRAST_COUNTS`]; reports note throughput.
+///
+/// Fixture: temporary directory created once per shape and size outside timing.
 /// Compares dense link graphs, rich realistic note shapes, and binary
-/// attachments against the plain baseline over [`PROFILE_CONTRAST_COUNTS`].
-/// Redundant shapes (`tagged`, `classified`, `list_heavy`) whose build scaling
-/// matches plain notes are omitted.
+/// attachments against the plain baseline. Redundant shapes (`tagged`,
+/// `classified`, `list_heavy`) whose build scaling matches plain notes are
+/// omitted.
 ///
 /// Expected outcomes:
 /// - Rich realistic and dense link shapes exhibit higher constant factors due

@@ -23,8 +23,8 @@
 //! cargo flamegraph --bench query_sort -- --bench "bench_sort_by_metadata"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
-//! `test-utils`-gated public surface is only reachable with
+//! Run via `mise run bench -f query_sort` (or `mise run bench -m query`): this
+//! crate's `test-utils`-gated public surface is only reachable with
 //! `--features test-utils`, which the mise task supplies.
 
 #![expect(

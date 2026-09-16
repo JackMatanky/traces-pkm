@@ -9,8 +9,10 @@
 //!
 //! ### Data Flow Diagram
 //!
-//! [`Path`] ──(`Blake3FileHash::try_from`)──► [BLAKE3-256 file digest]
-//! [`Path`] ──(`Blake3PathHash::from`)───────► [64-byte hex path digest]
+//! ```text
+//! [Path] ──(Blake3FileHash::try_from)──► [BLAKE3-256 file digest]
+//! [Path] ──(Blake3PathHash::from)───────► [64-byte hex path digest]
+//! ```
 //!
 //! ### Profiling Integration
 //!
@@ -19,7 +21,7 @@
 //! cargo flamegraph --bench hash -- --bench "Blake3FileHash::try_from/1mb"
 //! ```
 //!
-//! Run via `mise run bench`, not bare `cargo bench`: this crate's
+//! Run via `mise run bench -f hash` (or `mise run bench -m hash`): this crate's
 //! `test-utils`-gated public surface (`Blake3FileHash`, `Blake3PathHash`) is
 //! only reachable with `--features test-utils`, which the mise task supplies.
 
@@ -36,9 +38,8 @@ use criterion::{
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
 
 // ----------------------------------------------------------- //
-//                         Benchmarks                          //
+//                  Benchmarks: File Hashing                   //
 // ----------------------------------------------------------- //
-
 /// Measures file-content hashing cost for small (`1 KiB`) and large (`1 MiB`)
 /// pre-created temp files.
 ///
@@ -80,8 +81,11 @@ fn bench_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//                  Benchmarks: Path Hashing                   //
+// ----------------------------------------------------------- //
+
 /// Measures path-hash cost over coupled short, medium, and deep path fixtures.
-///
 /// Parameters: varies static path fixture; reports encoded path-byte
 /// throughput. Timed work is [`Blake3PathHash::from`], including encoded-byte
 /// hashing, digest hex encoding, and copy into the `[u8; 64]` storage.
@@ -125,6 +129,11 @@ fn bench_path_hash(c: &mut Criterion) {
     }
     group.finish();
 }
+
+// ----------------------------------------------------------- //
+//              Benchmarks: Memory Buffer Hashing              //
+// ----------------------------------------------------------- //
+
 /// Measures BLAKE3 hashing over preallocated in-memory byte buffers.
 ///
 /// Parameters: varies buffer size over `1kb`, `64kb`, and `1mb`; reports byte
