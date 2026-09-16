@@ -701,8 +701,8 @@ impl TaskConfig {
     ///
     /// # Panics
     ///
-    /// Panics if a tag does not parse. Fixture-only code: a panic here means
-    /// the test's fixture data is wrong.
+    /// - Panics if a tag does not parse. Fixture-only code: a panic here means
+    ///   the test's fixture data is wrong.
     #[cfg(any(test, feature = "test-utils"))]
     #[expect(
         clippy::expect_used,

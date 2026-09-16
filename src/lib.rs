@@ -198,7 +198,7 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if `rel_path` is absolute or contains a `..` component.
+    /// - Panics if `rel_path` is absolute or contains a `..` component.
     #[inline]
     #[must_use]
     pub fn resolve_safe_path(root: &Path, rel_path: &Path) -> PathBuf {
@@ -227,9 +227,9 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if `root` cannot be created, the config file cannot be written,
-    /// or trust cannot be recorded. Fixture-only code: a panic here means the
-    /// fixture setup itself is broken.
+    /// - Panics if `root` cannot be created, the config file cannot be written,
+    ///   or trust cannot be recorded. Fixture-only code: a panic here means the
+    ///   fixture setup itself is broken.
     #[inline]
     #[must_use]
     pub fn create_trusted_project(
@@ -259,8 +259,8 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if the path escapes `root` or the note cannot be written.
-    /// Fixture-only code: a panic here means the fixture setup is broken.
+    /// - Panics if the path escapes `root` or the note cannot be written.
+    ///   Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
     pub fn write_note<P: AsRef<Path>>(
         root: &Path,
@@ -280,8 +280,8 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if the path escapes `root` or the template cannot be written.
-    /// Fixture-only code: a panic here means the fixture setup is broken.
+    /// - Panics if the path escapes `root` or the template cannot be written.
+    ///   Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
     pub fn write_template<P: AsRef<Path>>(
         root: &Path,
@@ -304,8 +304,8 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if the path escapes `root` or the schema cannot be written.
-    /// Fixture-only code: a panic here means the fixture setup is broken.
+    /// - Panics if the path escapes `root` or the schema cannot be written.
+    ///   Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
     pub fn write_schema<P: AsRef<Path>>(
         root: &Path,
@@ -350,8 +350,8 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if `s` is not a valid tag. Fixture-only code: a panic here
-    /// means the test's fixture data is wrong.
+    /// - Panics if `s` is not a valid tag. Fixture-only code: a panic here
+    ///   means the test's fixture data is wrong.
     #[inline]
     #[must_use]
     pub fn parse_tag(s: &str) -> Tag {
@@ -377,8 +377,8 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if `root` cannot be created. Fixture-only code: a panic
-        /// here means the fixture setup itself is broken.
+        /// - Panics if `root` cannot be created. Fixture-only code: a panic
+        ///   here means the fixture setup itself is broken.
         #[inline]
         #[must_use]
         pub fn empty<P: Into<PathBuf>>(root: P) -> Self {
@@ -395,7 +395,7 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if the config file cannot be written. Fixture-only code.
+        /// - Panics if the config file cannot be written. Fixture-only code.
         #[inline]
         #[must_use]
         pub fn untrusted<P: Into<PathBuf>>(root: P) -> Self {
@@ -423,7 +423,7 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if the fixture setup fails; see [`create_trusted_project`].
+        /// - Panics if the fixture setup fails; see [`create_trusted_project`].
         #[inline]
         #[must_use]
         pub fn trusted<P: Into<PathBuf>>(root: P) -> Self {
@@ -467,8 +467,9 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if `.traces/config.toml` is missing or invalid. Fixture-only
-        /// code: a panic here means the test's fixture data is wrong.
+        /// - Panics if `.traces/config.toml` is missing or invalid.
+        ///   Fixture-only code: a panic here means the test's fixture data is
+        ///   wrong.
         #[inline]
         pub fn trust(&self) {
             let config_path = self.root.join(".traces/config.toml");
@@ -484,7 +485,7 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if the trust entry cannot be removed. Fixture-only code.
+        /// - Panics if the trust entry cannot be removed. Fixture-only code.
         #[inline]
         #[must_use]
         pub fn untrust(&self) -> usize {
@@ -497,8 +498,8 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if the path escapes `root` or the file cannot be written.
-        /// Fixture-only code: a panic here means the fixture setup is broken.
+        /// - Panics if the path escapes `root` or the file cannot be written.
+        ///   Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
         pub fn write_file<P: AsRef<Path>>(
             &self,
@@ -518,8 +519,8 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if `rel_path` escapes `root` or the note cannot be written.
-        /// Fixture-only code: a panic here means the fixture setup is broken.
+        /// - Panics if `rel_path` escapes `root` or the note cannot be written.
+        ///   Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
         pub fn write_note<P: AsRef<Path>>(
             &self,
@@ -532,6 +533,9 @@ mod test_support {
         /// Writes a template file under `templates/`.
         ///
         /// # Panics
+        ///
+        /// - Panics if the path escapes `root` or the template cannot be
+        ///   written. Fixture-only code.
         #[inline]
         pub fn write_template<P: AsRef<Path>>(
             &self,
@@ -544,9 +548,11 @@ mod test_support {
             )
         }
 
-        /// Writes a schema file under `.traces/schemas/`.
         ///
         /// # Panics
+        ///
+        /// - Panics if the path escapes `root` or the schema cannot be written.
+        ///   Fixture-only code.
         #[inline]
         pub fn write_schema<P: AsRef<Path>>(
             &self,
@@ -560,12 +566,11 @@ mod test_support {
             )
         }
 
-        /// Writes a schema value file under `.traces/schemas/values/`.
         ///
         /// # Panics
         ///
-        /// Panics if the path escapes `root` or the file cannot be written.
-        /// Fixture-only code.
+        /// - Panics if the path escapes `root` or the file cannot be written.
+        ///   Fixture-only code.
         #[inline]
         pub fn write_schema_value<P: AsRef<Path>>(
             &self,
@@ -585,11 +590,10 @@ mod test_support {
             IndexerService::new(&self.root).with_config(&self.config())
         }
 
-        /// Builds an in-memory index from disk files.
         ///
         /// # Panics
         ///
-        /// Panics if the index build fails. Fixture-only code.
+        /// - Panics if the index build fails. Fixture-only code.
         #[inline]
         #[must_use]
         pub fn build_index(&self) -> FileIndex {
@@ -600,7 +604,7 @@ mod test_support {
         ///
         /// # Panics
         ///
-        /// Panics if the build or persist fails. Fixture-only code.
+        /// - Panics if the build or persist fails. Fixture-only code.
         #[inline]
         #[must_use]
         pub fn persist_index(&self) -> (IndexerService, FileIndex) {
@@ -614,6 +618,36 @@ mod test_support {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        mod path_safety {
+            use super::*;
+
+            #[test]
+            fn resolves_valid_relative_paths() {
+                let root = Path::new("/workspace");
+                let resolved =
+                    resolve_safe_path(root, Path::new("notes/daily.md"));
+                assert_eq!(resolved, Path::new("/workspace/notes/daily.md"));
+            }
+
+            #[test]
+            #[should_panic(
+                expected = "fixture path must stay inside project root"
+            )]
+            fn rejects_absolute_paths() {
+                let root = Path::new("/workspace");
+                let _ = resolve_safe_path(root, Path::new("/etc/passwd"));
+            }
+
+            #[test]
+            #[should_panic(
+                expected = "fixture path must stay inside project root"
+            )]
+            fn rejects_parent_directory_traversal() {
+                let root = Path::new("/workspace");
+                let _ = resolve_safe_path(root, Path::new("../escape.md"));
+            }
+        }
 
         mod service {
             use super::*;
@@ -631,6 +665,14 @@ mod test_support {
             use pretty_assertions::assert_eq;
 
             use super::*;
+
+            #[test]
+            fn creates_empty_workspace_without_traces_config() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let project = TestProject::empty(temp.path().join("proj"));
+                assert!(project.root().is_dir());
+                assert!(!project.root().join(".traces/config.toml").exists());
+            }
 
             #[test]
             fn creates_trusted_workspace_and_persists_index() {
@@ -663,8 +705,20 @@ mod test_support {
                 let removed = project.untrust();
                 assert_eq!(removed, 1);
             }
-        }
 
+            #[test]
+            fn config_detects_templates_directory() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let project = TestProject::empty(temp.path().join("proj"));
+                assert!(project.config().local_template_dir().is_none());
+
+                project.write_template("test.md", "content");
+                assert_eq!(
+                    project.config().local_template_dir(),
+                    Some(project.root().join("templates").as_path())
+                );
+            }
+        }
         mod memory {
             use pretty_assertions::assert_eq;
 
