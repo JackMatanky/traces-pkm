@@ -15,6 +15,7 @@ use super::{
 #[cfg(any(test, feature = "test-utils"))]
 use crate::index::IndexerService;
 use crate::index::{FileIndex, IndexResult, IndexStore, RowIndex};
+
 /// Evaluates source expressions against a borrowed [`FileIndex`].
 ///
 /// Supports page/task modes, optional File Class expansion, and pending plan
