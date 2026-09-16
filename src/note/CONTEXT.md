@@ -64,3 +64,26 @@ todo, in-progress, on-hold, done, cancelled, or non-task.
 A `#`-prefixed identifier extracted from body text and frontmatter supporting
 hierarchical sub-tags (e.g. `#projects/active`).
 *Avoid*: hashtag, category, label
+
+#### Footnote Reference
+
+An inline `[^label]` reference to a footnote definition. Labels are opaque
+identifiers (numeric, symbolic, or mixed). Document-scoped; never crosses file
+boundaries.
+*Avoid*: footnote ref, fn ref
+
+#### Footnote Definition
+
+A block-level `[^label]: content` definition providing the body text for a
+footnote reference. Definitions and references may appear in any order; the
+parser emits them independently and the index cross-references them.
+*Avoid*: footnote def, fn def
+
+#### Callout
+
+A blockquote annotated with a type identifier on its first line
+(`> [!TYPE] content`). Types are case-insensitive; 13 canonical types with
+aliases are defined by Obsidian (note, abstract, info, todo, tip, success,
+question, warning, failure, danger, bug, example, quote). Unknown types fall
+back to generic note rendering. Custom types may be defined via CSS.
+*Avoid*: alert, admonition, callout block
