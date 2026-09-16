@@ -163,7 +163,7 @@ impl FileBase {
 
     /// Returns the filesystem creation timestamp, if the host reports one.
     ///
-    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, NFSv3,
+    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, `NFSv3`,
     /// and kernels before 4.11. Callers should treat this as `Option`, falling
     /// back to [`Self::modified_at`] or displaying `None` as appropriate.
     #[inline]

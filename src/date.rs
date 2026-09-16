@@ -318,17 +318,9 @@ pub struct DateTimeValue(DateTime<Utc>);
 
 impl DateTimeValue {
     /// Returns the current UTC date-time.
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; used only by \
-                      FileBase::for_test"
-        )
-    )]
+    #[cfg(test)]
     #[inline]
     #[must_use]
-    #[allow(dead_code, reason = "utility constructor used only in tests")]
     pub(crate) fn now() -> Self {
         Self(Utc::now())
     }
