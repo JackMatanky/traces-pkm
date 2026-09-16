@@ -22,21 +22,20 @@
 //!
 //! # Timestamps
 //!
-//! [`FileBase`] stores metadata timestamps as [`crate::DateTimeValue`], the
-//! crate's single date/date-time type (see `src/date.rs`).
+//! [`FileBase`] stores metadata timestamps as [`std::time::SystemTime`],
+//! deferring conversion to [`crate::DateTimeValue`] or [`crate::DateValue`]
+//! at the point of use (see `src/date.rs`).
 
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{
-    DateTimeValue,
-    path::{FolderRef, RelativePath},
-};
+use crate::path::{FolderRef, RelativePath};
 
 /// Metadata captured for one regular file under a project root.
 ///
@@ -50,8 +49,8 @@ pub struct FileBase {
     #[serde(with = "crate::index::path")]
     folder: PathBuf,
     format: FileFormat,
-    created_at: Option<DateTimeValue>,
-    modified_at: DateTimeValue,
+    created_at: Option<SystemTime>,
+    modified_at: SystemTime,
     size: u64,
 }
 
@@ -70,8 +69,8 @@ impl FileBase {
         metadata: &fs::Metadata,
     ) -> Result<Self, std::io::Error> {
         let relative = relative.into_path_buf();
-        let modified_at = metadata.modified().map(DateTimeValue::from)?;
-        let created_at = metadata.created().map(DateTimeValue::from).ok();
+        let modified_at = metadata.modified()?;
+        let created_at = metadata.created().ok();
         let file_name =
             FileName::try_from(relative.as_path()).unwrap_or_default();
         let name = BaseName::from(&file_name);
@@ -106,7 +105,7 @@ impl FileBase {
             folder,
             format,
             created_at: None,
-            modified_at: DateTimeValue::now(),
+            modified_at: SystemTime::now(),
             size: 10,
         }
     }
@@ -166,37 +165,19 @@ impl FileBase {
 
     /// Returns the filesystem creation timestamp, if the host reports one.
     ///
-    /// Use [`Self::created_at_or_modified`] when unsupported creation times
-    /// should fall back to [`Self::modified_at`].
+    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, NFSv3,
+    /// and kernels before 4.11. Callers should treat this as `Option` — fall
+    /// back to [`Self::modified_at`] or display `None` as appropriate.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#01's FileIndex baseline design, \
-                      distinct from created_at_or_modified which field \
-                      resolution uses"
-        )
-    )]
-    pub(crate) const fn created_at(&self) -> Option<DateTimeValue> {
+    pub(crate) const fn created_at(&self) -> Option<SystemTime> {
         self.created_at
     }
 
-    /// Returns [`Self::created_at`] when available, falling back to
-    /// [`Self::modified_at`] when creation time is unsupported on the host OS
-    /// or filesystem.
+    /// Returns the raw filesystem modification timestamp.
     #[inline]
     #[must_use]
-    pub(crate) fn created_at_or_modified(&self) -> DateTimeValue {
-        self.created_at.unwrap_or(self.modified_at)
-    }
-
-    /// Returns this file's last modification time.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn modified_at(&self) -> DateTimeValue {
+    pub(crate) const fn modified_at(&self) -> SystemTime {
         self.modified_at
     }
 
