@@ -1,26 +1,65 @@
-Status: ready-for-agent
+# 11 — Task and list system integration test suite
 
-# 11 — Task system integration tests
+**Status:** ready-for-agent
 
-**What to build:** End-to-end integration tests covering the full task system flow from configuration through parsing, indexing, querying, and CLI/template output. Uses the existing Sandbox test pattern for isolation. Verifies the complete feature set works together, not just individual components.
+**What to build:** Implement a focused, high-value integration test suite in
+`tests/integration/` verifying the end-to-end task and list system across all
+subsystems. Using `test_support::TestProject`, test the public boundaries:
+configuration loading with custom status registries and tag filters, note
+parsing and indexing, index persistence invariance without a separate `LISTS`
+table, query execution across `lists` and `tasks` modes, CLI command execution
+with fidelity formatting, and template pipeline rendering. Strictly avoid
+duplicating low-level unit tests.
 
-**Blocked by:** 09, 10 (needs all query/CLI/template pieces).
+**Blocked by:** 09 (needs template namespaces), 10 (needs CLI task command).
 
-- [ ] Test full flow: config with tag filters → parse notes → index → query → CLI output
-- [ ] Test full flow: config without tag filters → all status-marked items are Tasks
-- [ ] Test completion tri-state: done → `Some(true)`, cancelled → `None`, incomplete → `Some(false)`
-- [ ] Test fully-complete with nested cancelled children → true
-- [ ] Test fully-complete with any incomplete descendant → false
-- [ ] Test `Note.tasks()` iterator returns only Task items
-- [ ] Test `Note.list_items()` iterator returns all item kinds
-- [ ] Test task query rows inherit parent Note metadata
-- [ ] Test task item fields override inherited Note metadata
-- [ ] Test `traces task --sort` and descending order
-- [ ] Test `traces task --table` default and custom columns
-- [ ] Test `--from` with tag, folder, File Class, and file sources
-- [ ] Test `--from` File Class uses transitive is-a matching
-- [ ] Test template `tasks.from_class()` with transitive matching
-- [ ] Test index persistence roundtrip includes LISTS-derived fields
-- [ ] Test custom markers (`[/]`, `[-]`, `[!]`, `[?]`) parsed and classified correctly
-- [ ] Test unknown markers behave as incomplete todos
-- [ ] Test `[x]` and `[X]` both map to Done
+## Key Integration Workflows
+
+- **Full Vault Lifecycle:**
+  Create an isolated test vault with custom statuses (`[/]` for In Progress,
+  `[!]` for Attention) and tag filters (`#task`). Populate multiple notes with
+  mixed outlines: plain bullets, checkboxes, top-level tasks, and nested
+  subtasks with dates and priorities. Verify `QueryService::run` returns all
+  items in `QueryMode::Lists`, but only tag-matching status items in
+  `QueryMode::Tasks`.
+
+- **Persistence Invariance (Without `LISTS` Table):**
+  Persist the index to disk using `TestProject::persist_index`. Load a fresh
+  `IndexerService` from the same database file, execute list and task queries,
+  and assert identical results, proving `NOTES` and `FILES` tables alone
+  faithfully reconstruct the entire list and task domain without reparsing
+  Markdown.
+
+- **CLI Execution & Output Fidelity:**
+  Exercise the `Task` CLI command across realistic workflows:
+  - Verify `render_task_list` preserves custom markers (`[/]`, `[!]`) and
+    indents nested tasks by `list.depth * 2`.
+  - Verify `--line-numbers` produces clickable `({path}:{line})` coordinates.
+  - Verify `--todo`, `--done`, and `--status` filter shortcuts narrow output
+    accurately.
+  - Verify `--table` produces a formatted Markdown table with resolved
+    columns.
+
+- **Template Pipeline Execution:**
+  Render templates via `TemplateService` containing `lists.from()` and
+  `tasks.from()` pipelines. Verify transforms (`where`, `sort`, `limit`,
+  `group_by`) and renderers (`task_list`, `table`, `count`) execute cleanly
+  with inherited note metadata and inline field overrides.
+
+## Acceptance Criteria
+
+- [ ] Create `tests/integration/task_system_lifecycle.rs` using
+  `TestProject`.
+- [ ] Test multi-note vault lifecycle: custom statuses, tag filters, mixed list
+  items, and query mode separation (`QueryMode::Lists` vs `QueryMode::Tasks`).
+- [ ] Test index persistence invariance: build, persist to redb, reload from
+  fresh service, and assert identical query outcomes without reparsing.
+- [ ] Test CLI execution with output fidelity: custom marker preservation,
+  nested indentation, clickable coordinates (`--line-numbers`), and filter
+  shortcuts (`--todo`, `--done`, `--status`).
+- [ ] Test CLI `--table` output with default columns and `--sort` ordering.
+- [ ] Test template pipeline rendering with `lists.from()` and `tasks.from()`
+  under `TemplateService`.
+- [ ] Verify zero duplicate unit tests: low-level parser edge cases are
+  excluded from the integration suite.
+- [ ] All checks pass under `mise run verify`.
