@@ -151,11 +151,17 @@ pub use template::{
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and, under
 /// the `test-utils` feature, for external `tests/`/`benches/` consumers.
 ///
+/// - [`TestProject`] encapsulates an isolated workspace fixture managing paths,
+///   configuration, trust records, schemas, templates, and on-disk index
+///   persistence.
 /// - [`fixture_service`] returns a [`ConfigService`] backed by temporary
 ///   directories.
 /// - [`create_trusted_project`] writes a minimal config and trusts it.
-/// - [`write_note`] creates note files.
-/// - [`write_template`] creates template files.
+/// - [`write_note`], [`write_template`], and [`write_schema`] write fixture
+///   files.
+/// - [`parse_note`], [`parse_note_str`], and [`build_test_index`] construct
+///   in-memory notes and indexes with zero disk I/O.
+/// - [`parse_tag`] parses tag string slices for fixture data.
 #[cfg(any(test, feature = "test-utils"))]
 mod test_support {
     #![expect(
@@ -511,6 +517,11 @@ mod test_support {
         }
 
         /// Writes a note relative to the project root.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `rel_path` escapes `root` or the note cannot be written.
+        /// Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
         pub fn write_note<P: AsRef<Path>>(
             &self,
@@ -521,6 +532,11 @@ mod test_support {
         }
 
         /// Writes a template file under `templates/`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the path escapes `root` or the template cannot be written.
+        /// Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
         #[expect(
             clippy::must_use_candidate,
@@ -535,6 +551,11 @@ mod test_support {
         }
 
         /// Writes a schema file under `.traces/schemas/`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the path escapes `root` or the schema cannot be written.
+        /// Fixture-only code: a panic here means the fixture setup is broken.
         #[inline]
         #[expect(
             clippy::must_use_candidate,
