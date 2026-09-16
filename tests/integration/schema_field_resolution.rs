@@ -7,17 +7,11 @@
 
 use traces_pkm::{SchemaService, TestProject};
 
-/// Writes a schema fixture via [`TestProject`] and returns the project root,
-/// which is the directory the [`SchemaService`] should read.
-fn schema_project(root: &std::path::Path) -> TestProject {
-    TestProject::empty(root)
-}
-
 #[test]
 fn child_schema_inherits_parent_fields()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
-    let project = schema_project(temp.path());
+    let project = TestProject::empty(temp.path());
     project.write_schema(
         "book",
         r#"
@@ -28,7 +22,7 @@ fn child_schema_inherits_parent_fields()
     );
     project.write_schema("sci_fi", r#"extends = ["book"]"#);
 
-    let service = SchemaService::new(&temp.path().join(".traces/schemas"))?;
+    let service = SchemaService::new(&project.root().join(".traces/schemas"))?;
     let sci_fi = service
         .get("sci_fi")
         .ok_or_else(|| std::io::Error::other("sci_fi resolved"))?;
@@ -45,7 +39,7 @@ fn child_schema_inherits_parent_fields()
 fn parent_fields_override_is_not_lost_when_child_adds_own_fields()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
-    let project = schema_project(temp.path());
+    let project = TestProject::empty(temp.path());
     project.write_schema(
         "book",
         r#"
@@ -64,7 +58,7 @@ fn parent_fields_override_is_not_lost_when_child_adds_own_fields()
         "#,
     );
 
-    let service = SchemaService::new(&temp.path().join(".traces/schemas"))?;
+    let service = SchemaService::new(&project.root().join(".traces/schemas"))?;
     let sci_fi = service
         .get("sci_fi")
         .ok_or_else(|| std::io::Error::other("sci_fi resolved"))?;
@@ -87,12 +81,12 @@ fn parent_fields_override_is_not_lost_when_child_adds_own_fields()
 fn children_of_returns_direct_extenders()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
-    let project = schema_project(temp.path());
+    let project = TestProject::empty(temp.path());
     project.write_schema("book", "");
     project.write_schema("sci_fi", r#"extends = ["book"]"#);
     project.write_schema("memoir", r#"extends = ["book"]"#);
 
-    let service = SchemaService::new(&temp.path().join(".traces/schemas"))?;
+    let service = SchemaService::new(&project.root().join(".traces/schemas"))?;
 
     let children = service.children_of("book");
     let names: Vec<&str> = children.iter().map(|s| s.name()).collect();
@@ -109,12 +103,12 @@ fn children_of_returns_direct_extenders()
 fn descendants_of_returns_transitive_extenders()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
-    let project = schema_project(temp.path());
+    let project = TestProject::empty(temp.path());
     project.write_schema("thing", "");
     project.write_schema("book", r#"extends = ["thing"]"#);
     project.write_schema("sci_fi", r#"extends = ["book"]"#);
 
-    let service = SchemaService::new(&temp.path().join(".traces/schemas"))?;
+    let service = SchemaService::new(&project.root().join(".traces/schemas"))?;
 
     let descendants = service.descendants_of("thing");
     let names: Vec<&str> = descendants.iter().map(|s| s.name()).collect();
@@ -131,11 +125,11 @@ fn descendants_of_returns_transitive_extenders()
 fn matches_includes_transitive_subclasses()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
-    let project = schema_project(temp.path());
+    let project = TestProject::empty(temp.path());
     project.write_schema("book", "");
     project.write_schema("sci_fi", r#"extends = ["book"]"#);
 
-    let service = SchemaService::new(&temp.path().join(".traces/schemas"))?;
+    let service = SchemaService::new(&project.root().join(".traces/schemas"))?;
 
     let matches = service.matches(&["book".to_owned()]);
     if !matches.contains("book") || !matches.contains("sci_fi") {

@@ -60,13 +60,10 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     let trust = run(&sandbox, &["trust"]);
     assert!(trust.is_success(), "stderr: {}", trust.stderr);
 
-    std::fs::create_dir_all(sandbox.root().join("notes"))
-        .expect("create notes dir");
-    std::fs::write(
-        sandbox.root().join("notes/golden.md"),
+    sandbox.write_note(
+        "notes/golden.md",
         "---\nrating: 8\n---\n\n- [ ] buy milk\n",
-    )
-    .expect("write note with task and frontmatter field");
+    );
 
     let index = run(&sandbox, &["index"]);
     assert!(index.is_success(), "stderr: {}", index.stderr);
@@ -100,11 +97,10 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     // init's template directory): `query.from()` indexes every markdown file
     // under the project root, including the template file itself, so an
     // unscoped query here would also count `report.md`.
-    std::fs::write(
-        sandbox.root().join(".traces/templates/report.md"),
+    sandbox.write_note(
+        ".traces/templates/report.md",
         "{{ query.from(\"notes/\") | length }} note(s)",
-    )
-    .expect("write template");
+    );
 
     let template =
         run(&sandbox, &["template", "-i", "report", "--dry-run", "--no-input"]);

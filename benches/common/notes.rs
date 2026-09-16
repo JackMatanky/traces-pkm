@@ -26,10 +26,8 @@ pub(crate) fn parse_note(path: &Path, content: &str) -> Note {
 
 /// Returns sorted [`FileBase`] note records matching `notes`.
 pub(crate) fn file_records_for_notes(notes: &[Note]) -> Vec<FileBase> {
-    let mut files: Vec<FileBase> = notes
-        .iter()
-        .map(|note| FileBase::note_for_test(note.path().to_path_buf()))
-        .collect();
+    let mut files: Vec<FileBase> =
+        notes.iter().map(|note| FileBase::note_for_test(note.path())).collect();
     files.sort_by(|a, b| a.path().cmp(b.path()));
     files
 }

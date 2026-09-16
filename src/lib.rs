@@ -201,7 +201,11 @@ mod test_support {
     /// - Panics if `rel_path` is absolute or contains a `..` component.
     #[inline]
     #[must_use]
-    pub fn resolve_safe_path(root: &Path, rel_path: &Path) -> PathBuf {
+    pub fn resolve_safe_path<P: AsRef<Path>>(
+        root: &Path,
+        rel_path: P,
+    ) -> PathBuf {
+        let rel_path = rel_path.as_ref();
         assert!(
             rel_path.is_relative()
                 && !rel_path
@@ -212,7 +216,6 @@ mod test_support {
         );
         root.join(rel_path)
     }
-
     /// Creates a [`ConfigService`] backed by isolated tracked-config and trust
     /// stores under `root`, never the real OS state directories.
     #[inline]
@@ -220,7 +223,6 @@ mod test_support {
     pub fn fixture_service(root: &Path) -> ConfigService {
         ConfigService::at(root.join("tracked-store"), root.join("trust-store"))
     }
-
     /// Writes a minimal local config at `root/.traces/config.toml` pointing
     /// at `root/templates` (creating that directory), and records `root` as
     /// trusted in `service`'s trust store.
@@ -290,7 +292,7 @@ mod test_support {
     ) -> PathBuf {
         let path = resolve_safe_path(
             root,
-            &Path::new(DEFAULT_TEMPLATES_DIR).join(name.as_ref()),
+            Path::new(DEFAULT_TEMPLATES_DIR).join(name.as_ref()),
         );
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create templates dir");
@@ -315,7 +317,7 @@ mod test_support {
         let file_name = format!("{}.toml", name.as_ref().display());
         let path = resolve_safe_path(
             root,
-            &Path::new(DEFAULT_SCHEMAS_DIR).join(file_name),
+            Path::new(DEFAULT_SCHEMAS_DIR).join(file_name),
         );
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create schemas dir");
@@ -368,11 +370,10 @@ mod test_support {
 
     impl TestProject {
         fn project_service(root: &Path) -> ConfigService {
-            let state_root = root.parent().unwrap_or(root);
-            fixture_service(state_root)
+            let state_root = root.join(".traces");
+            fixture_service(&state_root)
         }
 
-        /// Creates an empty directory with an isolated config service and no
         /// `.traces/` directory.
         ///
         /// # Panics

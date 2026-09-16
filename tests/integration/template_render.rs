@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    CommitPolicy, Config, PresetDialogProvider, TemplatePathInput,
-    TemplateService, TestProject, WriteMode, WriteOutcome,
+    CommitPolicy, PresetDialogProvider, TemplatePathInput, TemplateService,
+    TestProject, WriteMode, WriteOutcome,
 };
 
 /// Renders a template whose query counts real indexed notes, and checks
@@ -20,15 +20,13 @@ use traces_pkm::{
 fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
-    let root = project.root();
     project.write_note("notes/a.md", "# A\n");
     project.write_note("notes/b.md", "# B\n");
     project.write_template(
         "report.md",
         "{{ query.from(\"notes/\") | length }} notes",
     );
-
-    let config = Config::test_default(root).with_templates();
+    let config = project.config();
     let template_service =
         TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
             .expect("valid test schema directory");
@@ -58,7 +56,6 @@ fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
 fn renders_a_file_sourced_select_field_in_template_rendering() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
-    let root = project.root();
 
     project.write_schema_value(
         "categories.toml",
@@ -79,8 +76,7 @@ fn renders_a_file_sourced_select_field_in_template_rendering() {
         "Category: {{ schema.get('topic').field('category')[0].label }} ({{ \
          schema.get('topic').field('category')[0].value }})",
     );
-
-    let config = Config::test_default(root).with_templates();
+    let config = project.config();
     let template_service =
         TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
             .expect("valid test schema directory");

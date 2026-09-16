@@ -24,40 +24,9 @@ use std::{
 };
 
 use tempfile::TempDir;
-use traces_pkm::{FileIndex, IndexerService, resolve_safe_path};
+use traces_pkm::{FileIndex, IndexerService, resolve_safe_path, write_note};
 
 use super::content::{ProjectShape, note_path, note_source};
-
-/// Resolves a project-relative fixture path beneath `root`.
-///
-/// Use this before every benchmark fixture file write or delete. It prevents
-/// accidental writes outside the [`TempDir`] by rejecting absolute paths and
-/// parent-directory traversal.
-///
-/// # Panics
-///
-/// Panics if `relative` is absolute or contains a `..` component.
-fn fixture_path(root: &Path, relative: &Path) -> PathBuf {
-    resolve_safe_path(root, relative)
-}
-
-/// Writes a UTF-8 fixture file beneath a temporary project root.
-///
-/// `relative` is interpreted as a project-relative path, so callers should pass
-/// values such as `note-0.md` or `areas/project/note.md`, never paths from the
-/// repository checkout. Parent directories are created inside `root`.
-///
-/// # Panics
-///
-/// Panics if `relative` escapes `root`, if a parent directory cannot be
-/// created, or if the file cannot be written.
-fn write_text_file(root: &Path, relative: &Path, content: &str) {
-    let path = fixture_path(root, relative);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create fixture parent dir");
-    }
-    fs::write(path, content).expect("write fixture file");
-}
 
 /// Writes a binary fixture file beneath a temporary project root.
 ///
@@ -69,7 +38,7 @@ fn write_text_file(root: &Path, relative: &Path, content: &str) {
 /// Panics if `relative` escapes `root`, if a parent directory cannot be
 /// created, or if the file cannot be written.
 fn write_binary_file(root: &Path, relative: &Path, bytes: &[u8]) {
-    let path = fixture_path(root, relative);
+    let path = resolve_safe_path(root, relative);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create fixture parent dir");
     }
@@ -95,7 +64,7 @@ pub(crate) fn create_project(
     for i in 0..note_count {
         let path = note_path(shape, i);
         let content = note_source(shape, i, note_count);
-        write_text_file(temp.path(), &path, &content);
+        write_note(temp.path(), &path, &content);
     }
     if shape == ProjectShape::AttachmentProject {
         write_attachment_files(temp.path());
@@ -265,7 +234,7 @@ pub fn rewrite_note(
     } else {
         content.to_owned()
     };
-    write_text_file(root, &path, &content);
+    write_note(root, &path, &content);
 }
 
 /// Removes `note_index` from a temporary project.
@@ -277,6 +246,6 @@ pub fn rewrite_note(
 ///
 /// Panics if the note path escapes `root` or cannot be deleted.
 pub(crate) fn remove_note(root: &Path, shape: ProjectShape, note_index: usize) {
-    let path = fixture_path(root, &note_path(shape, note_index));
+    let path = resolve_safe_path(root, note_path(shape, note_index));
     fs::remove_file(path).expect("delete fixture note");
 }
