@@ -327,6 +327,14 @@ mod test_support {
     }
 
     /// Parses a Markdown note in memory with a custom path.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use traces_pkm::parse_note;
+    /// let note = parse_note("notes/daily.md", "# Today\n\n- [ ] Task");
+    /// assert_eq!(note.path().to_str(), Some("notes/daily.md"));
+    /// ```
     #[inline]
     #[must_use]
     pub fn parse_note<P: AsRef<Path>>(path: P, src: &str) -> Note {
@@ -334,6 +342,14 @@ mod test_support {
     }
 
     /// Parses a Markdown note in memory with the default path `note.md`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use traces_pkm::parse_note_str;
+    /// let note = parse_note_str("# Sample\n\nContent");
+    /// assert_eq!(note.path().to_str(), Some("note.md"));
+    /// ```
     #[inline]
     #[must_use]
     pub fn parse_note_str(src: &str) -> Note {
@@ -342,6 +358,14 @@ mod test_support {
 
     /// Builds an in-memory [`FileIndex`] wrapped in an [`Arc`] from note path
     /// and content pairs with zero disk I/O.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use traces_pkm::build_test_index;
+    /// let index = build_test_index(&[("a.md", "# A"), ("b.md", "# B")]);
+    /// assert_eq!(index.entries().len(), 2);
+    /// ```
     #[inline]
     #[must_use]
     pub fn build_test_index(notes: &[(&str, &str)]) -> Arc<FileIndex> {
@@ -354,6 +378,14 @@ mod test_support {
     ///
     /// - Panics if `s` is not a valid tag. Fixture-only code: a panic here
     ///   means the test's fixture data is wrong.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use traces_pkm::parse_tag;
+    /// let tag = parse_tag("#projects/active");
+    /// assert_eq!(tag.as_str(), "#projects/active");
+    /// ```
     #[inline]
     #[must_use]
     pub fn parse_tag(s: &str) -> Tag {
@@ -362,18 +394,29 @@ mod test_support {
 
     /// Encapsulates an isolated workspace fixture directory, configuration,
     /// trust records, and on-disk index persistence for tests.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use traces_pkm::TestProject;
+    /// let temp = tempfile::tempdir().unwrap();
+    /// let project = TestProject::trusted(temp.path().join("project"));
+    /// project.write_note("notes/sample.md", "# Sample\n");
+    /// let index = project.build_index();
+    /// assert_eq!(index.entries().len(), 1);
+    /// ```
     #[derive(Clone, Debug)]
     pub struct TestProject {
         root: PathBuf,
         service: ConfigService,
     }
-
     impl TestProject {
         fn project_service(root: &Path) -> ConfigService {
             let state_root = root.join(".traces");
             fixture_service(&state_root)
         }
 
+        /// Creates an empty directory with an isolated config service and no
         /// `.traces/` directory.
         ///
         /// # Panics
@@ -549,6 +592,7 @@ mod test_support {
             )
         }
 
+        /// Writes a schema file under `.traces/schemas/`.
         ///
         /// # Panics
         ///
@@ -567,6 +611,7 @@ mod test_support {
             )
         }
 
+        /// Writes a schema value file under `.traces/schemas/values/`.
         ///
         /// # Panics
         ///
@@ -591,6 +636,7 @@ mod test_support {
             IndexerService::new(&self.root).with_config(&self.config())
         }
 
+        /// Builds an in-memory index from disk files.
         ///
         /// # Panics
         ///
