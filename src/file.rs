@@ -323,15 +323,15 @@ pub(crate) enum FileNameError {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use std::time::SystemTime;
 
     use super::*;
 
     /// Builds a `FileBase` with `created_at`/`modified_at` set directly, for
     /// exercising timestamp accessor behavior without touching the filesystem.
     fn record_with(
-        created_at: Option<DateTimeValue>,
-        modified_at: DateTimeValue,
+        created_at: Option<SystemTime>,
+        modified_at: SystemTime,
     ) -> FileBase {
         FileBase {
             path: PathBuf::from("note.md"),
@@ -378,7 +378,7 @@ mod tests {
                 assert_eq!(record.folder().as_path(), Path::new("notes"));
                 assert_eq!(record.format(), FileFormat::Note);
                 assert_eq!(record.size(), 7);
-                assert!(record.modified_at().into_inner() <= Utc::now());
+                assert!(record.modified_at() <= SystemTime::now());
             }
 
             #[test]
@@ -408,45 +408,20 @@ mod tests {
 
             #[test]
             fn returns_none_when_creation_time_is_unsupported() {
-                let record = record_with(None, DateTimeValue::now());
+                let record = record_with(None, SystemTime::now());
 
                 assert_eq!(record.created_at(), None);
             }
 
             #[test]
             fn returns_some_when_creation_time_is_reported() {
-                let modified_at = DateTimeValue::now();
-                let reported = DateTimeValue::from(
-                    modified_at.into_inner() - chrono::Duration::days(1),
-                );
+                let modified_at = SystemTime::now();
+                let reported = modified_at
+                    .checked_sub(std::time::Duration::from_secs(86400))
+                    .unwrap();
                 let record = record_with(Some(reported), modified_at);
 
                 assert_eq!(record.created_at(), Some(reported));
-            }
-        }
-
-        mod created_at_or_modified {
-            use pretty_assertions::assert_eq;
-
-            use super::*;
-
-            #[test]
-            fn returns_created_when_present() {
-                let modified_at = DateTimeValue::now();
-                let reported = DateTimeValue::from(
-                    modified_at.into_inner() - chrono::Duration::days(1),
-                );
-                let record = record_with(Some(reported), modified_at);
-
-                assert_eq!(record.created_at_or_modified(), reported);
-            }
-
-            #[test]
-            fn falls_back_to_modified_when_created_is_none() {
-                let modified_at = DateTimeValue::now();
-                let record = record_with(None, modified_at);
-
-                assert_eq!(record.created_at_or_modified(), modified_at);
             }
         }
     }
