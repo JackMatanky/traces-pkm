@@ -1,30 +1,25 @@
-//! File metadata and file-name newtypes.
+//! Captures filesystem metadata and decomposes file names for the project
+//! index.
 //!
-//! This module provides two families of types for working with files in a
-//! project:
+//! [`FileBase`] stores the metadata the indexer persists for every regular file
+//! under a project root: project-root-relative path, parent folder, timestamps,
+//! byte size, and [`FileFormat`] classification. [`FileFormat::Note`] files
+//! also get parsed into [`crate::Note`] metadata; [`FileFormat::Other`] files
+//! keep only their [`FileBase`].
 //!
-//! - [`FileBase`] captures filesystem metadata (path, timestamps, size) for
-//!   every regular file under a project root.
-//! - The file-name newtypes ([`FileName`], [`BaseName`], [`BaseNameRef`])
-//!   represent different views of a path's final component: full name, owned
-//!   stem, and borrowed stem respectively.
+//! File-name newtypes decompose a path's final component for index lookup:
 //!
-//! # File-name decomposition
-//!
-//! Given a path like `notes/todo.md`:
-//!
-//! - [`FileName`] stores `todo.md` (the final component, including extension).
-//! - [`BaseName`] stores `todo` (the stem, extension stripped).
-//! - [`BaseNameRef`] borrows the same `todo` without allocation.
+//! - [`FileName`] owns the full final component including extension
+//!   (`todo.md`). Constructed from a [`Path`] via [`TryFrom`]; returns
+//!   [`FileNameError::Missing`] when the path has no final component.
+//! - [`BaseName`] owns the stem with the extension stripped (`todo`), derived
+//!   from [`FileName`] via [`From`]. Used as the index key for stem-based link
+//!   resolution.
+//! - [`BaseNameRef`] borrows the stem without allocation, enabling zero-copy
+//!   comparison and hash lookups directly from a [`Path`].
 //!
 //! Dotfiles follow [`Path::file_stem`]: `.gitignore` has no extension, so both
 //! [`FileName`] and [`BaseName`] store `.gitignore`.
-//!
-//! # Timestamps
-//!
-//! [`FileBase`] stores metadata timestamps as [`std::time::SystemTime`],
-//! deferring conversion to [`crate::DateTimeValue`] or [`crate::DateValue`]
-//! at the point of use (see `src/date.rs`).
 
 use std::{
     fs,
@@ -90,6 +85,9 @@ impl FileBase {
     }
 
     /// Builds a [`FileBase`] with custom fields for test fixtures.
+    ///
+    /// Sets `created_at` to [`None`], `modified_at` to [`SystemTime::now()`],
+    /// and `size` to 10.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
@@ -165,9 +163,9 @@ impl FileBase {
 
     /// Returns the filesystem creation timestamp, if the host reports one.
     ///
-    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, `NFSv3`,
-    /// and kernels before 4.11. Callers should treat this as `Option` — fall
-    /// back to [`Self::modified_at`] or display `None` as appropriate.
+    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, NFSv3,
+    /// and kernels before 4.11. Callers should treat this as `Option`, falling
+    /// back to [`Self::modified_at`] or displaying `None` as appropriate.
     #[inline]
     #[must_use]
     pub(crate) const fn created_at(&self) -> Option<SystemTime> {
