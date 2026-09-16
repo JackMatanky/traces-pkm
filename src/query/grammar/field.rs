@@ -29,10 +29,11 @@ pub(crate) enum FileField {
     Name,
     Folder,
     Size,
-    /// Accesses [`crate::FileBase::created_at_or_modified`] as a datetime
-    /// without a UTC offset.
+    /// Accesses [`crate::FileBase::created_at`] (falling back to
+    /// [`crate::FileBase::modified_at`]) as a datetime without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`crate::FileBase::created_at_or_modified`] as a bare date.
+    /// Accesses [`crate::FileBase::created_at`] (falling back to
+    /// [`crate::FileBase::modified_at`]) as a bare date.
     CreatedDate,
     /// Accesses [`crate::FileBase::modified_at`] as a datetime without a UTC
     /// offset.

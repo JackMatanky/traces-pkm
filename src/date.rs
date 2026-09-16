@@ -328,6 +328,7 @@ impl DateTimeValue {
     )]
     #[inline]
     #[must_use]
+    #[allow(dead_code, reason = "utility constructor used only in tests")]
     pub(crate) fn now() -> Self {
         Self(Utc::now())
     }
