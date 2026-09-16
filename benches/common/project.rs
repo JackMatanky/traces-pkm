@@ -17,14 +17,12 @@
 //! `write_text_file` or `write_binary_file`, which reject absolute paths and
 //! `..` before touching disk.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fs, path::Path, sync::Arc};
 
 use tempfile::TempDir;
-use traces_pkm::{FileIndex, IndexerService, resolve_safe_path, write_note};
+use traces_pkm::{
+    FileIndex, IndexerService, build_test_index, resolve_safe_path, write_note,
+};
 
 use super::content::{ProjectShape, note_path, note_source};
 
@@ -37,7 +35,7 @@ use super::content::{ProjectShape, note_path, note_source};
 ///
 /// Panics if `relative` escapes `root`, if a parent directory cannot be
 /// created, or if the file cannot be written.
-fn write_binary_file(root: &Path, relative: &Path, bytes: &[u8]) {
+fn write_binary_file<P: AsRef<Path>>(root: &Path, relative: P, bytes: &[u8]) {
     let path = resolve_safe_path(root, relative);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create fixture parent dir");
@@ -113,31 +111,17 @@ pub(crate) fn build_index_arc(
 ///
 /// `note_source` receives `(note_index, note_count)` and must return full
 /// Markdown content. Notes are written as `note-{i}.md` in memory only.
-fn build_index_from_note_source(
+/// Handles errors by panicking internally.
+pub(crate) fn build_index_arc_from_note_source(
     note_count: usize,
     note_source: impl Fn(usize, usize) -> String,
-) -> FileIndex {
+) -> Arc<FileIndex> {
     let pairs: Vec<(String, String)> = (0..note_count)
         .map(|i| (format!("note-{i}.md"), note_source(i, note_count)))
         .collect();
     let refs: Vec<(&str, &str)> =
         pairs.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
-    FileIndex::new_test(&refs)
-}
-
-/// Builds a shareable, in-memory [`FileIndex`] from generated note content.
-///
-/// Clone the returned [`Arc`] inside Criterion iterations to exclude fixture
-/// setup from the measurement.
-///
-/// # Panics
-///
-/// Panics if a generated note path or source is malformed.
-pub(crate) fn build_index_arc_from_note_source(
-    note_count: usize,
-    note_source: impl Fn(usize, usize) -> String,
-) -> Arc<FileIndex> {
-    Arc::new(build_index_from_note_source(note_count, note_source))
+    build_test_index(&refs)
 }
 
 /// Creates attachment files referenced by [`ProjectShape::AttachmentProject`].
@@ -152,12 +136,12 @@ fn write_attachment_files(root: &Path) {
     for i in 0..20 {
         write_binary_file(
             root,
-            &PathBuf::from(format!("assets/image-{i}.png")),
+            format!("assets/image-{i}.png"),
             b"fixture image bytes",
         );
         write_binary_file(
             root,
-            &PathBuf::from(format!("docs/spec-{i}.pdf")),
+            format!("docs/spec-{i}.pdf"),
             b"fixture pdf bytes",
         );
     }

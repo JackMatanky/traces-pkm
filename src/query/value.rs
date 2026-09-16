@@ -503,7 +503,7 @@ mod tests {
 
         #[test]
         fn to_owned_value_converts_tags_into_a_string_list() {
-            let tags = [Tag::parse("#book").expect("valid tag")];
+            let tags = [crate::parse_tag("#book")];
             let owned = QueryFieldValueRef::Tags(&tags).to_owned_value();
             assert_eq!(
                 owned,
@@ -527,7 +527,7 @@ mod tests {
 
         #[test]
         fn as_note_ref_returns_none_for_tags() {
-            let tags = [Tag::parse("#book").expect("valid tag")];
+            let tags = [crate::parse_tag("#book")];
             assert!(QueryFieldValueRef::Tags(&tags).as_note_ref().is_none());
         }
 

@@ -834,7 +834,7 @@ mod tests {
         use super::super::{QueryFieldValueRef, SortKey};
         use crate::{
             DateTimeValue, DateValue, DurationSeconds, DurationValue,
-            NoteFieldValue, NoteFieldValueRef, Tag,
+            NoteFieldValue, NoteFieldValueRef,
         };
 
         fn date(s: &str) -> DateValue {
@@ -937,7 +937,7 @@ mod tests {
 
         #[test]
         fn from_value_ref_maps_tags_to_null() {
-            let tags = [Tag::parse("#book").expect("valid tag")];
+            let tags = [crate::parse_tag("#book")];
             assert_eq!(
                 SortKey::from_value_ref(QueryFieldValueRef::Tags(&tags)),
                 SortKey::Null

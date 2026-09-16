@@ -54,9 +54,7 @@ impl FileIndex {
         let mut items = Vec::with_capacity(notes.len());
         items.extend(notes.iter().map(|(path_str, src)| {
             let p = std::path::Path::new(path_str);
-            let note = crate::parse_markdown(
-                &crate::MarkdownParserInput::for_test(p, src),
-            );
+            let note = crate::parse_note(p, src);
             let size = u64::try_from(src.len()).unwrap_or(u64::MAX);
             (note, size)
         }));
@@ -65,10 +63,7 @@ impl FileIndex {
         let mut parsed = Vec::with_capacity(items.len());
         let mut files = Vec::with_capacity(items.len());
         for (note, size) in items {
-            files.push(FileBase::note_with_size_for_test(
-                note.path().to_path_buf(),
-                size,
-            ));
+            files.push(FileBase::note_with_size_for_test(note.path(), size));
             parsed.push(note);
         }
 

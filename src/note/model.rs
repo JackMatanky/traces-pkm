@@ -473,7 +473,7 @@ mod tests {
                     List::new(false, vec![child]),
                 ])
                 .with_fields(item_fields)
-                .with_tags(vec![Tag::parse("#task").expect("valid item tag")]);
+                .with_tags(vec![crate::parse_tag("#task")]);
 
             let list = List::new(false, vec![item]);
             let outlink = Link::new("target", "text", LinkType::Wikilink);
@@ -489,7 +489,7 @@ mod tests {
                     outlink,
                 ])
                 .with_inline_fields(inline_fields)
-                .with_tags(vec![Tag::parse("#book").expect("valid test tag")]);
+                .with_tags(vec![crate::parse_tag("#book")]);
 
             let bytes = postcard::to_allocvec(&note).expect("encode note");
             let decoded: Note =

@@ -1532,8 +1532,7 @@ mod tests {
 
         #[test]
         fn returns_true_when_only_non_task_checkbox_children_exist() {
-            let tasks =
-                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let tasks = TaskConfig::from_tags(&["#task"]);
             let frontmatter = crate::config::FrontmatterConfig::default();
             let input = MarkdownParserInput::new(
                 std::path::Path::new("note.md"),

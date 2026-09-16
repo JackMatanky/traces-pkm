@@ -37,3 +37,13 @@ fn trust_then_untrust_round_trips_through_the_public_service_surface() {
         .expect("untrust project root");
     assert_eq!(removed, 1);
 }
+
+#[test]
+fn test_project_manages_trust_and_untrust_lifecycle() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = traces_pkm::TestProject::trusted(temp.path().join("project"));
+    assert!(project.root().join(".traces/config.toml").is_file());
+
+    let removed = project.untrust();
+    assert_eq!(removed, 1);
+}
