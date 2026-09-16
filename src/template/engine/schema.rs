@@ -415,29 +415,7 @@ mod tests {
         full_env(directory).render_str(source, minijinja::context!())
     }
 
-    mod fixtures {
-        use std::{fs, path::Path};
-
-        /// Writes `content` as a Schema TOML file named `name.toml` under
-        /// `root/.traces/schemas/`, creating the directory if needed.
-        pub(super) fn write_schema(root: &Path, name: &str, content: &str) {
-            let dir = root.join(".traces/schemas");
-            fs::create_dir_all(&dir).expect("create schemas dir");
-            fs::write(dir.join(format!("{name}.toml")), content)
-                .expect("write schema");
-        }
-
-        /// Writes `content` as a project-relative Markdown file under `root`,
-        /// creating parent directories if needed.
-        pub(super) fn write_note(root: &Path, path: &str, content: &str) {
-            let path = root.join(path);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).expect("create note parent dir");
-            }
-            fs::write(path, content).expect("write note");
-        }
-    }
-    use fixtures::{write_note, write_schema};
+    use crate::{write_note, write_schema};
 
     mod get_value {
         use super::*;

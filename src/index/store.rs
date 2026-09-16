@@ -1789,15 +1789,7 @@ mod tests {
     use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
-    use crate::{
-        IndexerService,
-        note::{MarkdownParserInput, parse_markdown},
-    };
-
-    fn parse(path: impl AsRef<Path>, src: &str) -> Note {
-        let input = MarkdownParserInput::for_test(path.as_ref(), src);
-        parse_markdown(&input)
-    }
+    use crate::{IndexerService, parse_note as parse};
     #[test]
     fn check_health_passes_on_healthy_database() {
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -1809,11 +1801,7 @@ mod tests {
     fn load_file_metadata_returns_persisted_records() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let store = IndexStore::open(temp.path()).expect("open store");
-        let files = vec![FileBase::new_test(
-            PathBuf::from("a.md"),
-            PathBuf::new(),
-            crate::file::FileFormat::Note,
-        )];
+        let files = vec![FileBase::note_for_test("a.md")];
         let write_txn = store.begin_write().expect("write txn");
         store
             .write_table(&write_txn, FILES, &files, FileBase::path)
@@ -1907,16 +1895,7 @@ mod tests {
 
     /// Builds note `FileBase` fixtures in caller-provided order.
     fn note_files(paths: &[&str]) -> Vec<FileBase> {
-        paths
-            .iter()
-            .map(|p| {
-                FileBase::new_test(
-                    PathBuf::from(*p),
-                    PathBuf::new(),
-                    crate::file::FileFormat::Note,
-                )
-            })
-            .collect()
+        paths.iter().map(|&p| FileBase::note_for_test(p)).collect()
     }
 
     #[test]
@@ -2171,13 +2150,7 @@ mod tests {
                 .collect();
             let files: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
                 .iter()
-                .map(|p| {
-                    FileBase::new_test(
-                        PathBuf::from(*p),
-                        PathBuf::new(),
-                        crate::file::FileFormat::Note,
-                    )
-                })
+                .map(|&p| FileBase::note_for_test(p))
                 .collect();
             write_all_parts(&store, &files, &notes, &links)
                 .expect("persist links");
@@ -2364,11 +2337,7 @@ mod tests {
 
             let weird_path = non_unicode_path();
 
-            let file = FileBase::new_test(
-                weird_path.clone(),
-                PathBuf::new(),
-                crate::file::FileFormat::Note,
-            );
+            let file = FileBase::note_for_test(weird_path.clone());
 
             let note = parse(&weird_path, "content");
             let files = vec![file];
@@ -2390,16 +2359,8 @@ mod tests {
             let weird = non_unicode_path();
             let normal = PathBuf::from("normal.md");
             let mut files = vec![
-                FileBase::new_test(
-                    weird.clone(),
-                    PathBuf::new(),
-                    crate::file::FileFormat::Note,
-                ),
-                FileBase::new_test(
-                    normal.clone(),
-                    PathBuf::new(),
-                    crate::file::FileFormat::Note,
-                ),
+                FileBase::note_for_test(weird.clone()),
+                FileBase::note_for_test(normal.clone()),
             ];
             files.sort_by(|a, b| a.path().cmp(b.path()));
             let mut notes = vec![

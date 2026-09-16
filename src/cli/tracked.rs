@@ -118,7 +118,7 @@ mod tests {
     }
     use fixtures::*;
 
-    use crate::cli::tests::fixtures::service;
+    use crate::fixture_service;
 
     mod parsing {
         use super::*;
@@ -142,7 +142,7 @@ mod tests {
         #[test]
         fn succeeds_against_an_empty_tracked_store() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(temp.path());
+            let service = fixture_service(temp.path());
 
             action_args(TrackedAction::List)
                 .run(&service)
@@ -156,7 +156,7 @@ mod tests {
         #[test]
         fn on_an_empty_tracked_store_does_not_error() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(temp.path());
+            let service = fixture_service(temp.path());
 
             action_args(TrackedAction::Clean)
                 .run(&service)

@@ -480,12 +480,12 @@ mod tests {
 
     use super::FilterExpr;
     use crate::{
-        FileIndex, IndexerService,
+        IndexerService,
         query::{QueryError, *},
     };
 
     fn outcome_for_files(_temp: &Path, files: &[(&str, &str)]) -> QuerySet {
-        let index = Arc::new(FileIndex::new_test(files));
+        let index = crate::build_test_index(files);
         QueryService::new("class")
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }

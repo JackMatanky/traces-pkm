@@ -323,7 +323,7 @@ impl DateTimeValue {
         expect(
             dead_code,
             reason = "no current caller outside tests; used only by \
-                      FileBase::new_test"
+                      FileBase::for_test"
         )
     )]
     #[inline]

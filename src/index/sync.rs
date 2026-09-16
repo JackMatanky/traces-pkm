@@ -355,10 +355,9 @@ mod tests {
 
     #[test]
     fn report_counts_upserts_deletes_and_link_edges() {
-        let delta = IndexDelta::compute(
-            &[FileBase::new_note_test("a.md".into(), "".into())],
-            &[FileBase::new_note_test("b.md".into(), "".into())],
-        );
+        let delta = IndexDelta::compute(&[FileBase::note_for_test("a.md")], &[
+            FileBase::note_for_test("b.md"),
+        ]);
         let inlink_delta =
             InlinkDelta::compute(&InlinkMap::default(), &InlinkMap::default());
         let update = IndexUpdate {

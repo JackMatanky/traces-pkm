@@ -136,7 +136,6 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::Tag;
 
         #[test]
         fn path_returns_exact_borrowed_path() {
@@ -155,8 +154,7 @@ mod tests {
 
         #[test]
         fn tasks_returns_referenced_task_config() {
-            let tasks =
-                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let tasks = TaskConfig::from_tags(&["#task"]);
             let frontmatter = FrontmatterConfig::default();
             let input = MarkdownParserInput::new(
                 Path::new("note.md"),

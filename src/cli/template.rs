@@ -261,11 +261,10 @@ impl Template {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::tests::fixtures::{create_config, service, trust_config};
+    use crate::TestProject;
 
     mod fixtures {
         use std::{
-            fs,
             path::{Path, PathBuf},
             sync::Arc,
         };
@@ -287,18 +286,11 @@ mod tests {
             temp: &Path,
             template_content: &str,
         ) -> (PathBuf, ConfigService) {
-            let root = temp.join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let config_file = create_config(&root, "templates");
-            let templates_dir = root.join("templates");
-            fs::create_dir_all(&templates_dir).expect("create templates dir");
+            let project = TestProject::trusted(temp.join("project"));
             if !template_content.is_empty() {
-                fs::write(templates_dir.join("daily.md"), template_content)
-                    .expect("write template");
+                project.write_template("daily.md", template_content);
             }
-            let service = service(temp);
-            trust_config(&service, &config_file);
-            (root, service)
+            (project.root().to_path_buf(), project.service().clone())
         }
 
         pub(super) struct CancellingDialogProvider;
@@ -374,16 +366,13 @@ mod tests {
         #[test]
         fn fails_when_project_root_is_not_trusted() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            create_config(&root, "templates");
-            fs::create_dir_all(root.join("templates"))
-                .expect("create templates dir");
-            let service = service(temp.path());
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::untrusted(temp.path().join("project"));
+            let templates_dir = project.root().join("templates");
+            fs::create_dir_all(&templates_dir).expect("create templates dir");
+            let _guard = CwdGuard::enter(project.root());
 
             let error = Template::new(PathBuf::from("daily"))
-                .run(&service, preset_provider())
+                .run(project.service(), preset_provider())
                 .expect_err("untrusted root fails");
 
             assert!(matches!(error, CliError::ConfigLoad {

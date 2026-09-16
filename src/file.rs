@@ -93,11 +93,11 @@ impl FileBase {
     /// Builds a [`FileBase`] with custom fields for test fixtures.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
-    pub(crate) fn new_test(
-        path: PathBuf,
-        folder: PathBuf,
-        format: FileFormat,
-    ) -> Self {
+    #[must_use]
+    pub fn for_test<P: Into<PathBuf>>(path: P, format: FileFormat) -> Self {
+        let path = path.into();
+        let folder =
+            path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
         let file_name = FileName::try_from(path.as_path()).unwrap_or_default();
         let name = BaseName::from(&file_name);
         Self {
@@ -116,8 +116,8 @@ impl FileBase {
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn new_note_test(path: PathBuf, folder: PathBuf) -> Self {
-        Self::new_test(path, folder, FileFormat::Note)
+    pub fn note_for_test<P: Into<PathBuf>>(path: P) -> Self {
+        Self::for_test(path, FileFormat::Note)
     }
 
     /// Builds a [`FileBase`] for a Markdown note with custom paths and byte
@@ -125,12 +125,11 @@ impl FileBase {
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn new_note_with_size_test(
-        path: PathBuf,
-        folder: PathBuf,
+    pub fn note_with_size_for_test<P: Into<PathBuf>>(
+        path: P,
         size: u64,
     ) -> Self {
-        let mut file = Self::new_test(path, folder, FileFormat::Note);
+        let mut file = Self::for_test(path, FileFormat::Note);
         file.size = size;
         file
     }
@@ -308,7 +307,7 @@ impl std::borrow::Borrow<str> for BaseNameRef<'_> {
 /// Markdown notes get parsed [`crate::Note`] metadata in addition to their
 /// [`FileBase`]. Other files only keep general file metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) enum FileFormat {
+pub enum FileFormat {
     /// Markdown file parsed into a [`crate::Note`].
     Note,
     /// Regular non-Markdown file.

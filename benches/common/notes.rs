@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use traces_pkm::{FileBase, MarkdownParserInput, Note, parse_markdown};
+use traces_pkm::{FileBase, Note};
 
 use super::content::{
     attachment_note_source, duplicate_link_note_source, linked_note_source,
@@ -21,22 +21,14 @@ use super::content::{
 
 /// Parses a synthetic note at `path` from `content`.
 pub(crate) fn parse_note(path: &Path, content: &str) -> Note {
-    let input = MarkdownParserInput::for_test(path, content);
-    parse_markdown(&input)
+    traces_pkm::parse_note(path, content)
 }
 
 /// Returns sorted [`FileBase`] note records matching `notes`.
 pub(crate) fn file_records_for_notes(notes: &[Note]) -> Vec<FileBase> {
     let mut files: Vec<FileBase> = notes
         .iter()
-        .map(|note| {
-            FileBase::new_note_test(
-                note.path().to_path_buf(),
-                note.path()
-                    .parent()
-                    .map_or_else(PathBuf::new, Path::to_path_buf),
-            )
-        })
+        .map(|note| FileBase::note_for_test(note.path().to_path_buf()))
         .collect();
     files.sort_by(|a, b| a.path().cmp(b.path()));
     files
@@ -153,16 +145,16 @@ pub(crate) fn generate_attachment_link_notes(
         let path = PathBuf::from(format!("note-{i}.md"));
         let content = attachment_note_source(i);
         notes.push(parse_note(&path, &content));
-        files.push(FileBase::new_note_test(path, PathBuf::new()));
+        files.push(FileBase::note_for_test(path));
     }
     for i in 0..20 {
-        files.push(FileBase::new_note_test(
-            PathBuf::from(format!("assets/image-{i}.png")),
-            PathBuf::from("assets"),
+        files.push(FileBase::for_test(
+            format!("assets/image-{i}.png"),
+            traces_pkm::FileFormat::Other,
         ));
-        files.push(FileBase::new_note_test(
-            PathBuf::from(format!("docs/spec-{i}.pdf")),
-            PathBuf::from("docs"),
+        files.push(FileBase::for_test(
+            format!("docs/spec-{i}.pdf"),
+            traces_pkm::FileFormat::Other,
         ));
     }
     notes.sort_by(|a, b| a.path().cmp(b.path()));

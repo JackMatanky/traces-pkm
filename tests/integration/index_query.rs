@@ -2,25 +2,21 @@
 //! through the test-utils surface alone. Unit coverage inside `src/query/`
 //! exercises crate-internal transforms.
 
-use std::{fs, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use pretty_assertions::assert_eq;
-use traces_pkm::{IndexerService, QueryBuilder, QueryService, SourceSelector};
+use traces_pkm::{QueryBuilder, QueryService, SourceSelector, TestProject};
 
 /// Checks a page request returns every indexed note without consuming the
 /// borrowed index.
 #[test]
 fn page_query_returns_real_indexed_notes() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    fs::write(temp.path().join("a.md"), "---\nrating: 3\n---\n")
-        .expect("write a.md");
-    fs::write(temp.path().join("b.md"), "---\nrating: 9\n---\n")
-        .expect("write b.md");
-    fs::write(temp.path().join("c.md"), "---\nrating: 5\n---\n")
-        .expect("write c.md");
-    let index = Arc::new(
-        IndexerService::new(temp.path()).build().expect("build index"),
-    );
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("a.md", "---\nrating: 3\n---\n");
+    project.write_note("b.md", "---\nrating: 9\n---\n");
+    project.write_note("c.md", "---\nrating: 5\n---\n");
+    let index = Arc::new(project.indexer().build().expect("build index"));
     let outcome = QueryService::new("class")
         .run(&index, QueryBuilder::pages(SourceSelector::All));
 
@@ -44,18 +40,11 @@ fn page_query_returns_real_indexed_notes() {
 #[test]
 fn sorts_pages_by_a_typed_date_frontmatter_field() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    fs::write(
-        temp.path().join("late.md"),
-        "---\ndue: 2026-07-29T14:30:00Z\n---\n",
-    )
-    .expect("write late.md");
-    fs::write(temp.path().join("early.md"), "---\ndue: 2026-01-01\n---\n")
-        .expect("write early.md");
-    fs::write(temp.path().join("none.md"), "no frontmatter")
-        .expect("write none.md");
-    let index = Arc::new(
-        IndexerService::new(temp.path()).build().expect("build index"),
-    );
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("late.md", "---\ndue: 2026-07-29T14:30:00Z\n---\n");
+    project.write_note("early.md", "---\ndue: 2026-01-01\n---\n");
+    project.write_note("none.md", "no frontmatter");
+    let index = Arc::new(project.indexer().build().expect("build index"));
     let query = QueryBuilder::pages(SourceSelector::All)
         .sort("due", false)
         .expect("valid sort");
@@ -79,11 +68,9 @@ fn sorts_pages_by_a_typed_date_frontmatter_field() {
 #[test]
 fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    fs::write(temp.path().join("todo.md"), "- [ ] one\n- [x] two\n")
-        .expect("write todo.md");
-    let index = Arc::new(
-        IndexerService::new(temp.path()).build().expect("build index"),
-    );
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("todo.md", "- [ ] one\n- [x] two\n");
+    let index = Arc::new(project.indexer().build().expect("build index"));
     let tasks = QueryService::new("class")
         .run(&index, QueryBuilder::tasks(SourceSelector::All));
     assert_eq!(tasks.len(), 2);
@@ -104,16 +91,13 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
 #[test]
 fn query_builder_reuses_one_index_for_page_and_task_queries() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    fs::write(
-        temp.path().join("book.md"),
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note(
+        "book.md",
         "---\nrating: 9\n---\n#book [[todo]]\n- [ ] read chapter\n",
-    )
-    .expect("write book.md");
-    fs::write(temp.path().join("todo.md"), "---\nrating: 1\n---\n")
-        .expect("write todo.md");
-    let index = Arc::new(
-        IndexerService::new(temp.path()).build().expect("build index"),
     );
+    project.write_note("todo.md", "---\nrating: 1\n---\n");
+    let index = Arc::new(project.indexer().build().expect("build index"));
     let service = QueryService::new("class");
 
     let pages = service.run(&index, QueryBuilder::pages(SourceSelector::All));

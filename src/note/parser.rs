@@ -447,13 +447,7 @@ mod tests {
         super::{ListItem, ListItemType, NoteFieldValue},
         *,
     };
-    use crate::{DateValue, SourceLine};
-
-    fn parse(src: &str) -> Note {
-        let input =
-            MarkdownParserInput::for_test(std::path::Path::new("note.md"), src);
-        parse_markdown(&input)
-    }
+    use crate::{DateValue, SourceLine, parse_note_str as parse};
 
     fn parse_with_tasks(src: &str, tasks: &crate::TaskConfig) -> Note {
         let frontmatter = crate::config::FrontmatterConfig::default();
@@ -1331,8 +1325,7 @@ mod tests {
 
         #[test]
         fn classifies_matching_items_as_tasks_and_non_matching_as_checkboxes() {
-            let tasks =
-                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let tasks = TaskConfig::from_tags(&["#task"]);
             let input = "- [ ] Marked matching #task\n- [x] Marked \
                          non-matching #other\n- [ ] Marked without tags\n- \
                          Plain with #task";
@@ -1394,8 +1387,7 @@ mod tests {
 
         #[test]
         fn enforces_exact_tag_matching_for_nested_tags() {
-            let tasks =
-                TaskConfig::for_test(vec![Tag::parse("#task").unwrap()]);
+            let tasks = TaskConfig::from_tags(&["#task"]);
             let input = "- [ ] Nested tag #task/project\n- [ ] Exact tag #task";
             let note = parse_with_tasks(input, &tasks);
 

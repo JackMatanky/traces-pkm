@@ -1031,11 +1031,10 @@ mod tests {
 
         #[test]
         fn extracts_values_from_list_field() {
-            let input = crate::note::MarkdownParserInput::for_test(
-                std::path::Path::new("test.md"),
+            let note = crate::parse_note(
+                "test.md",
                 "---\ntags:\n  - rust\n  - pkm\n---\nBody.",
             );
-            let note = crate::note::parse_markdown(&input);
             let values: Vec<&str> = class_values(&note, "tags").collect();
             assert_eq!(values, vec!["rust", "pkm"]);
         }

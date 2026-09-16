@@ -32,14 +32,14 @@ fn renders_file_sourced_select_field_in_e2e_template() {
     let sandbox = Sandbox::trusted();
 
     // Write values file DTO
-    sandbox.write_note(
-        ".traces/schemas/values/categories.toml",
+    sandbox.write_schema_value(
+        "categories.toml",
         "[[entries]]\nid = \"rust\"\ntitle = \"Rust Programming\"\n",
     );
 
     // Write schema file referencing values file
-    sandbox.write_note(
-        ".traces/schemas/topic.toml",
+    sandbox.write_schema(
+        "topic",
         r#"
         [fields.category]
         type = "select"

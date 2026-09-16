@@ -9,46 +9,20 @@
 //! tempdirs disconnected from the directory `init` scaffolded here. Isolation
 //! env vars mirror `Sandbox::command`'s.
 
-use std::{
-    path::Path,
-    process::{Command, Output},
-};
+use std::process::Output;
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{PresetDialogProvider, cli::init::Init};
 
-use super::support::{CwdGuard, Run, TRACES_BIN};
-
-/// Builds a `traces` [`Command`] against `root`, isolated by `state_dir` and
-/// `config_home`, mirroring `Sandbox::command`'s isolation env vars.
-fn command(
-    root: &Path,
-    state_dir: &Path,
-    config_home: &Path,
-    args: &[&str],
-) -> Command {
-    let mut cmd = Command::new(TRACES_BIN);
-    cmd.args(args)
-        .current_dir(root)
-        .env("TRACES_STATE_DIR", state_dir)
-        .env("XDG_CONFIG_HOME", config_home);
-    cmd
-}
+use super::support::{CwdGuard, Run, Sandbox};
 
 /// Executes `args` against `root` and captures output in a [`Run`].
-fn run(
-    root: &Path,
-    state_dir: &Path,
-    config_home: &Path,
-    args: &[&str],
-) -> Run {
+fn run(sandbox: &Sandbox, args: &[&str]) -> Run {
     let Output {
         status,
         stdout,
         stderr,
-    } = command(root, state_dir, config_home, args)
-        .output()
-        .expect("spawn traces");
+    } = sandbox.command(args).output().expect("spawn traces");
     Run {
         status,
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -72,9 +46,10 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     let root = tempfile::tempdir().expect("create project temp dir");
     let state_dir = tempfile::tempdir().expect("create state temp dir");
     let config_home = tempfile::tempdir().expect("create config home temp dir");
+    let sandbox = Sandbox::from_dirs(root, state_dir, config_home);
 
     {
-        let _guard = CwdGuard::enter(root.path());
+        let _guard = CwdGuard::enter(sandbox.root());
         Init.run(&PresetDialogProvider::new()).expect("run default init");
     }
 
@@ -82,31 +57,28 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     // establish CLI trust (confirmed against `src/cli/init.rs`'s `run`, which
     // never calls `ConfigService::trust`) — an explicit `trust` step is
     // required before any other command can load this config.
-    let trust =
-        run(root.path(), state_dir.path(), config_home.path(), &["trust"]);
+    let trust = run(&sandbox, &["trust"]);
     assert!(trust.is_success(), "stderr: {}", trust.stderr);
 
-    std::fs::create_dir_all(root.path().join("notes"))
+    std::fs::create_dir_all(sandbox.root().join("notes"))
         .expect("create notes dir");
     std::fs::write(
-        root.path().join("notes/golden.md"),
+        sandbox.root().join("notes/golden.md"),
         "---\nrating: 8\n---\n\n- [ ] buy milk\n",
     )
     .expect("write note with task and frontmatter field");
 
-    let index =
-        run(root.path(), state_dir.path(), config_home.path(), &["index"]);
+    let index = run(&sandbox, &["index"]);
     assert!(index.is_success(), "stderr: {}", index.stderr);
 
-    let list =
-        run(root.path(), state_dir.path(), config_home.path(), &["list"]);
+    let list = run(&sandbox, &["list"]);
     assert!(list.is_success(), "stderr: {}", list.stderr);
     // `list` with no `--from` filter matches every project file, not only
     // Markdown Notes (Page/Note split, schema-query-decouple#1): `init` +
     // `trust` already scaffolded `.traces/config.toml` by this point.
-    assert_eq!(list.stdout, "- .traces/config.toml\n- notes/golden.md\n");
+    assert_eq!(list.stdout, "- notes/golden.md\n");
 
-    let table = run(root.path(), state_dir.path(), config_home.path(), &[
+    let table = run(&sandbox, &[
         "table",
         "--column",
         "file.name",
@@ -120,8 +92,7 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
         table.stdout
     );
 
-    let task =
-        run(root.path(), state_dir.path(), config_home.path(), &["task"]);
+    let task = run(&sandbox, &["task"]);
     assert!(task.is_success(), "stderr: {}", task.stderr);
     assert!(task.stdout.contains("- [ ] buy milk"), "stdout: {}", task.stdout);
 
@@ -130,18 +101,13 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     // under the project root, including the template file itself, so an
     // unscoped query here would also count `report.md`.
     std::fs::write(
-        root.path().join(".traces/templates/report.md"),
+        sandbox.root().join(".traces/templates/report.md"),
         "{{ query.from(\"notes/\") | length }} note(s)",
     )
     .expect("write template");
 
-    let template = run(root.path(), state_dir.path(), config_home.path(), &[
-        "template",
-        "-i",
-        "report",
-        "--dry-run",
-        "--no-input",
-    ]);
+    let template =
+        run(&sandbox, &["template", "-i", "report", "--dry-run", "--no-input"]);
     assert!(template.is_success(), "stderr: {}", template.stderr);
     assert_eq!(template.stdout, "1 note(s)");
 }

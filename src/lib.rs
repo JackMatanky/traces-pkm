@@ -103,6 +103,8 @@ pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };
 pub use file::FileBase;
+#[cfg(any(test, feature = "test-utils"))]
+pub use file::FileFormat;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{
     FileStateStore, FileStateStoreError, FileStoreCleanMode,
@@ -162,26 +164,51 @@ mod test_support {
                   fixture itself is broken and should panic immediately"
     )]
 
-    use std::path::{Path, PathBuf};
-
-    use crate::{
-        ConfigService,
-        config::{Discovered, LocalConfigFile, TrustRequest},
+    use std::{
+        path::{Component, Path, PathBuf},
+        sync::Arc,
     };
 
-    /// Creates a [`ConfigService`] backed by isolated tracked-config and trust
-    /// stores under `root`, never the real OS state directories.
+    use crate::{
+        Config, ConfigService, FileIndex, IndexerService, MarkdownParserInput,
+        Note, Tag,
+        config::{Discovered, LocalConfigFile, TrustRequest},
+        parse_markdown,
+    };
+
+    /// Default template directory relative to project root.
+    pub const DEFAULT_TEMPLATES_DIR: &str = "templates";
+
+    /// Default schemas directory relative to project root.
+    pub const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas";
+
+    /// Default schema values directory relative to project root.
+    pub const DEFAULT_SCHEMA_VALUES_DIR: &str = ".traces/schemas/values";
+
+    /// Resolves a project-relative fixture path beneath `root`.
+    ///
+    /// Prevents accidental writes outside the fixture directory by rejecting
+    /// absolute paths and parent-directory traversal (`..`).
     ///
     /// # Panics
     ///
-    /// Never panics.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// let svc = traces_pkm::fixture_service(Path::new("/tmp/test"));
-    /// ```
+    /// Panics if `rel_path` is absolute or contains a `..` component.
+    #[inline]
+    #[must_use]
+    pub fn resolve_safe_path(root: &Path, rel_path: &Path) -> PathBuf {
+        assert!(
+            rel_path.is_relative()
+                && !rel_path
+                    .components()
+                    .any(|part| part == Component::ParentDir),
+            "fixture path must stay inside project root: {}",
+            rel_path.display()
+        );
+        root.join(rel_path)
+    }
+
+    /// Creates a [`ConfigService`] backed by isolated tracked-config and trust
+    /// stores under `root`, never the real OS state directories.
     #[inline]
     #[must_use]
     pub fn fixture_service(root: &Path) -> ConfigService {
@@ -195,8 +222,8 @@ mod test_support {
     /// # Panics
     ///
     /// Panics if `root` cannot be created, the config file cannot be written,
-    /// or trust cannot be recorded. This is fixture setup code, so any such
-    /// failure means the test itself is broken.
+    /// or trust cannot be recorded. Fixture-only code: a panic here means the
+    /// fixture setup itself is broken.
     #[inline]
     #[must_use]
     pub fn create_trusted_project(
@@ -220,20 +247,27 @@ mod test_support {
             .expect("trust project config");
         config_path
     }
+
     /// Writes a Markdown note at `root.join(rel_path)`, creating parent
     /// directories as needed.
     ///
     /// # Panics
     ///
-    /// Panics if parent directories or the note file cannot be written. This
-    /// is fixture setup code, so any such failure means the test itself is
-    /// broken.
+    /// Panics if the path escapes `root` or the note cannot be written.
+    /// Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
-    pub fn write_note(root: &Path, rel_path: &str, content: &str) {
-        let path = root.join(rel_path);
-        std::fs::create_dir_all(path.parent().expect("note parent"))
-            .expect("create note parent dir");
-        std::fs::write(path, content).expect("write note");
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "the fs::write side effect is the point; the returned path \
+                  is a convenience that fixtures routinely ignore"
+    )]
+    pub fn write_note(root: &Path, rel_path: &str, content: &str) -> PathBuf {
+        let path = resolve_safe_path(root, Path::new(rel_path));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create note parent dir");
+        }
+        std::fs::write(&path, content).expect("write note");
+        path
     }
 
     /// Writes a template file into `root/templates/name`, creating the
@@ -241,34 +275,420 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if the `templates` directory or the template file cannot be
-    /// written. This is fixture setup code, so any such failure means the test
-    /// itself is broken.
+    /// Panics if the path escapes `root` or the template cannot be written.
+    /// Fixture-only code: a panic here means the fixture setup is broken.
     #[inline]
-    pub fn write_template(root: &Path, name: &str, source: &str) {
-        std::fs::create_dir_all(root.join("templates"))
-            .expect("create templates dir");
-        std::fs::write(root.join("templates").join(name), source)
-            .expect("write template");
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "the fs::write side effect is the point; the returned path \
+                  is a convenience that fixtures routinely ignore"
+    )]
+    pub fn write_template(root: &Path, name: &str, source: &str) -> PathBuf {
+        let path = resolve_safe_path(
+            root,
+            &Path::new(DEFAULT_TEMPLATES_DIR).join(name),
+        );
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create templates dir");
+        }
+        std::fs::write(&path, source).expect("write template");
+        path
+    }
+
+    /// Writes a schema file into `root/.traces/schemas/name.toml`, creating
+    /// directories if needed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the path escapes `root` or the schema cannot be written.
+    /// Fixture-only code: a panic here means the fixture setup is broken.
+    #[inline]
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "the fs::write side effect is the point; the returned path \
+                  is a convenience that fixtures routinely ignore"
+    )]
+    pub fn write_schema(root: &Path, name: &str, toml: &str) -> PathBuf {
+        let path = resolve_safe_path(
+            root,
+            &Path::new(DEFAULT_SCHEMAS_DIR).join(format!("{name}.toml")),
+        );
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create schemas dir");
+        }
+        std::fs::write(&path, toml).expect("write schema");
+        path
+    }
+
+    /// Parses a Markdown note in memory with a custom path.
+    #[inline]
+    #[must_use]
+    pub fn parse_note<P: AsRef<Path>>(path: P, src: &str) -> Note {
+        parse_markdown(&MarkdownParserInput::for_test(path.as_ref(), src))
+    }
+
+    /// Parses a Markdown note in memory with the default path `note.md`.
+    #[inline]
+    #[must_use]
+    pub fn parse_note_str(src: &str) -> Note {
+        parse_note(Path::new("note.md"), src)
+    }
+
+    /// Builds an in-memory [`FileIndex`] wrapped in an [`Arc`] from note path
+    /// and content pairs with zero disk I/O.
+    #[inline]
+    #[must_use]
+    pub fn build_test_index(notes: &[(&str, &str)]) -> Arc<FileIndex> {
+        Arc::new(FileIndex::new_test(notes))
+    }
+
+    /// Parses a [`Tag`] string slice for tests.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `s` is not a valid tag. Fixture-only code: a panic here
+    /// means the test's fixture data is wrong.
+    #[inline]
+    #[must_use]
+    pub fn parse_tag(s: &str) -> Tag {
+        Tag::parse(s).expect("valid test tag")
+    }
+
+    /// Encapsulates an isolated workspace fixture directory, configuration,
+    /// trust records, and on-disk index persistence for tests.
+    #[derive(Clone, Debug)]
+    pub struct TestProject {
+        root: PathBuf,
+        service: ConfigService,
+    }
+
+    impl TestProject {
+        fn project_service(root: &Path) -> ConfigService {
+            let state_root = root.parent().unwrap_or(root);
+            fixture_service(state_root)
+        }
+
+        /// Creates an empty directory with an isolated config service and no
+        /// `.traces/` directory.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `root` cannot be created. Fixture-only code: a panic
+        /// here means the fixture setup itself is broken.
+        #[inline]
+        #[must_use]
+        pub fn empty<P: Into<PathBuf>>(root: P) -> Self {
+            let root = root.into();
+            std::fs::create_dir_all(&root).expect("create project dir");
+            let service = Self::project_service(&root);
+            Self {
+                root,
+                service,
+            }
+        }
+
+        /// Writes `.traces/config.toml` without recording trust in the service.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the config file cannot be written. Fixture-only code.
+        #[inline]
+        #[must_use]
+        pub fn untrusted<P: Into<PathBuf>>(root: P) -> Self {
+            let root = root.into();
+            std::fs::create_dir_all(&root).expect("create project dir");
+            let config_path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(
+                config_path.parent().expect("config parent"),
+            )
+            .expect("create config parent");
+            std::fs::write(
+                &config_path,
+                "[templates]\ndirectory = \"templates\"\n",
+            )
+            .expect("write config file");
+            let service = Self::project_service(&root);
+            Self {
+                root,
+                service,
+            }
+        }
+
+        /// Writes `.traces/config.toml` and records it as trusted in the
+        /// isolated trust store.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the fixture setup fails; see [`create_trusted_project`].
+        #[inline]
+        #[must_use]
+        pub fn trusted<P: Into<PathBuf>>(root: P) -> Self {
+            let root = root.into();
+            let service = Self::project_service(&root);
+            let _ = create_trusted_project(&service, &root);
+            Self {
+                root,
+                service,
+            }
+        }
+
+        /// Returns the project root directory.
+        #[inline]
+        #[must_use]
+        pub fn root(&self) -> &Path {
+            &self.root
+        }
+
+        /// Returns the backing [`ConfigService`].
+        #[inline]
+        #[must_use]
+        pub fn service(&self) -> &ConfigService {
+            &self.service
+        }
+
+        /// Returns test [`Config`] rooted at this project, with templates
+        /// configured if `templates/` exists.
+        #[inline]
+        #[must_use]
+        pub fn config(&self) -> Config {
+            let base = Config::test_default(&self.root);
+            if self.root.join(DEFAULT_TEMPLATES_DIR).is_dir() {
+                base.with_templates()
+            } else {
+                base
+            }
+        }
+
+        /// Records trust for this project in its isolated trust store.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `.traces/config.toml` is missing or invalid. Fixture-only
+        /// code: a panic here means the test's fixture data is wrong.
+        #[inline]
+        pub fn trust(&self) {
+            let config_path = self.root.join(".traces/config.toml");
+            let config = LocalConfigFile::<Discovered>::try_new(config_path)
+                .expect("valid local config for trust");
+            self.service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project config");
+        }
+
+        /// Removes trust for this project, returning the count of removed
+        /// entries.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the trust entry cannot be removed. Fixture-only code.
+        #[inline]
+        #[must_use]
+        pub fn untrust(&self) -> usize {
+            self.service
+                .untrust(&TrustRequest::from(self.root.as_path()))
+                .expect("untrust project")
+        }
+
+        /// Safely writes content to `rel_path` beneath project root.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the path escapes `root` or the file cannot be written.
+        /// Fixture-only code: a panic here means the fixture setup is broken.
+        #[inline]
+        pub fn write_file<P: AsRef<Path>>(
+            &self,
+            rel_path: P,
+            content: &str,
+        ) -> PathBuf {
+            let path = resolve_safe_path(&self.root, rel_path.as_ref());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .expect("create parent directory");
+            }
+            std::fs::write(&path, content).expect("write file");
+            path
+        }
+
+        /// Writes a note relative to the project root.
+        #[inline]
+        pub fn write_note<P: AsRef<Path>>(
+            &self,
+            rel_path: P,
+            content: &str,
+        ) -> PathBuf {
+            self.write_file(rel_path, content)
+        }
+
+        /// Writes a template file under `templates/`.
+        #[inline]
+        #[expect(
+            clippy::must_use_candidate,
+            reason = "the fs::write side effect is the point; the returned \
+                      path is a convenience that fixtures routinely ignore"
+        )]
+        pub fn write_template(&self, name: &str, content: &str) -> PathBuf {
+            self.write_file(
+                Path::new(DEFAULT_TEMPLATES_DIR).join(name),
+                content,
+            )
+        }
+
+        /// Writes a schema file under `.traces/schemas/`.
+        #[inline]
+        #[expect(
+            clippy::must_use_candidate,
+            reason = "the fs::write side effect is the point; the returned \
+                      path is a convenience that fixtures routinely ignore"
+        )]
+        pub fn write_schema(&self, name: &str, toml: &str) -> PathBuf {
+            self.write_file(
+                Path::new(DEFAULT_SCHEMAS_DIR).join(format!("{name}.toml")),
+                toml,
+            )
+        }
+
+        /// Writes a schema value file under `.traces/schemas/values/`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the path escapes `root` or the file cannot be written.
+        /// Fixture-only code.
+        #[inline]
+        pub fn write_schema_value<P: AsRef<Path>>(
+            &self,
+            rel_path: P,
+            toml: &str,
+        ) -> PathBuf {
+            self.write_file(
+                Path::new(DEFAULT_SCHEMA_VALUES_DIR).join(rel_path.as_ref()),
+                toml,
+            )
+        }
+
+        /// Returns an [`IndexerService`] configured for this project.
+        #[inline]
+        #[must_use]
+        pub fn indexer(&self) -> IndexerService {
+            IndexerService::new(&self.root).with_config(&self.config())
+        }
+
+        /// Builds an in-memory index from disk files.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the index build fails. Fixture-only code.
+        #[inline]
+        #[must_use]
+        pub fn build_index(&self) -> FileIndex {
+            self.indexer().build().expect("build index")
+        }
+
+        /// Builds and persists the index to `index.redb`, returning both.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the build or persist fails. Fixture-only code.
+        #[inline]
+        #[must_use]
+        pub fn persist_index(&self) -> (IndexerService, FileIndex) {
+            let indexer = self.indexer();
+            let index = indexer.build().expect("build index");
+            indexer.persist(&index).expect("persist index");
+            (indexer, index)
+        }
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
 
-        #[test]
-        fn fixture_service_returns_a_usable_config_service() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let service = fixture_service(temp.path());
+        mod service {
+            use super::*;
 
-            // Verify the service can discover config (empty dir → no config).
-            let result = service.load(temp.path());
-            assert!(result.is_err(), "empty dir should fail discovery");
+            #[test]
+            fn returns_usable_service_in_temporary_directory() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let service = fixture_service(temp.path());
+                let result = service.load(temp.path());
+                assert!(result.is_err(), "empty dir should fail discovery");
+            }
+        }
+
+        mod project {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn creates_trusted_workspace_and_persists_index() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let project = TestProject::trusted(temp.path().join("proj"));
+                assert_eq!(project.root(), temp.path().join("proj").as_path());
+                project.write_note("notes/sample.md", "# Sample\n");
+                project.write_template("daily.md", "Template");
+                project.write_schema("tag_schema", "fields = {}\n");
+                project.write_schema_value("vals.toml", "vals = []\n");
+
+                let (indexer, index) = project.persist_index();
+                let reloaded = indexer.load().expect("load persisted index");
+                assert_eq!(reloaded.entries().len(), index.entries().len());
+                assert!(
+                    reloaded.entries().iter().any(
+                        |e| e.file().path() == Path::new("notes/sample.md")
+                    )
+                );
+                assert!(reloaded.entries().iter().any(
+                    |e| e.file().path() == Path::new("templates/daily.md")
+                ));
+            }
+
+            #[test]
+            fn manages_trust_and_untrust_lifecycle() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let project = TestProject::untrusted(temp.path().join("proj"));
+                project.trust();
+                let removed = project.untrust();
+                assert_eq!(removed, 1);
+            }
+        }
+
+        mod memory {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn parses_notes_and_builds_index_without_disk() {
+                let note = parse_note_str("# Test Note\n");
+                assert_eq!(note.path(), Path::new("note.md"));
+
+                let index =
+                    build_test_index(&[("a.md", "# A"), ("b.md", "# B")]);
+                assert_eq!(index.entries().len(), 2);
+
+                let tag = parse_tag("#project");
+                assert_eq!(tag.as_str(), "#project");
+            }
+
+            #[test]
+            fn scan_skips_traces_dir() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let project = TestProject::trusted(temp.path().join("proj"));
+                project.write_note("a.md", "# A\n");
+                let index = project.build_index();
+                let paths: Vec<&Path> =
+                    index.entries().iter().map(|e| e.file().path()).collect();
+                assert_eq!(paths, [Path::new("a.md")]);
+            }
         }
     }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_support::{
-    create_trusted_project, fixture_service, write_note, write_template,
+    DEFAULT_SCHEMA_VALUES_DIR, DEFAULT_SCHEMAS_DIR, DEFAULT_TEMPLATES_DIR,
+    TestProject, build_test_index, create_trusted_project, fixture_service,
+    parse_note, parse_note_str, parse_tag, resolve_safe_path, write_note,
+    write_schema, write_template,
 };

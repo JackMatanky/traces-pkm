@@ -453,13 +453,12 @@ impl TextShape {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::path::Path;
 
     use super::super::*;
-    use crate::FileIndex;
 
     fn outcome_for_files(_temp: &Path, files: &[(&str, &str)]) -> QuerySet {
-        let index = Arc::new(FileIndex::new_test(files));
+        let index = crate::build_test_index(files);
         QueryService::new("class")
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }

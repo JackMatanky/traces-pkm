@@ -459,69 +459,10 @@ mod tests {
     use super::*;
 
     pub(crate) mod fixtures {
-        use std::{
-            fs,
-            path::{Path, PathBuf},
-            sync::Arc,
-        };
+        use std::{fs, path::Path, sync::Arc};
 
         use super::*;
-        use crate::{
-            cli::CwdGuard,
-            config::{
-                ConfigService, Discovered, LocalConfigFile, TrustRequest,
-            },
-            dialog::PresetDialogProvider,
-        };
-
-        pub(crate) fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
-
-        pub(crate) fn create_config(root: &Path, directory: &str) -> PathBuf {
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(
-                &config_file,
-                format!("[templates]\ndirectory = \"{directory}\"\n"),
-            )
-            .expect("write config file");
-            config_file
-        }
-
-        pub(crate) fn create_empty_config(root: &Path) -> PathBuf {
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "").expect("write config file");
-            config_file
-        }
-
-        pub(crate) fn trust_config(
-            service: &ConfigService,
-            config_path: &Path,
-        ) {
-            let config = LocalConfigFile::<Discovered>::try_new(
-                config_path.to_path_buf(),
-            )
-            .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project config");
-        }
-
-        pub(crate) fn create_trusted_project(
-            service: &ConfigService,
-            root: &Path,
-        ) {
-            fs::create_dir_all(root).expect("create project dir");
-            let config_file = create_config(root, "templates");
-            trust_config(service, &config_file);
-        }
+        use crate::{TestProject, cli::CwdGuard, dialog::PresetDialogProvider};
 
         pub(super) struct CancellingSelect;
         impl DialogProvider for CancellingSelect {
@@ -570,41 +511,18 @@ mod tests {
             root: &Path,
         ) -> String {
             let cli = Cli::try_parse_from(argv).expect("parse argv");
-            let service = ConfigService::at(
-                root.join("tracked-store"),
-                root.join("trust-store"),
-            );
-            let project = root.join("project");
-            fs::create_dir_all(project.join(".traces"))
-                .expect("create .traces dir");
-            fs::create_dir_all(project.join("templates"))
-                .expect("create templates dir");
-            fs::write(
-                project.join(".traces/config.toml"),
-                "[templates]\ndirectory = \"templates\"\n",
-            )
-            .expect("write config file");
-            fs::write(
-                project.join("templates/daily.md"),
+            let project = TestProject::trusted(root.join("project"));
+            project.write_template(
+                "daily.md",
                 "{% for n in [1, 2, 3] %}{{ n }}{% endfor %}",
-            )
-            .expect("write template");
-            let config = crate::config::LocalConfigFile::<
-                crate::config::Discovered,
-            >::try_new(
-                project.join(".traces/config.toml")
-            )
-            .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project root");
-            let _guard = CwdGuard::enter(&project);
+            );
+            let _guard = CwdGuard::enter(project.root());
 
             let provider: Arc<dyn DialogProvider> =
                 Arc::new(PresetDialogProvider::new());
-            cli.run(&service, provider).expect("run succeeds");
+            cli.run(project.service(), provider).expect("run succeeds");
 
-            fs::read_to_string(project.join("daily.md"))
+            fs::read_to_string(project.root().join("daily.md"))
                 .expect("read written output")
         }
     }
@@ -993,11 +911,9 @@ mod tests {
 
         use super::*;
         use crate::{
+            TestProject,
             cli::CwdGuard,
-            config::{
-                Config, ConfigService, Discovered, LocalConfigFile,
-                TrustRequest,
-            },
+            config::{Config, ConfigService},
             dialog::PresetDialogProvider,
             query::{
                 QueryBuilderError, QueryError, SourceSelector, TaskPathStyle,
@@ -1019,40 +935,17 @@ mod tests {
         /// dispatch) and the project root (for direct [`FileIndex`]/
         /// [`TemplateService`] calls).
         fn seed_book_project(root: &Path) -> (ConfigService, PathBuf) {
-            let project = root.join("project");
-            fs::create_dir_all(project.join(".traces"))
-                .expect("create .traces dir");
-            fs::create_dir_all(project.join("templates"))
-                .expect("create templates dir");
-            fs::create_dir_all(project.join("books"))
-                .expect("create books dir");
-            fs::write(
-                project.join(".traces/config.toml"),
-                "[templates]\ndirectory = \"templates\"\n",
-            )
-            .expect("write config file");
-            fs::write(
-                project.join("books/dune.md"),
+            let project = TestProject::trusted(root.join("project"));
+            project.write_template("daily.md", "");
+            project.write_note(
+                "books/dune.md",
                 "---\nrating: 9\n---\n#book\n\n- [ ] read part two\n",
-            )
-            .expect("write dune.md");
-            fs::write(
-                project.join("books/hyperion.md"),
-                "---\nrating: 7\n---\n#book\n\nSee [[dune]] for comparison.\n",
-            )
-            .expect("write hyperion.md");
-            let config = LocalConfigFile::<Discovered>::try_new(
-                project.join(".traces/config.toml"),
-            )
-            .expect("valid local config");
-            let service = ConfigService::at(
-                root.join("tracked-store"),
-                root.join("trust-store"),
             );
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project root");
-            (service, project)
+            project.write_note(
+                "books/hyperion.md",
+                "---\nrating: 7\n---\n#book\n\nSee [[dune]] for comparison.\n",
+            );
+            (project.service().clone(), project.root().to_path_buf())
         }
 
         /// Renders `source` as a one-off template under `project`'s
@@ -1064,12 +957,7 @@ mod tests {
             let templates_dir = project.join("templates");
             fs::write(templates_dir.join("report.md"), source)
                 .expect("write report.md");
-            let config = Config::for_test(
-                project.to_path_buf(),
-                Some(templates_dir),
-                None,
-                project.to_path_buf(),
-            );
+            let config = Config::test_default(project).with_templates();
             let service = TemplateService::new(
                 &config,
                 Arc::new(PresetDialogProvider::new()),
@@ -1371,11 +1259,12 @@ mod tests {
     }
 
     mod run {
-        use std::{fs, sync::Arc};
+        use std::sync::Arc;
 
         use super::*;
         use crate::{
-            cli::CwdGuard, config::ConfigService, dialog::PresetDialogProvider,
+            TestProject, cli::CwdGuard, config::ConfigService,
+            dialog::PresetDialogProvider,
         };
 
         #[test]
@@ -1401,36 +1290,16 @@ mod tests {
         #[test]
         fn user_cancelled_during_template_picker_returns_aborted() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            fs::create_dir_all(root.join("templates"))
-                .expect("create templates dir");
-            fs::write(root.join("templates/daily.md"), "content")
-                .expect("write template");
-            let service = ConfigService::at(
-                temp.path().join("tracked-store"),
-                temp.path().join("trust-store"),
-            );
-            let config = crate::config::LocalConfigFile::<
-                crate::config::Discovered,
-            >::try_new(config_file)
-            .expect("valid local config");
-            service
-                .trust(&crate::TrustRequest::from(&config))
-                .expect("trust project root");
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_template("daily.md", "content");
+            let _guard = CwdGuard::enter(project.root());
 
             let outcome = Cli {
                 command: None,
                 input: Some(None),
             }
-            .run(&service, Arc::new(fixtures::CancellingSelect))
+            .run(project.service(), Arc::new(fixtures::CancellingSelect))
             .expect("user abort is not an error");
-
             assert_eq!(outcome, CommandOutcome::Aborted(UserAbort::Cancelled));
         }
     }

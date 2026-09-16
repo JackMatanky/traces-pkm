@@ -88,6 +88,23 @@ impl CwdGuard {
             _lock: lock,
         }
     }
+
+    /// Holds [`CWD_TEST_LOCK`] while keeping the cwd unchanged.
+    ///
+    /// For tests that never change the directory but must not observe another
+    /// thread's `CwdGuard`-mediated change (the cwd is global state).
+    #[inline]
+    #[must_use]
+    pub(crate) fn same_dir() -> Self {
+        let lock = CWD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = Cwd::new().expect("read current dir").0;
+        Self {
+            original,
+            _lock: lock,
+        }
+    }
 }
 
 #[cfg(test)]

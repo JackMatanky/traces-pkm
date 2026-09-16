@@ -19,12 +19,12 @@
 
 use std::{
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
 use tempfile::TempDir;
-use traces_pkm::{FileIndex, IndexerService};
+use traces_pkm::{FileIndex, IndexerService, resolve_safe_path};
 
 use super::content::{ProjectShape, note_path, note_source};
 
@@ -38,13 +38,7 @@ use super::content::{ProjectShape, note_path, note_source};
 ///
 /// Panics if `relative` is absolute or contains a `..` component.
 fn fixture_path(root: &Path, relative: &Path) -> PathBuf {
-    assert!(
-        relative.is_relative()
-            && !relative.components().any(|part| part == Component::ParentDir),
-        "fixture path must stay inside temporary project: {}",
-        relative.display()
-    );
-    root.join(relative)
+    resolve_safe_path(root, relative)
 }
 
 /// Writes a UTF-8 fixture file beneath a temporary project root.

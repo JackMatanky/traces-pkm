@@ -3,6 +3,12 @@
 //! no crate-internal imports). See `tests/e2e.rs` for process-boundary coverage
 //! of the same command surface.
 #![cfg(feature = "test-utils")]
+#![allow(
+    clippy::expect_used,
+    reason = "this whole binary is test fixture/harness code; a failed \
+              .expect() here means the fixture itself is broken and should \
+              panic the test immediately"
+)]
 #[path = "integration/config_lifecycle.rs"]
 mod config_lifecycle;
 #[path = "integration/index_persistence_roundtrip.rs"]

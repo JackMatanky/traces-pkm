@@ -120,7 +120,7 @@ impl Completions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::tests::fixtures::{create_config, service, trust_config};
+    use crate::{TestProject, fixture_service};
 
     mod script {
         use super::*;
@@ -153,7 +153,7 @@ mod tests {
         #[test]
         fn generates_shell_script_and_returns_ok() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(temp.path());
+            let service = fixture_service(temp.path());
 
             Completions {
                 shell: Some(Shell::Bash),
@@ -178,7 +178,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            let service = service(temp.path());
+            let service = fixture_service(temp.path());
             let _guard = CwdGuard::enter(&root);
 
             let error = Completions {
@@ -209,19 +209,12 @@ mod tests {
         #[test]
         fn lists_every_available_template_name() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let config_file = create_config(&root, "templates");
-            let templates_dir = root.join("templates");
-            fs::create_dir_all(&templates_dir).expect("create templates dir");
-            fs::write(templates_dir.join("daily.md"), "content")
-                .expect("write template");
-            let service = service(temp.path());
-            trust_config(&service, &config_file);
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_template("daily.md", "content");
+            let _guard = CwdGuard::enter(project.root());
 
-            let names =
-                Completions::template_names(&service).expect("template_names");
+            let names = Completions::template_names(project.service())
+                .expect("template_names");
 
             assert_eq!(names, vec!["daily".to_owned()]);
         }
@@ -229,15 +222,12 @@ mod tests {
         #[test]
         fn fails_with_config_build_when_project_root_is_not_trusted() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            create_config(&root, "templates");
-            fs::create_dir_all(root.join("templates"))
-                .expect("create templates dir");
-            let service = service(temp.path());
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::untrusted(temp.path().join("project"));
+            let templates_dir = project.root().join("templates");
+            fs::create_dir_all(&templates_dir).expect("create templates dir");
+            let _guard = CwdGuard::enter(project.root());
 
-            let error = Completions::template_names(&service)
+            let error = Completions::template_names(project.service())
                 .expect_err("untrusted root fails");
 
             assert!(matches!(error, CliError::ConfigLoad {

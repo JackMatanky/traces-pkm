@@ -303,10 +303,7 @@ impl IndexerService {
     pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileBase>> {
         let index_db = root.join(INDEX_FILE);
         let paths = DirTree::descendants(root)
-            .filter(|node| {
-                node.file_name() != ".traces"
-                    && crate::env_vars::is_ignored_dir(node.file_name())
-            })
+            .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
             .filter_map(|node| {
                 let node = match node {
                     Ok(node) => node,

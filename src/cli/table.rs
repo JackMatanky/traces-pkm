@@ -105,7 +105,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::tests::fixtures::{create_trusted_project, service};
+    use crate::TestProject;
 
     mod render {
         use std::{fs, path::Path};
@@ -120,7 +120,7 @@ mod tests {
         };
 
         fn config(root: &Path) -> Config {
-            Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+            Config::test_default(root)
         }
 
         #[test]
@@ -524,7 +524,6 @@ mod tests {
     }
 
     mod run {
-        use std::fs;
 
         use super::*;
         use crate::{cli::CwdGuard, config::ConfigLoadError};
@@ -532,11 +531,9 @@ mod tests {
         #[test]
         fn succeeds_for_a_trusted_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            fs::write(root.join("a.md"), "# A\n").expect("write a.md");
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("a.md", "# A\n");
+            let _guard = CwdGuard::enter(project.root());
             let table = Table {
                 from: None,
                 filter: vec![],
@@ -544,21 +541,14 @@ mod tests {
                 columns: vec!["file.path".to_owned()],
             };
 
-            table.run(&service).expect("run table command");
+            table.run(project.service()).expect("run table command");
         }
 
         #[test]
         fn fails_when_project_root_is_not_trusted() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            let service = service(temp.path());
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::untrusted(temp.path().join("project"));
+            let _guard = CwdGuard::enter(project.root());
             let table = Table {
                 from: None,
                 filter: vec![],
@@ -566,7 +556,8 @@ mod tests {
                 columns: vec!["file.path".to_owned()],
             };
 
-            let error = table.run(&service).expect_err("untrusted root fails");
+            let error =
+                table.run(project.service()).expect_err("untrusted root fails");
 
             assert!(matches!(error, CliError::ConfigLoad {
                 source: ConfigLoadError::Build(_),

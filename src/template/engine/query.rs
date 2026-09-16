@@ -670,15 +670,7 @@ mod tests {
         env.render_str(source, minijinja::context!())
     }
 
-    mod fixtures {
-        use std::{fs, path::Path};
-
-        /// Writes `content` as `name` under `root`.
-        pub(super) fn write_note(root: &Path, name: &str, content: &str) {
-            fs::write(root.join(name), content).expect("write note");
-        }
-    }
-    use fixtures::write_note;
+    use crate::write_note;
 
     mod get_value {
         use super::*;

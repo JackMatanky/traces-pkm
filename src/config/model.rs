@@ -190,6 +190,35 @@ impl Config {
         }
     }
 
+    /// Builds config with default paths rooted at `root` for tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn test_default<P: Into<PathBuf>>(root: P) -> Self {
+        let root = root.into();
+        let templates = TemplateConfig::new(None, None, root.clone());
+        Self {
+            root,
+            templates,
+            schemas: SchemasConfig::default(),
+            frontmatter: FrontmatterConfig::default(),
+            tasks: TaskConfig::default(),
+        }
+    }
+
+    /// Configures templates rooted at `root/templates` for tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn with_templates(mut self) -> Self {
+        self.templates = TemplateConfig::new(
+            Some(self.root.join("templates")),
+            None,
+            self.root.clone(),
+        );
+        self
+    }
+
     /// Overrides the `[frontmatter]` resolution on a test-built config, for
     /// tests that exercise non-default label resolution.
     #[cfg(any(test, feature = "test-utils"))]
@@ -666,6 +695,27 @@ impl TaskConfig {
             tag_filters,
         }
     }
+
+    /// Builds a task config with tag filters parsed from string slices for
+    /// tests.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a tag does not parse. Fixture-only code: a panic here means
+    /// the test's fixture data is wrong.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[expect(
+        clippy::expect_used,
+        reason = "test-only constructor; an invalid literal here is a test \
+                  fixture bug, not a recoverable caller error"
+    )]
+    #[inline]
+    #[must_use]
+    pub fn from_tags(tags: &[&str]) -> Self {
+        let tag_filters =
+            tags.iter().map(|&t| Tag::parse(t).expect("valid tag")).collect();
+        Self::for_test(tag_filters)
+    }
 }
 
 impl Default for TaskConfig {
@@ -739,7 +789,7 @@ mod tests {
             let root = temp.path().join("vault");
             let schemas = root.join(".traces/schemas");
             std::fs::create_dir_all(&schemas).expect("create schema directory");
-            let config = Config::for_test(root.clone(), None, None, root);
+            let config = Config::test_default(&root);
 
             assert_eq!(
                 config

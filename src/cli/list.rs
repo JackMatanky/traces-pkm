@@ -100,7 +100,7 @@ impl List {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::tests::fixtures::{create_trusted_project, service};
+    use crate::TestProject;
     mod render {
         use std::{fs, path::Path};
 
@@ -114,7 +114,7 @@ mod tests {
         };
 
         fn config(root: &Path) -> Config {
-            Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+            Config::test_default(root)
         }
 
         #[test]
@@ -505,7 +505,6 @@ mod tests {
     }
 
     mod run {
-        use std::fs;
 
         use super::*;
         use crate::cli::CwdGuard;
@@ -513,18 +512,16 @@ mod tests {
         #[test]
         fn succeeds_for_a_trusted_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            fs::write(root.join("a.md"), "# A\n").expect("write a.md");
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("a.md", "# A\n");
+            let _guard = CwdGuard::enter(project.root());
             let list = List {
                 from: None,
                 filter: vec![],
                 sort: SortArgs::default(),
             };
 
-            list.run(&service).expect("run list command");
+            list.run(project.service()).expect("run list command");
         }
     }
 }

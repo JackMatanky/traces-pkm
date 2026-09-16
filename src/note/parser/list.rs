@@ -906,23 +906,14 @@ struct ListFrame {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use rstest::rstest;
 
     use super::*;
     use crate::{
         TaskStatusType,
-        note::{
-            Note,
-            parser::{MarkdownParserInput, parse_markdown},
-        },
+        note::{MarkdownParserInput, parse_markdown},
+        parse_note_str as parse,
     };
-    fn parse(src: &str) -> Note {
-        let input = MarkdownParserInput::for_test(Path::new("note.md"), src);
-        parse_markdown(&input)
-    }
-
     mod tracker_state {
 
         use super::*;

@@ -494,12 +494,7 @@ mod tests {
         #[test]
         fn propagates_resolution_errors() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                None,
-                None,
-                temp.path().to_path_buf(),
-            );
+            let config = Config::test_default(temp.path());
             let service = TemplateService::new(&config, preset_provider())
                 .expect("valid test schema directory");
 

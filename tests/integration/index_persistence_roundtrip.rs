@@ -3,13 +3,11 @@
 //! public round-trip contract: `FileIndex::build` → `persist` → `load` in a
 //! fresh `FileIndex` value, simulating a new process.
 
-use std::fs;
-
 use chrono::NaiveDate;
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    Config, IndexerService, ListItem, ListItemType, SourceLine, Tag,
-    TaskConfig, TaskPriority, TaskStatusType,
+    FileEntry, ListItem, ListItemType, SourceLine, TaskConfig, TaskPriority,
+    TaskStatusType, TestProject,
 };
 
 /// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
@@ -21,11 +19,10 @@ use traces_pkm::{
 #[test]
 fn persist_then_load_recovers_the_same_file_count_and_paths() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    fs::write(temp.path().join("a.md"), "# A\n").expect("write a.md");
-    fs::write(temp.path().join("b.md"), "# B\n").expect("write b.md");
-    let indexer = IndexerService::new(temp.path());
-    let built = indexer.build().expect("build index");
-    indexer.persist(&built).expect("persist index");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("a.md", "# A\n");
+    project.write_note("b.md", "# B\n");
+    let (indexer, built) = project.persist_index();
 
     let loaded = indexer.load().expect("load persisted index");
 
@@ -52,29 +49,21 @@ fn persist_then_load_recovers_the_same_file_count_and_paths() {
 #[test]
 fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    let root = temp.path();
+    let root = temp.path().join("project");
     let markdown = "\
 - [ ] Root task #task 📅 2025-06-01
   - [x] Child completed task #task
 - [ ] Non-task checkbox
 - Plain bullet point
 ";
-    fs::write(root.join("todo.md"), markdown).expect("write todo.md");
+    let project = TestProject::trusted(&root);
+    project.write_note("todo.md", markdown);
 
-    let tag_filters = vec![Tag::parse("#task").expect("valid tag")];
-    let tasks_config = TaskConfig::for_test(tag_filters);
-    let config =
-        Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
-            .with_tasks(tasks_config);
-    let index = IndexerService::new(root)
-        .with_config(&config)
-        .build()
-        .expect("build index");
-    let note = index
-        .entries()
-        .iter()
-        .find_map(traces_pkm::FileEntry::note)
-        .expect("indexed note");
+    let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
+    let index =
+        project.indexer().with_config(&config).build().expect("build index");
+    let note =
+        index.entries().iter().find_map(FileEntry::note).expect("indexed note");
 
     let all_items: Vec<_> = note.list_items().collect();
     assert_eq!(all_items.len(), 4);
@@ -114,19 +103,19 @@ fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
 #[test]
 fn note_with_tasks_persists_correct_records_in_lists_table() {
     let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
     let markdown = "\
 - [ ] Root task 📅 2025-06-01 🔺
   - [ ] Subtask
     - [x] Grandchild completed
 - Plain bullet
 ";
-    fs::write(temp.path().join("tasks.md"), markdown).expect("write tasks.md");
+    project.write_note("tasks.md", markdown);
 
-    let indexer = IndexerService::new(temp.path());
-    let built = indexer.build().expect("build index");
-    indexer.persist(&built).expect("persist index");
+    let (indexer, _) = project.persist_index();
 
     let list_records = indexer.read_lists().expect("read lists table");
+
     assert_eq!(list_records.len(), 4);
 
     // (index, clean_text, status_type, depth, line, parent_line)
@@ -171,19 +160,18 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
 #[test]
 fn index_persistence_roundtrip_includes_lists_derived_fields() {
     let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
     let markdown = "\
 - [x] Completed task 📅 2025-12-31 🔽
 - Plain item
 ";
-    fs::write(temp.path().join("items.md"), markdown).expect("write items.md");
+    project.write_note("items.md", markdown);
 
     // 1. Build and persist
-    let indexer1 = IndexerService::new(temp.path());
-    let built = indexer1.build().expect("build");
-    indexer1.persist(&built).expect("persist");
+    let (_, _built) = project.persist_index();
 
     // 2. Fresh service instance simulates a new process
-    let indexer2 = IndexerService::new(temp.path());
+    let indexer2 = project.indexer();
     let records = indexer2.read_lists().expect("read lists from fresh service");
     assert_eq!(records.len(), 2);
 

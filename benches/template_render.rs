@@ -41,8 +41,7 @@ use criterion::{
 use tempfile::TempDir;
 use traces_pkm::{
     Config, IndexerService, PresetDialogProvider, TemplatePathInput,
-    TemplateService, WriteMode, create_trusted_project, fixture_service,
-    write_note, write_template,
+    TemplateService, TestProject, WriteMode,
 };
 
 #[expect(
@@ -66,44 +65,31 @@ use common::quick_file_counts;
 fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
     let temp = tempfile::tempdir().expect("create temp dir");
     let root = temp.path().join("project");
-    let service = fixture_service(temp.path());
-    let _ = create_trusted_project(&service, &root);
+    let project = TestProject::trusted(&root);
     for i in 0..n {
-        write_note(
-            &root,
-            &format!("notes/note-{i}.md"),
+        let status = if i % 2 == 0 {
+            "active"
+        } else {
+            "archived"
+        };
+        project.write_note(
+            format!("notes/note-{i}.md"),
             &format!(
-                "---\nrating: {}\nstatus: {}\n---\n# Note {i}\nBody content \
-                 for note {i}.\n",
-                i % 10,
-                if i % 2 == 0 {
-                    "active"
-                } else {
-                    "archived"
-                }
+                "---\nrating: {}\nstatus: {status}\n---\n# Note {i}\n",
+                i % 10
             ),
         );
     }
-    write_template(
-        &root,
+    project.write_template(
         "list_report.md",
         "{{ query.from() | list(\"file.path\") }}",
     );
-    write_template(
-        &root,
+    project.write_template(
         "table_report.md",
         r#"{{ query.from().where("rating >= 5").sort("file.name", false).table(["Path", "Rating", "Status"], ["file.path", "rating", "status"]) }}"#,
     );
-    let indexer = IndexerService::new(&root);
-    indexer
-        .persist(&indexer.build().expect("build index"))
-        .expect("persist index");
-    let config = Config::for_test(
-        root.clone(),
-        Some(root.join("templates")),
-        None,
-        root.clone(),
-    );
+    let _ = project.persist_index();
+    let config = Config::test_default(&root).with_templates();
     (temp, root, config)
 }
 

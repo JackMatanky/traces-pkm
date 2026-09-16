@@ -65,11 +65,8 @@ impl FileIndex {
         let mut parsed = Vec::with_capacity(items.len());
         let mut files = Vec::with_capacity(items.len());
         for (note, size) in items {
-            files.push(FileBase::new_note_with_size_test(
+            files.push(FileBase::note_with_size_for_test(
                 note.path().to_path_buf(),
-                note.path()
-                    .parent()
-                    .map_or_else(PathBuf::new, std::path::Path::to_path_buf),
                 size,
             ));
             parsed.push(note);
@@ -553,6 +550,9 @@ mod tests {
         }
         #[test]
         fn creates_no_files_on_disk() {
+            // The cwd is process-global state; hold CWD_TEST_LOCK so another
+            // test's CwdGuard-mediated change cannot be observed mid-walk.
+            let _cwd = crate::cli::CwdGuard::same_dir();
             let count_entries =
                 || std::fs::read_dir(".").map_or(0, std::iter::Iterator::count);
             let before = count_entries();

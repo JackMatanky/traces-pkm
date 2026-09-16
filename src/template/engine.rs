@@ -223,7 +223,7 @@ mod tests {
     /// default `[schemas]` settings, for tests that only need a project root
     /// to pass to [`TemplateEngine::new`].
     fn config_for(root: &Path) -> Config {
-        Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+        Config::test_default(root)
     }
 
     /// Creates a cheap, deterministic [`DialogProvider`] for tests that do not

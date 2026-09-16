@@ -517,15 +517,10 @@ mod tests {
         }
 
         fn build_book_index() -> Arc<FileIndex> {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("book.md"),
+            crate::build_test_index(&[(
+                "book.md",
                 "---\ntitle: Dune\n---\nGenre:: Sci-fi\n\nShelved as #book.",
-            )
-            .expect("write note");
-            Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
-            )
+            )])
         }
 
         #[test]

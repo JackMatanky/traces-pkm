@@ -808,34 +808,14 @@ impl Default for NearestCandidate<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        file::FileFormat,
-        note::{LinkType, MarkdownParserInput, parse_markdown},
-    };
-
-    fn parse(path: &str, src: &str) -> Note {
-        let input = MarkdownParserInput::for_test(Path::new(path), src);
-        parse_markdown(&input)
-    }
+    use crate::{file::FileFormat, note::LinkType, parse_note as parse};
 
     fn file_for_note(path: &str) -> FileBase {
-        FileBase::new_test(
-            PathBuf::from(path),
-            Path::new(path)
-                .parent()
-                .map_or_else(PathBuf::new, Path::to_path_buf),
-            FileFormat::Note,
-        )
+        FileBase::note_for_test(path)
     }
 
     fn file_for_attachment(path: &str, format: FileFormat) -> FileBase {
-        FileBase::new_test(
-            PathBuf::from(path),
-            Path::new(path)
-                .parent()
-                .map_or_else(PathBuf::new, Path::to_path_buf),
-            format,
-        )
+        FileBase::for_test(path, format)
     }
 
     fn note_with_outlink(path: &str, target: &str, kind: LinkType) -> Note {

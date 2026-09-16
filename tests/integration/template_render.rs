@@ -7,8 +7,7 @@ use std::sync::Arc;
 use pretty_assertions::assert_eq;
 use traces_pkm::{
     CommitPolicy, Config, PresetDialogProvider, TemplatePathInput,
-    TemplateService, WriteMode, WriteOutcome, create_trusted_project,
-    fixture_service, write_note, write_template,
+    TemplateService, TestProject, WriteMode, WriteOutcome,
 };
 
 /// Renders a template whose query counts real indexed notes, and checks
@@ -20,23 +19,16 @@ use traces_pkm::{
 #[test]
 fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    let root = temp.path().join("project");
-    let service = fixture_service(temp.path());
-    let _ = create_trusted_project(&service, &root);
-    write_note(&root, "notes/a.md", "# A\n");
-    write_note(&root, "notes/b.md", "# B\n");
-    write_template(
-        &root,
+    let project = TestProject::trusted(temp.path().join("project"));
+    let root = project.root();
+    project.write_note("notes/a.md", "# A\n");
+    project.write_note("notes/b.md", "# B\n");
+    project.write_template(
         "report.md",
         "{{ query.from(\"notes/\") | length }} notes",
     );
 
-    let config = Config::for_test(
-        root.clone(),
-        Some(root.join("templates")),
-        None,
-        root.clone(),
-    );
+    let config = Config::test_default(root).with_templates();
     let template_service =
         TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
             .expect("valid test schema directory");
@@ -65,43 +57,30 @@ fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
 #[test]
 fn renders_a_file_sourced_select_field_in_template_rendering() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    let root = temp.path().join("project");
-    let service = fixture_service(temp.path());
-    let _ = create_trusted_project(&service, &root);
+    let project = TestProject::trusted(temp.path().join("project"));
+    let root = project.root();
 
-    let schemas_dir = root.join(".traces/schemas");
-    std::fs::create_dir_all(schemas_dir.join("values"))
-        .expect("create values dir");
-
-    std::fs::write(
-        schemas_dir.join("values/categories.toml"),
+    project.write_schema_value(
+        "categories.toml",
         "[[entries]]\nid = \"rust\"\ntitle = \"Rust Programming\"\n",
-    )
-    .expect("write categories values file");
+    );
 
-    std::fs::write(
-        schemas_dir.join("topic.toml"),
+    project.write_schema(
+        "topic",
         r#"
         [fields.category]
         type = "select"
         values = { path = "values/categories.toml", value = "id", label = "title" }
         "#,
-    )
-    .expect("write topic schema");
+    );
 
-    write_template(
-        &root,
+    project.write_template(
         "topic_note.md",
         "Category: {{ schema.get('topic').field('category')[0].label }} ({{ \
          schema.get('topic').field('category')[0].value }})",
     );
 
-    let config = Config::for_test(
-        root.clone(),
-        Some(root.join("templates")),
-        Some(schemas_dir),
-        root.clone(),
-    );
+    let config = Config::test_default(root).with_templates();
     let template_service =
         TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
             .expect("valid test schema directory");

@@ -78,16 +78,15 @@ pub(crate) use sort::{SortDirection, SortOrder};
 
 #[cfg(test)]
 pub(super) mod test_support {
-    use std::{path::Path, sync::Arc};
+    use std::path::Path;
 
     use super::*;
-    use crate::index::FileIndex;
     /// Writes `files` under `temp` and returns an all-notes page query.
     pub(super) fn outcome_for_files(
         _temp: &Path,
         files: &[(&str, &str)],
     ) -> QuerySet {
-        let index = Arc::new(FileIndex::new_test(files));
+        let index = crate::build_test_index(files);
         QueryService::new("class")
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }

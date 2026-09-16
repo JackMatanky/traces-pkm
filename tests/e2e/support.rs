@@ -115,6 +115,20 @@ impl Sandbox {
         }
     }
 
+    /// Adopts caller-owned temporary directories (used by `golden_path`,
+    /// which must create its directories before `Init` runs in-process).
+    pub(crate) fn from_dirs(
+        project: TempDir,
+        state_dir: TempDir,
+        config_home: TempDir,
+    ) -> Self {
+        Self {
+            state_dir,
+            config_home,
+            project,
+        }
+    }
+
     pub(crate) fn root(&self) -> &Path {
         self.project.path()
     }
@@ -140,6 +154,23 @@ impl Sandbox {
         std::fs::create_dir_all(path.parent().expect("note parent"))
             .expect("create note parent dir");
         std::fs::write(path, content).expect("write note");
+    }
+
+    /// Writes a schema TOML file under `.traces/schemas/`.
+    pub(crate) fn write_schema(&self, name: &str, toml: &str) {
+        let path =
+            self.root().join(".traces/schemas").join(format!("{name}.toml"));
+        std::fs::create_dir_all(path.parent().expect("schemas parent"))
+            .expect("create schemas dir");
+        std::fs::write(path, toml).expect("write schema file");
+    }
+
+    /// Writes a schema values file under `.traces/schemas/values/`.
+    pub(crate) fn write_schema_value(&self, rel_path: &str, toml: &str) {
+        let path = self.root().join(".traces/schemas/values").join(rel_path);
+        std::fs::create_dir_all(path.parent().expect("schema values parent"))
+            .expect("create schema values dir");
+        std::fs::write(path, toml).expect("write schema value file");
     }
 
     /// Writes a template file into the project's local template directory.

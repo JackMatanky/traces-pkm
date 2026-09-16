@@ -63,9 +63,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        TrustRequest,
-        cli::tests::fixtures::{create_empty_config, service},
-        config::ConfigTrustStatus,
+        TestProject, TrustRequest, config::ConfigTrustStatus, fixture_service,
     };
     #[derive(Debug, Parser)]
     struct TestCli {
@@ -134,8 +132,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            create_empty_config(&root);
-            let service = super::service(temp.path());
+            TestProject::empty(&root).write_file(".traces/config.toml", "");
+            let service = fixture_service(temp.path());
             super::trust_root(&service, &root);
 
             super::untrust_args(Some(root.clone()), false)
@@ -156,8 +154,8 @@ mod tests {
             let root = temp.path().join("project");
             let cwd = root.join("notes/daily");
             fs::create_dir_all(&cwd).expect("create nested cwd");
-            create_empty_config(&root);
-            let service = super::service(temp.path());
+            TestProject::empty(&root).write_file(".traces/config.toml", "");
+            let service = fixture_service(temp.path());
             super::trust_root(&service, &root);
             let _guard = CwdGuard::enter(&cwd);
 
@@ -179,9 +177,9 @@ mod tests {
             let parent = temp.path().join("parent");
             let child = parent.join("child");
             fs::create_dir_all(&child).expect("create child dir");
-            create_empty_config(&parent);
-            create_empty_config(&child);
-            let service = super::service(temp.path());
+            TestProject::empty(&parent).write_file(".traces/config.toml", "");
+            TestProject::empty(&child).write_file(".traces/config.toml", "");
+            let service = fixture_service(temp.path());
             super::trust_root(&service, &parent);
             super::trust_root(&service, &child);
 

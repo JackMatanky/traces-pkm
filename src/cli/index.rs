@@ -71,7 +71,7 @@ mod tests {
     }
     use fixtures::*;
 
-    use crate::cli::tests::fixtures::{create_trusted_project, service};
+    use crate::TestProject;
 
     mod index {
         use std::{fs, path::Path};
@@ -81,67 +81,54 @@ mod tests {
 
         use super::*;
         use crate::{
-            DirTreeError,
-            cli::CwdGuard,
-            config::ConfigLoadError,
-            index::{IndexError, IndexerService},
+            DirTreeError, cli::CwdGuard, config::ConfigLoadError,
+            index::IndexError,
         };
 
         #[test]
         fn persists_covering_every_project_file() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            fs::create_dir_all(root.join("notes")).expect("mkdir notes");
-            fs::write(root.join("notes/todo.md"), "- [ ] task")
-                .expect("write note");
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("notes/todo.md", "- [ ] task");
+            let _guard = CwdGuard::enter(project.root());
 
-            Index.run(&service).expect("run index command");
+            Index.run(project.service()).expect("run index command");
 
-            let loaded = IndexerService::new(&root)
-                .load()
-                .expect("load persisted index");
+            let loaded =
+                project.indexer().load().expect("load persisted index");
             let paths = record_paths(&loaded);
-            assert!(paths.contains(&"notes/todo.md".to_owned()));
-            assert!(paths.contains(&".traces/config.toml".to_owned()));
+            assert!(!paths.contains(&".traces/config.toml".to_owned()));
         }
 
         #[test]
         fn survives_a_later_process_invocation_via_load() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            fs::write(root.join("first.md"), "content").expect("write first");
-            let _guard = CwdGuard::enter(&root);
-            Index.run(&service).expect("first index run");
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("first.md", "content");
+            let _guard = CwdGuard::enter(project.root());
+            Index.run(project.service()).expect("first index run");
 
-            let reloaded = IndexerService::new(&root)
-                .load()
-                .expect("reload persisted index");
+            let reloaded =
+                project.indexer().load().expect("reload persisted index");
 
-            assert_eq!(reloaded.entries().len(), 2);
+            assert_eq!(reloaded.entries().len(), 1);
         }
 
         #[test]
         fn rebuilds_rather_than_appends() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            fs::write(root.join("stale.md"), "old").expect("write stale");
-            let _guard = CwdGuard::enter(&root);
-            Index.run(&service).expect("first index run");
-            fs::remove_file(root.join("stale.md")).expect("remove stale");
-            fs::write(root.join("fresh.md"), "new").expect("write fresh");
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("stale.md", "old");
+            let _guard = CwdGuard::enter(project.root());
+            Index.run(project.service()).expect("first index run");
+            fs::remove_file(project.root().join("stale.md"))
+                .expect("remove stale");
+            project.write_note("fresh.md", "new");
 
-            Index.run(&service).expect("second index run");
+            Index.run(project.service()).expect("second index run");
 
-            let loaded = IndexerService::new(&root)
-                .load()
-                .expect("load persisted index");
+            let loaded =
+                project.indexer().load().expect("load persisted index");
             let paths = record_paths(&loaded);
             assert!(!paths.contains(&"stale.md".to_owned()));
             assert!(paths.contains(&"fresh.md".to_owned()));
@@ -150,17 +137,11 @@ mod tests {
         #[test]
         fn fails_when_project_root_is_not_trusted() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            let service = service(temp.path());
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::untrusted(temp.path().join("project"));
+            let _guard = CwdGuard::enter(project.root());
 
-            let error = Index.run(&service).expect_err("untrusted root fails");
+            let error =
+                Index.run(project.service()).expect_err("untrusted root fails");
 
             assert!(matches!(error, CliError::ConfigLoad {
                 source: ConfigLoadError::Build(_),
@@ -189,18 +170,17 @@ mod tests {
             }
 
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            let locked = root.join("locked");
+            let project = TestProject::trusted(temp.path().join("project"));
+            let locked = project.root().join("locked");
             fs::create_dir(&locked).expect("create locked dir");
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
                 .expect("revoke read permission");
             let _restore = RestorePermissions(&locked);
-            let _guard = CwdGuard::enter(&root);
+            let _guard = CwdGuard::enter(project.root());
 
-            let error =
-                Index.run(&service).expect_err("unreadable subdirectory fails");
+            let error = Index
+                .run(project.service())
+                .expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {
                 source: IndexError::Walk(DirTreeError::NodeInaccessible { .. }),

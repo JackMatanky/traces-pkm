@@ -218,7 +218,7 @@ impl DirTree {
         F: FnMut(&DirNode) -> bool + 'static,
     {
         self.prune = Some(Box::new(move |entry: &DirEntry| {
-            !(entry.file_type().is_dir() && predicate(&DirNode(entry.clone())))
+            !entry.file_type().is_dir() || !predicate(&DirNode(entry.clone()))
         }));
         self
     }
@@ -724,6 +724,33 @@ mod tests {
             let (path, _) = error.expect("present").into_parts();
             assert_eq!(path, kid);
             assert!(errors.next().is_none(), "exactly one error");
+        }
+
+        #[test]
+        fn filter_prunes_matching_subtree_during_descendants() {
+            // Arrange: nested matching dir (not a direct child of root);
+            // dot-prefixed tempdir name must NOT match the predicate.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            write(root, "proj/.traces/config.toml");
+            write(root, "proj/a.md");
+
+            // Act
+            let relatives: Vec<String> = DirTree::descendants(root)
+                .filter(|node| node.file_name() == ".traces")
+                .map(|entry| entry.expect("entry is ok"))
+                .map(|node| {
+                    node.path()
+                        .strip_prefix(root)
+                        .expect("under root")
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+
+            // Assert: the .traces/config.toml file is pruned with its dir;
+            // root itself and surviving files remain.
+            assert_eq!(relatives, vec!["", "proj", "proj/a.md"]);
         }
     }
 

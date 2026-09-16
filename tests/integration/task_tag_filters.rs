@@ -5,19 +5,18 @@
 //! resolution, indexing, and query execution through the public service
 //! surface.
 
-use std::{fs, sync::Arc};
+use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    Config, IndexerService, ListItemType, QueryBuilder, QueryService,
-    SourceSelector, Tag, TaskConfig,
+    ListItemType, QueryBuilder, QueryService, SourceSelector, TaskConfig,
+    TestProject,
 };
 
 #[test]
 fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    let root = temp.path().join("project");
-    fs::create_dir_all(&root).expect("create project dir");
+    let project = TestProject::trusted(temp.path().join("project"));
 
     let markdown = r"# Tasks and Checklists
 
@@ -28,21 +27,12 @@ fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
 - [ ] Nested tag item #task/urgent
 - Plain bullet with #task
 ";
-    fs::write(root.join("notes.md"), markdown).expect("write notes.md");
+    project.write_note("notes.md", markdown);
 
-    let tag_filters = vec![
-        Tag::parse("#task").expect("valid tag"),
-        Tag::parse("#todo").expect("valid tag"),
-    ];
-    let tasks_config = TaskConfig::for_test(tag_filters);
-    let config = Config::for_test(root.clone(), None, None, root.clone())
-        .with_tasks(tasks_config);
-
+    let config =
+        project.config().with_tasks(TaskConfig::from_tags(&["#task", "#todo"]));
     let index = Arc::new(
-        IndexerService::new(&root)
-            .with_config(&config)
-            .build()
-            .expect("build index"),
+        project.indexer().with_config(&config).build().expect("build index"),
     );
 
     let query_service = QueryService::new("class");
@@ -89,8 +79,7 @@ fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
 #[test]
 fn config_without_tag_filters_classifies_all_status_marked_items_as_tasks() {
     let temp = tempfile::tempdir().expect("create temp dir");
-    let root = temp.path().join("project");
-    fs::create_dir_all(&root).expect("create project dir");
+    let project = TestProject::trusted(temp.path().join("project"));
 
     let markdown = r"# Simple Tasks
 
@@ -99,10 +88,9 @@ fn config_without_tag_filters_classifies_all_status_marked_items_as_tasks() {
 - [?] Unknown marker item
 - Plain bullet
 ";
-    fs::write(root.join("notes.md"), markdown).expect("write notes.md");
+    project.write_note("notes.md", markdown);
 
-    let index =
-        Arc::new(IndexerService::new(&root).build().expect("build index"));
+    let index = Arc::new(project.indexer().build().expect("build index"));
 
     let query_service = QueryService::new("class");
     let task_rows =

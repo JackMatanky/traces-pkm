@@ -89,7 +89,7 @@ impl Task {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::tests::fixtures::{create_trusted_project, service};
+    use crate::TestProject;
 
     mod render {
         use std::{fs, path::Path};
@@ -302,7 +302,6 @@ mod tests {
     }
 
     mod run {
-        use std::fs;
 
         use super::*;
         use crate::{cli::CwdGuard, config::ConfigLoadError};
@@ -310,38 +309,29 @@ mod tests {
         #[test]
         fn succeeds_for_a_trusted_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            fs::write(root.join("todo.md"), "- [ ] buy milk\n")
-                .expect("write note");
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("todo.md", "- [ ] buy milk\n");
+            let _guard = CwdGuard::enter(project.root());
             let task = Task {
                 from: None,
                 filter: vec![],
             };
 
-            task.run(&service).expect("run task command");
+            task.run(project.service()).expect("run task command");
         }
 
         #[test]
         fn fails_when_project_root_is_not_trusted() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            let service = service(temp.path());
-            let _guard = CwdGuard::enter(&root);
+            let project = TestProject::untrusted(temp.path().join("project"));
+            let _guard = CwdGuard::enter(project.root());
             let task = Task {
                 from: None,
                 filter: vec![],
             };
 
-            let error = task.run(&service).expect_err("untrusted root fails");
+            let error =
+                task.run(project.service()).expect_err("untrusted root fails");
 
             assert!(matches!(error, CliError::ConfigLoad {
                 source: ConfigLoadError::Build(_),
