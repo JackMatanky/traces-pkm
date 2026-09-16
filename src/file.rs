@@ -165,7 +165,7 @@ impl FileBase {
 
     /// Returns the filesystem creation timestamp, if the host reports one.
     ///
-    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, NFSv3,
+    /// On Linux, [`std::fs::Metadata::created`] fails on tmpfs, FAT32, `NFSv3`,
     /// and kernels before 4.11. Callers should treat this as `Option` — fall
     /// back to [`Self::modified_at`] or display `None` as appropriate.
     #[inline]
@@ -417,12 +417,21 @@ mod tests {
             fn returns_some_when_creation_time_is_reported() {
                 let modified_at = SystemTime::now();
                 let reported = modified_at
-                    .checked_sub(std::time::Duration::from_secs(86400))
+                    .checked_sub(std::time::Duration::from_hours(24))
                     .unwrap();
                 let record = record_with(Some(reported), modified_at);
 
                 assert_eq!(record.created_at(), Some(reported));
             }
+        }
+
+        #[test]
+        fn file_base_postcard_roundtrip() {
+            let file = FileBase::note_for_test("test.md");
+            let bytes = postcard::to_allocvec(&file).expect("serialize");
+            let decoded: FileBase =
+                postcard::from_bytes(&bytes).expect("deserialize");
+            assert_eq!(file, decoded);
         }
     }
 
