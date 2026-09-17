@@ -434,7 +434,7 @@ impl SchemasConfig {
     ///
     /// # Panics
     ///
-    /// If `class_field` is not a valid field key.
+    /// Panics if `class_field` is not a valid field key.
     #[cfg(any(test, feature = "test-utils"))]
     #[must_use]
     #[expect(

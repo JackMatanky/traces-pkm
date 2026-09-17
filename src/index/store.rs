@@ -1713,6 +1713,9 @@ impl IndexStore {
     }
 
     /// Upserts each of `modified_notes`' current values into `index`'s forward
+    /// table, first removing exactly this note's previous values via the
+    /// reverse (path-keyed) table in O(k) time where k is this note's previous
+    /// value count, rather than performing a full-table scan.
     fn upsert_source_index<'a>(
         &self,
         write_txn: &WriteTransaction,
