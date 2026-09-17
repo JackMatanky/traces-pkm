@@ -1594,7 +1594,7 @@ mod tests {
             assert_eq!(real.as_ref(), [PathBuf::from("a.md")]);
             let legacy =
                 store.paths_with_file_class("legacy").expect("read legacy");
-            assert_eq!(legacy.as_ref(), [] as [PathBuf; 0]);
+            assert_eq!(legacy.as_ref(), <&[PathBuf]>::default());
         }
 
         #[test]
@@ -1642,7 +1642,7 @@ mod tests {
             let store = IndexStore::open(root).expect("open store");
             let movie =
                 store.paths_with_file_class("movie").expect("read movie");
-            assert_eq!(movie.as_ref(), [] as [PathBuf; 0]);
+            assert_eq!(movie.as_ref(), <&[PathBuf]>::default());
             let novel =
                 store.paths_with_file_class("novel").expect("read novel");
             assert_eq!(novel.as_ref(), [PathBuf::from("b.md")]);
