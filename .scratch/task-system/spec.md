@@ -262,7 +262,7 @@ shortcuts (`--todo`, `--done`, `--status <char>`), sorting, and table output.
 - Compute `fully_complete` on Task items by checking the task itself and
   recursively checking task children only. Plain bullets and checkboxes are
   ignored.
-- `ListText.raw` excludes only the leading `[<char>] ` prefix, preserving all
+- `ListText.raw` excludes only the leading `"[<char>] "` prefix, preserving all
   other inline syntax. `ListText.clean` strips markers, task tag filters, date
   syntax, priority emojis, and inline task fields.
 - `render_task_list` in `src/query/format.rs` outputs the exact
