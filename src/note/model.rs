@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     field::NoteFieldValue,
     links::Link,
-    lists::{List, ListItemIter},
+    lists::{ListItem, descendants_of},
     metadata::Frontmatter,
 };
 use crate::{FieldKey, FieldKeyRef, Tag};
@@ -23,7 +23,7 @@ pub struct Note {
     #[serde(with = "crate::index::path")]
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
-    lists: Box<[List]>,
+    lists: Box<[ListItem]>,
     outlinks: Box<[Link]>,
     inline_fields: IndexMap<FieldKey, Box<[NoteFieldValue]>>,
     tags: Box<[Tag]>,
@@ -39,7 +39,7 @@ impl Note {
     #[must_use]
     pub(crate) fn new<
         P: Into<PathBuf>,
-        L: Into<Box<[List]>>,
+        L: Into<Box<[ListItem]>>,
         O: Into<Box<[Link]>>,
     >(
         path: P,
@@ -95,13 +95,10 @@ impl Note {
         self.frontmatter.as_ref()
     }
 
-    /// Returns the top-level body lists.
-    ///
-    /// Nested `ListItem` values hold child lists. Use [`Self::tasks`] for a
-    /// flattened view of task items from every list depth.
+    /// Returns all list items in strict document order.
     #[inline]
     #[must_use]
-    pub fn lists(&self) -> &[List] {
+    pub fn lists(&self) -> &[ListItem] {
         &self.lists
     }
 
@@ -186,19 +183,34 @@ impl Note {
         &self.tags
     }
 
-    /// Iterates over all list items across all nesting depths in document
-    /// order.
+    /// Iterates over all list items in document order.
     #[inline]
-    #[must_use]
-    pub fn list_items(&self) -> ListItemIter<'_> {
-        ListItemIter::new(&self.lists)
+    pub fn list_items(&self) -> impl Iterator<Item = &ListItem> {
+        self.lists.iter()
     }
 
-    /// Iterates over task list items across all nesting depths.
+    /// Iterates over task list items in document order.
     #[inline]
-    #[must_use]
-    pub fn tasks(&self) -> ListItemIter<'_> {
-        ListItemIter::tasks(&self.lists)
+    pub fn tasks(&self) -> impl Iterator<Item = &ListItem> {
+        self.lists.iter().filter(|item| item.kind().is_task())
+    }
+
+    /// Returns an iterator over all descendant items of the list item at
+    /// `parent_idx`.
+    ///
+    /// Scans contiguous items following `parent_idx` in document order whose
+    /// depth is strictly greater than the parent's depth, stopping at the
+    /// first sibling or ancestor item.
+    #[inline]
+    pub fn descendants(
+        &self,
+        parent_idx: usize,
+    ) -> impl Iterator<Item = &ListItem> {
+        let parent_depth =
+            self.lists.get(parent_idx).map_or(u8::MAX, ListItem::depth);
+        let rest =
+            self.lists.get(parent_idx.saturating_add(1)..).unwrap_or(&[]);
+        descendants_of(rest, parent_depth)
     }
 }
 
@@ -233,22 +245,19 @@ mod tests {
         #[test]
         fn constructs_note_with_the_given_path_and_parts() {
             let frontmatter = Frontmatter::new(IndexMap::new());
-            let list = List::new(false, vec![ListItem::new(
-                "item",
-                ListItemType::Plain,
-            )]);
+            let item = ListItem::new("item", ListItemType::Plain);
             let outlink = Link::new("target", "text", LinkType::Wikilink);
 
             let note = Note::new(
                 "notes/a.md",
                 Some(frontmatter.clone()),
-                vec![list.clone()],
+                vec![item.clone()],
                 vec![outlink.clone()],
             );
 
             assert_eq!(note.path(), Path::new("notes/a.md"));
             assert_eq!(note.frontmatter(), Some(&frontmatter));
-            assert_eq!(note.lists(), [list]);
+            assert_eq!(note.lists(), [item]);
             assert_eq!(note.outlinks(), [outlink]);
         }
 
@@ -364,20 +373,22 @@ mod tests {
 
         #[test]
         fn yields_task_items_from_top_level_and_nested_lists_in_order() {
+            let parent = ListItem::new(
+                "parent task",
+                task("Todo", ' ', TaskStatusType::Todo),
+            )
+            .with_depth(0);
             let child_task = ListItem::new(
                 "child task",
                 task("Done", 'x', TaskStatusType::Done),
-            );
-            let parent = ListItem::with_children(
-                "parent task",
-                task("Todo", ' ', TaskStatusType::Todo),
-                vec![List::new(false, vec![child_task])],
-            );
-            let plain = ListItem::new("plain item", ListItemType::Plain);
+            )
+            .with_depth(1);
+            let plain =
+                ListItem::new("plain item", ListItemType::Plain).with_depth(0);
             let note = Note::new(
                 "notes/a.md",
                 None,
-                vec![List::new(false, vec![parent, plain])],
+                vec![parent, child_task, plain],
                 Vec::new(),
             );
 
@@ -394,7 +405,7 @@ mod tests {
             let note = Note::new(
                 "notes/a.md",
                 None,
-                vec![List::new(false, vec![plain, checkbox])],
+                vec![plain, checkbox],
                 Vec::new(),
             );
 
@@ -409,28 +420,30 @@ mod tests {
 
         #[test]
         fn yields_all_items_including_plain_and_checkbox_and_tasks_in_order() {
-            let grandchild_plain =
-                ListItem::new("grandchild plain", ListItemType::Plain);
-            let child_checkbox = ListItem::with_children(
-                "child checkbox",
-                ListItemType::Checkbox,
-                vec![List::new(false, vec![grandchild_plain])],
-            );
-            let parent_task = ListItem::with_children(
+            let parent_task = ListItem::new(
                 "parent task",
                 task("Todo", ' ', TaskStatusType::Todo),
-                vec![List::new(false, vec![child_checkbox])],
-            );
+            )
+            .with_depth(0);
+            let child_checkbox =
+                ListItem::new("child checkbox", ListItemType::Checkbox)
+                    .with_depth(1);
+            let grandchild_plain =
+                ListItem::new("grandchild plain", ListItemType::Plain)
+                    .with_depth(2);
             let sibling_task = ListItem::new(
                 "sibling task",
                 task("Done", 'x', TaskStatusType::Done),
-            );
+            )
+            .with_depth(0);
             let note = Note::new(
                 "notes/a.md",
                 None,
                 vec![
-                    List::new(false, vec![parent_task]),
-                    List::new(false, vec![sibling_task]),
+                    parent_task,
+                    child_checkbox,
+                    grandchild_plain,
+                    sibling_task,
                 ],
                 Vec::new(),
             );
@@ -467,15 +480,11 @@ mod tests {
             item_fields.insert(item_field_key, vec![NoteFieldValue::String(
                 "high".to_owned(),
             )]);
-            let child = ListItem::new("child item", ListItemType::Plain);
-            let item =
-                ListItem::with_children("item", ListItemType::Plain, vec![
-                    List::new(false, vec![child]),
-                ])
+            let child =
+                ListItem::new("child item", ListItemType::Plain).with_depth(1);
+            let item = ListItem::new("item", ListItemType::Plain)
                 .with_fields(item_fields)
                 .with_tags(vec![crate::parse_tag("#task")]);
-
-            let list = List::new(false, vec![item]);
             let outlink = Link::new("target", "text", LinkType::Wikilink);
 
             let mut inline_fields = IndexMap::new();
@@ -484,12 +493,14 @@ mod tests {
                     .into(),
             )]);
 
-            let note =
-                Note::new("notes/a.md", Some(frontmatter), vec![list], vec![
-                    outlink,
-                ])
-                .with_inline_fields(inline_fields)
-                .with_tags(vec![crate::parse_tag("#book")]);
+            let note = Note::new(
+                "notes/a.md",
+                Some(frontmatter),
+                vec![item, child],
+                vec![outlink],
+            )
+            .with_inline_fields(inline_fields)
+            .with_tags(vec![crate::parse_tag("#book")]);
 
             let bytes = postcard::to_allocvec(&note).expect("encode note");
             let decoded: Note =

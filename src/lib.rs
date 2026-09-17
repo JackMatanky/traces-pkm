@@ -36,8 +36,7 @@
 //!
 //! Always available:
 //!
-//! - [`Note`], [`ListItem`], [`ListItemIter`], [`TaskListItem`]: Parsed note
-//!   and task records.
+//! - [`Note`], [`ListItem`], [`TaskListItem`]: Parsed note and task records.
 //! - [`Tag`], [`TagError`]: Validated Markdown tags.
 //! - [`SourceLine`]: Strongly-typed 1-indexed source line numbers.
 //! - [`TaskStatus`], [`TaskStatusMap`], [`TaskStatusType`]: Task status symbols
@@ -89,8 +88,9 @@ pub mod cli;
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use config::{Config, ConfigService, TaskConfig, TrustRequest};
+pub use date::DateValue;
 pub(crate) use date::{
-    DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
+    DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue,
 };
 pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
@@ -117,7 +117,7 @@ pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileEntry, FileIndex, IndexerService, InlinkMap, ListEntry, SyncReport,
+    FileEntry, FileIndex, IndexerService, InlinkMap, SyncReport,
     path as path_codec,
 };
 pub(crate) use lexer::{
@@ -125,9 +125,9 @@ pub(crate) use lexer::{
 };
 pub(crate) use note::NoteFieldType;
 pub use note::{
-    List, ListItem, ListItemIter, ListItemType, ListText, MarkdownParserInput,
-    Note, NoteFieldValue, NoteFieldValueRef, TaskDates, TaskListItem,
-    TaskPriority, parse_markdown,
+    ListItem, ListItemType, ListText, MarkdownParserInput, Note,
+    NoteFieldValue, NoteFieldValueRef, TaskDates, TaskListItem, TaskPriority,
+    descendants_of, parse_markdown,
 };
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;

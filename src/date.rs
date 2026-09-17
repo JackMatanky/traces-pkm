@@ -148,8 +148,8 @@ impl DateTimeFormat {
 
 /// Parsed calendar date with no time-of-day component.
 ///
-/// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition through
-/// [`DateValue::parse_iso`]. All four-digit years are accepted; two-digit years
+/// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition.
+/// All four-digit years are accepted; two-digit years
 /// are rejected to prevent chrono's silent century misinterpretation.
 #[repr(transparent)]
 #[derive(
@@ -284,6 +284,12 @@ impl From<DateValue> for NaiveDate {
     #[inline]
     fn from(value: DateValue) -> Self {
         value.into_inner()
+    }
+}
+impl From<NaiveDate> for DateValue {
+    #[inline]
+    fn from(date: NaiveDate) -> Self {
+        Self(date)
     }
 }
 
@@ -1046,6 +1052,16 @@ mod tests {
             assert_eq!(
                 naive,
                 NaiveDate::from_ymd_opt(2026, 7, 29).expect("valid date")
+            );
+        }
+        #[test]
+        fn converts_from_naive_date_via_from_trait() {
+            let naive =
+                NaiveDate::from_ymd_opt(2026, 7, 29).expect("valid date");
+            let date: DateValue = naive.into();
+            assert_eq!(
+                date,
+                DateValue::parse_iso("2026-07-29").expect("valid date")
             );
         }
 

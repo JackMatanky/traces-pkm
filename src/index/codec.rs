@@ -52,11 +52,9 @@ pub(super) fn decode_row<T: DeserializeOwned>(
 /// Tries UTF-8 first and falls back to lossy decoding for non-Unicode paths.
 /// The lossy fallback affects only refresh-diff link paths:
 /// [`IndexStore::read_all`] resolves stored link bytes against loaded notes
-/// for byte-exact query output, and `LISTS` keys are valid UTF-8 by
-/// construction (see [`IndexStore::write_lists_for_note`]).
+/// for byte-exact query output.
 ///
 /// [`IndexStore::read_all`]: super::store::IndexStore::read_all
-/// [`IndexStore::write_lists_for_note`]: super::store::IndexStore::write_lists_for_note
 pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
         |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),

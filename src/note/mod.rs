@@ -21,13 +21,10 @@
 //! # Key Types
 //!
 //! - [`Note`]: Parsed record for one Markdown file.
-//! - [`List`], [`ListItem`], [`ListItemType`], [`TaskListItem`]: Ordered and
-//!   unordered lists, including classified task items, checkboxes, and nested
-//!   child lists.
+//! - [`ListItem`], [`ListItemType`], [`TaskListItem`]: Ordered and unordered
+//!   list items, including classified task items and checkboxes.
 //! - [`ListText`], [`TaskDates`], [`TaskPriority`]: Normalized list text,
 //!   extracted task dates, and priority levels.
-//! - [`ListItemIter`]: Depth-first list iterator across list trees, optionally
-//!   filtered to task items.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: Outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
@@ -48,8 +45,8 @@ pub(crate) use field::NoteFieldType;
 pub use field::{NoteFieldValue, NoteFieldValueRef};
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
-    List, ListItem, ListItemIter, ListItemType, ListText, TaskDates,
-    TaskListItem, TaskPriority,
+    ListItem, ListItemType, ListText, TaskDates, TaskListItem, TaskPriority,
+    descendants_of,
 };
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;

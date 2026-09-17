@@ -268,13 +268,13 @@ fn bench_index_load(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures public list-table reads over persisted list-heavy projects.
+/// Measures list item access over loaded list-heavy projects.
 ///
 /// Parameters: varies note count across [`PROFILE_CONTRAST_COUNTS`]; reports
 /// list row throughput. Fixture: persisted list-heavy project created outside
 /// timing. Each [`ProjectShape::ListHeavy`] note contributes 20 list rows,
-/// reporting throughput as `20 * n` rows. Timed work reads all persisted list
-/// items via [`IndexerService::read_lists`].
+/// reporting throughput as `20 * n` rows. Timed work loads the index and counts
+/// list items.
 ///
 /// Expected outcomes:
 /// - Read cost scales linearly with persisted list row count.
@@ -282,7 +282,7 @@ fn bench_index_load(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Disproportionate latency per row or non-linear scaling across sizes.
 fn bench_read_lists(c: &mut Criterion) {
-    let mut group = c.benchmark_group("IndexerService::read_lists");
+    let mut group = c.benchmark_group("FileIndex::read_lists");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -299,9 +299,15 @@ fn bench_read_lists(c: &mut Criterion) {
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter_with_large_drop(|| {
-                let lists = indexer.read_lists().expect("read lists");
-                black_box(lists.len());
-                black_box(lists)
+                let index = indexer.load().expect("load index");
+                let count: usize = index
+                    .entries()
+                    .iter()
+                    .filter_map(traces_pkm::FileEntry::note)
+                    .map(|note| note.lists().len())
+                    .sum();
+                black_box(count);
+                black_box(index)
             });
         });
     }

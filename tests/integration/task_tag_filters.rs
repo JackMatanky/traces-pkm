@@ -48,8 +48,7 @@ fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
 
     let note_entry = index.entries().first().expect("entry present");
     let note = note_entry.note().expect("note present");
-    let list = note.lists().first().expect("list present");
-    let items = list.items();
+    let items = note.lists();
     assert_eq!(items.len(), 6);
     assert_eq!(
         items.first().expect("item 0").raw_text(),

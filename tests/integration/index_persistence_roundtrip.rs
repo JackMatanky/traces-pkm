@@ -6,8 +6,8 @@
 use chrono::NaiveDate;
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    FileEntry, ListItem, ListItemType, SourceLine, TaskConfig, TaskPriority,
-    TaskStatusType, TestProject,
+    FileEntry, ListItem, ListItemType, SourceLine, TaskConfig, TaskListItem,
+    TaskPriority, TaskStatusType, TestProject,
 };
 
 /// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
@@ -98,10 +98,10 @@ fn note_list_items_returns_all_item_kinds_and_tasks_returns_only_task_items() {
     assert_eq!(task_texts, ["Root task", "Child completed task"]);
 }
 
-/// Proves a note with tasks persists correct `ListEntry`s in the `LISTS`
-/// table.
+/// Proves a note with tasks persists correct list items inside `Note` in the
+/// `NOTES` table.
 #[test]
-fn note_with_tasks_persists_correct_records_in_lists_table() {
+fn note_with_tasks_persists_correct_records_in_notes_table() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
     let markdown = "\
@@ -114,7 +114,13 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
 
     let (indexer, _) = project.persist_index();
 
-    let list_records = indexer.read_lists().expect("read lists table");
+    let loaded = indexer.load().expect("load persisted index");
+    let note = loaded
+        .entries()
+        .iter()
+        .find_map(FileEntry::note)
+        .expect("note present");
+    let list_records: Vec<_> = note.list_items().collect();
 
     assert_eq!(list_records.len(), 4);
 
@@ -127,17 +133,16 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
     ];
     for (index, clean_text, status_type, depth, line, parent_line) in expected {
         let record = list_records.get(index).expect("record in bounds");
-        assert_eq!(record.path(), "tasks.md", "record {index} path");
         assert_eq!(record.clean_text(), clean_text, "record {index} text");
         assert_eq!(
-            record.status_type(),
+            record.kind().as_task().map(|t| t.status().kind()),
             status_type,
             "record {index} status_type"
         );
         assert_eq!(record.depth(), depth, "record {index} depth");
         assert_eq!(record.line(), SourceLine::new(line), "record {index} line");
         assert_eq!(
-            record.parent_line(),
+            record.parent(),
             parent_line.and_then(SourceLine::new),
             "record {index} parent_line"
         );
@@ -145,17 +150,29 @@ fn note_with_tasks_persists_correct_records_in_lists_table() {
 
     // Task-only fields: present on the root task, absent on the plain bullet.
     let root = list_records.first().expect("root task record");
-    assert_eq!(root.due_date(), NaiveDate::from_ymd_opt(2025, 6, 1));
-    assert_eq!(root.priority(), Some(TaskPriority::Highest));
-    assert_eq!(root.is_fully_complete(), Some(false));
+    assert_eq!(
+        root.kind().as_task().and_then(|t| t.dates().due).map(Into::into),
+        NaiveDate::from_ymd_opt(2025, 6, 1)
+    );
+    assert_eq!(
+        root.kind().as_task().and_then(TaskListItem::priority),
+        Some(TaskPriority::Highest)
+    );
+    assert_eq!(
+        root.kind().as_task().map(TaskListItem::is_fully_complete),
+        Some(false)
+    );
 
     let plain = list_records.get(3).expect("plain bullet record");
-    assert_eq!(plain.due_date(), None);
-    assert_eq!(plain.priority(), None);
-    assert_eq!(plain.is_fully_complete(), None);
+    assert_eq!(plain.kind().as_task().and_then(|t| t.dates().due), None);
+    assert_eq!(plain.kind().as_task().and_then(TaskListItem::priority), None);
+    assert_eq!(
+        plain.kind().as_task().map(TaskListItem::is_fully_complete),
+        None
+    );
 }
 
-/// Proves index persistence round-trip preserves all LISTS-derived fields
+/// Proves index persistence round-trip preserves all list-derived fields
 /// across process recreation (build → persist → fresh service load).
 #[test]
 fn index_persistence_roundtrip_includes_lists_derived_fields() {
@@ -172,25 +189,44 @@ fn index_persistence_roundtrip_includes_lists_derived_fields() {
 
     // 2. Fresh service instance simulates a new process
     let indexer2 = project.indexer();
-    let records = indexer2.read_lists().expect("read lists from fresh service");
+    let loaded = indexer2.load().expect("load index from fresh service");
+    let note = loaded
+        .entries()
+        .iter()
+        .find_map(FileEntry::note)
+        .expect("note present");
+    let records: Vec<_> = note.list_items().collect();
     assert_eq!(records.len(), 2);
 
     let task_rec = records.first().expect("task record");
-    assert_eq!(task_rec.path(), "items.md");
     assert_eq!(task_rec.clean_text(), "Completed task");
     assert_eq!(task_rec.raw_text(), "Completed task 📅 2025-12-31 🔽");
-    assert_eq!(task_rec.status_type(), Some(TaskStatusType::Done));
-    assert_eq!(task_rec.due_date(), NaiveDate::from_ymd_opt(2025, 12, 31));
-    assert_eq!(task_rec.priority(), Some(TaskPriority::Low));
-    assert_eq!(task_rec.is_fully_complete(), Some(true));
+    assert_eq!(
+        task_rec.kind().as_task().map(|t| t.status().kind()),
+        Some(TaskStatusType::Done)
+    );
+    assert_eq!(
+        task_rec.kind().as_task().and_then(|t| t.dates().due).map(Into::into),
+        NaiveDate::from_ymd_opt(2025, 12, 31)
+    );
+    assert_eq!(
+        task_rec.kind().as_task().and_then(TaskListItem::priority),
+        Some(TaskPriority::Low)
+    );
+    assert_eq!(
+        task_rec.kind().as_task().map(TaskListItem::is_fully_complete),
+        Some(true)
+    );
     assert_eq!(task_rec.line(), SourceLine::new(1));
     assert_eq!(task_rec.depth(), 0);
 
     let plain_rec = records.get(1).expect("plain record");
-    assert_eq!(plain_rec.path(), "items.md");
     assert_eq!(plain_rec.clean_text(), "Plain item");
-    assert_eq!(plain_rec.status_type(), None);
-    assert_eq!(plain_rec.is_fully_complete(), None);
+    assert_eq!(plain_rec.kind().as_task().map(|t| t.status().kind()), None);
+    assert_eq!(
+        plain_rec.kind().as_task().map(TaskListItem::is_fully_complete),
+        None
+    );
     assert_eq!(plain_rec.line(), SourceLine::new(2));
     assert_eq!(plain_rec.depth(), 0);
 }
