@@ -1563,6 +1563,7 @@ mod tests {
 
     mod class_field {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
         use crate::{
@@ -1598,7 +1599,7 @@ mod tests {
         }
 
         #[test]
-        fn default_config_indexes_class_frontmatter() {
+        fn indexes_class_frontmatter_under_default_config() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
@@ -1618,7 +1619,7 @@ mod tests {
         }
 
         #[test]
-        fn incremental_refresh_rederives_class_under_the_configured_field() {
+        fn rederives_class_under_configured_field_on_incremental_refresh() {
             // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
@@ -1646,6 +1647,65 @@ mod tests {
             let novel =
                 store.paths_with_file_class("novel").expect("read novel");
             assert_eq!(novel.as_ref(), [PathBuf::from("b.md")]);
+            let book = store.paths_with_file_class("book").expect("read book");
+            assert_eq!(book.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[rstest]
+        #[case::file_class("fileClass")]
+        #[case::file_class_snake("file_class")]
+        #[case::classes_plural("classes")]
+        fn rejects_obsolete_alias_keys(#[case] key: &str) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("a.md"), format!("---\n{key}: Book\n---\n# A"))
+                .expect("write a");
+            let service = IndexerService::new(root);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            let store = IndexStore::open(root).expect("open store");
+            let paths =
+                store.paths_with_file_class("book").expect("read class");
+            assert_eq!(paths.as_ref(), <&[PathBuf]>::default());
+        }
+
+        #[test]
+        fn indexes_multiple_classes_under_configured_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(
+                root.join("a.md"),
+                "---\nkind:\n  - Book\n  - Novel\n---\n# A",
+            )
+            .expect("write a");
+            let config = Config::test_default(root.to_path_buf())
+                .with_schemas(SchemasConfig::for_test("kind"));
+            let service = IndexerService::new(root).with_config(&config);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            let store = IndexStore::open(root).expect("open store");
+            let book = store.paths_with_file_class("book").expect("read book");
+            assert_eq!(book.as_ref(), [PathBuf::from("a.md")]);
+            let novel =
+                store.paths_with_file_class("novel").expect("read novel");
+            assert_eq!(novel.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn matches_configured_field_key_case_insensitively() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("a.md"), "---\nKIND: Book\n---\n# A")
+                .expect("write a");
+            let config = Config::test_default(root.to_path_buf())
+                .with_schemas(SchemasConfig::for_test("kind"));
+            let service = IndexerService::new(root).with_config(&config);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            let store = IndexStore::open(root).expect("open store");
             let book = store.paths_with_file_class("book").expect("read book");
             assert_eq!(book.as_ref(), [PathBuf::from("a.md")]);
         }
