@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     Config, DirTree, Note, TaskConfig,
-    config::FrontmatterConfig,
+    config::{FrontmatterConfig, SchemasConfig},
     file::{FileBase, FileFormat},
     note::{MarkdownParserInput, parse_markdown},
     path::RelativePath,
@@ -36,6 +36,7 @@ pub struct IndexerService {
     root: PathBuf,
     tasks: TaskConfig,
     frontmatter: FrontmatterConfig,
+    class_field: String,
 }
 
 impl IndexerService {
@@ -47,16 +48,19 @@ impl IndexerService {
             root: root.into(),
             tasks: TaskConfig::default(),
             frontmatter: FrontmatterConfig::default(),
+            class_field: SchemasConfig::default().class_field_name().to_owned(),
         }
     }
 
     /// Attaches resolved [`Config`] settings for task and frontmatter
-    /// classification.
+    /// classification, and the File Class key used when persisting class index
+    /// entries.
     #[inline]
     #[must_use]
     pub fn with_config(mut self, config: &Config) -> Self {
         self.tasks = config.tasks().clone();
         self.frontmatter = config.frontmatter().clone();
+        config.schemas().class_field_name().clone_into(&mut self.class_field);
         self
     }
 
@@ -123,7 +127,7 @@ impl IndexerService {
         let modified_notes = self.parse_notes(plan.upserted_files())?;
         let (store, update) = plan.reconcile(modified_notes)?;
         let report = update.report();
-        match update.persist(&store) {
+        match update.persist(&store, &self.class_field) {
             Ok(()) => Self::log_sync_report(&report),
             Err(source) => {
                 tracing::warn!(%source, "failed to persist refreshed index");
@@ -188,7 +192,7 @@ impl IndexerService {
         }
         let modified_notes = self.parse_notes(plan.upserted_files())?;
         let (store, update) = plan.reconcile(modified_notes)?;
-        update.persist(&store)?;
+        update.persist(&store, &self.class_field)?;
         Self::log_sync_report(&update.report());
         Ok(store)
     }
@@ -246,7 +250,7 @@ impl IndexerService {
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
-        IndexStore::open(&self.root)?.persist_index(index)
+        IndexStore::open(&self.root)?.persist_index(index, &self.class_field)
     }
 
     /// Loads the index previously persisted for this service's root, or an
@@ -1554,6 +1558,156 @@ mod tests {
                 .expect("notes/foo.md record");
 
             assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
+        }
+    }
+
+    mod class_field {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+        use crate::{
+            config::{Config, SchemasConfig},
+            index::store::IndexStore,
+        };
+
+        #[test]
+        fn indexes_file_class_under_the_configured_field() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(
+                root.join("a.md"),
+                "---\nkind: real\nfileClass: Legacy\n---\n# A",
+            )
+            .expect("write a");
+            let config = Config::test_default(root.to_path_buf())
+                .with_schemas(SchemasConfig::for_test("kind"));
+            let service = IndexerService::new(root).with_config(&config);
+            let index = service.build().expect("build index");
+
+            // Act
+            service.persist(&index).expect("persist index");
+
+            // Assert
+            let store = IndexStore::open(root).expect("open store");
+            let real = store.paths_with_file_class("real").expect("read real");
+            assert_eq!(real.as_ref(), [PathBuf::from("a.md")]);
+            let legacy =
+                store.paths_with_file_class("legacy").expect("read legacy");
+            assert_eq!(legacy.as_ref(), <&[PathBuf]>::default());
+        }
+
+        #[test]
+        fn indexes_class_frontmatter_under_default_config() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("a.md"), "---\nclass: Book\n---\n# A")
+                .expect("write a");
+            let service = IndexerService::new(root);
+            let index = service.build().expect("build index");
+
+            // Act
+            service.persist(&index).expect("persist index");
+
+            // Assert
+            let store = IndexStore::open(root).expect("open store");
+            let paths =
+                store.paths_with_file_class("book").expect("read class");
+            assert_eq!(paths.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn rederives_class_under_configured_field_on_incremental_refresh() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("a.md"), "---\nkind: book\n---\n# A")
+                .expect("write a");
+            fs::write(root.join("b.md"), "---\nkind: movie\n---\n# B")
+                .expect("write b");
+            let config = Config::test_default(root.to_path_buf())
+                .with_schemas(SchemasConfig::for_test("kind"));
+            let service = IndexerService::new(root).with_config(&config);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            // Act: rewrite b.md to new class and run incremental refresh
+            fs::write(root.join("b.md"), "---\nkind: novel\n---\n# B")
+                .expect("rewrite b");
+            let (_refreshed_index, _report) =
+                service.refresh_with_report().expect("refresh with report");
+
+            // Assert: store reflected the incremental upsert and removal
+            let store = IndexStore::open(root).expect("open store");
+            let movie =
+                store.paths_with_file_class("movie").expect("read movie");
+            assert_eq!(movie.as_ref(), <&[PathBuf]>::default());
+            let novel =
+                store.paths_with_file_class("novel").expect("read novel");
+            assert_eq!(novel.as_ref(), [PathBuf::from("b.md")]);
+            let book = store.paths_with_file_class("book").expect("read book");
+            assert_eq!(book.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[rstest]
+        #[case::file_class("fileClass")]
+        #[case::file_class_snake("file_class")]
+        #[case::classes_plural("classes")]
+        fn rejects_obsolete_alias_keys(#[case] key: &str) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("a.md"), format!("---\n{key}: Book\n---\n# A"))
+                .expect("write a");
+            let service = IndexerService::new(root);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            let store = IndexStore::open(root).expect("open store");
+            let paths =
+                store.paths_with_file_class("book").expect("read class");
+            assert_eq!(paths.as_ref(), <&[PathBuf]>::default());
+        }
+
+        #[test]
+        fn indexes_multiple_classes_under_configured_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(
+                root.join("a.md"),
+                "---\nkind:\n  - Book\n  - Novel\n---\n# A",
+            )
+            .expect("write a");
+            let config = Config::test_default(root.to_path_buf())
+                .with_schemas(SchemasConfig::for_test("kind"));
+            let service = IndexerService::new(root).with_config(&config);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            let store = IndexStore::open(root).expect("open store");
+            let book = store.paths_with_file_class("book").expect("read book");
+            assert_eq!(book.as_ref(), [PathBuf::from("a.md")]);
+            let novel =
+                store.paths_with_file_class("novel").expect("read novel");
+            assert_eq!(novel.as_ref(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn matches_configured_field_key_case_insensitively() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::write(root.join("a.md"), "---\nKIND: Book\n---\n# A")
+                .expect("write a");
+            let config = Config::test_default(root.to_path_buf())
+                .with_schemas(SchemasConfig::for_test("kind"));
+            let service = IndexerService::new(root).with_config(&config);
+            let index = service.build().expect("build index");
+            service.persist(&index).expect("persist index");
+
+            let store = IndexStore::open(root).expect("open store");
+            let book = store.paths_with_file_class("book").expect("read book");
+            assert_eq!(book.as_ref(), [PathBuf::from("a.md")]);
         }
     }
 }

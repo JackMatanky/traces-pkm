@@ -225,18 +225,18 @@ impl std::fmt::Debug for QueryService {
 }
 
 /// Store-backed resolver for source selector candidate paths.
-pub(crate) struct SourceResolver<'a> {
+struct SourceResolver<'a> {
     store: &'a IndexStore,
 }
 
 impl<'a> SourceResolver<'a> {
-    pub(crate) fn new(store: &'a IndexStore) -> Self {
+    fn new(store: &'a IndexStore) -> Self {
         Self {
             store,
         }
     }
 
-    pub(crate) fn resolve(
+    fn resolve(
         &self,
         selector: &SourceSelector,
     ) -> IndexResult<Box<[PathBuf]>> {
@@ -376,11 +376,8 @@ mod tests {
         fn resolves_all_selector_to_all_paths() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A #tag1").expect("write a");
-            fs::write(
-                temp.path().join("b.md"),
-                "---\nfileClass: Book\n---\n# B",
-            )
-            .expect("write b");
+            fs::write(temp.path().join("b.md"), "---\nclass: Book\n---\n# B")
+                .expect("write b");
             let indexer = IndexerService::new(temp.path());
             let index = indexer.build().expect("build");
             indexer.persist(&index).expect("persist");
@@ -446,11 +443,8 @@ mod tests {
         #[test]
         fn resolves_class_selector_via_multimap() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("a.md"),
-                "---\nfileClass: Book\n---\n# A",
-            )
-            .expect("write a");
+            fs::write(temp.path().join("a.md"), "---\nclass: Book\n---\n# A")
+                .expect("write a");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             let indexer = IndexerService::new(temp.path());
             let index = indexer.build().expect("build");

@@ -105,28 +105,47 @@ impl SourceIndex {
         }
     }
 
-    /// Returns `note`'s current normalized values for this index: lowercased
-    /// tag segments, or lowercased file-class frontmatter values.
-    fn values<'n>(
+    /// Visits `note`'s current normalized values for this index: lowercased
+    /// tag segments, or lowercased values of the configured File Class key.
+    ///
+    /// Uses `with_lowercased` to avoid heap allocations when values are
+    /// already ASCII lowercase.
+    fn visit_values(
         self,
-        note: &'n Note,
-    ) -> Box<dyn Iterator<Item = String> + 'n> {
+        note: &Note,
+        class_field: &str,
+        mut visit: impl FnMut(&str) -> Result<(), IndexError>,
+    ) -> Result<(), IndexError> {
         match self {
-            Self::Tag => Box::new(
-                note.tags()
-                    .iter()
-                    .flat_map(Tag::segments)
-                    .map(str::to_lowercase),
-            ),
+            Self::Tag => {
+                let segments = note.tags().iter().flat_map(Tag::segments);
+                for segment in segments {
+                    with_lowercased(segment, &mut visit)?;
+                }
+            }
             Self::FileClass => {
-                Box::new(note.frontmatter().into_iter().flat_map(|fm| {
-                    ["fileClass", "file_class", "class", "classes"]
-                        .into_iter()
-                        .flat_map(move |key| fm.get_values(key))
-                        .filter_map(|val| val.as_str().map(str::to_lowercase))
-                }))
+                let values = note
+                    .frontmatter()
+                    .into_iter()
+                    .flat_map(|fm| fm.get_values(class_field))
+                    .filter_map(crate::NoteFieldValue::as_str);
+                for s in values {
+                    with_lowercased(s, &mut visit)?;
+                }
             }
         }
+        Ok(())
+    }
+}
+
+/// Invokes `f` with a lowercased view of `s`, avoiding an owned allocation
+/// when `s` is already lowercase ASCII.
+#[inline]
+fn with_lowercased<R>(s: &str, f: impl FnOnce(&str) -> R) -> R {
+    if s.is_ascii() && !s.bytes().any(|b| b.is_ascii_uppercase()) {
+        f(s)
+    } else {
+        f(&s.to_lowercase())
     }
 }
 
@@ -160,6 +179,7 @@ impl WriteTarget {
         store: &IndexStore,
         txn: &WriteTransaction,
         entries: &[FileEntry],
+        class_field: &str,
     ) -> IndexResult<()> {
         match self {
             Self::Files => store
@@ -182,21 +202,29 @@ impl WriteTarget {
                 store.write_links(txn, LINKS, entries).map_err(IndexError::from)
             }
             Self::Lists => store.write_lists(txn, entries),
-            Self::PathsByTags => {
-                store.write_source_index_forward(txn, SourceIndex::Tag, entries)
-            }
-            Self::TagsByPath => {
-                store.write_source_index_reverse(txn, SourceIndex::Tag, entries)
-            }
+            Self::PathsByTags => store.write_source_index_forward(
+                txn,
+                SourceIndex::Tag,
+                entries,
+                class_field,
+            ),
+            Self::TagsByPath => store.write_source_index_reverse(
+                txn,
+                SourceIndex::Tag,
+                entries,
+                class_field,
+            ),
             Self::PathsByFileClasses => store.write_source_index_forward(
                 txn,
                 SourceIndex::FileClass,
                 entries,
+                class_field,
             ),
             Self::FileClassesByPath => store.write_source_index_reverse(
                 txn,
                 SourceIndex::FileClass,
                 entries,
+                class_field,
             ),
         }
     }
@@ -581,12 +609,16 @@ impl IndexStore {
         &self,
         tag: &str,
     ) -> IndexResult<Box<[PathBuf]>> {
-        let normalized = if tag.starts_with('#') {
-            tag.to_lowercase()
+        if tag.starts_with('#') {
+            with_lowercased(tag, |lower| {
+                self.paths_from_multimap(PATHS_BY_TAG, lower.as_bytes())
+            })
         } else {
-            format!("#{tag}").to_lowercase()
-        };
-        self.paths_from_multimap(PATHS_BY_TAG, normalized.as_bytes())
+            with_lowercased(tag, |lower| {
+                let normalized = format!("#{lower}");
+                self.paths_from_multimap(PATHS_BY_TAG, normalized.as_bytes())
+            })
+        }
     }
 
     /// Returns sorted paths carrying the file class `class`.
@@ -600,10 +632,9 @@ impl IndexStore {
         &self,
         class: &str,
     ) -> IndexResult<Box<[PathBuf]>> {
-        self.paths_from_multimap(
-            PATHS_BY_FILE_CLASS,
-            class.to_lowercase().as_bytes(),
-        )
+        with_lowercased(class, |lower| {
+            self.paths_from_multimap(PATHS_BY_FILE_CLASS, lower.as_bytes())
+        })
     }
 
     /// Reads, sorts, and deduplicates every path stored under `key` in
@@ -1270,9 +1301,13 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the transaction fails.
     /// - [`DbError::Serialize`] if a record cannot be encoded.
-    pub(super) fn write_all(&self, entries: &[FileEntry]) -> IndexResult<()> {
+    fn write_all(
+        &self,
+        entries: &[FileEntry],
+        class_field: &str,
+    ) -> IndexResult<()> {
         let write_txn = self.prepare_write_txn()?;
-        self.write_all_parallel(&write_txn, entries)?;
+        self.write_all_parallel(&write_txn, entries, class_field)?;
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
@@ -1344,15 +1379,17 @@ impl IndexStore {
         txn: &WriteTransaction,
         index: SourceIndex,
         entries: &[FileEntry],
+        class_field: &str,
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            for value in index.values(note) {
+            index.visit_values(note, class_field, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
-            }
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -1363,15 +1400,17 @@ impl IndexStore {
         txn: &WriteTransaction,
         index: SourceIndex,
         entries: &[FileEntry],
+        class_field: &str,
     ) -> IndexResult<()> {
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            for value in index.values(note) {
+            index.visit_values(note, class_field, |value| {
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.raise_source_error(source))?;
-            }
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -1398,10 +1437,11 @@ impl IndexStore {
         &self,
         write_txn: &WriteTransaction,
         entries: &[FileEntry],
+        class_field: &str,
     ) -> IndexResult<()> {
-        WriteTarget::ALL
-            .into_par_iter()
-            .try_for_each(|target| target.run(self, write_txn, entries))
+        WriteTarget::ALL.into_par_iter().try_for_each(|target| {
+            target.run(self, write_txn, entries, class_field)
+        })
     }
 
     /// Persists `index` by writing all entries.
@@ -1411,8 +1451,12 @@ impl IndexStore {
     /// - [`Store`] if the transaction fails or a record cannot be encoded.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn persist_index(&self, index: &FileIndex) -> IndexResult<()> {
-        self.write_all(index.entries())
+    pub(super) fn persist_index(
+        &self,
+        index: &FileIndex,
+        class_field: &str,
+    ) -> IndexResult<()> {
+        self.write_all(index.entries(), class_field)
     }
 
     /// Row-level incremental write for changes between scans.
@@ -1427,11 +1471,13 @@ impl IndexStore {
         delta: &IndexDelta,
         modified_notes: &[Note],
         inlink_delta: &InlinkDelta,
+        class_field: &str,
     ) -> IndexResult<()> {
         self.persist_incremental_with_notes(
             delta,
             || modified_notes.iter(),
             inlink_delta,
+            class_field,
         )
     }
 
@@ -1450,6 +1496,7 @@ impl IndexStore {
         delta: &IndexDelta,
         notes: &[Note],
         inlink_delta: &InlinkDelta,
+        class_field: &str,
     ) -> IndexResult<()> {
         debug_assert!(
             notes.windows(2).all(|pair| match pair {
@@ -1462,6 +1509,7 @@ impl IndexStore {
             delta,
             || Self::notes_for_upserted_files(delta.upserted(), notes),
             inlink_delta,
+            class_field,
         )
     }
 
@@ -1470,6 +1518,7 @@ impl IndexStore {
         delta: &IndexDelta,
         modified_notes: Notes,
         inlink_delta: &InlinkDelta,
+        class_field: &str,
     ) -> IndexResult<()>
     where
         Notes: Fn() -> Iter,
@@ -1484,7 +1533,7 @@ impl IndexStore {
         let write_txn = self.prepare_incremental_txn()?;
         self.apply_diff_deletions(&write_txn, delta.deleted())?;
         self.apply_diff_upserts(&write_txn, delta.upserted())?;
-        self.apply_modified_notes(&write_txn, modified_notes)?;
+        self.apply_modified_notes(&write_txn, modified_notes, class_field)?;
         self.apply_inlink_delta(&write_txn, inlink_delta)?;
         write_txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
@@ -1620,6 +1669,7 @@ impl IndexStore {
         &self,
         write_txn: &WriteTransaction,
         modified_notes: Notes,
+        class_field: &str,
     ) -> IndexResult<()>
     where
         Notes: Fn() -> Iter,
@@ -1630,7 +1680,7 @@ impl IndexStore {
         }
         self.upsert_notes(write_txn, modified_notes())?;
         self.upsert_lists_for_notes(write_txn, modified_notes())?;
-        self.upsert_tags_and_classes(write_txn, modified_notes)?;
+        self.upsert_tags_and_classes(write_txn, modified_notes, class_field)?;
         Ok(())
     }
 
@@ -1670,26 +1720,33 @@ impl IndexStore {
         &self,
         write_txn: &WriteTransaction,
         modified_notes: Notes,
+        class_field: &str,
     ) -> IndexResult<()>
     where
         Notes: Fn() -> Iter,
         Iter: Iterator<Item = &'a Note>,
     {
         for index in SourceIndex::ALL {
-            self.upsert_source_index(write_txn, index, modified_notes())?;
+            self.upsert_source_index(
+                write_txn,
+                index,
+                modified_notes(),
+                class_field,
+            )?;
         }
         Ok(())
     }
 
     /// Upserts each of `modified_notes`' current values into `index`'s forward
     /// table, first removing exactly this note's previous values via the
-    /// reverse (path-keyed) table - O(that note's previous value count), never
-    /// a full-table scan.
+    /// reverse (path-keyed) table in O(k) time where k is this note's previous
+    /// value count, rather than performing a full-table scan.
     fn upsert_source_index<'a>(
         &self,
         write_txn: &WriteTransaction,
         index: SourceIndex,
         modified_notes: impl Iterator<Item = &'a Note>,
+        class_field: &str,
     ) -> IndexResult<()> {
         let mut forward =
             self.open_multimap_for_write(write_txn, index.forward())?;
@@ -1702,14 +1759,15 @@ impl IndexStore {
                 &mut reverse,
                 path_bytes,
             )?;
-            for value in index.values(note) {
+            index.visit_values(note, class_field, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.raise_source_error(source))?;
-            }
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -1874,7 +1932,7 @@ mod tests {
     ) -> IndexResult<()> {
         let index =
             FileIndex::assemble(files.to_vec(), notes.to_vec(), links.clone());
-        store.write_all(index.entries())
+        store.write_all(index.entries(), "class")
     }
 
     /// Writes an orphanable raw `LINKS` row that `write_all` cannot assemble.
