@@ -253,7 +253,11 @@ impl IndexUpdate {
     /// # Errors
     ///
     /// - `IndexError::Store` if incremental persistence fails.
-    pub(super) fn persist(&self, store: &IndexStore) -> IndexResult<()> {
+    pub(super) fn persist(
+        &self,
+        store: &IndexStore,
+        class_field: &str,
+    ) -> IndexResult<()> {
         match &self.inlinks {
             InlinkReconciliation::ContentOnlyPatch {
                 modified_notes,
@@ -262,6 +266,7 @@ impl IndexUpdate {
                 &self.delta,
                 modified_notes,
                 &self.inlink_delta,
+                class_field,
             ),
             InlinkReconciliation::PathSetRebuild {
                 notes,
@@ -270,6 +275,7 @@ impl IndexUpdate {
                 &self.delta,
                 notes,
                 &self.inlink_delta,
+                class_field,
             ),
         }
     }
