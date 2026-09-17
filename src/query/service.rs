@@ -225,18 +225,18 @@ impl std::fmt::Debug for QueryService {
 }
 
 /// Store-backed resolver for source selector candidate paths.
-pub(crate) struct SourceResolver<'a> {
+struct SourceResolver<'a> {
     store: &'a IndexStore,
 }
 
 impl<'a> SourceResolver<'a> {
-    pub(crate) fn new(store: &'a IndexStore) -> Self {
+    fn new(store: &'a IndexStore) -> Self {
         Self {
             store,
         }
     }
 
-    pub(crate) fn resolve(
+    fn resolve(
         &self,
         selector: &SourceSelector,
     ) -> IndexResult<Box<[PathBuf]>> {
