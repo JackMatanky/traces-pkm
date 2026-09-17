@@ -149,7 +149,7 @@ impl ListTracker {
     pub(super) fn start_item(&mut self, line: SourceLine) {
         let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
             .unwrap_or(u8::MAX);
-        let parent = self.item_stack.last().and_then(|item| item.line);
+        let parent = self.item_stack.last().map(|item| item.line);
         let is_ordered =
             self.list_stack.last().is_some_and(|frame| frame.is_ordered);
         self.item_stack.push(ItemFrame {
@@ -157,7 +157,7 @@ impl ListTracker {
             scan_buffer: String::new(),
             fields: IndexMap::new(),
             tags: Vec::new(),
-            line: Some(line),
+            line,
             depth,
             parent,
             is_ordered,
@@ -215,9 +215,8 @@ impl ListTracker {
                 ItemClassificationState::Plain
                 | ItemClassificationState::Pending => ListItemType::Plain,
             };
-            let item = ListItem::new(text, item_type)
+            let item = ListItem::new(item_frame.line, text, item_type)
                 .with_depth(item_frame.depth)
-                .with_line(item_frame.line)
                 .with_parent(item_frame.parent)
                 .with_is_ordered(item_frame.is_ordered)
                 .with_fields(item_frame.fields)
@@ -780,7 +779,7 @@ struct ItemFrame {
     /// status-marked item as [`ListItemType::Task`] or
     /// [`ListItemType::Checkbox`] against configured tag filters.
     tags: Vec<Tag>,
-    line: Option<SourceLine>,
+    line: SourceLine,
     depth: u8,
     parent: Option<SourceLine>,
     is_ordered: bool,

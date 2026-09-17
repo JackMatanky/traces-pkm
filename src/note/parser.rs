@@ -654,7 +654,7 @@ mod tests {
             let child_item = items.get(1).expect("child item");
             assert_eq!(child_item.clean_text(), "Child item");
             assert_eq!(child_item.depth(), 1);
-            assert_eq!(child_item.parent(), parent_item.line());
+            assert_eq!(child_item.parent(), Some(parent_item.line()));
         }
 
         #[test]
@@ -678,34 +678,22 @@ mod tests {
             assert_eq!(items.len(), 3);
 
             let parent = items.first().expect("parent item");
-            assert_eq!(
-                parent.line(),
-                Some(SourceLine::new(1).expect("non-zero"))
-            );
+            assert_eq!(parent.line(), SourceLine::new(1).expect("non-zero"));
             assert_eq!(parent.depth(), 0);
             assert_eq!(parent.parent(), None);
 
             let child = items.get(1).expect("child item");
-            assert_eq!(
-                child.line(),
-                Some(SourceLine::new(2).expect("non-zero"))
-            );
+            assert_eq!(child.line(), SourceLine::new(2).expect("non-zero"));
             assert_eq!(child.depth(), 1);
-            assert_eq!(
-                child.parent(),
-                Some(SourceLine::new(1).expect("non-zero"))
-            );
+            assert_eq!(child.parent(), Some(parent.line()));
 
             let grandchild = items.get(2).expect("grandchild item");
             assert_eq!(
                 grandchild.line(),
-                Some(SourceLine::new(3).expect("non-zero"))
+                SourceLine::new(3).expect("non-zero")
             );
             assert_eq!(grandchild.depth(), 2);
-            assert_eq!(
-                grandchild.parent(),
-                Some(SourceLine::new(2).expect("non-zero"))
-            );
+            assert_eq!(grandchild.parent(), Some(child.line()));
         }
 
         #[test]
@@ -716,10 +704,7 @@ mod tests {
             let items = note.lists();
             assert_eq!(items.len(), 3);
             let sibling = items.get(2).expect("sibling item");
-            assert_eq!(
-                sibling.line(),
-                Some(SourceLine::new(3).expect("non-zero"))
-            );
+            assert_eq!(sibling.line(), SourceLine::new(3).expect("non-zero"));
             assert_eq!(sibling.depth(), 0);
             assert_eq!(sibling.parent(), None);
         }
@@ -757,9 +742,9 @@ mod tests {
             ];
             assert_eq!(actual.as_slice(), expected.as_slice());
 
-            let p1_line = items.first().and_then(ListItem::line);
-            let c1_line = items.get(1).and_then(ListItem::line);
-            let p2_line = items.get(5).and_then(ListItem::line);
+            let p1_line = items.first().map(ListItem::line);
+            let c1_line = items.get(1).map(ListItem::line);
+            let p2_line = items.get(5).map(ListItem::line);
 
             assert_eq!(items.get(1).and_then(ListItem::parent), p1_line);
             assert_eq!(items.get(2).and_then(ListItem::parent), c1_line);

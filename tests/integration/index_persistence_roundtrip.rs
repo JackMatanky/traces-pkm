@@ -140,7 +140,11 @@ fn note_with_tasks_persists_correct_records_in_notes_table() {
             "record {index} status_type"
         );
         assert_eq!(record.depth(), depth, "record {index} depth");
-        assert_eq!(record.line(), SourceLine::new(line), "record {index} line");
+        assert_eq!(
+            record.line(),
+            SourceLine::new(line).expect("non-zero"),
+            "record {index} line"
+        );
         assert_eq!(
             record.parent(),
             parent_line.and_then(SourceLine::new),
@@ -217,7 +221,7 @@ fn index_persistence_roundtrip_includes_lists_derived_fields() {
         task_rec.kind().as_task().map(TaskListItem::is_fully_complete),
         Some(true)
     );
-    assert_eq!(task_rec.line(), SourceLine::new(1));
+    assert_eq!(task_rec.line(), SourceLine::new(1).expect("non-zero"));
     assert_eq!(task_rec.depth(), 0);
 
     let plain_rec = records.get(1).expect("plain record");
@@ -227,6 +231,6 @@ fn index_persistence_roundtrip_includes_lists_derived_fields() {
         plain_rec.kind().as_task().map(TaskListItem::is_fully_complete),
         None
     );
-    assert_eq!(plain_rec.line(), SourceLine::new(2));
+    assert_eq!(plain_rec.line(), SourceLine::new(2).expect("non-zero"));
     assert_eq!(plain_rec.depth(), 0);
 }

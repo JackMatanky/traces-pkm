@@ -245,7 +245,7 @@ mod tests {
         #[test]
         fn constructs_note_with_the_given_path_and_parts() {
             let frontmatter = Frontmatter::new(IndexMap::new());
-            let item = ListItem::new("item", ListItemType::Plain);
+            let item = ListItem::new_test("item", ListItemType::Plain);
             let outlink = Link::new("target", "text", LinkType::Wikilink);
 
             let note = Note::new(
@@ -373,18 +373,18 @@ mod tests {
 
         #[test]
         fn yields_task_items_from_top_level_and_nested_lists_in_order() {
-            let parent = ListItem::new(
+            let parent = ListItem::new_test(
                 "parent task",
                 task("Todo", ' ', TaskStatusType::Todo),
             )
             .with_depth(0);
-            let child_task = ListItem::new(
+            let child_task = ListItem::new_test(
                 "child task",
                 task("Done", 'x', TaskStatusType::Done),
             )
             .with_depth(1);
-            let plain =
-                ListItem::new("plain item", ListItemType::Plain).with_depth(0);
+            let plain = ListItem::new_test("plain item", ListItemType::Plain)
+                .with_depth(0);
             let note = Note::new(
                 "notes/a.md",
                 None,
@@ -399,9 +399,9 @@ mod tests {
 
         #[test]
         fn excludes_plain_and_checkbox_items() {
-            let plain = ListItem::new("plain item", ListItemType::Plain);
+            let plain = ListItem::new_test("plain item", ListItemType::Plain);
             let checkbox =
-                ListItem::new("checkbox item", ListItemType::Checkbox);
+                ListItem::new_test("checkbox item", ListItemType::Checkbox);
             let note = Note::new(
                 "notes/a.md",
                 None,
@@ -420,18 +420,18 @@ mod tests {
 
         #[test]
         fn yields_all_items_including_plain_and_checkbox_and_tasks_in_order() {
-            let parent_task = ListItem::new(
+            let parent_task = ListItem::new_test(
                 "parent task",
                 task("Todo", ' ', TaskStatusType::Todo),
             )
             .with_depth(0);
             let child_checkbox =
-                ListItem::new("child checkbox", ListItemType::Checkbox)
+                ListItem::new_test("child checkbox", ListItemType::Checkbox)
                     .with_depth(1);
             let grandchild_plain =
-                ListItem::new("grandchild plain", ListItemType::Plain)
+                ListItem::new_test("grandchild plain", ListItemType::Plain)
                     .with_depth(2);
-            let sibling_task = ListItem::new(
+            let sibling_task = ListItem::new_test(
                 "sibling task",
                 task("Done", 'x', TaskStatusType::Done),
             )
@@ -480,9 +480,9 @@ mod tests {
             item_fields.insert(item_field_key, vec![NoteFieldValue::String(
                 "high".to_owned(),
             )]);
-            let child =
-                ListItem::new("child item", ListItemType::Plain).with_depth(1);
-            let item = ListItem::new("item", ListItemType::Plain)
+            let child = ListItem::new_test("child item", ListItemType::Plain)
+                .with_depth(1);
+            let item = ListItem::new_test("item", ListItemType::Plain)
                 .with_fields(item_fields)
                 .with_tags(vec![crate::parse_tag("#task")]);
             let outlink = Link::new("target", "text", LinkType::Wikilink);

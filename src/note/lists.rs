@@ -40,7 +40,7 @@ pub struct ListItem {
     text: ListText,
     kind: ListItemType,
     depth: u8,
-    line: Option<SourceLine>,
+    line: SourceLine,
     parent: Option<SourceLine>,
     is_ordered: bool,
     fields: Option<Box<ListFieldMap>>,
@@ -48,15 +48,19 @@ pub struct ListItem {
 }
 
 impl ListItem {
-    /// Creates a list item with default positioning.
+    /// Creates a list item with its source line and classification.
     #[inline]
     #[must_use]
-    pub fn new<T: Into<ListText>>(text: T, kind: ListItemType) -> Self {
+    pub fn new<T: Into<ListText>>(
+        line: SourceLine,
+        text: T,
+        kind: ListItemType,
+    ) -> Self {
         Self {
             text: text.into(),
             kind,
             depth: 0,
-            line: None,
+            line,
             parent: None,
             is_ordered: false,
             fields: None,
@@ -64,12 +68,13 @@ impl ListItem {
         }
     }
 
-    /// Attaches the item's 1-indexed source line.
+    /// Creates a test list item with a default source line
+    /// ([`SourceLine::MIN`]).
+    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn with_line(mut self, line: Option<SourceLine>) -> Self {
-        self.line = line;
-        self
+    pub fn new_test<T: Into<ListText>>(text: T, kind: ListItemType) -> Self {
+        Self::new(SourceLine::MIN, text, kind)
     }
 
     /// Attaches the item's 0-indexed nesting depth.
@@ -197,11 +202,10 @@ impl ListItem {
         self.depth
     }
 
-    /// Returns the item's 1-indexed source line, or `None` if the position
-    /// has not been assigned yet.
+    /// Returns the item's 1-indexed source line.
     #[inline]
     #[must_use]
-    pub const fn line(&self) -> Option<SourceLine> {
+    pub const fn line(&self) -> SourceLine {
         self.line
     }
 
@@ -1062,7 +1066,7 @@ mod tests {
             #[case::checkbox(ListItemType::Checkbox)]
             #[case::task(done_task())]
             fn stores_the_given_kind(#[case] kind: ListItemType) {
-                let item = ListItem::new("task item", kind.clone());
+                let item = ListItem::new_test("task item", kind.clone());
 
                 assert_eq!(item.text().raw(), "task item");
                 assert_eq!(item.text().clean(), "task item");
@@ -1086,9 +1090,8 @@ mod tests {
                 fields.insert(key.clone(), vec![NoteFieldValue::String(
                     "high".to_owned(),
                 )]);
-                let item =
-                    ListItem::new("task item", done_task()).with_fields(fields);
-
+                let item = ListItem::new_test("task item", done_task())
+                    .with_fields(fields);
                 let mut expected = IndexMap::new();
                 expected.insert(
                     key,
@@ -1099,7 +1102,8 @@ mod tests {
             }
             #[test]
             fn has_no_fields_by_default() {
-                let item = ListItem::new("plain item", ListItemType::Plain);
+                let item =
+                    ListItem::new_test("plain item", ListItemType::Plain);
 
                 assert_eq!(item.fields(), None);
             }
@@ -1113,7 +1117,7 @@ mod tests {
             #[test]
             fn stores_tags_when_attached_with_with_tags() {
                 let tags = vec![Tag::parse("#project").expect("valid tag")];
-                let item = ListItem::new("task item", done_task())
+                let item = ListItem::new_test("task item", done_task())
                     .with_tags(tags.clone());
 
                 assert_eq!(item.tags(), tags.as_slice());
@@ -1121,7 +1125,8 @@ mod tests {
 
             #[test]
             fn has_no_tags_by_default() {
-                let item = ListItem::new("plain item", ListItemType::Plain);
+                let item =
+                    ListItem::new_test("plain item", ListItemType::Plain);
 
                 assert_eq!(item.tags(), []);
             }
@@ -1133,26 +1138,30 @@ mod tests {
             use super::*;
             #[test]
             fn defaults_position_to_zero_and_no_parent() {
-                let item = ListItem::new("item", ListItemType::Plain);
+                let item = ListItem::new(
+                    SourceLine::new(5).expect("non-zero"),
+                    "item",
+                    ListItemType::Plain,
+                );
 
                 assert_eq!(item.depth(), 0);
-                assert_eq!(item.line(), None);
+                assert_eq!(item.line(), SourceLine::new(5).expect("non-zero"));
                 assert_eq!(item.parent(), None);
                 assert!(!item.is_ordered());
             }
 
             #[test]
-            fn builders_set_line_depth_parent_and_ordering() {
-                let item = ListItem::new("item", ListItemType::Plain)
-                    .with_line(Some(SourceLine::new(3).expect("non-zero")))
-                    .with_depth(2)
-                    .with_parent(Some(SourceLine::new(1).expect("non-zero")))
-                    .with_is_ordered(true);
+            fn builders_set_depth_parent_and_ordering() {
+                let item = ListItem::new(
+                    SourceLine::new(3).expect("non-zero"),
+                    "item",
+                    ListItemType::Plain,
+                )
+                .with_depth(2)
+                .with_parent(Some(SourceLine::new(1).expect("non-zero")))
+                .with_is_ordered(true);
 
-                assert_eq!(
-                    item.line(),
-                    Some(SourceLine::new(3).expect("non-zero"))
-                );
+                assert_eq!(item.line(), SourceLine::new(3).expect("non-zero"));
                 assert_eq!(item.depth(), 2);
                 assert_eq!(
                     item.parent(),
@@ -1170,20 +1179,35 @@ mod tests {
 
         #[test]
         fn yields_all_descendant_items_whose_depth_is_greater() {
-            let parent = ListItem::new("parent", ListItemType::Plain)
-                .with_depth(0)
-                .with_line(Some(SourceLine::new(1).expect("non-zero")));
-            let child1 = ListItem::new("child 1", ListItemType::Plain)
-                .with_depth(1)
-                .with_parent(Some(SourceLine::new(1).expect("non-zero")));
-            let grandchild = ListItem::new("grandchild", ListItemType::Plain)
-                .with_depth(2)
-                .with_parent(Some(SourceLine::new(2).expect("non-zero")));
-            let child2 = ListItem::new("child 2", ListItemType::Plain)
-                .with_depth(1)
-                .with_parent(Some(SourceLine::new(1).expect("non-zero")));
-            let sibling =
-                ListItem::new("sibling", ListItemType::Plain).with_depth(0);
+            let parent = ListItem::new(
+                SourceLine::new(1).expect("non-zero"),
+                "parent",
+                ListItemType::Plain,
+            )
+            .with_depth(0);
+            let child1 = ListItem::new(
+                SourceLine::new(2).expect("non-zero"),
+                "child 1",
+                ListItemType::Plain,
+            )
+            .with_depth(1)
+            .with_parent(Some(SourceLine::new(1).expect("non-zero")));
+            let grandchild = ListItem::new(
+                SourceLine::new(3).expect("non-zero"),
+                "grandchild",
+                ListItemType::Plain,
+            )
+            .with_depth(2)
+            .with_parent(Some(SourceLine::new(2).expect("non-zero")));
+            let child2 = ListItem::new(
+                SourceLine::new(4).expect("non-zero"),
+                "child 2",
+                ListItemType::Plain,
+            )
+            .with_depth(1)
+            .with_parent(Some(SourceLine::new(1).expect("non-zero")));
+            let sibling = ListItem::new_test("sibling", ListItemType::Plain)
+                .with_depth(0);
 
             let slice = [parent, child1, grandchild, child2, sibling];
             let desc: Vec<&str> = descendants_of(&slice[1..], 0)
@@ -1200,9 +1224,9 @@ mod tests {
         #[test]
         fn returns_empty_iterator_when_no_descendants_exist() {
             let parent =
-                ListItem::new("parent", ListItemType::Plain).with_depth(0);
-            let sibling =
-                ListItem::new("sibling", ListItemType::Plain).with_depth(0);
+                ListItem::new_test("parent", ListItemType::Plain).with_depth(0);
+            let sibling = ListItem::new_test("sibling", ListItemType::Plain)
+                .with_depth(0);
             let slice = [parent, sibling];
             assert_eq!(descendants_of(&slice[1..], 0).count(), 0);
         }

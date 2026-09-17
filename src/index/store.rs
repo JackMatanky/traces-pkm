@@ -1795,28 +1795,19 @@ mod tests {
             let rec0 = items.first().expect("first item");
             assert_eq!(rec0.clean_text(), "Todo task");
             assert!(rec0.kind().is_task());
-            assert_eq!(
-                rec0.line(),
-                Some(SourceLine::new(1).expect("non-zero"))
-            );
+            assert_eq!(rec0.line(), SourceLine::new(1).expect("non-zero"));
             assert_eq!(rec0.depth(), 0);
 
             let rec1 = items.get(1).expect("second item");
             assert_eq!(rec1.clean_text(), "Plain bullet");
             assert!(!rec1.kind().is_task());
-            assert_eq!(
-                rec1.line(),
-                Some(SourceLine::new(2).expect("non-zero"))
-            );
+            assert_eq!(rec1.line(), SourceLine::new(2).expect("non-zero"));
             assert_eq!(rec1.depth(), 0);
 
             let rec2 = items.get(2).expect("third item");
             assert_eq!(rec2.clean_text(), "Child task");
             assert!(rec2.kind().is_task());
-            assert_eq!(
-                rec2.line(),
-                Some(SourceLine::new(3).expect("non-zero"))
-            );
+            assert_eq!(rec2.line(), SourceLine::new(3).expect("non-zero"));
             assert_eq!(rec2.depth(), 1);
             assert_eq!(
                 rec2.parent(),
