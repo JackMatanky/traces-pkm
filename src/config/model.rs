@@ -237,6 +237,15 @@ impl Config {
         self.tasks = tasks;
         self
     }
+
+    /// Overrides the `[schemas]` resolution on a test-built config.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn with_schemas(mut self, schemas: SchemasConfig) -> Self {
+        self.schemas = schemas;
+        self
+    }
 }
 
 /// Template directories and output path from merged config.
@@ -414,6 +423,29 @@ impl Default for SchemasConfig {
         Self {
             class_field: FieldName::try_from(DEFAULT_CLASS_FIELD)
                 .expect("DEFAULT_CLASS_FIELD is a valid field key"),
+            directory: ConfigSubDir::default(),
+        }
+    }
+}
+
+impl SchemasConfig {
+    /// Builds schemas config directly for tests that do not exercise TOML
+    /// loading; `class_field` must pass field-name validation.
+    ///
+    /// # Panics
+    ///
+    /// If `class_field` is not a valid field key.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "test inputs must validate; Default carries the same \
+                  expectation"
+    )]
+    pub fn for_test(class_field: &str) -> Self {
+        Self {
+            class_field: FieldName::try_from(class_field)
+                .expect("test class field validates as a field key"),
             directory: ConfigSubDir::default(),
         }
     }
@@ -835,6 +867,18 @@ mod tests {
 
             assert_eq!(config.title_name(), "heading");
             assert_eq!(config.aliases_name(), "also_known");
+        }
+    }
+    mod schemas_for_test {
+        use pretty_assertions::assert_eq;
+
+        use crate::config::SchemasConfig;
+
+        #[test]
+        fn sets_the_expected_class_field() {
+            let config = SchemasConfig::for_test("kind");
+
+            assert_eq!(config.class_field_name(), "kind");
         }
     }
     mod config_sub_dir {
