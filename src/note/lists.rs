@@ -73,7 +73,7 @@ impl ListItem {
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn new_test<T: Into<ListText>>(text: T, kind: ListItemType) -> Self {
+    pub fn for_test<T: Into<ListText>>(text: T, kind: ListItemType) -> Self {
         Self::new(SourceLine::MIN, text, kind)
     }
 
@@ -1066,7 +1066,7 @@ mod tests {
             #[case::checkbox(ListItemType::Checkbox)]
             #[case::task(done_task())]
             fn stores_the_given_kind(#[case] kind: ListItemType) {
-                let item = ListItem::new_test("task item", kind.clone());
+                let item = ListItem::for_test("task item", kind.clone());
 
                 assert_eq!(item.text().raw(), "task item");
                 assert_eq!(item.text().clean(), "task item");
@@ -1090,7 +1090,7 @@ mod tests {
                 fields.insert(key.clone(), vec![NoteFieldValue::String(
                     "high".to_owned(),
                 )]);
-                let item = ListItem::new_test("task item", done_task())
+                let item = ListItem::for_test("task item", done_task())
                     .with_fields(fields);
                 let mut expected = IndexMap::new();
                 expected.insert(
@@ -1103,7 +1103,7 @@ mod tests {
             #[test]
             fn has_no_fields_by_default() {
                 let item =
-                    ListItem::new_test("plain item", ListItemType::Plain);
+                    ListItem::for_test("plain item", ListItemType::Plain);
 
                 assert_eq!(item.fields(), None);
             }
@@ -1117,7 +1117,7 @@ mod tests {
             #[test]
             fn stores_tags_when_attached_with_with_tags() {
                 let tags = vec![Tag::parse("#project").expect("valid tag")];
-                let item = ListItem::new_test("task item", done_task())
+                let item = ListItem::for_test("task item", done_task())
                     .with_tags(tags.clone());
 
                 assert_eq!(item.tags(), tags.as_slice());
@@ -1126,7 +1126,7 @@ mod tests {
             #[test]
             fn has_no_tags_by_default() {
                 let item =
-                    ListItem::new_test("plain item", ListItemType::Plain);
+                    ListItem::for_test("plain item", ListItemType::Plain);
 
                 assert_eq!(item.tags(), []);
             }
@@ -1206,7 +1206,7 @@ mod tests {
             )
             .with_depth(1)
             .with_parent(Some(SourceLine::new(1).expect("non-zero")));
-            let sibling = ListItem::new_test("sibling", ListItemType::Plain)
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain)
                 .with_depth(0);
 
             let slice = [parent, child1, grandchild, child2, sibling];
@@ -1224,8 +1224,8 @@ mod tests {
         #[test]
         fn returns_empty_iterator_when_no_descendants_exist() {
             let parent =
-                ListItem::new_test("parent", ListItemType::Plain).with_depth(0);
-            let sibling = ListItem::new_test("sibling", ListItemType::Plain)
+                ListItem::for_test("parent", ListItemType::Plain).with_depth(0);
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain)
                 .with_depth(0);
             let slice = [parent, sibling];
             assert_eq!(descendants_of(&slice[1..], 0).count(), 0);
