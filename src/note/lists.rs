@@ -653,7 +653,7 @@ impl PartialEq<ListText> for &str {
 /// Scans contiguous items in document order whose depth is strictly greater
 /// than `parent_depth`, stopping at the first sibling or ancestor item.
 #[inline]
-pub fn descendants_of(
+pub(crate) fn descendants_of(
     slice: &[ListItem],
     parent_depth: u8,
 ) -> impl Iterator<Item = &ListItem> {

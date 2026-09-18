@@ -126,8 +126,7 @@ pub(crate) use lexer::{
 pub(crate) use note::NoteFieldType;
 pub use note::{
     ListItem, ListItemType, ListText, MarkdownParserInput, Note,
-    NoteFieldValue, NoteFieldValueRef, TaskListItem, descendants_of,
-    parse_markdown,
+    NoteFieldValue, NoteFieldValueRef, TaskListItem, parse_markdown,
 };
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;

@@ -44,9 +44,7 @@ mod parser;
 pub(crate) use field::NoteFieldType;
 pub use field::{NoteFieldValue, NoteFieldValueRef};
 pub use links::{Link, LinkTarget, LinkType};
-pub use lists::{
-    ListItem, ListItemType, ListText, TaskListItem, descendants_of,
-};
+pub use lists::{ListItem, ListItemType, ListText, TaskListItem};
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
 pub use model::Note;

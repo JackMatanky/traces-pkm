@@ -332,7 +332,14 @@ fn extract_task_priority(
                 continue;
             };
             if let Ok(p) = s.parse::<TaskPriority>() {
-                return Some(p);
+                // `Normal` is represented as `None` on `TaskListItem` (see
+                // [`TaskPriority::Normal`]), so an explicit `normal` field
+                // collapses to `None` just like an unspecified priority.
+                return if matches!(p, TaskPriority::Normal) {
+                    None
+                } else {
+                    Some(p)
+                };
             }
         }
     }
@@ -1692,6 +1699,16 @@ mod tests {
 
             assert_eq!(task.priority(), Some(TaskPriority::High));
             assert_eq!(task_item.text().clean(), "Task");
+        }
+
+        #[test]
+        fn stores_none_for_an_explicit_normal_priority_field() {
+            let note = parse("- [ ] Task [priority:: normal]");
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            let task_item = tasks.first().expect("task present");
+            let task = expect_task(task_item);
+
+            assert_eq!(task.priority(), None);
         }
 
         #[test]
