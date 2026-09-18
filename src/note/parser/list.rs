@@ -17,11 +17,9 @@ use super::{
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
 use crate::{
-    DateValue, FieldKey, SourceLine, Tag, TaskStatusMap,
-    note::{
-        ListItem, ListItemType, ListText, NoteFieldValue, TaskDates,
-        TaskListItem, TaskPriority,
-    },
+    DateValue, FieldKey, SourceLine, Tag, TaskDates, TaskPriority,
+    TaskStatusMap,
+    note::{ListItem, ListItemType, ListText, NoteFieldValue, TaskListItem},
 };
 
 /// Nested list and list-item state for one Markdown event stream.
@@ -1724,27 +1722,27 @@ mod tests {
             let dates = task.dates();
 
             assert_eq!(
-                dates.created,
+                dates.created(),
                 NaiveDate::from_ymd_opt(2025, 1, 1).map(Into::into)
             );
             assert_eq!(
-                dates.start,
+                dates.start(),
                 NaiveDate::from_ymd_opt(2025, 1, 5).map(Into::into)
             );
             assert_eq!(
-                dates.scheduled,
+                dates.scheduled(),
                 NaiveDate::from_ymd_opt(2025, 1, 10).map(Into::into)
             );
             assert_eq!(
-                dates.due,
+                dates.due(),
                 NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into)
             );
             assert_eq!(
-                dates.done,
+                dates.done(),
                 NaiveDate::from_ymd_opt(2025, 1, 20).map(Into::into)
             );
             assert_eq!(
-                dates.cancelled,
+                dates.cancelled(),
                 NaiveDate::from_ymd_opt(2025, 1, 25).map(Into::into)
             );
             assert_eq!(task_item.text().clean(), "Task");
@@ -1763,27 +1761,27 @@ mod tests {
             let dates = task.dates();
 
             assert_eq!(
-                dates.created,
+                dates.created(),
                 NaiveDate::from_ymd_opt(2025, 1, 1).map(Into::into)
             );
             assert_eq!(
-                dates.start,
+                dates.start(),
                 NaiveDate::from_ymd_opt(2025, 1, 5).map(Into::into)
             );
             assert_eq!(
-                dates.scheduled,
+                dates.scheduled(),
                 NaiveDate::from_ymd_opt(2025, 1, 10).map(Into::into)
             );
             assert_eq!(
-                dates.due,
+                dates.due(),
                 NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into)
             );
             assert_eq!(
-                dates.done,
+                dates.done(),
                 NaiveDate::from_ymd_opt(2025, 1, 20).map(Into::into)
             );
             assert_eq!(
-                dates.cancelled,
+                dates.cancelled(),
                 NaiveDate::from_ymd_opt(2025, 1, 25).map(Into::into)
             );
             assert_eq!(task_item.text().clean(), "Task");
@@ -1801,27 +1799,27 @@ mod tests {
             let dates = task.dates();
 
             assert_eq!(
-                dates.created,
+                dates.created(),
                 NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into)
             );
             assert_eq!(
-                dates.start,
+                dates.start(),
                 NaiveDate::from_ymd_opt(2025, 2, 5).map(Into::into)
             );
             assert_eq!(
-                dates.scheduled,
+                dates.scheduled(),
                 NaiveDate::from_ymd_opt(2025, 2, 10).map(Into::into)
             );
             assert_eq!(
-                dates.due,
+                dates.due(),
                 NaiveDate::from_ymd_opt(2025, 2, 15).map(Into::into)
             );
             assert_eq!(
-                dates.done,
+                dates.done(),
                 NaiveDate::from_ymd_opt(2025, 2, 20).map(Into::into)
             );
             assert_eq!(
-                dates.cancelled,
+                dates.cancelled(),
                 NaiveDate::from_ymd_opt(2025, 2, 25).map(Into::into)
             );
             assert_eq!(task_item.text().clean(), "Task");
@@ -1836,7 +1834,7 @@ mod tests {
             let task = expect_task(task_item);
 
             assert_eq!(
-                task.dates().due,
+                task.dates().due(),
                 NaiveDate::from_ymd_opt(2025, 3, 1).map(Into::into)
             );
             assert_eq!(task_item.text().clean(), "Task");
@@ -1850,7 +1848,7 @@ mod tests {
             let task_item = tasks.first().expect("task present");
             let task = expect_task(task_item);
 
-            assert_eq!(task.dates().due, None);
+            assert_eq!(task.dates().due(), None);
         }
 
         #[test]
@@ -1861,7 +1859,7 @@ mod tests {
             let task_item = tasks.first().expect("task present");
             let task = expect_task(task_item);
 
-            assert_eq!(task.dates().start, None);
+            assert_eq!(task.dates().start(), None);
         }
     }
 

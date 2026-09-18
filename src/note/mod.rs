@@ -45,8 +45,7 @@ pub(crate) use field::NoteFieldType;
 pub use field::{NoteFieldValue, NoteFieldValueRef};
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{
-    ListItem, ListItemType, ListText, TaskDates, TaskListItem, TaskPriority,
-    descendants_of,
+    ListItem, ListItemType, ListText, TaskListItem, descendants_of,
 };
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;

@@ -13,9 +13,9 @@ use traces_pkm::{
 /// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
 /// checking records survive intact.
 ///
-/// `src/index/mod.rs` covers the identical round trip with an internal
-/// unit test. This is the only test proving `build`/`persist`/`load` still
-/// work when called only through their `pub` signatures.
+/// `src/index/mod.rs` covers the identical round trip with an internal unit
+/// test. This is the only test proving `build`/`persist`/`load` still work when
+/// called only through their `pub` signatures.
 #[test]
 fn persist_then_load_recovers_the_same_file_count_and_paths() {
     let temp = tempfile::tempdir().expect("create temp dir");
@@ -39,8 +39,8 @@ fn persist_then_load_recovers_the_same_file_count_and_paths() {
     ]);
 }
 
-/// Proves `Note.list_items()` returns every item kind (Plain, Checkbox,
-/// Task) in document order, while `Note.tasks()` returns only Task items.
+/// Proves `Note.list_items()` returns every item kind (Plain, Checkbox, Task)
+/// in document order, while `Note.tasks()` returns only Task items.
 ///
 /// Configures a `#task` tag filter so a status-marked item without the tag
 /// classifies as a `Checkbox`, not a `Task` — otherwise every status-marked
@@ -155,7 +155,7 @@ fn note_with_tasks_persists_correct_records_in_notes_table() {
     // Task-only fields: present on the root task, absent on the plain bullet.
     let root = list_records.first().expect("root task record");
     assert_eq!(
-        root.kind().as_task().and_then(|t| t.dates().due).map(Into::into),
+        root.kind().as_task().and_then(|t| t.dates().due()).map(Into::into),
         NaiveDate::from_ymd_opt(2025, 6, 1)
     );
     assert_eq!(
@@ -168,7 +168,7 @@ fn note_with_tasks_persists_correct_records_in_notes_table() {
     );
 
     let plain = list_records.get(3).expect("plain bullet record");
-    assert_eq!(plain.kind().as_task().and_then(|t| t.dates().due), None);
+    assert_eq!(plain.kind().as_task().and_then(|t| t.dates().due()), None);
     assert_eq!(plain.kind().as_task().and_then(TaskListItem::priority), None);
     assert_eq!(
         plain.kind().as_task().map(TaskListItem::is_fully_complete),
@@ -176,8 +176,8 @@ fn note_with_tasks_persists_correct_records_in_notes_table() {
     );
 }
 
-/// Proves index persistence round-trip preserves all list-derived fields
-/// across process recreation (build → persist → fresh service load).
+/// Proves index persistence round-trip preserves all list-derived fields across
+/// process recreation (build → persist → fresh service load).
 #[test]
 fn index_persistence_roundtrip_includes_lists_derived_fields() {
     let temp = tempfile::tempdir().expect("create temp dir");
@@ -210,7 +210,7 @@ fn index_persistence_roundtrip_includes_lists_derived_fields() {
         Some(TaskStatusType::Done)
     );
     assert_eq!(
-        task_rec.kind().as_task().and_then(|t| t.dates().due).map(Into::into),
+        task_rec.kind().as_task().and_then(|t| t.dates().due()).map(Into::into),
         NaiveDate::from_ymd_opt(2025, 12, 31)
     );
     assert_eq!(

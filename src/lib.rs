@@ -126,8 +126,8 @@ pub(crate) use lexer::{
 pub(crate) use note::NoteFieldType;
 pub use note::{
     ListItem, ListItemType, ListText, MarkdownParserInput, Note,
-    NoteFieldValue, NoteFieldValueRef, TaskDates, TaskListItem, TaskPriority,
-    descendants_of, parse_markdown,
+    NoteFieldValue, NoteFieldValueRef, TaskListItem, descendants_of,
+    parse_markdown,
 };
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;
@@ -138,7 +138,10 @@ pub use query::{
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
 pub use tag::{Tag, TagError};
-pub use task::{TaskStatus, TaskStatusMap, TaskStatusSymbol, TaskStatusType};
+pub use task::{
+    TaskDates, TaskPriority, TaskStatus, TaskStatusMap, TaskStatusSymbol,
+    TaskStatusType,
+};
 #[cfg(not(any(test, feature = "test-utils")))]
 #[expect(unused_imports, reason = "crate re-export")]
 pub(crate) use template::TemplateService;

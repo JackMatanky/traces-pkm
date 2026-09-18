@@ -199,8 +199,8 @@ impl Note {
     /// `parent_idx`.
     ///
     /// Scans contiguous items following `parent_idx` in document order whose
-    /// depth is strictly greater than the parent's depth, stopping at the
-    /// first sibling or ancestor item.
+    /// depth is strictly greater than the parent's depth, stopping at the first
+    /// sibling or ancestor item.
     #[inline]
     pub fn descendants(
         &self,
@@ -221,10 +221,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        TaskStatus, TaskStatusSymbol, TaskStatusType,
+        TaskDates, TaskStatus, TaskStatusSymbol, TaskStatusType,
         note::{
-            LinkType, ListItem, ListItemType, NoteFieldValue, TaskDates,
-            TaskListItem,
+            LinkType, ListItem, ListItemType, NoteFieldValue, TaskListItem,
         },
     };
 
