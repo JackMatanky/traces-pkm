@@ -2,8 +2,8 @@
 //! (`IndexStore`).
 //!
 //! Exposes and monitors the execution cost of database transaction commits,
-//! full table deserialization into in-memory [`FileIndex`], selective table
-//! scans (`read_lists`), and multi-project concurrent database access.
+//! full table deserialization into in-memory [`FileIndex`], list-heavy index
+//! loads, and multi-project concurrent database access.
 //!
 //! ### Data Flow Diagram
 //!
@@ -281,8 +281,8 @@ fn bench_index_load(c: &mut Criterion) {
 ///
 /// Unexpected outcomes:
 /// - Disproportionate latency per row or non-linear scaling across sizes.
-fn bench_read_lists(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::read_lists");
+fn bench_load_list_heavy(c: &mut Criterion) {
+    let mut group = c.benchmark_group("FileIndex::load_list_heavy");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -359,7 +359,7 @@ criterion_group!(
     bench_index_persist,
     bench_index_persist_profiles,
     bench_index_load,
-    bench_read_lists,
+    bench_load_list_heavy,
     bench_concurrent_operations
 );
 criterion_main!(benches);

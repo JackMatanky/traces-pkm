@@ -1292,8 +1292,8 @@ impl IndexStore {
         })
     }
 
-    /// Removes every deleted file's rows from `FILES`, `NOTES`, `LISTS`, and
-    /// the tag/class indexes.
+    /// Removes every deleted file's rows from `FILES`, `NOTES`, and the
+    /// tag/class indexes.
     fn apply_diff_deletions(
         &self,
         write_txn: &WriteTransaction,
