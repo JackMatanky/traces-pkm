@@ -21,7 +21,7 @@ env:
   MISE_AUTO_INSTALL: "0"
   RUSTUP_AUTO_INSTALL: "0"
 
-# Job names mirror the command each job runs; "lints" is the hk suite.
+# Job names mirror the primary check run by each job.
 jobs:
   # -- Compile gates --
   check:
@@ -69,9 +69,9 @@ jobs:
       - run: mise install --locked cargo:cargo-nextest
       - run: mise run test
 
-  # -- Repository lints (hk) --
-  lints:
-    name: lints (hk)
+  # -- Repository hygiene & file formats (hk) --
+  hygiene:
+    name: hygiene
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,13 +81,41 @@ jobs:
           install_args: rust
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "hk-ubuntu"
-      - run: mise install --locked taplo tombi gitleaks cargo:ryl cargo-deny cargo:cargo-audit
-      - run: mise install --locked hk
+          shared-key: "hk-hygiene"
+      - run: mise install --locked taplo tombi cargo:ryl hk
       - run: mise exec -- hk validate
-      - run: mise exec -- hk check --all --no-fail-fast --skip-step cargo-clippy --skip-step cargo-test --skip-step cargo-doc
+      - run: >-
+          mise exec -- hk check --all --no-fail-fast
+          --skip-step cargo-audit
+          --skip-step cargo-deny
+          --skip-step gitleaks
+          --skip-step detect-private-key
+          --skip-step cargo-clippy
+          --skip-step cargo-test
+          --skip-step cargo-doc
 
-  # -- Docs & compatibility --
+  # -- Security, supply chain & secrets (hk) --
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          experimental: true
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "hk-security"
+      - run: mise install --locked gitleaks cargo-deny cargo:cargo-audit hk
+      - run: mise exec -- hk validate
+      - run: >-
+          mise exec -- hk check --all --no-fail-fast
+          --step cargo-audit
+          --step cargo-deny
+          --step gitleaks
+          --step detect-private-key
+
   docs:
     runs-on: ubuntu-latest
     steps:
