@@ -1,7 +1,15 @@
-//! Declarative query builder for source selection, row mode, and transforms.
+//! Declarative query builder for source selection, row granularity, and
+//! transformations.
 //!
-//! [`QueryBuilder`] configures index query execution before passing the request
-//! to [`QueryService::run`](super::QueryService::run).
+//! This module provides [`QueryBuilder`], the primary user-facing builder for
+//! constructing index queries. A query combines a [`SourceSelector`], a
+//! [`QueryMode`] governing row granularity ([`QueryBuilder::pages`] vs.
+//! [`QueryBuilder::tasks`]), and a sequence of pending transformations
+//! including filters, sorts, and limits.
+//!
+//! Plans remain inert specifications until passed to
+//! [`QueryService::run`](super::QueryService::run) or
+//! [`QueryService::run_from_store`](super::QueryService::run_from_store).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,

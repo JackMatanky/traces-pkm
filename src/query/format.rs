@@ -1,5 +1,10 @@
-//! Markdown renderers for query result rows.
-
+//! Markdown formatting and rendering for query result collections.
+//!
+//! This module converts transformed [`QueryRow`] items into user-facing
+//! Markdown formats, including GitHub-flavored Markdown tables, bulleted lists,
+//! and task checkbox lists. It supports optional file-path parenthetical
+//! suffixes via [`TaskPathStyle`] to disambiguate task origin in CLI task
+//! aggregation.
 use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 
 /// Controls file-path rendering in task list output.

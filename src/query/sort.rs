@@ -1,5 +1,15 @@
-//! Sort-key utilities and total-order comparison for resolved field values.
-
+//! Sort-key generation, total-order comparison, and sorting execution for query
+//! rows.
+//!
+//! This module implements ordering semantics across diverse metadata types,
+//! mapping dynamically typed [`NoteFieldValue`] and borrowed
+//! [`QueryFieldValueRef`] variants into comparable [`SortKey`] values.
+//! It defines canonical cross-type ranking, case-insensitive text
+//! normalization, date and duration ordering, and configurable null placement.
+//!
+//! Complex, multi-column orderings are represented via [`SortOrder`], which
+//! combines multiple [`SortTerm`] clauses into an efficient row-major key
+//! matrix.
 use std::{borrow::Cow, cmp::Ordering, num::NonZeroUsize};
 
 use super::{

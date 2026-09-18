@@ -1,26 +1,30 @@
-//! Query field path parsing and resolution.
+//! Query field path parsing, validation, and typed accessor representation.
 //!
-//! Field paths such as `file.name`, `list.completed`, `tags`, `inlinks`, or
-//! bare metadata keys resolve to a [`FieldPath`] that extracts a
-//! [`NoteFieldValue`] from each [`crate::query::QueryRow`].
+//! Field paths appear in filter expressions, sort specifications, and
+//! table/list output configurations. This module parses string paths into a
+//! structured [`FieldPath`], validating accessor names, verifying dot syntax,
+//! and providing typo suggestions.
 //!
-//! # Supported accessors
+//! # Supported Accessor Namespaces
 //!
-//! - `file.<field>`: [`FileField`] accessors backed by [`FileBase`] metadata.
-//! - `list.<field>`: [`ListField`] accessors valid on list rows.
-//! - `tags`: Note tags.
-//! - `inlinks`: Project-relative paths of Notes linking to this Note.
-//! - Bare keys: frontmatter or inline metadata field keys.
+//! - `file.<field>`: Maps to [`FileField`] variants backed by [`FileBase`]
+//!   metadata (such as `file.name`, `file.folder`, `file.mtime`, `file.tags`).
+//! - `list.<field>`: Maps to [`ListField`] variants valid on list rows,
+//!   including universal properties (`list.text`, `list.line`, `list.depth`)
+//!   and embedded [`TaskField`] properties (`list.status`, `list.completed`,
+//!   `list.due`).
+//! - `tags`: Document tags on page rows, or item tags on list rows.
+//! - `inlinks`: Project-relative paths of Notes linking to the target note.
+//! - Bare keys: User-defined frontmatter or inline metadata field names.
 //!
 //! [`NoteFieldValue`]: crate::NoteFieldValue
 //! [`FileBase`]: crate::FileBase
-
 use crate::{FieldKey, query::error::FieldPathError, strsim::closest_match};
 
 /// A `file.<field>` accessor backed by [`FileBase`] metadata.
 ///
-/// Accepted accessor names, including aliases such as `ctime` for
-/// `created_at`, are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
+/// Accepted accessor names, including aliases such as `ctime` for `created_at`,
+/// are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
 /// [`FileBase`]: crate::FileBase
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

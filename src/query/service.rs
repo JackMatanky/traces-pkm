@@ -1,8 +1,13 @@
-//! Query service execution over in-memory and persisted indexes.
+//! Query execution service over in-memory indexes and persisted key-value
+//! storage.
 //!
-//! [`QueryService`] evaluates source selectors, applies query plans, and
-//! produces [`QuerySet`] rows for pages or tasks.
-
+//! This module provides [`QueryService`], the central coordination engine that
+//! executes queries against either an in-memory [`FileIndex`] or directly
+//! against on-disk [`IndexStore`] tables without loading the full index into
+//! memory.
+//! It resolves candidate paths from [`SourceSelector`] expressions, expands
+//! File Class inheritance trees via [`FileClassExpander`], instantiates
+//! [`QueryRow`] items, and applies the optimized [`super::plan::QueryPlan`].
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

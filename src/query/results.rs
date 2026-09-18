@@ -1,5 +1,16 @@
-//! Query result rows and lazy result sets.
-
+//! Positional result rows and lazy, memoized query result sets.
+//!
+//! This module implements the runtime data representations produced by query
+//! execution:
+//! - [`QueryRow`]: A lightweight, zero-allocation view over an indexed note or
+//!   list item. It pairs a [`FileIndex`] handle with a row position and an
+//!   optional positional list item offset (`item_idx: u32`). Field resolution
+//!   borrows directly from in-memory note storage without string or status
+//!   allocations.
+//! - [`QuerySet`]: A lazy, memoized wrapper over a collection of [`QueryRow`]
+//!   items. Transformation methods append to an unexecuted [`QueryPlan`],
+//!   deferring execution until terminal renderers or read methods materialize
+//!   and cache the final rows.
 use std::{path::PathBuf, sync::Arc};
 
 use super::{

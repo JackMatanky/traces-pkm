@@ -1,11 +1,14 @@
-//! Boolean expression grammar shared by source and filter queries.
+//! Recursive descent boolean algebra parser shared by source and filter
+//! languages.
 //!
-//! [`parse_boolean_expr`] builds a [`BooleanExpr`] with `not` > `and` > `or`
-//! precedence and parenthesized grouping. Atom recognition is delegated to
-//! [`AtomParser`] implementations ([`SourceAtom`](super::SourceAtom) for
-//! `--from`, [`FilterAtom`](super::filter::FilterAtom) for `--where`); the
-//! shared parser only interprets [`LogicalControl`] tokens.
-
+//! This module provides a generic, precedence-climbing boolean expression
+//! parser implementing standard operator precedence (`not` > `and` > `or`) and
+//! nested parenthesized sub-expressions.
+//!
+//! Domain-specific leaf parsing is abstracted behind the [`AtomParser`] trait,
+//! allowing source selection ([`SourceAtom`](super::SourceAtom)) and row
+//! filtering ([`FilterAtom`](super::filter::FilterAtom)) to reuse identical
+//! operator semantics, associativity, and diagnostic span reporting.
 use miette::SourceSpan;
 
 use crate::{

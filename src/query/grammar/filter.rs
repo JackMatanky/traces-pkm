@@ -1,8 +1,14 @@
-//! Record filter expression DSL for `--where` queries.
+//! Record filter expression language and abstract syntax tree for `--where`
+//! queries.
 //!
-//! Parses field path accessors, comparison operators, boolean operators, and
-//! `contains` calls over [`QueryRow`] rows.
-
+//! This module parses and evaluates row-level filter expressions. Expressions
+//! support:
+//! - Dotted and bare field path lookups resolved via [`FieldPath`].
+//! - Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) with type
+//!   coercion.
+//! - Function calls such as `contains(field, target)` with tag prefix matching.
+//! - Boolean combinators (`and`, `or`, `not`, parentheses) parsed via the
+//!   shared boolean expression grammar.
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
 

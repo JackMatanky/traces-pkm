@@ -1,12 +1,20 @@
-//! Query parsing, field-resolution, and result-transformation errors.
+//! Error types for query specification, syntax parsing, and result evaluation.
 //!
-//! Primary errors:
+//! This module defines the error domain for the query subsystem, providing
+//! typed diagnostics with source spans, friendly suggestions, and formatted
+//! error messages.
 //!
-//! - [`QueryError`]: top-level query failure.
-//! - [`QueryBuilderError`]: request-construction failure.
-//! - [`QuerySyntaxError`]: syntax error with [`miette::Diagnostic`] spans.
-//! - [`FieldPathError`]: invalid field path with typo suggestions.
-
+//! # Primary Error Types
+//!
+//! - [`QueryError`]: Top-level unified error representing any failure during
+//!   query construction, syntax analysis, field path resolution, or formatting.
+//! - [`QueryBuilderError`]: Construction-time errors originating from invalid
+//!   filter expressions, malformed field paths, or invalid limits.
+//! - [`QuerySyntaxError`]: Parsing and lexing errors with
+//!   [`miette::Diagnostic`] spans and labels indicating the exact error
+//!   location.
+//! - [`FieldPathError`]: Field path syntax failures with edit-distance typo
+//!   recommendations for standard accessors (`file.<field>`, `list.<field>`).
 use std::fmt;
 
 use miette::{Diagnostic, SourceSpan};
