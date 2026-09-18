@@ -1,7 +1,7 @@
 # 07 — Note API flat storage, memory compaction, and persistence cleanup
 
 **Category:** enhancement
-**Status:** ready-for-agent
+**Status:** done
 
 **What to build:** Amend ADR 0005 by dropping the unread `LISTS` table from redb
 and removing `ListEntry` and `ListEntryRef`, leaving `NOTES` as the single source
@@ -16,43 +16,43 @@ memory layout by adopting sparse inline fields, lazy clean text, and 4-byte
 
 ## Acceptance Criteria
 
-- [ ] Remove `LISTS` table definition, key codecs, and associated reader/writer
+- [x] Remove `LISTS` table definition, key codecs, and associated reader/writer
   methods (`write_lists_for_note`, `remove_lists_for_path`, `read_lists`,
   `read_lists_for_path`, `read_all_lists`) from `src/index/store.rs` and
   `src/index/service.rs`.
-- [ ] Remove `ListEntry` and `ListEntryRef` from `src/index/entry.rs` and public
+- [x] Remove `ListEntry` and `ListEntryRef` from `src/index/entry.rs` and public
   crate exports (`src/index/mod.rs` and `src/lib.rs`).
-- [ ] Revert `IndexStore::check_rebuild_needed` probe list to only include
+- [x] Revert `IndexStore::check_rebuild_needed` probe list to only include
   `FILES`, `NOTES`, and `LINKS`, and remove `WriteTarget::Lists` from
   `WriteTarget::ALL`.
-- [ ] Flatten `Note.lists` to `Box<[ListItem]>` in document order, and update
+- [x] Flatten `Note.lists` to `Box<[ListItem]>` in document order, and update
   `Note::new` and `Note::lists(&self) -> &[ListItem]`.
-- [ ] Dissolve `ListItemPosition` and update `ListItem` struct layout with
+- [x] Dissolve `ListItemPosition` and update `ListItem` struct layout with
   `text: ListText`, `kind: ListItemType`, `depth: u8`,
-  `line: Option<SourceLine>`, `parent: Option<SourceLine>`, `is_ordered: bool`,
+  `line: SourceLine`, `parent: Option<SourceLine>`, `is_ordered: bool`,
   `fields: Option<Box<IndexMap<FieldKey, Box<[NoteFieldValue]>>>>`, and
   `tags: Box<[Tag]>`, removing `children: Box<[List]>`.
-- [ ] Compact `ListItem.fields` to
+- [x] Compact `ListItem.fields` to
   `Option<Box<IndexMap<FieldKey, Box<[NoteFieldValue]>>>>`, returning
   `Option<&IndexMap<FieldKey, Box<[NoteFieldValue]>>>` from `ListItem::fields`.
-- [ ] Update `ListText` to store `clean: Option<String>`, setting `clean` to
+- [x] Update `ListText` to store `clean: Option<String>`, setting `clean` to
   `None` when clean text equals raw text, and returning
   `self.clean.as_deref().unwrap_or(&self.raw)` from `ListText::clean()`.
-- [ ] Update `TaskDates` to use `Option<crate::DateValue>` for all six lifecycle
+- [x] Update `TaskDates` to use `Option<crate::DateValue>` for all six lifecycle
   dates (`created`, `start`, `scheduled`, `due`, `done`, `cancelled`), and
   implement `From<chrono::NaiveDate> for crate::DateValue`.
-- [ ] Implement `Note::list_items()` and `Note::tasks()` as slice-backed
+- [x] Implement `Note::list_items()` and `Note::tasks()` as slice-backed
   iterators directly over `self.lists`, eliminating the stack-allocated
   `ListItemIter`.
-- [ ] Ensure markdown list parser outputs `ListItem`s in strict pre-order
+- [x] Ensure markdown list parser outputs `ListItem`s in strict pre-order
   document order (`[Parent, Child, Sibling]`), accounting for pulldown-cmark's
   child-before-parent `End(Item)` event sequence.
-- [ ] Update descendant traversal helper to use non-recursive slice scans
+- [x] Update descendant traversal helper to use non-recursive slice scans
   (`take_while(|child| child.depth() > parent_depth)`).
-- [ ] Update existing unit tests in `src/note/` and `src/index/`, and
+- [x] Update existing unit tests in `src/note/` and `src/index/`, and
   integration tests in `tests/integration/index_persistence_roundtrip.rs`, to
   verify flattened list persistence inside `Note` within the `NOTES` table.
-- [ ] All checks pass under `mise run verify`.
+- [x] All checks pass under `mise run verify`.
 
 ## Key Interfaces and Models
 

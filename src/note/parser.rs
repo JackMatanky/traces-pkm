@@ -353,9 +353,9 @@ impl<'a> ParserContext<'a> {
 
     /// Closes the innermost list.
     ///
-    /// A list nested inside an active item is stored under
-    /// [`ListItem::children`](super::ListItem::children). Otherwise, it becomes
-    /// a top-level [`Note::lists`] entry.
+    /// Items of a list nested inside an active item carry that item's line as
+    /// their `parent` and a deeper `depth`; a top-level list's items become
+    /// [`Note::lists`] entries in document order.
     fn end_list(&mut self) {
         self.list_nesting.end_list();
     }
@@ -611,9 +611,9 @@ mod tests {
             let input = "- [ ] Incomplete task\n- [x] Completed task";
             let note = parse(input);
 
-            let list = note.lists().first().expect("list present");
-            let item0 = list.items().first().expect("item 0");
-            let item1 = list.items().get(1).expect("item 1");
+            let items = note.lists();
+            let item0 = items.first().expect("item 0");
+            let item1 = items.get(1).expect("item 1");
 
             assert_eq!(item0.text(), "Incomplete task");
             let ListItemType::Task(task0) = item0.kind() else {
@@ -633,11 +633,7 @@ mod tests {
             let input = "- [ ] Check [link text](https://example.com) here";
             let note = parse(input);
 
-            let item = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("item present");
+            let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Check link text here");
 
             let link = note.outlinks().first().expect("outlink present");
@@ -649,14 +645,16 @@ mod tests {
             let input = "- Parent item\n  - Child item";
             let note = parse(input);
 
-            let parent_list = note.lists().first().expect("parent list");
-            let parent_item = parent_list.items().first().expect("parent item");
-            assert_eq!(parent_item.children().len(), 1);
+            let items = note.lists();
+            assert_eq!(items.len(), 2);
+            let parent_item = items.first().expect("parent item");
+            assert_eq!(parent_item.clean_text(), "Parent item");
+            assert_eq!(parent_item.depth(), 0);
 
-            let child_list =
-                parent_item.children().first().expect("child list");
-            let child_item = child_list.items().first().expect("child item");
-            assert_eq!(child_item.text(), "Child item");
+            let child_item = items.get(1).expect("child item");
+            assert_eq!(child_item.clean_text(), "Child item");
+            assert_eq!(child_item.depth(), 1);
+            assert_eq!(child_item.parent(), Some(parent_item.line()));
         }
 
         #[test]
@@ -664,16 +662,11 @@ mod tests {
             let input = "- Parent\n  - Child\n    - Grandchild";
             let note = parse(input);
 
-            let grandchild = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .and_then(|item| item.children().first())
-                .and_then(|list| list.items().first())
-                .and_then(|item| item.children().first())
-                .and_then(|list| list.items().first())
-                .map(ListItem::raw_text);
-            assert_eq!(grandchild, Some("Grandchild"));
+            let items = note.lists();
+            assert_eq!(items.len(), 3);
+            assert_eq!(items.first().expect("item 0").raw_text(), "Parent");
+            assert_eq!(items.get(1).expect("item 1").raw_text(), "Child");
+            assert_eq!(items.get(2).expect("item 2").raw_text(), "Grandchild");
         }
 
         #[test]
@@ -681,47 +674,26 @@ mod tests {
             let input = "- Parent\n  - Child\n    - Grandchild";
             let note = parse(input);
 
-            let parent = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("parent item");
-            assert_eq!(
-                parent.line(),
-                Some(SourceLine::new(1).expect("non-zero"))
-            );
+            let items = note.lists();
+            assert_eq!(items.len(), 3);
+
+            let parent = items.first().expect("parent item");
+            assert_eq!(parent.line(), SourceLine::new(1).expect("non-zero"));
             assert_eq!(parent.depth(), 0);
             assert_eq!(parent.parent(), None);
 
-            let child = parent
-                .children()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("child item");
-            assert_eq!(
-                child.line(),
-                Some(SourceLine::new(2).expect("non-zero"))
-            );
+            let child = items.get(1).expect("child item");
+            assert_eq!(child.line(), SourceLine::new(2).expect("non-zero"));
             assert_eq!(child.depth(), 1);
-            assert_eq!(
-                child.parent(),
-                Some(SourceLine::new(1).expect("non-zero"))
-            );
+            assert_eq!(child.parent(), Some(parent.line()));
 
-            let grandchild = child
-                .children()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("grandchild item");
+            let grandchild = items.get(2).expect("grandchild item");
             assert_eq!(
                 grandchild.line(),
-                Some(SourceLine::new(3).expect("non-zero"))
+                SourceLine::new(3).expect("non-zero")
             );
             assert_eq!(grandchild.depth(), 2);
-            assert_eq!(
-                grandchild.parent(),
-                Some(SourceLine::new(2).expect("non-zero"))
-            );
+            assert_eq!(grandchild.parent(), Some(child.line()));
         }
 
         #[test]
@@ -729,14 +701,57 @@ mod tests {
             let input = "- Parent\n  - Child\n- Sibling";
             let note = parse(input);
 
-            let list = note.lists().first().expect("list present");
-            let sibling = list.items().get(1).expect("sibling item");
-            assert_eq!(
-                sibling.line(),
-                Some(SourceLine::new(3).expect("non-zero"))
-            );
+            let items = note.lists();
+            assert_eq!(items.len(), 3);
+            let sibling = items.get(2).expect("sibling item");
+            assert_eq!(sibling.line(), SourceLine::new(3).expect("non-zero"));
             assert_eq!(sibling.depth(), 0);
             assert_eq!(sibling.parent(), None);
+        }
+        #[test]
+        fn outputs_list_items_in_strict_pre_order_document_order() {
+            let input = "\
+- Parent 1
+  - Child 1.1
+    - Grandchild 1.1.1
+    - Grandchild 1.1.2
+  - Child 1.2
+- Parent 2
+  1. Ordered child 2.1
+  2. Ordered child 2.2
+- Sibling 3
+";
+            let note = parse(input);
+            let items = note.lists();
+            let actual: Vec<(&str, u8, bool)> = items
+                .iter()
+                .map(|item| {
+                    (item.clean_text(), item.depth(), item.is_ordered())
+                })
+                .collect();
+            let expected = [
+                ("Parent 1", 0, false),
+                ("Child 1.1", 1, false),
+                ("Grandchild 1.1.1", 2, false),
+                ("Grandchild 1.1.2", 2, false),
+                ("Child 1.2", 1, false),
+                ("Parent 2", 0, false),
+                ("Ordered child 2.1", 1, true),
+                ("Ordered child 2.2", 1, true),
+                ("Sibling 3", 0, false),
+            ];
+            assert_eq!(actual.as_slice(), expected.as_slice());
+
+            let p1_line = items.first().map(ListItem::line);
+            let c1_line = items.get(1).map(ListItem::line);
+            let p2_line = items.get(5).map(ListItem::line);
+
+            assert_eq!(items.get(1).and_then(ListItem::parent), p1_line);
+            assert_eq!(items.get(2).and_then(ListItem::parent), c1_line);
+            assert_eq!(items.get(3).and_then(ListItem::parent), c1_line);
+            assert_eq!(items.get(4).and_then(ListItem::parent), p1_line);
+            assert_eq!(items.get(6).and_then(ListItem::parent), p2_line);
+            assert_eq!(items.get(7).and_then(ListItem::parent), p2_line);
         }
 
         #[rstest]
@@ -748,20 +763,23 @@ mod tests {
         ) {
             let note = parse(input);
 
-            let list = note.lists().first().expect("list present");
-            assert_eq!(list.is_ordered(), expected_ordered);
-            assert_eq!(list.items().len(), 2);
+            let items = note.lists();
+            assert_eq!(items.len(), 2);
+            assert_eq!(
+                items.first().expect("item 0").is_ordered(),
+                expected_ordered
+            );
+            assert_eq!(
+                items.get(1).expect("item 1").is_ordered(),
+                expected_ordered
+            );
         }
 
         #[test]
         fn preserves_soft_breaks_inside_list_item_text() {
             let note = parse("- Wrapped\n  line");
 
-            let text = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .map(ListItem::raw_text);
+            let text = note.lists().first().map(ListItem::raw_text);
             assert_eq!(text, Some("Wrapped\nline"));
         }
 
@@ -863,14 +881,11 @@ mod tests {
             let input = "- Item with `inline code` here\n";
             let note = parse(input);
 
-            // Act
-            let lists = note.lists();
-            let item_text = lists
+            let item_text = note
+                .lists()
                 .first()
-                .and_then(|l| l.items().first())
                 .map(ListItem::raw_text)
                 .unwrap_or_default();
-
             // Assert
             assert!(
                 item_text.contains("inline code"),
@@ -927,11 +942,7 @@ mod tests {
             let note = parse("- Status:: Draft");
             assert_eq!(note.inline_fields().len(), 1);
 
-            let item = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("item present");
+            let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Status:: Draft");
 
             let (key, values) =
@@ -947,13 +958,13 @@ mod tests {
                  [priority:: low]",
             );
 
-            let list = note.lists().first().expect("list present");
-            let mut items = list.items().iter();
-            let first = items.next().expect("first item present");
-            let second = items.next().expect("second item present");
+            let items = note.lists();
+            let first = items.first().expect("first item present");
+            let second = items.get(1).expect("second item present");
 
-            let first_priority = first
-                .fields()
+            let first_fields =
+                first.fields().expect("first item fields present");
+            let first_priority = first_fields
                 .iter()
                 .find(|(k, _)| k.is_canonical_match("priority"))
                 .expect("first item field present");
@@ -962,8 +973,9 @@ mod tests {
                 Some("high")
             );
 
-            let second_priority = second
-                .fields()
+            let second_fields =
+                second.fields().expect("second item fields present");
+            let second_priority = second_fields
                 .iter()
                 .find(|(k, _)| k.is_canonical_match("priority"))
                 .expect("second item field present");
@@ -989,13 +1001,14 @@ mod tests {
             let note = parse(
                 "- [ ] First task 🗓️2026-01-01\n- [ ] Second task 🗓️2026-02-02",
             );
-            let list = note.lists().first().expect("list present");
-            let mut items = list.items().iter();
-            let first = items.next().expect("first item present");
-            let second = items.next().expect("second item present");
+            let items = note.lists();
+            let first = items.first().expect("first item present");
+            let second = items.get(1).expect("second item present");
 
+            let first_fields =
+                first.fields().expect("first item fields present");
             let (first_key, first_vals) =
-                first.fields().iter().next().expect("first due field");
+                first_fields.iter().next().expect("first due field");
             assert!(first_key.is_canonical_match("due"));
             assert_eq!(
                 first_vals.first(),
@@ -1004,8 +1017,10 @@ mod tests {
                 ))
             );
 
+            let second_fields =
+                second.fields().expect("second item fields present");
             let (_second_key, second_vals) =
-                second.fields().iter().next().expect("second due field");
+                second_fields.iter().next().expect("second due field");
             assert_eq!(
                 second_vals.first(),
                 Some(&NoteFieldValue::Date(
@@ -1018,12 +1033,8 @@ mod tests {
         fn plain_list_items_without_fields_have_no_scoped_fields() {
             let note = parse("- Plain item with no fields");
 
-            let item = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("item present");
-            assert!(item.fields().is_empty());
+            let item = note.lists().first().expect("item present");
+            assert!(item.fields().is_none());
         }
 
         #[rstest]
@@ -1128,11 +1139,7 @@ mod tests {
         fn extracts_a_tag_from_a_list_item_and_keeps_it_in_item_text() {
             let note = parse("- Reading #book now");
 
-            let item = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("item present");
+            let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Reading #book now");
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
@@ -1218,11 +1225,7 @@ mod tests {
         fn extracts_both_a_field_and_a_tag_from_the_same_list_item_text() {
             let note = parse("- Status:: Draft #urgent");
 
-            let item = note
-                .lists()
-                .first()
-                .and_then(|list| list.items().first())
-                .expect("item present");
+            let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Status:: Draft #urgent");
 
             assert_eq!(note.inline_fields().len(), 1);
@@ -1338,8 +1341,7 @@ mod tests {
                 Some("Marked matching #task")
             );
 
-            let list = note.lists().first().expect("list present");
-            let items = list.items();
+            let items = note.lists();
             assert_eq!(items.len(), 4);
             assert!(matches!(
                 items.first().expect("item 0").kind(),
@@ -1368,8 +1370,7 @@ mod tests {
 
             assert_eq!(note.tasks().count(), 2);
 
-            let list = note.lists().first().expect("list present");
-            let items = list.items();
+            let items = note.lists();
             assert_eq!(items.len(), 3);
             assert!(matches!(
                 items.first().expect("item 0").kind(),
@@ -1398,8 +1399,7 @@ mod tests {
                 Some("Exact tag #task")
             );
 
-            let list = note.lists().first().expect("list present");
-            let items = list.items();
+            let items = note.lists();
             assert_eq!(
                 items.first().expect("item 0").kind(),
                 &ListItemType::Checkbox

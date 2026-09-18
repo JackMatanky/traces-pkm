@@ -2,8 +2,8 @@
 //! (`IndexStore`).
 //!
 //! Exposes and monitors the execution cost of database transaction commits,
-//! full table deserialization into in-memory [`FileIndex`], selective table
-//! scans (`read_lists`), and multi-project concurrent database access.
+//! full table deserialization into in-memory [`FileIndex`], list-heavy index
+//! loads, and multi-project concurrent database access.
 //!
 //! ### Data Flow Diagram
 //!
@@ -268,21 +268,21 @@ fn bench_index_load(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures public list-table reads over persisted list-heavy projects.
+/// Measures list item access over loaded list-heavy projects.
 ///
 /// Parameters: varies note count across [`PROFILE_CONTRAST_COUNTS`]; reports
 /// list row throughput. Fixture: persisted list-heavy project created outside
 /// timing. Each [`ProjectShape::ListHeavy`] note contributes 20 list rows,
-/// reporting throughput as `20 * n` rows. Timed work reads all persisted list
-/// items via [`IndexerService::read_lists`].
+/// reporting throughput as `20 * n` rows. Timed work loads the index and counts
+/// list items.
 ///
 /// Expected outcomes:
 /// - Read cost scales linearly with persisted list row count.
 ///
 /// Unexpected outcomes:
 /// - Disproportionate latency per row or non-linear scaling across sizes.
-fn bench_read_lists(c: &mut Criterion) {
-    let mut group = c.benchmark_group("IndexerService::read_lists");
+fn bench_load_list_heavy(c: &mut Criterion) {
+    let mut group = c.benchmark_group("FileIndex::load_list_heavy");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -299,9 +299,15 @@ fn bench_read_lists(c: &mut Criterion) {
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter_with_large_drop(|| {
-                let lists = indexer.read_lists().expect("read lists");
-                black_box(lists.len());
-                black_box(lists)
+                let index = indexer.load().expect("load index");
+                let count: usize = index
+                    .entries()
+                    .iter()
+                    .filter_map(traces_pkm::FileEntry::note)
+                    .map(|note| note.lists().len())
+                    .sum();
+                black_box(count);
+                black_box(index)
             });
         });
     }
@@ -353,7 +359,7 @@ criterion_group!(
     bench_index_persist,
     bench_index_persist_profiles,
     bench_index_load,
-    bench_read_lists,
+    bench_load_list_heavy,
     bench_concurrent_operations
 );
 criterion_main!(benches);

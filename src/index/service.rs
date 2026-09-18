@@ -13,7 +13,6 @@ use rayon::prelude::*;
 
 use super::{
     FileIndex, INDEX_FILE, IndexError, IndexResult,
-    entry::ListEntry,
     inlinks::InlinkMap,
     store::IndexStore,
     sync::{RefreshPlan, SyncReport},
@@ -273,24 +272,6 @@ impl IndexerService {
         let (files, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;
         Ok(FileIndex::assemble(files, notes, inlinks))
-    }
-
-    /// Reads all persisted [`ListEntry`]s from the `LISTS` table.
-    ///
-    /// # Errors
-    ///
-    /// - `IndexError::Store` if the database cannot be opened or read.
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "consumed by task queries added in issue 08"
-        )
-    )]
-    #[inline]
-    pub fn read_lists(&self) -> IndexResult<Vec<ListEntry>> {
-        let store = IndexStore::open(&self.root)?;
-        Ok(store.read_all_lists()?)
     }
 
     /// Recursively scans `root` for regular files, skipping `.git`

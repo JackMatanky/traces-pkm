@@ -1,5 +1,5 @@
-//! Task status domain model: symbols, statuses, and the resolved lookup map
-//! shared by note parsing, display, and querying.
+//! Task status, priority, and lifecycle-date domain model shared by note
+//! parsing, display, and querying.
 //!
 //! - [`TaskStatus`]: a named, typed status keyed by its marker symbol.
 //! - [`TaskStatusMap`]: a lookup table built once at config resolution, indexed
@@ -9,10 +9,17 @@
 //! - [`TaskStatusType`]: the workflow classification of a status (todo,
 //!   in-progress, on-hold, done, cancelled, non-task).
 //! - [`TaskStatusSymbol`]: the marker character inside `[<char>]`.
+//! - [`TaskPriority`]: six-level task priority enum mapped to emoji and text
+//!   representations.
+//! - [`TaskDates`]: six distinct task-lifecycle calendar dates (created,
+//!   scheduled, start, due, done, cancelled).
+//! - [`TaskError`]: error type for task domain parsing failures.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+use crate::DateValue;
 
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -323,6 +330,372 @@ fn normalize_name(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// Task priority level.
+///
+/// Supports six priority levels ordered from lowest to highest:
+/// [`Self::Lowest`] < [`Self::Low`] < [`Self::Normal`] < [`Self::Medium`] <
+/// [`Self::High`] < [`Self::Highest`].
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::TaskPriority;
+///
+/// assert!(TaskPriority::Highest > TaskPriority::High);
+/// assert!(TaskPriority::High > TaskPriority::Medium);
+/// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
+/// ```
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Deserialize,
+    Serialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskPriority {
+    /// Lowest priority (`⏬`).
+    Lowest,
+    /// Low priority (`🔽`).
+    Low,
+    /// Normal priority (stored as `None` on
+    /// [`TaskListItem`](crate::TaskListItem) when unspecified).
+    Normal,
+    /// Medium priority (`🔼`).
+    Medium,
+    /// High priority (`⏫`).
+    High,
+    /// Highest priority (`🔺`).
+    Highest,
+}
+
+impl TaskPriority {
+    /// Returns the canonical lowercase string name of the priority.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::Highest.as_str(), "highest");
+    /// assert_eq!(TaskPriority::Normal.as_str(), "normal");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Lowest => "lowest",
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Highest => "highest",
+        }
+    }
+
+    /// Parses a priority from an emoji, with or without variation selector 16
+    /// (`\u{FE0F}`).
+    ///
+    /// | Emoji | Priority |
+    /// | ----- | -------- |
+    /// | 🔺    | highest  |
+    /// | ⏫    | high     |
+    /// | 🔼    | medium   |
+    /// | 🔽    | low      |
+    /// | ⏬    | lowest   |
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
+    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
+    /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn from_emoji(emoji: &str) -> Option<Self> {
+        let trimmed = emoji.trim_end_matches('\u{FE0F}');
+        match trimmed {
+            "\u{1F53A}" => Some(Self::Highest),
+            "\u{23EB}" => Some(Self::High),
+            "\u{1F53C}" => Some(Self::Medium),
+            "\u{1F53D}" => Some(Self::Low),
+            "\u{23EC}" => Some(Self::Lowest),
+            _ => None,
+        }
+    }
+
+    /// Returns the canonical emoji representation for this priority, or
+    /// [`None`] for [`Self::Normal`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::Highest.emoji(), Some("🔺"));
+    /// assert_eq!(TaskPriority::Normal.emoji(), None);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn emoji(&self) -> Option<&'static str> {
+        match self {
+            Self::Highest => Some("🔺"),
+            Self::High => Some("⏫"),
+            Self::Medium => Some("🔼"),
+            Self::Low => Some("🔽"),
+            Self::Lowest => Some("⏬"),
+            Self::Normal => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TaskPriority {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TaskPriority {
+    type Err = TaskError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "lowest" => Ok(Self::Lowest),
+            "low" => Ok(Self::Low),
+            "normal" => Ok(Self::Normal),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "highest" => Ok(Self::Highest),
+            _ => {
+                Self::from_emoji(s).ok_or_else(|| TaskError::InvalidPriority {
+                    input: s.to_owned(),
+                })
+            }
+        }
+    }
+}
+
+/// Date metadata associated with a [`TaskListItem`](crate::TaskListItem).
+///
+/// Stores six distinct task-lifecycle dates parsed from emoji shorthand or
+/// Dataview inline field syntax. Missing dates are represented as [`None`].
+///
+/// # Examples
+///
+/// ```rust
+/// use chrono::NaiveDate;
+/// use traces_pkm::{DateValue, TaskDates};
+///
+/// let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
+/// let dates = TaskDates::new(None, None, None, due, None, None);
+/// assert!(!dates.is_empty());
+/// assert_eq!(dates.due(), due);
+/// ```
+#[derive(
+    Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
+)]
+pub struct TaskDates {
+    /// Date when the task was created (`➕` or `[created::]`).
+    created: Option<DateValue>,
+    /// Date when the task is scheduled (`⏳` or `[scheduled::]`).
+    scheduled: Option<DateValue>,
+    /// Date when work on the task begins (`🛫` or `[start::]`).
+    start: Option<DateValue>,
+    /// Date when the task is due (`📅` or `[due::]`).
+    due: Option<DateValue>,
+    /// Date when the task was completed (`✅` or `[done::]`).
+    done: Option<DateValue>,
+    /// Date when the task was cancelled (`❌` or `[cancelled::]`).
+    cancelled: Option<DateValue>,
+}
+
+impl TaskDates {
+    /// Creates a new [`Self`] instance with all dates specified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
+    /// let dates = TaskDates::new(None, None, None, due, None, None);
+    /// assert_eq!(dates.due(), due);
+    /// ```
+    #[inline]
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor accepts all 6 task dates"
+    )]
+    pub const fn new(
+        created: Option<DateValue>,
+        scheduled: Option<DateValue>,
+        start: Option<DateValue>,
+        due: Option<DateValue>,
+        done: Option<DateValue>,
+        cancelled: Option<DateValue>,
+    ) -> Self {
+        Self {
+            created,
+            scheduled,
+            start,
+            due,
+            done,
+            cancelled,
+        }
+    }
+
+    /// Returns `true` if no dates are set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDates;
+    ///
+    /// assert!(TaskDates::default().is_empty());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.created.is_none()
+            && self.scheduled.is_none()
+            && self.start.is_none()
+            && self.due.is_none()
+            && self.done.is_none()
+            && self.cancelled.is_none()
+    }
+
+    /// Returns the task's creation date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let created = NaiveDate::from_ymd_opt(2025, 1, 1).map(DateValue::from);
+    /// let dates = TaskDates::new(created, None, None, None, None, None);
+    /// assert_eq!(dates.created(), created);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn created(&self) -> Option<DateValue> {
+        self.created
+    }
+
+    /// Returns the task's scheduled date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let scheduled = NaiveDate::from_ymd_opt(2025, 1, 10).map(DateValue::from);
+    /// let dates = TaskDates::new(None, scheduled, None, None, None, None);
+    /// assert_eq!(dates.scheduled(), scheduled);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn scheduled(&self) -> Option<DateValue> {
+        self.scheduled
+    }
+
+    /// Returns the task's start date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let start = NaiveDate::from_ymd_opt(2025, 1, 12).map(DateValue::from);
+    /// let dates = TaskDates::new(None, None, start, None, None, None);
+    /// assert_eq!(dates.start(), start);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn start(&self) -> Option<DateValue> {
+        self.start
+    }
+
+    /// Returns the task's due date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
+    /// let dates = TaskDates::new(None, None, None, due, None, None);
+    /// assert_eq!(dates.due(), due);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn due(&self) -> Option<DateValue> {
+        self.due
+    }
+
+    /// Returns the task's completion date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let done = NaiveDate::from_ymd_opt(2025, 1, 20).map(DateValue::from);
+    /// let dates = TaskDates::new(None, None, None, None, done, None);
+    /// assert_eq!(dates.done(), done);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn done(&self) -> Option<DateValue> {
+        self.done
+    }
+
+    /// Returns the task's cancellation date, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDates};
+    ///
+    /// let cancelled = NaiveDate::from_ymd_opt(2025, 1, 22).map(DateValue::from);
+    /// let dates = TaskDates::new(None, None, None, None, None, cancelled);
+    /// assert_eq!(dates.cancelled(), cancelled);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn cancelled(&self) -> Option<DateValue> {
+        self.cancelled
+    }
+}
+
+/// Error type for task domain parsing failures.
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+pub enum TaskError {
+    /// No task priority name or emoji matched `input`.
+    #[error("unrecognized task priority: {input:?}")]
+    InvalidPriority {
+        /// The unrecognized input.
+        input: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,6 +928,159 @@ mod tests {
         #[test]
         fn returns_empty_string_for_whitespace_only_input() {
             assert_eq!(normalize_name("   "), "");
+        }
+    }
+
+    mod task_priority {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case(TaskPriority::Lowest, "lowest")]
+        #[case(TaskPriority::Low, "low")]
+        #[case(TaskPriority::Normal, "normal")]
+        #[case(TaskPriority::Medium, "medium")]
+        #[case(TaskPriority::High, "high")]
+        #[case(TaskPriority::Highest, "highest")]
+        fn returns_canonical_name_for_each_level(
+            #[case] priority: TaskPriority,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(priority.as_str(), expected);
+            assert_eq!(format!("{priority}"), expected);
+        }
+
+        #[rstest]
+        #[case("🔺", Some(TaskPriority::Highest))]
+        #[case("🔺\u{FE0F}", Some(TaskPriority::Highest))]
+        #[case("⏫", Some(TaskPriority::High))]
+        #[case("⏫\u{FE0F}", Some(TaskPriority::High))]
+        #[case("🔼", Some(TaskPriority::Medium))]
+        #[case("🔼\u{FE0F}", Some(TaskPriority::Medium))]
+        #[case("🔽", Some(TaskPriority::Low))]
+        #[case("🔽\u{FE0F}", Some(TaskPriority::Low))]
+        #[case("⏬", Some(TaskPriority::Lowest))]
+        #[case("⏬\u{FE0F}", Some(TaskPriority::Lowest))]
+        #[case("⭐", None)]
+        #[case("", None)]
+        fn parses_priority_emojis_with_and_without_variation_selector(
+            #[case] emoji: &str,
+            #[case] expected: Option<TaskPriority>,
+        ) {
+            assert_eq!(TaskPriority::from_emoji(emoji), expected);
+        }
+
+        #[rstest]
+        #[case("lowest", Ok(TaskPriority::Lowest))]
+        #[case("LOW", Ok(TaskPriority::Low))]
+        #[case("Normal", Ok(TaskPriority::Normal))]
+        #[case("medium", Ok(TaskPriority::Medium))]
+        #[case("HIGH", Ok(TaskPriority::High))]
+        #[case("highest", Ok(TaskPriority::Highest))]
+        #[case("🔺", Ok(TaskPriority::Highest))]
+        #[case(
+            "invalid",
+            Err(TaskError::InvalidPriority {
+                input: "invalid".to_owned(),
+            })
+        )]
+        fn parses_names_and_emojis_case_insensitively(
+            #[case] input: &str,
+            #[case] expected: Result<TaskPriority, TaskError>,
+        ) {
+            assert_eq!(input.parse::<TaskPriority>(), expected);
+        }
+
+        #[test]
+        fn accepts_priority_emoji_with_repeated_variation_selectors() {
+            assert_eq!(
+                TaskPriority::from_emoji("🔺\u{FE0F}\u{FE0F}"),
+                Some(TaskPriority::Highest)
+            );
+        }
+
+        #[test]
+        fn orders_priorities_from_lowest_to_highest() {
+            assert!(TaskPriority::Lowest < TaskPriority::Low);
+            assert!(TaskPriority::Low < TaskPriority::Normal);
+            assert!(TaskPriority::Normal < TaskPriority::Medium);
+            assert!(TaskPriority::Medium < TaskPriority::High);
+            assert!(TaskPriority::High < TaskPriority::Highest);
+        }
+    }
+
+    mod task_dates {
+        use chrono::NaiveDate;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn is_empty_when_all_dates_are_absent() {
+            let dates = TaskDates::default();
+
+            assert_eq!(dates.is_empty(), true);
+        }
+
+        #[test]
+        fn is_not_empty_when_a_lifecycle_date_is_present() {
+            let dates = TaskDates::new(
+                None,
+                None,
+                None,
+                NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into),
+                None,
+                None,
+            );
+
+            assert_eq!(dates.is_empty(), false);
+        }
+
+        #[test]
+        fn returns_configured_date_values() {
+            let created =
+                NaiveDate::from_ymd_opt(2025, 1, 1).map(DateValue::from);
+            let scheduled =
+                NaiveDate::from_ymd_opt(2025, 1, 2).map(DateValue::from);
+            let start =
+                NaiveDate::from_ymd_opt(2025, 1, 3).map(DateValue::from);
+            let due = NaiveDate::from_ymd_opt(2025, 1, 4).map(DateValue::from);
+            let done = NaiveDate::from_ymd_opt(2025, 1, 5).map(DateValue::from);
+            let cancelled =
+                NaiveDate::from_ymd_opt(2025, 1, 6).map(DateValue::from);
+            let dates =
+                TaskDates::new(created, scheduled, start, due, done, cancelled);
+
+            assert_eq!(dates.created(), created);
+            assert_eq!(dates.scheduled(), scheduled);
+            assert_eq!(dates.start(), start);
+            assert_eq!(dates.due(), due);
+            assert_eq!(dates.done(), done);
+            assert_eq!(dates.cancelled(), cancelled);
+        }
+
+        #[test]
+        fn preserves_all_none_dates_across_postcard_roundtrip() {
+            let dates = TaskDates::default();
+            let bytes = postcard::to_allocvec(&dates).expect("encode dates");
+            let decoded: TaskDates =
+                postcard::from_bytes(&bytes).expect("decode dates");
+
+            assert_eq!(decoded, dates);
+        }
+
+        #[test]
+        fn preserves_partially_populated_dates_across_postcard_roundtrip() {
+            let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
+            let dates = TaskDates::new(None, None, None, due, None, None);
+            let bytes = postcard::to_allocvec(&dates).expect("encode dates");
+            let decoded: TaskDates =
+                postcard::from_bytes(&bytes).expect("decode dates");
+
+            assert_eq!(decoded, dates);
+            assert_eq!(decoded.due(), due);
         }
     }
 }

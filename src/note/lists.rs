@@ -1,162 +1,119 @@
-//! Markdown list, list item, and task-list structures.
+//! Markdown list items and task-list structures.
 //!
-//! This module defines the core data model for ordered and unordered Markdown
-//! lists, individual list items, task-specific metadata, and recursive task
-//! iterators.
+//! This module defines the flat list-item data model. Items are stored in
+//! strict document order inside a [`Note`](crate::Note); hierarchy is
+//! reconstructed from each item's `depth` and `parent` source line rather
+//! than from child containers.
 //!
 //! # Key Types
 //!
-//! - [`List`]: An ordered or unordered Markdown list holding direct child
-//!   items.
-//! - [`ListItem`]: A list item with a classified [`ListItemType`], child lists,
-//!   inline fields, and source positioning.
+//! - [`ListItem`]: A list item with a classified [`ListItemType`], inline
+//!   fields, tags, and source positioning.
 //! - [`ListItemType`]: Classification of an item as a plain bullet, a checkbox,
 //!   or a task carrying a [`TaskListItem`].
 //! - [`TaskListItem`]: Task-specific metadata (resolved status, priority,
 //!   dates, and precomputed subtree completion state) carried by
 //!   [`ListItemType::Task`].
-//! - [`TaskPriority`]: Six-level task priority enum mapped to emoji and text
-//!   representations.
-//! - [`TaskDates`]: Six distinct task-lifecycle calendar dates (created,
-//!   scheduled, start, due, done, cancelled).
 //! - [`ListText`]: Dual-representation text container maintaining both raw
 //!   source and clean display text.
-//! - [`ListItemIter`]: A depth-first iterator yielding all list items across
-//!   top-level and nested child lists in document order, optionally filtered to
-//!   [`ListItemType::Task`] items.
-use chrono::NaiveDate;
+//! - [`descendants_of`]: Contiguous slice scan yielding the items following a
+//!   parent within a document-order slice.
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, Tag, TaskStatus};
-/// An ordered or unordered Markdown list.
-///
-/// Holds direct child [`ListItem`] elements and a flag indicating whether the
-/// list is numbered (ordered) or bulleted (unordered).
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct List {
-    is_ordered: bool,
-    items: Box<[ListItem]>,
-}
+use crate::{FieldKey, SourceLine, Tag, TaskDates, TaskPriority, TaskStatus};
+/// Compact inline field map for a list item.
+pub(crate) type ListFieldMap = IndexMap<FieldKey, Box<[NoteFieldValue]>>;
 
-impl List {
-    /// Creates a list from its ordering flag and direct child items.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new<I: Into<Box<[ListItem]>>>(
-        is_ordered: bool,
-        items: I,
-    ) -> Self {
-        Self {
-            is_ordered,
-            items: items.into(),
-        }
-    }
-
-    /// Returns `true` if this is an ordered list.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for List accessor \
-                      symmetry with its fields"
-        )
-    )]
-    pub(crate) const fn is_ordered(&self) -> bool {
-        self.is_ordered
-    }
-
-    /// Returns the direct child items in this list.
-    ///
-    /// Does not include descendant items nested inside child lists.
-    #[inline]
-    #[must_use]
-    pub fn items(&self) -> &[ListItem] {
-        &self.items
-    }
-}
-/// A Markdown list item with a classified [`ListItemType`], child lists,
-/// inline fields, and item-level tags.
-///
-/// Stores both raw and normalized text representations via [`ListText`], nested
-/// child [`List`] structures, extracted Dataview-style inline fields, tags
-/// scanned from the item's own text, and source line positioning information.
+/// A Markdown list item with a classified [`ListItemType`], inline fields,
+/// tags, and source line positioning information.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: ListText,
     kind: ListItemType,
-    children: Box<[List]>,
-    fields: IndexMap<FieldKey, Box<[NoteFieldValue]>>,
+    depth: u8,
+    line: SourceLine,
+    parent: Option<SourceLine>,
+    is_ordered: bool,
+    fields: Option<Box<ListFieldMap>>,
     tags: Box<[Tag]>,
-    position: ListItemPosition,
 }
 
 impl ListItem {
-    /// Creates a list item without child lists.
+    /// Creates a list item with its source line and classification.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for ListItem \
-                      constructor symmetry with with_children"
-        )
-    )]
-    pub(crate) fn new(text: impl Into<ListText>, kind: ListItemType) -> Self {
-        Self {
-            text: text.into(),
-            kind,
-            children: Box::default(),
-            fields: IndexMap::new(),
-            tags: Box::default(),
-            position: ListItemPosition::default(),
-        }
-    }
-
-    /// Creates a list item with nested child lists.
-    ///
-    /// The item starts with no inline fields. Attach fields parsed from the
-    /// item's own text with [`Self::with_fields`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn with_children<T: Into<ListText>, C: Into<Box<[List]>>>(
+    pub fn new<T: Into<ListText>>(
+        line: SourceLine,
         text: T,
         kind: ListItemType,
-        children: C,
     ) -> Self {
         Self {
             text: text.into(),
             kind,
-            children: children.into(),
-            fields: IndexMap::new(),
+            depth: 0,
+            line,
+            parent: None,
+            is_ordered: false,
+            fields: None,
             tags: Box::default(),
-            position: ListItemPosition::default(),
         }
+    }
+
+    /// Creates a test list item with a default source line
+    /// ([`SourceLine::MIN`]).
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn for_test<T: Into<ListText>>(text: T, kind: ListItemType) -> Self {
+        Self::new(SourceLine::MIN, text, kind)
+    }
+
+    /// Attaches the item's 0-indexed nesting depth.
+    #[inline]
+    #[must_use]
+    pub fn with_depth(mut self, depth: u8) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    /// Attaches the item's immediate parent's 1-indexed source line.
+    #[inline]
+    #[must_use]
+    pub fn with_parent(mut self, parent: Option<SourceLine>) -> Self {
+        self.parent = parent;
+        self
+    }
+
+    /// Attaches whether the item belongs to an ordered list.
+    #[inline]
+    #[must_use]
+    pub fn with_is_ordered(mut self, is_ordered: bool) -> Self {
+        self.is_ordered = is_ordered;
+        self
     }
 
     /// Attaches inline fields parsed from this item's own text.
     ///
-    /// [`Note::inline_fields`] also includes these fields for page-level
-    /// queries. This per-item list preserves the field-to-item relationship for
-    /// task and list queries.
-    ///
-    /// [`Note::inline_fields`]: crate::Note::inline_fields
+    /// Stores `None` when `fields` is empty to avoid heap-allocating an empty
+    /// map.
     #[inline]
     #[must_use]
     pub(crate) fn with_fields(
         mut self,
         fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     ) -> Self {
-        self.fields.clear();
-        self.fields.extend(
-            fields
+        self.fields = if fields.is_empty() {
+            None
+        } else {
+            let boxed: IndexMap<FieldKey, Box<[NoteFieldValue]>> = fields
                 .into_iter()
-                .map(|(key, values)| (key, values.into_boxed_slice())),
-        );
+                .map(|(key, values)| (key, values.into_boxed_slice()))
+                .collect();
+            Some(Box::new(boxed))
+        };
         self
     }
 
@@ -164,7 +121,7 @@ impl ListItem {
     ///
     /// Uses the same tag-token lexer that scans note body text; these are the
     /// same tags already consulted for task tag filter classification,
-    /// re-surfaced here as queryable data rather than discarded after
+    /// resurfaced here as queryable data rather than discarded after
     /// classification decides.
     #[inline]
     #[must_use]
@@ -182,8 +139,8 @@ impl ListItem {
         &self.tags
     }
 
-    /// Returns the plain or normalized text representation holding both raw
-    /// and clean variants.
+    /// Returns the plain or normalized text representation holding both raw and
+    /// clean variants.
     #[inline]
     #[must_use]
     pub fn text(&self) -> &ListText {
@@ -216,86 +173,49 @@ impl ListItem {
         &self.kind
     }
 
-    /// Returns the nested lists under this item.
-    #[inline]
-    #[must_use]
-    pub(crate) fn children(&self) -> &[List] {
-        &self.children
-    }
-
-    /// Returns the inline fields parsed from this item's own text.
-    ///
-    /// Task items also recognize date shorthand emoji such as `🗓️`, `➕`, `🛫`,
-    /// `⏳`, and `✅`.
+    /// Returns the inline fields parsed from this item's own text, or `None` if
+    /// the item carries no inline fields.
     #[inline]
     #[must_use]
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "no current caller outside tests; kept for ListItem \
-                      accessor symmetry with its fields"
+            reason = "part of ListItem API; consumed by query resolution in \
+                      issue 08"
         )
     )]
-    pub(crate) fn fields(&self) -> &IndexMap<FieldKey, Box<[NoteFieldValue]>> {
-        &self.fields
-    }
-
-    /// Returns a clone of this item with its descendant lists cleared.
-    ///
-    /// Used when persisting a list item independently of its subtree: each
-    /// descendant is its own persisted row, addressable by its own line
-    /// number, so nesting a copy of every descendant inside every ancestor's
-    /// persisted value would duplicate that data once per ancestor.
-    #[inline]
-    #[must_use]
-    pub(crate) fn without_children(&self) -> Self {
-        Self {
-            text: self.text.clone(),
-            kind: self.kind.clone(),
-            children: Box::default(),
-            fields: self.fields.clone(),
-            tags: self.tags.clone(),
-            position: self.position,
-        }
-    }
-
-    /// Attaches the source position (depth, line, parent line) computed by
-    /// the parser from Markdown byte offsets.
-    ///
-    /// Items built via [`Self::new`] or [`Self::with_children`] default to
-    /// [`ListItemPosition::default`] until this is called.
-    #[inline]
-    #[must_use]
-    pub(super) const fn with_position(
-        mut self,
-        position: ListItemPosition,
-    ) -> Self {
-        self.position = position;
-        self
+    pub(crate) fn fields(&self) -> Option<&ListFieldMap> {
+        self.fields.as_deref()
     }
 
     /// Returns the item's 0-indexed nesting level.
     #[inline]
     #[must_use]
-    pub(crate) const fn depth(&self) -> u8 {
-        self.position.depth()
+    pub const fn depth(&self) -> u8 {
+        self.depth
     }
 
-    /// Returns the item's 1-indexed source line, or `None` if the position
-    /// has not been assigned yet.
+    /// Returns the item's 1-indexed source line.
     #[inline]
     #[must_use]
-    pub(crate) const fn line(&self) -> Option<SourceLine> {
-        self.position.line()
+    pub const fn line(&self) -> SourceLine {
+        self.line
     }
 
-    /// Returns the immediate parent list item's 1-indexed source line, if
-    /// this item is nested inside another list item.
+    /// Returns the immediate parent list item's 1-indexed source line, if this
+    /// item is nested inside another list item.
     #[inline]
     #[must_use]
-    pub(crate) const fn parent(&self) -> Option<SourceLine> {
-        self.position.parent()
+    pub const fn parent(&self) -> Option<SourceLine> {
+        self.parent
+    }
+
+    /// Returns `true` if this item is part of an ordered list.
+    #[inline]
+    #[must_use]
+    pub const fn is_ordered(&self) -> bool {
+        self.is_ordered
     }
 }
 
@@ -343,8 +263,8 @@ impl ListItemType {
         matches!(self, Self::Task(_))
     }
 
-    /// Returns this item's [`TaskListItem`] data, or [`None`] if this list
-    /// item is not classified as a Task.
+    /// Returns this item's [`TaskListItem`] data, or [`None`] if this list item
+    /// is not classified as a Task.
     ///
     /// # Examples
     ///
@@ -433,8 +353,8 @@ pub struct TaskListItem {
 }
 
 impl TaskListItem {
-    /// Creates a task list item with its dates, priority, resolved status,
-    /// and precomputed fully-complete state.
+    /// Creates a task list item with its dates, priority, resolved status, and
+    /// precomputed fully-complete state.
     ///
     /// # Examples
     ///
@@ -509,16 +429,6 @@ impl TaskListItem {
         self.fully_complete
     }
 
-    /// Returns `true` if all descendant tasks in this item's subtree are
-    /// resolved (done or cancelled), or if this item has no descendant tasks.
-    ///
-    /// Alias for [`Self::is_fully_complete`].
-    #[inline]
-    #[must_use]
-    pub const fn fully_complete(&self) -> bool {
-        self.is_fully_complete()
-    }
-
     /// Returns the task's priority, or [`None`] if no priority was specified.
     ///
     /// # Examples
@@ -562,354 +472,6 @@ impl TaskListItem {
     }
 }
 
-/// Task priority level.
-///
-/// Supports six priority levels ordered from lowest to highest:
-/// [`Self::Lowest`] < [`Self::Low`] < [`Self::Normal`] < [`Self::Medium`] <
-/// [`Self::High`] < [`Self::Highest`].
-///
-/// # Examples
-///
-/// ```rust
-/// use traces_pkm::TaskPriority;
-///
-/// assert!(TaskPriority::Highest > TaskPriority::High);
-/// assert!(TaskPriority::High > TaskPriority::Medium);
-/// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
-/// ```
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskPriority {
-    /// Lowest priority (`⏬`).
-    Lowest,
-    /// Low priority (`🔽`).
-    Low,
-    /// Normal priority (stored as `None` on [`TaskListItem`] when unspecified).
-    Normal,
-    /// Medium priority (`🔼`).
-    Medium,
-    /// High priority (`⏫`).
-    High,
-    /// Highest priority (`🔺`).
-    Highest,
-}
-impl TaskPriority {
-    /// Returns the canonical lowercase string name of the priority.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use traces_pkm::TaskPriority;
-    ///
-    /// assert_eq!(TaskPriority::Highest.as_str(), "highest");
-    /// assert_eq!(TaskPriority::Normal.as_str(), "normal");
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Lowest => "lowest",
-            Self::Low => "low",
-            Self::Normal => "normal",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Highest => "highest",
-        }
-    }
-
-    /// Parses a priority from an emoji, with or without variation selector 16
-    /// (`\u{FE0F}`).
-    ///
-    /// | Emoji | Priority |
-    /// | ----- | -------- |
-    /// | 🔺    | highest  |
-    /// | ⏫    | high     |
-    /// | 🔼    | medium   |
-    /// | 🔽    | low      |
-    /// | ⏬    | lowest   |
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use traces_pkm::TaskPriority;
-    ///
-    /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
-    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
-    /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub fn from_emoji(emoji: &str) -> Option<Self> {
-        let trimmed = emoji.trim_end_matches('\u{FE0F}');
-        match trimmed {
-            "\u{1F53A}" => Some(Self::Highest),
-            "\u{23EB}" => Some(Self::High),
-            "\u{1F53C}" => Some(Self::Medium),
-            "\u{1F53D}" => Some(Self::Low),
-            "\u{23EC}" => Some(Self::Lowest),
-            _ => None,
-        }
-    }
-
-    /// Returns the canonical emoji representation for this priority, or
-    /// [`None`] for [`Self::Normal`].
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use traces_pkm::TaskPriority;
-    ///
-    /// assert_eq!(TaskPriority::Highest.emoji(), Some("🔺"));
-    /// assert_eq!(TaskPriority::Normal.emoji(), None);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn emoji(&self) -> Option<&'static str> {
-        match self {
-            Self::Highest => Some("🔺"),
-            Self::High => Some("⏫"),
-            Self::Medium => Some("🔼"),
-            Self::Low => Some("🔽"),
-            Self::Lowest => Some("⏬"),
-            Self::Normal => None,
-        }
-    }
-}
-
-impl std::fmt::Display for TaskPriority {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for TaskPriority {
-    type Err = ();
-
-    #[inline]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "lowest" => Ok(Self::Lowest),
-            "low" => Ok(Self::Low),
-            "normal" => Ok(Self::Normal),
-            "medium" => Ok(Self::Medium),
-            "high" => Ok(Self::High),
-            "highest" => Ok(Self::Highest),
-            _ => Self::from_emoji(s).ok_or(()),
-        }
-    }
-}
-
-/// Date metadata associated with a [`TaskListItem`].
-///
-/// Stores six distinct task-lifecycle dates parsed from emoji shorthand or
-/// Dataview inline field syntax. Missing dates are represented as [`None`].
-///
-/// # Examples
-///
-/// ```rust
-/// use chrono::NaiveDate;
-/// use traces_pkm::TaskDates;
-///
-/// let mut dates = TaskDates::default();
-/// dates.due = NaiveDate::from_ymd_opt(2025, 1, 15);
-/// assert!(!dates.is_empty());
-/// assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
-/// ```
-#[derive(
-    Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
-)]
-pub struct TaskDates {
-    /// Date when the task was created (`➕` or `[created::]`).
-    pub created: Option<NaiveDate>,
-    /// Date when the task is scheduled (`⏳` or `[scheduled::]`).
-    pub scheduled: Option<NaiveDate>,
-    /// Date when work on the task begins (`🛫` or `[start::]`).
-    pub start: Option<NaiveDate>,
-    /// Date when the task is due (`📅` or `[due::]`).
-    pub due: Option<NaiveDate>,
-    /// Date when the task was completed (`✅` or `[done::]`).
-    pub done: Option<NaiveDate>,
-    /// Date when the task was cancelled (`❌` or `[cancelled::]`).
-    pub cancelled: Option<NaiveDate>,
-}
-impl TaskDates {
-    /// Creates a new `TaskDates` instance with all dates specified.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let due = NaiveDate::from_ymd_opt(2025, 1, 15);
-    /// let dates = TaskDates::new(None, None, None, due, None, None);
-    /// assert_eq!(dates.due(), due);
-    /// ```
-    #[inline]
-    #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "constructor accepts all 6 task dates"
-    )]
-    pub const fn new(
-        created: Option<NaiveDate>,
-        scheduled: Option<NaiveDate>,
-        start: Option<NaiveDate>,
-        due: Option<NaiveDate>,
-        done: Option<NaiveDate>,
-        cancelled: Option<NaiveDate>,
-    ) -> Self {
-        Self {
-            created,
-            scheduled,
-            start,
-            due,
-            done,
-            cancelled,
-        }
-    }
-
-    /// Returns `true` if no dates are set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use traces_pkm::TaskDates;
-    ///
-    /// assert!(TaskDates::default().is_empty());
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.created.is_none()
-            && self.scheduled.is_none()
-            && self.start.is_none()
-            && self.due.is_none()
-            && self.done.is_none()
-            && self.cancelled.is_none()
-    }
-
-    /// Returns the task's creation date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let mut dates = TaskDates::default();
-    /// dates.created = NaiveDate::from_ymd_opt(2025, 1, 1);
-    /// assert_eq!(dates.created(), NaiveDate::from_ymd_opt(2025, 1, 1));
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn created(&self) -> Option<NaiveDate> {
-        self.created
-    }
-
-    /// Returns the task's scheduled date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let mut dates = TaskDates::default();
-    /// dates.scheduled = NaiveDate::from_ymd_opt(2025, 1, 10);
-    /// assert_eq!(dates.scheduled(), NaiveDate::from_ymd_opt(2025, 1, 10));
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn scheduled(&self) -> Option<NaiveDate> {
-        self.scheduled
-    }
-
-    /// Returns the task's start date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let mut dates = TaskDates::default();
-    /// dates.start = NaiveDate::from_ymd_opt(2025, 1, 12);
-    /// assert_eq!(dates.start(), NaiveDate::from_ymd_opt(2025, 1, 12));
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn start(&self) -> Option<NaiveDate> {
-        self.start
-    }
-
-    /// Returns the task's due date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let mut dates = TaskDates::default();
-    /// dates.due = NaiveDate::from_ymd_opt(2025, 1, 15);
-    /// assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn due(&self) -> Option<NaiveDate> {
-        self.due
-    }
-
-    /// Returns the task's completion date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let mut dates = TaskDates::default();
-    /// dates.done = NaiveDate::from_ymd_opt(2025, 1, 20);
-    /// assert_eq!(dates.done(), NaiveDate::from_ymd_opt(2025, 1, 20));
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn done(&self) -> Option<NaiveDate> {
-        self.done
-    }
-
-    /// Returns the task's cancellation date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::TaskDates;
-    ///
-    /// let mut dates = TaskDates::default();
-    /// dates.cancelled = NaiveDate::from_ymd_opt(2025, 1, 22);
-    /// assert_eq!(dates.cancelled(), NaiveDate::from_ymd_opt(2025, 1, 22));
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn cancelled(&self) -> Option<NaiveDate> {
-        self.cancelled
-    }
-}
-
 /// Text representation of a list item holding both raw source-like text and
 /// cleaned display text.
 ///
@@ -933,13 +495,14 @@ impl TaskDates {
 )]
 pub struct ListText {
     /// Source text minus the leading `[<char>] ` marker prefix only.
-    pub raw: String,
-    /// Normalized display text with task metadata stripped.
-    pub clean: String,
+    raw: String,
+    /// Normalized display text with task metadata stripped, or `None` when
+    /// identical to `raw`.
+    clean: Option<String>,
 }
 
 impl ListText {
-    /// Creates a new `ListText` from raw and clean text representations.
+    /// Creates a new [`Self`] from raw and clean text representations.
     ///
     /// # Examples
     ///
@@ -952,9 +515,16 @@ impl ListText {
     #[inline]
     #[must_use]
     pub fn new<R: Into<String>, C: Into<String>>(raw: R, clean: C) -> Self {
+        let raw = raw.into();
+        let clean = clean.into();
+        let clean = if clean == raw {
+            None
+        } else {
+            Some(clean)
+        };
         Self {
-            raw: raw.into(),
-            clean: clean.into(),
+            raw,
+            clean,
         }
     }
 
@@ -987,13 +557,13 @@ impl ListText {
     #[inline]
     #[must_use]
     pub fn clean(&self) -> &str {
-        &self.clean
+        self.clean.as_deref().unwrap_or(&self.raw)
     }
 }
 impl std::fmt::Display for ListText {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.clean)
+        f.write_str(self.clean())
     }
 }
 
@@ -1002,7 +572,7 @@ impl From<&str> for ListText {
     fn from(s: &str) -> Self {
         Self {
             raw: s.to_owned(),
-            clean: s.to_owned(),
+            clean: None,
         }
     }
 }
@@ -1011,8 +581,8 @@ impl From<String> for ListText {
     #[inline]
     fn from(s: String) -> Self {
         Self {
-            raw: s.clone(),
-            clean: s,
+            raw: s,
+            clean: None,
         }
     }
 }
@@ -1020,20 +590,14 @@ impl From<String> for ListText {
 impl From<(&str, &str)> for ListText {
     #[inline]
     fn from((raw, clean): (&str, &str)) -> Self {
-        Self {
-            raw: raw.to_owned(),
-            clean: clean.to_owned(),
-        }
+        Self::new(raw, clean)
     }
 }
 
 impl From<(String, String)> for ListText {
     #[inline]
     fn from((raw, clean): (String, String)) -> Self {
-        Self {
-            raw,
-            clean,
-        }
+        Self::new(raw, clean)
     }
 }
 impl AsRef<str> for ListText {
@@ -1071,134 +635,22 @@ impl PartialEq<ListText> for &str {
     }
 }
 
-/// A depth-first iterator over top-level and nested child lists in document
-/// order, yielding either every item ([`Note::list_items`]) or only items
-/// classified as [`ListItemType::Task`] ([`Note::tasks`]).
+/// Returns an iterator over all descendant items of a list item with
+/// `parent_depth` from the following items in `slice`.
 ///
-/// [`Note::list_items`]: super::Note::list_items
-/// [`Note::tasks`]: super::Note::tasks
-#[derive(Clone, Debug)]
-pub struct ListItemIter<'a> {
-    stack: Vec<std::slice::Iter<'a, ListItem>>,
-    tasks_only: bool,
-}
-
-impl<'a> ListItemIter<'a> {
-    /// Starts depth-first iteration over every item in top-level `lists`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(lists: &'a [List]) -> Self {
-        Self::with_stack(lists, false)
-    }
-
-    /// Starts depth-first iteration over top-level `lists`, yielding only
-    /// items classified as [`ListItemType::Task`].
-    ///
-    /// Filters at yield time rather than traversal time: descending into a
-    /// non-task item's children is unaffected, so nested tasks under a plain
-    /// bullet or checkbox are still reached.
-    #[inline]
-    #[must_use]
-    pub(crate) fn tasks(lists: &'a [List]) -> Self {
-        Self::with_stack(lists, true)
-    }
-
-    /// Builds the shared traversal stack for [`Self::new`] and
-    /// [`Self::tasks`].
-    #[inline]
-    #[must_use]
-    fn with_stack(lists: &'a [List], tasks_only: bool) -> Self {
-        let mut stack = Vec::with_capacity(lists.len());
-        stack.extend(lists.iter().rev().map(|list| list.items().iter()));
-        Self {
-            stack,
-            tasks_only,
-        }
-    }
-}
-
-impl<'a> Iterator for ListItemIter<'a> {
-    type Item = &'a ListItem;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(items) = self.stack.last_mut() {
-            let Some(item) = items.next() else {
-                self.stack.pop();
-                continue;
-            };
-            self.stack.extend(
-                item.children().iter().rev().map(|list| list.items().iter()),
-            );
-            if !self.tasks_only || matches!(item.kind(), ListItemType::Task(_))
-            {
-                return Some(item);
-            }
-        }
-        None
-    }
-}
-
-impl std::iter::FusedIterator for ListItemIter<'_> {}
-
-/// A list item's position: its 0-indexed nesting depth, 1-indexed source line,
-/// and its immediate parent's 1-indexed line, if nested.
-///
-/// `depth` is a `u8`: nesting hundreds of levels deep in a Markdown list is
-/// degenerate input, not a real document, so a `usize` counter would spend
-/// seven unreachable bytes per item. Saturates at 255 rather than wrapping.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize,
-)]
-pub(super) struct ListItemPosition {
-    depth: u8,
-    line: Option<SourceLine>,
-    parent: Option<SourceLine>,
-}
-
-impl ListItemPosition {
-    /// Creates a position from its source line, 0-indexed nesting depth, and
-    /// optional parent line.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(
-        line: SourceLine,
-        depth: u8,
-        parent: Option<SourceLine>,
-    ) -> Self {
-        Self {
-            depth,
-            line: Some(line),
-            parent,
-        }
-    }
-
-    /// Returns the 0-indexed nesting level.
-    #[inline]
-    #[must_use]
-    pub(super) const fn depth(&self) -> u8 {
-        self.depth
-    }
-
-    /// Returns the 1-indexed source line, or `None` if the position has not
-    /// been assigned yet.
-    #[inline]
-    #[must_use]
-    pub(super) const fn line(&self) -> Option<SourceLine> {
-        self.line
-    }
-
-    /// Returns the immediate parent item's 1-indexed source line, if this
-    /// item is nested inside another item's child list.
-    #[inline]
-    #[must_use]
-    pub(super) const fn parent(&self) -> Option<SourceLine> {
-        self.parent
-    }
+/// Scans contiguous items in document order whose depth is strictly greater
+/// than `parent_depth`, stopping at the first sibling or ancestor item.
+#[inline]
+pub(crate) fn descendants_of(
+    slice: &[ListItem],
+    parent_depth: u8,
+) -> impl Iterator<Item = &ListItem> {
+    slice.iter().take_while(move |child| child.depth() > parent_depth)
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::NaiveDate;
     use rstest::rstest;
 
     use super::*;
@@ -1217,18 +669,6 @@ mod tests {
         ))
     }
 
-    fn todo_task() -> ListItemType {
-        ListItemType::Task(TaskListItem::new(
-            TaskDates::default(),
-            None,
-            TaskStatus::new(
-                TaskStatusSymbol::new(' '),
-                "Todo",
-                TaskStatusType::Todo,
-            ),
-            true,
-        ))
-    }
     mod list_item {
         use super::*;
 
@@ -1240,29 +680,10 @@ mod tests {
             #[case::plain(ListItemType::Plain)]
             #[case::checkbox(ListItemType::Checkbox)]
             #[case::task(done_task())]
-            fn stores_the_given_kind(#[case] kind: ListItemType) {
-                let item = ListItem::new("task item", kind.clone());
+            fn preserves_the_constructed_item_kind(#[case] kind: ListItemType) {
+                let item = ListItem::for_test("task item", kind.clone());
 
-                assert_eq!(item.text().raw(), "task item");
-                assert_eq!(item.text().clean(), "task item");
-                assert_eq!(item.raw_text(), "task item");
-                assert_eq!(item.clean_text(), "task item");
                 assert_eq!(item.kind(), &kind);
-            }
-
-            #[test]
-            fn stores_child_lists_when_constructed_with_children() {
-                let child = List::new(false, vec![ListItem::new(
-                    "child",
-                    ListItemType::Plain,
-                )]);
-                let item = ListItem::with_children(
-                    "parent",
-                    ListItemType::Plain,
-                    vec![child.clone()],
-                );
-
-                assert_eq!(item.children(), [child]);
             }
         }
 
@@ -1280,22 +701,31 @@ mod tests {
                 fields.insert(key.clone(), vec![NoteFieldValue::String(
                     "high".to_owned(),
                 )]);
-                let item =
-                    ListItem::new("task item", done_task()).with_fields(fields);
-
+                let item = ListItem::for_test("task item", done_task())
+                    .with_fields(fields);
                 let mut expected = IndexMap::new();
                 expected.insert(
                     key,
                     vec![NoteFieldValue::String("high".to_owned())]
                         .into_boxed_slice(),
                 );
-                assert_eq!(item.fields(), &expected);
+                assert_eq!(item.fields(), Some(&expected));
             }
             #[test]
             fn has_no_fields_by_default() {
-                let item = ListItem::new("plain item", ListItemType::Plain);
+                let item =
+                    ListItem::for_test("plain item", ListItemType::Plain);
 
-                assert!(item.fields().is_empty());
+                assert_eq!(item.fields(), None);
+            }
+
+            #[test]
+            fn drops_an_explicit_empty_field_map() {
+                let item =
+                    ListItem::for_test("plain item", ListItemType::Plain)
+                        .with_fields(IndexMap::new());
+
+                assert_eq!(item.fields(), None);
             }
         }
 
@@ -1307,7 +737,7 @@ mod tests {
             #[test]
             fn stores_tags_when_attached_with_with_tags() {
                 let tags = vec![Tag::parse("#project").expect("valid tag")];
-                let item = ListItem::new("task item", done_task())
+                let item = ListItem::for_test("task item", done_task())
                     .with_tags(tags.clone());
 
                 assert_eq!(item.tags(), tags.as_slice());
@@ -1315,7 +745,8 @@ mod tests {
 
             #[test]
             fn has_no_tags_by_default() {
-                let item = ListItem::new("plain item", ListItemType::Plain);
+                let item =
+                    ListItem::for_test("plain item", ListItemType::Plain);
 
                 assert_eq!(item.tags(), []);
             }
@@ -1327,118 +758,122 @@ mod tests {
             use super::*;
             #[test]
             fn defaults_position_to_zero_and_no_parent() {
-                let item = ListItem::new("item", ListItemType::Plain);
+                let item = ListItem::new(
+                    SourceLine::new(5).expect("non-zero"),
+                    "item",
+                    ListItemType::Plain,
+                );
 
                 assert_eq!(item.depth(), 0);
+                assert_eq!(item.line(), SourceLine::new(5).expect("non-zero"));
                 assert_eq!(item.parent(), None);
+                assert!(!item.is_ordered());
             }
 
             #[test]
-            fn with_position_sets_line_depth_and_parent() {
-                let position = ListItemPosition::new(
+            fn builders_set_depth_parent_and_ordering() {
+                let item = ListItem::new(
                     SourceLine::new(3).expect("non-zero"),
-                    2,
-                    Some(SourceLine::new(1).expect("non-zero")),
-                );
-                let item = ListItem::new("item", ListItemType::Plain)
-                    .with_position(position);
+                    "item",
+                    ListItemType::Plain,
+                )
+                .with_depth(2)
+                .with_parent(Some(SourceLine::new(1).expect("non-zero")))
+                .with_is_ordered(true);
 
-                assert_eq!(
-                    item.line(),
-                    Some(SourceLine::new(3).expect("non-zero"))
-                );
+                assert_eq!(item.line(), SourceLine::new(3).expect("non-zero"));
                 assert_eq!(item.depth(), 2);
                 assert_eq!(
                     item.parent(),
                     Some(SourceLine::new(1).expect("non-zero"))
                 );
+                assert!(item.is_ordered());
             }
         }
     }
 
-    mod list {
-        use super::*;
-
-        mod constructor {
-            use pretty_assertions::assert_eq;
-
-            use super::*;
-            #[test]
-            fn stores_ordering_and_items() {
-                let item = ListItem::new("task item", done_task());
-                let list = List::new(true, vec![item.clone()]);
-
-                assert_eq!(list.is_ordered(), true);
-                assert_eq!(list.items(), [item]);
-            }
-        }
-    }
-
-    mod list_item_iter {
+    mod descendants {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn yields_all_items_depth_first_across_nested_lists() {
-            let grandchild_plain =
-                ListItem::new("grandchild plain", ListItemType::Plain);
-            let child_checkbox = ListItem::with_children(
-                "child checkbox",
-                ListItemType::Checkbox,
-                vec![List::new(false, vec![grandchild_plain])],
-            );
-            let parent_task =
-                ListItem::with_children("parent task", todo_task(), vec![
-                    List::new(false, vec![child_checkbox]),
-                ]);
-            let sibling = ListItem::new("sibling item", done_task());
-            let lists = vec![
-                List::new(false, vec![parent_task]),
-                List::new(false, vec![sibling]),
-            ];
+        fn yields_all_descendant_items_whose_depth_is_greater() {
+            let parent = ListItem::new(
+                SourceLine::new(1).expect("non-zero"),
+                "parent",
+                ListItemType::Plain,
+            )
+            .with_depth(0);
+            let child1 = ListItem::new(
+                SourceLine::new(2).expect("non-zero"),
+                "child 1",
+                ListItemType::Plain,
+            )
+            .with_depth(1)
+            .with_parent(Some(SourceLine::new(1).expect("non-zero")));
+            let grandchild = ListItem::new(
+                SourceLine::new(3).expect("non-zero"),
+                "grandchild",
+                ListItemType::Plain,
+            )
+            .with_depth(2)
+            .with_parent(Some(SourceLine::new(2).expect("non-zero")));
+            let child2 = ListItem::new(
+                SourceLine::new(4).expect("non-zero"),
+                "child 2",
+                ListItemType::Plain,
+            )
+            .with_depth(1)
+            .with_parent(Some(SourceLine::new(1).expect("non-zero")));
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain)
+                .with_depth(0);
 
-            let iter = ListItemIter::new(&lists);
-            let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
+            let slice = [parent, child1, grandchild, child2, sibling];
+            let desc: Vec<&str> = descendants_of(&slice[1..], 0)
+                .map(ListItem::clean_text)
+                .collect();
+            assert_eq!(desc, ["child 1", "grandchild", "child 2"]);
 
-            assert_eq!(texts, [
-                "parent task",
-                "child checkbox",
-                "grandchild plain",
-                "sibling item"
-            ]);
+            let child1_desc: Vec<&str> = descendants_of(&slice[2..], 1)
+                .map(ListItem::clean_text)
+                .collect();
+            assert_eq!(child1_desc, ["grandchild"]);
         }
 
         #[test]
-        fn tasks_yields_only_task_items_depth_first_across_nested_lists() {
-            let subchild_task = ListItem::new("subchild task", done_task());
-            let child_checkbox = ListItem::with_children(
-                "child checkbox",
-                ListItemType::Checkbox,
-                vec![List::new(false, vec![subchild_task])],
-            );
-            let parent_task =
-                ListItem::with_children("parent task", todo_task(), vec![
-                    List::new(false, vec![child_checkbox]),
-                ]);
-            let plain = ListItem::new("plain item", ListItemType::Plain);
-            let lists = vec![List::new(false, vec![parent_task, plain])];
-
-            let iter = ListItemIter::tasks(&lists);
-            let texts: Vec<&str> = iter.map(ListItem::clean_text).collect();
-
-            assert_eq!(texts, ["parent task", "subchild task"]);
+        fn returns_empty_iterator_when_no_descendants_exist() {
+            let parent =
+                ListItem::for_test("parent", ListItemType::Plain).with_depth(0);
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain)
+                .with_depth(0);
+            let slice = [parent, sibling];
+            assert_eq!(descendants_of(&slice[1..], 0).count(), 0);
         }
 
         #[test]
-        fn returns_none_for_empty_lists() {
-            let lists: Vec<List> = Vec::new();
-            let mut iter = ListItemIter::new(&lists);
+        fn returns_no_items_for_an_empty_slice() {
+            assert_eq!(descendants_of(&[], 0).count(), 0);
+        }
 
-            assert_eq!(iter.next(), None);
+        #[test]
+        fn includes_items_when_depth_skips_a_level() {
+            let parent =
+                ListItem::for_test("parent", ListItemType::Plain).with_depth(0);
+            let grandchild =
+                ListItem::for_test("grandchild", ListItemType::Plain)
+                    .with_depth(2)
+                    .with_parent(Some(SourceLine::new(1).expect("non-zero")));
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain)
+                .with_depth(0);
+            let slice = [parent, grandchild, sibling];
+
+            let desc: Vec<&str> = descendants_of(&slice[1..], 0)
+                .map(ListItem::clean_text)
+                .collect();
+            assert_eq!(desc, ["grandchild"]);
         }
     }
-
     mod task_list_item {
         use super::*;
 
@@ -1454,10 +889,10 @@ mod tests {
                     TaskStatusType::Done,
                 );
                 let dates = TaskDates::new(
-                    NaiveDate::from_ymd_opt(2025, 1, 1),
+                    NaiveDate::from_ymd_opt(2025, 1, 1).map(Into::into),
                     None,
                     None,
-                    NaiveDate::from_ymd_opt(2025, 1, 15),
+                    NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into),
                     None,
                     None,
                 );
@@ -1496,7 +931,7 @@ mod tests {
             }
 
             #[test]
-            fn returns_fully_complete_boolean() {
+            fn reports_whether_the_task_subtree_is_fully_complete() {
                 let status = TaskStatus::new(
                     TaskStatusSymbol::new(' '),
                     "Todo",
@@ -1510,30 +945,42 @@ mod tests {
                 );
 
                 assert_eq!(item.is_fully_complete(), false);
-                assert_eq!(item.fully_complete(), false);
             }
 
             #[test]
-            fn returns_priority_when_present_or_absent() {
+            fn returns_priority_when_configured() {
                 let status = TaskStatus::new(
                     TaskStatusSymbol::new(' '),
                     "Todo",
                     TaskStatusType::Todo,
                 );
-                let item_without = TaskListItem::new(
-                    TaskDates::default(),
-                    None,
-                    status.clone(),
-                    false,
-                );
-                let item_with = TaskListItem::new(
+                let item = TaskListItem::new(
                     TaskDates::default(),
                     Some(TaskPriority::Highest),
                     status,
                     false,
                 );
-                assert_eq!(item_without.priority(), None);
-                assert_eq!(item_with.priority(), Some(TaskPriority::Highest));
+                let priority = item.priority();
+
+                assert_eq!(priority, Some(TaskPriority::Highest));
+            }
+
+            #[test]
+            fn returns_none_when_priority_is_not_configured() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new(' '),
+                    "Todo",
+                    TaskStatusType::Todo,
+                );
+                let item = TaskListItem::new(
+                    TaskDates::default(),
+                    None,
+                    status,
+                    false,
+                );
+                let priority = item.priority();
+
+                assert_eq!(priority, None);
             }
 
             #[test]
@@ -1547,7 +994,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    NaiveDate::from_ymd_opt(2025, 2, 1),
+                    NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into),
                     None,
                     None,
                 );
@@ -1555,130 +1002,10 @@ mod tests {
 
                 assert_eq!(item.dates(), dates);
                 assert_eq!(
-                    item.dates().due,
-                    NaiveDate::from_ymd_opt(2025, 2, 1)
+                    item.dates().due(),
+                    NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into)
                 );
             }
-        }
-    }
-
-    mod task_priority {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case(TaskPriority::Lowest, "lowest")]
-        #[case(TaskPriority::Low, "low")]
-        #[case(TaskPriority::Normal, "normal")]
-        #[case(TaskPriority::Medium, "medium")]
-        #[case(TaskPriority::High, "high")]
-        #[case(TaskPriority::Highest, "highest")]
-        fn returns_canonical_name_for_each_level(
-            #[case] priority: TaskPriority,
-            #[case] expected: &str,
-        ) {
-            assert_eq!(priority.as_str(), expected);
-            assert_eq!(format!("{priority}"), expected);
-        }
-
-        #[rstest]
-        #[case("🔺", Some(TaskPriority::Highest))]
-        #[case("🔺\u{FE0F}", Some(TaskPriority::Highest))]
-        #[case("⏫", Some(TaskPriority::High))]
-        #[case("⏫\u{FE0F}", Some(TaskPriority::High))]
-        #[case("🔼", Some(TaskPriority::Medium))]
-        #[case("🔼\u{FE0F}", Some(TaskPriority::Medium))]
-        #[case("🔽", Some(TaskPriority::Low))]
-        #[case("🔽\u{FE0F}", Some(TaskPriority::Low))]
-        #[case("⏬", Some(TaskPriority::Lowest))]
-        #[case("⏬\u{FE0F}", Some(TaskPriority::Lowest))]
-        #[case("⭐", None)]
-        #[case("", None)]
-        fn parses_priority_emojis_with_and_without_variation_selector(
-            #[case] emoji: &str,
-            #[case] expected: Option<TaskPriority>,
-        ) {
-            assert_eq!(TaskPriority::from_emoji(emoji), expected);
-        }
-
-        #[rstest]
-        #[case("lowest", Ok(TaskPriority::Lowest))]
-        #[case("LOW", Ok(TaskPriority::Low))]
-        #[case("Normal", Ok(TaskPriority::Normal))]
-        #[case("medium", Ok(TaskPriority::Medium))]
-        #[case("HIGH", Ok(TaskPriority::High))]
-        #[case("highest", Ok(TaskPriority::Highest))]
-        #[case("🔺", Ok(TaskPriority::Highest))]
-        #[case("invalid", Err(()))]
-        fn parses_names_and_emojis_case_insensitively(
-            #[case] input: &str,
-            #[case] expected: Result<TaskPriority, ()>,
-        ) {
-            assert_eq!(input.parse::<TaskPriority>(), expected);
-        }
-
-        #[test]
-        fn orders_priorities_from_lowest_to_highest() {
-            assert!(TaskPriority::Lowest < TaskPriority::Low);
-            assert!(TaskPriority::Low < TaskPriority::Normal);
-            assert!(TaskPriority::Normal < TaskPriority::Medium);
-            assert!(TaskPriority::Medium < TaskPriority::High);
-            assert!(TaskPriority::High < TaskPriority::Highest);
-        }
-    }
-
-    mod task_dates {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_true_when_no_dates_are_set() {
-            let dates = TaskDates::default();
-
-            assert_eq!(dates.is_empty(), true);
-            assert_eq!(dates.created, None);
-            assert_eq!(dates.scheduled, None);
-            assert_eq!(dates.start, None);
-            assert_eq!(dates.due, None);
-            assert_eq!(dates.done, None);
-            assert_eq!(dates.cancelled, None);
-        }
-
-        #[test]
-        fn returns_false_when_any_date_is_set() {
-            let dates = TaskDates::new(
-                None,
-                None,
-                None,
-                NaiveDate::from_ymd_opt(2025, 1, 15),
-                None,
-                None,
-            );
-
-            assert_eq!(dates.is_empty(), false);
-            assert_eq!(dates.due(), NaiveDate::from_ymd_opt(2025, 1, 15));
-        }
-
-        #[test]
-        fn returns_configured_date_values() {
-            let created = NaiveDate::from_ymd_opt(2025, 1, 1);
-            let scheduled = NaiveDate::from_ymd_opt(2025, 1, 2);
-            let start = NaiveDate::from_ymd_opt(2025, 1, 3);
-            let due = NaiveDate::from_ymd_opt(2025, 1, 4);
-            let done = NaiveDate::from_ymd_opt(2025, 1, 5);
-            let cancelled = NaiveDate::from_ymd_opt(2025, 1, 6);
-            let dates =
-                TaskDates::new(created, scheduled, start, due, done, cancelled);
-
-            assert_eq!(dates.created(), created);
-            assert_eq!(dates.scheduled(), scheduled);
-            assert_eq!(dates.start(), start);
-            assert_eq!(dates.due(), due);
-            assert_eq!(dates.done(), done);
-            assert_eq!(dates.cancelled(), cancelled);
         }
     }
 
@@ -1688,16 +1015,29 @@ mod tests {
         use super::*;
 
         #[test]
-        fn stores_raw_and_clean_text() {
+        fn returns_distinct_raw_and_clean_text() {
             let text = ListText::new("raw text", "clean text");
 
             assert_eq!(text.raw(), "raw text");
             assert_eq!(text.clean(), "clean text");
+        }
+
+        #[test]
+        fn displays_clean_text() {
+            let text = ListText::new("raw text", "clean text");
+
             assert_eq!(format!("{text}"), "clean text");
         }
 
         #[test]
-        fn converts_from_str_and_tuples() {
+        fn uses_raw_text_when_clean_text_matches_raw_text() {
+            let text = ListText::new("same", "same");
+
+            assert_eq!(text.clean(), "same");
+        }
+
+        #[test]
+        fn converts_a_text_pair_to_raw_and_clean_text() {
             let from_str: ListText = "plain".into();
             assert_eq!(from_str.raw(), "plain");
             assert_eq!(from_str.clean(), "plain");
