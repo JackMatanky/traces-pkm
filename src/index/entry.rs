@@ -173,7 +173,7 @@ impl FileEntry {
 }
 
 /// Position of a [`FileEntry`] within [`FileIndex::entries`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RowIndex(usize);
 
 impl RowIndex {

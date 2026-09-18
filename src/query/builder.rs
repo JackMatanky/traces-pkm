@@ -21,6 +21,9 @@ use super::{
 pub(crate) enum QueryMode {
     /// One row per matching note.
     Pages,
+    /// One row per list item in each matching note (plain bullets, checkboxes,
+    /// and tasks).
+    Lists,
     /// One row per task list item in each matching note.
     Tasks,
 }
@@ -65,6 +68,18 @@ impl QueryBuilder {
         }
     }
 
+    /// Builds a list-row query that emits one row per list item (plain
+    /// bullets, checkboxes, and tasks) in each matching note.
+    #[inline]
+    #[must_use]
+    pub fn lists(source: SourceSelector) -> Self {
+        Self {
+            mode: QueryMode::Lists,
+            source,
+            plan: QueryPlan::default(),
+        }
+    }
+
     /// Builds a task-row query that emits one row per task list item.
     #[inline]
     #[must_use]
@@ -73,6 +88,19 @@ impl QueryBuilder {
             mode: QueryMode::Tasks,
             source,
             plan: QueryPlan::default(),
+        }
+    }
+
+    /// Builds a query for `mode`, dispatching to the mode-specific
+    /// constructor so callers can hold a bare [`QueryMode`] without knowing
+    /// which constructor it selects.
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_mode(mode: QueryMode, source: SourceSelector) -> Self {
+        match mode {
+            QueryMode::Pages => Self::pages(source),
+            QueryMode::Lists => Self::lists(source),
+            QueryMode::Tasks => Self::tasks(source),
         }
     }
 
@@ -423,6 +451,16 @@ mod tests {
             let outcome = QueryService::new("class").run(&index, request);
 
             assert!(outcome.is_empty());
+        }
+
+        #[test]
+        fn lists_builder_constructs_query_with_lists_mode() {
+            let (mode, source, plan) =
+                QueryBuilder::lists(SourceSelector::All).into_parts();
+
+            assert_eq!(mode, QueryMode::Lists);
+            assert_eq!(source, SourceSelector::All);
+            assert!(plan.is_empty());
         }
     }
 }

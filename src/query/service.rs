@@ -19,12 +19,15 @@ use super::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 use crate::index::IndexerService;
-use crate::index::{FileIndex, IndexResult, IndexStore, RowIndex};
+use crate::{
+    ListItem,
+    index::{FileIndex, IndexResult, IndexStore, RowIndex},
+};
 
 /// Evaluates source expressions against a borrowed [`FileIndex`].
 ///
-/// Supports page/task modes, optional File Class expansion, and pending plan
-/// transformations.
+/// Supports page/list/task modes, optional File Class expansion, and pending
+/// plan transformations.
 ///
 /// # Examples
 ///
@@ -81,6 +84,17 @@ impl QueryService {
         self
     }
 
+    /// Expands `source`'s File Class atoms through this service's expander,
+    /// if one is attached. Both execution paths call this before row
+    /// generation so class matching shares one implementation.
+    fn resolve_source_classes(&self, source: &mut SourceSelector) {
+        if source.has_classes()
+            && let Some(expander) = self.class_expander.as_deref()
+        {
+            source.resolve_classes(expander);
+        }
+    }
+
     /// Applies File Class expansion and plan transformations to `builder`.
     #[inline]
     pub fn run(
@@ -89,15 +103,8 @@ impl QueryService {
         builder: QueryBuilder,
     ) -> QuerySet {
         let (mode, mut source, plan) = builder.into_parts();
-        if source.has_classes()
-            && let Some(expander) = self.class_expander.as_deref()
-        {
-            source.resolve_classes(expander);
-        }
-        let rows = match mode {
-            QueryMode::Pages => self.page_rows(index, &source),
-            QueryMode::Tasks => self.task_rows(index, &source),
-        };
+        self.resolve_source_classes(&mut source);
+        let rows = self.rows_for(mode, index, &source);
         QuerySet::new(plan.run(rows))
     }
 
@@ -118,11 +125,7 @@ impl QueryService {
         builder: QueryBuilder,
     ) -> IndexResult<QuerySet> {
         let (mode, mut source, plan) = builder.into_parts();
-        if source.has_classes()
-            && let Some(expander) = self.class_expander.as_deref()
-        {
-            source.resolve_classes(expander);
-        }
+        self.resolve_source_classes(&mut source);
         let resolver = SourceResolver::new(store);
         let candidate_paths = resolver.resolve(&source)?;
         let (notes_result, (files_result, inlinks_result)) = rayon::join(
@@ -151,10 +154,7 @@ impl QueryService {
         let inlinks = inlinks_result?;
         let index =
             Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
-        let rows = match mode {
-            QueryMode::Pages => self.page_rows(&index, &source),
-            QueryMode::Tasks => self.task_rows(&index, &source),
-        };
+        let rows = self.rows_for(mode, &index, &source);
         Ok(QuerySet::new(plan.run(rows)))
     }
 
@@ -178,6 +178,20 @@ impl QueryService {
         self.run_from_store(&store, builder)
     }
 
+    /// Instantiates rows at `mode`'s granularity for notes matching `source`.
+    fn rows_for(
+        &self,
+        mode: QueryMode,
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+    ) -> Vec<QueryRow> {
+        match mode {
+            QueryMode::Pages => self.page_rows(index, source),
+            QueryMode::Lists => self.list_rows(index, source),
+            QueryMode::Tasks => self.task_rows(index, source),
+        }
+    }
+
     fn page_rows(
         &self,
         index: &Arc<FileIndex>,
@@ -186,11 +200,32 @@ impl QueryService {
         self.matched_file_rows(index, source).collect()
     }
 
+    /// Expands matching notes into one [`QueryRow`] per list item, including
+    /// plain bullets, checkboxes, and tasks, in document order.
+    fn list_rows(
+        &self,
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+    ) -> Vec<QueryRow> {
+        self.item_rows(index, source, |_| true)
+    }
+
     /// Expands matching notes into one [`QueryRow`] per task list item.
     fn task_rows(
         &self,
         index: &Arc<FileIndex>,
         source: &SourceSelector,
+    ) -> Vec<QueryRow> {
+        self.item_rows(index, source, |item| item.kind().is_task())
+    }
+
+    /// Expands matching notes into one [`QueryRow`] per list item whose kind
+    /// satisfies `is_wanted`, in document order.
+    fn item_rows(
+        &self,
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+        is_wanted: impl Fn(&ListItem) -> bool,
     ) -> Vec<QueryRow> {
         let mut out = Vec::new();
         for base in self.matched_file_rows(index, source) {
@@ -198,7 +233,7 @@ impl QueryService {
                 continue;
             };
             for (item_idx, item) in note.lists().iter().enumerate() {
-                if item.kind().is_task()
+                if is_wanted(item)
                     && let Ok(item_idx) = u32::try_from(item_idx)
                 {
                     out.push(base.clone().with_list_item(item_idx));
@@ -208,7 +243,9 @@ impl QueryService {
         out
     }
 
-    /// Creates page-level rows for indexed files matching `source`.
+    /// Creates one row per indexed file matching `source`, at note
+    /// granularity. List and task modes expand these base rows into per-item
+    /// rows via [`Self::item_rows`].
     fn matched_file_rows<'b>(
         &'b self,
         index: &'b Arc<FileIndex>,
@@ -374,6 +411,14 @@ mod tests {
     ) -> QuerySet {
         QueryService::new("class")
             .run(index, QueryBuilder::tasks(source.clone()))
+    }
+
+    fn query_lists(
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+    ) -> QuerySet {
+        QueryService::new("class")
+            .run(index, QueryBuilder::lists(source.clone()))
     }
 
     mod source_resolver {
@@ -1017,6 +1062,105 @@ mod tests {
             // Filtering must keep only matching task rows, not every row from a
             // note with one match.
             assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
+        }
+    }
+
+    mod query_lists {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::NoteFieldValue;
+
+        #[test]
+        fn emits_plain_checkbox_and_task_rows_in_document_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("items.md"),
+                "- plain bullet\n- [ ] checkbox\n- [x] done #task\n",
+            )
+            .expect("write note");
+            // Default classification would promote every status-marked item
+            // to a Task; the tag filter keeps the bare checkbox a checkbox.
+            let config = crate::Config::test_default(temp.path().to_path_buf())
+                .with_tasks(crate::TaskConfig::from_tags(&["#task"]));
+            let index = Arc::new(
+                IndexerService::new(temp.path())
+                    .with_config(&config)
+                    .build()
+                    .expect("build index"),
+            );
+
+            let kinds: Vec<_> = query_lists(&index, &SourceSelector::All)
+                .iter()
+                .map(|row| row.field("list.kind").expect("list.kind resolves"))
+                .collect();
+
+            assert_eq!(kinds, [
+                NoteFieldValue::String("plain".into()),
+                NoteFieldValue::String("checkbox".into()),
+                NoteFieldValue::String("task".into()),
+            ]);
+        }
+
+        #[test]
+        fn contributes_no_rows_when_note_has_no_list_items() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("prose.md"), "Just prose, no lists.")
+                .expect("write note");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = query_lists(&index, &SourceSelector::All);
+
+            assert_eq!(outcome.len(), 0);
+        }
+
+        #[test]
+        fn filters_list_items_by_is_task() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("items.md"),
+                "- plain bullet 1\n- plain bullet 2\n- [x] task\n",
+            )
+            .expect("write note");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let non_tasks = query_lists(&index, &SourceSelector::All)
+                .filter("list.is_task == false")
+                .expect("valid filter");
+            let tasks = query_lists(&index, &SourceSelector::All)
+                .filter("list.is_task == true")
+                .expect("valid filter");
+
+            assert_eq!(non_tasks.len(), 2);
+            assert_eq!(tasks.len(), 1);
+        }
+
+        #[test]
+        fn runs_from_store_matching_in_memory_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("items.md"),
+                "- plain bullet\n- [x] task #todo\n",
+            )
+            .expect("write note");
+            let service = QueryService::new("class");
+            let indexer = IndexerService::new(temp.path());
+            let index = Arc::new(indexer.build().expect("build index"));
+
+            let from_store = service
+                .sync_and_run(
+                    &indexer,
+                    QueryBuilder::lists(SourceSelector::All),
+                )
+                .expect("run from store");
+            let in_memory =
+                service.run(&index, QueryBuilder::lists(SourceSelector::All));
+
+            // Persisted list items must reconstruct rows identical to the
+            // in-memory path without reparsing Markdown.
+            assert_eq!(from_store, in_memory);
         }
     }
 }

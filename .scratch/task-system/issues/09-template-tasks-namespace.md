@@ -1,7 +1,7 @@
 # 09 — Template lists and tasks namespaces
 
 **Category:** enhancement
-**Status:** ready-for-agent
+**Status:** done
 
 **What to build:** Expose `lists` (generic list items) and `tasks` (list items
 pre-filtered to `list.is_task == true`) globals in MiniJinja templates,
@@ -15,26 +15,26 @@ exposing all universal and task fields.
 
 ## Acceptance Criteria
 
-- [ ] Add `QueryMode::Lists` variant to `QueryMode` and `QueryBuilder::lists` in `src/query/builder.rs`.
-- [ ] Implement `QueryService::list_rows` in `src/query/service.rs` to yield one row per list item (plain bullets, checkboxes, tasks) and wire `QueryMode::Lists` in `QueryService::run` and `QueryService::run_from_store`.
-- [ ] Parameterize `QueryOps` by `QueryMode` in `src/template/engine/query.rs` (`QueryOps::page`, `QueryOps::list`, `QueryOps::task`).
-- [ ] Register `lists`, `tasks`, and `query` globals in the MiniJinja environment in `src/template/engine.rs`.
-- [ ] Implement `ListFields` wrapping `Arc<QueryRow>` in `src/template/engine/query.rs` to expose all universal and task fields via `list.<field>`, replacing `TaskFields`.
-- [ ] Support `lists.from(...)` and `tasks.from(...)` using canonical `SourceSelector` DSL expressions (empty/all, `#tag`, `folder/`, `@Class*`, and boolean expressions).
-- [ ] Enable filtering on `list.*` fields in templates, e.g.,
+- [x] Add `QueryMode::Lists` variant to `QueryMode` and `QueryBuilder::lists` in `src/query/builder.rs`.
+- [x] Implement `QueryService::list_rows` in `src/query/service.rs` to yield one row per list item (plain bullets, checkboxes, tasks) and wire `QueryMode::Lists` in `QueryService::run` and `QueryService::run_from_store`.
+- [x] Parameterize `QueryOps` by `QueryMode` in `src/template/engine/query.rs` (`QueryOps::page`, `QueryOps::list`, `QueryOps::task`).
+- [x] Register `lists`, `tasks`, and `query` globals in the MiniJinja environment in `src/template/engine.rs`.
+- [x] Implement `ListFields` wrapping `Arc<QueryRow>` in `src/template/engine/query.rs` to expose all universal and task fields via `list.<field>`, replacing `TaskFields`.
+- [x] Support `lists.from(...)` and `tasks.from(...)` using canonical `SourceSelector` DSL expressions (empty/all, `#tag`, `folder/`, `@Class*`, and boolean expressions).
+- [x] Enable filtering on `list.*` fields in templates, e.g.,
   `tasks.where("list.status == \"Done\"")` and
   `lists.where("list.is_task == false")`.
-- [ ] Enable sorting on `list.*` fields in templates, e.g.,
+- [x] Enable sorting on `list.*` fields in templates, e.g.,
   `tasks.sort("list.due", true)`.
-- [ ] Terminal renderers (`task_list`, `table`, `list`, `count`) execute
+- [x] Terminal renderers (`task_list`, `table`, `list`, `count`) execute
   cleanly on list and task query sets.
-- [ ] Migrate existing template query tests from `t.task.*` to `t.list.*`.
-- [ ] Unit tests verifying task-specific fields return `none` when accessed on plain
+- [x] Migrate existing template query tests from `t.task.*` to `t.list.*`.
+- [x] Unit tests verifying task-specific fields return `none` when accessed on plain
   bullets and non-task checkboxes in templates (e.g. `{{ item.list.due is none }}`).
-- [ ] Unit tests verifying universal fields (`list.text`, `list.depth`, `list.line`, `list.is_task`, `list.kind`) resolve correctly on plain bullets and checkboxes in templates.
-- [ ] Unit tests for `lists` and `tasks` template evaluation in
+- [x] Unit tests verifying universal fields (`list.text`, `list.depth`, `list.line`, `list.is_task`, `list.kind`) resolve correctly on plain bullets and checkboxes in templates.
+- [x] Unit tests for `lists` and `tasks` template evaluation in
   `src/template/engine/query.rs`.
-- [ ] All checks pass under `mise run verify`.
+- [x] All checks pass under `mise run verify`.
 
 ## Key Interfaces and Models
 

@@ -1,12 +1,13 @@
-//! Register the `query` and `tasks` namespaces for templates.
+//! Register the `query`, `lists`, and `tasks` namespaces for templates.
 //!
-//! Both namespaces are backed by [`QueryOps`], registered twice by
+//! All three namespaces are backed by [`QueryOps`], registered by
 //! [`super::TemplateEngine::new`]:
 //! - [`QueryOps::page`] creates the `query` global
+//! - [`QueryOps::list`] creates the `lists` global
 //! - [`QueryOps::task`] creates the `tasks` global.
 //!
-//! Each namespace starts a query with one of four methods, matching
-//! [`SourceSelector`]'s variants:
+//! Each namespace starts a query with `.from([expr])`, whose expression
+//! forms mirror [`SourceSelector`]'s variants:
 //!
 //! - `.from()`: every indexed Note.
 //! - `.from("#tag")`: Notes with an exact or nested tag.
@@ -15,16 +16,16 @@
 //!   descendant.
 //!
 //! Each call reuses the render's cached [`FileIndex`], refreshing it once per
-//! render (see [`cached_refresh`]), and returns a [`QuerySet`] wrapped in
-//! a [`Value`].
+//! render (see [`QueryOps::cached_index`]), and returns a [`QuerySet`] wrapped
+//! in a [`Value`].
 //!
 //! # Row Shape
 //!
-//! `query` returns one row per Note. `tasks` returns one row per task item.
-//! `list.*` paths are the filter/sort expression namespace; row attributes
-//! remain `t.task.completed`/`t.task.text` until the planned `ListFields`
-//! wrapper lands, alongside the parent Note's `file.*`, frontmatter,
-//! inline-field, and tag metadata.
+//! `query` returns one row per Note. `lists` returns one row per list item
+//! (plain bullets, checkboxes, and tasks). `tasks` returns one row per task
+//! item. Universal and task-specific properties are exposed via the canonical
+//! `record.list.<field>` namespace wrapped by [`ListFields`], alongside the
+//! parent Note's `file.*`, frontmatter, inline-field, and tag metadata.
 //!
 //! # Chaining and Terminal Methods
 //!
@@ -48,14 +49,13 @@
 //! task` can reuse [`FileIndex`], [`QuerySet`], and [`QueryRow`] without
 //! pulling in rendering concerns.
 //!
-//! `record` attributes other than `file` and `task` forward to
+//! `record` attributes other than `file` and `list` forward to
 //! [`QueryRow::field`], the same resolver `.where()` and `.sort()` use.
-//! `record.file.*` and `record.task.*` use forwarding wrappers ([`FileFields`]
-//! and [`TaskFields`]) instead: minijinja resolves a dotted attribute path one
+//! `record.file.*` and `record.list.*` use forwarding wrappers ([`FileFields`]
+//! and [`ListFields`]) instead: minijinja resolves a dotted attribute path one
 //! segment at a time, so the wrappers call [`FileField::parse`] and
-//! [`QueryRow::task_completed`]/[`QueryRow::task_text`] directly, skipping the
-//! string-prefix handling [`QueryRow::field`] needs once the `file`/`task`
-//! segment is already known.
+//! [`ListField::parse`] directly, skipping the string-prefix handling
+//! [`QueryRow::field`] needs once the `file`/`list` segment is already known.
 //!
 //! # Errors
 //!
@@ -65,7 +65,7 @@
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
 //! template name, line, and column context like every other namespace.
 
-use std::{cmp::Ordering, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeSet, path::Path, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
@@ -75,45 +75,65 @@ use minijinja::{
 use super::error::TemplateEngineResult;
 use crate::{
     NoteFieldValue,
-    index::{FileIndex, IndexError, IndexerService},
+    index::{FileIndex, IndexerService},
     query::{
-        ClassExpansionMode, FieldPath, FileField, QueryBuilder, QueryError,
-        QueryRow, QueryService, QuerySet, SortDirection, SourceAtom,
-        SourceSelector, TaskPathStyle,
+        ClassExpansionMode, FieldPath, FileField, ListField, QueryBuilder,
+        QueryError, QueryMode, QueryRow, QueryService, QuerySet, SortDirection,
+        SourceAtom, SourceSelector, TaskPathStyle,
     },
     schema::SchemaService,
 };
 
-/// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
+/// Method names `query`, `lists`, and `tasks` each expose, for
+/// [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["from"];
 
 /// The [`State::set_temp`] key used to cache one refreshed [`FileIndex`] for
 /// the current render.
 ///
-/// Shared by the `query` and `tasks` namespaces (both dispatch through
-/// [`QueryOps::run`]) so a render calling into both pays for one
+/// Shared by the `query`, `lists`, and `tasks` namespaces (all dispatch
+/// through [`QueryOps::run`]) so a render calling into multiple pays for one
 /// [`IndexerService::refresh`] instead of one per query call. `State`'s temp
 /// storage is scoped to one render, including `{% include %}`s, and resets for
 /// the next. A cache field on [`QueryOps`] itself would wrongly persist across
 /// independent renders on a reused [`Environment`]/[`super::TemplateEngine`].
 const INDEX_CACHE_KEY: &str = "query.index_cache";
 
-/// Backs both the `query` and `tasks` minijinja namespace objects: one instance
-/// per namespace, differing only in which global it registers as and which
-/// [`QueryBuilder`] mode it executes. See [`Self::page`]/[`Self::task`].
+/// Backs the `query`, `lists`, and `tasks` minijinja namespace objects: one
+/// instance per namespace, differing only in which global it registers as and
+/// which [`QueryBuilder`] mode it executes.
 #[derive(Debug)]
 pub(super) struct QueryOps {
     /// The minijinja global this instance registers as.
     name: &'static str,
     root: Arc<Path>,
-    /// Pre-configured once at construction (see [`Self::page`]/[`Self::task`])
-    /// instead of being rebuilt on every `.from()` call.
+    /// Pre-configured once at construction instead of being rebuilt on every
+    /// `.from()` call.
     service: QueryService,
-    /// `false` for page-level `query`, `true` for task-level `tasks`.
-    is_task: bool,
+    /// Row granularity this namespace dispatches to [`QueryBuilder`].
+    mode: QueryMode,
 }
 
 impl QueryOps {
+    /// Wires the shared pipeline every namespace dispatches through: one
+    /// [`QueryService`] pre-configured with `class_field` and the File Class
+    /// `schema` expander, for registration as the `name` global at `mode`'s
+    /// row granularity.
+    fn new(
+        name: &'static str,
+        mode: QueryMode,
+        root: Arc<Path>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
+    ) -> Self {
+        Self {
+            name,
+            root,
+            service: QueryService::new(class_field).with_class_expander(schema),
+            mode,
+        }
+    }
+
     /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
@@ -122,12 +142,20 @@ impl QueryOps {
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self {
-            name: "query",
-            root,
-            service: QueryService::new(class_field).with_class_expander(schema),
-            is_task: false,
-        }
+        Self::new("query", QueryMode::Pages, root, class_field, schema)
+    }
+
+    /// Wraps `root` for list-level dispatch under the `lists` global. Each row
+    /// is one list item (plain bullets, checkboxes, and tasks) instead of one
+    /// Note.
+    #[inline]
+    #[must_use]
+    pub(super) fn list(
+        root: Arc<Path>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
+    ) -> Self {
+        Self::new("lists", QueryMode::Lists, root, class_field, schema)
     }
 
     /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
@@ -139,15 +167,11 @@ impl QueryOps {
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self {
-            name: "tasks",
-            root,
-            service: QueryService::new(class_field).with_class_expander(schema),
-            is_task: true,
-        }
+        Self::new("tasks", QueryMode::Tasks, root, class_field, schema)
     }
 
-    /// Registers this object as its `name` global (`query` or `tasks`).
+    /// Registers this object as its `name` global (`query`, `lists`, or
+    /// `tasks`).
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         let name = self.name;
@@ -175,21 +199,46 @@ impl QueryOps {
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::InvalidOperation`] via [`index_error`] if refreshing the
-    ///   index fails, including I/O errors while scanning `root`, database
-    ///   access errors, and TOML (de)serialization errors on stored records.
+    /// - [`ErrorKind::InvalidOperation`] if refreshing the index fails, as
+    ///   documented on [`Self::cached_index`].
     fn run(
         &self,
         state: &State,
         source: SourceSelector,
     ) -> TemplateEngineResult<Value> {
-        let index = cached_refresh(state, &self.root).map_err(index_error)?;
-        let builder = if self.is_task {
-            QueryBuilder::tasks(source)
-        } else {
-            QueryBuilder::pages(source)
-        };
+        let index = self.cached_index(state)?;
+        let builder = QueryBuilder::from_mode(self.mode, source);
         Ok(Value::from_object(self.service.run(&index, builder)))
+    }
+
+    /// Returns this render's cached [`FileIndex`] for `self.root`, refreshing
+    /// and caching it first if not already cached this render. See
+    /// [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::InvalidOperation`] if refreshing the index fails,
+    ///   including I/O errors while scanning `root`, database access errors,
+    ///   and TOML (de)serialization errors on stored records. The original
+    ///   error is preserved as [`source`], matching [`super::ui`]'s
+    ///   `dialog_error`.
+    ///
+    /// [`source`]: std::error::Error::source
+    fn cached_index(
+        &self,
+        state: &State,
+    ) -> TemplateEngineResult<Arc<FileIndex>> {
+        super::cache::cached(state, INDEX_CACHE_KEY, || {
+            IndexerService::new(self.root.as_ref())
+                .refresh()
+                .map(Arc::new)
+                .map_err(|source| {
+                    super::error::invalid_operation(
+                        "failed to refresh the file index",
+                        source,
+                    )
+                })
+        })
     }
 }
 
@@ -214,31 +263,6 @@ impl Object for QueryOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
-}
-
-/// Returns the render's cached [`FileIndex`], refreshing and caching it in
-/// `state`'s temp storage first if not already cached this render.
-///
-/// # Errors
-///
-/// - Any error [`IndexerService::refresh`](crate::index::IndexerService::refresh) returns.
-pub(super) fn cached_refresh(
-    state: &State,
-    root: &Path,
-) -> Result<Arc<FileIndex>, IndexError> {
-    super::cache::cached(state, INDEX_CACHE_KEY, || {
-        IndexerService::new(root).refresh().map(Arc::new)
-    })
-}
-
-/// Maps a [`IndexError`] into a [`minijinja::Error`].
-///
-/// Keeps the original error as [`source`], matching [`super::ui`]'s
-/// `dialog_error`.
-///
-/// [`source`]: std::error::Error::source
-pub(super) fn index_error(source: IndexError) -> Error {
-    super::error::invalid_operation("failed to refresh the file index", source)
 }
 
 /// Maps a [`QueryError`] into a [`minijinja::Error`].
@@ -470,11 +494,12 @@ fn with_descendants_filter(source: &SourceSelector) -> Value {
     ))
 }
 
-/// Replaces every `Class` atom's [`ClassExpansionMode`] in `source`, keeping
-/// the match set empty (still unresolved; `resolve_classes` fills it in at
+/// Replaces every `Class` atom's [`ClassExpansionMode`] in `source` with
+/// `mode`, keeping each atom's match set empty: the selector stays
+/// unresolved, and `resolve_classes` fills the match sets in at query time.
 fn set_class_depth(
     mut source: SourceSelector,
-    mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
+    mode: impl Fn(BTreeSet<String>) -> ClassExpansionMode,
 ) -> SourceSelector {
     if let SourceSelector::Expr(expr) = &mut source {
         expr.visit_atoms_mut(&mut |atom| {
@@ -483,7 +508,7 @@ fn set_class_depth(
                 ..
             } = atom
             {
-                *existing = mode(std::collections::BTreeSet::new());
+                *existing = mode(BTreeSet::new());
             }
         });
     }
@@ -493,8 +518,8 @@ fn set_class_depth(
 impl Object for QueryRow {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
-    /// `"file"` and `"task"` return forwarding wrappers for `record.file.*` and
-    /// `record.task.*`. Every other key resolves through [`QueryRow`]'s field
+    /// `"file"` and `"list"` return forwarding wrappers for `record.file.*` and
+    /// `record.list.*`. Every other key resolves through [`QueryRow`]'s field
     /// lookup, the same frontmatter, inline-field, and tag lookup used by
     /// `.where()` and `.sort()`.
     ///
@@ -506,20 +531,14 @@ impl Object for QueryRow {
         let key = key.as_str()?;
         match key {
             "file" => Some(Value::from_object(FileFields(Arc::clone(self)))),
-            "task" => Some(Value::from_object(TaskFields(Arc::clone(self)))),
+            "list" => Some(Value::from_object(ListFields(Arc::clone(self)))),
             _ => self.field(key).ok().map(field_value),
         }
     }
 
     #[inline]
     fn custom_cmp(self: &Arc<Self>, other: &DynObject) -> Option<Ordering> {
-        other.downcast_ref::<Self>().map(|other| {
-            if **self == *other {
-                Ordering::Equal
-            } else {
-                Ordering::Less
-            }
-        })
+        other.downcast_ref::<Self>().map(|other| self.cmp_document_order(other))
     }
 }
 
@@ -546,36 +565,26 @@ impl Object for FileFields {
     }
 }
 
-/// Forwards `record.task.<field>` to
-/// [`QueryRow::task_completed`]/[`QueryRow::task_text`].
+/// Forwards `record.list.<field>` to [`ListField::parse`].
 ///
-/// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
-/// segment at a time, so `record.task` must itself resolve to something before
-/// `.completed`/`.text` can be looked up.
-///
-/// On a page-level record (not built by a task [`QueryBuilder`]) both accessors
-/// resolve to minijinja's `none`, a defined empty value rather than a missing
-/// attribute, matching [`field_value`]'s handling of [`NoteFieldValue::Null`].
+/// A thin wrapper rather than a second lookup path, needed only because
+/// minijinja resolves a dotted attribute path one segment at a time:
+/// `record.list` must itself resolve to *something* before `.<field>` can be
+/// looked up on it. Calls the same [`ListField`] accessor pair
+/// [`QueryRow::field`] uses for its `list.*` branch, skipping that method's
+/// string-based `list.` prefix handling, which doesn't apply here: `key` is
+/// already a single attribute segment, never a dotted path.
 #[derive(Debug)]
-struct TaskFields(Arc<QueryRow>);
+struct ListFields(Arc<QueryRow>);
 
-impl Object for TaskFields {
+impl Object for ListFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
-        match key.as_str()? {
-            "completed" => Some(
-                self.0
-                    .task_completed()
-                    .map_or_else(|| Value::from(()), Value::from),
-            ),
-            "text" => Some(
-                self.0.task_text().map_or_else(|| Value::from(()), Value::from),
-            ),
-            _ => None,
-        }
+        let field = ListField::parse(key.as_str()?)?;
+        Some(field_value(self.0.resolve_owned(&FieldPath::List(field))))
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
-        Enumerator::Str(&["completed", "text"])
+        Enumerator::Str(ListField::ACCESSOR_NAMES)
     }
 }
 
@@ -618,9 +627,9 @@ mod tests {
     use super::*;
     use crate::{DialogProvider, PresetDialogProvider};
 
-    /// Builds a shared [`SchemaService`] for `root`, backing both [`page_ops`]
-    /// and [`task_ops`] so both namespaces resolve the same Schema registry
-    /// directory (`root/.traces/schemas`), mirroring
+    /// Builds a shared [`SchemaService`] for `root`, backing [`page_ops`],
+    /// [`list_ops`], and [`task_ops`] so all namespaces resolve the same Schema
+    /// registry directory (`root/.traces/schemas`), mirroring
     /// [`super::super::TemplateEngine::new`]'s wiring.
     fn schema_service(root: &Path) -> Arc<SchemaService> {
         Arc::new(
@@ -635,16 +644,22 @@ mod tests {
         QueryOps::page(Arc::from(root), "class", schema_service(root))
     }
 
+    /// Builds a `lists` [`QueryOps`], the [`page_ops`] counterpart.
+    fn list_ops(root: &Path) -> QueryOps {
+        QueryOps::list(Arc::from(root), "class", schema_service(root))
+    }
+
     /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
     fn task_ops(root: &Path) -> QueryOps {
         QueryOps::task(Arc::from(root), "class", schema_service(root))
     }
 
-    /// A minimal [`Environment`] with `query` and `tasks` registered against
-    /// `root`, plus the `table`/`list`/`task_list`/`count` pipeline filters.
+    /// A minimal [`Environment`] with `query`, `lists`, and `tasks` registered
+    /// against `root`, plus terminal query filters.
     fn env(root: &Path) -> Environment<'static> {
         let mut env = Environment::new();
         page_ops(root).register(&mut env);
+        list_ops(root).register(&mut env);
         task_ops(root).register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env
@@ -665,6 +680,8 @@ mod tests {
         let service = schema_service(root);
         let mut env = Environment::new();
         QueryOps::page(Arc::from(root), class_field, Arc::clone(&service))
+            .register(&mut env);
+        QueryOps::list(Arc::from(root), class_field, Arc::clone(&service))
             .register(&mut env);
         QueryOps::task(Arc::from(root), class_field, service)
             .register(&mut env);
@@ -746,6 +763,17 @@ mod tests {
 
             assert_eq!(rendered, "1");
         }
+
+        #[test]
+        fn register_makes_lists_reachable_through_a_real_environment() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "notes.md", "- item 1\n- item 2\n");
+
+            let rendered = render(temp.path(), "{{ lists.from() | length }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "2");
+        }
     }
 
     mod source_selection {
@@ -804,7 +832,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r##"{% for t in tasks.from("#projects") %}{{ t.task.text }}{% endfor %}"##,
+                r##"{% for t in tasks.from("#projects") %}{{ t.list.text }}{% endfor %}"##,
             )
             .expect("render succeeds");
 
@@ -820,7 +848,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for t in tasks.from("projects/") %}{{ t.task.text }}{% endfor %}"#,
+                r#"{% for t in tasks.from("projects/") %}{{ t.list.text }}{% endfor %}"#,
             )
             .expect("render succeeds");
 
@@ -904,7 +932,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for t in tasks.from().where("list.completed == true") %}{{ t.task.text }}{% endfor %}"#,
+                r#"{% for t in tasks.from().where("list.completed == true") %}{{ t.list.text }}{% endfor %}"#,
             )
             .expect("render succeeds");
 
@@ -912,6 +940,52 @@ mod tests {
             // must keep only the matching task row, not both of the one
             // Note that has at least one match.
             assert_eq!(rendered, "pay rent");
+        }
+
+        #[test]
+        fn where_filters_lists_by_is_task() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "- bullet\n- [x] task\n");
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for l in lists.from().where("list.is_task == false") %}{{ l.list.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "bullet");
+        }
+
+        #[test]
+        fn where_filters_tasks_by_status() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] todo\n- [x] done\n");
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.from().where("list.status == \"Done\"") %}{{ t.list.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "done");
+        }
+
+        #[test]
+        fn sort_orders_tasks_by_due_date() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "tasks.md",
+                "- [ ] later 📅 2026-05-01\n- [ ] earlier 📅 2026-01-01\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.from().sort("list.due", true) %}{{ t.list.text }} {% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "later earlier ");
         }
     }
 
@@ -1034,6 +1108,65 @@ mod tests {
 
             assert_eq!(rendered, format!("- {expected_line}\n"));
         }
+
+        #[test]
+        fn table_renders_list_and_task_fields() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] task A\n- [x] task B\n");
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ tasks.from().table(["Task", "Done"], ["list.text", "list.completed"]) }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(
+                rendered,
+                "| Task   | Done  |\n|--------|-------|\n| task A | false \
+                 |\n| task B | true  |\n",
+            );
+        }
+
+        #[test]
+        fn list_renders_list_items_text() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "items.md", "- first\n- second\n");
+
+            let rendered =
+                render(temp.path(), r#"{{ lists.from().list("list.text") }}"#)
+                    .expect("render succeeds");
+
+            assert_eq!(rendered, "- first\n- second\n");
+        }
+
+        #[test]
+        fn task_list_renders_matching_tasks_from_filtered_lists_query() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "notes.md",
+                "- plain bullet\n- [x] done task\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ lists.from().where("list.is_task == true").task_list() }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "- [x] done task\n");
+        }
+
+        #[test]
+        fn count_renders_list_item_count() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "notes.md", "- a\n- b\n- c\n");
+
+            let rendered = render(temp.path(), "{{ lists.from().count() }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "3");
+        }
     }
 
     mod for_loop_escape_hatch {
@@ -1066,6 +1199,7 @@ mod tests {
 
     mod attribute_resolution {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -1130,7 +1264,7 @@ mod tests {
         }
 
         #[test]
-        fn task_completed_and_task_text_resolve_per_row() {
+        fn list_completed_and_list_text_resolve_per_row() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(
                 temp.path(),
@@ -1140,8 +1274,8 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{% for t in tasks.from() %}{{ t.task.completed }}:{{ \
-                 t.task.text }} {% endfor %}",
+                "{% for t in tasks.from() %}{{ t.list.completed }}:{{ \
+                 t.list.text }} {% endfor %}",
             )
             .expect("render succeeds");
 
@@ -1169,18 +1303,155 @@ mod tests {
         }
 
         #[test]
-        fn task_completed_and_task_text_are_none_on_a_page_level_record() {
+        fn list_completed_and_list_text_are_none_on_a_page_level_record() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "note.md", "# No tasks here");
 
             let rendered = render(
                 temp.path(),
-                "{{ query.from()[0].task.completed is none }}:{{ \
-                 query.from()[0].task.text is none }}",
+                "{{ query.from()[0].list.completed is none }}:{{ \
+                 query.from()[0].list.text is none }}",
             )
             .expect("render succeeds");
 
             assert_eq!(rendered, "True:True");
+        }
+
+        #[rstest]
+        #[case::status("status")]
+        #[case::status_type("status_type")]
+        #[case::status_symbol("status_symbol")]
+        #[case::completed("completed")]
+        #[case::priority("priority")]
+        #[case::due("due")]
+        #[case::done("done")]
+        #[case::created("created")]
+        #[case::start("start")]
+        #[case::scheduled("scheduled")]
+        #[case::cancelled("cancelled")]
+        #[case::fully_complete("fully_complete")]
+        fn task_fields_are_none_on_plain_bullets(#[case] field: &str) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "- a plain bullet\n");
+
+            let rendered = render(
+                temp.path(),
+                &format!("{{{{ lists.from()[0].list.{field} is none }}}}"),
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "True");
+        }
+
+        #[test]
+        fn universal_fields_resolve_correctly_on_plain_bullets() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "note.md",
+                "1. first ordered item\n  - nested plain #tag1\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for item in lists.from() %}{{ item.list.text }}|{{ \
+                 item.list.raw_text }}|{{ item.list.depth }}|{{ \
+                 item.list.line }}|{{ item.list.parent is none }}|{{ \
+                 item.list.is_task }}|{{ item.list.kind }}|{{ \
+                 item.list.is_ordered }};{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(
+                rendered,
+                "first ordered item|first ordered \
+                 item|0.0|1.0|True|False|plain|True;nested plain #tag1|nested \
+                 plain #tag1|0.0|2.0|True|False|plain|False;",
+            );
+        }
+
+        #[test]
+        fn universal_fields_resolve_and_task_fields_are_none_on_checkboxes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "- [ ] untagged checkbox\n");
+            let config = crate::Config::test_default(temp.path().to_path_buf())
+                .with_tasks(crate::TaskConfig::from_tags(&["#task"]));
+            let index = Arc::new(
+                IndexerService::new(temp.path())
+                    .with_config(&config)
+                    .build()
+                    .expect("build index"),
+            );
+            let row = QueryService::new("class")
+                .run(&index, QueryBuilder::lists(SourceSelector::All))
+                .into_iter()
+                .next()
+                .expect("row");
+
+            let rendered = env(temp.path())
+                .render_str(
+                    "{{ item.list.text }}|{{ item.list.depth }}|{{ \
+                     item.list.line }}|{{ item.list.is_task }}|{{ \
+                     item.list.kind }}|{{ item.list.due is none }}|{{ \
+                     item.list.completed is none }}",
+                    minijinja::context! { item => Value::from_object(row) },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(
+                rendered,
+                "untagged checkbox|0.0|1.0|False|checkbox|True|True",
+            );
+        }
+
+        #[test]
+        fn universal_and_task_fields_resolve_correctly_on_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "note.md",
+                "- [ ] buy milk 📅 2026-05-01 #errand\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% set t = tasks.from()[0] %}{{ t.list.text }}|{{ \
+                 t.list.is_task }}|{{ t.list.kind }}|{{ t.list.status }}|{{ \
+                 t.list.status_symbol }}|{{ t.list.status_type }}|{{ \
+                 t.list.completed }}|{{ t.list.due }}|{{ t.list.tags[0] }}",
+            )
+            .expect("render succeeds");
+
+            // The default Todo status symbol is a bare space, hence the
+            // empty-looking segment between `Todo|` and `|todo`.
+            assert_eq!(
+                rendered,
+                "buy milk #errand|True|task|Todo| \
+                 |todo|False|2026-05-01|#errand",
+            );
+        }
+    }
+
+    mod row_ordering {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// `>` and `<` on rows must follow document order: a total order
+        /// where each distinct pair compares one way, never both.
+        #[test]
+        fn row_comparisons_follow_document_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "# A");
+            write_note(temp.path(), "b.md", "# B");
+
+            let rendered = render(
+                temp.path(),
+                r"{% set rows = query.from() %}{{ rows[0] > rows[1] }} {{ rows[1] > rows[0] }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "False True");
         }
     }
 
@@ -1555,6 +1826,26 @@ mod tests {
                     .expect("render succeeds");
 
             assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn lists_from_class_source_selects_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_note(
+                temp.path(),
+                "dune.md",
+                "---\nclass: book\n---\n# Dune\n- outline point\n- [ ] read \
+                 part two\n",
+            );
+
+            let rendered =
+                render(temp.path(), r#"{{ lists.from("@book") | length }}"#)
+                    .expect("render succeeds");
+
+            // Both list items match, where `tasks.from` would yield only the
+            // task row.
+            assert_eq!(rendered, "2");
         }
 
         #[test]

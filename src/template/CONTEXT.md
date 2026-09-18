@@ -48,7 +48,7 @@ invoking interactive helpers at point of need during evaluation.
 #### Template Helper
 
 A function, filter, or generator available in templates, grouped under domain
-namespaces (`ui`, `file`, `date`, `query`, `tasks`, `schema`).
+namespaces (`ui`, `file`, `date`, `query`, `lists`, `tasks`, `schema`).
 *Avoid*: custom function, internal function, tp helper
 
 ### Output Resolution & Writing

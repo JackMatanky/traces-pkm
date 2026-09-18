@@ -10,8 +10,8 @@
 //! - [`mod@file`] registers `file.write_to()` and `file.include()`.
 //! - [`path`] registers path tests and path-component filters.
 //! - [`num`] registers numeric filters.
-//! - [`query`] registers the `query` and `tasks` namespaces plus terminal query
-//!   filters.
+//! - [`query`] registers the `query`, `lists`, and `tasks` namespaces plus
+//!   terminal query filters.
 //! - [`mod@schema`] registers Schema registry access through `schema.get()`.
 //! - [`string`] registers case, trimming, truncation, repetition, and regex
 //!   filters.
@@ -91,9 +91,9 @@ impl TemplateEngine {
     /// * `provider` - The [`DialogProvider`] implementation handling `ui.*`
     ///   calls.
     /// * `config` - Supplies the project root confining file operations,
-    ///   queries, and path inspections, the `[schemas]` settings for
-    ///   `query.from_class`/`tasks.from_class`, and the Schema registry
-    ///   directory for the `schema` namespace.
+    ///   queries, and path inspections, the `[schemas]` class field used by
+    ///   `query.from()`/`lists.from()`/`tasks.from()` source expressions, and
+    ///   the Schema registry directory for the `schema` namespace.
     ///
     /// # Errors
     ///
@@ -126,9 +126,9 @@ impl TemplateEngine {
         let root = config.root_arc();
         let class_field = config.class_field_arc();
         // Resolved once here and shared with `QueryOps` (below) so
-        // `query`/`tasks` `.from()` and `schema.get()` read the identical,
-        // already-resolved `SchemaService` for this engine's whole lifetime:
-        // no render-scoped re-resolution or caching.
+        // `query`/`lists`/`tasks` `.from()` and `schema.get()` read the
+        // identical, already-resolved `SchemaService` for this engine's whole
+        // lifetime: no render-scoped re-resolution or caching.
         let schema_directory = config.resolved_schema_directory()?;
         let construction = SchemaService::load_verbose(&schema_directory)?;
         warn_schema_construction_diagnostics(&construction);
@@ -136,6 +136,8 @@ impl TemplateEngine {
 
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(Arc::clone(&root), &class_field, Arc::clone(&service))
+            .register(&mut env);
+        QueryOps::list(Arc::clone(&root), &class_field, Arc::clone(&service))
             .register(&mut env);
         QueryOps::task(Arc::clone(&root), &class_field, Arc::clone(&service))
             .register(&mut env);
