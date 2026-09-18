@@ -353,9 +353,9 @@ impl<'a> ParserContext<'a> {
 
     /// Closes the innermost list.
     ///
-    /// A list nested inside an active item is stored under
-    /// [`ListItem::children`](super::ListItem::children). Otherwise, it becomes
-    /// a top-level [`Note::lists`] entry.
+    /// Items of a list nested inside an active item carry that item's line as
+    /// their `parent` and a deeper `depth`; a top-level list's items become
+    /// [`Note::lists`] entries in document order.
     fn end_list(&mut self) {
         self.list_nesting.end_list();
     }

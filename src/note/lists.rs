@@ -1,15 +1,14 @@
-//! Markdown list, list item, and task-list structures.
+//! Markdown list items and task-list structures.
 //!
-//! This module defines the core data model for ordered and unordered Markdown
-//! lists, individual list items, task-specific metadata, and recursive task
-//! iterators.
+//! This module defines the flat list-item data model. Items are stored in
+//! strict document order inside a [`Note`](crate::Note); hierarchy is
+//! reconstructed from each item's `depth` and `parent` source line rather
+//! than from child containers.
 //!
 //! # Key Types
 //!
-//! - [`List`]: An ordered or unordered Markdown list holding direct child
-//!   items.
-//! - [`ListItem`]: A list item with a classified [`ListItemType`], child lists,
-//!   inline fields, and source positioning.
+//! - [`ListItem`]: A list item with a classified [`ListItemType`], inline
+//!   fields, tags, and source positioning.
 //! - [`ListItemType`]: Classification of an item as a plain bullet, a checkbox,
 //!   or a task carrying a [`TaskListItem`].
 //! - [`TaskListItem`]: Task-specific metadata (resolved status, priority,
@@ -17,9 +16,8 @@
 //!   [`ListItemType::Task`].
 //! - [`ListText`]: Dual-representation text container maintaining both raw
 //!   source and clean display text.
-//! - [`ListItemIter`]: A depth-first iterator yielding all list items across
-//!   top-level and nested child lists in document order, optionally filtered to
-//!   [`ListItemType::Task`] items.
+//! - [`descendants_of`]: Contiguous slice scan yielding the items following a
+//!   parent within a document-order slice.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -431,16 +429,6 @@ impl TaskListItem {
         self.fully_complete
     }
 
-    /// Returns `true` if all descendant tasks in this item's subtree are
-    /// resolved (done or cancelled), or if this item has no descendant tasks.
-    ///
-    /// Alias for [`Self::is_fully_complete`].
-    #[inline]
-    #[must_use]
-    pub const fn fully_complete(&self) -> bool {
-        self.is_fully_complete()
-    }
-
     /// Returns the task's priority, or [`None`] if no priority was specified.
     ///
     /// # Examples
@@ -514,7 +502,7 @@ pub struct ListText {
 }
 
 impl ListText {
-    /// Creates a new `ListText` from raw and clean text representations.
+    /// Creates a new [`Self`] from raw and clean text representations.
     ///
     /// # Examples
     ///
@@ -692,13 +680,9 @@ mod tests {
             #[case::plain(ListItemType::Plain)]
             #[case::checkbox(ListItemType::Checkbox)]
             #[case::task(done_task())]
-            fn stores_the_given_kind(#[case] kind: ListItemType) {
+            fn preserves_the_constructed_item_kind(#[case] kind: ListItemType) {
                 let item = ListItem::for_test("task item", kind.clone());
 
-                assert_eq!(item.text().raw(), "task item");
-                assert_eq!(item.text().clean(), "task item");
-                assert_eq!(item.raw_text(), "task item");
-                assert_eq!(item.clean_text(), "task item");
                 assert_eq!(item.kind(), &kind);
             }
         }
@@ -731,6 +715,15 @@ mod tests {
             fn has_no_fields_by_default() {
                 let item =
                     ListItem::for_test("plain item", ListItemType::Plain);
+
+                assert_eq!(item.fields(), None);
+            }
+
+            #[test]
+            fn drops_an_explicit_empty_field_map() {
+                let item =
+                    ListItem::for_test("plain item", ListItemType::Plain)
+                        .with_fields(IndexMap::new());
 
                 assert_eq!(item.fields(), None);
             }
@@ -857,6 +850,29 @@ mod tests {
             let slice = [parent, sibling];
             assert_eq!(descendants_of(&slice[1..], 0).count(), 0);
         }
+
+        #[test]
+        fn returns_no_items_for_an_empty_slice() {
+            assert_eq!(descendants_of(&[], 0).count(), 0);
+        }
+
+        #[test]
+        fn includes_items_when_depth_skips_a_level() {
+            let parent =
+                ListItem::for_test("parent", ListItemType::Plain).with_depth(0);
+            let grandchild =
+                ListItem::for_test("grandchild", ListItemType::Plain)
+                    .with_depth(2)
+                    .with_parent(Some(SourceLine::new(1).expect("non-zero")));
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain)
+                .with_depth(0);
+            let slice = [parent, grandchild, sibling];
+
+            let desc: Vec<&str> = descendants_of(&slice[1..], 0)
+                .map(ListItem::clean_text)
+                .collect();
+            assert_eq!(desc, ["grandchild"]);
+        }
     }
     mod task_list_item {
         use super::*;
@@ -915,7 +931,7 @@ mod tests {
             }
 
             #[test]
-            fn returns_fully_complete_boolean() {
+            fn reports_whether_the_task_subtree_is_fully_complete() {
                 let status = TaskStatus::new(
                     TaskStatusSymbol::new(' '),
                     "Todo",
@@ -929,30 +945,42 @@ mod tests {
                 );
 
                 assert_eq!(item.is_fully_complete(), false);
-                assert_eq!(item.fully_complete(), false);
             }
 
             #[test]
-            fn returns_priority_when_present_or_absent() {
+            fn returns_priority_when_configured() {
                 let status = TaskStatus::new(
                     TaskStatusSymbol::new(' '),
                     "Todo",
                     TaskStatusType::Todo,
                 );
-                let item_without = TaskListItem::new(
-                    TaskDates::default(),
-                    None,
-                    status.clone(),
-                    false,
-                );
-                let item_with = TaskListItem::new(
+                let item = TaskListItem::new(
                     TaskDates::default(),
                     Some(TaskPriority::Highest),
                     status,
                     false,
                 );
-                assert_eq!(item_without.priority(), None);
-                assert_eq!(item_with.priority(), Some(TaskPriority::Highest));
+                let priority = item.priority();
+
+                assert_eq!(priority, Some(TaskPriority::Highest));
+            }
+
+            #[test]
+            fn returns_none_when_priority_is_not_configured() {
+                let status = TaskStatus::new(
+                    TaskStatusSymbol::new(' '),
+                    "Todo",
+                    TaskStatusType::Todo,
+                );
+                let item = TaskListItem::new(
+                    TaskDates::default(),
+                    None,
+                    status,
+                    false,
+                );
+                let priority = item.priority();
+
+                assert_eq!(priority, None);
             }
 
             #[test]
@@ -987,27 +1015,29 @@ mod tests {
         use super::*;
 
         #[test]
-        fn stores_raw_and_clean_text() {
+        fn returns_distinct_raw_and_clean_text() {
             let text = ListText::new("raw text", "clean text");
 
             assert_eq!(text.raw(), "raw text");
             assert_eq!(text.clean(), "clean text");
+        }
+
+        #[test]
+        fn displays_clean_text() {
+            let text = ListText::new("raw text", "clean text");
+
             assert_eq!(format!("{text}"), "clean text");
         }
+
         #[test]
-        fn falls_back_to_raw_when_clean_equals_raw() {
+        fn uses_raw_text_when_clean_text_matches_raw_text() {
             let text = ListText::new("same", "same");
+
             assert_eq!(text.clean(), "same");
-
-            let from_str: ListText = "plain".into();
-            assert_eq!(from_str.clean(), "plain");
-
-            let diff = ListText::new("raw", "clean");
-            assert_eq!(diff.clean(), "clean");
         }
 
         #[test]
-        fn converts_from_str_and_tuples() {
+        fn converts_a_text_pair_to_raw_and_clean_text() {
             let from_str: ListText = "plain".into();
             assert_eq!(from_str.raw(), "plain");
             assert_eq!(from_str.clean(), "plain");

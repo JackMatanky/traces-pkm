@@ -132,9 +132,9 @@ impl ListTracker {
 
     /// Closes the innermost list.
     ///
-    /// A list nested inside an active item is stored under
-    /// [`ListItem::children`]. Otherwise, it becomes a top-level completed
-    /// list.
+    /// Items of a list nested inside an active item carry that item's line as
+    /// their `parent` and a deeper `depth`; a top-level list's items are
+    /// appended to the tracker's completed lists.
     pub(super) fn end_list(&mut self) {
         self.list_stack.pop();
     }
@@ -178,6 +178,8 @@ impl ListTracker {
     ) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
+            // Borrowed before `text_buffer`/`fields` move out of the frame.
+            let fully_complete = item_frame.is_descendant_tree_complete();
             let clean =
                 compute_clean_text(&item_frame.text_buffer, tag_filters);
             let text = ListText::new(item_frame.text_buffer, clean);
@@ -190,10 +192,6 @@ impl ListTracker {
                             .iter()
                             .any(|tag| tag_filters.contains(tag))
                     {
-                        let fully_complete = is_descendant_tree_complete(
-                            &item_frame.descendants,
-                            item_frame.depth,
-                        );
                         let priority = extract_task_priority(
                             text.raw(),
                             &item_frame.fields,
@@ -266,29 +264,6 @@ impl ListTracker {
         item.push_scan_char(ch);
         true
     }
-}
-
-/// Returns `true` if every descendant task under `children` is resolved (done
-/// or cancelled), or if there are no descendant tasks.
-///
-/// Plain bullet items ([`ListItemType::Plain`]) and non-task checkboxes
-/// ([`ListItemType::Checkbox`]) are ignored and do not block completion.
-/// Short-circuits on the first incomplete task descendant.
-fn is_descendant_tree_complete(
-    descendants: &[ListItem],
-    parent_depth: u8,
-) -> bool {
-    for item in
-        descendants.iter().take_while(|child| child.depth() > parent_depth)
-    {
-        if let ListItemType::Task(task) = item.kind()
-            && (task.status().kind().completed() == Some(false)
-                || !task.is_fully_complete())
-        {
-            return false;
-        }
-    }
-    true
 }
 
 /// Extracts task priority from text emojis or an inline `[priority:: <level>]`
@@ -900,6 +875,28 @@ impl ItemFrame {
     fn push_code(&mut self, text: &str) {
         self.text_buffer.push_str(text);
     }
+
+    /// Returns `true` if every descendant task collected under this frame is
+    /// resolved (done or cancelled), or if there are no descendant tasks.
+    ///
+    /// Plain bullet items ([`ListItemType::Plain`]) and non-task checkboxes
+    /// ([`ListItemType::Checkbox`]) are ignored and do not block completion.
+    /// Short-circuits on the first incomplete task descendant.
+    fn is_descendant_tree_complete(&self) -> bool {
+        for item in self
+            .descendants
+            .iter()
+            .take_while(|child| child.depth() > self.depth)
+        {
+            if let ListItemType::Task(task) = item.kind()
+                && (task.status().kind().completed() == Some(false)
+                    || !task.is_fully_complete())
+            {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// An active list frame on the parser stack.
@@ -914,7 +911,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        TaskStatusType,
+        Note, TaskStatusType,
         note::{MarkdownParserInput, parse_markdown},
         parse_note_str as parse,
     };
@@ -1642,12 +1639,9 @@ mod tests {
         }
     }
 
-    #[expect(clippy::panic, reason = "test assertion on enum variant")]
-    fn expect_task(item: &ListItem) -> &TaskListItem {
-        let ListItemType::Task(task) = item.kind() else {
-            panic!("expected task item, got {:?}", item.kind());
-        };
-        task
+    /// Returns the first task item of `note`, or `None` if it has none.
+    fn first_task(note: &Note) -> Option<&TaskListItem> {
+        note.tasks().find_map(|item| item.kind().as_task())
     }
 
     mod priority_extraction {
@@ -1672,20 +1666,17 @@ mod tests {
             #[case] expected: TaskPriority,
         ) {
             let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let item = note.tasks().next().expect("task present");
+            let task = item.kind().as_task().expect("task kind");
 
             assert_eq!(task.priority(), Some(expected));
-            assert_eq!(task_item.text().clean(), "Task");
+            assert_eq!(item.text().clean(), "Task");
         }
 
         #[test]
         fn returns_none_when_priority_emoji_is_missing() {
             let note = parse("- [ ] Plain task without priority");
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let task = first_task(&note).expect("task present");
 
             assert_eq!(task.priority(), None);
         }
@@ -1693,20 +1684,17 @@ mod tests {
         #[test]
         fn extracts_priority_from_inline_field_when_emoji_absent() {
             let note = parse("- [ ] Task [priority:: high]");
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let item = note.tasks().next().expect("task present");
+            let task = item.kind().as_task().expect("task kind");
 
             assert_eq!(task.priority(), Some(TaskPriority::High));
-            assert_eq!(task_item.text().clean(), "Task");
+            assert_eq!(item.text().clean(), "Task");
         }
 
         #[test]
         fn stores_none_for_an_explicit_normal_priority_field() {
             let note = parse("- [ ] Task [priority:: normal]");
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let task = first_task(&note).expect("task present");
 
             assert_eq!(task.priority(), None);
         }
@@ -1714,12 +1702,28 @@ mod tests {
         #[test]
         fn prefers_earliest_priority_emoji_when_multiple_present() {
             let note = parse("- [ ] Task ⏫ then 🔽 later");
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let item = note.tasks().next().expect("task present");
+            let task = item.kind().as_task().expect("task kind");
 
             assert_eq!(task.priority(), Some(TaskPriority::High));
-            assert_eq!(task_item.text().clean(), "Task then later");
+            assert_eq!(item.text().clean(), "Task then later");
+        }
+
+        #[test]
+        fn prefers_priority_emoji_over_inline_priority_field() {
+            let note = parse("- [ ] Task 🔼 [priority:: high]");
+            let task = first_task(&note).expect("task present");
+
+            assert_eq!(task.priority(), Some(TaskPriority::Medium));
+        }
+
+        #[test]
+        fn extracts_first_valid_inline_priority_after_invalid_value() {
+            let note =
+                parse("- [ ] Task [priority:: urgent] [priority:: high]");
+            let task = first_task(&note).expect("task present");
+
+            assert_eq!(task.priority(), Some(TaskPriority::High));
         }
     }
 
@@ -1728,142 +1732,63 @@ mod tests {
 
         use super::*;
 
-        #[test]
-        fn extracts_dates_from_emoji_syntax() {
-            let input = "- [ ] Task ➕ 2025-01-01 🛫 2025-01-05 ⏳ 2025-01-10 \
-                         📅 2025-01-15 ✅ 2025-01-20 ❌ 2025-01-25";
+        fn date(year: i32, month: u32, day: u32) -> Option<DateValue> {
+            NaiveDate::from_ymd_opt(year, month, day).map(Into::into)
+        }
+        #[rstest]
+        #[case::emoji(
+            "- [ ] Task ➕ 2025-01-01 🛫 2025-01-05 ⏳ 2025-01-10 📅 \
+             2025-01-15 ✅ 2025-01-20 ❌ 2025-01-25"
+        )]
+        #[case::emoji_with_variation_selectors(
+            "- [ ] Task ➕\u{FE0F} 2025-01-01 🛫\u{FE0F} 2025-01-05 \
+             ⏳\u{FE0F} 2025-01-10 📅\u{FE0F} 2025-01-15 ✅\u{FE0F} \
+             2025-01-20 ❌\u{FE0F} 2025-01-25"
+        )]
+        #[case::inline_fields(
+            "- [ ] Task [created:: 2025-01-01] [start:: 2025-01-05] \
+             [scheduled:: 2025-01-10] [due:: 2025-01-15] [done:: 2025-01-20] \
+             [cancelled:: 2025-01-25]"
+        )]
+        fn extracts_all_lifecycle_dates_from_supported_syntax(
+            #[case] input: &str,
+        ) {
             let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let task = first_task(&note).expect("task present");
             let dates = task.dates();
 
-            assert_eq!(
-                dates.created(),
-                NaiveDate::from_ymd_opt(2025, 1, 1).map(Into::into)
-            );
-            assert_eq!(
-                dates.start(),
-                NaiveDate::from_ymd_opt(2025, 1, 5).map(Into::into)
-            );
-            assert_eq!(
-                dates.scheduled(),
-                NaiveDate::from_ymd_opt(2025, 1, 10).map(Into::into)
-            );
-            assert_eq!(
-                dates.due(),
-                NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into)
-            );
-            assert_eq!(
-                dates.done(),
-                NaiveDate::from_ymd_opt(2025, 1, 20).map(Into::into)
-            );
-            assert_eq!(
-                dates.cancelled(),
-                NaiveDate::from_ymd_opt(2025, 1, 25).map(Into::into)
-            );
-            assert_eq!(task_item.text().clean(), "Task");
+            assert_eq!(dates.created(), date(2025, 1, 1));
+            assert_eq!(dates.start(), date(2025, 1, 5));
+            assert_eq!(dates.scheduled(), date(2025, 1, 10));
+            assert_eq!(dates.due(), date(2025, 1, 15));
+            assert_eq!(dates.done(), date(2025, 1, 20));
+            assert_eq!(dates.cancelled(), date(2025, 1, 25));
         }
 
-        #[test]
-        fn extracts_dates_from_emoji_syntax_with_variation_selectors() {
-            let input = "- [ ] Task ➕\u{FE0F} 2025-01-01 🛫\u{FE0F} \
-                         2025-01-05 ⏳\u{FE0F} 2025-01-10 📅\u{FE0F} \
-                         2025-01-15 ✅\u{FE0F} 2025-01-20 ❌\u{FE0F} \
-                         2025-01-25";
-            let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
-            let dates = task.dates();
+        #[rstest]
+        #[case::without_variation_selector("🗓")]
+        #[case::with_variation_selector("🗓\u{FE0F}")]
+        fn extracts_due_date_from_spiral_calendar_emojis(#[case] emoji: &str) {
+            let note = parse(&format!("- [ ] Task {emoji} 2025-01-15"));
+            let task = first_task(&note).expect("task present");
 
-            assert_eq!(
-                dates.created(),
-                NaiveDate::from_ymd_opt(2025, 1, 1).map(Into::into)
-            );
-            assert_eq!(
-                dates.start(),
-                NaiveDate::from_ymd_opt(2025, 1, 5).map(Into::into)
-            );
-            assert_eq!(
-                dates.scheduled(),
-                NaiveDate::from_ymd_opt(2025, 1, 10).map(Into::into)
-            );
-            assert_eq!(
-                dates.due(),
-                NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into)
-            );
-            assert_eq!(
-                dates.done(),
-                NaiveDate::from_ymd_opt(2025, 1, 20).map(Into::into)
-            );
-            assert_eq!(
-                dates.cancelled(),
-                NaiveDate::from_ymd_opt(2025, 1, 25).map(Into::into)
-            );
-            assert_eq!(task_item.text().clean(), "Task");
-        }
-        #[test]
-        fn extracts_dates_from_inline_field_syntax() {
-            let input = "- [ ] Task [created:: 2025-02-01] [start:: \
-                         2025-02-05] [scheduled:: 2025-02-10] [due:: \
-                         2025-02-15] [done:: 2025-02-20] [cancelled:: \
-                         2025-02-25]";
-            let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
-            let dates = task.dates();
-
-            assert_eq!(
-                dates.created(),
-                NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into)
-            );
-            assert_eq!(
-                dates.start(),
-                NaiveDate::from_ymd_opt(2025, 2, 5).map(Into::into)
-            );
-            assert_eq!(
-                dates.scheduled(),
-                NaiveDate::from_ymd_opt(2025, 2, 10).map(Into::into)
-            );
-            assert_eq!(
-                dates.due(),
-                NaiveDate::from_ymd_opt(2025, 2, 15).map(Into::into)
-            );
-            assert_eq!(
-                dates.done(),
-                NaiveDate::from_ymd_opt(2025, 2, 20).map(Into::into)
-            );
-            assert_eq!(
-                dates.cancelled(),
-                NaiveDate::from_ymd_opt(2025, 2, 25).map(Into::into)
-            );
-            assert_eq!(task_item.text().clean(), "Task");
+            assert_eq!(task.dates().due(), date(2025, 1, 15));
         }
 
         #[test]
         fn prefers_emoji_date_over_inline_field_when_both_present() {
             let input = "- [ ] Task 📅 2025-03-01 [due:: 2025-03-15]";
             let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let task = first_task(&note).expect("task present");
 
-            assert_eq!(
-                task.dates().due(),
-                NaiveDate::from_ymd_opt(2025, 3, 1).map(Into::into)
-            );
-            assert_eq!(task_item.text().clean(), "Task");
+            assert_eq!(task.dates().due(), date(2025, 3, 1));
         }
 
         #[test]
         fn returns_none_for_an_invalid_calendar_date_in_emoji_syntax() {
             let input = "- [ ] Task 📅 2025-02-30";
             let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let task = first_task(&note).expect("task present");
 
             assert_eq!(task.dates().due(), None);
         }
@@ -1872,9 +1797,7 @@ mod tests {
         fn returns_none_for_an_invalid_date_in_inline_field_syntax() {
             let input = "- [ ] Task [start:: not-a-date]";
             let note = parse(input);
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            let task_item = tasks.first().expect("task present");
-            let task = expect_task(task_item);
+            let task = first_task(&note).expect("task present");
 
             assert_eq!(task.dates().start(), None);
         }

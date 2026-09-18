@@ -110,6 +110,11 @@ impl FileIndex {
     }
 
     /// Returns the [`FileEntry`] at `position`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `position` is not a valid row index for this index. Row
+    /// indices are only constructed from a valid range over entries.
     #[expect(
         clippy::expect_used,
         reason = "RowIndex is always in bounds: values are only constructed \

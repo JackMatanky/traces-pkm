@@ -15,9 +15,9 @@ use crate::{FieldKey, FieldKeyRef, Tag};
 
 /// A parsed Markdown note.
 ///
-/// Stores page-level frontmatter, top-level lists, outgoing links, inline
-/// fields, and tags. [`Self::tasks`] derives task items from stored lists
-/// instead of duplicating them.
+/// Stores page-level frontmatter, list items in document order, outgoing
+/// links, inline fields, and tags. [`Self::tasks`] filters stored list items
+/// to tasks instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {
     #[serde(with = "crate::index::path")]
@@ -455,6 +455,47 @@ mod tests {
                 "grandchild plain",
                 "sibling task"
             ]);
+        }
+    }
+
+    mod descendants {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_descendants_until_the_next_sibling() {
+            let parent = ListItem::for_test("parent", ListItemType::Plain);
+            let child =
+                ListItem::for_test("child", ListItemType::Plain).with_depth(1);
+            let sibling = ListItem::for_test("sibling", ListItemType::Plain);
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                vec![parent, child, sibling],
+                Vec::new(),
+            );
+
+            let texts: Vec<&str> =
+                note.descendants(0).map(ListItem::clean_text).collect();
+            assert_eq!(texts, ["child"]);
+        }
+
+        #[test]
+        fn returns_no_descendants_for_the_final_item() {
+            let plain = ListItem::for_test("plain item", ListItemType::Plain);
+            let note = Note::new("notes/a.md", None, vec![plain], Vec::new());
+
+            assert_eq!(note.descendants(0).count(), 0);
+        }
+
+        #[test]
+        fn returns_no_descendants_for_an_out_of_range_parent_index() {
+            let plain = ListItem::for_test("plain item", ListItemType::Plain);
+            let note = Note::new("notes/a.md", None, vec![plain], Vec::new());
+
+            assert_eq!(note.descendants(5).count(), 0);
+            assert_eq!(note.descendants(usize::MAX).count(), 0);
         }
     }
 

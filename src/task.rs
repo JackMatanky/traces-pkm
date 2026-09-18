@@ -464,7 +464,7 @@ impl std::fmt::Display for TaskPriority {
 }
 
 impl std::str::FromStr for TaskPriority {
-    type Err = ();
+    type Err = TaskPriorityParseError;
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -475,9 +475,20 @@ impl std::str::FromStr for TaskPriority {
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
             "highest" => Ok(Self::Highest),
-            _ => Self::from_emoji(s).ok_or(()),
+            _ => Self::from_emoji(s).ok_or_else(|| TaskPriorityParseError {
+                input: s.to_owned(),
+            }),
         }
     }
+}
+
+/// Error returned when parsing a [`TaskPriority`] from an unrecognized
+/// string.
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+#[error("unrecognized task priority: {input:?}")]
+pub struct TaskPriorityParseError {
+    /// The unrecognized input.
+    input: String,
 }
 
 /// Date metadata associated with a [`TaskListItem`](crate::TaskListItem).
@@ -515,7 +526,7 @@ pub struct TaskDates {
 }
 
 impl TaskDates {
-    /// Creates a new `TaskDates` instance with all dates specified.
+    /// Creates a new [`Self`] instance with all dates specified.
     ///
     /// # Examples
     ///
@@ -963,12 +974,25 @@ mod tests {
         #[case("HIGH", Ok(TaskPriority::High))]
         #[case("highest", Ok(TaskPriority::Highest))]
         #[case("🔺", Ok(TaskPriority::Highest))]
-        #[case("invalid", Err(()))]
+        #[case(
+            "invalid",
+            Err(TaskPriorityParseError {
+                input: "invalid".to_owned(),
+            })
+        )]
         fn parses_names_and_emojis_case_insensitively(
             #[case] input: &str,
-            #[case] expected: Result<TaskPriority, ()>,
+            #[case] expected: Result<TaskPriority, TaskPriorityParseError>,
         ) {
             assert_eq!(input.parse::<TaskPriority>(), expected);
+        }
+
+        #[test]
+        fn accepts_priority_emoji_with_repeated_variation_selectors() {
+            assert_eq!(
+                TaskPriority::from_emoji("🔺\u{FE0F}\u{FE0F}"),
+                Some(TaskPriority::Highest)
+            );
         }
 
         #[test]
@@ -988,20 +1012,14 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_true_when_no_dates_are_set() {
+        fn is_empty_when_all_dates_are_absent() {
             let dates = TaskDates::default();
 
             assert_eq!(dates.is_empty(), true);
-            assert_eq!(dates.created(), None);
-            assert_eq!(dates.scheduled(), None);
-            assert_eq!(dates.start(), None);
-            assert_eq!(dates.due(), None);
-            assert_eq!(dates.done(), None);
-            assert_eq!(dates.cancelled(), None);
         }
 
         #[test]
-        fn returns_false_when_any_date_is_set() {
+        fn is_not_empty_when_a_lifecycle_date_is_present() {
             let dates = TaskDates::new(
                 None,
                 None,
@@ -1012,10 +1030,6 @@ mod tests {
             );
 
             assert_eq!(dates.is_empty(), false);
-            assert_eq!(
-                dates.due(),
-                NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into)
-            );
         }
 
         #[test]
@@ -1039,6 +1053,28 @@ mod tests {
             assert_eq!(dates.due(), due);
             assert_eq!(dates.done(), done);
             assert_eq!(dates.cancelled(), cancelled);
+        }
+
+        #[test]
+        fn preserves_all_none_dates_across_postcard_roundtrip() {
+            let dates = TaskDates::default();
+            let bytes = postcard::to_allocvec(&dates).expect("encode dates");
+            let decoded: TaskDates =
+                postcard::from_bytes(&bytes).expect("decode dates");
+
+            assert_eq!(decoded, dates);
+        }
+
+        #[test]
+        fn preserves_partially_populated_dates_across_postcard_roundtrip() {
+            let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
+            let dates = TaskDates::new(None, None, None, due, None, None);
+            let bytes = postcard::to_allocvec(&dates).expect("encode dates");
+            let decoded: TaskDates =
+                postcard::from_bytes(&bytes).expect("decode dates");
+
+            assert_eq!(decoded, dates);
+            assert_eq!(decoded.due(), due);
         }
     }
 }
