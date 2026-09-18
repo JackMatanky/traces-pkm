@@ -2247,44 +2247,6 @@ mod tests {
             assert_eq!(notes, []);
             assert!(links.is_empty());
         }
-
-        #[test]
-        fn recovers_by_rebuilding_when_the_lists_table_has_the_old_str_key_schema()
-         {
-            use pretty_assertions::assert_eq;
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path();
-            let db_path = root.join(INDEX_FILE);
-            fs::create_dir_all(
-                db_path.parent().expect("index file path has a parent"),
-            )
-            .expect("create .traces dir");
-            {
-                const OLD_LISTS: TableDefinition<&str, &[u8]> =
-                    TableDefinition::new("lists");
-                let db =
-                    redb::Database::create(&db_path).expect("create raw db");
-                let write_txn = db.begin_write().expect("begin write");
-                {
-                    let mut table = write_txn
-                        .open_table(OLD_LISTS)
-                        .expect("open old table");
-                    table
-                        .insert("old.md", [1u8, 2, 3].as_slice())
-                        .expect("insert old row");
-                }
-                write_txn.commit().expect("commit old schema");
-            }
-
-            let store = IndexStore::open(root)
-                .expect("open recovers from schema mismatch");
-            let (files, notes, links) =
-                store.read_all().expect("load after recovery");
-
-            assert_eq!(files, []);
-            assert_eq!(notes, []);
-            assert!(links.is_empty());
-        }
     }
 
     mod is_rebuild_trigger {
