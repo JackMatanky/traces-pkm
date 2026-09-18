@@ -22,7 +22,7 @@ pub(crate) enum QueryMode {
     /// One row per matching note.
     Pages,
     /// One row per list item in each matching note (plain bullets, checkboxes,
-    /// tasks).
+    /// and tasks).
     Lists,
     /// One row per task list item in each matching note.
     Tasks,
@@ -88,6 +88,19 @@ impl QueryBuilder {
             mode: QueryMode::Tasks,
             source,
             plan: QueryPlan::default(),
+        }
+    }
+
+    /// Builds a query for `mode`, dispatching to the mode-specific
+    /// constructor so callers can hold a bare [`QueryMode`] without knowing
+    /// which constructor it selects.
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_mode(mode: QueryMode, source: SourceSelector) -> Self {
+        match mode {
+            QueryMode::Pages => Self::pages(source),
+            QueryMode::Lists => Self::lists(source),
+            QueryMode::Tasks => Self::tasks(source),
         }
     }
 

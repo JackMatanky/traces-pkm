@@ -6,8 +6,8 @@
 //! - [`QueryOps::list`] creates the `lists` global
 //! - [`QueryOps::task`] creates the `tasks` global.
 //!
-//! Each namespace starts a query with one of four methods, matching
-//! [`SourceSelector`]'s variants:
+//! Each namespace starts a query with `.from([expr])`, whose expression
+//! forms mirror [`SourceSelector`]'s variants:
 //!
 //! - `.from()`: every indexed Note.
 //! - `.from("#tag")`: Notes with an exact or nested tag.
@@ -16,8 +16,8 @@
 //!   descendant.
 //!
 //! Each call reuses the render's cached [`FileIndex`], refreshing it once per
-//! render (see [`cached_refresh`]), and returns a [`QuerySet`] wrapped in
-//! a [`Value`].
+//! render (see [`QueryOps::cached_index`]), and returns a [`QuerySet`] wrapped
+//! in a [`Value`].
 //!
 //! # Row Shape
 //!
@@ -75,7 +75,7 @@ use minijinja::{
 use super::error::TemplateEngineResult;
 use crate::{
     NoteFieldValue,
-    index::{FileIndex, IndexError, IndexerService},
+    index::{FileIndex, IndexerService},
     query::{
         ClassExpansionMode, FieldPath, FileField, ListField, QueryBuilder,
         QueryError, QueryMode, QueryRow, QueryService, QuerySet, SortDirection,
@@ -115,6 +115,25 @@ pub(super) struct QueryOps {
 }
 
 impl QueryOps {
+    /// Wires the shared pipeline every namespace dispatches through: one
+    /// [`QueryService`] pre-configured with `class_field` and the File Class
+    /// `schema` expander, registering as the `name` global at `mode`'s row
+    /// granularity.
+    fn new(
+        name: &'static str,
+        mode: QueryMode,
+        root: Arc<Path>,
+        class_field: &str,
+        schema: Arc<SchemaService>,
+    ) -> Self {
+        Self {
+            name,
+            root,
+            service: QueryService::new(class_field).with_class_expander(schema),
+            mode,
+        }
+    }
+
     /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
@@ -123,16 +142,12 @@ impl QueryOps {
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self {
-            name: "query",
-            root,
-            service: QueryService::new(class_field).with_class_expander(schema),
-            mode: QueryMode::Pages,
-        }
+        Self::new("query", QueryMode::Pages, root, class_field, schema)
     }
 
     /// Wraps `root` for list-level dispatch under the `lists` global. Each row
-    /// is one list item (plain bullets, checkboxes, tasks) instead of one Note.
+    /// is one list item (plain bullets, checkboxes, and tasks) instead of one
+    /// Note.
     #[inline]
     #[must_use]
     pub(super) fn list(
@@ -140,12 +155,7 @@ impl QueryOps {
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self {
-            name: "lists",
-            root,
-            service: QueryService::new(class_field).with_class_expander(schema),
-            mode: QueryMode::Lists,
-        }
+        Self::new("lists", QueryMode::Lists, root, class_field, schema)
     }
 
     /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
@@ -157,12 +167,7 @@ impl QueryOps {
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self {
-            name: "tasks",
-            root,
-            service: QueryService::new(class_field).with_class_expander(schema),
-            mode: QueryMode::Tasks,
-        }
+        Self::new("tasks", QueryMode::Tasks, root, class_field, schema)
     }
 
     /// Registers this object as its `name` global (`query`, `lists`, or
@@ -194,21 +199,46 @@ impl QueryOps {
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::InvalidOperation`] via [`index_error`] if refreshing the
-    ///   index fails, including I/O errors while scanning `root`, database
-    ///   access errors, and TOML (de)serialization errors on stored records.
+    /// - [`ErrorKind::InvalidOperation`] if refreshing the index fails, as
+    ///   documented on [`Self::cached_index`].
     fn run(
         &self,
         state: &State,
         source: SourceSelector,
     ) -> TemplateEngineResult<Value> {
-        let index = cached_refresh(state, &self.root).map_err(index_error)?;
-        let builder = match self.mode {
-            QueryMode::Pages => QueryBuilder::pages(source),
-            QueryMode::Lists => QueryBuilder::lists(source),
-            QueryMode::Tasks => QueryBuilder::tasks(source),
-        };
+        let index = self.cached_index(state)?;
+        let builder = QueryBuilder::from_mode(self.mode, source);
         Ok(Value::from_object(self.service.run(&index, builder)))
+    }
+
+    /// Returns this render's cached [`FileIndex`] for `self.root`, refreshing
+    /// and caching it first if not already cached this render. See
+    /// [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::InvalidOperation`] if refreshing the index fails,
+    ///   including I/O errors while scanning `root`, database access errors,
+    ///   and TOML (de)serialization errors on stored records. The original
+    ///   error is preserved as [`source`], matching [`super::ui`]'s
+    ///   `dialog_error`.
+    ///
+    /// [`source`]: std::error::Error::source
+    fn cached_index(
+        &self,
+        state: &State,
+    ) -> TemplateEngineResult<Arc<FileIndex>> {
+        super::cache::cached(state, INDEX_CACHE_KEY, || {
+            IndexerService::new(self.root.as_ref())
+                .refresh()
+                .map(Arc::new)
+                .map_err(|source| {
+                    super::error::invalid_operation(
+                        "failed to refresh the file index",
+                        source,
+                    )
+                })
+        })
     }
 }
 
@@ -233,31 +263,6 @@ impl Object for QueryOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
-}
-
-/// Returns the render's cached [`FileIndex`], refreshing and caching it in
-/// `state`'s temp storage first if not already cached this render.
-///
-/// # Errors
-///
-/// - Any error [`IndexerService::refresh`](crate::index::IndexerService::refresh) returns.
-pub(super) fn cached_refresh(
-    state: &State,
-    root: &Path,
-) -> Result<Arc<FileIndex>, IndexError> {
-    super::cache::cached(state, INDEX_CACHE_KEY, || {
-        IndexerService::new(root).refresh().map(Arc::new)
-    })
-}
-
-/// Maps a [`IndexError`] into a [`minijinja::Error`].
-///
-/// Keeps the original error as [`source`], matching [`super::ui`]'s
-/// `dialog_error`.
-///
-/// [`source`]: std::error::Error::source
-pub(super) fn index_error(source: IndexError) -> Error {
-    super::error::invalid_operation("failed to refresh the file index", source)
 }
 
 /// Maps a [`QueryError`] into a [`minijinja::Error`].
@@ -981,11 +986,11 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for t in tasks.from().sort("list.due", false) %}{{ t.list.text }} {% endfor %}"#,
+                r#"{% for t in tasks.from().sort("list.due", true) %}{{ t.list.text }} {% endfor %}"#,
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "earlier later ");
+            assert_eq!(rendered, "later earlier ");
         }
     }
 
