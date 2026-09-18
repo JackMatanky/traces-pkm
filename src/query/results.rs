@@ -819,6 +819,7 @@ mod tests {
 
     mod field_path {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -1000,178 +1001,84 @@ mod tests {
                 .with_list_item(item_idx)
         }
 
-        #[test]
-        fn resolves_universal_list_fields_on_list_rows() {
+        #[rstest]
+        #[case::text("list.text", NoteFieldValue::String("plain #item".to_owned()))]
+        #[case::raw_text("list.raw_text", NoteFieldValue::String("plain #item".to_owned()))]
+        #[case::line("list.line", NoteFieldValue::Number(1.0))]
+        #[case::parent("list.parent", NoteFieldValue::Null)]
+        #[case::depth("list.depth", NoteFieldValue::Number(0.0))]
+        #[case::tags("list.tags", NoteFieldValue::List(vec![NoteFieldValue::String("#item".to_owned())].into()))]
+        #[case::is_task("list.is_task", NoteFieldValue::Bool(false))]
+        #[case::kind("list.kind", NoteFieldValue::String("plain".to_owned()))]
+        #[case::is_ordered("list.is_ordered", NoteFieldValue::Bool(true))]
+        fn resolves_universal_list_fields_on_list_rows(
+            #[case] field_name: &str,
+            #[case] expected: NoteFieldValue,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let row = list_row(
-                temp.path(),
-                "1. plain #item
-   - child
-",
-                0,
-            );
-
-            assert_eq!(
-                row.field("list.text"),
-                Ok(NoteFieldValue::String("plain #item".to_owned()))
-            );
-            assert_eq!(
-                row.field("list.raw_text"),
-                Ok(NoteFieldValue::String("plain #item".to_owned()))
-            );
-            assert_eq!(row.field("list.line"), Ok(NoteFieldValue::Number(1.0)));
-            assert_eq!(row.field("list.parent"), Ok(NoteFieldValue::Null));
-            assert_eq!(
-                row.field("list.depth"),
-                Ok(NoteFieldValue::Number(0.0))
-            );
-            assert_eq!(
-                row.field("list.tags"),
-                Ok(NoteFieldValue::List(
-                    vec![NoteFieldValue::String("#item".to_owned())].into()
-                ))
-            );
-            assert_eq!(
-                row.field("list.is_task"),
-                Ok(NoteFieldValue::Bool(false))
-            );
-            assert_eq!(
-                row.field("list.kind"),
-                Ok(NoteFieldValue::String("plain".to_owned()))
-            );
-            assert_eq!(
-                row.field("list.is_ordered"),
-                Ok(NoteFieldValue::Bool(true))
-            );
+            let row = list_row(temp.path(), "1. plain #item\n   - child\n", 0);
+            assert_eq!(row.field(field_name), Ok(expected));
         }
 
-        #[test]
-        fn resolves_task_specific_list_fields_on_task_rows() {
+        #[rstest]
+        #[case::status("list.status", NoteFieldValue::String("Done".to_owned()))]
+        #[case::status_type("list.status_type", NoteFieldValue::String("done".to_owned()))]
+        #[case::status_symbol("list.status_symbol", NoteFieldValue::String("x".to_owned()))]
+        #[case::completed("list.completed", NoteFieldValue::Bool(true))]
+        #[case::priority("list.priority", NoteFieldValue::String("highest".to_owned()))]
+        #[case::created("list.created", NoteFieldValue::Date(DateValue::parse_iso("2025-01-01").unwrap()))]
+        #[case::due("list.due", NoteFieldValue::Date(DateValue::parse_iso("2025-01-02").unwrap()))]
+        #[case::done("list.done", NoteFieldValue::Date(DateValue::parse_iso("2025-01-03").unwrap()))]
+        #[case::start("list.start", NoteFieldValue::Date(DateValue::parse_iso("2025-01-04").unwrap()))]
+        #[case::scheduled("list.scheduled", NoteFieldValue::Date(DateValue::parse_iso("2025-01-05").unwrap()))]
+        #[case::cancelled("list.cancelled", NoteFieldValue::Date(DateValue::parse_iso("2025-01-06").unwrap()))]
+        #[case::fully_complete(
+            "list.fully_complete",
+            NoteFieldValue::Bool(true)
+        )]
+        fn resolves_task_specific_list_fields_on_task_rows(
+            #[case] field_name: &str,
+            #[case] expected: NoteFieldValue,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let row = list_row(
                 temp.path(),
                 "- [x] Ship 🔺 📅 2025-01-02 ✅ 2025-01-03 ➕ 2025-01-01 🛫 \
-                 2025-01-04 ⏳ 2025-01-05 ❌ 2025-01-06
-",
+                 2025-01-04 ⏳ 2025-01-05 ❌ 2025-01-06\n",
                 0,
             );
-
-            assert_eq!(
-                row.field("list.status"),
-                Ok(NoteFieldValue::String("Done".to_owned()))
-            );
-            assert_eq!(
-                row.field("list.status_type"),
-                Ok(NoteFieldValue::String("done".to_owned()))
-            );
-            assert_eq!(
-                row.field("list.status_symbol"),
-                Ok(NoteFieldValue::String("x".to_owned()))
-            );
-            assert_eq!(
-                row.field("list.completed"),
-                Ok(NoteFieldValue::Bool(true))
-            );
-            assert_eq!(
-                row.field("list.priority"),
-                Ok(NoteFieldValue::String("highest".to_owned()))
-            );
-            assert_eq!(
-                row.field("list.created"),
-                Ok(NoteFieldValue::Date(
-                    DateValue::parse_iso("2025-01-01").expect("valid date")
-                ))
-            );
-            assert_eq!(
-                row.field("list.due"),
-                Ok(NoteFieldValue::Date(
-                    DateValue::parse_iso("2025-01-02").expect("valid date")
-                ))
-            );
-            assert_eq!(
-                row.field("list.done"),
-                Ok(NoteFieldValue::Date(
-                    DateValue::parse_iso("2025-01-03").expect("valid date")
-                ))
-            );
-            assert_eq!(
-                row.field("list.start"),
-                Ok(NoteFieldValue::Date(
-                    DateValue::parse_iso("2025-01-04").expect("valid date")
-                ))
-            );
-            assert_eq!(
-                row.field("list.scheduled"),
-                Ok(NoteFieldValue::Date(
-                    DateValue::parse_iso("2025-01-05").expect("valid date")
-                ))
-            );
-            assert_eq!(
-                row.field("list.cancelled"),
-                Ok(NoteFieldValue::Date(
-                    DateValue::parse_iso("2025-01-06").expect("valid date")
-                ))
-            );
-            assert_eq!(
-                row.field("list.fully_complete"),
-                Ok(NoteFieldValue::Bool(true))
-            );
+            assert_eq!(row.field(field_name), Ok(expected));
         }
 
-        #[test]
-        fn task_fields_resolve_to_null_on_plain_and_checkbox_list_rows() {
+        #[rstest]
+        #[case::completed("list.completed")]
+        #[case::status("list.status")]
+        #[case::status_type("list.status_type")]
+        #[case::status_symbol("list.status_symbol")]
+        #[case::due("list.due")]
+        #[case::done("list.done")]
+        #[case::created("list.created")]
+        #[case::start("list.start")]
+        #[case::scheduled("list.scheduled")]
+        #[case::cancelled("list.cancelled")]
+        #[case::priority("list.priority")]
+        #[case::fully_complete("list.fully_complete")]
+        fn task_fields_resolve_to_null_on_plain_and_checkbox_list_rows(
+            #[case] field_name: &str,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let plain_row = list_row(
-                temp.path(),
-                "- just a bullet
-",
-                0,
-            );
-
-            assert_eq!(
-                plain_row.field("list.completed"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(
-                plain_row.field("list.status"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(plain_row.field("list.due"), Ok(NoteFieldValue::Null));
-            assert_eq!(
-                plain_row.field("list.priority"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(
-                plain_row.field("list.fully_complete"),
-                Ok(NoteFieldValue::Null)
-            );
+            let plain_row = list_row(temp.path(), "- just a bullet\n", 0);
+            assert_eq!(plain_row.field(field_name), Ok(NoteFieldValue::Null));
 
             let tasks_config = crate::TaskConfig::from_tags(&["#task"]);
             let checkbox_row = list_row_with_tasks_config(
                 temp.path(),
-                "- [ ] non-task checkbox
-",
+                "- [ ] non-task checkbox\n",
                 &tasks_config,
                 0,
             );
             assert_eq!(
-                checkbox_row.field("list.completed"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(
-                checkbox_row.field("list.status"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(
-                checkbox_row.field("list.due"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(
-                checkbox_row.field("list.priority"),
-                Ok(NoteFieldValue::Null)
-            );
-            assert_eq!(
-                checkbox_row.field("list.fully_complete"),
+                checkbox_row.field(field_name),
                 Ok(NoteFieldValue::Null)
             );
         }

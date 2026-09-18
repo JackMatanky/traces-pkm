@@ -244,7 +244,7 @@ impl FieldPath {
                 Err(invalid())
             } else {
                 FileField::parse(field).map(Self::File).ok_or_else(|| {
-                    accessor_typo_error(
+                    Self::accessor_typo_error(
                         path,
                         "file",
                         FileField::ACCESSOR_NAMES,
@@ -258,7 +258,7 @@ impl FieldPath {
                 Err(invalid())
             } else {
                 ListField::parse(field).map(Self::List).ok_or_else(|| {
-                    accessor_typo_error(
+                    Self::accessor_typo_error(
                         path,
                         "list",
                         ListField::ACCESSOR_NAMES,
@@ -295,28 +295,28 @@ impl FieldPath {
                 .to_owned(),
         ))
     }
-}
 
-fn accessor_typo_error(
-    path: &str,
-    prefix: &str,
-    candidates: &[&'static str],
-    field: &str,
-) -> FieldPathError {
-    FieldPathError::new(
-        path,
-        closest_accessor(candidates, field)
-            .map(|name| format!("{prefix}.{name}"))
-            .as_deref(),
-    )
-}
+    fn accessor_typo_error(
+        path: &str,
+        prefix: &str,
+        candidates: &[&'static str],
+        field: &str,
+    ) -> FieldPathError {
+        FieldPathError::new(
+            path,
+            Self::closest_accessor(candidates, field)
+                .map(|name| format!("{prefix}.{name}"))
+                .as_deref(),
+        )
+    }
 
-/// Finds the closest accessor name within the edit-distance threshold.
-fn closest_accessor(
-    candidates: &[&'static str],
-    input: &str,
-) -> Option<&'static str> {
-    closest_match(candidates.iter().map(|&name| (name, name)), input)
+    /// Finds the closest accessor name within the edit-distance threshold.
+    fn closest_accessor(
+        candidates: &[&'static str],
+        input: &str,
+    ) -> Option<&'static str> {
+        closest_match(candidates.iter().map(|&name| (name, name)), input)
+    }
 }
 
 #[cfg(test)]
@@ -438,7 +438,10 @@ mod tests {
         #[test]
         fn closest_accessor_matches_within_the_half_length_threshold() {
             let candidates: &[&str] = &["path", "name", "folder"];
-            assert_eq!(closest_accessor(candidates, "nam"), Some("name"));
+            assert_eq!(
+                FieldPath::closest_accessor(candidates, "nam"),
+                Some("name")
+            );
         }
 
         #[test]
@@ -446,19 +449,22 @@ mod tests {
             // "na" has threshold 1, but distance 2 from "name": too far to
             // suggest.
             let candidates: &[&str] = &["name"];
-            assert_eq!(closest_accessor(candidates, "na"), None);
+            assert_eq!(FieldPath::closest_accessor(candidates, "na"), None);
         }
 
         #[test]
         fn closest_accessor_returns_none_for_an_empty_candidate_list() {
-            assert_eq!(closest_accessor(&[], "name"), None);
+            assert_eq!(FieldPath::closest_accessor(&[], "name"), None);
         }
 
         #[test]
         fn closest_accessor_breaks_ties_by_iteration_order() {
             // Both candidates are distance 1 from "mat"; iteration order wins.
             let candidates: &[&str] = &["cat", "bat"];
-            assert_eq!(closest_accessor(candidates, "mat"), Some("cat"));
+            assert_eq!(
+                FieldPath::closest_accessor(candidates, "mat"),
+                Some("cat")
+            );
         }
     }
 
