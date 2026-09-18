@@ -13,6 +13,7 @@
 //!   representations.
 //! - [`TaskDates`]: six distinct task-lifecycle calendar dates (created,
 //!   scheduled, start, due, done, cancelled).
+//! - [`TaskError`]: error type for task domain parsing failures.
 
 use std::collections::HashMap;
 
@@ -464,7 +465,7 @@ impl std::fmt::Display for TaskPriority {
 }
 
 impl std::str::FromStr for TaskPriority {
-    type Err = TaskPriorityParseError;
+    type Err = TaskError;
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -475,20 +476,13 @@ impl std::str::FromStr for TaskPriority {
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
             "highest" => Ok(Self::Highest),
-            _ => Self::from_emoji(s).ok_or_else(|| TaskPriorityParseError {
-                input: s.to_owned(),
-            }),
+            _ => {
+                Self::from_emoji(s).ok_or_else(|| TaskError::InvalidPriority {
+                    input: s.to_owned(),
+                })
+            }
         }
     }
-}
-
-/// Error returned when parsing a [`TaskPriority`] from an unrecognized
-/// string.
-#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
-#[error("unrecognized task priority: {input:?}")]
-pub struct TaskPriorityParseError {
-    /// The unrecognized input.
-    input: String,
 }
 
 /// Date metadata associated with a [`TaskListItem`](crate::TaskListItem).
@@ -690,6 +684,18 @@ impl TaskDates {
         self.cancelled
     }
 }
+
+/// Error type for task domain parsing failures.
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+pub enum TaskError {
+    /// No task priority name or emoji matched `input`.
+    #[error("unrecognized task priority: {input:?}")]
+    InvalidPriority {
+        /// The unrecognized input.
+        input: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -976,13 +982,13 @@ mod tests {
         #[case("🔺", Ok(TaskPriority::Highest))]
         #[case(
             "invalid",
-            Err(TaskPriorityParseError {
+            Err(TaskError::InvalidPriority {
                 input: "invalid".to_owned(),
             })
         )]
         fn parses_names_and_emojis_case_insensitively(
             #[case] input: &str,
-            #[case] expected: Result<TaskPriority, TaskPriorityParseError>,
+            #[case] expected: Result<TaskPriority, TaskError>,
         ) {
             assert_eq!(input.parse::<TaskPriority>(), expected);
         }
