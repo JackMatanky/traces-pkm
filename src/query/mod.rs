@@ -16,7 +16,7 @@
 //! - File classes: frontmatter class values matching the named class or a
 //!   transitive descendant.
 //!
-//! Field resolution supports `file.*`, `task.*`, frontmatter, tag, and
+//! Field resolution supports `file.*`, `list.*`, frontmatter, tag, and
 //! inlinks fields. [`QueryError`] reports malformed field paths, invalid
 //! expressions, and transformation constraint violations.
 //!

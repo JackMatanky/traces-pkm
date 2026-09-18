@@ -20,9 +20,11 @@
 //!
 //! # Row Shape
 //!
-//! `query` returns one row per Note. `tasks` returns one row per task item,
-//! exposing `task.completed` and `task.text` alongside the parent Note's
-//! `file.*`, frontmatter, inline-field, and tag metadata.
+//! `query` returns one row per Note. `tasks` returns one row per task item.
+//! `list.*` paths are the filter/sort expression namespace; row attributes
+//! remain `t.task.completed`/`t.task.text` until the planned `ListFields`
+//! wrapper lands, alongside the parent Note's `file.*`, frontmatter,
+//! inline-field, and tag metadata.
 //!
 //! # Chaining and Terminal Methods
 //!
@@ -330,7 +332,7 @@ impl Object for QuerySet {
     ///   method's arguments don't match its expected shape.
     /// - [`ErrorKind::InvalidOperation`] via `query_error` if a field path or
     ///   filter expression is unparsable, `.limit(...)` is negative, or
-    ///   `.task_list()` runs on records with no `task.*` fields.
+    ///   `.task_list()` runs on records with no `list.*` fields.
     ///
     /// [`ErrorKind::InvalidOperation`]: minijinja::ErrorKind::InvalidOperation
     /// [`ErrorKind::MissingArgument`]: minijinja::ErrorKind::MissingArgument
@@ -496,7 +498,7 @@ impl Object for QueryRow {
     /// lookup, the same frontmatter, inline-field, and tag lookup used by
     /// `.where()` and `.sort()`.
     ///
-    /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
+    /// A rejected key, such as a dotted, empty, or unknown `file.*`/`list.*`
     /// accessor, resolves to `None` like any other missing attribute instead of
     /// surfacing `QueryError::FieldPath` as a render error.
     #[inline]
@@ -902,7 +904,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for t in tasks.from().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
+                r#"{% for t in tasks.from().where("list.completed == true") %}{{ t.task.text }}{% endfor %}"#,
             )
             .expect("render succeeds");
 
@@ -1159,7 +1161,7 @@ mod tests {
             let rendered = render(
                 temp.path(),
                 "{% for t in tasks.from() %}{{ t.file.name }}|{{ t.title \
-                 }}|{{ t.tags | length }}{% endfor %}",
+                 }}|{{ t.file.tags | length }}{% endfor %}",
             )
             .expect("render succeeds");
 
@@ -1281,7 +1283,7 @@ mod tests {
 
             let error = render(
                 temp.path(),
-                r#"{{ tasks.from().filter("task.completed >") }}"#,
+                r#"{{ tasks.from().filter("list.completed >") }}"#,
             )
             .expect_err("malformed filter expression should error");
 

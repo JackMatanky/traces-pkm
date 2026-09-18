@@ -542,9 +542,9 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.sort("file.bogus", false),
+                outcome.sort("file.zzzz", false),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
-                    FieldPathError::new("file.bogus", None)
+                    FieldPathError::new("file.zzzz", None)
                 )))
             );
         }

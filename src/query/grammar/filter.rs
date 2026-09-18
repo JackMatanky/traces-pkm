@@ -577,9 +577,9 @@ mod tests {
             let outcome = rated_outcome(temp.path());
 
             assert_eq!(
-                outcome.filter("file.bogus == 1"),
+                outcome.filter("file.zzzz == 1"),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
-                    FieldPathError::new("file.bogus", None)
+                    FieldPathError::new("file.zzzz", None)
                 )))
             );
         }
@@ -587,9 +587,9 @@ mod tests {
         #[test]
         fn rejects_malformed_field_path_in_function() {
             assert_eq!(
-                FilterExpr::parse("contains(file.bogus, \"x\")"),
+                FilterExpr::parse("contains(file.zzzz, \"x\")"),
                 Err(QueryBuilderError::FieldPath(FieldPathError::new(
-                    "file.bogus",
+                    "file.zzzz",
                     None
                 )))
             );

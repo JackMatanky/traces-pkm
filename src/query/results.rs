@@ -4,12 +4,12 @@ use std::{path::PathBuf, sync::Arc};
 use super::{
     QueryPlan, QueryResult, QueryTransform,
     format::{QueryDisplayFormat, TaskPathStyle},
-    grammar::{FieldPath, FileField, TaskField},
+    grammar::{FieldPath, FileField, ListField, TaskField},
     sort::{SortDirection, SortOrder},
     value::QueryFieldValueRef,
 };
 use crate::{
-    DateTimeValue, DateValue, TaskStatus,
+    DateTimeValue, DateValue,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
@@ -18,19 +18,15 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 enum RowKind {
     Page,
-    Task(TaskRow),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct TaskRow {
-    status: TaskStatus,
-    text: String,
+    List {
+        item_idx: u32,
+    },
 }
 
 /// Query-visible view of one indexed [`FileEntry`].
 ///
-/// Carries task metadata and flattened field overrides used to resolve
-/// `file.*`, `task.*`, frontmatter, inline fields, `tags`, and inlinks.
+/// Carries row kind and flattened field overrides used to resolve `file.*`,
+/// `list.*`, frontmatter, inline fields, `tags`, and inlinks.
 #[derive(Clone)]
 pub struct QueryRow {
     index: Arc<FileIndex>,
@@ -56,19 +52,23 @@ impl QueryRow {
         self.index.entry_at(self.position)
     }
 
-    /// Promotes task list items to task-level rows.
-    ///
-    /// Leaves plain and checkbox-only list items as page rows because they lack
-    /// task status.
-    pub(super) fn with_task_item(mut self, item: &ListItem) -> Self {
-        let ListItemType::Task(task) = item.kind() else {
-            return self;
+    /// Promotes a list item to a list-level row by storing its note-local
+    /// index.
+    pub(super) fn with_list_item(mut self, item_idx: u32) -> Self {
+        self.kind = RowKind::List {
+            item_idx,
         };
-        self.kind = RowKind::Task(TaskRow {
-            status: task.status().clone(),
-            text: item.clean_text().to_owned(),
-        });
         self
+    }
+
+    fn list_item(&self) -> Option<&ListItem> {
+        let RowKind::List {
+            item_idx,
+        } = self.kind
+        else {
+            return None;
+        };
+        self.note()?.lists().get(usize::try_from(item_idx).ok()?)
     }
 
     /// Returns task completion for task rows.
@@ -77,20 +77,18 @@ impl QueryRow {
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
-        match &self.kind {
-            RowKind::Page => None,
-            RowKind::Task(task) => task.status.kind().completed(),
-        }
+        self.list_item()
+            .and_then(|item| item.kind().as_task())
+            .and_then(|task| task.status().kind().completed())
     }
 
     /// Returns task text for task-level rows.
     #[inline]
     #[must_use]
     pub fn task_text(&self) -> Option<&str> {
-        match &self.kind {
-            RowKind::Page => None,
-            RowKind::Task(task) => Some(task.text.as_str()),
-        }
+        self.list_item()
+            .filter(|item| item.kind().is_task())
+            .map(ListItem::clean_text)
     }
 
     /// Returns the underlying file metadata.
@@ -138,17 +136,17 @@ impl QueryRow {
         }
         match path {
             FieldPath::File(field) => self.resolve_file_ref(*field),
-            FieldPath::Task(field) => self.resolve_task_ref(*field),
+            FieldPath::List(field) => self.resolve_list_ref(*field),
             FieldPath::Tags => {
-                let tags = self.note().map_or(&[][..], Note::tags);
+                let tags = self.list_item().map_or_else(
+                    || self.note().map_or(&[][..], Note::tags),
+                    ListItem::tags,
+                );
                 QueryFieldValueRef::Tags(tags)
             }
             FieldPath::Inlinks => QueryFieldValueRef::Inlinks(self.inlinks()),
             FieldPath::Metadata(key) => self
-                .note()
-                .and_then(|note| {
-                    note.get(key.as_str()).map(QueryFieldValueRef::from)
-                })
+                .resolve_metadata_ref(key)
                 .unwrap_or(QueryFieldValueRef::Note(NoteFieldValueRef::Null)),
         }
     }
@@ -226,25 +224,138 @@ impl QueryRow {
             FileField::ModifiedDate => QueryFieldValueRef::Note(
                 NoteFieldValueRef::Date(DateValue::from(file.modified_at())),
             ),
+            FileField::Tags => {
+                let tags = self.note().map_or(&[][..], Note::tags);
+                QueryFieldValueRef::Tags(tags)
+            }
         }
     }
 
-    /// Resolves a `task.*` field, or [`NoteFieldValueRef::Null`] for page
-    /// rows.
-    fn resolve_task_ref(&self, field: TaskField) -> QueryFieldValueRef<'_> {
-        let RowKind::Task(task) = &self.kind else {
+    fn resolve_metadata_ref(
+        &self,
+        key: &str,
+    ) -> Option<QueryFieldValueRef<'_>> {
+        if let Some(item) = self.list_item()
+            && let Some(value) = item
+                .fields()
+                .and_then(|fields| fields.get(&crate::FieldKeyRef::new(key)))
+                .and_then(|values| values.first())
+        {
+            return Some(QueryFieldValueRef::from(value));
+        }
+        self.note().and_then(|note| note.get(key)).map(QueryFieldValueRef::from)
+    }
+
+    fn resolve_list_ref(&self, field: ListField) -> QueryFieldValueRef<'_> {
+        let Some(item) = self.list_item() else {
             return QueryFieldValueRef::Note(NoteFieldValueRef::Null);
         };
         match field {
-            TaskField::Completed => match task.status.kind().completed() {
-                Some(completed) => {
-                    QueryFieldValueRef::Note(NoteFieldValueRef::Bool(completed))
-                }
-                None => QueryFieldValueRef::Note(NoteFieldValueRef::Null),
-            },
-            TaskField::Text => {
-                QueryFieldValueRef::Note(NoteFieldValueRef::String(&task.text))
+            ListField::Text => QueryFieldValueRef::Note(
+                NoteFieldValueRef::String(item.clean_text()),
+            ),
+            ListField::RawText => QueryFieldValueRef::Note(
+                NoteFieldValueRef::String(item.raw_text()),
+            ),
+            ListField::Line => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Number(f64::from(item.line().get())),
+            ),
+            ListField::Parent => item.parent().map_or(
+                QueryFieldValueRef::Note(NoteFieldValueRef::Null),
+                |line| {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Number(
+                        f64::from(line.get()),
+                    ))
+                },
+            ),
+            ListField::Depth => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Number(f64::from(item.depth())),
+            ),
+            ListField::Tags => QueryFieldValueRef::Tags(item.tags()),
+            ListField::IsTask => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Bool(item.kind().is_task()),
+            ),
+            ListField::Kind => {
+                QueryFieldValueRef::Note(NoteFieldValueRef::String(match item
+                    .kind()
+                {
+                    ListItemType::Plain => "plain",
+                    ListItemType::Checkbox => "checkbox",
+                    ListItemType::Task(_) => "task",
+                }))
             }
+            ListField::IsOrdered => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Bool(item.is_ordered()),
+            ),
+            ListField::Task(field) => Self::resolve_task_ref(item, field),
+        }
+    }
+
+    fn resolve_task_ref(
+        item: &ListItem,
+        field: TaskField,
+    ) -> QueryFieldValueRef<'_> {
+        let Some(task) = item.kind().as_task() else {
+            return QueryFieldValueRef::Note(NoteFieldValueRef::Null);
+        };
+        let null = QueryFieldValueRef::Note(NoteFieldValueRef::Null);
+        match field {
+            TaskField::Status => QueryFieldValueRef::Note(
+                NoteFieldValueRef::String(task.status().name()),
+            ),
+            TaskField::StatusType => {
+                QueryFieldValueRef::Note(NoteFieldValueRef::String(match task
+                    .status()
+                    .kind()
+                {
+                    crate::TaskStatusType::Todo => "todo",
+                    crate::TaskStatusType::InProgress => "in-progress",
+                    crate::TaskStatusType::OnHold => "on-hold",
+                    crate::TaskStatusType::Done => "done",
+                    crate::TaskStatusType::Cancelled => "cancelled",
+                    crate::TaskStatusType::NonTask => "non-task",
+                }))
+            }
+            TaskField::StatusSymbol => {
+                QueryFieldValueRef::Owned(NoteFieldValue::String(
+                    task.status().symbol().as_char().to_string(),
+                ))
+            }
+            TaskField::Completed => {
+                task.status().kind().completed().map_or(null, |completed| {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Bool(completed))
+                })
+            }
+            TaskField::Priority => task.priority().map_or(null, |priority| {
+                QueryFieldValueRef::Note(NoteFieldValueRef::String(
+                    priority.as_str(),
+                ))
+            }),
+            TaskField::Due => task.dates().due().map_or(null, |date| {
+                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+            }),
+            TaskField::Done => task.dates().done().map_or(null, |date| {
+                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+            }),
+            TaskField::Created => task.dates().created().map_or(null, |date| {
+                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+            }),
+            TaskField::Start => task.dates().start().map_or(null, |date| {
+                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+            }),
+            TaskField::Scheduled => {
+                task.dates().scheduled().map_or(null, |date| {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+                })
+            }
+            TaskField::Cancelled => {
+                task.dates().cancelled().map_or(null, |date| {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+                })
+            }
+            TaskField::FullyComplete => QueryFieldValueRef::Note(
+                NoteFieldValueRef::Bool(task.is_fully_complete()),
+            ),
         }
     }
 }
@@ -861,6 +972,184 @@ mod tests {
             assert_eq!(row.field("no_such_field"), Ok(NoteFieldValue::Null));
         }
 
+        fn list_row(temp: &Path, source: &str, item_idx: u32) -> QueryRow {
+            fs::write(temp.join("a.md"), source).expect("write file");
+            let index = Arc::new(
+                IndexerService::new(temp).build().expect("build index"),
+            );
+            QueryRow::from_row(&index, RowIndex::new(0))
+                .with_list_item(item_idx)
+        }
+
+        #[test]
+        fn resolves_universal_list_fields_on_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let row = list_row(
+                temp.path(),
+                "1. plain #item
+   - child
+",
+                0,
+            );
+
+            assert_eq!(
+                row.field("list.text"),
+                Ok(NoteFieldValue::String("plain #item".to_owned()))
+            );
+            assert_eq!(
+                row.field("list.raw_text"),
+                Ok(NoteFieldValue::String("plain #item".to_owned()))
+            );
+            assert_eq!(row.field("list.line"), Ok(NoteFieldValue::Number(1.0)));
+            assert_eq!(row.field("list.parent"), Ok(NoteFieldValue::Null));
+            assert_eq!(
+                row.field("list.depth"),
+                Ok(NoteFieldValue::Number(0.0))
+            );
+            assert_eq!(
+                row.field("list.tags"),
+                Ok(NoteFieldValue::List(
+                    vec![NoteFieldValue::String("#item".to_owned())].into()
+                ))
+            );
+            assert_eq!(
+                row.field("list.is_task"),
+                Ok(NoteFieldValue::Bool(false))
+            );
+            assert_eq!(
+                row.field("list.kind"),
+                Ok(NoteFieldValue::String("plain".to_owned()))
+            );
+            assert_eq!(
+                row.field("list.is_ordered"),
+                Ok(NoteFieldValue::Bool(true))
+            );
+        }
+
+        #[test]
+        fn resolves_task_specific_list_fields_on_task_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let row = list_row(
+                temp.path(),
+                "- [x] Ship 🔺 📅 2025-01-02 ✅ 2025-01-03 ➕ 2025-01-01 🛫 \
+                 2025-01-04 ⏳ 2025-01-05 ❌ 2025-01-06
+",
+                0,
+            );
+
+            assert_eq!(
+                row.field("list.status"),
+                Ok(NoteFieldValue::String("Done".to_owned()))
+            );
+            assert_eq!(
+                row.field("list.status_type"),
+                Ok(NoteFieldValue::String("done".to_owned()))
+            );
+            assert_eq!(
+                row.field("list.status_symbol"),
+                Ok(NoteFieldValue::String("x".to_owned()))
+            );
+            assert_eq!(
+                row.field("list.completed"),
+                Ok(NoteFieldValue::Bool(true))
+            );
+            assert_eq!(
+                row.field("list.priority"),
+                Ok(NoteFieldValue::String("highest".to_owned()))
+            );
+            assert_eq!(
+                row.field("list.created"),
+                Ok(NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-01-01").expect("valid date")
+                ))
+            );
+            assert_eq!(
+                row.field("list.due"),
+                Ok(NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-01-02").expect("valid date")
+                ))
+            );
+            assert_eq!(
+                row.field("list.done"),
+                Ok(NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-01-03").expect("valid date")
+                ))
+            );
+            assert_eq!(
+                row.field("list.start"),
+                Ok(NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-01-04").expect("valid date")
+                ))
+            );
+            assert_eq!(
+                row.field("list.scheduled"),
+                Ok(NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-01-05").expect("valid date")
+                ))
+            );
+            assert_eq!(
+                row.field("list.cancelled"),
+                Ok(NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-01-06").expect("valid date")
+                ))
+            );
+            assert_eq!(
+                row.field("list.fully_complete"),
+                Ok(NoteFieldValue::Bool(true))
+            );
+        }
+
+        #[test]
+        fn task_fields_resolve_to_null_on_plain_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let row = list_row(
+                temp.path(),
+                "- just a bullet
+",
+                0,
+            );
+
+            assert_eq!(row.field("list.completed"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("list.status"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("list.due"), Ok(NoteFieldValue::Null));
+        }
+
+        #[test]
+        fn list_row_inline_fields_override_note_metadata() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let row = list_row(
+                temp.path(),
+                "---
+rating: note
+---
+#note
+- item [rating:: item] #item
+",
+                0,
+            );
+
+            assert_eq!(
+                row.field("rating"),
+                Ok(NoteFieldValue::String("item".to_owned()))
+            );
+            assert_eq!(
+                row.field("tags"),
+                Ok(NoteFieldValue::List(
+                    vec![NoteFieldValue::String("#item".to_owned())].into()
+                ))
+            );
+            assert_eq!(
+                row.field("file.tags"),
+                Ok(NoteFieldValue::List(
+                    vec![
+                        NoteFieldValue::String("#note".to_owned()),
+                        NoteFieldValue::String("#item".to_owned()),
+                    ]
+                    .into()
+                ))
+            );
+        }
+
         #[test]
         fn resolves_task_completed_and_task_text_on_task_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -873,11 +1162,11 @@ mod tests {
                 .run(&index, QueryBuilder::tasks(SourceSelector::All));
             let row = outcome.get(0).expect("row");
             assert_eq!(
-                row.field("task.completed"),
+                row.field("list.completed"),
                 Ok(NoteFieldValue::Bool(true))
             );
             assert_eq!(
-                row.field("task.text"),
+                row.field("list.text"),
                 Ok(NoteFieldValue::String("Buy milk".to_owned()))
             );
         }
@@ -888,8 +1177,8 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
             let row = outcome.get(0).expect("row");
 
-            assert_eq!(row.field("task.completed"), Ok(NoteFieldValue::Null));
-            assert_eq!(row.field("task.text"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("list.completed"), Ok(NoteFieldValue::Null));
+            assert_eq!(row.field("list.text"), Ok(NoteFieldValue::Null));
         }
     }
 
@@ -1002,9 +1291,9 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.group_by("file.bogus"),
+                outcome.group_by("file.zzzz"),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
-                    FieldPathError::new("file.bogus", None)
+                    FieldPathError::new("file.zzzz", None)
                 )))
             );
         }
@@ -1090,9 +1379,9 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.flatten("file.bogus"),
+                outcome.flatten("file.zzzz"),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
-                    FieldPathError::new("file.bogus", None)
+                    FieldPathError::new("file.zzzz", None)
                 )))
             );
         }
@@ -1242,9 +1531,9 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.table(&["Name"], &["file.bogus"]),
+                outcome.table(&["Name"], &["file.zzzz"]),
                 Err(QueryError::FieldPath(FieldPathError::new(
-                    "file.bogus",
+                    "file.zzzz",
                     None
                 )))
             );
@@ -1299,9 +1588,9 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.list("file.bogus"),
+                outcome.list("file.zzzz"),
                 Err(QueryError::FieldPath(FieldPathError::new(
-                    "file.bogus",
+                    "file.zzzz",
                     None
                 )))
             );

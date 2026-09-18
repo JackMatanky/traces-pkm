@@ -152,9 +152,8 @@ impl QuerySyntaxError {
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 #[error(
     "invalid field path {path:?}; expected `file.<field>` (path, name, \
-     folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
-     (completed, text), or a single frontmatter, inline field, or `tags` \
-     name{}",
+     folder, size, ctime, cdate, mtime, mdate, tags), `list.<field>`, \
+     or a single frontmatter, inline field, or `tags` name{}",
     suggestion.as_deref().map_or_else(String::new, |name| format!(
         " (did you mean `{name}`?)"
     ))
@@ -273,9 +272,9 @@ mod tests {
             assert_display(
                 &error,
                 "invalid field path \"file.bogus\"; expected `file.<field>` \
-                 (path, name, folder, size, ctime, cdate, mtime, mdate), \
-                 `task.<field>` (completed, text), or a single frontmatter, \
-                 inline field, or `tags` name",
+                 (path, name, folder, size, ctime, cdate, mtime, mdate, \
+                 tags), `list.<field>`, or a single frontmatter, inline \
+                 field, or `tags` name",
             );
         }
 
@@ -289,9 +288,9 @@ mod tests {
             assert_display(
                 &error,
                 "invalid field path \"file.nam\"; expected `file.<field>` \
-                 (path, name, folder, size, ctime, cdate, mtime, mdate), \
-                 `task.<field>` (completed, text), or a single frontmatter, \
-                 inline field, or `tags` name (did you mean `file.name`?)",
+                 (path, name, folder, size, ctime, cdate, mtime, mdate, \
+                 tags), `list.<field>`, or a single frontmatter, inline \
+                 field, or `tags` name (did you mean `file.name`?)",
             );
         }
     }

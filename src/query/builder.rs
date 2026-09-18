@@ -381,10 +381,10 @@ mod tests {
         fn returns_field_path_error_for_invalid_sort_field() {
             assert_eq!(
                 QueryBuilder::pages(SourceSelector::All)
-                    .sort("file.bogus", false)
+                    .sort("file.zzzz", false)
                     .err(),
                 Some(QueryBuilderError::FieldPath(FieldPathError::new(
-                    "file.bogus",
+                    "file.zzzz",
                     None
                 )))
             );
