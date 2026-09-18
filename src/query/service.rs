@@ -104,8 +104,8 @@ impl QueryService {
     ///
     /// # Errors
     ///
-    /// - `IndexError` if source resolution or any batch read from `store`
-    ///   fails.
+    /// - [`crate::index::IndexError`] if source resolution or any batch read
+    ///   from `store` fails.
     #[inline]
     pub(crate) fn run_from_store(
         &self,

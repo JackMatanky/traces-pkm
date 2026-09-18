@@ -75,9 +75,9 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - `QueryBuilderError::Syntax` if `expr` cannot be parsed as a valid
+    /// - [`QueryBuilderError::Syntax`] if `expr` cannot be parsed as a valid
     ///   boolean filter expression.
-    /// - `QueryBuilderError::FieldPath` if `expr` references an invalid or
+    /// - [`QueryBuilderError::FieldPath`] if `expr` references an invalid or
     ///   malformed field path.
     #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
@@ -91,9 +91,8 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - `QueryBuilderError::FieldPath` if `field` cannot be parsed as a valid
-    ///   field path.
-    #[inline]
+    /// - [`QueryBuilderError::FieldPath`] if `field` cannot be parsed as a
+    ///   valid field path.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -102,6 +101,7 @@ impl QueryBuilder {
                       tests and test-utils"
         )
     )]
+    #[inline]
     pub fn sort(
         mut self,
         field: &str,
@@ -122,8 +122,8 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - `QueryBuilderError::LimitOutOfRange` if `n` is negative or exceeds
-    ///   `usize::MAX`.
+    /// - [`QueryBuilderError::LimitOutOfRange`] if `n` is negative or exceeds
+    ///   [`usize::MAX`].
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),

@@ -152,6 +152,9 @@ impl QueryRow {
         }
     }
 
+    /// Resolves `path` into an owned [`NoteFieldValue`].
+    #[inline]
+    #[must_use]
     pub(crate) fn resolve_owned(&self, path: &FieldPath) -> NoteFieldValue {
         self.resolve_ref(path).to_owned_value()
     }

@@ -166,6 +166,9 @@ pub struct FieldPathError {
 }
 
 impl FieldPathError {
+    /// Creates a new field path error for `path` with an optional typo
+    /// `suggestion`.
+    #[must_use]
     pub(in crate::query) fn new(path: &str, suggestion: Option<&str>) -> Self {
         Self {
             path: path.to_owned(),
