@@ -159,10 +159,10 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    /// Escapes Markdown table cell text by replacing newlines with spaces
-    /// and escaping pipes. Short-circuits to a plain copy when neither
-    /// character is present, avoiding the two intermediate allocations a
-    /// chained `.replace().replace()` would otherwise cost every cell.
+    /// Escapes Markdown table cell text by replacing newlines with spaces and
+    /// escaping pipes. Short-circuits to a plain copy when neither character is
+    /// present, avoiding the two intermediate allocations a chained
+    /// `.replace().replace()` would otherwise cost every cell.
     fn escape_table_cell(text: &str) -> String {
         if !text.contains(['\n', '|']) {
             return text.to_owned();

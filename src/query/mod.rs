@@ -1,9 +1,8 @@
 //! Query source selection, field resolution, and result transformation.
 //!
-//! Call [`QueryService::run`] with a [`QueryBuilder`] and [`SourceSelector`]
-//! to select [`Note`]s from a [`FileIndex`], pair each match with
-//! [`FileBase`] metadata in a [`QueryRow`], and transform rows through
-//! [`QuerySet`].
+//! Call [`QueryService::run`] with a [`QueryBuilder`] and [`SourceSelector`] to
+//! select [`Note`]s from a [`FileIndex`], pair each match with [`FileBase`]
+//! metadata in a [`QueryRow`], and transform rows through [`QuerySet`].
 //!
 //! # Source expression language
 //!
@@ -16,9 +15,9 @@
 //! - File classes: frontmatter class values matching the named class or a
 //!   transitive descendant.
 //!
-//! Field resolution supports `file.*`, `list.*`, frontmatter, tag, and
-//! inlinks fields. [`QueryError`] reports malformed field paths, invalid
-//! expressions, and transformation constraint violations.
+//! Field resolution supports `file.*`, `list.*`, frontmatter, tag, and inlinks
+//! fields. [`QueryError`] reports malformed field paths, invalid expressions,
+//! and transformation constraint violations.
 //!
 //! # Examples
 //!
@@ -50,6 +49,7 @@
 //! [`FileBase`]: crate::file::FileBase
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`Note`]: crate::note::Note
+
 mod builder;
 mod error;
 mod format;

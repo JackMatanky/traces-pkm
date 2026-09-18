@@ -6,6 +6,7 @@
 //! fuses adjacent filters, merges consecutive sorts, and rewrites sort-limit
 //! pairs into `TopK`, replacing an `O(n log n)` full sort with an `O(n)`
 //! quickselect partition when a bounded selection is enough.
+
 #[cfg(test)]
 use super::sort::SortTerm;
 use super::{

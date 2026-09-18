@@ -1,7 +1,7 @@
 //! Declarative query builder for source selection, row mode, and transforms.
 //!
-//! [`QueryBuilder`] configures index query execution before passing the
-//! request to [`QueryService::run`](super::QueryService::run).
+//! [`QueryBuilder`] configures index query execution before passing the request
+//! to [`QueryService::run`](super::QueryService::run).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,

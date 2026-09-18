@@ -1,4 +1,5 @@
 //! Query result rows and lazy result sets.
+
 use std::{path::PathBuf, sync::Arc};
 
 use super::{

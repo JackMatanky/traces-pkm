@@ -175,14 +175,13 @@ impl ComparisonExpr {
     }
 
     /// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
-    /// `Duration` when its text has that shape, once, at query-build time
-    /// (not per row). Only `NoteFieldValue::String` needs inspection: the
-    /// filter grammar's `Literal` token never produces `Date`/`DateTime`/
+    /// `Duration` when its text has that shape, once, at query-build time (not
+    /// per row). Only `NoteFieldValue::String` needs inspection: the filter
+    /// grammar's `Literal` token never produces `Date`/`DateTime`/
     /// `Duration`/`Link`/`List`/`Object` directly (`Null`/`Bool`/`Number`/
     /// `String` are its only literal shapes). Reuses [`TextShape::classify`]
-    /// (the same heuristic `SortKey::from_text` uses), so filter
-    /// literals and sort-key text classify identically, not via a second
-    /// hand-rolled copy.
+    /// (the same heuristic `SortKey::from_text` uses), so filter literals and
+    /// sort-key text classify identically, not via a second hand-rolled copy.
     fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
         let NoteFieldValue::String(text) = &literal else {
             return literal;
@@ -214,12 +213,12 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// `Eq`/`Ne` use `is_equal_to_literal`'s existing cross-kind coercion
-    /// (e.g. a `Date` field against a `DateTime` literal at midnight UTC).
-    /// `Lt`/`Le`/`Gt`/`Ge` use [`NoteFieldValueRef::compare`]'s full rank
-    /// order directly; a `Null` on either side never satisfies an ordering
-    /// comparison (matches today's behavior: a missing field never passes a
-    /// numeric/date threshold).
+    /// `Eq`/`Ne` use `is_equal_to_literal`'s existing cross-kind coercion (e.g.
+    /// a `Date` field against a `DateTime` literal at midnight UTC).
+    /// `Lt`/`Le`/`Gt`/`Ge` use [`NoteFieldValueRef::compare`]'s full rank order
+    /// directly; a `Null` on either side never satisfies an ordering comparison
+    /// (matches today's behavior: a missing field never passes a numeric/date
+    /// threshold).
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
