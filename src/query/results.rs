@@ -981,6 +981,25 @@ mod tests {
                 .with_list_item(item_idx)
         }
 
+        fn list_row_with_tasks_config(
+            temp: &Path,
+            source: &str,
+            tasks: &crate::TaskConfig,
+            item_idx: u32,
+        ) -> QueryRow {
+            fs::write(temp.join("a.md"), source).expect("write file");
+            let config = crate::Config::test_default(temp.to_path_buf())
+                .with_tasks(tasks.clone());
+            let index = Arc::new(
+                IndexerService::new(temp)
+                    .with_config(&config)
+                    .build()
+                    .expect("build index"),
+            );
+            QueryRow::from_row(&index, RowIndex::new(0))
+                .with_list_item(item_idx)
+        }
+
         #[test]
         fn resolves_universal_list_fields_on_list_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1100,18 +1119,61 @@ mod tests {
         }
 
         #[test]
-        fn task_fields_resolve_to_null_on_plain_list_rows() {
+        fn task_fields_resolve_to_null_on_plain_and_checkbox_list_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let row = list_row(
+            let plain_row = list_row(
                 temp.path(),
                 "- just a bullet
 ",
                 0,
             );
 
-            assert_eq!(row.field("list.completed"), Ok(NoteFieldValue::Null));
-            assert_eq!(row.field("list.status"), Ok(NoteFieldValue::Null));
-            assert_eq!(row.field("list.due"), Ok(NoteFieldValue::Null));
+            assert_eq!(
+                plain_row.field("list.completed"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(
+                plain_row.field("list.status"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(plain_row.field("list.due"), Ok(NoteFieldValue::Null));
+            assert_eq!(
+                plain_row.field("list.priority"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(
+                plain_row.field("list.fully_complete"),
+                Ok(NoteFieldValue::Null)
+            );
+
+            let tasks_config = crate::TaskConfig::from_tags(&["#task"]);
+            let checkbox_row = list_row_with_tasks_config(
+                temp.path(),
+                "- [ ] non-task checkbox
+",
+                &tasks_config,
+                0,
+            );
+            assert_eq!(
+                checkbox_row.field("list.completed"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(
+                checkbox_row.field("list.status"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(
+                checkbox_row.field("list.due"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(
+                checkbox_row.field("list.priority"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(
+                checkbox_row.field("list.fully_complete"),
+                Ok(NoteFieldValue::Null)
+            );
         }
 
         #[test]

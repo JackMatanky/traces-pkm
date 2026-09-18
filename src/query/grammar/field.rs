@@ -227,9 +227,11 @@ impl FieldPath {
     ///
     /// # Errors
     ///
-    /// - [`FieldPathError`] if `path` is empty.
+    /// - [`FieldPathError`] if `path` is empty or contains an invalid
+    ///   identifier.
     /// - [`FieldPathError`] if `path` has invalid `.` structure (for example,
-    ///   `file.` or `a.b`).
+    ///   `file.`, `a.b`, or more than two segments).
+    /// - [`FieldPathError`] if `path` uses obsolete `task.<field>` syntax.
     /// - [`FieldPathError`] if `path` names an unknown `file.<field>` or
     ///   `list.<field>` accessor.
     ///
@@ -344,16 +346,28 @@ mod tests {
 
     mod task_field {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn parses_task_specific_fields() {
-            assert_eq!(
-                TaskField::parse("completed"),
-                Some(TaskField::Completed)
-            );
-            assert_eq!(TaskField::parse("due"), Some(TaskField::Due));
+        #[rstest]
+        #[case::status("status", TaskField::Status)]
+        #[case::status_type("status_type", TaskField::StatusType)]
+        #[case::status_symbol("status_symbol", TaskField::StatusSymbol)]
+        #[case::completed("completed", TaskField::Completed)]
+        #[case::priority("priority", TaskField::Priority)]
+        #[case::due("due", TaskField::Due)]
+        #[case::done("done", TaskField::Done)]
+        #[case::created("created", TaskField::Created)]
+        #[case::start("start", TaskField::Start)]
+        #[case::scheduled("scheduled", TaskField::Scheduled)]
+        #[case::cancelled("cancelled", TaskField::Cancelled)]
+        #[case::fully_complete("fully_complete", TaskField::FullyComplete)]
+        fn parses_all_task_field_variants(
+            #[case] name: &str,
+            #[case] expected: TaskField,
+        ) {
+            assert_eq!(TaskField::parse(name), Some(expected));
         }
 
         #[test]
@@ -366,6 +380,50 @@ mod tests {
             for name in TaskField::ACCESSOR_NAMES {
                 assert!(
                     TaskField::parse(name).is_some(),
+                    "{name} should parse"
+                );
+            }
+        }
+    }
+
+    mod list_field {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::text("text", ListField::Text)]
+        #[case::raw_text("raw_text", ListField::RawText)]
+        #[case::line("line", ListField::Line)]
+        #[case::parent("parent", ListField::Parent)]
+        #[case::depth("depth", ListField::Depth)]
+        #[case::tags("tags", ListField::Tags)]
+        #[case::is_task("is_task", ListField::IsTask)]
+        #[case::kind("kind", ListField::Kind)]
+        #[case::is_ordered("is_ordered", ListField::IsOrdered)]
+        #[case::embedded_due("due", ListField::Task(TaskField::Due))]
+        #[case::embedded_completed(
+            "completed",
+            ListField::Task(TaskField::Completed)
+        )]
+        fn parses_all_list_field_variants(
+            #[case] name: &str,
+            #[case] expected: ListField,
+        ) {
+            assert_eq!(ListField::parse(name), Some(expected));
+        }
+
+        #[test]
+        fn rejects_an_unknown_accessor_name() {
+            assert_eq!(ListField::parse("bogus"), None);
+        }
+
+        #[test]
+        fn accessor_names_round_trip_through_parse() {
+            for name in ListField::ACCESSOR_NAMES {
+                assert!(
+                    ListField::parse(name).is_some(),
                     "{name} should parse"
                 );
             }
@@ -415,6 +473,14 @@ mod tests {
             assert_eq!(
                 FieldPath::parse("file.name"),
                 Ok(FieldPath::File(FileField::Name))
+            );
+        }
+
+        #[test]
+        fn parses_a_file_tags_accessor() {
+            assert_eq!(
+                FieldPath::parse("file.tags"),
+                Ok(FieldPath::File(FileField::Tags))
             );
         }
 
