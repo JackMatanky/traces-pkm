@@ -110,6 +110,7 @@ pub(super) struct QueryOps {
     /// Pre-configured once at construction instead of being rebuilt on every
     /// `.from()` call.
     service: QueryService,
+    /// Row granularity this namespace dispatches to [`QueryBuilder`].
     mode: QueryMode,
 }
 
@@ -1198,6 +1199,7 @@ mod tests {
 
     mod attribute_resolution {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -1315,21 +1317,30 @@ mod tests {
             assert_eq!(rendered, "True:True");
         }
 
-        #[test]
-        fn task_specific_fields_return_none_on_plain_bullets() {
+        #[rstest]
+        #[case::status("status")]
+        #[case::status_type("status_type")]
+        #[case::status_symbol("status_symbol")]
+        #[case::completed("completed")]
+        #[case::priority("priority")]
+        #[case::due("due")]
+        #[case::done("done")]
+        #[case::created("created")]
+        #[case::start("start")]
+        #[case::scheduled("scheduled")]
+        #[case::cancelled("cancelled")]
+        #[case::fully_complete("fully_complete")]
+        fn task_fields_are_none_on_plain_bullets(#[case] field: &str) {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "note.md", "- a plain bullet\n");
 
             let rendered = render(
                 temp.path(),
-                "{{ lists.from()[0].list.due is none }}:{{ \
-                 lists.from()[0].list.priority is none }}:{{ \
-                 lists.from()[0].list.status is none }}:{{ \
-                 lists.from()[0].list.completed is none }}",
+                &format!("{{{{ lists.from()[0].list.{field} is none }}}}"),
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "True:True:True:True");
+            assert_eq!(rendered, "True");
         }
 
         #[test]
@@ -1404,17 +1415,15 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{{ tasks.from()[0].list.text }}|{{ \
-                 tasks.from()[0].list.is_task }}|{{ tasks.from()[0].list.kind \
-                 }}|{{ tasks.from()[0].list.status }}|{{ \
-                 tasks.from()[0].list.status_symbol }}|{{ \
-                 tasks.from()[0].list.status_type }}|{{ \
-                 tasks.from()[0].list.completed }}|{{ \
-                 tasks.from()[0].list.due }}|{{ tasks.from()[0].list.tags[0] \
-                 }}",
+                "{% set t = tasks.from()[0] %}{{ t.list.text }}|{{ \
+                 t.list.is_task }}|{{ t.list.kind }}|{{ t.list.status }}|{{ \
+                 t.list.status_symbol }}|{{ t.list.status_type }}|{{ \
+                 t.list.completed }}|{{ t.list.due }}|{{ t.list.tags[0] }}",
             )
             .expect("render succeeds");
 
+            // The default Todo status symbol is a bare space, hence the
+            // empty-looking segment between `Todo|` and `|todo`.
             assert_eq!(
                 rendered,
                 "buy milk #errand|True|task|Todo| \
@@ -1794,6 +1803,26 @@ mod tests {
                     .expect("render succeeds");
 
             assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn lists_from_class_source_selects_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_note(
+                temp.path(),
+                "dune.md",
+                "---\nclass: book\n---\n# Dune\n- outline point\n- [ ] read \
+                 part two\n",
+            );
+
+            let rendered =
+                render(temp.path(), r#"{{ lists.from("@book") | length }}"#)
+                    .expect("render succeeds");
+
+            // Both list items match, where `tasks.from` would yield only the
+            // task row.
+            assert_eq!(rendered, "2");
         }
 
         #[test]

@@ -91,9 +91,9 @@ impl TemplateEngine {
     /// * `provider` - The [`DialogProvider`] implementation handling `ui.*`
     ///   calls.
     /// * `config` - Supplies the project root confining file operations,
-    ///   queries, and path inspections, the `[schemas]` settings for
-    ///   `query.from_class`/`tasks.from_class`, and the Schema registry
-    ///   directory for the `schema` namespace.
+    ///   queries, and path inspections, the `[schemas]` class field used by
+    ///   `query.from()`/`lists.from()`/`tasks.from()` source expressions, and
+    ///   the Schema registry directory for the `schema` namespace.
     ///
     /// # Errors
     ///
@@ -126,9 +126,9 @@ impl TemplateEngine {
         let root = config.root_arc();
         let class_field = config.class_field_arc();
         // Resolved once here and shared with `QueryOps` (below) so
-        // `query`/`tasks` `.from()` and `schema.get()` read the identical,
-        // already-resolved `SchemaService` for this engine's whole lifetime:
-        // no render-scoped re-resolution or caching.
+        // `query`/`lists`/`tasks` `.from()` and `schema.get()` read the
+        // identical, already-resolved `SchemaService` for this engine's whole
+        // lifetime: no render-scoped re-resolution or caching.
         let schema_directory = config.resolved_schema_directory()?;
         let construction = SchemaService::load_verbose(&schema_directory)?;
         warn_schema_construction_diagnostics(&construction);

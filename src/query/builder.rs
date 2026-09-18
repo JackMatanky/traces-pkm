@@ -68,10 +68,8 @@ impl QueryBuilder {
         }
     }
 
-    /// Builds a list-row query that emits one row per list item.
-    ///
-    /// Emits all list items (plain bullets, checkboxes, and tasks) from
-    /// matching notes.
+    /// Builds a list-row query that emits one row per list item (plain
+    /// bullets, checkboxes, and tasks) in each matching note.
     #[inline]
     #[must_use]
     pub fn lists(source: SourceSelector) -> Self {

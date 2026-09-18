@@ -8,14 +8,15 @@
 //!
 //! # Architecture and Pipeline
 //!
-//! 1. **Specification**: Callers construct a [`QueryBuilder`] in either page or
+//! 1. **Specification**: Callers construct a [`QueryBuilder`] in page, list, or
 //!    task row granularity using a [`SourceSelector`].
 //! 2. **Evaluation**: [`QueryService::run`] evaluates the source expression
 //!    against a [`FileIndex`], optionally expanding File Class hierarchies via
 //!    a [`FileClassExpander`].
 //! 3. **Row Instantiation**: Matching notes generate [`QueryRow`] items. For
-//!    page queries, each note forms one row. For task queries, each task list
-//!    item within matching notes forms a zero-allocation positional list row.
+//!    page queries, each note forms one row. For list and task queries, each
+//!    list item (or task item) within matching notes forms a zero-allocation
+//!    positional list row.
 //! 4. **Transformation**: The query planner optimizes operations by fusing
 //!    adjacent filters, merging consecutive sort terms, and rewriting
 //!    sort-limit pairs into bounded top-k selections.

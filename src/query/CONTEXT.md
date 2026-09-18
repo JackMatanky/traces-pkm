@@ -21,8 +21,8 @@ results (e.g. `rating > 7 and file.folder == "books"`).
 
 #### Query Mode
 
-The row evaluation granularity of a query: `Pages` (one row per Note) or
-`Tasks` (one row per task checklist item).
+The row evaluation granularity of a query: `Pages` (one row per Note), `Lists`
+(one row per list item), or `Tasks` (one row per task checklist item).
 *Avoid*: query type, evaluation level
 
 ### Execution & Rows

@@ -19,12 +19,15 @@ use super::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 use crate::index::IndexerService;
-use crate::index::{FileIndex, IndexResult, IndexStore, RowIndex};
+use crate::{
+    ListItem,
+    index::{FileIndex, IndexResult, IndexStore, RowIndex},
+};
 
 /// Evaluates source expressions against a borrowed [`FileIndex`].
 ///
-/// Supports page/task modes, optional File Class expansion, and pending plan
-/// transformations.
+/// Supports page/list/task modes, optional File Class expansion, and pending
+/// plan transformations.
 ///
 /// # Examples
 ///
@@ -94,11 +97,7 @@ impl QueryService {
         {
             source.resolve_classes(expander);
         }
-        let rows = match mode {
-            QueryMode::Pages => self.page_rows(index, &source),
-            QueryMode::Lists => self.list_rows(index, &source),
-            QueryMode::Tasks => self.task_rows(index, &source),
-        };
+        let rows = self.rows_for(mode, index, &source);
         QuerySet::new(plan.run(rows))
     }
 
@@ -152,11 +151,7 @@ impl QueryService {
         let inlinks = inlinks_result?;
         let index =
             Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
-        let rows = match mode {
-            QueryMode::Pages => self.page_rows(&index, &source),
-            QueryMode::Lists => self.list_rows(&index, &source),
-            QueryMode::Tasks => self.task_rows(&index, &source),
-        };
+        let rows = self.rows_for(mode, &index, &source);
         Ok(QuerySet::new(plan.run(rows)))
     }
 
@@ -180,6 +175,20 @@ impl QueryService {
         self.run_from_store(&store, builder)
     }
 
+    /// Instantiates rows at `mode`'s granularity for notes matching `source`.
+    fn rows_for(
+        &self,
+        mode: QueryMode,
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+    ) -> Vec<QueryRow> {
+        match mode {
+            QueryMode::Pages => self.page_rows(index, source),
+            QueryMode::Lists => self.list_rows(index, source),
+            QueryMode::Tasks => self.task_rows(index, source),
+        }
+    }
+
     fn page_rows(
         &self,
         index: &Arc<FileIndex>,
@@ -188,26 +197,14 @@ impl QueryService {
         self.matched_file_rows(index, source).collect()
     }
 
-    /// Expands matching notes into one [`QueryRow`] per list item.
-    ///
-    /// Emits all list items (plain bullets, checkboxes, and tasks).
+    /// Expands matching notes into one [`QueryRow`] per list item, including
+    /// plain bullets, checkboxes, and tasks, in document order.
     fn list_rows(
         &self,
         index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
-        let mut out = Vec::new();
-        for base in self.matched_file_rows(index, source) {
-            let Some(note) = base.note() else {
-                continue;
-            };
-            for (item_idx, _) in note.lists().iter().enumerate() {
-                if let Ok(item_idx) = u32::try_from(item_idx) {
-                    out.push(base.clone().with_list_item(item_idx));
-                }
-            }
-        }
-        out
+        self.item_rows(index, source, |_| true)
     }
 
     /// Expands matching notes into one [`QueryRow`] per task list item.
@@ -216,13 +213,24 @@ impl QueryService {
         index: &Arc<FileIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
+        self.item_rows(index, source, |item| item.kind().is_task())
+    }
+
+    /// Expands matching notes into one [`QueryRow`] per list item whose kind
+    /// satisfies `is_wanted`, in document order.
+    fn item_rows(
+        &self,
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+        is_wanted: impl Fn(&ListItem) -> bool,
+    ) -> Vec<QueryRow> {
         let mut out = Vec::new();
         for base in self.matched_file_rows(index, source) {
             let Some(note) = base.note() else {
                 continue;
             };
             for (item_idx, item) in note.lists().iter().enumerate() {
-                if item.kind().is_task()
+                if is_wanted(item)
                     && let Ok(item_idx) = u32::try_from(item_idx)
                 {
                     out.push(base.clone().with_list_item(item_idx));
@@ -1056,21 +1064,37 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::NoteFieldValue;
 
         #[test]
-        fn emits_all_list_item_kinds_including_plain_checkbox_and_task() {
+        fn emits_plain_checkbox_and_task_rows_in_document_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("items.md"),
-                "- plain bullet\n- [ ] checkbox\n- [x] task\n",
+                "- plain bullet\n- [ ] checkbox\n- [x] done #task\n",
             )
             .expect("write note");
+            // Default classification would promote every status-marked item
+            // to a Task; the tag filter keeps the bare checkbox a checkbox.
+            let config = crate::Config::test_default(temp.path().to_path_buf())
+                .with_tasks(crate::TaskConfig::from_tags(&["#task"]));
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::new(temp.path())
+                    .with_config(&config)
+                    .build()
+                    .expect("build index"),
             );
-            let outcome = query_lists(&index, &SourceSelector::All);
 
-            assert_eq!(outcome.len(), 3);
+            let kinds: Vec<_> = query_lists(&index, &SourceSelector::All)
+                .iter()
+                .map(|row| row.field("list.kind").expect("list.kind resolves"))
+                .collect();
+
+            assert_eq!(kinds, [
+                NoteFieldValue::String("plain".into()),
+                NoteFieldValue::String("checkbox".into()),
+                NoteFieldValue::String("task".into()),
+            ]);
         }
 
         #[test]
@@ -1109,20 +1133,29 @@ mod tests {
         }
 
         #[test]
-        fn runs_from_store_producing_identical_list_rows() {
+        fn runs_from_store_matching_in_memory_list_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("items.md"), "- item 1\n- item 2\n")
-                .expect("write note");
+            fs::write(
+                temp.path().join("items.md"),
+                "- plain bullet\n- [x] task #todo\n",
+            )
+            .expect("write note");
             let service = QueryService::new("class");
             let indexer = IndexerService::new(temp.path());
-            let store_outcome = service
+            let index = Arc::new(indexer.build().expect("build index"));
+
+            let from_store = service
                 .sync_and_run(
                     &indexer,
                     QueryBuilder::lists(SourceSelector::All),
                 )
                 .expect("run from store");
+            let in_memory =
+                service.run(&index, QueryBuilder::lists(SourceSelector::All));
 
-            assert_eq!(store_outcome.len(), 2);
+            // Persisted list items must reconstruct rows identical to the
+            // in-memory path without reparsing Markdown.
+            assert_eq!(from_store, in_memory);
         }
     }
 }
