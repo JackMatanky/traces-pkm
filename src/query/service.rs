@@ -84,6 +84,17 @@ impl QueryService {
         self
     }
 
+    /// Expands `source`'s File Class atoms through this service's expander,
+    /// if one is attached. Both execution paths call this before row
+    /// generation so class matching shares one implementation.
+    fn resolve_source_classes(&self, source: &mut SourceSelector) {
+        if source.has_classes()
+            && let Some(expander) = self.class_expander.as_deref()
+        {
+            source.resolve_classes(expander);
+        }
+    }
+
     /// Applies File Class expansion and plan transformations to `builder`.
     #[inline]
     pub fn run(
@@ -92,11 +103,7 @@ impl QueryService {
         builder: QueryBuilder,
     ) -> QuerySet {
         let (mode, mut source, plan) = builder.into_parts();
-        if source.has_classes()
-            && let Some(expander) = self.class_expander.as_deref()
-        {
-            source.resolve_classes(expander);
-        }
+        self.resolve_source_classes(&mut source);
         let rows = self.rows_for(mode, index, &source);
         QuerySet::new(plan.run(rows))
     }
@@ -118,11 +125,7 @@ impl QueryService {
         builder: QueryBuilder,
     ) -> IndexResult<QuerySet> {
         let (mode, mut source, plan) = builder.into_parts();
-        if source.has_classes()
-            && let Some(expander) = self.class_expander.as_deref()
-        {
-            source.resolve_classes(expander);
-        }
+        self.resolve_source_classes(&mut source);
         let resolver = SourceResolver::new(store);
         let candidate_paths = resolver.resolve(&source)?;
         let (notes_result, (files_result, inlinks_result)) = rayon::join(
@@ -240,7 +243,9 @@ impl QueryService {
         out
     }
 
-    /// Creates page-level rows for indexed files matching `source`.
+    /// Creates one row per indexed file matching `source`, at note
+    /// granularity. List and task modes expand these base rows into per-item
+    /// rows via [`Self::item_rows`].
     fn matched_file_rows<'b>(
         &'b self,
         index: &'b Arc<FileIndex>,

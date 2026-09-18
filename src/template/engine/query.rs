@@ -22,8 +22,8 @@
 //! # Row Shape
 //!
 //! `query` returns one row per Note. `lists` returns one row per list item
-//! (plain bullets, checkboxes, tasks). `tasks` returns one row per task item.
-//! Universal and task-specific properties are exposed via the canonical
+//! (plain bullets, checkboxes, and tasks). `tasks` returns one row per task
+//! item. Universal and task-specific properties are exposed via the canonical
 //! `record.list.<field>` namespace wrapped by [`ListFields`], alongside the
 //! parent Note's `file.*`, frontmatter, inline-field, and tag metadata.
 //!
@@ -65,7 +65,7 @@
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
 //! template name, line, and column context like every other namespace.
 
-use std::{cmp::Ordering, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeSet, path::Path, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
@@ -117,8 +117,8 @@ pub(super) struct QueryOps {
 impl QueryOps {
     /// Wires the shared pipeline every namespace dispatches through: one
     /// [`QueryService`] pre-configured with `class_field` and the File Class
-    /// `schema` expander, registering as the `name` global at `mode`'s row
-    /// granularity.
+    /// `schema` expander, for registration as the `name` global at `mode`'s
+    /// row granularity.
     fn new(
         name: &'static str,
         mode: QueryMode,
@@ -494,11 +494,12 @@ fn with_descendants_filter(source: &SourceSelector) -> Value {
     ))
 }
 
-/// Replaces every `Class` atom's [`ClassExpansionMode`] in `source`, keeping
-/// the match set empty (still unresolved; `resolve_classes` fills it in at
+/// Replaces every `Class` atom's [`ClassExpansionMode`] in `source` with
+/// `mode`, keeping each atom's match set empty: the selector stays
+/// unresolved, and `resolve_classes` fills the match sets in at query time.
 fn set_class_depth(
     mut source: SourceSelector,
-    mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
+    mode: impl Fn(BTreeSet<String>) -> ClassExpansionMode,
 ) -> SourceSelector {
     if let SourceSelector::Expr(expr) = &mut source {
         expr.visit_atoms_mut(&mut |atom| {
@@ -507,7 +508,7 @@ fn set_class_depth(
                 ..
             } = atom
             {
-                *existing = mode(std::collections::BTreeSet::new());
+                *existing = mode(BTreeSet::new());
             }
         });
     }
@@ -537,13 +538,7 @@ impl Object for QueryRow {
 
     #[inline]
     fn custom_cmp(self: &Arc<Self>, other: &DynObject) -> Option<Ordering> {
-        other.downcast_ref::<Self>().map(|other| {
-            if **self == *other {
-                Ordering::Equal
-            } else {
-                Ordering::Less
-            }
-        })
+        other.downcast_ref::<Self>().map(|other| self.cmp_document_order(other))
     }
 }
 
@@ -1434,6 +1429,29 @@ mod tests {
                 "buy milk #errand|True|task|Todo| \
                  |todo|False|2026-05-01|#errand",
             );
+        }
+    }
+
+    mod row_ordering {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// `>` and `<` on rows must follow document order: a total order
+        /// where each distinct pair compares one way, never both.
+        #[test]
+        fn row_comparisons_follow_document_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "# A");
+            write_note(temp.path(), "b.md", "# B");
+
+            let rendered = render(
+                temp.path(),
+                r"{% set rows = query.from() %}{{ rows[0] > rows[1] }} {{ rows[1] > rows[0] }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "False True");
         }
     }
 

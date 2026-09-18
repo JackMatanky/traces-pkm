@@ -373,6 +373,19 @@ impl QueryRow {
             ),
         }
     }
+
+    /// Orders two rows by their position in the underlying [`FileIndex`]:
+    /// document order for note rows, and item order within their note for
+    /// list and task rows. This is the total order behind minijinja's row
+    /// comparisons and `sort` filter.
+    #[inline]
+    #[must_use]
+    pub(crate) fn cmp_document_order(
+        &self,
+        other: &Self,
+    ) -> std::cmp::Ordering {
+        self.position.cmp(&other.position)
+    }
 }
 
 impl PartialEq for QueryRow {
