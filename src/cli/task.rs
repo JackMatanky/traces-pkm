@@ -21,7 +21,7 @@ pub(super) struct Task {
     /// combination. Omit to query every indexed note's tasks.
     #[arg(long)]
     from: Option<String>,
-    /// Filter expression narrowing results, e.g. `"task.completed == false"`.
+    /// Filter expression narrowing results, e.g. `"list.completed == false"`.
     /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
     filter: Vec<String>,
@@ -178,7 +178,7 @@ mod tests {
             .expect("write note");
             let task = Task {
                 from: None,
-                filter: vec!["task.completed == false".to_owned()],
+                filter: vec!["list.completed == false".to_owned()],
             };
 
             let (rendered, count) =
@@ -259,14 +259,14 @@ mod tests {
                 "--from",
                 "#tag",
                 "--where",
-                "task.completed == false",
+                "list.completed == false",
             ])
             .expect("parse task argv");
 
             let task = task_args(&cli);
 
             assert_eq!(task.from.as_deref(), Some("#tag"));
-            assert_eq!(task.filter, vec!["task.completed == false".to_owned()]);
+            assert_eq!(task.filter, vec!["list.completed == false".to_owned()]);
         }
 
         #[test]
@@ -286,7 +286,7 @@ mod tests {
                 "traces",
                 "task",
                 "--where",
-                "task.completed == false",
+                "list.completed == false",
                 "--where",
                 "rating > 2",
             ])
@@ -295,7 +295,7 @@ mod tests {
             let task = task_args(&cli);
 
             assert_eq!(task.filter, vec![
-                "task.completed == false".to_owned(),
+                "list.completed == false".to_owned(),
                 "rating > 2".to_owned()
             ]);
         }

@@ -1,7 +1,15 @@
-//! Declarative query builder for source selection, row mode, and transforms.
+//! Declarative query builder for source selection, row granularity, and
+//! transformations.
 //!
-//! [`QueryBuilder`] configures index query execution before passing the
-//! request to [`QueryService::run`](super::QueryService::run).
+//! This module provides [`QueryBuilder`], the primary user-facing builder for
+//! constructing index queries. A query combines a [`SourceSelector`], a
+//! [`QueryMode`] governing row granularity ([`QueryBuilder::pages`] vs.
+//! [`QueryBuilder::tasks`]), and a sequence of pending transformations
+//! including filters, sorts, and limits.
+//!
+//! Plans remain inert specifications until passed to
+//! [`QueryService::run`](super::QueryService::run) or
+//! [`QueryService::run_from_store`](super::QueryService::run_from_store).
 
 use super::{
     QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
@@ -75,9 +83,9 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - `QueryBuilderError::Syntax` if `expr` cannot be parsed as a valid
+    /// - [`QueryBuilderError::Syntax`] if `expr` cannot be parsed as a valid
     ///   boolean filter expression.
-    /// - `QueryBuilderError::FieldPath` if `expr` references an invalid or
+    /// - [`QueryBuilderError::FieldPath`] if `expr` references an invalid or
     ///   malformed field path.
     #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryBuilderError> {
@@ -91,9 +99,8 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - `QueryBuilderError::FieldPath` if `field` cannot be parsed as a valid
-    ///   field path.
-    #[inline]
+    /// - [`QueryBuilderError::FieldPath`] if `field` cannot be parsed as a
+    ///   valid field path.
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -102,6 +109,7 @@ impl QueryBuilder {
                       tests and test-utils"
         )
     )]
+    #[inline]
     pub fn sort(
         mut self,
         field: &str,
@@ -122,8 +130,8 @@ impl QueryBuilder {
     ///
     /// # Errors
     ///
-    /// - `QueryBuilderError::LimitOutOfRange` if `n` is negative or exceeds
-    ///   `usize::MAX`.
+    /// - [`QueryBuilderError::LimitOutOfRange`] if `n` is negative or exceeds
+    ///   [`usize::MAX`].
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -381,10 +389,10 @@ mod tests {
         fn returns_field_path_error_for_invalid_sort_field() {
             assert_eq!(
                 QueryBuilder::pages(SourceSelector::All)
-                    .sort("file.bogus", false)
+                    .sort("file.zzzz", false)
                     .err(),
                 Some(QueryBuilderError::FieldPath(FieldPathError::new(
-                    "file.bogus",
+                    "file.zzzz",
                     None
                 )))
             );

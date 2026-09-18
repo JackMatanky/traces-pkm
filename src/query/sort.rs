@@ -1,5 +1,15 @@
-//! Sort-key utilities and total-order comparison for resolved field values.
-
+//! Sort-key generation, total-order comparison, and sorting execution for query
+//! rows.
+//!
+//! This module implements ordering semantics across diverse metadata types,
+//! mapping dynamically typed [`NoteFieldValue`] and borrowed
+//! [`QueryFieldValueRef`] variants into comparable [`SortKey`] values.
+//! It defines canonical cross-type ranking, case-insensitive text
+//! normalization, date and duration ordering, and configurable null placement.
+//!
+//! Complex, multi-column orderings are represented via [`SortOrder`], which
+//! combines multiple [`SortTerm`] clauses into an efficient row-major key
+//! matrix.
 use std::{borrow::Cow, cmp::Ordering, num::NonZeroUsize};
 
 use super::{
@@ -66,9 +76,9 @@ impl SortOrder {
 
     /// Compares key slices term-by-term.
     ///
-    /// Applies each term's direction and null placement. Shared by full
-    /// sorting and top-k selection so both execution paths keep identical
-    /// ordering semantics.
+    /// Applies each term's direction and null placement. Shared by full sorting
+    /// and top-k selection so both execution paths keep identical ordering
+    /// semantics.
     #[must_use]
     pub(super) fn compare_keys(
         &self,
@@ -240,9 +250,9 @@ impl SortDirection {
 ///
 /// Dataview treats `null` unconditionally as the smallest value, which
 /// [`Self::Auto`] reproduces (first ascending, last descending). No current
-/// query syntax constructs [`Self::First`] or [`Self::Last`]; this is a
-/// seam for a future `sort field asc nulls last` grammar addition, wired
-/// through [`SortOrder::compare_keys`] with zero behavior change today.
+/// query syntax constructs [`Self::First`] or [`Self::Last`]; this is a seam
+/// for a future `sort field asc nulls last` grammar addition, wired through
+/// [`SortOrder::compare_keys`] with zero behavior change today.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
@@ -284,10 +294,9 @@ impl<'a> SortKeys<'a> {
 /// Normalized scalar used for row-order comparisons.
 ///
 /// Reduced projection of [`NoteFieldValueRef`]'s rank order for cheap,
-/// precomputed sort comparisons: `List` and `Object` collapse to `Null`,
-/// `Link` collapses to `Text` by its target. Values needing full fidelity
-/// compare via [`NoteFieldValueRef::compare`] directly, not through
-/// `SortKey`.
+/// precomputed sort comparisons: `List` and `Object` collapse to `Null`, `Link`
+/// collapses to `Text` by its target. Values needing full fidelity compare via
+/// [`NoteFieldValueRef::compare`] directly, not through `SortKey`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SortKey<'a> {
     /// Missing or unindexable value; sorts below every other kind.
@@ -305,11 +314,11 @@ pub(super) enum SortKey<'a> {
 }
 
 impl<'a> SortKey<'a> {
-    /// Normalizes a resolved field value into a comparable scalar. Takes
-    /// `val` by value (not by reference) so the rare `Owned` fallback can
-    /// move its already-allocated `String` into `Text` with no extra clone,
-    /// and so the common case can copy out `&'a str`/`&'a Link` fields tied
-    /// to the caller's own `'a`, not a shorter local borrow.
+    /// Normalizes a resolved field value into a comparable scalar. Takes `val`
+    /// by value (not by reference) so the rare `Owned` fallback can move its
+    /// already-allocated `String` into `Text` with no extra clone, and so the
+    /// common case can copy out `&'a str`/`&'a Link` fields tied to the
+    /// caller's own `'a`, not a shorter local borrow.
     pub(super) fn from_value_ref(val: QueryFieldValueRef<'a>) -> Self {
         match val {
             QueryFieldValueRef::Note(note_ref) => Self::from_note_ref(note_ref),
@@ -344,9 +353,9 @@ impl<'a> SortKey<'a> {
     }
 
     /// Opportunistically classifies free text as a date-time, date, or
-    /// duration, falling back to text. Takes `Cow` so the common borrowed
-    /// path and the rare owned fallback share one classification instead of
-    /// two copies of the same match.
+    /// duration, falling back to text. Takes `Cow` so the common borrowed path
+    /// and the rare owned fallback share one classification instead of two
+    /// copies of the same match.
     fn from_text(s: Cow<'a, str>) -> Self {
         match TextShape::classify(&s) {
             TextShape::DateTime(value) => Self::DateTime(value),
@@ -398,8 +407,8 @@ impl<'a> SortKey<'a> {
 }
 
 /// `-0.0` and `0.0` both normalize to `0.0` before `total_cmp`, matching
-/// [`NoteFieldValueRef::compare`]'s signed-zero handling so `SortKey::cmp`
-/// and `NoteFieldValueRef::compare` never disagree on a `Number` pair.
+/// [`NoteFieldValueRef::compare`]'s signed-zero handling so `SortKey::cmp` and
+/// `NoteFieldValueRef::compare` never disagree on a `Number` pair.
 fn normalize_zero(n: f64) -> f64 {
     if n == 0.0 {
         0.0
@@ -410,8 +419,8 @@ fn normalize_zero(n: f64) -> f64 {
 
 /// Result of inspecting free text for a date, date-time, or duration shape.
 /// Shared by [`SortKey::from_text`] and
-/// `filter::ComparisonExpr::classify_literal` so both call one classifier,
-/// not two copies of the same date/duration heuristic.
+/// `filter::ComparisonExpr::classify_literal` so both call one classifier, not
+/// two copies of the same date/duration heuristic.
 pub(super) enum TextShape {
     /// Text parsed as an ISO date-time.
     DateTime(DateTimeValue),
@@ -427,11 +436,11 @@ impl TextShape {
     /// Inspects free text for a date, date-time, or duration shape.
     ///
     /// Tries [`DateTimeValue::parse_iso`] before [`DateValue::parse_iso`]: a
-    /// full date-time string always fails `DateValue`'s whole-string match,
-    /// so trying it second never misclassifies. Duration parsing is guarded
-    /// by [`crate::DurationValue::can_start`], an `O(1)` leading-character
-    /// check, so non-duration-shaped text (e.g. a plain title) never pays
-    /// for `DurationValue::parse`'s allocating error path.
+    /// full date-time string always fails `DateValue`'s whole-string match, so
+    /// trying it second never misclassifies. Duration parsing is guarded by
+    /// [`crate::DurationValue::can_start`], an `O(1)` leading-character check,
+    /// so non-duration-shaped text (e.g. a plain title) never pays for
+    /// `DurationValue::parse`'s allocating error path.
     pub(super) fn classify(s: &str) -> Self {
         let trimmed = s.trim();
         if DateValue::has_four_digit_year(trimmed) {
@@ -542,9 +551,9 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.sort("file.bogus", false),
+                outcome.sort("file.zzzz", false),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
-                    FieldPathError::new("file.bogus", None)
+                    FieldPathError::new("file.zzzz", None)
                 )))
             );
         }

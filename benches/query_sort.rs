@@ -550,12 +550,12 @@ fn bench_sort_by_duration(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures sort cost on task rows by `task.completed` (`SortKey::Bool`).
+/// Measures sort cost on task rows by `list.completed` (`SortKey::Bool`).
 ///
 /// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports task rows (`3 * n`).
 ///
 /// Fixture indexes are built outside timing from [`task_triplet_note_source`],
-/// so timed work expands pre-parsed tasks, resolves `task.completed`, and sorts
+/// so timed work expands pre-parsed tasks, resolves `list.completed`, and sorts
 /// task rows.
 ///
 /// Expected outcomes:
@@ -584,7 +584,7 @@ fn bench_sort_task_rows(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     QueryBuilder::tasks(SourceSelector::All)
-                        .sort("task.completed", false)
+                        .sort("list.completed", false)
                         .expect("valid sort")
                 },
                 |query| service.run(&index, query),

@@ -1,5 +1,10 @@
-//! Markdown renderers for query result rows.
-
+//! Markdown formatting and rendering for query result collections.
+//!
+//! This module converts transformed [`QueryRow`] items into user-facing
+//! Markdown formats, including GitHub-flavored Markdown tables, bulleted lists,
+//! and task checkbox lists. It supports optional file-path parenthetical
+//! suffixes via [`TaskPathStyle`] to disambiguate task origin in CLI task
+//! aggregation.
 use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 
 /// Controls file-path rendering in task list output.
@@ -159,10 +164,10 @@ impl QueryDisplayFormat {
         Ok(out)
     }
 
-    /// Escapes Markdown table cell text by replacing newlines with spaces
-    /// and escaping pipes. Short-circuits to a plain copy when neither
-    /// character is present, avoiding the two intermediate allocations a
-    /// chained `.replace().replace()` would otherwise cost every cell.
+    /// Escapes Markdown table cell text by replacing newlines with spaces and
+    /// escaping pipes. Short-circuits to a plain copy when neither character is
+    /// present, avoiding the two intermediate allocations a chained
+    /// `.replace().replace()` would otherwise cost every cell.
     fn escape_table_cell(text: &str) -> String {
         if !text.contains(['\n', '|']) {
             return text.to_owned();

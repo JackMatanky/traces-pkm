@@ -1,8 +1,14 @@
-//! Record filter expression DSL for `--where` queries.
+//! Record filter expression language and abstract syntax tree for `--where`
+//! queries.
 //!
-//! Parses field path accessors, comparison operators, boolean operators, and
-//! `contains` calls over [`QueryRow`] rows.
-
+//! This module parses and evaluates row-level filter expressions. Expressions
+//! support:
+//! - Dotted and bare field path lookups resolved via [`FieldPath`].
+//! - Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) with type
+//!   coercion.
+//! - Function calls such as `contains(field, target)` with tag prefix matching.
+//! - Boolean combinators (`and`, `or`, `not`, parentheses) parsed via the
+//!   shared boolean expression grammar.
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
 
@@ -175,14 +181,13 @@ impl ComparisonExpr {
     }
 
     /// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
-    /// `Duration` when its text has that shape, once, at query-build time
-    /// (not per row). Only `NoteFieldValue::String` needs inspection: the
-    /// filter grammar's `Literal` token never produces `Date`/`DateTime`/
+    /// `Duration` when its text has that shape, once, at query-build time (not
+    /// per row). Only `NoteFieldValue::String` needs inspection: the filter
+    /// grammar's `Literal` token never produces `Date`/`DateTime`/
     /// `Duration`/`Link`/`List`/`Object` directly (`Null`/`Bool`/`Number`/
     /// `String` are its only literal shapes). Reuses [`TextShape::classify`]
-    /// (the same heuristic `SortKey::from_text` uses), so filter
-    /// literals and sort-key text classify identically, not via a second
-    /// hand-rolled copy.
+    /// (the same heuristic `SortKey::from_text` uses), so filter literals and
+    /// sort-key text classify identically, not via a second hand-rolled copy.
     fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
         let NoteFieldValue::String(text) = &literal else {
             return literal;
@@ -214,12 +219,12 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// `Eq`/`Ne` use `is_equal_to_literal`'s existing cross-kind coercion
-    /// (e.g. a `Date` field against a `DateTime` literal at midnight UTC).
-    /// `Lt`/`Le`/`Gt`/`Ge` use [`NoteFieldValueRef::compare`]'s full rank
-    /// order directly; a `Null` on either side never satisfies an ordering
-    /// comparison (matches today's behavior: a missing field never passes a
-    /// numeric/date threshold).
+    /// `Eq`/`Ne` use `is_equal_to_literal`'s existing cross-kind coercion (e.g.
+    /// a `Date` field against a `DateTime` literal at midnight UTC).
+    /// `Lt`/`Le`/`Gt`/`Ge` use [`NoteFieldValueRef::compare`]'s full rank order
+    /// directly; a `Null` on either side never satisfies an ordering comparison
+    /// (matches today's behavior: a missing field never passes a numeric/date
+    /// threshold).
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
@@ -577,9 +582,9 @@ mod tests {
             let outcome = rated_outcome(temp.path());
 
             assert_eq!(
-                outcome.filter("file.bogus == 1"),
+                outcome.filter("file.zzzz == 1"),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
-                    FieldPathError::new("file.bogus", None)
+                    FieldPathError::new("file.zzzz", None)
                 )))
             );
         }
@@ -587,9 +592,9 @@ mod tests {
         #[test]
         fn rejects_malformed_field_path_in_function() {
             assert_eq!(
-                FilterExpr::parse("contains(file.bogus, \"x\")"),
+                FilterExpr::parse("contains(file.zzzz, \"x\")"),
                 Err(QueryBuilderError::FieldPath(FieldPathError::new(
-                    "file.bogus",
+                    "file.zzzz",
                     None
                 )))
             );

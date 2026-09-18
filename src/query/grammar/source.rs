@@ -1,8 +1,15 @@
-//! Source expression parser and evaluator for `--from` queries.
+//! Source expression language parser and document selector for `--from`
+//! queries.
 //!
-//! Matches candidate notes against tag (`#tag`), path (`folder/`, `file.md`,
-//! `**/*.md`), and File Class (`@Class`) leaves.
-
+//! This module evaluates document-level source expressions against candidate
+//! notes in a [`FileIndex`](crate::index::FileIndex). It supports:
+//! - Tags: `#tag` and `#nested/tag` patterns with hierarchical matching.
+//! - Paths: Exact files, directory prefixes (`folder/`), and glob patterns
+//!   (`**/*.md`).
+//! - File Classes: `@Class` and `class("Class")` with transitive hierarchy
+//!   expansion.
+//! - Boolean combinators: Compound logic combining atoms with `and`, `or`, and
+//!   `not`.
 use std::{borrow::Cow, collections::BTreeSet, path::Path};
 
 use logos::{Lexer, Logos};

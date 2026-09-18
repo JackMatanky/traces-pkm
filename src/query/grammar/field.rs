@@ -1,26 +1,30 @@
-//! Query field path parsing and resolution.
+//! Query field path parsing, validation, and typed accessor representation.
 //!
-//! Field paths such as `file.name`, `task.completed`, `tags`, `inlinks`, or
-//! bare metadata keys resolve to a [`FieldPath`] that extracts a
-//! [`NoteFieldValue`] from each [`crate::query::QueryRow`].
+//! Field paths appear in filter expressions, sort specifications, and
+//! table/list output configurations. This module parses string paths into a
+//! structured [`FieldPath`], validating accessor names, verifying dot syntax,
+//! and providing typo suggestions.
 //!
-//! # Supported accessors
+//! # Supported Accessor Namespaces
 //!
-//! - `file.<field>`: [`FileField`] accessors backed by [`FileBase`] metadata.
-//! - `task.<field>`: [`TaskField`] accessors valid on task-level records only.
-//! - `tags`: Note tags.
-//! - `inlinks`: Project-relative paths of Notes linking to this Note.
-//! - Bare keys: frontmatter or inline metadata field keys.
+//! - `file.<field>`: Maps to [`FileField`] variants backed by [`FileBase`]
+//!   metadata (such as `file.name`, `file.folder`, `file.mtime`, `file.tags`).
+//! - `list.<field>`: Maps to [`ListField`] variants valid on list rows,
+//!   including universal properties (`list.text`, `list.line`, `list.depth`)
+//!   and embedded [`TaskField`] properties (`list.status`, `list.completed`,
+//!   `list.due`).
+//! - `tags`: Document tags on page rows, or item tags on list rows.
+//! - `inlinks`: Project-relative paths of Notes linking to the target note.
+//! - Bare keys: User-defined frontmatter or inline metadata field names.
 //!
 //! [`NoteFieldValue`]: crate::NoteFieldValue
 //! [`FileBase`]: crate::FileBase
-
 use crate::{FieldKey, query::error::FieldPathError, strsim::closest_match};
 
 /// A `file.<field>` accessor backed by [`FileBase`] metadata.
 ///
-/// Accepted accessor names, including aliases such as `ctime` for
-/// `created_at`, are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
+/// Accepted accessor names, including aliases such as `ctime` for `created_at`,
+/// are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
 /// [`FileBase`]: crate::FileBase
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -40,6 +44,8 @@ pub(crate) enum FileField {
     ModifiedDateTime,
     /// Accesses [`crate::FileBase::modified_at`] as a bare date.
     ModifiedDate,
+    /// Accesses note-level tags from the row's file.
+    Tags,
 }
 
 impl FileField {
@@ -55,6 +61,7 @@ impl FileField {
         "modified_at",
         "mtime",
         "mdate",
+        "tags",
     ];
 
     /// Parses the field portion of a `file.<field>` accessor string.
@@ -71,34 +78,124 @@ impl FileField {
             "cdate" => Some(Self::CreatedDate),
             "modified_at" | "mtime" => Some(Self::ModifiedDateTime),
             "mdate" => Some(Self::ModifiedDate),
+            "tags" => Some(Self::Tags),
             _ => None,
         }
     }
 }
 
-/// A `task.<field>` accessor valid on task-level records.
+/// A task-specific list field.
 ///
-/// Resolves to [`crate::NoteFieldValue::Null`] on page-level records.
+/// These fields resolve to [`crate::NoteFieldValue::Null`] on plain bullets and
+/// non-task checkboxes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TaskField {
-    /// Accesses task completion state (`- [ ]` versus `- [x]`).
+    Status,
+    StatusType,
+    StatusSymbol,
     Completed,
-    Text,
+    Priority,
+    Due,
+    Done,
+    Created,
+    Start,
+    Scheduled,
+    Cancelled,
+    FullyComplete,
 }
 
 impl TaskField {
-    /// Accepted `task.<field>` accessor names.
-    pub(super) const ACCESSOR_NAMES: &'static [&'static str] =
-        &["completed", "text"];
+    /// Accepted task-specific `list.<field>` accessor names.
+    #[cfg(test)]
+    pub(super) const ACCESSOR_NAMES: &'static [&'static str] = &[
+        "status",
+        "status_type",
+        "status_symbol",
+        "completed",
+        "priority",
+        "due",
+        "done",
+        "created",
+        "start",
+        "scheduled",
+        "cancelled",
+        "fully_complete",
+    ];
 
-    /// Parses the field portion of a `task.<field>` accessor string.
-    ///
-    /// Returns `None` for unknown names.
+    /// Parses a task-specific list field name.
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
+            "status" => Some(Self::Status),
+            "status_type" => Some(Self::StatusType),
+            "status_symbol" => Some(Self::StatusSymbol),
             "completed" => Some(Self::Completed),
-            "text" => Some(Self::Text),
+            "priority" => Some(Self::Priority),
+            "due" => Some(Self::Due),
+            "done" => Some(Self::Done),
+            "created" => Some(Self::Created),
+            "start" => Some(Self::Start),
+            "scheduled" => Some(Self::Scheduled),
+            "cancelled" => Some(Self::Cancelled),
+            "fully_complete" => Some(Self::FullyComplete),
             _ => None,
+        }
+    }
+}
+
+/// A universal or task-specific `list.<field>` accessor.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ListField {
+    Text,
+    RawText,
+    Line,
+    Parent,
+    Depth,
+    Tags,
+    IsTask,
+    Kind,
+    IsOrdered,
+    Task(TaskField),
+}
+
+impl ListField {
+    /// Accepted `list.<field>` accessor names.
+    pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
+        "text",
+        "raw_text",
+        "line",
+        "parent",
+        "depth",
+        "tags",
+        "is_task",
+        "kind",
+        "is_ordered",
+        "status",
+        "status_type",
+        "status_symbol",
+        "completed",
+        "priority",
+        "due",
+        "done",
+        "created",
+        "start",
+        "scheduled",
+        "cancelled",
+        "fully_complete",
+    ];
+
+    /// Parses the field portion of a canonical `list.<field>` accessor.
+    pub(crate) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "text" => Some(Self::Text),
+            "raw_text" => Some(Self::RawText),
+            "line" => Some(Self::Line),
+            "parent" => Some(Self::Parent),
+            "depth" => Some(Self::Depth),
+            "tags" => Some(Self::Tags),
+            "is_task" => Some(Self::IsTask),
+            "kind" => Some(Self::Kind),
+            "is_ordered" => Some(Self::IsOrdered),
+            _ => TaskField::parse(name).map(Self::Task),
         }
     }
 }
@@ -108,7 +205,7 @@ impl TaskField {
 /// Parsed once per [`crate::query::QuerySet`] transformation, then applied to
 /// each [`crate::query::QueryRow`] to extract a [`NoteFieldValue`].
 ///
-/// Unknown `file.*` or `task.*` accessors produce a [`FieldPathError`] with an
+/// Unknown `file.*` or `list.*` accessors produce a [`FieldPathError`] with an
 /// optional suggestion.
 ///
 /// [`NoteFieldValue`]: crate::NoteFieldValue
@@ -116,14 +213,13 @@ impl TaskField {
 pub(crate) enum FieldPath {
     File(FileField),
     /// Resolves to [`crate::NoteFieldValue::Null`] on page-level records.
-    Task(TaskField),
+    List(ListField),
     /// Frontmatter or inline field key.
     Metadata(String),
     Tags,
     /// Project-relative paths of Notes linking to this Note.
     ///
-    /// Derived dynamically by `InlinkMap` rather
-    /// than stored on the Note.
+    /// Derived dynamically by `InlinkMap` rather than stored on the Note.
     Inlinks,
 }
 
@@ -134,11 +230,13 @@ impl FieldPath {
     ///
     /// # Errors
     ///
-    /// - [`FieldPathError`] if `path` is empty.
+    /// - [`FieldPathError`] if `path` is empty or contains an invalid
+    ///   identifier.
     /// - [`FieldPathError`] if `path` has invalid `.` structure (for example,
-    ///   `file.` or `a.b`).
+    ///   `file.`, `a.b`, or more than two segments).
+    /// - [`FieldPathError`] if `path` uses obsolete `task.<field>` syntax.
     /// - [`FieldPathError`] if `path` names an unknown `file.<field>` or
-    ///   `task.<field>` accessor.
+    ///   `list.<field>` accessor.
     ///
     /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(crate) fn parse(path: &str) -> Result<Self, FieldPathError> {
@@ -149,10 +247,24 @@ impl FieldPath {
                 Err(invalid())
             } else {
                 FileField::parse(field).map(Self::File).ok_or_else(|| {
-                    accessor_typo_error(
+                    Self::accessor_typo_error(
                         path,
                         "file",
                         FileField::ACCESSOR_NAMES,
+                        field,
+                    )
+                })
+            };
+        }
+        if let Some(field) = path.strip_prefix("list.") {
+            return if field.is_empty() || field.contains('.') {
+                Err(invalid())
+            } else {
+                ListField::parse(field).map(Self::List).ok_or_else(|| {
+                    Self::accessor_typo_error(
+                        path,
+                        "list",
+                        ListField::ACCESSOR_NAMES,
                         field,
                     )
                 })
@@ -162,19 +274,13 @@ impl FieldPath {
             return if field.is_empty() || field.contains('.') {
                 Err(invalid())
             } else {
-                TaskField::parse(field).map(Self::Task).ok_or_else(|| {
-                    accessor_typo_error(
-                        path,
-                        "task",
-                        TaskField::ACCESSOR_NAMES,
-                        field,
-                    )
-                })
+                Err(FieldPathError::new(path, Some(&format!("list.{field}"))))
             };
         }
         if path.is_empty()
             || path == "file"
             || path == "task"
+            || path == "list"
             || path.contains('.')
         {
             return Err(invalid());
@@ -192,28 +298,28 @@ impl FieldPath {
                 .to_owned(),
         ))
     }
-}
 
-fn accessor_typo_error(
-    path: &str,
-    prefix: &str,
-    candidates: &[&'static str],
-    field: &str,
-) -> FieldPathError {
-    FieldPathError::new(
-        path,
-        closest_accessor(candidates, field)
-            .map(|name| format!("{prefix}.{name}"))
-            .as_deref(),
-    )
-}
+    fn accessor_typo_error(
+        path: &str,
+        prefix: &str,
+        candidates: &[&'static str],
+        field: &str,
+    ) -> FieldPathError {
+        FieldPathError::new(
+            path,
+            Self::closest_accessor(candidates, field)
+                .map(|name| format!("{prefix}.{name}"))
+                .as_deref(),
+        )
+    }
 
-/// Finds the closest accessor name within the edit-distance threshold.
-fn closest_accessor(
-    candidates: &[&'static str],
-    input: &str,
-) -> Option<&'static str> {
-    closest_match(candidates.iter().map(|&name| (name, name)), input)
+    /// Finds the closest accessor name within the edit-distance threshold.
+    fn closest_accessor(
+        candidates: &[&'static str],
+        input: &str,
+    ) -> Option<&'static str> {
+        closest_match(candidates.iter().map(|&name| (name, name)), input)
+    }
 }
 
 #[cfg(test)]
@@ -243,16 +349,28 @@ mod tests {
 
     mod task_field {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn parses_completed_and_text() {
-            assert_eq!(
-                TaskField::parse("completed"),
-                Some(TaskField::Completed)
-            );
-            assert_eq!(TaskField::parse("text"), Some(TaskField::Text));
+        #[rstest]
+        #[case::status("status", TaskField::Status)]
+        #[case::status_type("status_type", TaskField::StatusType)]
+        #[case::status_symbol("status_symbol", TaskField::StatusSymbol)]
+        #[case::completed("completed", TaskField::Completed)]
+        #[case::priority("priority", TaskField::Priority)]
+        #[case::due("due", TaskField::Due)]
+        #[case::done("done", TaskField::Done)]
+        #[case::created("created", TaskField::Created)]
+        #[case::start("start", TaskField::Start)]
+        #[case::scheduled("scheduled", TaskField::Scheduled)]
+        #[case::cancelled("cancelled", TaskField::Cancelled)]
+        #[case::fully_complete("fully_complete", TaskField::FullyComplete)]
+        fn parses_all_task_field_variants(
+            #[case] name: &str,
+            #[case] expected: TaskField,
+        ) {
+            assert_eq!(TaskField::parse(name), Some(expected));
         }
 
         #[test]
@@ -271,6 +389,50 @@ mod tests {
         }
     }
 
+    mod list_field {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::text("text", ListField::Text)]
+        #[case::raw_text("raw_text", ListField::RawText)]
+        #[case::line("line", ListField::Line)]
+        #[case::parent("parent", ListField::Parent)]
+        #[case::depth("depth", ListField::Depth)]
+        #[case::tags("tags", ListField::Tags)]
+        #[case::is_task("is_task", ListField::IsTask)]
+        #[case::kind("kind", ListField::Kind)]
+        #[case::is_ordered("is_ordered", ListField::IsOrdered)]
+        #[case::embedded_due("due", ListField::Task(TaskField::Due))]
+        #[case::embedded_completed(
+            "completed",
+            ListField::Task(TaskField::Completed)
+        )]
+        fn parses_all_list_field_variants(
+            #[case] name: &str,
+            #[case] expected: ListField,
+        ) {
+            assert_eq!(ListField::parse(name), Some(expected));
+        }
+
+        #[test]
+        fn rejects_an_unknown_accessor_name() {
+            assert_eq!(ListField::parse("bogus"), None);
+        }
+
+        #[test]
+        fn accessor_names_round_trip_through_parse() {
+            for name in ListField::ACCESSOR_NAMES {
+                assert!(
+                    ListField::parse(name).is_some(),
+                    "{name} should parse"
+                );
+            }
+        }
+    }
+
     mod accessor_matching {
         use pretty_assertions::assert_eq;
 
@@ -279,7 +441,10 @@ mod tests {
         #[test]
         fn closest_accessor_matches_within_the_half_length_threshold() {
             let candidates: &[&str] = &["path", "name", "folder"];
-            assert_eq!(closest_accessor(candidates, "nam"), Some("name"));
+            assert_eq!(
+                FieldPath::closest_accessor(candidates, "nam"),
+                Some("name")
+            );
         }
 
         #[test]
@@ -287,19 +452,22 @@ mod tests {
             // "na" has threshold 1, but distance 2 from "name": too far to
             // suggest.
             let candidates: &[&str] = &["name"];
-            assert_eq!(closest_accessor(candidates, "na"), None);
+            assert_eq!(FieldPath::closest_accessor(candidates, "na"), None);
         }
 
         #[test]
         fn closest_accessor_returns_none_for_an_empty_candidate_list() {
-            assert_eq!(closest_accessor(&[], "name"), None);
+            assert_eq!(FieldPath::closest_accessor(&[], "name"), None);
         }
 
         #[test]
         fn closest_accessor_breaks_ties_by_iteration_order() {
             // Both candidates are distance 1 from "mat"; iteration order wins.
             let candidates: &[&str] = &["cat", "bat"];
-            assert_eq!(closest_accessor(candidates, "mat"), Some("cat"));
+            assert_eq!(
+                FieldPath::closest_accessor(candidates, "mat"),
+                Some("cat")
+            );
         }
     }
 
@@ -318,10 +486,18 @@ mod tests {
         }
 
         #[test]
-        fn parses_a_task_accessor() {
+        fn parses_a_file_tags_accessor() {
             assert_eq!(
-                FieldPath::parse("task.completed"),
-                Ok(FieldPath::Task(TaskField::Completed))
+                FieldPath::parse("file.tags"),
+                Ok(FieldPath::File(FileField::Tags))
+            );
+        }
+
+        #[test]
+        fn parses_a_list_accessor() {
+            assert_eq!(
+                FieldPath::parse("list.completed"),
+                Ok(FieldPath::List(ListField::Task(TaskField::Completed)))
             );
         }
 
@@ -347,12 +523,11 @@ mod tests {
         #[case::empty("")]
         #[case::bare_file("file")]
         #[case::trailing_dot("file.")]
-        #[case::unknown_file_accessor("file.bogus")]
+        #[case::unknown_file_accessor("file.zzzz")]
         #[case::extra_file_segment("file.name.extra")]
         #[case::bare_task("task")]
         #[case::trailing_dot_task("task.")]
-        #[case::unknown_task_accessor("task.bogus")]
-        #[case::extra_task_segment("task.completed.extra")]
+        #[case::extra_task_segment("list.completed.extra")]
         #[case::dotted_metadata_path("a.b")]
         #[case::canonical_empty_bare_key("!!!")]
         fn rejects_malformed_paths(#[case] path: &str) {
@@ -371,12 +546,12 @@ mod tests {
         }
 
         #[test]
-        fn suggests_the_closest_task_accessor_for_a_typo() {
+        fn rejects_task_accessor_with_list_suggestion() {
             assert_eq!(
-                FieldPath::parse("task.complete"),
+                FieldPath::parse("task.completed"),
                 Err(FieldPathError::new(
-                    "task.complete",
-                    Some("task.completed")
+                    "task.completed",
+                    Some("list.completed")
                 ))
             );
         }
@@ -384,8 +559,8 @@ mod tests {
         #[test]
         fn no_suggestion_for_an_unrelated_unknown_accessor() {
             assert_eq!(
-                FieldPath::parse("file.bogus"),
-                Err(FieldPathError::new("file.bogus", None))
+                FieldPath::parse("file.zzzz"),
+                Err(FieldPathError::new("file.zzzz", None))
             );
         }
     }

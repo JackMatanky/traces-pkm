@@ -1,24 +1,48 @@
-//! Query source selection, field resolution, and result transformation.
+//! Query source selection, record filtering, field resolution, and
+//! transformations.
 //!
-//! Call [`QueryService::run`] with a [`QueryBuilder`] and [`SourceSelector`]
-//! to select [`Note`]s from a [`FileIndex`], pair each match with
-//! [`FileBase`] metadata in a [`QueryRow`], and transform rows through
-//! [`QuerySet`].
+//! The query subsystem evaluates declarative queries over indexed Markdown
+//! notes and flat list items stored in a [`FileIndex`]. It provides a query
+//! planning and execution engine supporting filtering, sorting, limiting,
+//! grouping, flattening, and formatting into Markdown tables and lists.
 //!
-//! # Source expression language
+//! # Architecture and Pipeline
 //!
-//! Source expressions combine leaves with `and`, `or`, `not`, and parentheses.
-//! Leaves are:
+//! 1. **Specification**: Callers construct a [`QueryBuilder`] in either page or
+//!    task row granularity using a [`SourceSelector`].
+//! 2. **Evaluation**: [`QueryService::run`] evaluates the source expression
+//!    against a [`FileIndex`], optionally expanding File Class hierarchies via
+//!    a [`FileClassExpander`].
+//! 3. **Row Instantiation**: Matching notes generate [`QueryRow`] items. For
+//!    page queries, each note forms one row. For task queries, each task list
+//!    item within matching notes forms a zero-allocation positional list row.
+//! 4. **Transformation**: The query planner optimizes operations by fusing
+//!    adjacent filters, merging consecutive sort terms, and rewriting
+//!    sort-limit pairs into bounded top-k selections.
+//! 5. **Materialization**: Results are exposed lazily via [`QuerySet`], caching
+//!    intermediate representations across repeat reads and formatting requests.
 //!
-//! - Tags: `#`-prefixed identifiers matching exact or nested tags. Names may
-//!   contain letters, digits, underscores, hyphens, dots, and forward slashes.
-//! - Paths: exact file paths, folder prefixes, or explicit globs.
-//! - File classes: frontmatter class values matching the named class or a
-//!   transitive descendant.
+//! # Query Expressions
 //!
-//! Field resolution supports `file.*`, `task.*`, frontmatter, tag, and
-//! inlinks fields. [`QueryError`] reports malformed field paths, invalid
-//! expressions, and transformation constraint violations.
+//! - **Source Selectors (`--from`)**: Filter notes by `#tag` patterns,
+//!   directory paths, file paths, glob patterns, and `@Class` hierarchies
+//!   combined with boolean operators (`and`, `or`, `not`, parentheses).
+//! - **Filter Expressions (`--where`)**: Filter individual rows using
+//!   comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) and
+//!   `contains(...)` calls.
+//! - **Field Resolution**: Access fields across `file.<field>` metadata,
+//!   canonical `list.<field>` properties, note tags, project-relative
+//!   `inlinks`, and frontmatter or inline metadata keys.
+//!
+//! # Key Types
+//!
+//! - [`QueryBuilder`]: Declarative builder for query configuration.
+//! - [`QueryService`]: Evaluation service executing plans against an index.
+//! - [`QuerySet`]: Lazily transformed collection of query result rows.
+//! - [`QueryRow`]: Positional record view over an indexed file or list item.
+//! - [`SourceSelector`]: Source filter specifying target documents.
+//! - [`QueryError`]: Top-level error covering syntax, field path, and execution
+//!   errors.
 //!
 //! # Examples
 //!
@@ -49,6 +73,7 @@
 //!
 //! [`FileBase`]: crate::file::FileBase
 //! [`FileIndex`]: crate::index::FileIndex
+//! [`FileClassExpander`]: crate::query::grammar::FileClassExpander
 //! [`Note`]: crate::note::Note
 mod builder;
 mod error;

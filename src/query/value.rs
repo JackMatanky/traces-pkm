@@ -1,9 +1,12 @@
-//! Zero-copy and fallback resolved field values for query evaluation.
+//! Zero-copy borrowed field representations and value conversions for query
+//! evaluation.
 //!
-//! [`QueryFieldValueRef`] borrows directly from note metadata, tags, and
-//! inlinks without allocation in the common case, with an owned fallback for
-//! non-UTF8 file paths.
-
+//! This module provides [`QueryFieldValueRef`], an ephemeral enum that borrows
+//! directly from parsed note metadata, tag lists, and incoming link tables
+//! without heap allocation. It acts as the bridge between low-level note memory
+//! and query operations (such as filter predicate evaluation and sort-key
+//! generation), falling back to an owned variant only for non-UTF8 paths or
+//! dynamically calculated values.
 use std::path::PathBuf;
 
 use crate::{
@@ -15,8 +18,8 @@ use crate::{
 pub(super) enum QueryFieldValueRef<'a> {
     /// Borrowed metadata field from note-domain storage.
     Note(NoteFieldValueRef<'a>),
-    /// Freshly allocated fallback for non-UTF8 paths, which have no
-    /// long-lived backing store to borrow from.
+    /// Freshly allocated fallback for non-UTF8 paths, which have no long-lived
+    /// backing store to borrow from.
     Owned(NoteFieldValue),
     /// Borrowed note tags.
     Tags(&'a [Tag]),
@@ -48,8 +51,8 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
-    /// Appends the shared query-display text used by list joins, table
-    /// cells, and text output.
+    /// Appends the shared query-display text used by list joins, table cells,
+    /// and text output.
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
             Self::Note(note_ref) => note_ref.append_text(out),
@@ -72,8 +75,8 @@ impl QueryFieldValueRef<'_> {
         out
     }
 
-    /// Returns the borrowed string for string/duration-typed fields, or
-    /// `None` for non-textual variants.
+    /// Returns the borrowed string for string/duration-typed fields, or `None`
+    /// for non-textual variants.
     #[cfg_attr(
         not(test),
         expect(

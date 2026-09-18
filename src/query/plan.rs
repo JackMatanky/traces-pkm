@@ -1,11 +1,21 @@
-//! Query transformation plan optimizer and executor.
+//! Query transformation plan optimization and execution pipeline.
 //!
-//! [`QueryBuilder`](super::QueryBuilder) runs a complete plan before fetching
-//! rows from the index; [`QuerySet`](super::QuerySet) accumulates a plan across
-//! chained operations and runs it lazily on first read. [`QueryPlan::run`]
-//! fuses adjacent filters, merges consecutive sorts, and rewrites sort-limit
-//! pairs into `TopK`, replacing an `O(n log n)` full sort with an `O(n)`
-//! quickselect partition when a bounded selection is enough.
+//! This module provides [`QueryPlan`], an ordered sequence of transformation
+//! steps applied to query rows. Operations such as filtering, sorting,
+//! limiting, grouping, and flattening are scheduled as declarative
+//! [`QueryTransform`] steps.
+//!
+//! # Algebraic Optimizations
+//!
+//! Before row execution, [`QueryPlan::run`] applies idempotent optimization
+//! passes:
+//! - **Filter Fusion**: Combines adjacent filter predicates into a single
+//!   boolean `And` tree, eliminating intermediate row buffers.
+//! - **Sort Fusion**: Merges consecutive sort transforms into a single
+//!   composite [`SortOrder`].
+//! - **Sort-Limit Fusion**: Rewrites sort followed by limit into a bounded
+//!   `TopK` selection, replacing an $O(n \log n)$ full sort with an $O(n)$
+//!   quickselect partition.
 #[cfg(test)]
 use super::sort::SortTerm;
 use super::{

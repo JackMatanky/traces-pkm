@@ -132,7 +132,8 @@ pub(crate) use position::ByteOffset;
 pub use position::SourceLine;
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
-    QueryBuilder, QueryResult, QueryRow, QueryService, QuerySet, SourceSelector,
+    QueryBuilder, QueryBuilderError, QueryResult, QueryRow, QueryService,
+    QuerySet, SourceSelector,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};

@@ -1,8 +1,13 @@
-//! Query service execution over in-memory and persisted indexes.
+//! Query execution service over in-memory indexes and persisted key-value
+//! storage.
 //!
-//! [`QueryService`] evaluates source selectors, applies query plans, and
-//! produces [`QuerySet`] rows for pages or tasks.
-
+//! This module provides [`QueryService`], the central coordination engine that
+//! executes queries against either an in-memory [`FileIndex`] or directly
+//! against on-disk [`IndexStore`] tables without loading the full index into
+//! memory.
+//! It resolves candidate paths from [`SourceSelector`] expressions, expands
+//! File Class inheritance trees via [`FileClassExpander`], instantiates
+//! [`QueryRow`] items, and applies the optimized [`super::plan::QueryPlan`].
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -104,8 +109,8 @@ impl QueryService {
     ///
     /// # Errors
     ///
-    /// - `IndexError` if source resolution or any batch read from `store`
-    ///   fails.
+    /// - [`crate::index::IndexError`] if source resolution or any batch read
+    ///   from `store` fails.
     #[inline]
     pub(crate) fn run_from_store(
         &self,
@@ -192,8 +197,12 @@ impl QueryService {
             let Some(note) = base.note() else {
                 continue;
             };
-            for item in note.tasks() {
-                out.push(base.clone().with_task_item(item));
+            for (item_idx, item) in note.lists().iter().enumerate() {
+                if item.kind().is_task()
+                    && let Ok(item_idx) = u32::try_from(item_idx)
+                {
+                    out.push(base.clone().with_list_item(item_idx));
+                }
             }
         }
         out
@@ -917,6 +926,10 @@ mod tests {
 
             assert_eq!(
                 row.field("tags"),
+                Ok(crate::NoteFieldValue::List(Box::default()))
+            );
+            assert_eq!(
+                row.field("file.tags"),
                 Ok(crate::NoteFieldValue::List(
                     vec![
                         crate::NoteFieldValue::String("#projects".to_owned(),)
@@ -998,7 +1011,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index"),
             );
             let outcome = query_tasks(&index, &SourceSelector::All)
-                .filter("task.completed == true")
+                .filter("list.completed == true")
                 .expect("valid filter");
 
             // Filtering must keep only matching task rows, not every row from a

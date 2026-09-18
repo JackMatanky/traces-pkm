@@ -177,14 +177,6 @@ impl ListItem {
     /// the item carries no inline fields.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of ListItem API; consumed by query resolution in \
-                      issue 08"
-        )
-    )]
     pub(crate) fn fields(&self) -> Option<&ListFieldMap> {
         self.fields.as_deref()
     }
