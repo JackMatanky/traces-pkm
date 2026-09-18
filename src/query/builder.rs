@@ -21,6 +21,9 @@ use super::{
 pub(crate) enum QueryMode {
     /// One row per matching note.
     Pages,
+    /// One row per list item in each matching note (plain bullets, checkboxes,
+    /// tasks).
+    Lists,
     /// One row per task list item in each matching note.
     Tasks,
 }
@@ -60,6 +63,20 @@ impl QueryBuilder {
     pub fn pages(source: SourceSelector) -> Self {
         Self {
             mode: QueryMode::Pages,
+            source,
+            plan: QueryPlan::default(),
+        }
+    }
+
+    /// Builds a list-row query that emits one row per list item.
+    ///
+    /// Emits all list items (plain bullets, checkboxes, and tasks) from
+    /// matching notes.
+    #[inline]
+    #[must_use]
+    pub fn lists(source: SourceSelector) -> Self {
+        Self {
+            mode: QueryMode::Lists,
             source,
             plan: QueryPlan::default(),
         }
@@ -423,6 +440,16 @@ mod tests {
             let outcome = QueryService::new("class").run(&index, request);
 
             assert!(outcome.is_empty());
+        }
+
+        #[test]
+        fn lists_builder_constructs_query_with_lists_mode() {
+            let (mode, source, plan) =
+                QueryBuilder::lists(SourceSelector::All).into_parts();
+
+            assert_eq!(mode, QueryMode::Lists);
+            assert_eq!(source, SourceSelector::All);
+            assert!(plan.is_empty());
         }
     }
 }

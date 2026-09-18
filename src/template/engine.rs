@@ -10,8 +10,8 @@
 //! - [`mod@file`] registers `file.write_to()` and `file.include()`.
 //! - [`path`] registers path tests and path-component filters.
 //! - [`num`] registers numeric filters.
-//! - [`query`] registers the `query` and `tasks` namespaces plus terminal query
-//!   filters.
+//! - [`query`] registers the `query`, `lists`, and `tasks` namespaces plus
+//!   terminal query filters.
 //! - [`mod@schema`] registers Schema registry access through `schema.get()`.
 //! - [`string`] registers case, trimming, truncation, repetition, and regex
 //!   filters.
@@ -136,6 +136,8 @@ impl TemplateEngine {
 
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(Arc::clone(&root), &class_field, Arc::clone(&service))
+            .register(&mut env);
+        QueryOps::list(Arc::clone(&root), &class_field, Arc::clone(&service))
             .register(&mut env);
         QueryOps::task(Arc::clone(&root), &class_field, Arc::clone(&service))
             .register(&mut env);

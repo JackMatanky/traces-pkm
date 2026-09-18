@@ -96,6 +96,7 @@ impl QueryService {
         }
         let rows = match mode {
             QueryMode::Pages => self.page_rows(index, &source),
+            QueryMode::Lists => self.list_rows(index, &source),
             QueryMode::Tasks => self.task_rows(index, &source),
         };
         QuerySet::new(plan.run(rows))
@@ -153,6 +154,7 @@ impl QueryService {
             Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
         let rows = match mode {
             QueryMode::Pages => self.page_rows(&index, &source),
+            QueryMode::Lists => self.list_rows(&index, &source),
             QueryMode::Tasks => self.task_rows(&index, &source),
         };
         Ok(QuerySet::new(plan.run(rows)))
@@ -184,6 +186,28 @@ impl QueryService {
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
         self.matched_file_rows(index, source).collect()
+    }
+
+    /// Expands matching notes into one [`QueryRow`] per list item.
+    ///
+    /// Emits all list items (plain bullets, checkboxes, and tasks).
+    fn list_rows(
+        &self,
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+    ) -> Vec<QueryRow> {
+        let mut out = Vec::new();
+        for base in self.matched_file_rows(index, source) {
+            let Some(note) = base.note() else {
+                continue;
+            };
+            for (item_idx, _) in note.lists().iter().enumerate() {
+                if let Ok(item_idx) = u32::try_from(item_idx) {
+                    out.push(base.clone().with_list_item(item_idx));
+                }
+            }
+        }
+        out
     }
 
     /// Expands matching notes into one [`QueryRow`] per task list item.
@@ -374,6 +398,14 @@ mod tests {
     ) -> QuerySet {
         QueryService::new("class")
             .run(index, QueryBuilder::tasks(source.clone()))
+    }
+
+    fn query_lists(
+        index: &Arc<FileIndex>,
+        source: &SourceSelector,
+    ) -> QuerySet {
+        QueryService::new("class")
+            .run(index, QueryBuilder::lists(source.clone()))
     }
 
     mod source_resolver {
@@ -1017,6 +1049,80 @@ mod tests {
             // Filtering must keep only matching task rows, not every row from a
             // note with one match.
             assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
+        }
+    }
+
+    mod query_lists {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn emits_all_list_item_kinds_including_plain_checkbox_and_task() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("items.md"),
+                "- plain bullet\n- [ ] checkbox\n- [x] task\n",
+            )
+            .expect("write note");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = query_lists(&index, &SourceSelector::All);
+
+            assert_eq!(outcome.len(), 3);
+        }
+
+        #[test]
+        fn contributes_no_rows_when_note_has_no_list_items() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("prose.md"), "Just prose, no lists.")
+                .expect("write note");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = query_lists(&index, &SourceSelector::All);
+
+            assert_eq!(outcome.len(), 0);
+        }
+
+        #[test]
+        fn filters_list_items_by_is_task() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("items.md"),
+                "- plain bullet 1\n- plain bullet 2\n- [x] task\n",
+            )
+            .expect("write note");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let non_tasks = query_lists(&index, &SourceSelector::All)
+                .filter("list.is_task == false")
+                .expect("valid filter");
+            let tasks = query_lists(&index, &SourceSelector::All)
+                .filter("list.is_task == true")
+                .expect("valid filter");
+
+            assert_eq!(non_tasks.len(), 2);
+            assert_eq!(tasks.len(), 1);
+        }
+
+        #[test]
+        fn runs_from_store_producing_identical_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("items.md"), "- item 1\n- item 2\n")
+                .expect("write note");
+            let service = QueryService::new("class");
+            let indexer = IndexerService::new(temp.path());
+            let store_outcome = service
+                .sync_and_run(
+                    &indexer,
+                    QueryBuilder::lists(SourceSelector::All),
+                )
+                .expect("run from store");
+
+            assert_eq!(store_outcome.len(), 2);
         }
     }
 }

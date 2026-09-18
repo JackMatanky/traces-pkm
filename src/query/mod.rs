@@ -86,15 +86,15 @@ mod sort;
 mod value;
 
 pub use builder::QueryBuilder;
-use builder::QueryMode;
+pub(crate) use builder::QueryMode;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryBuilderError, QueryDialect, QueryError, QueryResult};
 pub(crate) use format::TaskPathStyle;
 pub use grammar::SourceSelector;
 pub(crate) use grammar::{
-    ClassExpansionMode, FieldPath, FileClassExpander, FileField, SourceAtom,
-    SourceExpr,
+    ClassExpansionMode, FieldPath, FileClassExpander, FileField, ListField,
+    SourceAtom, SourceExpr,
 };
 use plan::{QueryPlan, QueryTransform};
 pub use results::{QueryRow, QuerySet};
