@@ -181,6 +181,7 @@ mod tests {
         use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
         use crate::query::{QueryBuilderError, QueryError};
@@ -389,8 +390,13 @@ mod tests {
             assert_eq!(count, 1);
         }
 
-        #[test]
-        fn filters_by_status_symbol_character() {
+        #[rstest]
+        #[case('/', "- [/] in progress (todo.md)\n")]
+        #[case('!', "- [!] urgent (todo.md)\n")]
+        fn filters_by_status_symbol_character(
+            #[case] symbol: char,
+            #[case] expected: &str,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("todo.md"),
@@ -398,24 +404,15 @@ mod tests {
             )
             .expect("write note");
             let task = Task {
-                status: Some('/'),
+                status: Some(symbol),
                 ..Default::default()
             };
 
             let (rendered, count) =
                 task.render(&config(temp.path())).expect("valid query");
 
-            assert_eq!(rendered, "- [/] in progress (todo.md)\n");
+            assert_eq!(rendered, expected);
             assert_eq!(count, 1);
-
-            let urgent_task = Task {
-                status: Some('!'),
-                ..Default::default()
-            };
-            let (urgent_rendered, urgent_count) =
-                urgent_task.render(&config(temp.path())).expect("valid query");
-            assert_eq!(urgent_rendered, "- [!] urgent (todo.md)\n");
-            assert_eq!(urgent_count, 1);
         }
 
         #[test]

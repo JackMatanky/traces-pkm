@@ -139,13 +139,18 @@ impl QueryDisplayFormat {
     }
 
     /// Renders task rows as Markdown checkbox lines.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::TaskListRequiresTaskRows`] if any row in `rows` is not a
+    ///   task row.
     fn render_task_list(
         rows: &[QueryRow],
         path_style: TaskPathStyle,
     ) -> QueryResult<String> {
         use std::fmt::Write as _;
 
-        let mut out = String::new();
+        let mut out = String::with_capacity(rows.len().saturating_mul(48));
         for row in rows {
             let Some(text) = row.task_text() else {
                 return Err(QueryError::TaskListRequiresTaskRows);
@@ -335,6 +340,22 @@ mod tests {
                 rendered,
                 "- [ ] first (todo.md:3)\n  - [x] second (todo.md:4)\n"
             );
+        }
+
+        #[test]
+        fn rejects_non_task_rows_with_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("page.md"), "# Heading\n")
+                .expect("write page.md");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
+            let error = outcome
+                .task_list(TaskPathStyle::None)
+                .expect_err("non-task rows must fail");
+            assert!(matches!(error, QueryError::TaskListRequiresTaskRows));
         }
     }
 }

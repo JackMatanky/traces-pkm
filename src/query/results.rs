@@ -1916,7 +1916,7 @@ rating: note
         }
     }
 
-    mod list_accessors {
+    mod accessors {
         use pretty_assertions::assert_eq;
 
         use super::{field_path::list_row, *};
@@ -1936,11 +1936,15 @@ rating: note
         }
 
         #[test]
-        fn returns_none_status_symbol_for_plain_list_and_page_rows() {
+        fn returns_none_status_symbol_for_plain_list_row() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let bullet_row = list_row(temp.path(), "- plain bullet\n", 0);
             assert_eq!(bullet_row.status_symbol(), None);
+        }
 
+        #[test]
+        fn returns_none_status_symbol_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
             let outcome =
                 outcome_for_files(temp.path(), &[("page.md", "# Page")]);
             let page_row = outcome.get(0).expect("page row");
@@ -1948,7 +1952,7 @@ rating: note
         }
 
         #[test]
-        fn returns_depth_for_list_and_page_rows() {
+        fn returns_depth_for_list_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let source = "- top\n  - child\n    - grandchild\n";
             let top = list_row(temp.path(), source, 0);
@@ -1958,7 +1962,11 @@ rating: note
             assert_eq!(top.depth(), 0);
             assert_eq!(child.depth(), 1);
             assert_eq!(grandchild.depth(), 2);
+        }
 
+        #[test]
+        fn returns_zero_depth_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
             let outcome =
                 outcome_for_files(temp.path(), &[("page.md", "# Page")]);
             let page_row = outcome.get(0).expect("page row");
@@ -1966,7 +1974,7 @@ rating: note
         }
 
         #[test]
-        fn returns_line_for_list_and_page_rows() {
+        fn returns_line_for_list_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let source = "# Heading\n\n- first\n- second\n";
             let first = list_row(temp.path(), source, 0);
@@ -1974,7 +1982,11 @@ rating: note
 
             assert_eq!(first.line(), SourceLine::new(3));
             assert_eq!(second.line(), SourceLine::new(4));
+        }
 
+        #[test]
+        fn returns_none_line_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
             let outcome =
                 outcome_for_files(temp.path(), &[("page.md", "# Page")]);
             let page_row = outcome.get(0).expect("page row");
@@ -1982,15 +1994,24 @@ rating: note
         }
 
         #[test]
-        fn returns_parent_line_for_nested_list_and_page_rows() {
+        fn returns_parent_line_for_nested_list_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- parent\n  - child\n";
+            let child_item = list_row(temp.path(), source, 1);
+            assert_eq!(child_item.parent(), SourceLine::new(1));
+        }
+
+        #[test]
+        fn returns_none_parent_line_for_top_level_list_row() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let source = "- parent\n  - child\n";
             let parent_item = list_row(temp.path(), source, 0);
-            let child_item = list_row(temp.path(), source, 1);
-
             assert_eq!(parent_item.parent(), None);
-            assert_eq!(child_item.parent(), SourceLine::new(1));
+        }
 
+        #[test]
+        fn returns_none_parent_line_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
             let outcome =
                 outcome_for_files(temp.path(), &[("page.md", "# Page")]);
             let page_row = outcome.get(0).expect("page row");

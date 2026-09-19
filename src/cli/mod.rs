@@ -366,6 +366,14 @@ fn refresh_task_query<'a>(
     run_query_builder_from_store(config, &store, builder, has_classes)
 }
 
+/// Parses an optional source expression string into a [`SourceSelector`].
+///
+/// Normalizes unadorned relative paths pointing to existing `.md` files
+/// under `config`'s root by appending the `.md` extension.
+///
+/// # Errors
+///
+/// - [`CliError::Query`] if the source expression fails to parse.
 fn parse_source(
     config: &Config,
     from: Option<&str>,
@@ -377,6 +385,11 @@ fn parse_source(
         .map_err(|source| query_error(root, source))
 }
 
+/// Normalizes unadorned relative paths pointing to existing `.md` files under
+/// `root` by appending the `.md` extension.
+///
+/// Leaves tags (`#tag`), classes (`@Class`), folder globs, and already-quoted
+/// expressions untouched.
 fn normalize_source_input<'a>(
     root: &Path,
     input: &'a str,
@@ -883,7 +896,16 @@ mod tests {
         }
 
         #[test]
-        fn preserves_tag_and_class_selectors() {
+        fn returns_all_when_from_is_none() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let source = parse_source(&config, None).expect("parse source");
+            assert_eq!(source, SourceSelector::All);
+        }
+
+        #[test]
+        fn preserves_tag_selector() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let config = Config::test_default(temp.path().to_path_buf());
 
@@ -893,6 +915,12 @@ mod tests {
                 tag_source,
                 SourceSelector::parse("#daily").expect("expected tag")
             );
+        }
+
+        #[test]
+        fn preserves_class_selector() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
 
             let class_source =
                 parse_source(&config, Some("@Daily")).expect("parse class");
