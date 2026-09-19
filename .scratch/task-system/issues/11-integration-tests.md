@@ -3,109 +3,166 @@
 **Category:** enhancement
 **Status:** ready-for-agent
 
-**What to build:** Implement a focused, high-value integration test suite in
-`tests/integration/` verifying the end-to-end task and list system across all
-subsystems. Using `test_support::TestProject`, test the public boundaries:
-configuration loading with custom status registries and tag filters, note
-parsing and indexing, index persistence invariance without a separate `LISTS`
-table, query execution across `lists` and `tasks` modes, CLI command execution
-with fidelity formatting, and template pipeline rendering. Strictly avoid
-duplicating low-level unit tests.
+**What to build:** Expand and complete the integration and end-to-end test
+suites across the existing module-aligned test files in `tests/integration/` and
+`tests/e2e/`. Rather than creating an uncohesive, cross-cutting kitchen-sink file,
+distribute high-value end-to-end scenario coverage into their natural module
+homes: task classification & multi-note lifecycle into `tests/integration/task_tag_filters.rs`
+(or generalized to `task_lifecycle.rs`), index persistence invariance into
+`tests/integration/index_persistence_roundtrip.rs`, query modes (`lists` vs `tasks`)
+& canonical syntax into `tests/integration/index_query.rs`, template pipelines
+(`lists.from()`, `tasks.from()`) into `tests/integration/template_render.rs`, and
+process-boundary CLI fidelity into `tests/e2e/dispatch.rs` (under `query_commands`).
+Strictly avoid duplicating low-level unit tests.
 
-**Blocked by:** 09 (needs template namespaces), 10 (needs CLI task command).
+**Blocked by:** 09 (resolved: merged to `main@e945c9e`), 10 (pending merge: implemented in `.worktrees/task-10-cli-enhancements-and-from-expansion@1f25022`).
 
 ## Acceptance Criteria
 
-- [ ] Create `tests/integration/task_system_lifecycle.rs` using
-  `TestProject`.
-- [ ] Test multi-note vault lifecycle: custom statuses, tag filters, mixed list
-  items, and query mode separation (`QueryMode::Lists` vs `QueryMode::Tasks`).
-- [ ] Test index persistence invariance: build, persist to redb, reload from
-  fresh service, and assert identical query outcomes without reparsing.
-- [ ] Test CLI execution with output fidelity: custom marker preservation,
-  nested indentation, clickable coordinates (`--line-numbers`), and filter
-  shortcuts (`--todo`, `--done`, `--status`).
-- [ ] Test CLI `--table` output with default columns and `--sort` ordering.
-- [ ] Test template pipeline rendering with `lists.from()` and `tasks.from()`
-  under `TemplateService`.
-- [ ] Verify zero duplicate unit tests: low-level parser edge cases are
-  excluded from the integration suite.
+- [ ] **Task Lifecycle (`tests/integration/task_tag_filters.rs`):** Test
+  multi-note vault lifecycle using `TestProject`: custom and extended status
+  markers (`[/]`, `[-]`, `[!]`, and unknown single-char markers `[?]`), tag
+  filters (`#task`), mixed list outlines (plain bullets, non-task checkboxes,
+  top-level tasks, and nested subtasks with dates and priorities), and
+  `fully_complete` computation (parent task with all task children done evaluates
+  to `fully_complete == true`; parent with an incomplete/in-progress child evaluates
+  to `false`; non-task checklist items and plain bullets are ignored).
+- [ ] **Persistence Invariance (`tests/integration/index_persistence_roundtrip.rs`):**
+  Test redb persistence invariance without `LISTS` table (ADR 0005): build,
+  persist to redb (`NOTES` and `FILES` tables only), reload from a fresh
+  `IndexerService` simulating a cold process restart, and assert identical query
+  outcomes and complete list metadata without reparsing Markdown.
+- [ ] **Query Modes & Namespaces (`tests/integration/index_query.rs`):**
+  Test public query evaluation across modes: `QueryBuilder::lists` yields all
+  items (bullets, checkboxes, tasks) with structural fields (`depth`, `line`,
+  `parent`), while `QueryBuilder::tasks` yields only tag-matching status items;
+  verify acceptance of canonical `list.<field>` and diagnostic rejection of
+  obsolete `task.<field>`; verify note frontmatter inheritance on list rows and
+  inline field overrides.
+- [ ] **Template Pipelines (`tests/integration/template_render.rs`):**
+  Test template rendering under `TemplateService` with `lists.from(...)` and
+  `tasks.from(...)` pipelines, verifying transforms (`where`, `sort`, `limit`) and
+  terminal formatters (`task_list`, `table`, `count`) with inherited note
+  frontmatter and inline field overrides.
+- [ ] **CLI Output Fidelity (`tests/e2e/dispatch.rs`):**
+  Add process-boundary CLI tests under `mod query_commands` using `Sandbox`:
+  verify `traces task` preserves custom status markers (`[/]`, `[-]`, `[!]`, `[?]`),
+  indents nested tasks by `list.depth * 2` spaces, formats clickable coordinates
+  with `--line-numbers` (`-l`), filters with shortcuts (`--todo`, `--done`,
+  `--status <char>`), orders with `--sort` (`--asc`/`--desc`), renders tables with
+  default and custom columns via `--table`, outputs counts via `--count`, and
+  resolves bare `.md` paths via `--from`.
+- [ ] **No Unit Test Duplication:** Low-level parser edge cases (bracket
+  variations, malformed emojis, date parsing errors) remain exclusively in unit
+  suites (`src/note/`, `src/task/`, `src/query/`).
 - [ ] All checks pass under `mise run verify`.
 
-## Key Integration Workflows
+## Key Integration Workflows (Combined by Module)
 
-- **Full Vault Lifecycle:**
-  Create an isolated test vault with custom statuses (`[/]` for In Progress,
-  `[!]` for Attention) and tag filters (`#task`). Populate multiple notes with
-  mixed outlines: plain bullets, checkboxes, top-level tasks, and nested
-  subtasks with dates and priorities. Verify `QueryService::run` returns all
-  items in `QueryMode::Lists`, but only tag-matching status items in
-  `QueryMode::Tasks`.
+- **Task Lifecycle & Outline Classification (`tests/integration/task_tag_filters.rs`):**
+  Exercise an isolated test vault with `[tasks] tag_filters = ["#task"]`.
+  Populate multiple notes with mixed outlines: plain bullets, non-task checkboxes,
+  top-level tasks, and nested subtasks with dates (`📅`, `[due:: ...]`) and
+  priorities (`🔺`, `[priority:: ...]`). Prove classification correctly isolates
+  tasks, preserves custom markers (`[/]`, `[-]`, `[!]`, `[?]`), and computes
+  `fully_complete` across parent-child hierarchies.
 
-- **Persistence Invariance (Without `LISTS` Table):**
+- **Persistence Invariance Without `LISTS` Table (`tests/integration/index_persistence_roundtrip.rs`):**
   Persist the index to disk using `TestProject::persist_index`. Load a fresh
-  `IndexerService` from the same database file, execute list and task queries,
-  and assert identical results, proving `NOTES` and `FILES` tables alone
-  faithfully reconstruct the entire list and task domain without reparsing
-  Markdown.
+  `IndexerService` from the same database file (simulating cold process restart),
+  execute list and task queries, and assert identical results to the in-memory
+  index, proving `NOTES` and `FILES` tables alone faithfully reconstruct the
+  entire list and task domain without reparsing Markdown (ADR 0005).
 
-- **CLI Execution & Output Fidelity:**
-  Exercise the `Task` CLI command across realistic workflows:
-  - Verify `render_task_list` preserves custom markers (`[/]`, `[!]`) and
-    indents nested tasks by `list.depth * 2`.
-  - Verify `--line-numbers` produces clickable `({path}:{line})` coordinates.
-  - Verify `--todo`, `--done`, and `--status` filter shortcuts narrow output
-    accurately.
-  - Verify `--table` produces a formatted Markdown table with resolved
-    columns.
+- **Query Mode Separation & Canonical Grammar (`tests/integration/index_query.rs`):**
+  Verify `QueryService::run` with `QueryBuilder::lists` returns all list items
+  with structural metadata (`list.depth`, `list.line`, `list.parent`), while
+  `QueryBuilder::tasks` returns only tag-matching tasks. Verify canonical
+  `list.<field>` syntax succeeds, obsolete `task.<field>` produces an actionable
+  diagnostic hint, and inline fields on list items override note frontmatter.
 
-- **Template Pipeline Execution:**
+- **Template Pipeline Execution (`tests/integration/template_render.rs`):**
   Render templates via `TemplateService` containing `lists.from()` and
   `tasks.from()` pipelines. Verify transforms (`where`, `sort`, `limit`,
   `group_by`) and renderers (`task_list`, `table`, `count`) execute cleanly
   with inherited note metadata and inline field overrides.
 
+- **CLI Execution & Output Fidelity (`tests/e2e/dispatch.rs`):**
+  In `tests/e2e/dispatch.rs` under `mod query_commands` using `Sandbox::trusted()`,
+  exercise the compiled `traces` binary across realistic task workflows:
+  - Verify `traces task` preserves custom and fallback markers (`[/]`, `[-]`,
+    `[!]`, `[?]`) and indents nested tasks by `list.depth * 2` spaces.
+  - Verify `--line-numbers` (`-l`) produces clickable `({path}:{line})`
+    coordinates.
+  - Verify `--todo`, `--done`, and `--status <char>` filter shortcuts narrow
+    output accurately.
+  - Verify `--sort` with `--asc` and `--desc` correctly orders output rows.
+  - Verify `--table` produces formatted Markdown table with default columns
+    (`Task`, `Status`, `Due`, `Priority`, `File`) and custom `--column` overrides.
+  - Verify `--count` produces single numeric integer on stdout with zero stderr.
+  - Verify `--from <path.md>` directly queries specified note files.
+
 ## Comments
 
-> *This was generated by AI during triage.*
+> *Triaged and verified against task-system spec, codebase architecture, and ADR 0005.*
+> *Architectural decision: aligned with the repository's modular test layout.*
+> *Tests are combined into their respective subsystem files (`task_tag_filters.rs`,*
+> *`index_persistence_roundtrip.rs`, `index_query.rs`, `template_render.rs`, and*
+> *`tests/e2e/dispatch.rs`) instead of introducing a redundant, monolithic file.*
 
 ## Agent Brief
 
 **Category:** enhancement
-**Summary:** Build an end-to-end integration test suite exercising the task
-and list system across public subsystem boundaries.
+**Summary:** Build out end-to-end integration and CLI test coverage for the task
+and list system across the existing module-organized test suites.
 
 **Current behavior:**
-`tests/integration/` contains only narrow, unit-like tests for task tag filters
-and page-level index persistence roundtrips. There is no integration suite
-verifying that custom statuses, flat list index persistence in `NOTES`,
-positional `QueryRow` execution, CLI commands, and template pipelines function
-together across an actual multi-note vault.
+Integration tests in `tests/integration/` are split by subsystem module but currently
+lack full task-system coverage:
+- `task_tag_filters.rs` only tests basic tag filter classification without custom
+  status markers, deep hierarchies, dates/priorities, or `fully_complete`.
+- `index_persistence_roundtrip.rs` has a preliminary flat list check, but does not
+  prove full persistence invariance of query outcomes against reloaded redb stores.
+- `index_query.rs` only exercises page-level queries, with zero coverage for
+  `QueryMode::Lists` vs `QueryMode::Tasks`, canonical `list.*` paths, or inline field
+  overrides.
+- `template_render.rs` only tests `query.from()`, lacking `lists.from()` and
+  `tasks.from()` pipeline rendering.
+- `tests/e2e/dispatch.rs` only checks basic `traces task` without marker preservation,
+  depth indentation, `--line-numbers`, shortcuts, sorting, or `--table`.
 
 **Desired behavior:**
-Implement `tests/integration/task_system_lifecycle.rs` using the established
-`test_support::TestProject` fixture harness. Exercise complete workflows:
-indexing notes with custom status markers and tag filters, persisting to redb
-without a `LISTS` table and reloading, executing queries across `lists` and
-`tasks` modes, invoking CLI commands to verify marker output and indentation,
-and executing template rendering pipelines. Strictly avoid repeating unit test
-assertions.
+Distribute focused, end-to-end task integration coverage into existing test suites:
+1. `tests/integration/task_tag_filters.rs`: multi-note vault lifecycle, custom markers
+   (`[/]`, `[-]`, `[!]`, `[?]`), mixed list outlines, dates, priorities, and
+   `fully_complete` computation.
+2. `tests/integration/index_persistence_roundtrip.rs`: persistence invariance proving
+   cold `IndexerService::load` recovers identical list/task query outcomes without
+   reparsing Markdown (ADR 0005, no `LISTS` table).
+3. `tests/integration/index_query.rs`: `QueryMode::Lists` vs `QueryMode::Tasks`,
+   canonical `list.<field>` validation, obsolete `task.<field>` rejection, and
+   field override precedence.
+4. `tests/integration/template_render.rs`: `lists.from()` and `tasks.from()` pipelines,
+   method transforms, and terminal filters (`task_list`, `table`, `count`).
+5. `tests/e2e/dispatch.rs`: process-boundary CLI tests for `traces task` covering
+   marker preservation, depth indentation, clickable line coordinates (`-l`),
+   filter shortcuts (`--todo`, `--done`, `--status`), sorting, `--table`, and `--count`.
 
 **Key interfaces:**
 
-- `test_support::TestProject`: Scaffold isolated test vaults with custom
-  `traces.toml` config, write notes, and persist/reload indices.
-- `QueryService::run`: Test public query evaluation across `QueryMode::Lists`
-  and `QueryMode::Tasks`.
-- `TemplateService::render`: Test template pipelines with `lists.from()` and
-  `tasks.from()`.
-- CLI binary execution: Verify stdout output fidelity, indentation, and
-  exit codes.
+- `traces_pkm::TestProject`: Scaffold isolated test vaults with custom config,
+  write notes, and persist/reload indices in `tests/integration/`.
+- `traces_pkm::QueryService`: Evaluate queries across `QueryMode::Lists` and
+  `QueryMode::Tasks`.
+- `traces_pkm::TemplateService`: Render templates containing `lists.from()` and
+  `tasks.from()` pipelines.
+- `tests/e2e/support::Sandbox`: Spawn isolated child processes running the real
+  `traces` binary to assert stdout, stderr, and exit codes.
 
 **Acceptance criteria:**
 Refer to the single Acceptance Criteria checklist at the top of this ticket.
 
 **Out of scope:**
 
-- Criterion performance and micro-benchmarks (addressed in Issue 12).
-- Adding new CLI flags or parser features.
+- Criterion performance and allocation benchmarks (addressed in Issue 12).
+- Adding new CLI flags, parser features, or mutating task statuses.
