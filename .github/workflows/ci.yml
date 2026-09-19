@@ -82,7 +82,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "hk-hygiene"
-      - run: mise install --locked taplo tombi cargo:ryl hk
+      - run: mise install --locked cargo-binstall taplo tombi cargo:ryl hk
       - run: mise exec -- hk validate
       - run: >-
           mise exec -- hk check --all --no-fail-fast
@@ -107,7 +107,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "hk-security"
-      - run: mise install --locked gitleaks cargo-deny cargo:cargo-audit hk
+      - run: mise install --locked cargo-binstall gitleaks cargo-deny cargo:cargo-audit hk
       - run: mise exec -- hk validate
       - run: >-
           mise exec -- hk check --all --no-fail-fast
