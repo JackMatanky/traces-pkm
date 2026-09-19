@@ -563,10 +563,11 @@ impl AtomParser for SourceGrammar {
                         Self::parse_sigil(input, &sigil, span)
                     }
                     SourceToken::Quoted(path) | SourceToken::Bare(path) => {
-                        let glob = if path.ends_with('/') {
-                            format!("{path}**")
+                        let normalized = normalize_path_prefix(&path);
+                        let glob = if normalized.ends_with('/') {
+                            format!("{normalized}**")
                         } else {
-                            path
+                            normalized.to_owned()
                         };
                         GlobPattern::compile(&glob)
                             .map(SourceAtom::Path)
@@ -610,6 +611,16 @@ impl AtomParser for SourceGrammar {
     ) -> QuerySyntaxError {
         QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
     }
+}
+
+/// Strips leading `./` and `.\\` prefixes from path atoms.
+fn normalize_path_prefix(mut path: &str) -> &str {
+    while let Some(stripped) =
+        path.strip_prefix("./").or_else(|| path.strip_prefix(".\\"))
+    {
+        path = stripped;
+    }
+    path
 }
 
 #[derive(Clone, Debug, PartialEq, Logos)]
@@ -811,6 +822,42 @@ mod tests {
         fn parses_a_double_star_wildcard_path_glob() {
             assert!(SourceExpr::parse("**/draft.md").is_ok());
         }
+
+        #[test]
+        fn normalizes_leading_dot_slash_in_path_atoms() {
+            let expr =
+                SourceExpr::parse("./notes/daily.md").expect("valid source");
+            assert_eq!(
+                expr,
+                SourceExpr(BooleanExpr::Atom(
+                    SourceAtom::path("notes/daily.md").expect("valid atom")
+                ))
+            );
+        }
+
+        #[test]
+        fn normalizes_leading_dot_backslash_in_path_atoms() {
+            let expr =
+                SourceExpr::parse(".\\notes/daily.md").expect("valid source");
+            assert_eq!(
+                expr,
+                SourceExpr(BooleanExpr::Atom(
+                    SourceAtom::path("notes/daily.md").expect("valid atom")
+                ))
+            );
+        }
+
+        #[test]
+        fn parses_unquoted_markdown_file_path() {
+            let expr =
+                SourceExpr::parse("notes/daily.md").expect("valid source");
+            assert_eq!(
+                expr,
+                SourceExpr(BooleanExpr::Atom(
+                    SourceAtom::path("notes/daily.md").expect("valid atom")
+                ))
+            );
+        }
     }
     mod glob_pattern {
         use super::*;
@@ -937,6 +984,19 @@ mod tests {
             );
             assert!(
                 !SourceExpr::parse("books/hyperion.md")
+                    .expect("valid source")
+                    .is_match(entry, "class")
+            );
+        }
+
+        #[test]
+        fn matches_path_with_leading_dot_slash() {
+            let (_temp, index) = indexed_note("#book", "notes/daily.md");
+            let entry =
+                find_entry(index.entries(), Path::new("notes/daily.md"));
+
+            assert!(
+                SourceExpr::parse("./notes/daily.md")
                     .expect("valid source")
                     .is_match(entry, "class")
             );

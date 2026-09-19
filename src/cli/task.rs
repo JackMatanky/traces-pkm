@@ -2,20 +2,37 @@
 //!
 //! Handles `traces task` by refreshing the trusted project root's
 //! [`FileIndex`], selecting task rows via optional source and filter
-//! expressions, and formatting matching tasks as Markdown checkbox lines.
+//! expressions, and formatting matching tasks as Markdown checkbox lines or a
+//! table.
 //!
 //! [`FileIndex`]: crate::index::FileIndex
 
 use clap::Args;
 
-use super::error::{CliError, CliResult};
+use super::{
+    SortArgs,
+    error::{CliError, CliResult},
+};
 use crate::{Config, ConfigService, query::TaskPathStyle};
+
+/// Default table column headers when `--table` is passed without `--column`.
+const DEFAULT_TABLE_HEADERS: &[&str] =
+    &["Task", "Status", "Due", "Priority", "File"];
+
+/// Default table field paths when `--table` is passed without `--column`.
+const DEFAULT_TABLE_COLUMNS: &[&str] =
+    &["list.text", "list.status", "list.due", "list.priority", "file.path"];
 
 /// Arguments for `traces task`.
 ///
 /// Queries tasks from the trusted project root and prints matching checkbox
-/// lines.
-#[derive(Debug, Args)]
+/// lines or a formatted table.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a clap arg for an independent CLI flag; they are \
+              not related enough to collapse into a state-machine enum"
+)]
+#[derive(Debug, Default, Args)]
 pub(super) struct Task {
     /// Source expression, e.g. `#tag`, `folder/`, `@Class*`, or a boolean
     /// combination. Omit to query every indexed note's tasks.
@@ -25,13 +42,40 @@ pub(super) struct Task {
     /// Repeatable; multiple `--where` flags compose as AND.
     #[arg(long = "where")]
     filter: Vec<String>,
+    /// Display clickable editor line coordinates `({path}:{line})`.
+    #[arg(short = 'l', long = "line-numbers")]
+    line_numbers: bool,
+    /// Filter to incomplete tasks (`list.completed == false`). Conflicts with
+    /// `--done`.
+    #[arg(long, conflicts_with = "done")]
+    todo: bool,
+    /// Filter to completed tasks (`list.completed == true`). Conflicts with
+    /// `--todo`.
+    #[arg(long, conflicts_with = "todo")]
+    done: bool,
+    /// Filter by status character via `list.status_symbol == "<char>"`.
+    #[arg(long, value_name = "CHAR")]
+    status: Option<char>,
+    /// Sort configuration. See [`SortArgs`].
+    #[command(flatten)]
+    sort: SortArgs,
+    /// Render output as a Markdown table.
+    #[arg(long)]
+    table: bool,
+    /// Field path to render as a table column. Custom overrides default table
+    /// columns.
+    #[arg(long = "column", requires = "table")]
+    columns: Vec<String>,
+    /// Output only the matching row count.
+    #[arg(long)]
+    count: bool,
 }
 
 impl Task {
     /// Runs `traces task` for the trusted project root.
     ///
     /// Refreshes the root's [`FileIndex`] and writes each matching task to
-    /// stdout as a Markdown checkbox line.
+    /// stdout as a Markdown checkbox line or formatted table.
     ///
     /// # Errors
     ///
@@ -40,7 +84,9 @@ impl Task {
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
-    /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
+    /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
+    ///   `--sort` names a malformed field path, or `--column` names a malformed
+    ///   field path.
     ///
     /// [`FileIndex`]: crate::index::FileIndex
     #[expect(
@@ -54,13 +100,14 @@ impl Task {
         let root = config.root();
         let (rendered, count) = self.render(&config)?;
         print!("{rendered}");
-        eprintln!("{count} task(s) from {}", root.display());
+        if !self.count {
+            eprintln!("{count} task(s) from {}", root.display());
+        }
         Ok(())
     }
 
     /// Renders matching tasks from `root`'s [`FileIndex`] as a Markdown task
-    /// list with each row's file path appended, alongside the matched row
-    /// count.
+    /// list, table, or count-only output, alongside the matched row count.
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content
     /// without capturing process stdout.
@@ -68,19 +115,58 @@ impl Task {
     /// # Errors
     ///
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
-    /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
+    /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
+    ///   `--sort` names a malformed field path, or `--column` names a malformed
+    ///   field path.
     ///
     /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
+        let mut status_filter = None;
+        let mut extra_filters = Vec::new();
+        if self.todo {
+            extra_filters.push("list.completed == false");
+        }
+        if self.done {
+            extra_filters.push("list.completed == true");
+        }
+        if let Some(status) = self.status {
+            status_filter = Some(format!("list.status_symbol == \"{status}\""));
+        }
+        if let Some(filter_str) = &status_filter {
+            extra_filters.push(filter_str.as_str());
+        }
+        let all_filters =
+            self.filter.iter().map(String::as_str).chain(extra_filters);
+        let order = self.sort.resolve(root)?;
         let outcome = super::refresh_task_query(
             config,
             self.from.as_deref(),
-            &self.filter,
+            all_filters,
+            order,
         )?;
         let count = outcome.len();
+        if self.count {
+            return Ok((format!("{count}\n"), count));
+        }
+        if self.table {
+            let rendered = if self.columns.is_empty() {
+                outcome.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
+            } else {
+                let columns: Vec<&str> =
+                    self.columns.iter().map(String::as_str).collect();
+                outcome.table(&columns, &columns)
+            }
+            .map_err(|source| super::query_error(root, source))?;
+            return Ok((rendered, count));
+        }
+        let path_style = if self.line_numbers {
+            TaskPathStyle::Coordinates
+        } else {
+            TaskPathStyle::Suffix
+        };
         let rendered = outcome
-            .task_list(TaskPathStyle::Suffix)
+            .task_list(path_style)
             .map_err(|source| super::query_error(root, source))?;
         Ok((rendered, count))
     }
@@ -114,6 +200,7 @@ mod tests {
             let task = Task {
                 from: None,
                 filter: vec![],
+                ..Default::default()
             };
 
             let (rendered, count) =
@@ -136,6 +223,7 @@ mod tests {
             let task = Task {
                 from: Some("#projects".to_owned()),
                 filter: vec![],
+                ..Default::default()
             };
 
             let (rendered, count) =
@@ -159,6 +247,7 @@ mod tests {
             let task = Task {
                 from: Some("projects/".to_owned()),
                 filter: vec![],
+                ..Default::default()
             };
 
             let (rendered, count) =
@@ -179,6 +268,7 @@ mod tests {
             let task = Task {
                 from: None,
                 filter: vec!["list.completed == false".to_owned()],
+                ..Default::default()
             };
 
             let (rendered, count) =
@@ -201,6 +291,7 @@ mod tests {
             let task = Task {
                 from: None,
                 filter: vec![],
+                ..Default::default()
             };
 
             let (rendered, count) =
@@ -222,6 +313,7 @@ mod tests {
             let task = Task {
                 from: None,
                 filter: vec!["not a valid expression".to_owned()],
+                ..Default::default()
             };
 
             let error = task
@@ -232,6 +324,233 @@ mod tests {
                 source: QueryError::Builder(QueryBuilderError::Syntax(_)),
                 ..
             }));
+        }
+
+        #[test]
+        fn renders_line_number_coordinates_with_line_numbers_flag() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "# Heading\n\n- [ ] buy milk\n- [x] pay rent\n",
+            )
+            .expect("write note");
+            let task = Task {
+                line_numbers: true,
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(
+                rendered,
+                "- [ ] buy milk (todo.md:3)\n- [x] pay rent (todo.md:4)\n"
+            );
+            assert_eq!(count, 2);
+        }
+
+        #[test]
+        fn filters_incomplete_tasks_with_todo_flag() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] buy milk\n- [x] pay rent\n- [-] cancelled\n",
+            )
+            .expect("write note");
+            let task = Task {
+                todo: true,
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- [ ] buy milk (todo.md)\n");
+            assert_eq!(count, 1);
+        }
+
+        #[test]
+        fn filters_completed_tasks_with_done_flag() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] buy milk\n- [x] pay rent\n- [-] cancelled\n",
+            )
+            .expect("write note");
+            let task = Task {
+                done: true,
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- [x] pay rent (todo.md)\n");
+            assert_eq!(count, 1);
+        }
+
+        #[test]
+        fn filters_by_status_symbol_character() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] buy milk\n- [/] in progress\n- [!] urgent\n- [x] done\n",
+            )
+            .expect("write note");
+            let task = Task {
+                status: Some('/'),
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- [/] in progress (todo.md)\n");
+            assert_eq!(count, 1);
+
+            let urgent_task = Task {
+                status: Some('!'),
+                ..Default::default()
+            };
+            let (urgent_rendered, urgent_count) =
+                urgent_task.render(&config(temp.path())).expect("valid query");
+            assert_eq!(urgent_rendered, "- [!] urgent (todo.md)\n");
+            assert_eq!(urgent_count, 1);
+        }
+
+        #[test]
+        fn sorts_tasks_by_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] zebra\n- [ ] apple\n- [ ] mango\n",
+            )
+            .expect("write note");
+            let task = Task {
+                sort: SortArgs {
+                    sort: vec!["list.text".to_owned()],
+                    asc: true,
+                    desc: false,
+                },
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(
+                rendered,
+                "- [ ] apple (todo.md)\n- [ ] mango (todo.md)\n- [ ] zebra \
+                 (todo.md)\n"
+            );
+            assert_eq!(count, 3);
+        }
+
+        #[test]
+        fn renders_table_with_default_columns() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] buy milk ➕ 2025-01-01 📅 2025-01-05 🔺\n",
+            )
+            .expect("write note");
+            let task = Task {
+                table: true,
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(count, 1);
+            assert!(rendered.contains("| Task"));
+            assert!(rendered.contains("| Status"));
+            assert!(rendered.contains("| Due"));
+            assert!(rendered.contains("| Priority"));
+            assert!(rendered.contains("| File"));
+            assert!(rendered.contains("buy milk"));
+            assert!(rendered.contains("todo.md"));
+        }
+
+        #[test]
+        fn renders_table_with_custom_columns() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("todo.md"), "- [x] buy milk\n")
+                .expect("write note");
+            let task = Task {
+                table: true,
+                columns: vec!["list.text".to_owned(), "file.path".to_owned()],
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(count, 1);
+            assert!(rendered.contains("| list.text"));
+            assert!(rendered.contains("| file.path"));
+            assert!(rendered.contains("buy milk"));
+            assert!(rendered.contains("todo.md"));
+        }
+
+        #[test]
+        fn outputs_only_count_when_count_flag_enabled() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("todo.md"), "- [ ] one\n- [x] two\n")
+                .expect("write note");
+            let task = Task {
+                count: true,
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "2\n");
+            assert_eq!(count, 2);
+        }
+
+        #[test]
+        fn from_direct_markdown_file_path_selects_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+            fs::write(temp.path().join("notes/todo.md"), "- [ ] notes task\n")
+                .expect("write notes/todo.md");
+            fs::write(temp.path().join("other.md"), "- [ ] other task\n")
+                .expect("write other.md");
+            let task = Task {
+                from: Some("notes/todo.md".to_owned()),
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- [ ] notes task (notes/todo.md)\n");
+            assert_eq!(count, 1);
+        }
+
+        #[test]
+        fn from_unadorned_path_without_extension_selects_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+            fs::write(
+                temp.path().join("notes/todo.md"),
+                "- [ ] unadorned task\n",
+            )
+            .expect("write notes/todo.md");
+            fs::write(temp.path().join("other.md"), "- [ ] other task\n")
+                .expect("write other.md");
+            let task = Task {
+                from: Some("notes/todo".to_owned()),
+                ..Default::default()
+            };
+
+            let (rendered, count) =
+                task.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- [ ] unadorned task (notes/todo.md)\n");
+            assert_eq!(count, 1);
         }
     }
 
@@ -299,10 +618,110 @@ mod tests {
                 "rating > 2".to_owned()
             ]);
         }
+
+        #[test]
+        fn parses_line_numbers_flag_short_and_long() {
+            let short_cli = Cli::try_parse_from(["traces", "task", "-l"])
+                .expect("parse short line numbers");
+            assert!(task_args(&short_cli).line_numbers);
+
+            let long_cli =
+                Cli::try_parse_from(["traces", "task", "--line-numbers"])
+                    .expect("parse long line numbers");
+            assert!(task_args(&long_cli).line_numbers);
+        }
+
+        #[test]
+        fn parses_todo_and_done_flags() {
+            let todo_cli = Cli::try_parse_from(["traces", "task", "--todo"])
+                .expect("parse todo flag");
+            assert!(task_args(&todo_cli).todo);
+            assert!(!task_args(&todo_cli).done);
+
+            let done_cli = Cli::try_parse_from(["traces", "task", "--done"])
+                .expect("parse done flag");
+            assert!(task_args(&done_cli).done);
+            assert!(!task_args(&done_cli).todo);
+        }
+
+        #[test]
+        fn rejects_conflicting_todo_and_done_flags() {
+            let result =
+                Cli::try_parse_from(["traces", "task", "--todo", "--done"]);
+            assert!(
+                result.is_err(),
+                "passing both --todo and --done must fail"
+            );
+        }
+
+        #[test]
+        fn parses_status_flag() {
+            let cli = Cli::try_parse_from(["traces", "task", "--status", "/"])
+                .expect("parse status flag");
+            assert_eq!(task_args(&cli).status, Some('/'));
+        }
+
+        #[test]
+        fn parses_sort_flags() {
+            let cli = Cli::try_parse_from([
+                "traces", "task", "--sort", "list.due", "--asc",
+            ])
+            .expect("parse sort flag");
+            let task = task_args(&cli);
+            assert_eq!(task.sort.sort, vec!["list.due".to_owned()]);
+            assert!(task.sort.asc);
+        }
+
+        #[test]
+        fn parses_table_flag_and_columns() {
+            let cli = Cli::try_parse_from(["traces", "task", "--table"])
+                .expect("parse table flag");
+            let task = task_args(&cli);
+            assert!(task.table);
+            assert_eq!(task.columns, Vec::<String>::new());
+
+            let custom_cli = Cli::try_parse_from([
+                "traces",
+                "task",
+                "--table",
+                "--column",
+                "list.text",
+                "--column",
+                "file.path",
+            ])
+            .expect("parse custom columns");
+            let custom_task = task_args(&custom_cli);
+            assert!(custom_task.table);
+            assert_eq!(custom_task.columns, vec![
+                "list.text".to_owned(),
+                "file.path".to_owned()
+            ]);
+        }
+
+        #[test]
+        fn rejects_column_without_table() {
+            let result = Cli::try_parse_from([
+                "traces",
+                "task",
+                "--column",
+                "list.text",
+            ]);
+            assert!(
+                result.is_err(),
+                "--column requires --table, so passing --column alone must \
+                 fail"
+            );
+        }
+
+        #[test]
+        fn parses_count_flag() {
+            let cli = Cli::try_parse_from(["traces", "task", "--count"])
+                .expect("parse count flag");
+            assert!(task_args(&cli).count);
+        }
     }
 
     mod run {
-
         use super::*;
         use crate::{cli::CwdGuard, config::ConfigLoadError};
 
@@ -312,10 +731,7 @@ mod tests {
             let project = TestProject::trusted(temp.path().join("project"));
             project.write_note("todo.md", "- [ ] buy milk\n");
             let _guard = CwdGuard::enter(project.root());
-            let task = Task {
-                from: None,
-                filter: vec![],
-            };
+            let task = Task::default();
 
             task.run(project.service()).expect("run task command");
         }
@@ -325,10 +741,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let project = TestProject::untrusted(temp.path().join("project"));
             let _guard = CwdGuard::enter(project.root());
-            let task = Task {
-                from: None,
-                filter: vec![],
-            };
+            let task = Task::default();
 
             let error =
                 task.run(project.service()).expect_err("untrusted root fails");
@@ -337,6 +750,20 @@ mod tests {
                 source: ConfigLoadError::Build(_),
                 ..
             }));
+        }
+
+        #[test]
+        fn run_with_count_omits_summary_stderr() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let project = TestProject::trusted(temp.path().join("project"));
+            project.write_note("todo.md", "- [ ] buy milk\n");
+            let _guard = CwdGuard::enter(project.root());
+            let task = Task {
+                count: true,
+                ..Default::default()
+            };
+
+            task.run(project.service()).expect("run task command with count");
         }
     }
 }

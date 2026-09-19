@@ -250,7 +250,7 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 /// `--sort`), and their parsing all come from one definition instead of two
 /// copies.
 #[derive(Debug, Default, clap::Args)]
-struct SortArgs {
+pub(super) struct SortArgs {
     /// Field path to sort by. Repeatable; multiple `--sort` flags or
     /// comma-separated values compose as composite sort terms. Defaults to
     /// descending order unless overridden by prefix `+` or the `--asc` flag.
@@ -339,10 +339,11 @@ fn refresh_page_query(
 ///
 /// - [`CliError::Index`] if syncing the index or querying the store fails.
 /// - [`CliError::Query`] if any filter expression is malformed.
-fn refresh_task_query(
+fn refresh_task_query<'a>(
     config: &Config,
     from: Option<&str>,
-    filters: &[String],
+    filters: impl IntoIterator<Item = &'a str>,
+    order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
     let store = IndexerService::new(root).with_config(config).sync().map_err(
@@ -359,6 +360,9 @@ fn refresh_task_query(
             .filter(expr)
             .map_err(|error| query_error(root, error.into()))?;
     }
+    if let Some(order) = order {
+        builder = builder.order(order);
+    }
     run_query_builder_from_store(config, &store, builder, has_classes)
 }
 
@@ -367,8 +371,33 @@ fn parse_source(
     from: Option<&str>,
 ) -> Result<SourceSelector, CliError> {
     let root = config.root();
-    SourceSelector::parse(from.unwrap_or_default())
+    let source_str = from.map_or("", str::trim);
+    let normalized = normalize_source_input(root, source_str);
+    SourceSelector::parse(&normalized)
         .map_err(|source| query_error(root, source))
+}
+
+fn normalize_source_input<'a>(
+    root: &Path,
+    input: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    if !input.is_empty()
+        && !input.starts_with('#')
+        && !input.starts_with('@')
+        && !input.starts_with('"')
+        && !input.starts_with('\'')
+        && !input.ends_with('/')
+        && !input.ends_with('\\')
+    {
+        let path = Path::new(input);
+        if path.is_relative() && path.extension().is_none() {
+            let candidate = root.join(path).with_extension("md");
+            if candidate.is_file() {
+                return std::borrow::Cow::Owned(format!("{input}.md"));
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(input)
 }
 
 fn run_query_builder_from_store(
@@ -798,6 +827,79 @@ mod tests {
                 desc: false,
             };
             assert!(args.resolve(Path::new("")).is_err());
+        }
+    }
+
+    mod parse_source {
+        use std::fs;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn appends_md_when_unadorned_path_exists_as_md() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::write(temp.path().join("daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source =
+                parse_source(&config, Some("daily")).expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("daily.md").expect("expected source")
+            );
+        }
+
+        #[test]
+        fn appends_md_for_nested_unadorned_path_when_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::create_dir_all(temp.path().join("notes")).expect("create dir");
+            fs::write(temp.path().join("notes/daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source = parse_source(&config, Some("notes/daily"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("notes/daily.md")
+                    .expect("expected source")
+            );
+        }
+
+        #[test]
+        fn preserves_unadorned_path_when_no_md_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let source = parse_source(&config, Some("nonexistent"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("nonexistent").expect("expected source")
+            );
+        }
+
+        #[test]
+        fn preserves_tag_and_class_selectors() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let tag_source =
+                parse_source(&config, Some("#daily")).expect("parse tag");
+            assert_eq!(
+                tag_source,
+                SourceSelector::parse("#daily").expect("expected tag")
+            );
+
+            let class_source =
+                parse_source(&config, Some("@Daily")).expect("parse class");
+            assert_eq!(
+                class_source,
+                SourceSelector::parse("@Daily").expect("expected class")
+            );
         }
     }
 
