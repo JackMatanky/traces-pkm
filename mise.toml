@@ -11,6 +11,7 @@ rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
   "rustfmt",
 ] }
 hk = "2.0.0"
+cargo-binstall = "latest"
 
 # -- Data formats --
 taplo = "latest"
@@ -23,7 +24,7 @@ cargo-deny = "latest"
 "cargo:cargo-audit" = "latest"
 
 # -- Testing & Quality --
-"cargo:cargo-nextest" = "latest"
+"github:nextest-rs/nextest" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:cargo-mutants" = "latest"

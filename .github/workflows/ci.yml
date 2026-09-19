@@ -66,7 +66,7 @@ jobs:
           experimental: true
           install_args: rust
       - uses: Swatinem/rust-cache@v2
-      - run: mise install --locked cargo:cargo-nextest
+      - run: mise install --locked cargo-binstall github:nextest-rs/nextest
       - run: mise run test
 
   # -- Repository hygiene & file formats (hk) --
