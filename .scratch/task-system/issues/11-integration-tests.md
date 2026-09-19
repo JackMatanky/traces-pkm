@@ -1,7 +1,7 @@
 # 11 — Task and list system integration test suite
 
 **Category:** enhancement
-**Status:** ready-for-agent
+**Status:** done
 
 **What to build:** Expand and complete the integration and end-to-end test
 suites across the existing module-aligned test files in `tests/integration/` and
@@ -19,7 +19,7 @@ Strictly avoid duplicating low-level unit tests.
 
 ## Acceptance Criteria
 
-- [ ] **Task Lifecycle (`tests/integration/task_tag_filters.rs`):** Test
+- [x] **Task Lifecycle (`tests/integration/task_tag_filters.rs`):** Test
   multi-note vault lifecycle using `TestProject`: custom and extended status
   markers (`[/]`, `[-]`, `[!]`, and unknown single-char markers `[?]`), tag
   filters (`#task`), mixed list outlines (plain bullets, non-task checkboxes,
@@ -27,24 +27,24 @@ Strictly avoid duplicating low-level unit tests.
   `fully_complete` computation (parent task with all task children done evaluates
   to `fully_complete == true`; parent with an incomplete/in-progress child evaluates
   to `false`; non-task checklist items and plain bullets are ignored).
-- [ ] **Persistence Invariance (`tests/integration/index_persistence_roundtrip.rs`):**
+- [x] **Persistence Invariance (`tests/integration/index_persistence_roundtrip.rs`):**
   Test redb persistence invariance without `LISTS` table (ADR 0005): build,
   persist to redb (`NOTES` and `FILES` tables only), reload from a fresh
   `IndexerService` simulating a cold process restart, and assert identical query
   outcomes and complete list metadata without reparsing Markdown.
-- [ ] **Query Modes & Namespaces (`tests/integration/index_query.rs`):**
+- [x] **Query Modes & Namespaces (`tests/integration/index_query.rs`):**
   Test public query evaluation across modes: `QueryBuilder::lists` yields all
   items (bullets, checkboxes, tasks) with structural fields (`depth`, `line`,
   `parent`), while `QueryBuilder::tasks` yields only tag-matching status items;
   verify acceptance of canonical `list.<field>` and diagnostic rejection of
   obsolete `task.<field>`; verify note frontmatter inheritance on list rows and
   inline field overrides.
-- [ ] **Template Pipelines (`tests/integration/template_render.rs`):**
+- [x] **Template Pipelines (`tests/integration/template_render.rs`):**
   Test template rendering under `TemplateService` with `lists.from(...)` and
   `tasks.from(...)` pipelines, verifying transforms (`where`, `sort`, `limit`) and
   terminal formatters (`task_list`, `table`, `count`) with inherited note
   frontmatter and inline field overrides.
-- [ ] **CLI Output Fidelity (`tests/e2e/dispatch.rs`):**
+- [x] **CLI Output Fidelity (`tests/e2e/dispatch.rs`):**
   Add process-boundary CLI tests under `mod query_commands` using `Sandbox`:
   verify `traces task` preserves custom status markers (`[/]`, `[-]`, `[!]`, `[?]`),
   indents nested tasks by `list.depth * 2` spaces, formats clickable coordinates
@@ -52,10 +52,10 @@ Strictly avoid duplicating low-level unit tests.
   `--status <char>`), orders with `--sort` (`--asc`/`--desc`), renders tables with
   default and custom columns via `--table`, outputs counts via `--count`, and
   resolves bare `.md` paths via `--from`.
-- [ ] **No Unit Test Duplication:** Low-level parser edge cases (bracket
+- [x] **No Unit Test Duplication:** Low-level parser edge cases (bracket
   variations, malformed emojis, date parsing errors) remain exclusively in unit
   suites (`src/note/`, `src/task/`, `src/query/`).
-- [ ] All checks pass under `mise run verify`.
+- [x] All checks pass under `mise run verify`.
 
 ## Key Integration Workflows (Combined by Module)
 
