@@ -1,7 +1,7 @@
 # 10 — CLI task enhancements, output fidelity, and source expansion
 
 **Category:** enhancement
-**Status:** ready-for-agent
+**Status:** done
 
 **What to build:** Specialize and polish the `traces task` CLI command for
 daily PKM workflows. Fix the status marker erasure bug in `render_task_list` so
@@ -18,31 +18,31 @@ direct Markdown file paths.
 
 ## Acceptance Criteria
 
-- [ ] Fix `render_task_list` to format exact `TaskStatusSymbol` characters
+- [x] Fix `render_task_list` to format exact `TaskStatusSymbol` characters
   inside `"- [{}] "`, preserving `[/]`, `[-]`, `[!]`, and custom markers.
-- [ ] Implement visual indentation in `render_task_list` using `list.depth * 2`
+- [x] Implement visual indentation in `render_task_list` using `list.depth * 2`
   spaces.
-- [ ] Add `--line-numbers` (`-l`) to `traces task` to format suffix coordinates
+- [x] Add `--line-numbers` (`-l`) to `traces task` to format suffix coordinates
   as `({path}:{line})`.
-- [ ] Add `--todo`, `--done`, and `--status <char>` flags to `traces task`.
-- [ ] Flatten `SortArgs` on `Task` in `src/cli/task.rs` to support `--sort`,
+- [x] Add `--todo`, `--done`, and `--status <char>` flags to `traces task`.
+- [x] Flatten `SortArgs` on `Task` in `src/cli/task.rs` to support `--sort`,
   `--asc`, and `--desc`.
-- [ ] Add `--table` support with default columns (`Task`, `Status`, `Due`,
+- [x] Add `--table` support with default columns (`Task`, `Status`, `Due`,
   `Priority`, `File`) and custom `--column` overrides.
-- [ ] Add `--count` flag to `traces task` to output only the matching row count.
-- [ ] Expand `--from` in `SourceSelector::parse` to accept direct Markdown file
+- [x] Add `--count` flag to `traces task` to output only the matching row count.
+- [x] Expand `--from` in `SourceSelector::parse` to accept direct Markdown file
   paths alongside tags, folders, and File Classes.
-- [ ] Unit tests in `src/query/results.rs` verifying `status_symbol`,
+- [x] Unit tests in `src/query/results.rs` verifying `status_symbol`,
   `depth`, `line`, and `parent` on `QueryRow` returning `TaskStatusSymbol`
   and `SourceLine`.
-- [ ] Unit tests in `src/query/format.rs` verifying custom marker preservation,
+- [x] Unit tests in `src/query/format.rs` verifying custom marker preservation,
   depth indentation, and coordinate suffixes.
-- [ ] CLI argument parsing tests in `src/cli/task.rs` verifying flag validation,
+- [x] CLI argument parsing tests in `src/cli/task.rs` verifying flag validation,
   conflicts (`--todo` with `--done`), and shortcuts.
-- [ ] CLI execution and rendering tests in `src/cli/task.rs` verifying
+- [x] CLI execution and rendering tests in `src/cli/task.rs` verifying
   `--line-numbers`, `--todo`, `--done`, `--status`, `--sort`, `--table`,
   `--column`, `--count`, and `--from` direct file paths.
-- [ ] All checks pass under `mise run verify`.
+- [x] All checks pass under `mise run verify`.
 
 ## Key Interfaces and Models
 

@@ -42,8 +42,8 @@ use crate::{
     config::{DiscoveryScope, TrustRequests},
     index::{IndexStore, IndexerService},
     query::{
-        QueryBuilder, QueryError, QueryService, QuerySet, SortDirection,
-        SortOrder, SourceSelector,
+        QueryBuilder, QueryError, QueryMode, QueryService, QuerySet,
+        SortDirection, SortOrder, SourceSelector,
     },
     schema::{SchemaService, warn_schema_construction_diagnostics},
 };
@@ -250,7 +250,7 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 /// `--sort`), and their parsing all come from one definition instead of two
 /// copies.
 #[derive(Debug, Default, clap::Args)]
-struct SortArgs {
+pub(super) struct SortArgs {
     /// Field path to sort by. Repeatable; multiple `--sort` flags or
     /// comma-separated values compose as composite sort terms. Defaults to
     /// descending order unless overridden by prefix `+` or the `--asc` flag.
@@ -289,12 +289,50 @@ impl SortArgs {
     }
 }
 
-/// Synchronizes `root`'s index store and returns page-level records selected
-/// by `from`, filtered by `filters` (composed as AND) and optionally sorted.
+/// Synchronizes `root`'s index store and evaluates a query with the given
+/// `mode`, `from` source, `filters`, and `order`.
 ///
-/// Queries directly against the synced [`IndexStore`], resolving only
-/// candidate rows matching `from` instead of materializing a full
-/// [`FileIndex`](crate::index::FileIndex) of every indexed file.
+/// Shared by [`list::List`], [`table::Table`], and [`task::Task`].
+///
+/// # Errors
+///
+/// - [`CliError::Index`] if syncing the index or querying the store fails.
+/// - [`CliError::Query`] if any filter expression is malformed or the source
+///   selector cannot be parsed.
+fn refresh_query<'a>(
+    config: &Config,
+    from: Option<&str>,
+    filters: impl IntoIterator<Item = &'a str>,
+    order: Option<SortOrder>,
+    mode: QueryMode,
+) -> Result<QuerySet, CliError> {
+    let root = config.root();
+    let store = IndexerService::new(root).with_config(config).sync().map_err(
+        |source| CliError::Index {
+            root: root.to_path_buf(),
+            source,
+        },
+    )?;
+    let source = parse_source(config, from)?;
+    let has_classes = source.has_classes();
+    let mut builder = match mode {
+        QueryMode::Pages => QueryBuilder::pages(source),
+        QueryMode::Lists => QueryBuilder::lists(source),
+        QueryMode::Tasks => QueryBuilder::tasks(source),
+    };
+    for expr in filters {
+        builder = builder
+            .filter(expr)
+            .map_err(|error| query_error(root, error.into()))?;
+    }
+    if let Some(order) = order {
+        builder = builder.order(order);
+    }
+    run_query_builder_from_store(config, &store, builder, has_classes)
+}
+
+/// Synchronizes `root`'s index store and returns page-level records selected
+/// by `from`, filtered by `filters` (composed as AND), and ordered by `order`.
 ///
 /// Shared by [`list::List`] and [`table::Table`].
 ///
@@ -309,29 +347,17 @@ fn refresh_page_query(
     filters: &[String],
     order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
-    let root = config.root();
-    let store = IndexerService::new(root).with_config(config).sync().map_err(
-        |source| CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        },
-    )?;
-    let source = parse_source(config, from)?;
-    let has_classes = source.has_classes();
-    let mut builder = QueryBuilder::pages(source);
-    for expr in filters {
-        builder = builder
-            .filter(expr)
-            .map_err(|error| query_error(root, error.into()))?;
-    }
-    if let Some(order) = order {
-        builder = builder.order(order);
-    }
-    run_query_builder_from_store(config, &store, builder, has_classes)
+    refresh_query(
+        config,
+        from,
+        filters.iter().map(String::as_str),
+        order,
+        QueryMode::Pages,
+    )
 }
 
 /// Synchronizes `root`'s index store and returns task-level records selected
-/// by `from`, filtered by `filters` (composed as AND).
+/// by `from`, filtered by `filters` (composed as AND), and ordered by `order`.
 ///
 /// Shared by [`task::Task`].
 ///
@@ -339,36 +365,72 @@ fn refresh_page_query(
 ///
 /// - [`CliError::Index`] if syncing the index or querying the store fails.
 /// - [`CliError::Query`] if any filter expression is malformed.
-fn refresh_task_query(
+fn refresh_task_query<'a>(
     config: &Config,
     from: Option<&str>,
-    filters: &[String],
+    filters: impl IntoIterator<Item = &'a str>,
+    order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
-    let root = config.root();
-    let store = IndexerService::new(root).with_config(config).sync().map_err(
-        |source| CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        },
-    )?;
-    let source = parse_source(config, from)?;
-    let has_classes = source.has_classes();
-    let mut builder = QueryBuilder::tasks(source);
-    for expr in filters {
-        builder = builder
-            .filter(expr)
-            .map_err(|error| query_error(root, error.into()))?;
-    }
-    run_query_builder_from_store(config, &store, builder, has_classes)
+    refresh_query(config, from, filters, order, QueryMode::Tasks)
 }
 
+/// Parses an optional source expression string into a [`SourceSelector`].
+///
+/// Normalizes unadorned relative paths pointing to existing `.md` files
+/// under `config`'s root by appending the `.md` extension.
+///
+/// # Errors
+///
+/// - [`CliError::Query`] if the source expression fails to parse.
 fn parse_source(
     config: &Config,
     from: Option<&str>,
 ) -> Result<SourceSelector, CliError> {
     let root = config.root();
-    SourceSelector::parse(from.unwrap_or_default())
+    let source_str = from.map_or("", str::trim);
+    let normalized = normalize_source_input(root, source_str);
+    SourceSelector::parse(&normalized)
         .map_err(|source| query_error(root, source))
+}
+
+/// Normalizes unadorned relative paths pointing to existing `.md` files under
+/// `root` by appending the `.md` extension.
+///
+/// Leaves tags (`#tag`), classes (`@Class`), folder globs, and already-quoted
+/// expressions untouched. Paths containing whitespace are enclosed in quotes
+/// so the query source lexer tokenizes them as a single quoted path atom.
+fn normalize_source_input<'a>(
+    root: &Path,
+    input: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    if input.is_empty()
+        || input.starts_with(['#', '@', '"', '\''])
+        || input.ends_with(['/', '\\'])
+    {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    let path = Path::new(input);
+    if !path.is_relative() {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    if path.extension().is_none() {
+        let candidate = root.join(path).with_extension("md");
+        if candidate.is_file() {
+            let quoted = if input.contains(char::is_whitespace) {
+                format!("\"{input}.md\"")
+            } else {
+                format!("{input}.md")
+            };
+            return std::borrow::Cow::Owned(quoted);
+        }
+    }
+    if path.extension() == Some(std::ffi::OsStr::new("md"))
+        && input.contains(char::is_whitespace)
+        && root.join(path).is_file()
+    {
+        return std::borrow::Cow::Owned(format!("\"{input}\""));
+    }
+    std::borrow::Cow::Borrowed(input)
 }
 
 fn run_query_builder_from_store(
@@ -798,6 +860,129 @@ mod tests {
                 desc: false,
             };
             assert!(args.resolve(Path::new("")).is_err());
+        }
+    }
+
+    mod parse_source {
+        use std::fs;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn appends_md_when_unadorned_path_exists_as_md() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::write(temp.path().join("daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source =
+                parse_source(&config, Some("daily")).expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("daily.md").expect("expected source")
+            );
+        }
+
+        #[test]
+        fn appends_md_for_nested_unadorned_path_when_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::create_dir_all(temp.path().join("notes")).expect("create dir");
+            fs::write(temp.path().join("notes/daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source = parse_source(&config, Some("notes/daily"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("notes/daily.md")
+                    .expect("expected source")
+            );
+        }
+        #[test]
+        fn quotes_unadorned_path_with_spaces_when_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::create_dir_all(temp.path().join("my notes"))
+                .expect("create dir");
+            fs::write(temp.path().join("my notes/daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source = parse_source(&config, Some("my notes/daily"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("\"my notes/daily.md\"")
+                    .expect("expected source")
+            );
+        }
+
+        #[test]
+        fn quotes_direct_md_path_with_spaces_when_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::create_dir_all(temp.path().join("my notes"))
+                .expect("create dir");
+            fs::write(temp.path().join("my notes/daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source = parse_source(&config, Some("my notes/daily.md"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("\"my notes/daily.md\"")
+                    .expect("expected source")
+            );
+        }
+
+        #[test]
+        fn preserves_unadorned_path_when_no_md_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let source = parse_source(&config, Some("nonexistent"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("nonexistent").expect("expected source")
+            );
+        }
+
+        #[test]
+        fn returns_all_when_from_is_none() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let source = parse_source(&config, None).expect("parse source");
+            assert_eq!(source, SourceSelector::All);
+        }
+
+        #[test]
+        fn preserves_tag_selector() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let tag_source =
+                parse_source(&config, Some("#daily")).expect("parse tag");
+            assert_eq!(
+                tag_source,
+                SourceSelector::parse("#daily").expect("expected tag")
+            );
+        }
+
+        #[test]
+        fn preserves_class_selector() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+
+            let class_source =
+                parse_source(&config, Some("@Daily")).expect("parse class");
+            assert_eq!(
+                class_source,
+                SourceSelector::parse("@Daily").expect("expected class")
+            );
         }
     }
 

@@ -21,7 +21,7 @@ use super::{
     value::QueryFieldValueRef,
 };
 use crate::{
-    DateTimeValue, DateValue,
+    DateTimeValue, DateValue, SourceLine, TaskStatusSymbol,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
@@ -101,6 +101,38 @@ impl QueryRow {
         self.list_item()
             .filter(|item| item.kind().is_task())
             .map(ListItem::clean_text)
+    }
+
+    /// Returns the task status symbol for task rows, or `None` for non-task
+    /// or page-level rows.
+    #[inline]
+    #[must_use]
+    pub fn status_symbol(&self) -> Option<TaskStatusSymbol> {
+        self.list_item()
+            .and_then(|item| item.kind().as_task())
+            .map(|task| task.status().symbol())
+    }
+
+    /// Returns 0-indexed list item depth, or 0 for non-list rows.
+    #[inline]
+    #[must_use]
+    pub fn depth(&self) -> u8 {
+        self.list_item().map_or(0, ListItem::depth)
+    }
+
+    /// Returns 1-indexed source line number, or `None` for non-list rows.
+    #[inline]
+    #[must_use]
+    pub fn line(&self) -> Option<SourceLine> {
+        self.list_item().map(ListItem::line)
+    }
+
+    /// Returns the parent list item's 1-indexed source line number, or `None`
+    /// if top-level or not a list row.
+    #[inline]
+    #[must_use]
+    pub fn parent(&self) -> Option<SourceLine> {
+        self.list_item().and_then(ListItem::parent)
     }
 
     /// Returns the underlying file metadata.
@@ -1001,7 +1033,11 @@ mod tests {
             assert_eq!(row.field("no_such_field"), Ok(NoteFieldValue::Null));
         }
 
-        fn list_row(temp: &Path, source: &str, item_idx: u32) -> QueryRow {
+        pub(super) fn list_row(
+            temp: &Path,
+            source: &str,
+            item_idx: u32,
+        ) -> QueryRow {
             fs::write(temp.join("a.md"), source).expect("write file");
             let index = Arc::new(
                 IndexerService::new(temp).build().expect("build index"),
@@ -1877,6 +1913,109 @@ rating: note
             assert_eq!(base.len(), 3, "branching must not mutate the base");
             assert_eq!(low.len(), 1);
             assert_eq!(high.len(), 1);
+        }
+    }
+
+    mod accessors {
+        use pretty_assertions::assert_eq;
+
+        use super::{field_path::list_row, *};
+
+        #[test]
+        fn returns_status_symbol_for_task_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let row = list_row(temp.path(), "- [x] task\n", 0);
+            assert_eq!(row.status_symbol(), Some(TaskStatusSymbol::from('x')));
+        }
+
+        #[test]
+        fn returns_custom_status_symbol_for_custom_task_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let row = list_row(temp.path(), "- [/] in progress\n", 0);
+            assert_eq!(row.status_symbol(), Some(TaskStatusSymbol::from('/')));
+        }
+
+        #[test]
+        fn returns_none_status_symbol_for_plain_list_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let bullet_row = list_row(temp.path(), "- plain bullet\n", 0);
+            assert_eq!(bullet_row.status_symbol(), None);
+        }
+
+        #[test]
+        fn returns_none_status_symbol_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome =
+                outcome_for_files(temp.path(), &[("page.md", "# Page")]);
+            let page_row = outcome.get(0).expect("page row");
+            assert_eq!(page_row.status_symbol(), None);
+        }
+
+        #[test]
+        fn returns_depth_for_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- top\n  - child\n    - grandchild\n";
+            let top = list_row(temp.path(), source, 0);
+            let child = list_row(temp.path(), source, 1);
+            let grandchild = list_row(temp.path(), source, 2);
+
+            assert_eq!(top.depth(), 0);
+            assert_eq!(child.depth(), 1);
+            assert_eq!(grandchild.depth(), 2);
+        }
+
+        #[test]
+        fn returns_zero_depth_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome =
+                outcome_for_files(temp.path(), &[("page.md", "# Page")]);
+            let page_row = outcome.get(0).expect("page row");
+            assert_eq!(page_row.depth(), 0);
+        }
+
+        #[test]
+        fn returns_line_for_list_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "# Heading\n\n- first\n- second\n";
+            let first = list_row(temp.path(), source, 0);
+            let second = list_row(temp.path(), source, 1);
+
+            assert_eq!(first.line(), SourceLine::new(3));
+            assert_eq!(second.line(), SourceLine::new(4));
+        }
+
+        #[test]
+        fn returns_none_line_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome =
+                outcome_for_files(temp.path(), &[("page.md", "# Page")]);
+            let page_row = outcome.get(0).expect("page row");
+            assert_eq!(page_row.line(), None);
+        }
+
+        #[test]
+        fn returns_parent_line_for_nested_list_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- parent\n  - child\n";
+            let child_item = list_row(temp.path(), source, 1);
+            assert_eq!(child_item.parent(), SourceLine::new(1));
+        }
+
+        #[test]
+        fn returns_none_parent_line_for_top_level_list_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- parent\n  - child\n";
+            let parent_item = list_row(temp.path(), source, 0);
+            assert_eq!(parent_item.parent(), None);
+        }
+
+        #[test]
+        fn returns_none_parent_line_for_page_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome =
+                outcome_for_files(temp.path(), &[("page.md", "# Page")]);
+            let page_row = outcome.get(0).expect("page row");
+            assert_eq!(page_row.parent(), None);
         }
     }
 }

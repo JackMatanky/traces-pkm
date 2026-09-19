@@ -523,6 +523,16 @@ impl SourceGrammar {
             mode,
         })
     }
+
+    /// Strips leading `./` and `.\\` prefixes from path atoms.
+    fn normalize_path_prefix(mut path: &str) -> &str {
+        while let Some(stripped) =
+            path.strip_prefix("./").or_else(|| path.strip_prefix(".\\"))
+        {
+            path = stripped;
+        }
+        path
+    }
 }
 
 impl AtomParser for SourceGrammar {
@@ -563,10 +573,11 @@ impl AtomParser for SourceGrammar {
                         Self::parse_sigil(input, &sigil, span)
                     }
                     SourceToken::Quoted(path) | SourceToken::Bare(path) => {
-                        let glob = if path.ends_with('/') {
-                            format!("{path}**")
+                        let normalized = Self::normalize_path_prefix(&path);
+                        let glob = if normalized.ends_with('/') {
+                            format!("{normalized}**")
                         } else {
-                            path
+                            normalized.to_owned()
                         };
                         GlobPattern::compile(&glob)
                             .map(SourceAtom::Path)
@@ -679,6 +690,7 @@ mod tests {
 
     mod parse {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -811,6 +823,31 @@ mod tests {
         fn parses_a_double_star_wildcard_path_glob() {
             assert!(SourceExpr::parse("**/draft.md").is_ok());
         }
+
+        #[rstest]
+        #[case("./notes/daily.md")]
+        #[case(".\\notes/daily.md")]
+        fn normalizes_leading_relative_path_prefix(#[case] input: &str) {
+            let expr = SourceExpr::parse(input).expect("valid source");
+            assert_eq!(
+                expr,
+                SourceExpr(BooleanExpr::Atom(
+                    SourceAtom::path("notes/daily.md").expect("valid atom")
+                ))
+            );
+        }
+
+        #[test]
+        fn parses_unquoted_markdown_file_path() {
+            let expr =
+                SourceExpr::parse("notes/daily.md").expect("valid source");
+            assert_eq!(
+                expr,
+                SourceExpr(BooleanExpr::Atom(
+                    SourceAtom::path("notes/daily.md").expect("valid atom")
+                ))
+            );
+        }
     }
     mod glob_pattern {
         use super::*;
@@ -887,6 +924,8 @@ mod tests {
     mod is_match {
         use std::{fs, path::Path};
 
+        use rstest::rstest;
+
         use super::*;
         use crate::{FileIndex, IndexerService};
 
@@ -937,6 +976,21 @@ mod tests {
             );
             assert!(
                 !SourceExpr::parse("books/hyperion.md")
+                    .expect("valid source")
+                    .is_match(entry, "class")
+            );
+        }
+
+        #[rstest]
+        #[case("./notes/daily.md")]
+        #[case(".\\notes/daily.md")]
+        fn matches_path_with_leading_relative_prefix(#[case] pattern: &str) {
+            let (_temp, index) = indexed_note("#book", "notes/daily.md");
+            let entry =
+                find_entry(index.entries(), Path::new("notes/daily.md"));
+
+            assert!(
+                SourceExpr::parse(pattern)
                     .expect("valid source")
                     .is_match(entry, "class")
             );

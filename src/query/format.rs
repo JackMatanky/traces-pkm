@@ -8,13 +8,16 @@
 use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
 
 /// Controls file-path rendering in task list output.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum TaskPathStyle {
     /// Omit paths for template rendering.
     #[default]
     None,
     /// Append paths in parentheses for `traces task`.
     Suffix,
+    /// Append file path and 1-indexed source line coordinates for
+    /// `traces task -l`.
+    Coordinates,
 }
 
 /// Markdown display formats supported by query results.
@@ -136,26 +139,50 @@ impl QueryDisplayFormat {
     }
 
     /// Renders task rows as Markdown checkbox lines.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::TaskListRequiresTaskRows`] if any row in `rows` is not a
+    ///   task row.
     fn render_task_list(
         rows: &[QueryRow],
         path_style: TaskPathStyle,
     ) -> QueryResult<String> {
         use std::fmt::Write as _;
 
-        let mut out = String::new();
+        let mut out = String::with_capacity(rows.len().saturating_mul(48));
         for row in rows {
             let Some(text) = row.task_text() else {
                 return Err(QueryError::TaskListRequiresTaskRows);
             };
-            out.push_str(match row.task_completed() {
-                Some(true) => "- [x] ",
-                Some(false) => "- [ ] ",
-                None => "- [-] ",
-            });
-            out.push_str(text);
+            for _ in 0..row.depth() {
+                out.push_str("  ");
+            }
+            let symbol = row.status_symbol().map_or_else(
+                || match row.task_completed() {
+                    Some(true) => 'x',
+                    Some(false) => ' ',
+                    None => '-',
+                },
+                |symbol| symbol.as_char(),
+            );
+            let _ = write!(out, "- [{symbol}] {text}");
             match path_style {
                 TaskPathStyle::Suffix => {
                     let _ = write!(out, " ({})", row.file().path().display());
+                }
+                TaskPathStyle::Coordinates => {
+                    if let Some(line) = row.line() {
+                        let _ = write!(
+                            out,
+                            " ({}:{})",
+                            row.file().path().display(),
+                            line
+                        );
+                    } else {
+                        let _ =
+                            write!(out, " ({})", row.file().path().display());
+                    }
                 }
                 TaskPathStyle::None => {}
             }
@@ -233,6 +260,102 @@ mod tests {
         #[test]
         fn passes_empty_string_unmodified() {
             assert_eq!(QueryDisplayFormat::escape_table_cell(""), "");
+        }
+    }
+
+    mod render_task_list {
+        use std::{fs, sync::Arc};
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::{
+            index::IndexerService,
+            query::{QueryBuilder, QueryService, SourceSelector},
+        };
+
+        fn outcome_for_tasks(
+            temp: &std::path::Path,
+            source: &str,
+        ) -> crate::query::QuerySet {
+            fs::write(temp.join("todo.md"), source).expect("write todo.md");
+            let index = Arc::new(
+                IndexerService::new(temp).build().expect("build index"),
+            );
+            QueryService::new("class")
+                .run(&index, QueryBuilder::tasks(SourceSelector::All))
+        }
+
+        #[test]
+        fn preserves_custom_status_markers() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- [ ] buy milk\n- [x] pay rent\n- [/] in \
+                          progress\n- [-] cancelled\n- [!] urgent\n- [?] \
+                          question\n";
+            let outcome = outcome_for_tasks(temp.path(), source);
+            let rendered = outcome
+                .task_list(TaskPathStyle::None)
+                .expect("render task list");
+            assert_eq!(
+                rendered,
+                "- [ ] buy milk\n- [x] pay rent\n- [/] in progress\n- [-] \
+                 cancelled\n- [!] urgent\n- [?] question\n"
+            );
+        }
+
+        #[test]
+        fn indents_nested_tasks_by_two_spaces_per_depth() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- [ ] parent\n  - [/] child\n    - [x] grandchild\n";
+            let outcome = outcome_for_tasks(temp.path(), source);
+            let rendered = outcome
+                .task_list(TaskPathStyle::None)
+                .expect("render task list");
+            assert_eq!(
+                rendered,
+                "- [ ] parent\n  - [/] child\n    - [x] grandchild\n"
+            );
+        }
+
+        #[test]
+        fn formats_suffix_path_style() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "- [ ] buy milk\n";
+            let outcome = outcome_for_tasks(temp.path(), source);
+            let rendered = outcome
+                .task_list(TaskPathStyle::Suffix)
+                .expect("render task list");
+            assert_eq!(rendered, "- [ ] buy milk (todo.md)\n");
+        }
+
+        #[test]
+        fn formats_coordinate_path_style_with_line_numbers() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let source = "# Header\n\n- [ ] first\n  - [x] second\n";
+            let outcome = outcome_for_tasks(temp.path(), source);
+            let rendered = outcome
+                .task_list(TaskPathStyle::Coordinates)
+                .expect("render task list");
+            assert_eq!(
+                rendered,
+                "- [ ] first (todo.md:3)\n  - [x] second (todo.md:4)\n"
+            );
+        }
+
+        #[test]
+        fn rejects_non_task_rows_with_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("page.md"), "# Heading\n")
+                .expect("write page.md");
+            let index = Arc::new(
+                IndexerService::new(temp.path()).build().expect("build index"),
+            );
+            let outcome = QueryService::new("class")
+                .run(&index, QueryBuilder::pages(SourceSelector::All));
+            let error = outcome
+                .task_list(TaskPathStyle::None)
+                .expect_err("non-task rows must fail");
+            assert!(matches!(error, QueryError::TaskListRequiresTaskRows));
         }
     }
 }
