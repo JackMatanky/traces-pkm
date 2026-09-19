@@ -397,26 +397,38 @@ fn parse_source(
 /// `root` by appending the `.md` extension.
 ///
 /// Leaves tags (`#tag`), classes (`@Class`), folder globs, and already-quoted
-/// expressions untouched.
+/// expressions untouched. Paths containing whitespace are enclosed in quotes
+/// so the query source lexer tokenizes them as a single quoted path atom.
 fn normalize_source_input<'a>(
     root: &Path,
     input: &'a str,
 ) -> std::borrow::Cow<'a, str> {
-    if !input.is_empty()
-        && !input.starts_with('#')
-        && !input.starts_with('@')
-        && !input.starts_with('"')
-        && !input.starts_with('\'')
-        && !input.ends_with('/')
-        && !input.ends_with('\\')
+    if input.is_empty()
+        || input.starts_with(['#', '@', '"', '\''])
+        || input.ends_with(['/', '\\'])
     {
-        let path = Path::new(input);
-        if path.is_relative() && path.extension().is_none() {
-            let candidate = root.join(path).with_extension("md");
-            if candidate.is_file() {
-                return std::borrow::Cow::Owned(format!("{input}.md"));
-            }
+        return std::borrow::Cow::Borrowed(input);
+    }
+    let path = Path::new(input);
+    if !path.is_relative() {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    if path.extension().is_none() {
+        let candidate = root.join(path).with_extension("md");
+        if candidate.is_file() {
+            let quoted = if input.contains(char::is_whitespace) {
+                format!("\"{input}.md\"")
+            } else {
+                format!("{input}.md")
+            };
+            return std::borrow::Cow::Owned(quoted);
         }
+    }
+    if path.extension() == Some(std::ffi::OsStr::new("md"))
+        && input.contains(char::is_whitespace)
+        && root.join(path).is_file()
+    {
+        return std::borrow::Cow::Owned(format!("\"{input}\""));
     }
     std::borrow::Cow::Borrowed(input)
 }
@@ -886,6 +898,41 @@ mod tests {
             assert_eq!(
                 source,
                 SourceSelector::parse("notes/daily.md")
+                    .expect("expected source")
+            );
+        }
+        #[test]
+        fn quotes_unadorned_path_with_spaces_when_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::create_dir_all(temp.path().join("my notes"))
+                .expect("create dir");
+            fs::write(temp.path().join("my notes/daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source = parse_source(&config, Some("my notes/daily"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("\"my notes/daily.md\"")
+                    .expect("expected source")
+            );
+        }
+
+        #[test]
+        fn quotes_direct_md_path_with_spaces_when_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::test_default(temp.path().to_path_buf());
+            fs::create_dir_all(temp.path().join("my notes"))
+                .expect("create dir");
+            fs::write(temp.path().join("my notes/daily.md"), "# Daily")
+                .expect("write daily.md");
+
+            let source = parse_source(&config, Some("my notes/daily.md"))
+                .expect("parse source");
+            assert_eq!(
+                source,
+                SourceSelector::parse("\"my notes/daily.md\"")
                     .expect("expected source")
             );
         }

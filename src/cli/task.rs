@@ -23,28 +23,9 @@ const DEFAULT_TABLE_HEADERS: &[&str] =
 const DEFAULT_TABLE_COLUMNS: &[&str] =
     &["list.text", "list.status", "list.due", "list.priority", "file.path"];
 
-/// Arguments for `traces task`.
-///
-/// Queries tasks from the trusted project root and prints matching checkbox
-/// lines or a formatted table.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each bool is a clap arg for an independent CLI flag; they are \
-              not related enough to collapse into a state-machine enum"
-)]
-#[derive(Debug, Default, Args)]
-pub(super) struct Task {
-    /// Source expression, e.g. `#tag`, `folder/`, `@Class*`, or a boolean
-    /// combination. Omit to query every indexed note's tasks.
-    #[arg(long)]
-    from: Option<String>,
-    /// Filter expression narrowing results, e.g. `"list.completed == false"`.
-    /// Repeatable; multiple `--where` flags compose as AND.
-    #[arg(long = "where")]
-    filter: Vec<String>,
-    /// Display clickable editor line coordinates `({path}:{line})`.
-    #[arg(short = 'l', long = "line-numbers")]
-    line_numbers: bool,
+/// Filter options for task completion and status.
+#[derive(Clone, Debug, Default, Args, PartialEq, Eq)]
+pub(super) struct TaskFilterArgs {
     /// Filter to incomplete tasks (`list.completed == false`). Conflicts with
     /// `--done`.
     #[arg(long, conflicts_with = "done")]
@@ -56,9 +37,36 @@ pub(super) struct Task {
     /// Filter by status character via `list.status_symbol == "<char>"`.
     #[arg(long, value_name = "CHAR")]
     status: Option<char>,
-    /// Sort configuration. See [`SortArgs`].
-    #[command(flatten)]
-    sort: SortArgs,
+}
+
+impl TaskFilterArgs {
+    /// Formats an exact status filter expression when `--status` is specified.
+    fn status_filter(&self) -> Option<String> {
+        self.status.map(|status| {
+            format!("list.status_symbol == \"{}\"", status.escape_default())
+        })
+    }
+
+    /// Collects synthesized filter expressions for `--todo`, `--done`, and
+    /// `--status`.
+    fn shortcuts<'a>(&self, status_filter: Option<&'a str>) -> Vec<&'a str> {
+        let mut filters = Vec::with_capacity(2);
+        if self.todo {
+            filters.push("list.completed == false");
+        }
+        if self.done {
+            filters.push("list.completed == true");
+        }
+        if let Some(filter) = status_filter {
+            filters.push(filter);
+        }
+        filters
+    }
+}
+
+/// Table presentation configuration for task output.
+#[derive(Clone, Debug, Default, Args, PartialEq, Eq)]
+pub(super) struct TaskTableArgs {
     /// Render output as a Markdown table.
     #[arg(long)]
     table: bool,
@@ -66,9 +74,95 @@ pub(super) struct Task {
     /// columns.
     #[arg(long = "column", requires = "table")]
     columns: Vec<String>,
+}
+
+impl TaskTableArgs {
+    /// Formats query outcome rows as a Markdown table.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::Query`] if table column validation or rendering fails.
+    fn format(
+        &self,
+        root: &std::path::Path,
+        outcome: &crate::query::QuerySet,
+    ) -> Result<String, CliError> {
+        if self.columns.is_empty() {
+            outcome.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
+        } else {
+            let columns: Vec<&str> =
+                self.columns.iter().map(String::as_str).collect();
+            outcome.table(&columns, &columns)
+        }
+        .map_err(|source| super::query_error(root, source))
+    }
+}
+
+/// Output presentation configuration for task lists, tables, and counts.
+#[derive(Clone, Debug, Default, Args, PartialEq, Eq)]
+pub(super) struct TaskPresentationArgs {
+    /// Display clickable editor line coordinates `({path}:{line})`.
+    #[arg(short = 'l', long = "line-numbers")]
+    line_numbers: bool,
+    /// Table configuration options.
+    #[command(flatten)]
+    table: TaskTableArgs,
     /// Output only the matching row count.
     #[arg(long)]
     count: bool,
+}
+
+impl TaskPresentationArgs {
+    /// Formats query outcome rows according to active presentation flags.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::Query`] if table or task list rendering fails.
+    fn format_outcome(
+        &self,
+        root: &std::path::Path,
+        outcome: &crate::query::QuerySet,
+    ) -> Result<String, CliError> {
+        if self.count {
+            return Ok(format!("{}\n", outcome.len()));
+        }
+        if self.table.table {
+            return self.table.format(root, outcome);
+        }
+        let path_style = if self.line_numbers {
+            TaskPathStyle::Coordinates
+        } else {
+            TaskPathStyle::Suffix
+        };
+        outcome
+            .task_list(path_style)
+            .map_err(|source| super::query_error(root, source))
+    }
+}
+
+/// Arguments for `traces task`.
+///
+/// Queries tasks from the trusted project root and prints matching checkbox
+/// lines or a formatted table.
+#[derive(Debug, Default, Args)]
+pub(super) struct Task {
+    /// Source expression, e.g. `#tag`, `folder/`, `@Class*`, or a boolean
+    /// combination. Omit to query every indexed note's tasks.
+    #[arg(long)]
+    from: Option<String>,
+    /// Filter expression narrowing results, e.g. `"list.completed == false"`.
+    /// Repeatable; multiple `--where` flags compose as AND.
+    #[arg(long = "where")]
+    filter: Vec<String>,
+    /// Filter shortcuts for task completion and status.
+    #[command(flatten)]
+    filters: TaskFilterArgs,
+    /// Sort configuration. See [`SortArgs`].
+    #[command(flatten)]
+    sort: SortArgs,
+    /// Output presentation configuration.
+    #[command(flatten)]
+    presentation: TaskPresentationArgs,
 }
 
 impl Task {
@@ -100,7 +194,7 @@ impl Task {
         let root = config.root();
         let (rendered, count) = self.render(&config)?;
         print!("{rendered}");
-        if !self.count {
+        if !self.presentation.count {
             eprintln!("{count} task(s) from {}", root.display());
         }
         Ok(())
@@ -111,7 +205,6 @@ impl Task {
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content
     /// without capturing process stdout.
-    ///
     /// # Errors
     ///
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
@@ -122,8 +215,8 @@ impl Task {
     /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
-        let status_filter = self.status_filter();
-        let extra_filters = self.filter_shortcuts(status_filter.as_deref());
+        let status_filter = self.filters.status_filter();
+        let extra_filters = self.filters.shortcuts(status_filter.as_deref());
         let all_filters =
             self.filter.iter().map(String::as_str).chain(extra_filters);
         let order = self.sort.resolve(root)?;
@@ -134,78 +227,8 @@ impl Task {
             order,
         )?;
         let count = outcome.len();
-        let rendered = self.format_outcome(root, &outcome)?;
+        let rendered = self.presentation.format_outcome(root, &outcome)?;
         Ok((rendered, count))
-    }
-
-    /// Formats an exact status filter expression when `--status` is specified.
-    fn status_filter(&self) -> Option<String> {
-        self.status.map(|status| format!("list.status_symbol == \"{status}\""))
-    }
-
-    /// Collects synthesized filter expressions for `--todo`, `--done`, and
-    /// `--status`.
-    fn filter_shortcuts<'a>(
-        &self,
-        status_filter: Option<&'a str>,
-    ) -> Vec<&'a str> {
-        let mut filters = Vec::with_capacity(2);
-        if self.todo {
-            filters.push("list.completed == false");
-        }
-        if self.done {
-            filters.push("list.completed == true");
-        }
-        if let Some(filter) = status_filter {
-            filters.push(filter);
-        }
-        filters
-    }
-
-    /// Formats query outcome rows according to active presentation flags.
-    ///
-    /// # Errors
-    ///
-    /// - [`CliError::Query`] if table or task list rendering fails.
-    fn format_outcome(
-        &self,
-        root: &std::path::Path,
-        outcome: &crate::query::QuerySet,
-    ) -> Result<String, CliError> {
-        if self.count {
-            return Ok(format!("{}\n", outcome.len()));
-        }
-        if self.table {
-            return self.format_table(root, outcome);
-        }
-        let path_style = if self.line_numbers {
-            TaskPathStyle::Coordinates
-        } else {
-            TaskPathStyle::Suffix
-        };
-        outcome
-            .task_list(path_style)
-            .map_err(|source| super::query_error(root, source))
-    }
-
-    /// Formats query outcome rows as a Markdown table.
-    ///
-    /// # Errors
-    ///
-    /// - [`CliError::Query`] if table column validation or rendering fails.
-    fn format_table(
-        &self,
-        root: &std::path::Path,
-        outcome: &crate::query::QuerySet,
-    ) -> Result<String, CliError> {
-        if self.columns.is_empty() {
-            outcome.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
-        } else {
-            let columns: Vec<&str> =
-                self.columns.iter().map(String::as_str).collect();
-            outcome.table(&columns, &columns)
-        }
-        .map_err(|source| super::query_error(root, source))
     }
 }
 
@@ -373,7 +396,10 @@ mod tests {
             )
             .expect("write note");
             let task = Task {
-                line_numbers: true,
+                presentation: TaskPresentationArgs {
+                    line_numbers: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -396,7 +422,10 @@ mod tests {
             )
             .expect("write note");
             let task = Task {
-                todo: true,
+                filters: TaskFilterArgs {
+                    todo: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -416,7 +445,10 @@ mod tests {
             )
             .expect("write note");
             let task = Task {
-                done: true,
+                filters: TaskFilterArgs {
+                    done: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -441,7 +473,10 @@ mod tests {
             )
             .expect("write note");
             let task = Task {
-                status: Some(symbol),
+                filters: TaskFilterArgs {
+                    status: Some(symbol),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -489,7 +524,13 @@ mod tests {
             )
             .expect("write note");
             let task = Task {
-                table: true,
+                presentation: TaskPresentationArgs {
+                    table: TaskTableArgs {
+                        table: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -512,8 +553,16 @@ mod tests {
             fs::write(temp.path().join("todo.md"), "- [x] buy milk\n")
                 .expect("write note");
             let task = Task {
-                table: true,
-                columns: vec!["list.text".to_owned(), "file.path".to_owned()],
+                presentation: TaskPresentationArgs {
+                    table: TaskTableArgs {
+                        table: true,
+                        columns: vec![
+                            "list.text".to_owned(),
+                            "file.path".to_owned(),
+                        ],
+                    },
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -533,7 +582,10 @@ mod tests {
             fs::write(temp.path().join("todo.md"), "- [ ] one\n- [x] two\n")
                 .expect("write note");
             let task = Task {
-                count: true,
+                presentation: TaskPresentationArgs {
+                    count: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -660,23 +712,23 @@ mod tests {
         fn parses_line_numbers_flag(#[case] flag: &str) {
             let cli = Cli::try_parse_from(["traces", "task", flag])
                 .expect("parse line numbers");
-            assert!(task_args(&cli).line_numbers);
+            assert!(task_args(&cli).presentation.line_numbers);
         }
 
         #[test]
         fn parses_todo_flag() {
             let cli = Cli::try_parse_from(["traces", "task", "--todo"])
                 .expect("parse todo flag");
-            assert!(task_args(&cli).todo);
-            assert!(!task_args(&cli).done);
+            assert!(task_args(&cli).filters.todo);
+            assert!(!task_args(&cli).filters.done);
         }
 
         #[test]
         fn parses_done_flag() {
             let cli = Cli::try_parse_from(["traces", "task", "--done"])
                 .expect("parse done flag");
-            assert!(task_args(&cli).done);
-            assert!(!task_args(&cli).todo);
+            assert!(task_args(&cli).filters.done);
+            assert!(!task_args(&cli).filters.todo);
         }
         #[test]
         fn rejects_conflicting_todo_and_done_flags() {
@@ -692,7 +744,7 @@ mod tests {
         fn parses_status_flag() {
             let cli = Cli::try_parse_from(["traces", "task", "--status", "/"])
                 .expect("parse status flag");
-            assert_eq!(task_args(&cli).status, Some('/'));
+            assert_eq!(task_args(&cli).filters.status, Some('/'));
         }
 
         #[test]
@@ -711,8 +763,8 @@ mod tests {
             let cli = Cli::try_parse_from(["traces", "task", "--table"])
                 .expect("parse table flag");
             let task = task_args(&cli);
-            assert!(task.table);
-            assert_eq!(task.columns, Vec::<String>::new());
+            assert!(task.presentation.table.table);
+            assert_eq!(task.presentation.table.columns, Vec::<String>::new());
         }
 
         #[test]
@@ -728,8 +780,8 @@ mod tests {
             ])
             .expect("parse custom columns");
             let custom_task = task_args(&custom_cli);
-            assert!(custom_task.table);
-            assert_eq!(custom_task.columns, vec![
+            assert!(custom_task.presentation.table.table);
+            assert_eq!(custom_task.presentation.table.columns, vec![
                 "list.text".to_owned(),
                 "file.path".to_owned()
             ]);
@@ -753,7 +805,7 @@ mod tests {
         fn parses_count_flag() {
             let cli = Cli::try_parse_from(["traces", "task", "--count"])
                 .expect("parse count flag");
-            assert!(task_args(&cli).count);
+            assert!(task_args(&cli).presentation.count);
         }
     }
 
@@ -795,11 +847,75 @@ mod tests {
             project.write_note("todo.md", "- [ ] buy milk\n");
             let _guard = CwdGuard::enter(project.root());
             let task = Task {
-                count: true,
+                presentation: TaskPresentationArgs {
+                    count: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
             task.run(project.service()).expect("run task command with count");
+        }
+    }
+
+    mod filter_args {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn escapes_special_characters_in_status_filter() {
+            let quote_args = TaskFilterArgs {
+                status: Some('"'),
+                ..Default::default()
+            };
+            assert_eq!(
+                quote_args.status_filter(),
+                Some("list.status_symbol == \"\\\"\"".to_owned())
+            );
+
+            let backslash_args = TaskFilterArgs {
+                status: Some('\\'),
+                ..Default::default()
+            };
+            assert_eq!(
+                backslash_args.status_filter(),
+                Some("list.status_symbol == \"\\\\\"".to_owned())
+            );
+        }
+
+        #[test]
+        fn returns_none_when_status_is_omitted() {
+            let args = TaskFilterArgs::default();
+            assert_eq!(args.status_filter(), None);
+        }
+
+        #[test]
+        fn collects_shortcuts_for_todo_and_status() {
+            let args = TaskFilterArgs {
+                todo: true,
+                done: false,
+                status: Some('/'),
+            };
+            let status_expr = args.status_filter();
+            let shortcuts = args.shortcuts(status_expr.as_deref());
+            assert_eq!(shortcuts, vec![
+                "list.completed == false",
+                "list.status_symbol == \"/\""
+            ]);
+        }
+    }
+
+    mod presentation_args {
+        use super::*;
+
+        #[test]
+        fn defaults_to_standard_formatting() {
+            let args = TaskPresentationArgs::default();
+            assert!(!args.line_numbers);
+            assert!(!args.table.table);
+            assert_eq!(args.table.columns, Vec::<String>::new());
+            assert!(!args.count);
         }
     }
 }
