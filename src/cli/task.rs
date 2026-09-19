@@ -122,20 +122,8 @@ impl Task {
     /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
-        let mut status_filter = None;
-        let mut extra_filters = Vec::new();
-        if self.todo {
-            extra_filters.push("list.completed == false");
-        }
-        if self.done {
-            extra_filters.push("list.completed == true");
-        }
-        if let Some(status) = self.status {
-            status_filter = Some(format!("list.status_symbol == \"{status}\""));
-        }
-        if let Some(filter_str) = &status_filter {
-            extra_filters.push(filter_str.as_str());
-        }
+        let status_filter = self.status_filter();
+        let extra_filters = self.filter_shortcuts(status_filter.as_deref());
         let all_filters =
             self.filter.iter().map(String::as_str).chain(extra_filters);
         let order = self.sort.resolve(root)?;
@@ -146,29 +134,78 @@ impl Task {
             order,
         )?;
         let count = outcome.len();
+        let rendered = self.format_outcome(root, &outcome)?;
+        Ok((rendered, count))
+    }
+
+    /// Formats an exact status filter expression when `--status` is specified.
+    fn status_filter(&self) -> Option<String> {
+        self.status.map(|status| format!("list.status_symbol == \"{status}\""))
+    }
+
+    /// Collects synthesized filter expressions for `--todo`, `--done`, and
+    /// `--status`.
+    fn filter_shortcuts<'a>(
+        &self,
+        status_filter: Option<&'a str>,
+    ) -> Vec<&'a str> {
+        let mut filters = Vec::with_capacity(2);
+        if self.todo {
+            filters.push("list.completed == false");
+        }
+        if self.done {
+            filters.push("list.completed == true");
+        }
+        if let Some(filter) = status_filter {
+            filters.push(filter);
+        }
+        filters
+    }
+
+    /// Formats query outcome rows according to active presentation flags.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::Query`] if table or task list rendering fails.
+    fn format_outcome(
+        &self,
+        root: &std::path::Path,
+        outcome: &crate::query::QuerySet,
+    ) -> Result<String, CliError> {
         if self.count {
-            return Ok((format!("{count}\n"), count));
+            return Ok(format!("{}\n", outcome.len()));
         }
         if self.table {
-            let rendered = if self.columns.is_empty() {
-                outcome.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
-            } else {
-                let columns: Vec<&str> =
-                    self.columns.iter().map(String::as_str).collect();
-                outcome.table(&columns, &columns)
-            }
-            .map_err(|source| super::query_error(root, source))?;
-            return Ok((rendered, count));
+            return self.format_table(root, outcome);
         }
         let path_style = if self.line_numbers {
             TaskPathStyle::Coordinates
         } else {
             TaskPathStyle::Suffix
         };
-        let rendered = outcome
+        outcome
             .task_list(path_style)
-            .map_err(|source| super::query_error(root, source))?;
-        Ok((rendered, count))
+            .map_err(|source| super::query_error(root, source))
+    }
+
+    /// Formats query outcome rows as a Markdown table.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::Query`] if table column validation or rendering fails.
+    fn format_table(
+        &self,
+        root: &std::path::Path,
+        outcome: &crate::query::QuerySet,
+    ) -> Result<String, CliError> {
+        if self.columns.is_empty() {
+            outcome.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
+        } else {
+            let columns: Vec<&str> =
+                self.columns.iter().map(String::as_str).collect();
+            outcome.table(&columns, &columns)
+        }
+        .map_err(|source| super::query_error(root, source))
     }
 }
 
@@ -215,7 +252,7 @@ mod tests {
         }
 
         #[test]
-        fn from_tag_selects_only_matching_notes_tasks() {
+        fn selects_tasks_from_tag_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "#projects\n- [ ] a task\n")
                 .expect("write a.md");
@@ -235,7 +272,7 @@ mod tests {
         }
 
         #[test]
-        fn from_folder_selects_only_matching_notes_tasks() {
+        fn selects_tasks_from_folder_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
             fs::write(
@@ -259,7 +296,7 @@ mod tests {
         }
 
         #[test]
-        fn where_filters_by_task_completion_not_by_note() {
+        fn filters_by_task_completion_instead_of_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("todo.md"),
@@ -508,7 +545,7 @@ mod tests {
         }
 
         #[test]
-        fn from_direct_markdown_file_path_selects_tasks() {
+        fn selects_tasks_from_direct_markdown_file_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
             fs::write(temp.path().join("notes/todo.md"), "- [ ] notes task\n")
@@ -528,7 +565,7 @@ mod tests {
         }
 
         #[test]
-        fn from_unadorned_path_without_extension_selects_tasks() {
+        fn selects_tasks_from_unadorned_path_without_extension() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
             fs::write(
@@ -554,6 +591,7 @@ mod tests {
     mod argv {
         use clap::Parser as _;
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
         use crate::cli::{Cli, Commands};
@@ -616,31 +654,30 @@ mod tests {
             ]);
         }
 
-        #[test]
-        fn parses_line_numbers_flag_short_and_long() {
-            let short_cli = Cli::try_parse_from(["traces", "task", "-l"])
-                .expect("parse short line numbers");
-            assert!(task_args(&short_cli).line_numbers);
-
-            let long_cli =
-                Cli::try_parse_from(["traces", "task", "--line-numbers"])
-                    .expect("parse long line numbers");
-            assert!(task_args(&long_cli).line_numbers);
+        #[rstest]
+        #[case("-l")]
+        #[case("--line-numbers")]
+        fn parses_line_numbers_flag(#[case] flag: &str) {
+            let cli = Cli::try_parse_from(["traces", "task", flag])
+                .expect("parse line numbers");
+            assert!(task_args(&cli).line_numbers);
         }
 
         #[test]
-        fn parses_todo_and_done_flags() {
-            let todo_cli = Cli::try_parse_from(["traces", "task", "--todo"])
+        fn parses_todo_flag() {
+            let cli = Cli::try_parse_from(["traces", "task", "--todo"])
                 .expect("parse todo flag");
-            assert!(task_args(&todo_cli).todo);
-            assert!(!task_args(&todo_cli).done);
-
-            let done_cli = Cli::try_parse_from(["traces", "task", "--done"])
-                .expect("parse done flag");
-            assert!(task_args(&done_cli).done);
-            assert!(!task_args(&done_cli).todo);
+            assert!(task_args(&cli).todo);
+            assert!(!task_args(&cli).done);
         }
 
+        #[test]
+        fn parses_done_flag() {
+            let cli = Cli::try_parse_from(["traces", "task", "--done"])
+                .expect("parse done flag");
+            assert!(task_args(&cli).done);
+            assert!(!task_args(&cli).todo);
+        }
         #[test]
         fn rejects_conflicting_todo_and_done_flags() {
             let result =
@@ -670,13 +707,16 @@ mod tests {
         }
 
         #[test]
-        fn parses_table_flag_and_columns() {
+        fn parses_table_flag_with_default_empty_columns() {
             let cli = Cli::try_parse_from(["traces", "task", "--table"])
                 .expect("parse table flag");
             let task = task_args(&cli);
             assert!(task.table);
             assert_eq!(task.columns, Vec::<String>::new());
+        }
 
+        #[test]
+        fn parses_table_columns() {
             let custom_cli = Cli::try_parse_from([
                 "traces",
                 "task",
@@ -694,7 +734,6 @@ mod tests {
                 "file.path".to_owned()
             ]);
         }
-
         #[test]
         fn rejects_column_without_table() {
             let result = Cli::try_parse_from([
@@ -723,7 +762,7 @@ mod tests {
         use crate::{cli::CwdGuard, config::ConfigLoadError};
 
         #[test]
-        fn succeeds_for_a_trusted_project_root() {
+        fn runs_successfully_for_a_trusted_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let project = TestProject::trusted(temp.path().join("project"));
             project.write_note("todo.md", "- [ ] buy milk\n");
@@ -750,7 +789,7 @@ mod tests {
         }
 
         #[test]
-        fn run_with_count_omits_summary_stderr() {
+        fn omits_summary_stderr_when_run_with_count() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let project = TestProject::trusted(temp.path().join("project"));
             project.write_note("todo.md", "- [ ] buy milk\n");

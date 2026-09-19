@@ -523,6 +523,16 @@ impl SourceGrammar {
             mode,
         })
     }
+
+    /// Strips leading `./` and `.\\` prefixes from path atoms.
+    fn normalize_path_prefix(mut path: &str) -> &str {
+        while let Some(stripped) =
+            path.strip_prefix("./").or_else(|| path.strip_prefix(".\\"))
+        {
+            path = stripped;
+        }
+        path
+    }
 }
 
 impl AtomParser for SourceGrammar {
@@ -563,7 +573,7 @@ impl AtomParser for SourceGrammar {
                         Self::parse_sigil(input, &sigil, span)
                     }
                     SourceToken::Quoted(path) | SourceToken::Bare(path) => {
-                        let normalized = normalize_path_prefix(&path);
+                        let normalized = Self::normalize_path_prefix(&path);
                         let glob = if normalized.ends_with('/') {
                             format!("{normalized}**")
                         } else {
@@ -611,16 +621,6 @@ impl AtomParser for SourceGrammar {
     ) -> QuerySyntaxError {
         QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
     }
-}
-
-/// Strips leading `./` and `.\\` prefixes from path atoms.
-fn normalize_path_prefix(mut path: &str) -> &str {
-    while let Some(stripped) =
-        path.strip_prefix("./").or_else(|| path.strip_prefix(".\\"))
-    {
-        path = stripped;
-    }
-    path
 }
 
 #[derive(Clone, Debug, PartialEq, Logos)]
@@ -690,6 +690,7 @@ mod tests {
 
     mod parse {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -823,22 +824,11 @@ mod tests {
             assert!(SourceExpr::parse("**/draft.md").is_ok());
         }
 
-        #[test]
-        fn normalizes_leading_dot_slash_in_path_atoms() {
-            let expr =
-                SourceExpr::parse("./notes/daily.md").expect("valid source");
-            assert_eq!(
-                expr,
-                SourceExpr(BooleanExpr::Atom(
-                    SourceAtom::path("notes/daily.md").expect("valid atom")
-                ))
-            );
-        }
-
-        #[test]
-        fn normalizes_leading_dot_backslash_in_path_atoms() {
-            let expr =
-                SourceExpr::parse(".\\notes/daily.md").expect("valid source");
+        #[rstest]
+        #[case("./notes/daily.md")]
+        #[case(".\\notes/daily.md")]
+        fn normalizes_leading_relative_path_prefix(#[case] input: &str) {
+            let expr = SourceExpr::parse(input).expect("valid source");
             assert_eq!(
                 expr,
                 SourceExpr(BooleanExpr::Atom(
@@ -934,6 +924,8 @@ mod tests {
     mod is_match {
         use std::{fs, path::Path};
 
+        use rstest::rstest;
+
         use super::*;
         use crate::{FileIndex, IndexerService};
 
@@ -989,14 +981,16 @@ mod tests {
             );
         }
 
-        #[test]
-        fn matches_path_with_leading_dot_slash() {
+        #[rstest]
+        #[case("./notes/daily.md")]
+        #[case(".\\notes/daily.md")]
+        fn matches_path_with_leading_relative_prefix(#[case] pattern: &str) {
             let (_temp, index) = indexed_note("#book", "notes/daily.md");
             let entry =
                 find_entry(index.entries(), Path::new("notes/daily.md"));
 
             assert!(
-                SourceExpr::parse("./notes/daily.md")
+                SourceExpr::parse(pattern)
                     .expect("valid source")
                     .is_match(entry, "class")
             );

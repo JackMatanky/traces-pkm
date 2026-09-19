@@ -42,8 +42,8 @@ use crate::{
     config::{DiscoveryScope, TrustRequests},
     index::{IndexStore, IndexerService},
     query::{
-        QueryBuilder, QueryError, QueryService, QuerySet, SortDirection,
-        SortOrder, SourceSelector,
+        QueryBuilder, QueryError, QueryMode, QueryService, QuerySet,
+        SortDirection, SortOrder, SourceSelector,
     },
     schema::{SchemaService, warn_schema_construction_diagnostics},
 };
@@ -289,12 +289,50 @@ impl SortArgs {
     }
 }
 
-/// Synchronizes `root`'s index store and returns page-level records selected
-/// by `from`, filtered by `filters` (composed as AND) and optionally sorted.
+/// Synchronizes `root`'s index store and evaluates a query with the given
+/// `mode`, `from` source, `filters`, and `order`.
 ///
-/// Queries directly against the synced [`IndexStore`], resolving only
-/// candidate rows matching `from` instead of materializing a full
-/// [`FileIndex`](crate::index::FileIndex) of every indexed file.
+/// Shared by [`list::List`], [`table::Table`], and [`task::Task`].
+///
+/// # Errors
+///
+/// - [`CliError::Index`] if syncing the index or querying the store fails.
+/// - [`CliError::Query`] if any filter expression is malformed or the source
+///   selector cannot be parsed.
+fn refresh_query<'a>(
+    config: &Config,
+    from: Option<&str>,
+    filters: impl IntoIterator<Item = &'a str>,
+    order: Option<SortOrder>,
+    mode: QueryMode,
+) -> Result<QuerySet, CliError> {
+    let root = config.root();
+    let store = IndexerService::new(root).with_config(config).sync().map_err(
+        |source| CliError::Index {
+            root: root.to_path_buf(),
+            source,
+        },
+    )?;
+    let source = parse_source(config, from)?;
+    let has_classes = source.has_classes();
+    let mut builder = match mode {
+        QueryMode::Pages => QueryBuilder::pages(source),
+        QueryMode::Lists => QueryBuilder::lists(source),
+        QueryMode::Tasks => QueryBuilder::tasks(source),
+    };
+    for expr in filters {
+        builder = builder
+            .filter(expr)
+            .map_err(|error| query_error(root, error.into()))?;
+    }
+    if let Some(order) = order {
+        builder = builder.order(order);
+    }
+    run_query_builder_from_store(config, &store, builder, has_classes)
+}
+
+/// Synchronizes `root`'s index store and returns page-level records selected
+/// by `from`, filtered by `filters` (composed as AND), and ordered by `order`.
 ///
 /// Shared by [`list::List`] and [`table::Table`].
 ///
@@ -309,29 +347,17 @@ fn refresh_page_query(
     filters: &[String],
     order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
-    let root = config.root();
-    let store = IndexerService::new(root).with_config(config).sync().map_err(
-        |source| CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        },
-    )?;
-    let source = parse_source(config, from)?;
-    let has_classes = source.has_classes();
-    let mut builder = QueryBuilder::pages(source);
-    for expr in filters {
-        builder = builder
-            .filter(expr)
-            .map_err(|error| query_error(root, error.into()))?;
-    }
-    if let Some(order) = order {
-        builder = builder.order(order);
-    }
-    run_query_builder_from_store(config, &store, builder, has_classes)
+    refresh_query(
+        config,
+        from,
+        filters.iter().map(String::as_str),
+        order,
+        QueryMode::Pages,
+    )
 }
 
 /// Synchronizes `root`'s index store and returns task-level records selected
-/// by `from`, filtered by `filters` (composed as AND).
+/// by `from`, filtered by `filters` (composed as AND), and ordered by `order`.
 ///
 /// Shared by [`task::Task`].
 ///
@@ -345,25 +371,7 @@ fn refresh_task_query<'a>(
     filters: impl IntoIterator<Item = &'a str>,
     order: Option<SortOrder>,
 ) -> Result<QuerySet, CliError> {
-    let root = config.root();
-    let store = IndexerService::new(root).with_config(config).sync().map_err(
-        |source| CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        },
-    )?;
-    let source = parse_source(config, from)?;
-    let has_classes = source.has_classes();
-    let mut builder = QueryBuilder::tasks(source);
-    for expr in filters {
-        builder = builder
-            .filter(expr)
-            .map_err(|error| query_error(root, error.into()))?;
-    }
-    if let Some(order) = order {
-        builder = builder.order(order);
-    }
-    run_query_builder_from_store(config, &store, builder, has_classes)
+    refresh_query(config, from, filters, order, QueryMode::Tasks)
 }
 
 /// Parses an optional source expression string into a [`SourceSelector`].
