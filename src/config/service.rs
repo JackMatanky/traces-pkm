@@ -251,7 +251,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when trust cannot be recorded.
+    /// - [`ConfigStateError::Tracker`] when trust cannot be recorded.
     /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn trust(
@@ -268,7 +268,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
     /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn trust_status(
@@ -290,7 +290,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigStateError::Store` when the trust entry cannot be
+    /// Returns `ConfigStateError::Tracker` when the trust entry cannot be
     /// removed.
     #[inline]
     pub fn untrust(
@@ -304,7 +304,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigStateError::Store` when the tracking store exists but
+    /// Returns `ConfigStateError::Tracker` when the tracking store exists but
     /// cannot be read.
     #[inline]
     pub(crate) fn list_tracked(
@@ -319,7 +319,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Store`] when the tracking store exists but
+    /// Returns [`ConfigStateError::Tracker`] when the tracking store exists but
     /// cannot be read, or a stale entry cannot be removed.
     #[inline]
     pub(crate) fn clean_tracked_store(
@@ -332,7 +332,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Store`] when the trust store exists but
+    /// Returns [`ConfigStateError::Tracker`] when the trust store exists but
     /// cannot be read.
     #[inline]
     pub(crate) fn list_trusted(
@@ -347,7 +347,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Store`] when the trust store exists but
+    /// Returns [`ConfigStateError::Tracker`] when the trust store exists but
     /// cannot be read, a stale root entry cannot be removed, or an existing
     /// content-hash companion cannot be removed.
     #[inline]
