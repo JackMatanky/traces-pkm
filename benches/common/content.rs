@@ -262,6 +262,68 @@ pub(crate) fn task_triplet_note_source(note_index: usize) -> String {
     task_note_source(note_index, 3)
 }
 
+/// Status markers cycling through every default [`TaskStatusType`]: todo
+/// (`[ ]`), in-progress (`[/]`), done (`[x]`), cancelled (`[-]`), and on-hold
+/// (`[!]`).
+///
+/// [`TaskStatusType`]: traces_pkm::TaskStatusType
+const SORT_FIXTURE_MARKERS: [char; 5] = [' ', '/', 'x', '-', '!'];
+
+/// Priority emojis cycling through every non-`Normal` [`TaskPriority`].
+///
+/// [`TaskPriority`]: traces_pkm::TaskPriority
+const SORT_FIXTURE_PRIORITIES: [&str; 4] = ["⏫", "🔼", "🔽", "⏬"];
+
+/// Word pool giving `list.text` sort keys real lexical variety instead of a
+/// monotonic `"item {n}"` counter that a comparison sort would see as nearly
+/// sorted.
+const SORT_FIXTURE_WORDS: [&str; 8] =
+    ["zebra", "mango", "quartz", "felix", "juniper", "opal", "willow", "cedar"];
+
+/// Returns a note with `item_count` high-entropy task items covering every
+/// default status marker, every non-`Normal` priority emoji, and a `📅` due
+/// date.
+///
+/// Marker, priority, due-date day/month, and word selection each use a
+/// distinct multiplicative hash of the item's global index (derived from
+/// `note_index` and `item_index`), so the four resulting sort keys
+/// (`list.text`, `list.due`, `list.priority`, `list.status`) are decorrelated:
+/// an input ordering that is nearly sorted for one field is not nearly sorted
+/// for the others. This defeats comparison-sort fast paths that a uniform or
+/// monotonic fixture would hide.
+pub(crate) fn task_sort_fixture_source(
+    note_index: usize,
+    item_count: usize,
+) -> String {
+    let mut source = String::new();
+    for item_index in 0..item_count {
+        let global =
+            note_index.wrapping_mul(item_count.max(1)).wrapping_add(item_index);
+        let marker = SORT_FIXTURE_MARKERS
+            .get(
+                global.wrapping_mul(2_654_435_761) % SORT_FIXTURE_MARKERS.len(),
+            )
+            .copied()
+            .unwrap_or(' ');
+        let priority = SORT_FIXTURE_PRIORITIES
+            .get(global.wrapping_mul(40_503) % SORT_FIXTURE_PRIORITIES.len())
+            .copied()
+            .unwrap_or("⏫");
+        let word = SORT_FIXTURE_WORDS
+            .get(global.wrapping_mul(2_246_822_519) % SORT_FIXTURE_WORDS.len())
+            .copied()
+            .unwrap_or("task");
+        let month = 1 + global.wrapping_mul(69_069) % 12;
+        let day = 1 + global.wrapping_mul(134_775_813) % 28;
+        let _ = writeln!(
+            source,
+            "- [{marker}] {word} task {item_index} for note {note_index} \
+             {priority} 📅 2026-{month:02}-{day:02}",
+        );
+    }
+    source
+}
+
 /// Returns a task-list note with `item_count` top-level checkbox items.
 pub(crate) fn list_items_source(item_count: usize) -> String {
     let mut source = String::from("# List Items\n\n");

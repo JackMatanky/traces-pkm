@@ -1,7 +1,7 @@
 # 12 — Task and list performance and allocation benchmarks
 
 **Category:** enhancement
-**Status:** ready-for-agent
+**Status:** done
 
 **What to build:** Implement rigorous Criterion performance and memory
 allocation benchmarks validating the design guarantees of the task and list
@@ -22,38 +22,38 @@ include expected and unexpected outcome doc comments matching repo conventions.
 
 ## Acceptance Criteria
 
-- [ ] Add `task_sort_fixture_source` in `benches/common/content.rs` generating
+- [x] Add `task_sort_fixture_source` in `benches/common/content.rs` generating
   notes with varied list/task items across statuses (`[ ]`, `[/]`, `[x]`, `[-]`,
   `[!]`), priorities (`⏫`, `🔼`, `🔽`, `⏬`), due dates (`📅 YYYY-MM-DD`), and text.
-- [ ] Add `bench_sort_list_rows_by_text` in `benches/query_sort.rs` benchmarking
+- [x] Add `bench_sort_list_rows_by_text` in `benches/query_sort.rs` benchmarking
   sorting by `list.text` (borrowed string slices).
-- [ ] Add `bench_sort_list_rows_by_due` in `benches/query_sort.rs` benchmarking
-  sorting by `list.due` (4-byte `DateValue` comparison).
-- [ ] Add `bench_sort_list_rows_by_priority` in `benches/query_sort.rs` benchmarking
-  sorting by `list.priority` (enum discriminant comparison).
-- [ ] Add `bench_sort_list_rows_by_status` in `benches/query_sort.rs` benchmarking
+- [x] Add `bench_sort_list_rows_by_due` in `benches/query_sort.rs` benchmarking
+  sorting by `list.due` (`DateValue` promoted to `DateTimeValue` for comparison).
+- [x] Add `bench_sort_list_rows_by_priority` in `benches/query_sort.rs` benchmarking
+  sorting by `list.priority` (alphabetical `as_str()` string comparison).
+- [x] Add `bench_sort_list_rows_by_status` in `benches/query_sort.rs` benchmarking
   sorting by `list.status` (borrowed status name string slices).
-- [ ] Add `bench_list_items_memory_footprint` in `benches/memory_footprint.rs`
+- [x] Add `bench_list_items_memory_footprint` in `benches/memory_footprint.rs`
   measuring gross bytes allocated per `ListItem` via `Region::new(GLOBAL)` over
   50,000 flat list items in `FileIndex`, asserting gross memory per item stays
-  under 220 bytes (validating the ~168-byte struct layout + raw string storage,
+  under 220 bytes (validating the 152-byte struct layout + heap string storage,
   achieving >50% reduction over pre-compaction >450 bytes/item).
-- [ ] Build every fixture through existing helpers — `project::build_index_arc_from_note_source`
+- [x] Build every fixture through existing helpers — `project::build_index_arc_from_note_source`
   (in-memory, wraps `test_support::build_test_index` → `FileIndex::new_test`, zero
   disk I/O) for `query_sort.rs`/`query_execution.rs`/`memory_footprint.rs`'s new
   list-item benchmark, and the new `task_sort_fixture_source` note generator for
   content. Do not add ad-hoc `IndexerService`/filesystem setup, hand-rolled Markdown
   strings inline in bench functions, or parallel note-building helpers.
-- [ ] Add `bench_query_tasks_density` in `benches/query_execution.rs` sweeping
+- [x] Add `bench_query_tasks_density` in `benches/query_execution.rs` sweeping
   1, 10, and 100 tasks per note across workspace file counts `[100, 1_000, 10_000]`,
   upgrading the legacy `bench_run_tasks_density`.
-- [ ] Document all benchmark groups with explicit expected and unexpected
+- [x] Document all benchmark groups with explicit expected and unexpected
   outcome doc comments per codebase guidelines.
-- [ ] Register all new benchmark functions in their respective `criterion_group!`
+- [x] Register all new benchmark functions in their respective `criterion_group!`
   macros.
-- [ ] Verify all benchmarks compile and pass smoke testing under `cargo bench --no-run`
+- [x] Verify all benchmarks compile and pass smoke testing under `cargo bench --no-run`
   and `mise run bench -t`.
-- [ ] All checks pass under `mise run verify`.
+- [x] All checks pass under `mise run verify`.
 
 ## Key Benchmark Suites
 
@@ -138,12 +138,26 @@ include expected and unexpected outcome doc comments matching repo conventions.
      - In memory, 50,000 items with shared clean text and heap `raw: String` (~24 bytes) consume ~192 bytes resident heap per item.
    - The pre-compaction layout occupied >450-500 bytes per item (inline `IndexMap` 56 bytes + hash table bucket allocations + separate `clean: String` heap alloc + 72-byte `NaiveDate` array + separate `LISTS` redb table rows).
    - The original ticket AC of "under 100 bytes" was an ungrounded napkin estimate that is physically lower than the 168-byte struct definition. The target is updated to "under 220 bytes gross allocation per item", which proves the required >50% reduction (>55% actual reduction).
+   - **Correction (implementation, 2026-09-20):** the compiled layout is
+     `size_of::<ListItem>() == 152` bytes (not 168), and the clone probe
+     measures 2 heap allocations per item (~29 bytes total), for ~180 gross
+     bytes/item against the 220-byte budget. The bench now prints
+     `size_of::<ListItem>()` alongside its gross-bytes report.
 
 3. **Benchmark Module Alignment:**
    - `benches/query_sort.rs`: Remains dedicated to CPU throughput, profiling, and cache-hit scaling. Comparator zero-allocation guarantees are documented in the function expected/unexpected doc comments.
    - `benches/memory_footprint.rs`: Houses the `StatsAlloc` `Region::new(GLOBAL)` memory verification measuring gross allocated bytes and allocation calls.
    - `benches/query_execution.rs`: Replaces legacy `bench_run_tasks_density` (`&[1, 3, 10, 20]`) with `bench_query_tasks_density` sweeping `[1, 10, 100]` tasks per note across workspace file counts.
    - `benches/common/content.rs`: Centralizes the varied task fixture generator to prevent code duplication across benchmark targets.
+
+- 2026-09-20 (implementation): Done on `feat/task-12-performance-benchmarks`
+  (`84058b7` benches, `0864a41` measurement hygiene, follow-up docs fix). Two
+  AC comparator premises were corrected in place during implementation:
+  `list.due` sorts via `DateTimeValue` promotion and `list.priority` sorts
+  alphabetically by `as_str()` — the bench docs document the actual
+  comparators. Zero-allocation comparator verification remains external
+  (DHAT/valgrind) per Triage Notes §3, as instrumenting the sort benches'
+  global allocator would perturb their timing.
 
 ## Agent Brief
 

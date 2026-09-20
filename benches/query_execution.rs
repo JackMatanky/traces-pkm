@@ -56,7 +56,13 @@ use common::{
 // ----------------------------------------------------------- //
 
 const QUERY_METADATA_FIELD_COUNTS: &[usize] = &[1, 5, 10, 20];
-const TASK_DENSITY_COUNTS: &[usize] = &[1, 3, 10, 20];
+/// Task-per-note sweep for [`bench_query_tasks_density`]: sparse, moderate,
+/// and heavy task lists per note.
+const TASK_DENSITY_COUNTS: &[usize] = &[1, 10, 100];
+
+/// Workspace file-count sweep for [`bench_query_tasks_density`], independent
+/// of the shared `WORKSPACE_FILE_COUNTS` tiers.
+const TASK_DENSITY_FILE_COUNTS: &[usize] = &[100, 1_000, 10_000];
 
 // ----------------------------------------------------------- //
 //                Benchmarks: General Execution                //
@@ -89,11 +95,8 @@ fn bench_run_pages(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::new("pages", n), &n, |b, _| {
             b.iter_batched(
-                || index.clone(),
-                |index| {
-                    service
-                        .run(&index, QueryBuilder::pages(SourceSelector::All))
-                },
+                || QueryBuilder::pages(SourceSelector::All),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -130,11 +133,8 @@ fn bench_run_tasks(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::new("tasks", n), &n, |b, _| {
             b.iter_batched(
-                || index.clone(),
-                |index| {
-                    service
-                        .run(&index, QueryBuilder::tasks(SourceSelector::All))
-                },
+                || QueryBuilder::tasks(SourceSelector::All),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -151,8 +151,8 @@ fn bench_run_tasks(c: &mut Criterion) {
 /// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports input note throughput.
 ///
 /// Fixture: [`ProjectShape::Plain`] in-memory indexes are built outside timing.
-/// Timed work builds and runs `All pages -> filter("rating > 2") ->
-/// sort("rating")`.
+/// Query construction is untimed setup; timed work runs `All pages ->
+/// filter("rating > 2") -> sort("rating")`.
 ///
 /// This group covers the combined end-to-end path only. The filter-width and
 /// sort-only benchmarks are diagnostic context, but they are not a controlled
@@ -185,17 +185,14 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
             &n,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All)
-                                .filter("rating > 2")
-                                .expect("valid filter")
-                                .sort("rating", false)
-                                .expect("valid sort"),
-                        )
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .filter("rating > 2")
+                            .expect("valid filter")
+                            .sort("rating", false)
+                            .expect("valid sort")
                     },
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -247,13 +244,8 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
             &fields,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All),
-                        )
-                    },
+                    || QueryBuilder::pages(SourceSelector::All),
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -263,15 +255,12 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
             &fields,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All)
-                                .filter("rating > 2")
-                                .expect("valid filter"),
-                        )
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .filter("rating > 2")
+                            .expect("valid filter")
                     },
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -280,49 +269,52 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures task expansion throughput across varied tasks-per-note density.
+/// Measures task expansion throughput across a task-density x
+/// workspace-size matrix.
 ///
-/// Holds notes fixed at 1,000 and sweeps tasks per note over `{1, 3, 10, 20}`.
-/// Isolates per-task expansion cost from fixed per-note iteration.
+/// Parameters: sweeps [`TASK_DENSITY_COUNTS`] (`1, 10, 100` tasks per note)
+/// across [`TASK_DENSITY_FILE_COUNTS`] (`100, 1_000, 10_000` files); reports
+/// total expanded task-row throughput. Fixture indexes are built outside
+/// timing through `task_note_source` and `FileIndex::new_test`.
 ///
 /// Expected outcomes:
-/// - Execution time scales linearly with total expanded task rows ($n \times
-///   \text{tasks\_per\_note}$).
+/// - Execution time scales linearly with total expanded task rows (`file_count`
+///   × `tasks_per_note`), independent of which factor grows.
 ///
 /// Unexpected outcomes:
-/// - Super-linear growth with task density, indicating per-note allocation
-///   churn or unbounded vector resizing during task row extraction.
-fn bench_run_tasks_density(c: &mut Criterion) {
+/// - Super-linear growth with task density at fixed file count, or with file
+///   count at fixed task density, indicating per-note allocation churn or
+///   inefficient slice traversal in `Note::tasks()`.
+fn bench_query_tasks_density(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/tasks_density");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
     let service = QueryService::new("class");
-    let note_count = 1_000_usize;
-    for &tasks_per_note in TASK_DENSITY_COUNTS {
-        let index = build_index_arc_from_note_source(note_count, |i, _| {
-            task_note_source(i, tasks_per_note)
-        });
-        let total_tasks = note_count.saturating_mul(tasks_per_note);
-        group.throughput(Throughput::Elements(
-            u64::try_from(total_tasks).expect("task count fits u64"),
-        ));
-        group.bench_with_input(
-            BenchmarkId::new("tasks", tasks_per_note),
-            &tasks_per_note,
-            |b, _| {
-                b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::tasks(SourceSelector::All),
-                        )
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
+    for &note_count in TASK_DENSITY_FILE_COUNTS {
+        if note_count >= 10_000 {
+            group.sample_size(10);
+        }
+        for &tasks_per_note in TASK_DENSITY_COUNTS {
+            let index = build_index_arc_from_note_source(note_count, |i, _| {
+                task_note_source(i, tasks_per_note)
+            });
+            let total_tasks = note_count.saturating_mul(tasks_per_note);
+            group.throughput(Throughput::Elements(
+                u64::try_from(total_tasks).expect("task count fits u64"),
+            ));
+            group.bench_with_input(
+                BenchmarkId::new(format!("files_{note_count}"), tasks_per_note),
+                &tasks_per_note,
+                |b, _| {
+                    b.iter_batched(
+                        || QueryBuilder::tasks(SourceSelector::All),
+                        |query| service.run(&index, query),
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -446,7 +438,7 @@ criterion_group!(
     benches,
     bench_run_pages,
     bench_run_tasks,
-    bench_run_tasks_density,
+    bench_query_tasks_density,
     bench_run_pages_by_metadata,
     bench_filter_by_metadata_field_count,
     bench_clone_query_set,
