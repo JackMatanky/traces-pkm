@@ -1,7 +1,10 @@
 //! Promotes `src/index/mod.rs`'s internal
 //! `persist_then_load_recovers_the_same_records_and_notes` test to prove the
 //! public round-trip contract: `FileIndex::build` → `persist` → `load` in a
-//! fresh `FileIndex` value, simulating a new process.
+//! fresh `FileIndex` value, simulating a new process. Also covers redb
+//! persistence invariance without the `LISTS` table (ADR 0005) and recovery
+//! from a corrupted `.traces/index.redb` file, both through the public
+//! `IndexerService` surface alone.
 
 use std::sync::Arc;
 

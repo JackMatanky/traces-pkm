@@ -403,6 +403,61 @@ mod query_commands {
         assert_eq!(from_count.stdout, "2\n");
         assert_eq!(from_count.stderr, "");
     }
+
+    /// Runs `task --from` against a bare `.md` path that does not exist on
+    /// disk, checking it degrades to a graceful zero-match result rather
+    /// than erroring or silently resolving to some other source kind.
+    ///
+    /// `normalize_source_input` (`src/cli/mod.rs`) only rewrites `--from`
+    /// into a `.md` file source when `candidate.is_file()` succeeds; a
+    /// nonexistent bare path falls through unchanged into
+    /// `SourceSelector::parse`, which still succeeds and simply matches
+    /// nothing. This proves that fallthrough is visible as "0 task(s)", not
+    /// a crash or a confusing match against an unrelated source kind.
+    #[test]
+    fn task_from_nonexistent_markdown_path_matches_nothing_without_erroring() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("todo.md", "- [ ] real task\n");
+
+        let from_missing = sandbox.run(&["task", "--from", "missing.md"]);
+
+        assert!(from_missing.is_success(), "stderr: {}", from_missing.stderr);
+        assert_eq!(from_missing.stdout, "");
+        assert!(
+            from_missing.stderr.contains("0 task(s)"),
+            "stderr: {}",
+            from_missing.stderr
+        );
+    }
+
+    /// Passes an invalid `--column` field path to `task --table` and checks
+    /// the CLI's diagnostic-rendering path for `--table`'s own field
+    /// resolution, not just `--where`'s.
+    ///
+    /// `TaskTableArgs::format` (`src/cli/task.rs`) resolves every `--column`
+    /// through the identical `FieldPath::parse` used by `--where`/`--sort`;
+    /// this proves that shared validation survives `--table`'s own argv
+    /// wiring and Miette rendering.
+    #[test]
+    fn task_table_invalid_column_reports_its_location_and_repair() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("a.md", "- [ ] x\n");
+
+        let table =
+            sandbox.run(&["task", "--table", "--column", "task.completed"]);
+
+        assert!(!table.is_success());
+        assert!(
+            table.stderr.contains("traces::cli::query::failed"),
+            "stderr: {}",
+            table.stderr
+        );
+        assert!(
+            plain(&table.stderr).contains("did you mean `list.completed`?"),
+            "stderr: {}",
+            table.stderr
+        );
+    }
 }
 
 mod template {
