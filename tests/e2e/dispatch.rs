@@ -122,9 +122,15 @@ mod trust_and_diagnostics {
 }
 
 mod query_commands {
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
 
-    use super::super::support::Sandbox;
+    use super::super::support::{Sandbox, plain};
+
+    /// Shared `items.md` fixture for the filter-shortcut and sorting tests
+    /// below: one task per completion/status combination they each narrow
+    /// or reorder differently.
+    const ITEMS_MD: &str = "- [ ] Bravo task\n- [x] Charlie done\n- [/] Alpha \
+                            in-progress\n- [!] Delta on-hold\n";
 
     /// Filters `list` by tag and checks matches land on stdout with a
     /// count on stderr.
@@ -197,6 +203,259 @@ mod query_commands {
             task.stdout.contains("- [x] walk dog"),
             "stdout: {}",
             task.stdout
+        );
+    }
+
+    /// Passes an invalid `--where` expression on `task` (obsolete
+    /// `task.<field>` syntax) and checks the CLI's own diagnostic-rendering
+    /// path for the `task` subcommand, not just `list`'s.
+    ///
+    /// `index_query.rs` proves `QueryBuilder::filter` rejects
+    /// `task.<field>` at the library level; this proves the identical
+    /// diagnostic survives `task`'s own argv wiring and Miette rendering.
+    #[test]
+    fn task_invalid_where_reports_its_location_and_repair() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("a.md", "- [ ] x\n");
+
+        let task = sandbox.run(&["task", "--where", "task.completed == true"]);
+
+        assert!(!task.is_success());
+        assert!(
+            task.stderr.contains("traces::cli::query::failed"),
+            "stderr: {}",
+            task.stderr
+        );
+        assert!(
+            plain(&task.stderr).contains("did you mean `list.completed`?"),
+            "stderr: {}",
+            task.stderr
+        );
+    }
+
+    /// Runs `task` across custom status markers, nested outlines, and line
+    /// numbers, checking marker characters, indentation, and clickable
+    /// coordinates are rendered faithfully.
+    #[test]
+    fn task_preserves_custom_markers_indents_nested_depth_and_formats_line_numbers()
+     {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note(
+            "tasks.md",
+            "- [ ] Root task\n  - [/] In progress\n    - [-] Cancelled\n  - \
+             [!] On hold\n- [?] Unknown marker\n",
+        );
+
+        // 1. Plain task output:
+        let task = sandbox.run(&["task"]);
+        assert!(task.is_success(), "stderr: {}", task.stderr);
+        let expected = "\
+- [ ] Root task (tasks.md)
+  - [/] In progress (tasks.md)
+    - [-] Cancelled (tasks.md)
+  - [!] On hold (tasks.md)
+- [?] Unknown marker (tasks.md)
+";
+        assert_eq!(task.stdout, expected);
+
+        // 2. Clickable line numbers (-l / --line-numbers):
+        let task_lines = sandbox.run(&["task", "-l"]);
+        assert!(task_lines.is_success(), "stderr: {}", task_lines.stderr);
+        let expected_lines = "\
+- [ ] Root task (tasks.md:1)
+  - [/] In progress (tasks.md:2)
+    - [-] Cancelled (tasks.md:3)
+  - [!] On hold (tasks.md:4)
+- [?] Unknown marker (tasks.md:5)
+";
+        assert_eq!(task_lines.stdout, expected_lines);
+    }
+
+    /// Runs `task` with shortcut filters (`--todo`, `--done`, `--status`),
+    /// verifying output filtering.
+    #[test]
+    fn task_filter_shortcuts_narrow_output_accurately() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("items.md", ITEMS_MD);
+
+        // 1. Shortcut --todo: returns incomplete tasks (Todo, InProgress,
+        //    OnHold), excludes Done
+        let todo = sandbox.run(&["task", "--todo"]);
+        assert!(todo.is_success(), "stderr: {}", todo.stderr);
+        assert!(todo.stdout.contains("- [ ] Bravo task"));
+        assert!(todo.stdout.contains("- [/] Alpha in-progress"));
+        assert!(todo.stdout.contains("- [!] Delta on-hold"));
+        assert!(!todo.stdout.contains("Charlie done"));
+
+        // 2. Shortcut --done: returns only completed tasks
+        let done = sandbox.run(&["task", "--done"]);
+        assert!(done.is_success(), "stderr: {}", done.stderr);
+        assert!(done.stdout.contains("- [x] Charlie done"));
+        assert!(!done.stdout.contains("Bravo task"));
+        assert!(!done.stdout.contains("Alpha in-progress"));
+
+        // 3. Shortcut --status <char>: filters to exact status symbol
+        let in_progress = sandbox.run(&["task", "--status", "/"]);
+        assert!(in_progress.is_success(), "stderr: {}", in_progress.stderr);
+        assert!(in_progress.stdout.contains("- [/] Alpha in-progress"));
+        assert!(!in_progress.stdout.contains("Bravo task"));
+        assert!(!in_progress.stdout.contains("Charlie done"));
+    }
+
+    /// Runs `task` with `--sort` and `--asc` / `--desc`, verifying ordered
+    /// output rows.
+    #[test]
+    fn task_sorting_orders_output_with_asc_and_desc() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("items.md", ITEMS_MD);
+
+        let asc = sandbox.run(&["task", "--sort", "list.text", "--asc"]);
+        assert!(asc.is_success(), "stderr: {}", asc.stderr);
+        let mut asc_lines = asc.stdout.lines();
+        assert!(
+            asc_lines.next().is_some_and(|l| l.contains("Alpha in-progress"))
+        );
+        assert!(asc_lines.next().is_some_and(|l| l.contains("Bravo task")));
+        assert!(asc_lines.next().is_some_and(|l| l.contains("Charlie done")));
+        assert!(asc_lines.next().is_some_and(|l| l.contains("Delta on-hold")));
+
+        let desc = sandbox.run(&["task", "--sort", "list.text", "--desc"]);
+        assert!(desc.is_success(), "stderr: {}", desc.stderr);
+        let mut desc_lines = desc.stdout.lines();
+        assert!(desc_lines.next().is_some_and(|l| l.contains("Delta on-hold")));
+        assert!(desc_lines.next().is_some_and(|l| l.contains("Charlie done")));
+        assert!(desc_lines.next().is_some_and(|l| l.contains("Bravo task")));
+        assert!(
+            desc_lines.next().is_some_and(|l| l.contains("Alpha in-progress"))
+        );
+        assert_ne!(asc.stdout, desc.stdout);
+    }
+
+    /// Runs `task` with `--table`, `--count`, and `--from <file.md>`, proving
+    /// tabular output, count output, and direct note file resolution.
+    #[test]
+    fn task_renders_tables_outputs_counts_and_resolves_bare_markdown_sources() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note(
+            "todo.md",
+            "- [ ] Alpha item 📅 2026-10-01 🔺\n- [x] Beta item 📅 2026-10-05 \
+             🔽\n",
+        );
+        sandbox.write_note("other.md", "- [ ] Gamma item\n");
+
+        // 1. Default --table rendering:
+        let table = sandbox.run(&["task", "--table"]);
+        assert!(table.is_success(), "stderr: {}", table.stderr);
+        assert!(
+            table.stdout.contains("Task")
+                && table.stdout.contains("Status")
+                && table.stdout.contains("Due")
+                && table.stdout.contains("Priority")
+                && table.stdout.contains("File"),
+            "table headers: {}",
+            table.stdout
+        );
+        assert!(
+            table.stdout.contains("Alpha item")
+                && table.stdout.contains("highest")
+        );
+        assert!(
+            table.stdout.contains("Beta item") && table.stdout.contains("low")
+        );
+
+        // 2. Custom --table columns:
+        let custom_table = sandbox.run(&[
+            "task",
+            "--table",
+            "--column",
+            "list.text",
+            "--column",
+            "list.priority",
+        ]);
+        assert!(custom_table.is_success(), "stderr: {}", custom_table.stderr);
+        assert!(
+            custom_table.stdout.contains("| list.text")
+                && custom_table.stdout.contains("list.priority |"),
+            "stdout: {}",
+            custom_table.stdout
+        );
+        assert!(
+            custom_table.stdout.contains("Alpha item")
+                && custom_table.stdout.contains("highest")
+        );
+
+        // 3. Count output: single integer on stdout, completely empty stderr
+        let count = sandbox.run(&["task", "--count"]);
+        assert!(count.is_success(), "stderr: {}", count.stderr);
+        assert_eq!(count.stdout, "3\n");
+        assert_eq!(count.stderr, "");
+
+        // 4. Resolving bare .md paths via --from:
+        let from_bare = sandbox.run(&["task", "--from", "todo.md"]);
+        assert!(from_bare.is_success(), "stderr: {}", from_bare.stderr);
+        assert!(from_bare.stdout.contains("Alpha item (todo.md)"));
+        assert!(from_bare.stdout.contains("Beta item (todo.md)"));
+        assert!(!from_bare.stdout.contains("Gamma item"));
+
+        // Count on bare .md source:
+        let from_count = sandbox.run(&["task", "--from", "todo.md", "--count"]);
+        assert!(from_count.is_success(), "stderr: {}", from_count.stderr);
+        assert_eq!(from_count.stdout, "2\n");
+        assert_eq!(from_count.stderr, "");
+    }
+
+    /// Runs `task --from` against a bare `.md` path that does not exist on
+    /// disk, checking it degrades to a graceful zero-match result rather
+    /// than erroring or silently resolving to some other source kind.
+    ///
+    /// `normalize_source_input` (`src/cli/mod.rs`) only rewrites `--from`
+    /// into a `.md` file source when `candidate.is_file()` succeeds; a
+    /// nonexistent bare path falls through unchanged into
+    /// `SourceSelector::parse`, which still succeeds and simply matches
+    /// nothing. This proves that fallthrough is visible as "0 task(s)", not
+    /// a crash or a confusing match against an unrelated source kind.
+    #[test]
+    fn task_from_nonexistent_markdown_path_matches_nothing_without_erroring() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("todo.md", "- [ ] real task\n");
+
+        let from_missing = sandbox.run(&["task", "--from", "missing.md"]);
+
+        assert!(from_missing.is_success(), "stderr: {}", from_missing.stderr);
+        assert_eq!(from_missing.stdout, "");
+        assert!(
+            from_missing.stderr.contains("0 task(s)"),
+            "stderr: {}",
+            from_missing.stderr
+        );
+    }
+
+    /// Passes an invalid `--column` field path to `task --table` and checks
+    /// the CLI's diagnostic-rendering path for `--table`'s own field
+    /// resolution, not just `--where`'s.
+    ///
+    /// `TaskTableArgs::format` (`src/cli/task.rs`) resolves every `--column`
+    /// through the identical `FieldPath::parse` used by `--where`/`--sort`;
+    /// this proves that shared validation survives `--table`'s own argv
+    /// wiring and Miette rendering.
+    #[test]
+    fn task_table_invalid_column_reports_its_location_and_repair() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("a.md", "- [ ] x\n");
+
+        let table =
+            sandbox.run(&["task", "--table", "--column", "task.completed"]);
+
+        assert!(!table.is_success());
+        assert!(
+            table.stderr.contains("traces::cli::query::failed"),
+            "stderr: {}",
+            table.stderr
+        );
+        assert!(
+            plain(&table.stderr).contains("did you mean `list.completed`?"),
+            "stderr: {}",
+            table.stderr
         );
     }
 }

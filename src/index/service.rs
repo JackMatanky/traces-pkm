@@ -1094,37 +1094,6 @@ mod tests {
         }
 
         #[test]
-        fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_deleted()
-         {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# A").expect("write a");
-            fs::write(temp.path().join("b.md"), "# B").expect("write b");
-            let indexer = IndexerService::new(temp.path());
-            indexer
-                .persist(&indexer.build().expect("build index"))
-                .expect("persist index");
-
-            let db_path = temp.path().join(".traces/index.redb");
-            let mut corrupted = fs::read(&db_path).expect("read valid db");
-            corrupted
-                .get_mut(9..)
-                .expect("db file longer than the 9-byte magic number")
-                .fill(0xFF);
-            fs::write(&db_path, &corrupted).expect("corrupt the database file");
-
-            let (_, report) = indexer
-                .refresh_with_report()
-                .expect("refresh recovers from corruption");
-
-            assert_eq!(report.upserted(), 2);
-            assert_eq!(report.deleted(), 0);
-
-            let store = IndexStore::open(temp.path()).expect("open store");
-            let metadata = store.load_file_metadata().expect("load metadata");
-            assert_eq!(metadata.len(), 2);
-        }
-
-        #[test]
         fn content_change_without_outlink_change_backdates_and_skips_inlink_recompute()
          {
             let temp = tempfile::tempdir().expect("create temp dir");

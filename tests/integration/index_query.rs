@@ -4,8 +4,11 @@
 
 use std::{path::Path, sync::Arc};
 
-use pretty_assertions::assert_eq;
-use traces_pkm::{QueryBuilder, QueryService, SourceSelector, TestProject};
+use pretty_assertions::{assert_eq, assert_ne};
+use traces_pkm::{
+    QueryBuilder, QueryBuilderError, QueryService, SourceLine, SourceSelector,
+    TaskConfig, TestProject,
+};
 
 /// Checks a page request returns every indexed note without consuming the
 /// borrowed index.
@@ -112,4 +115,193 @@ fn query_builder_reuses_one_index_for_page_and_task_queries() {
     assert_eq!(page_paths, [Path::new("book.md"), Path::new("todo.md")]);
     assert_eq!(tasks.len(), 1);
     assert_eq!(pages_again.len(), 2);
+}
+
+/// Proves that `QueryBuilder::lists` yields all list items (bullets,
+/// checkboxes, and tasks) with structural metadata (`depth`, `line`, `parent`),
+/// whereas `QueryBuilder::tasks` yields only tag-matching tasks.
+#[test]
+fn evaluates_query_modes_distinguishing_lists_and_tasks_with_structural_metadata()
+ {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+
+    let markdown = r"# Planning
+
+- Plain bullet outline
+- [ ] Top-level task #task
+  - [x] Child task done #task
+  - [ ] Untagged checkbox
+- [ ] Second task #task
+";
+    project.write_note("planning.md", markdown);
+
+    let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
+    let index = Arc::new(
+        project.indexer().with_config(&config).build().expect("build index"),
+    );
+    let service = QueryService::new("class");
+
+    // 1. Lists mode: returns all 5 items with structural fields.
+    let lists = service.run(&index, QueryBuilder::lists(SourceSelector::All));
+    assert_eq!(lists.len(), 5);
+
+    // Structural metadata verification across all items:
+    // Item 0: Plain bullet outline (depth 0, line 3, parent None, not a task)
+    let row0 = lists.get(0).expect("row 0");
+    assert_eq!(row0.depth(), 0);
+    assert_eq!(row0.line(), SourceLine::new(3));
+    assert_eq!(row0.parent(), None);
+    assert_eq!(row0.task_text(), None);
+
+    // Item 1: Top-level task (depth 0, line 4, parent None, task)
+    let row1 = lists.get(1).expect("row 1");
+    assert_eq!(row1.depth(), 0);
+    assert_eq!(row1.line(), SourceLine::new(4));
+    assert_eq!(row1.parent(), None);
+    assert_eq!(row1.task_text(), Some("Top-level task"));
+
+    // Item 2: Child task done (depth 1, line 5, parent 4, task)
+    let row2 = lists.get(2).expect("row 2");
+    assert_eq!(row2.depth(), 1);
+    assert_eq!(row2.line(), SourceLine::new(5));
+    assert_eq!(row2.parent(), SourceLine::new(4));
+    assert_eq!(row2.task_text(), Some("Child task done"));
+    assert_eq!(row2.task_completed(), Some(true));
+
+    // Item 3: Untagged checkbox (depth 1, line 6, parent 4, not a task)
+    let row3 = lists.get(3).expect("row 3");
+    assert_eq!(row3.depth(), 1);
+    assert_eq!(row3.line(), SourceLine::new(6));
+    assert_eq!(row3.parent(), SourceLine::new(4));
+    assert_eq!(row3.task_text(), None);
+
+    // Item 4: Second task (depth 0, line 7, parent None, task)
+    let row4 = lists.get(4).expect("row 4");
+    assert_eq!(row4.depth(), 0);
+    assert_eq!(row4.line(), SourceLine::new(7));
+    assert_eq!(row4.parent(), None);
+    assert_eq!(row4.task_text(), Some("Second task"));
+
+    // 2. Tasks mode: returns only the 3 tag-matching tasks.
+    let tasks = service.run(&index, QueryBuilder::tasks(SourceSelector::All));
+    assert_eq!(tasks.len(), 3);
+    let task_texts: Vec<&str> =
+        tasks.iter().filter_map(|r| r.task_text()).collect();
+    assert_eq!(task_texts, [
+        "Top-level task",
+        "Child task done",
+        "Second task"
+    ]);
+}
+
+/// Proves acceptance of canonical `list.<field>` filter syntax and rejection of
+/// obsolete `task.<field>` syntax with an actionable diagnostic hint.
+#[test]
+fn accepts_canonical_list_paths_and_rejects_obsolete_task_paths_with_diagnostic()
+ {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+
+    let markdown = r"# Work
+
+- [ ] Root item #task
+  - [x] Finished subtask #task
+  - [ ] Pending subtask #task
+";
+    project.write_note("work.md", markdown);
+
+    let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
+    let index = Arc::new(
+        project.indexer().with_config(&config).build().expect("build index"),
+    );
+    let service = QueryService::new("class");
+
+    // 1. Canonical list.<field> succeeds:
+    let depth_filter = QueryBuilder::lists(SourceSelector::All)
+        .filter("list.depth >= 1")
+        .expect("valid canonical list.depth filter");
+    let depth_rows = service.run(&index, depth_filter);
+    assert_eq!(depth_rows.len(), 2);
+
+    let completed_filter = QueryBuilder::tasks(SourceSelector::All)
+        .filter("list.completed == true")
+        .expect("valid canonical list.completed filter");
+    let completed_rows = service.run(&index, completed_filter);
+    assert_eq!(completed_rows.len(), 1);
+    assert_eq!(
+        completed_rows.get(0).and_then(|r| r.task_text()),
+        Some("Finished subtask")
+    );
+
+    // 2. Obsolete task.<field> is rejected with an actionable diagnostic
+    //    suggestion:
+    let task_completed_err = QueryBuilder::tasks(SourceSelector::All)
+        .filter("task.completed == true")
+        .expect_err("obsolete task.completed must be rejected");
+    assert!(matches!(task_completed_err, QueryBuilderError::FieldPath(_)));
+    let msg = task_completed_err.to_string();
+    assert!(msg.contains("did you mean `list.completed`?"), "message: {msg}");
+
+    let task_text_err = QueryBuilder::lists(SourceSelector::All)
+        .filter("task.text == \"Finished subtask\"")
+        .expect_err("obsolete task.text must be rejected");
+    assert!(matches!(task_text_err, QueryBuilderError::FieldPath(_)));
+    let msg2 = task_text_err.to_string();
+    assert!(msg2.contains("did you mean `list.text`?"), "message: {msg2}");
+    assert_ne!(msg, msg2);
+}
+
+/// Proves note frontmatter inheritance on list rows and inline field overrides.
+#[test]
+fn inherits_note_frontmatter_on_list_rows_with_inline_field_override() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    let markdown = r"---
+category: project
+priority: normal
+---
+# Planning
+
+- [ ] Item one inherits note frontmatter #task
+- [ ] Item two overrides inline [priority:: urgent] #task
+- Plain bullet inherits note frontmatter
+";
+    project.write_note("planning.md", markdown);
+
+    let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
+    let index = Arc::new(
+        project.indexer().with_config(&config).build().expect("build index"),
+    );
+    let service = QueryService::new("class");
+    // 1. All rows inherit frontmatter field `category == "project"`
+    let category_query = QueryBuilder::lists(SourceSelector::All)
+        .filter("category == \"project\"")
+        .expect("valid category filter");
+    let category_rows = service.run(&index, category_query);
+    assert_eq!(category_rows.len(), 3);
+
+    // 2. Inline field override: `priority == "urgent"` matches only Item two
+    let urgent_query = QueryBuilder::lists(SourceSelector::All)
+        .filter("priority == \"urgent\"")
+        .expect("valid priority filter");
+    let urgent_rows = service.run(&index, urgent_query);
+    assert_eq!(urgent_rows.len(), 1);
+    assert_eq!(
+        urgent_rows.get(0).and_then(|r| r.task_text()),
+        Some("Item two overrides inline")
+    );
+
+    // 3. Inherited frontmatter `priority == "normal"` matches rows without the
+    //    override
+    let normal_query = QueryBuilder::lists(SourceSelector::All)
+        .filter("priority == \"normal\"")
+        .expect("valid priority filter");
+    let normal_rows = service.run(&index, normal_query);
+    assert_eq!(normal_rows.len(), 2);
+    assert_eq!(
+        normal_rows.get(0).and_then(|r| r.task_text()),
+        Some("Item one inherits note frontmatter")
+    );
+    assert_eq!(normal_rows.get(1).and_then(|r| r.task_text()), None);
 }
