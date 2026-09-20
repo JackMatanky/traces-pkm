@@ -714,26 +714,24 @@ fn bench_sort_list_rows_by_due(c: &mut Criterion) {
 /// n`). Fixture indexes are built outside timing from
 /// [`task_sort_fixture_source`], which sets a priority emoji on every item.
 ///
-/// `list.priority` resolves `TaskPriority::as_str()` to one of five static
-/// `&'static str` names (`"lowest"`..`"highest"`), so `SortKey::Text`
-/// compares static string slices with no per-comparison allocation. This
-/// currently orders rows alphabetically by name (`"high"` < `"highest"` <
-/// `"low"` < `"lowest"` < `"medium"`), not by `TaskPriority`'s derived `Ord`
-/// severity ranking; this benchmark measures the field's actual comparator
-/// cost, not its semantic ordering.
+/// `list.priority` materializes `SortKey::Number` keys from the 1-byte
+/// `TaskPriority` discriminant (`TaskPriority::rank`), not
+/// `TaskPriority::as_str()`'s display name, so rows order by severity and
+/// the comparator is a primitive `f64` compare with zero heap allocation.
 ///
 /// Expected outcomes:
 /// - Zero heap allocations during comparator evaluation: every key is a
-///   `'static` string, so `SortKey::Text` never falls back to `Cow::Owned`.
-/// - Cost stays close to [`bench_sort_list_rows_by_status`]'s status-name text
-///   sort at equal row counts, since both compare short static/borrowed
-///   strings.
+///   `SortKey::Number`, never a `Cow::Owned` string.
+/// - Cost falls to near the primitive integer-sort floor, below
+///   [`bench_sort_list_rows_by_status`]'s and `list.text`'s string-key anchors
+///   at equal row counts.
 ///
 /// Unexpected outcomes:
-/// - Heap allocations detected in comparison loops, indicating
-///   `TaskPriority::as_str()` or its `SortKey` conversion started allocating.
-/// - Cost significantly exceeding the status-name sort anchor for equal row
-///   counts, indicating priority resolution overhead beyond key extraction.
+/// - Cost reverting to string-compare level, or any allocation detected in
+///   comparison loops, indicating the sort seam regressed to the `as_str()`
+///   path.
+/// - Non-monotonic throughput relative to [`bench_sort_list_rows_by_due`]'s
+///   numeric anchor, indicating keys are still ordering alphabetically.
 fn bench_sort_list_rows_by_priority(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("QueryService::run/sort_list_rows_by_priority");

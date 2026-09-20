@@ -64,6 +64,54 @@ fn sorts_pages_by_a_typed_date_frontmatter_field() {
     ]);
 }
 
+/// Checks `list.priority` sorts tasks by severity rank (lowest to highest)
+/// rather than alphabetically by status name, with tasks lacking a priority
+/// sorting first as nulls.
+#[test]
+fn sorts_tasks_by_priority_severity_rank_with_nulls_first() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("p1.md", "- [ ] high task ⏫\n");
+    project.write_note("p2.md", "- [ ] low task 🔽\n");
+    project.write_note("p3.md", "- [ ] highest task 🔺\n");
+    project.write_note("p4.md", "- [ ] lowest task ⏬\n");
+    project.write_note("p5.md", "- [ ] plain task\n");
+    let index = Arc::new(project.build_index());
+    let service = QueryService::new("class");
+
+    let ascending = QueryBuilder::tasks(SourceSelector::All)
+        .sort("list.priority", false)
+        .expect("valid sort");
+    let asc_rows = service.run(&index, ascending);
+    let asc_texts: Vec<&str> = (&asc_rows)
+        .into_iter()
+        .map(|row| row.task_text().expect("task row"))
+        .collect();
+    assert_eq!(asc_texts, [
+        "plain task",
+        "lowest task",
+        "low task",
+        "high task",
+        "highest task",
+    ]);
+
+    let descending = QueryBuilder::tasks(SourceSelector::All)
+        .sort("list.priority", true)
+        .expect("valid sort");
+    let desc_rows = service.run(&index, descending);
+    let desc_texts: Vec<&str> = (&desc_rows)
+        .into_iter()
+        .map(|row| row.task_text().expect("task row"))
+        .collect();
+    assert_eq!(desc_texts, [
+        "highest task",
+        "high task",
+        "low task",
+        "lowest task",
+        "plain task",
+    ]);
+}
+
 /// Checks task queries flatten two tasks in one note into two rows, each with
 /// the correct completion state.
 ///

@@ -21,7 +21,8 @@ use super::{
     value::QueryFieldValueRef,
 };
 use crate::{
-    DateTimeValue, DateValue, SourceLine, TaskStatusSymbol,
+    DateTimeValue, DateValue, SourceLine, TaskListItem, TaskPriority,
+    TaskStatusSymbol,
     file::FileBase,
     index::{FileEntry, FileIndex, RowIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
@@ -101,6 +102,21 @@ impl QueryRow {
         self.list_item()
             .filter(|item| item.kind().is_task())
             .map(ListItem::clean_text)
+    }
+
+    /// Returns the numeric severity rank of the task's priority for task
+    /// rows, or `None` for non-task rows, page-level rows, and tasks
+    /// without a priority.
+    ///
+    /// Consumed by sort key materialization. Rendering keeps using
+    /// [`TaskPriority::as_str`].
+    #[inline]
+    #[must_use]
+    pub fn task_priority_rank(&self) -> Option<u8> {
+        self.list_item()
+            .and_then(|item| item.kind().as_task())
+            .and_then(TaskListItem::priority)
+            .map(TaskPriority::rank)
     }
 
     /// Returns the task status symbol for task rows, or `None` for non-task

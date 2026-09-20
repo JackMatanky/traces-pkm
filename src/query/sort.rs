@@ -13,7 +13,9 @@
 use std::{borrow::Cow, cmp::Ordering, num::NonZeroUsize};
 
 use super::{
-    QueryRow, error::QueryBuilderError, grammar::FieldPath,
+    QueryRow,
+    error::QueryBuilderError,
+    grammar::{FieldPath, ListField, TaskField},
     value::QueryFieldValueRef,
 };
 use crate::{
@@ -64,13 +66,30 @@ impl SortOrder {
             Vec::with_capacity(rows.len().saturating_mul(stride.get()));
         for row in rows {
             for term in &self.terms {
-                let val_ref = row.resolve_ref(&term.path);
-                flat.push(SortKey::from_value_ref(val_ref));
+                flat.push(Self::key_for_term(row, term));
             }
         }
         SortKeys {
             flat,
             stride,
+        }
+    }
+
+    /// Computes one row's sort key for one term.
+    ///
+    /// `list.priority` materializes a numeric [`SortKey::Number`] from the
+    /// task's severity rank instead of the generic name-string path, so
+    /// `list.priority` sorts by severity, not alphabetically.
+    #[must_use]
+    fn key_for_term<'a>(row: &'a QueryRow, term: &SortTerm) -> SortKey<'a> {
+        if matches!(
+            term.path,
+            FieldPath::List(ListField::Task(TaskField::Priority))
+        ) {
+            row.task_priority_rank()
+                .map_or(SortKey::Null, |rank| SortKey::Number(f64::from(rank)))
+        } else {
+            SortKey::from_value_ref(row.resolve_ref(&term.path))
         }
     }
 

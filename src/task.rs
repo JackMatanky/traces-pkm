@@ -398,6 +398,27 @@ impl TaskPriority {
         }
     }
 
+    /// Returns the numeric severity rank of this priority, `0` (`Lowest`)
+    /// through `5` (`Highest`), in declaration order.
+    ///
+    /// Sort keys use this rank instead of the [`TaskPriority::as_str`]
+    /// display name so `list.priority` orders by severity, not
+    /// alphabetically. `Normal` resolves to rank `2` but is unreachable from
+    /// parsing (no emoji or name maps to it; items with no priority store
+    /// `None`).
+    #[inline]
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Lowest => 0,
+            Self::Low => 1,
+            Self::Normal => 2,
+            Self::Medium => 3,
+            Self::High => 4,
+            Self::Highest => 5,
+        }
+    }
+
     /// Parses a priority from an emoji, with or without variation selector 16
     /// (`\u{FE0F}`).
     ///
@@ -1008,6 +1029,22 @@ mod tests {
             assert!(TaskPriority::Normal < TaskPriority::Medium);
             assert!(TaskPriority::Medium < TaskPriority::High);
             assert!(TaskPriority::High < TaskPriority::Highest);
+        }
+
+        #[test]
+        fn ranks_are_strictly_increasing_by_severity() {
+            let all = [
+                TaskPriority::Lowest,
+                TaskPriority::Low,
+                TaskPriority::Normal,
+                TaskPriority::Medium,
+                TaskPriority::High,
+                TaskPriority::Highest,
+            ];
+            let ranks: Vec<u8> =
+                all.iter().copied().map(TaskPriority::rank).collect();
+            assert_eq!(ranks, [0, 1, 2, 3, 4, 5]);
+            assert!(ranks.windows(2).all(|w| matches!(w, [a, b] if a < b)));
         }
     }
 
