@@ -53,7 +53,8 @@ mod common;
 use common::{
     content::{
         ProjectShape, duration_field_note_source, nullable_rating_note_source,
-        task_triplet_note_source, title_field_note_source,
+        task_sort_fixture_source, task_triplet_note_source,
+        title_field_note_source,
     },
     project::{build_index_arc, build_index_arc_from_note_source},
 };
@@ -596,6 +597,231 @@ fn bench_sort_task_rows(c: &mut Criterion) {
 }
 
 // ----------------------------------------------------------- //
+//         Benchmarks: List Row Sort Key Coverage               //
+// ----------------------------------------------------------- //
+
+/// Measures sort cost on task rows by `list.text` (`SortKey::Text`, borrowed
+/// clean text).
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports task rows (`3 *
+/// n`). Fixture indexes are built outside timing from
+/// [`task_sort_fixture_source`], which decorrelates text, due date, priority,
+/// and status so no single sort sees a near-sorted input.
+///
+/// `list.text` resolves to `ListItem::clean_text()`, a borrowed `&str` slice
+/// of already-parsed clean text, so `SortKey::Text` holds a `Cow::Borrowed`
+/// with no per-comparison heap allocation.
+///
+/// Expected outcomes:
+/// - Zero heap allocations during comparator evaluation.
+/// - Cost stays comparable to [`bench_sort_by_text`]'s page-row text sort at
+///   equal row counts.
+///
+/// Unexpected outcomes:
+/// - Heap allocations detected in comparison loops (for example under a
+///   DHAT/valgrind run), indicating `clean_text()` or `SortKey::from_text`
+///   started cloning instead of borrowing.
+/// - Cost significantly exceeding the page-row text sort anchor, indicating
+///   task-row expansion or field resolution overhead beyond key extraction.
+fn bench_sort_list_rows_by_text(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("QueryService::run/sort_list_rows_by_text");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            task_sort_fixture_source(i, 3)
+        });
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64").saturating_mul(3),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    QueryBuilder::tasks(SourceSelector::All)
+                        .sort("list.text", false)
+                        .expect("valid sort")
+                },
+                |query| service.run(&index, query),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Measures sort cost on task rows by `list.due` (`SortKey::DateTime`,
+/// normalized from a 4-byte `DateValue`).
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports task rows (`3 *
+/// n`). Fixture indexes are built outside timing from
+/// [`task_sort_fixture_source`], with every item carrying a `📅` due date.
+///
+/// `list.due` resolves to `task.dates().due()`, a `Copy` 4-byte `DateValue`.
+/// `SortKey::from_note_ref` promotes it to a `DateTimeValue` before
+/// comparison; the promotion is a stack conversion, not a heap allocation.
+///
+/// Expected outcomes:
+/// - Zero heap allocations during comparator evaluation.
+/// - Cost stays close to [`bench_sort_by_date`]'s date-field sort at equal row
+///   counts, since both compare normalized `DateTimeValue` keys.
+///
+/// Unexpected outcomes:
+/// - Heap allocations detected in comparison loops, indicating the `DateValue`
+///   -> `DateTimeValue` promotion started allocating.
+/// - Cost significantly exceeding the date-field sort anchor, indicating task
+///   date resolution overhead beyond key extraction.
+fn bench_sort_list_rows_by_due(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("QueryService::run/sort_list_rows_by_due");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            task_sort_fixture_source(i, 3)
+        });
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64").saturating_mul(3),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    QueryBuilder::tasks(SourceSelector::All)
+                        .sort("list.due", false)
+                        .expect("valid sort")
+                },
+                |query| service.run(&index, query),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Measures sort cost on task rows by `list.priority`.
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports task rows (`3 *
+/// n`). Fixture indexes are built outside timing from
+/// [`task_sort_fixture_source`], which sets a priority emoji on every item.
+///
+/// `list.priority` resolves `TaskPriority::as_str()` to one of five static
+/// `&'static str` names (`"lowest"`..`"highest"`), so `SortKey::Text`
+/// compares static string slices with no per-comparison allocation. This
+/// currently orders rows alphabetically by name (`"high"` < `"highest"` <
+/// `"low"` < `"lowest"` < `"medium"`), not by `TaskPriority`'s derived `Ord`
+/// severity ranking; this benchmark measures the field's actual comparator
+/// cost, not its semantic ordering.
+///
+/// Expected outcomes:
+/// - Zero heap allocations during comparator evaluation: every key is a
+///   `'static` string, so `SortKey::Text` never falls back to `Cow::Owned`.
+/// - Cost stays close to [`bench_sort_list_rows_by_status`]'s status-name text
+///   sort at equal row counts, since both compare short static/borrowed
+///   strings.
+///
+/// Unexpected outcomes:
+/// - Heap allocations detected in comparison loops, indicating
+///   `TaskPriority::as_str()` or its `SortKey` conversion started allocating.
+/// - Cost significantly exceeding the status-name sort anchor for equal row
+///   counts, indicating priority resolution overhead beyond key extraction.
+fn bench_sort_list_rows_by_priority(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("QueryService::run/sort_list_rows_by_priority");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            task_sort_fixture_source(i, 3)
+        });
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64").saturating_mul(3),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    QueryBuilder::tasks(SourceSelector::All)
+                        .sort("list.priority", false)
+                        .expect("valid sort")
+                },
+                |query| service.run(&index, query),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Measures sort cost on task rows by `list.status` (borrowed status display
+/// name).
+///
+/// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports task rows (`3 *
+/// n`). Fixture indexes are built outside timing from
+/// [`task_sort_fixture_source`], which cycles every default status marker
+/// (`[ ]`, `[/]`, `[x]`, `[-]`, `[!]`).
+///
+/// `list.status` resolves to `task.status().name()`, a borrowed `&str` slice
+/// of the configured display name (`"Todo"`, `"In Progress"`, `"Done"`,
+/// `"Cancelled"`, `"On Hold"`), so `SortKey::Text` holds a `Cow::Borrowed`
+/// with no per-comparison allocation.
+///
+/// Expected outcomes:
+/// - Zero heap allocations during comparator evaluation.
+/// - Cost stays close to [`bench_sort_task_rows`]'s `list.completed` sort at
+///   equal row counts, since both resolve one borrowed/derived field per task.
+///
+/// Unexpected outcomes:
+/// - Heap allocations detected in comparison loops, indicating
+///   `TaskStatus::name()` or its `SortKey` conversion started cloning.
+/// - Cost significantly exceeding the `list.completed` sort anchor for equal
+///   row counts, indicating status lookup overhead beyond key extraction.
+fn bench_sort_list_rows_by_status(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("QueryService::run/sort_list_rows_by_status");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    for &n in SORT_STRESS_FILE_COUNTS {
+        if n >= 20_000 {
+            group.sample_size(10);
+        }
+        let index = build_index_arc_from_note_source(n, |i, _| {
+            task_sort_fixture_source(i, 3)
+        });
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64").saturating_mul(3),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    QueryBuilder::tasks(SourceSelector::All)
+                        .sort("list.status", false)
+                        .expect("valid sort")
+                },
+                |query| service.run(&index, query),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+// ----------------------------------------------------------- //
 //               Benchmarks: Sort Decomposition                //
 // ----------------------------------------------------------- //
 /// Measures synthetic `QueryRow` inline move/permutation cost, isolated from
@@ -756,6 +982,10 @@ criterion_group!(
     bench_sort_nullable,
     bench_sort_by_duration,
     bench_sort_task_rows,
+    bench_sort_list_rows_by_text,
+    bench_sort_list_rows_by_due,
+    bench_sort_list_rows_by_priority,
+    bench_sort_list_rows_by_status,
     bench_permute_query_rows,
     bench_sort_f64_floor,
     bench_sort_note_field_value_replica

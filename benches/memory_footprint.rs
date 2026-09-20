@@ -43,7 +43,10 @@ mod common;
 use common::{
     FRONTMATTER_FIELD_COUNTS, LIST_ITEM_COUNTS, WORKSPACE_FILE_COUNTS,
     content::{ProjectShape, frontmatter_fields_source, list_items_source},
-    project::{build_index_arc, create_project, setup_persisted_project},
+    project::{
+        build_index_arc, build_index_arc_from_note_source, create_project,
+        setup_persisted_project,
+    },
 };
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -336,11 +339,84 @@ fn bench_query_execution_footprint(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//           Benchmarks: List Item Memory Footprint             //
+// ----------------------------------------------------------- //
+
+/// Total flat `ListItem` count asserted against the post-compaction memory
+/// budget: 50,000 items in one in-memory `FileIndex`.
+const LIST_ITEM_FOOTPRINT_COUNT: usize = 50_000;
+
+/// Maximum allowed gross bytes allocated per `ListItem`: the 168-byte
+/// `size_of::<ListItem>()` struct plus one heap `raw: String` allocation.
+/// Pre-compaction items cost over 450 bytes each; this bound proves the
+/// required >50% reduction (ticket 12 triage notes).
+const MAX_LIST_ITEM_FOOTPRINT_BYTES: usize = 220;
+
+/// Measures gross bytes allocated per `ListItem` for 50,000 flat list items
+/// in `FileIndex` via `Region::new(GLOBAL)`, asserting the required >50%
+/// reduction over the pre-compaction (`>450` bytes/item) layout.
+///
+/// Parameters: fixed at [`LIST_ITEM_FOOTPRINT_COUNT`] items built through
+/// [`list_items_source`], exercising the shared raw/clean text and sparse
+/// inline fields path where `clean` is `None` and `fields` is `None`.
+///
+/// Fixture: [`build_index_arc_from_note_source`] parses the note in-memory
+/// with zero disk I/O. The [`Region`] probe measures `index.as_ref().clone()`,
+/// capturing the exact resident heap bytes requested by the `FileIndex`'s
+/// entries and list items (struct layout + heap strings) while excluding
+/// transient Markdown parser scratch buffers.
+///
+/// Expected outcomes:
+/// - Gross memory per item stays under [`MAX_LIST_ITEM_FOOTPRINT_BYTES`] (~180
+///   bytes/item: 168-byte struct plus one raw-string heap allocation),
+///   validating the compacted layout and achieving a >55% reduction over the
+///   pre-compaction >450 bytes/item layout.
+///
+/// Unexpected outcomes:
+/// - Memory per item exceeding the budget, indicating a compaction regression:
+///   empty inline field maps allocating a real `IndexMap`, duplicate raw/clean
+///   text allocations, or a `ListItem` layout regression widening
+///   `size_of::<ListItem>()`.
+fn bench_list_items_memory_footprint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("memory/list_item_footprint");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(1));
+    group.warm_up_time(Duration::from_millis(500));
+
+    let index = build_index_arc_from_note_source(1, |_, _| {
+        list_items_source(LIST_ITEM_FOOTPRINT_COUNT)
+    });
+    let region = Region::new(GLOBAL);
+    let cloned = black_box(index.as_ref().clone());
+    let stats = region.change();
+    drop(cloned);
+
+    let bytes_per_item = stats.bytes_allocated / LIST_ITEM_FOOTPRINT_COUNT;
+    eprintln!(
+        "[memory] list_item_footprint({LIST_ITEM_FOOTPRINT_COUNT}): gross {} \
+         bytes, {} allocs, {bytes_per_item} bytes/item",
+        stats.bytes_allocated, stats.allocations,
+    );
+    assert!(
+        bytes_per_item < MAX_LIST_ITEM_FOOTPRINT_BYTES,
+        "gross memory per ListItem ({bytes_per_item} bytes) exceeds the \
+         {MAX_LIST_ITEM_FOOTPRINT_BYTES}-byte budget",
+    );
+
+    group.bench_function("build_50000", |b| {
+        b.iter_with_large_drop(|| black_box(index.as_ref().clone()));
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_note_construction_allocation,
     bench_file_index_footprint,
     bench_sync_and_run_footprint,
-    bench_query_execution_footprint
+    bench_query_execution_footprint,
+    bench_list_items_memory_footprint
 );
 criterion_main!(benches);
