@@ -15,10 +15,10 @@ use thiserror::Error;
 enum ConfigError {
     #[error("Failed to read config file.")]  // Capital F, trailing period
     ReadFailed(#[from] std::io::Error),
-
+    
     #[error("Invalid JSON format!")]  // Capital I, exclamation
     ParseFailed(#[from] serde_json::Error),
-
+    
     #[error("The requested key was not found")]  // Reads like a sentence
     KeyNotFound(String),
 }
@@ -36,10 +36,10 @@ use thiserror::Error;
 enum ConfigError {
     #[error("failed to read config file")]  // lowercase, no period
     ReadFailed(#[from] std::io::Error),
-
+    
     #[error("invalid JSON format")]  // lowercase, no period
     ParseFailed(#[from] serde_json::Error),
-
+    
     #[error("key not found: {0}")]  // lowercase, data at end
     KeyNotFound(String),
 }
@@ -61,7 +61,7 @@ The standard library follows this convention:
 // std::num::ParseIntError
 "invalid digit found in string"
 
-// std::str::Utf8Error
+// std::str::Utf8Error  
 "invalid utf-8 sequence"
 ```
 
@@ -82,7 +82,7 @@ use anyhow::{Context, Result};
 fn load_user(id: u64) -> Result<User> {
     let data = fetch(id)
         .with_context(|| format!("failed to fetch user {}", id))?;
-
+    
     parse_user(data)
         .with_context(|| "failed to parse user data")?
 }

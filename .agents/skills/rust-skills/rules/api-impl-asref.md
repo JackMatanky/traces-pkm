@@ -40,7 +40,7 @@ process_text("literal");        // &str
 process_text(String::from("owned"));  // String
 process_text(Cow::from("cow")); // Cow<str>
 
-read_file("/path/to/file");     // &str
+read_file("/path/to/file");     // &str  
 read_file(Path::new("/path"));  // &Path
 read_file(PathBuf::from("/path")); // PathBuf
 read_file(OsStr::new("/path")); // &OsStr
