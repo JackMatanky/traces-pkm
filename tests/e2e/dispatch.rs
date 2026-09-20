@@ -124,7 +124,13 @@ mod trust_and_diagnostics {
 mod query_commands {
     use pretty_assertions::{assert_eq, assert_ne};
 
-    use super::super::support::Sandbox;
+    use super::super::support::{Sandbox, plain};
+
+    /// Shared `items.md` fixture for the filter-shortcut and sorting tests
+    /// below: one task per completion/status combination they each narrow
+    /// or reorder differently.
+    const ITEMS_MD: &str = "- [ ] Bravo task\n- [x] Charlie done\n- [/] Alpha \
+                            in-progress\n- [!] Delta on-hold\n";
 
     /// Filters `list` by tag and checks matches land on stdout with a
     /// count on stderr.
@@ -200,6 +206,33 @@ mod query_commands {
         );
     }
 
+    /// Passes an invalid `--where` expression on `task` (obsolete
+    /// `task.<field>` syntax) and checks the CLI's own diagnostic-rendering
+    /// path for the `task` subcommand, not just `list`'s.
+    ///
+    /// `index_query.rs` proves `QueryBuilder::filter` rejects
+    /// `task.<field>` at the library level; this proves the identical
+    /// diagnostic survives `task`'s own argv wiring and Miette rendering.
+    #[test]
+    fn task_invalid_where_reports_its_location_and_repair() {
+        let sandbox = Sandbox::trusted();
+        sandbox.write_note("a.md", "- [ ] x\n");
+
+        let task = sandbox.run(&["task", "--where", "task.completed == true"]);
+
+        assert!(!task.is_success());
+        assert!(
+            task.stderr.contains("traces::cli::query::failed"),
+            "stderr: {}",
+            task.stderr
+        );
+        assert!(
+            plain(&task.stderr).contains("did you mean `list.completed`?"),
+            "stderr: {}",
+            task.stderr
+        );
+    }
+
     /// Runs `task` across custom status markers, nested outlines, and line
     /// numbers, checking marker characters, indentation, and clickable
     /// coordinates are rendered faithfully.
@@ -243,11 +276,7 @@ mod query_commands {
     #[test]
     fn task_filter_shortcuts_narrow_output_accurately() {
         let sandbox = Sandbox::trusted();
-        sandbox.write_note(
-            "items.md",
-            "- [ ] Bravo task\n- [x] Charlie done\n- [/] Alpha in-progress\n- \
-             [!] Delta on-hold\n",
-        );
+        sandbox.write_note("items.md", ITEMS_MD);
 
         // 1. Shortcut --todo: returns incomplete tasks (Todo, InProgress,
         //    OnHold), excludes Done
@@ -278,11 +307,7 @@ mod query_commands {
     #[test]
     fn task_sorting_orders_output_with_asc_and_desc() {
         let sandbox = Sandbox::trusted();
-        sandbox.write_note(
-            "items.md",
-            "- [ ] Bravo task\n- [x] Charlie done\n- [/] Alpha in-progress\n- \
-             [!] Delta on-hold\n",
-        );
+        sandbox.write_note("items.md", ITEMS_MD);
 
         let asc = sandbox.run(&["task", "--sort", "list.text", "--asc"]);
         assert!(asc.is_success(), "stderr: {}", asc.stderr);

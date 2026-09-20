@@ -219,3 +219,85 @@ Table:
     assert!(content.contains("Task Charlie"), "content: {content}");
     assert_ne!(content, template_body);
 }
+
+/// Proves `tasks.from(...).where(...)` rejects obsolete `task.<field>`
+/// syntax with the same actionable diagnostic proven at the library level in
+/// `tests/integration/index_query.rs`, confirming the `tasks` template
+/// global routes through the identical `QueryBuilder::filter` validation as
+/// the `query` and `list.<field>` paths, rather than a namespace-specific
+/// bypass.
+#[test]
+fn tasks_pipeline_rejects_obsolete_task_field_syntax_with_diagnostic() {
+    use std::error::Error as StdError;
+
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("todo.md", "- [ ] one\n");
+    project.write_template(
+        "broken.md",
+        "{{ tasks.from().where('task.completed == true') | count }}",
+    );
+
+    let config = project.config();
+    let template_service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("broken"))
+        .expect("valid template input");
+
+    let err = template_service
+        .render_to_file(&input, None, WriteMode::DryRun)
+        .expect_err(
+            "obsolete task.<field> inside tasks.from().where() must be \
+             rejected",
+        );
+
+    let minijinja_source =
+        err.source().expect("Render variant carries a minijinja source");
+    let message = minijinja_source
+        .source()
+        .expect("minijinja error carries the query source")
+        .to_string();
+    assert!(
+        message.contains("did you mean `list.completed`?"),
+        "message: {message}"
+    );
+}
+
+/// Proves `lists.from(...).task_list()` rejects page-level (non-task) rows
+/// with `QueryError::TaskListRequiresTaskRows`, confirming the `lists`
+/// namespace's generic rows cannot silently pass through a formatter that
+/// requires task fields.
+#[test]
+fn lists_pipeline_rejects_task_list_formatter_on_non_task_rows() {
+    use std::error::Error as StdError;
+
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("todo.md", "- Plain bullet\n");
+    project.write_template("broken.md", "{{ lists.from().task_list() }}");
+
+    let config = project.config();
+    let template_service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("broken"))
+        .expect("valid template input");
+
+    let err = template_service
+        .render_to_file(&input, None, WriteMode::DryRun)
+        .expect_err(
+            "task_list() on page-level (non-task) list rows must be rejected",
+        );
+
+    let minijinja_source =
+        err.source().expect("Render variant carries a minijinja source");
+    let message = minijinja_source
+        .source()
+        .expect("minijinja error carries the query source")
+        .to_string();
+    assert!(
+        message.contains("task_list requires task-level records"),
+        "message: {message}"
+    );
+}

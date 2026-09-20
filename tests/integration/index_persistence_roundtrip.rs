@@ -286,3 +286,37 @@ fn assert_rows_match(loaded: &QuerySet, in_memory: &QuerySet, label: &str) {
         );
     }
 }
+
+/// Proves `IndexerService::refresh_with_report` recovers from a corrupted
+/// `.traces/index.redb` file and reports every project file as upserted,
+/// with nothing deleted, through the public API alone.
+///
+/// Promoted from `src/index/service.rs`'s internal unit test: corrupting a
+/// real on-disk redb file and recovering through it is exactly the
+/// filesystem/database boundary this module exists to cover, not a private
+/// invariant, per `rust-integration-testing`'s boundary strategy.
+#[test]
+fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_deleted()
+ {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("a.md", "# A\n");
+    project.write_note("b.md", "# B\n");
+    let (indexer, built) = project.persist_index();
+    assert_eq!(built.entries().len(), 2);
+
+    let db_path = project.root().join(".traces/index.redb");
+    let mut corrupted = std::fs::read(&db_path).expect("read valid db");
+    corrupted
+        .get_mut(9..)
+        .expect("db file longer than the 9-byte magic number")
+        .fill(0xFF);
+    std::fs::write(&db_path, &corrupted).expect("corrupt the database file");
+
+    let (_, report) = indexer
+        .refresh_with_report()
+        .expect("refresh recovers from corruption");
+
+    assert_eq!(report.upserted(), 2);
+    assert_eq!(report.deleted(), 0);
+}
