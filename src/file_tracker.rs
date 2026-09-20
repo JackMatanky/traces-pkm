@@ -1,9 +1,9 @@
 //! Store canonical file paths by path hash.
 //!
 //! Main types:
-//! - [`FileStateStore`] - Hash-keyed store for canonical file paths
-//! - [`FileStateStoreError`] - I/O failure from store operations
-//! - [`FileStoreCleanMode`] - Cleanup policy for stale entries
+//! - [`FilePathTracker`] - Hash-keyed tracker for canonical file paths
+//! - [`FilePathTrackerError`] - I/O failure from tracker operations
+//! - [`CleanMode`] - Cleanup policy for stale entries
 //!
 //! Entries are named with [`Blake3PathHash`]. Unix entries are symlinks whose
 //! targets are the recorded paths. Windows entries are plain files whose
@@ -28,11 +28,11 @@ use crate::{Blake3PathHash, DirTree, DirTreeError, dirs::StateDirRoot};
 ///
 /// Companion files are separate files with suffixes appended to the entry path.
 #[derive(Clone, Debug)]
-pub(crate) struct FileStateStore {
+pub(crate) struct FilePathTracker {
     root: StateDirRoot,
 }
 
-impl FileStateStore {
+impl FilePathTracker {
     /// Creates a store rooted at an arbitrary path for tests.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
@@ -55,22 +55,22 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    /// - [`FilePathTrackerError::Canonicalize`] if `target` cannot be
     ///   canonicalized
-    /// - [`FileStateStoreError::StoreIo`] if the store root cannot be created
+    /// - [`FilePathTrackerError::StoreIo`] if the store root cannot be created
     ///   or the entry cannot be written
     #[inline]
     pub(crate) fn record(
         &self,
         target: &Path,
-    ) -> Result<(), FileStateStoreError> {
+    ) -> Result<(), FilePathTrackerError> {
         let entry = StoreEntry::try_from(target)?;
         let entry_path = entry.path_in(&self.root);
         if entry_path.exists() {
             return Ok(());
         }
         fs::create_dir_all(&self.root).map_err(|source| {
-            FileStateStoreError::StoreIo {
+            FilePathTrackerError::StoreIo {
                 path: self.root.to_path_buf(),
                 source,
             }
@@ -85,7 +85,7 @@ impl FileStateStore {
             entry.canonical_target.as_os_str().as_encoded_bytes(),
         );
 
-        write_entry.map_err(|source| FileStateStoreError::StoreIo {
+        write_entry.map_err(|source| FilePathTrackerError::StoreIo {
             path: entry_path,
             source,
         })
@@ -99,20 +99,22 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    /// - [`FilePathTrackerError::Canonicalize`] if `target` cannot be
     ///   canonicalized
-    /// - [`FileStateStoreError::StoreIo`] if the entry's existence cannot be
+    /// - [`FilePathTrackerError::StoreIo`] if the entry's existence cannot be
     ///   checked
     #[inline]
     pub(crate) fn contains(
         &self,
         target: &Path,
-    ) -> Result<bool, FileStateStoreError> {
+    ) -> Result<bool, FilePathTrackerError> {
         let entry = StoreEntry::try_from(target)?;
         let entry_path = entry.path_in(&self.root);
-        entry_path.try_exists().map_err(|source| FileStateStoreError::StoreIo {
-            path: entry_path,
-            source,
+        entry_path.try_exists().map_err(|source| {
+            FilePathTrackerError::StoreIo {
+                path: entry_path,
+                source,
+            }
         })
     }
 
@@ -125,10 +127,12 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::StoreIo`] if the store root exists but cannot
+    /// - [`FilePathTrackerError::StoreIo`] if the store root exists but cannot
     ///   be read or a child entry cannot be inspected
     #[inline]
-    pub(crate) fn list_all(&self) -> Result<Vec<PathBuf>, FileStateStoreError> {
+    pub(crate) fn list_all(
+        &self,
+    ) -> Result<Vec<PathBuf>, FilePathTrackerError> {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
@@ -154,17 +158,17 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::StoreIo`] if the store root cannot be read, a
+    /// - [`FilePathTrackerError::StoreIo`] if the store root cannot be read, a
     ///   child entry cannot be inspected, or a stale entry cannot be removed
-    /// - [`FileStateStoreError::CompanionRemove`] if a companion file cannot be
-    ///   removed
+    /// - [`FilePathTrackerError::CompanionRemove`] if a companion file cannot
+    ///   be removed
     #[inline]
     pub(crate) fn clean(
         &self,
-        mode: FileStoreCleanMode<'_>,
-    ) -> Result<usize, FileStateStoreError> {
+        mode: CleanMode<'_>,
+    ) -> Result<usize, FilePathTrackerError> {
         let removed = self.clean_reporting()?;
-        let FileStoreCleanMode::WithCompanions(suffixes) = mode else {
+        let CleanMode::WithCompanions(suffixes) = mode else {
             return Ok(removed.len());
         };
         for entry in &removed {
@@ -175,7 +179,7 @@ impl FileStateStore {
                     Err(source) if source.kind() == io::ErrorKind::NotFound => {
                     }
                     Err(source) => {
-                        return Err(FileStateStoreError::CompanionRemove {
+                        return Err(FilePathTrackerError::CompanionRemove {
                             path: companion,
                             source,
                         });
@@ -194,9 +198,9 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    /// - [`FilePathTrackerError::Canonicalize`] if `target` cannot be
     ///   canonicalized
-    /// - [`FileStateStoreError::CompanionWrite`] if the companion cannot be
+    /// - [`FilePathTrackerError::CompanionWrite`] if the companion cannot be
     ///   written
     #[inline]
     pub(crate) fn write_companion(
@@ -204,12 +208,12 @@ impl FileStateStore {
         target: &Path,
         suffix: &str,
         contents: impl AsRef<[u8]>,
-    ) -> Result<(), FileStateStoreError> {
+    ) -> Result<(), FilePathTrackerError> {
         let entry = StoreEntry::try_from(target)?;
         let entry_path = entry.path_in(&self.root);
         let companion = companion_path(&entry_path, suffix);
         fs::write(&companion, contents).map_err(|source| {
-            FileStateStoreError::CompanionWrite {
+            FilePathTrackerError::CompanionWrite {
                 path: companion,
                 source,
             }
@@ -225,23 +229,23 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    /// - [`FilePathTrackerError::Canonicalize`] if `target` cannot be
     ///   canonicalized
-    /// - [`FileStateStoreError::CompanionRead`] if the companion exists but
+    /// - [`FilePathTrackerError::CompanionRead`] if the companion exists but
     ///   cannot be read
     #[inline]
     pub(crate) fn read_companion(
         &self,
         target: &Path,
         suffix: &str,
-    ) -> Result<Option<String>, FileStateStoreError> {
+    ) -> Result<Option<String>, FilePathTrackerError> {
         let entry = StoreEntry::try_from(target)?;
         let entry_path = entry.path_in(&self.root);
         let companion = companion_path(&entry_path, suffix);
         match fs::read_to_string(&companion) {
             Ok(contents) => Ok(Some(contents)),
             Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(FileStateStoreError::CompanionRead {
+            Err(source) => Err(FilePathTrackerError::CompanionRead {
                 path: companion,
                 source,
             }),
@@ -257,25 +261,25 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    /// - [`FilePathTrackerError::Canonicalize`] if `target` cannot be
     ///   canonicalized
-    /// - [`FileStateStoreError::StoreIo`] if the root entry exists but cannot
+    /// - [`FilePathTrackerError::StoreIo`] if the root entry exists but cannot
     ///   be removed
-    /// - [`FileStateStoreError::CompanionRemove`] if a companion file cannot be
-    ///   removed
+    /// - [`FilePathTrackerError::CompanionRemove`] if a companion file cannot
+    ///   be removed
     #[inline]
     pub(crate) fn remove_with_companions(
         &self,
         target: &Path,
         suffixes: &[&str],
-    ) -> Result<usize, FileStateStoreError> {
+    ) -> Result<usize, FilePathTrackerError> {
         let entry = StoreEntry::try_from(target)?;
         let entry_path = entry.path_in(&self.root);
         let removed = match fs::remove_file(&entry_path) {
             Ok(()) => 1,
             Err(source) if source.kind() == io::ErrorKind::NotFound => 0,
             Err(source) => {
-                return Err(FileStateStoreError::StoreIo {
+                return Err(FilePathTrackerError::StoreIo {
                     path: entry_path,
                     source,
                 });
@@ -287,7 +291,7 @@ impl FileStateStore {
                 Ok(()) => {}
                 Err(source) if source.kind() == io::ErrorKind::NotFound => {}
                 Err(source) => {
-                    return Err(FileStateStoreError::CompanionRemove {
+                    return Err(FilePathTrackerError::CompanionRemove {
                         path: companion,
                         source,
                     });
@@ -301,9 +305,9 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if the store root cannot be read or a stale
+    /// - [`FilePathTrackerError`] if the store root cannot be read or a stale
     ///   entry cannot be removed.
-    fn clean_reporting(&self) -> Result<Vec<PathBuf>, FileStateStoreError> {
+    fn clean_reporting(&self) -> Result<Vec<PathBuf>, FilePathTrackerError> {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
@@ -320,7 +324,7 @@ impl FileStateStore {
             match fs::remove_file(&entry) {
                 Ok(()) => removed.push(entry),
                 Err(source) => {
-                    return Err(FileStateStoreError::StoreIo {
+                    return Err(FilePathTrackerError::StoreIo {
                         path: entry,
                         source,
                     });
@@ -331,7 +335,7 @@ impl FileStateStore {
     }
 }
 
-impl From<StateDirRoot> for FileStateStore {
+impl From<StateDirRoot> for FilePathTracker {
     #[inline]
     fn from(root: StateDirRoot) -> Self {
         Self {
@@ -340,9 +344,9 @@ impl From<StateDirRoot> for FileStateStore {
     }
 }
 
-/// Selects how [`FileStateStore::clean`] removes stale data.
+/// Selects how [`FilePathTracker::clean`] removes stale data.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FileStoreCleanMode<'a> {
+pub(crate) enum CleanMode<'a> {
     /// Removes only stale hash entries.
     EntriesOnly,
     /// Removes stale hash entries and companion files for each suffix.
@@ -365,16 +369,17 @@ impl StoreEntry {
 }
 
 impl TryFrom<&Path> for StoreEntry {
-    type Error = FileStateStoreError;
+    type Error = FilePathTrackerError;
 
     #[inline]
     #[expect(
         clippy::disallowed_methods,
-        reason = "file-store entries must canonicalize targets before hashing"
+        reason = "file-path-tracker entries must canonicalize targets before \
+                  hashing"
     )]
     fn try_from(target: &Path) -> Result<Self, Self::Error> {
         let canonical_target = fs::canonicalize(target).map_err(|source| {
-            FileStateStoreError::Canonicalize {
+            FilePathTrackerError::Canonicalize {
                 path: target.to_path_buf(),
                 source,
             }
@@ -395,7 +400,7 @@ fn companion_path(entry: &Path, suffix: &str) -> PathBuf {
 
 /// Reads `entry`'s recorded target path.
 ///
-/// Returns `None` if `entry` was not written by [`FileStateStore::record`] or
+/// Returns `None` if `entry` was not written by [`FilePathTracker::record`] or
 /// cannot be read.
 fn recorded_target(entry: &Path) -> Option<PathBuf> {
     #[cfg(unix)]
@@ -405,18 +410,18 @@ fn recorded_target(entry: &Path) -> Option<PathBuf> {
     target.ok()
 }
 
-/// Converts a [`DirTreeError`] into a [`FileStateStoreError::StoreIo`].
-fn store_error(error: DirTreeError) -> FileStateStoreError {
+/// Converts a [`DirTreeError`] into a [`FilePathTrackerError::StoreIo`].
+fn store_error(error: DirTreeError) -> FilePathTrackerError {
     let (path, source) = error.into_parts();
-    FileStateStoreError::StoreIo {
+    FilePathTrackerError::StoreIo {
         path,
         source,
     }
 }
 
-/// Reports a [`FileStateStore`] operation failure.
+/// Reports a [`FilePathTracker`] operation failure.
 #[derive(Debug, Error)]
-pub enum FileStateStoreError {
+pub enum FilePathTrackerError {
     /// Fails before hashing when a target path cannot be canonicalized.
     #[error("failed to canonicalize path {path}")]
     Canonicalize {
@@ -427,7 +432,7 @@ pub enum FileStateStoreError {
         source: io::Error,
     },
     /// Fails while creating, checking, reading, or removing a store entry.
-    #[error("file state store operation failed for {path}")]
+    #[error("file path tracker operation failed for {path}")]
     StoreIo {
         /// Path the failing operation targeted (a directory or an entry).
         path: PathBuf,
@@ -472,13 +477,13 @@ mod tests {
 
     struct Fixture {
         temp: tempfile::TempDir,
-        store: FileStateStore,
+        store: FilePathTracker,
     }
 
     impl Fixture {
         fn new() -> Self {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let store = FileStateStore::at(temp.path().join("store"));
+            let store = FilePathTracker::at(temp.path().join("store"));
             Self {
                 temp,
                 store,
@@ -530,7 +535,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(FileStateStoreError::Canonicalize { .. })
+                Err(FilePathTrackerError::Canonicalize { .. })
             ));
         }
     }
@@ -579,7 +584,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(FileStateStoreError::Canonicalize { .. })
+                Err(FilePathTrackerError::Canonicalize { .. })
             ));
         }
 
@@ -594,7 +599,10 @@ mod tests {
             let result = fixture.store.record(&target);
 
             // Assert
-            assert!(matches!(result, Err(FileStateStoreError::StoreIo { .. })));
+            assert!(matches!(
+                result,
+                Err(FilePathTrackerError::StoreIo { .. })
+            ));
         }
     }
 
@@ -657,7 +665,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(FileStateStoreError::Canonicalize { .. })
+                Err(FilePathTrackerError::Canonicalize { .. })
             ));
         }
     }
@@ -744,7 +752,7 @@ mod tests {
             let fixture = Fixture::new();
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+            let result = fixture.store.clean(CleanMode::EntriesOnly);
 
             // Assert
             assert_eq!(result.unwrap(), 0);
@@ -760,7 +768,7 @@ mod tests {
             fs::write(&stray, "not a symlink").expect("write stray");
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+            let result = fixture.store.clean(CleanMode::EntriesOnly);
 
             // Assert
             assert_eq!(result.unwrap(), 0);
@@ -778,7 +786,7 @@ mod tests {
             fs::remove_file(&deleted).expect("delete target");
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+            let result = fixture.store.clean(CleanMode::EntriesOnly);
 
             // Assert
             assert_eq!(result.unwrap(), 1);
@@ -794,7 +802,7 @@ mod tests {
             fs::remove_file(&deleted).expect("delete target");
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+            let result = fixture.store.clean(CleanMode::EntriesOnly);
 
             // Assert
             assert!(result.is_ok());
@@ -810,7 +818,7 @@ mod tests {
             let entry_path = fixture.entry_path_for(&kept);
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+            let result = fixture.store.clean(CleanMode::EntriesOnly);
 
             // Assert
             assert!(result.is_ok());
@@ -832,9 +840,8 @@ mod tests {
             fs::remove_file(&deleted).expect("delete target");
 
             // Act
-            let result = fixture
-                .store
-                .clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+            let result =
+                fixture.store.clean(CleanMode::WithCompanions(&[".hash"]));
 
             // Assert
             assert!(result.is_ok());
@@ -855,9 +862,8 @@ mod tests {
                 companion_path(&fixture.entry_path_for(&kept), ".hash");
 
             // Act
-            let result = fixture
-                .store
-                .clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+            let result =
+                fixture.store.clean(CleanMode::WithCompanions(&[".hash"]));
 
             // Assert
             assert!(result.is_ok());
@@ -877,9 +883,8 @@ mod tests {
             fs::remove_file(&target).expect("delete target");
 
             // Act
-            let result = fixture
-                .store
-                .clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+            let result =
+                fixture.store.clean(CleanMode::WithCompanions(&[".hash"]));
 
             // Assert
             assert!(
@@ -1014,7 +1019,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(FileStateStoreError::CompanionWrite { .. })
+                Err(FilePathTrackerError::CompanionWrite { .. })
             ));
         }
 
@@ -1062,7 +1067,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(FileStateStoreError::Canonicalize { .. })
+                Err(FilePathTrackerError::Canonicalize { .. })
             ));
         }
     }
