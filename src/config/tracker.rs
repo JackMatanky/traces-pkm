@@ -1,6 +1,6 @@
 //! Persists config tracking and trust state across runs.
 //!
-//! [`ConfigStateStore`] wraps the durable stores used by config loading and
+//! [`ConfigPathTracker`] wraps the durable stores used by config loading and
 //! trust administration.
 //!
 //! # Stores
@@ -23,7 +23,7 @@ use super::{
     trust::{ConfigTrustStatus, TrustRequest, WorkspaceTrustStatus},
 };
 use crate::{
-    Blake3FileHash, FileStateStore, FileStoreCleanMode, dirs, hash::HashError,
+    Blake3FileHash, CleanMode, FilePathTracker, dirs, hash::HashError,
 };
 
 /// Result of checking whether a local config file may be parsed.
@@ -66,24 +66,24 @@ impl ConfigTrustCheck {
 const COMPANION_SUFFIX: &str = ".hash";
 
 /// Backs config tracking and trust records with two hash-keyed
-/// [`FileStateStore`] values.
+/// [`FilePathTracker`] values.
 ///
 /// - `tracked` records config files discovery has seen.
 /// - `trusted` records workspace roots and config content baselines.
 #[derive(Clone, Debug)]
-pub(crate) struct ConfigStateStore {
-    tracked: FileStateStore,
-    trusted: FileStateStore,
+pub(crate) struct ConfigPathTracker {
+    tracked: FilePathTracker,
+    trusted: FilePathTracker,
 }
 
-impl ConfigStateStore {
+impl ConfigPathTracker {
     /// Creates the production state store at the platform state-dir roots.
     #[inline]
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            tracked: FileStateStore::from(dirs::TRACKED_CONFIGS.clone()),
-            trusted: FileStateStore::from(dirs::TRUSTED_CONFIGS.clone()),
+            tracked: FilePathTracker::from(dirs::TRACKED_CONFIGS.clone()),
+            trusted: FilePathTracker::from(dirs::TRUSTED_CONFIGS.clone()),
         }
     }
 
@@ -93,8 +93,8 @@ impl ConfigStateStore {
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
-            tracked: FileStateStore::at(tracked_root),
-            trusted: FileStateStore::at(trusted_root),
+            tracked: FilePathTracker::at(tracked_root),
+            trusted: FilePathTracker::at(trusted_root),
         }
     }
 
@@ -123,7 +123,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when trust cannot be recorded.
+    /// - [`ConfigStateError::Tracker`] when trust cannot be recorded.
     /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn grant_trust(
@@ -147,7 +147,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
     pub(crate) fn workspace_trust_status(
         &self,
         subject: &TrustRequest,
@@ -163,7 +163,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
     /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn config_trust_status(
@@ -192,7 +192,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
     /// - [`ConfigStateError::Hash`] when the config file cannot be read.
     pub(crate) fn config_file_trust_check(
         &self,
@@ -225,7 +225,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed.
+    /// - [`ConfigStateError::Tracker`] when the trust entry cannot be removed.
     #[inline]
     pub(crate) fn revoke_trust(
         &self,
@@ -240,7 +240,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the tracked-config store cannot be
+    /// - [`ConfigStateError::Tracker`] when the tracked-config store cannot be
     ///   read.
     #[inline]
     pub(crate) fn list_tracked_configs(
@@ -253,19 +253,19 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when stale entries cannot be cleaned.
+    /// - [`ConfigStateError::Tracker`] when stale entries cannot be cleaned.
     #[inline]
     pub(crate) fn clean_tracked_configs(
         &self,
     ) -> Result<usize, ConfigStateError> {
-        self.tracked.clean(FileStoreCleanMode::EntriesOnly).map_err(Into::into)
+        self.tracked.clean(CleanMode::EntriesOnly).map_err(Into::into)
     }
 
     /// Lists trusted workspace roots.
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
     pub(crate) fn list_trusted_workspaces(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
@@ -277,13 +277,13 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when stale entries cannot be cleaned.
+    /// - [`ConfigStateError::Tracker`] when stale entries cannot be cleaned.
     #[inline]
     pub(crate) fn clean_trusted_workspaces(
         &self,
     ) -> Result<usize, ConfigStateError> {
         self.trusted
-            .clean(FileStoreCleanMode::WithCompanions(&[COMPANION_SUFFIX]))
+            .clean(CleanMode::WithCompanions(&[COMPANION_SUFFIX]))
             .map_err(Into::into)
     }
 }
@@ -297,7 +297,7 @@ mod tests {
     struct Fixture {
         _temp: tempfile::TempDir,
         root: PathBuf,
-        state: ConfigStateStore,
+        state: ConfigPathTracker,
     }
 
     impl Fixture {
@@ -313,7 +313,7 @@ mod tests {
                           resolved form to match"
             )]
             let root = std::fs::canonicalize(temp.path()).unwrap();
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 root.join("tracked"),
                 root.join("trusted"),
             );

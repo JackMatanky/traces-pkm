@@ -12,7 +12,7 @@
 //! 5. Merge global before local so local values win.
 //!
 //! Trust administration resolves subjects and delegates durable state to
-//! [`super::store::ConfigStateStore`].
+//! [`super::tracker::ConfigPathTracker`].
 
 use std::{
     fs,
@@ -38,7 +38,7 @@ use super::{
     },
     model::Config,
     raw::{RawConfig, RawTemplateConfig},
-    store::ConfigStateStore,
+    tracker::ConfigPathTracker,
     trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
 };
 
@@ -92,7 +92,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 /// `untrust`) are separate surfaces on this type.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
-    state: ConfigStateStore,
+    state: ConfigPathTracker,
 }
 
 impl ConfigService {
@@ -102,7 +102,7 @@ impl ConfigService {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            state: ConfigStateStore::new(),
+            state: ConfigPathTracker::new(),
         }
     }
 
@@ -116,7 +116,7 @@ impl ConfigService {
     #[must_use]
     pub fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
-            state: ConfigStateStore::at(tracked_root, trusted_root),
+            state: ConfigPathTracker::at(tracked_root, trusted_root),
         }
     }
 

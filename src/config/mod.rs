@@ -5,7 +5,7 @@
 //! 1. **Discover** local `.traces/config.toml` and optional global
 //!    `traces/config.toml` from a directory anchor ([`discovery`]).
 //! 2. **Track** discovered local configs in a best-effort store
-//!    ([`store::ConfigStateStore`]).
+//!    ([`tracker::ConfigPathTracker`]).
 //! 3. **Verify trust** before parsing local content; reject untrusted or stale
 //!    files ([`trust`]).
 //! 4. **Parse** TOML into [`raw::RawConfig`] ([`mod@file`]).
@@ -32,7 +32,7 @@ mod file;
 mod model;
 mod raw;
 mod service;
-mod store;
+mod tracker;
 mod trust;
 
 pub(crate) use builder::ConfigBuilder;

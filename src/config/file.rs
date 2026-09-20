@@ -22,7 +22,7 @@ use super::trust::TrustRequest;
 use super::{
     error::ConfigFileError,
     raw::RawConfig,
-    store::{ConfigStateStore, ConfigTrustCheck},
+    tracker::{ConfigPathTracker, ConfigTrustCheck},
     trust::ConfigTrustStatus,
 };
 
@@ -197,7 +197,7 @@ impl LocalConfigFile<Discovered> {
     #[inline]
     pub(crate) fn into_tracked(
         self,
-        store: &ConfigStateStore,
+        store: &ConfigPathTracker,
     ) -> LocalConfigFile<Tracked> {
         store.track_seen_config(&self);
         self.transition_to(Tracked)
@@ -251,7 +251,7 @@ impl LocalConfigFile<Tracked> {
     ///   fails.
     pub(crate) fn verify_trust(
         self,
-        state: &ConfigStateStore,
+        state: &ConfigPathTracker,
     ) -> Result<TrustOutcome, ConfigFileError> {
         let root = self.root().to_path_buf();
         let path = self.path().to_path_buf();
@@ -400,7 +400,7 @@ mod tests {
         #[test]
         fn transitions_to_tracked_state() {
             let temp = tempfile::tempdir().expect("temp");
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -420,7 +420,7 @@ mod tests {
         #[test]
         fn records_seen_config_in_store() {
             let temp = tempfile::tempdir().expect("temp");
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -439,7 +439,7 @@ mod tests {
             let _ = file.into_tracked(&state);
 
             let tracked =
-                crate::FileStateStore::at(temp.path().join("tracked"));
+                crate::FilePathTracker::at(temp.path().join("tracked"));
             assert!(
                 tracked.contains(&config_path).expect("check tracked store"),
                 "config path should be recorded in the tracked store"
@@ -459,7 +459,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -479,7 +479,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -502,7 +502,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -528,7 +528,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "old").unwrap();
 
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -556,7 +556,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigStateStore::at(
+            let state = ConfigPathTracker::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
