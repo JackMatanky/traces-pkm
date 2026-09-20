@@ -15,7 +15,7 @@ use super::{
     file::{LocalConfigFile, Tracked},
     trust::ConfigTrustStatus,
 };
-use crate::{FieldNameError, FileStateStoreError, TagError, hash::HashError};
+use crate::{FieldNameError, FilePathTrackerError, TagError, hash::HashError};
 
 /// Errors from the full config-loading pipeline.
 #[derive(Debug, Error)]
@@ -198,9 +198,9 @@ impl ConfigFileError {
 /// Errors from config tracking or trust-state operations.
 #[derive(Debug, Error)]
 pub enum ConfigStateError {
-    /// The underlying hash-keyed store operation failed.
+    /// The underlying file path tracker operation failed.
     #[error(transparent)]
-    Store(#[from] FileStateStoreError),
+    Tracker(#[from] FilePathTrackerError),
     /// Hashing a config file failed.
     #[error(transparent)]
     Hash(#[from] HashError),
