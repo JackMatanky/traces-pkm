@@ -247,7 +247,7 @@ impl LocalConfigFile<Tracked> {
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::TrustCheckFailed`] when the underlying state store
+    /// - [`ConfigFileError::TrustCheckFailed`] when the underlying path tracker
     ///   fails.
     pub(crate) fn verify_trust(
         self,

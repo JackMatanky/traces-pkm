@@ -17,7 +17,7 @@
 //!   template, and schema layers.
 //! - `file_class_expander` - Implements schema-aware File Class expansion for
 //!   the query domain, without either depending on the other.
-//! - `file_store` - Hash-keyed file and path state store using BLAKE3-named
+//! - `file_tracker` - Hash-keyed file and path tracker using BLAKE3-named
 //!   entries.
 //! - `hash` - BLAKE3 hashing for file contents and canonicalized paths.
 //! - `index` - Persistent file index, note parsing, and link graph

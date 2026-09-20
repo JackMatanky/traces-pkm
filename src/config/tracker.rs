@@ -77,7 +77,7 @@ pub(crate) struct ConfigPathTracker {
 }
 
 impl ConfigPathTracker {
-    /// Creates the production state store at the platform state-dir roots.
+    /// Creates the production path tracker at the platform state-dir roots.
     #[inline]
     #[must_use]
     pub(crate) fn new() -> Self {
@@ -87,7 +87,7 @@ impl ConfigPathTracker {
         }
     }
 
-    /// Creates a state store at explicit roots for tests.
+    /// Creates a path tracker at explicit roots for tests.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
