@@ -67,9 +67,9 @@ The shared filesystem traversal model for scanning directories, discovering
 templates, and loading schemas with classified error handling.
 *Avoid*: walker, walk adapter, walkdir
 
-#### File State Store
+#### File Path Tracker
 
-The user-level persistent store managing tracked configuration paths and
+The user-level persistent tracker managing tracked configuration paths and
 trusted project roots.
 *Avoid*: state cache, local database, cache dir
 

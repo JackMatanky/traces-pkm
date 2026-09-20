@@ -42,7 +42,7 @@ The stored cryptographic digest of a `.traces/config.toml` file used to detect
 out-of-band configuration changes.
 *Avoid*: baseline hash, signature, checksum
 
-#### Tracked Config Store
+#### Config Path Tracker
 
 The user-level record of all local `.traces/config.toml` paths discovered during
 execution, kept independent of trust decisions.
