@@ -154,8 +154,7 @@ impl Config {
         Arc::from(self.schemas().class_field_name())
     }
 
-    /// Returns the Schema registry directory resolved against the project
-    /// root.
+    /// Returns the Schema registry directory resolved against the project root.
     ///
     /// # Errors
     ///
@@ -299,82 +298,10 @@ impl TemplateConfig {
 
 /// Resolved `[schemas]` settings providing the class field name and registry
 /// directory for template lookup.
-/// A safe, root-relative subdirectory path configured in TOML (e.g. `[schemas]
-/// directory`).
-///
-/// Guaranteed to be relative, contain only normal components (no `..`), and be
-/// non-empty.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ConfigSubDir(RelativePath);
-
-impl ConfigSubDir {
-    /// Returns the subdirectory as a relative [`Path`].
-    #[inline]
-    #[must_use]
-    pub fn as_path(&self) -> &Path {
-        self.0.as_ref()
-    }
-
-    /// Resolves this subdirectory against `root`, guaranteeing the resolved
-    /// path stays within `root`.
-    ///
-    /// # Errors
-    ///
-    /// - [`ConfigFileError::InvalidSubDir`] if the resolved path escapes `root`
-    ///   or fails verification.
-    pub(crate) fn resolve_against(
-        &self,
-        root: &Path,
-    ) -> Result<PathBuf, ConfigFileError> {
-        SafeRelativePath::parse(root, self.as_path())
-            .map(SafeRelativePath::into_path_buf)
-            .map_err(|source| ConfigFileError::InvalidSubDir {
-                path: self.as_path().to_path_buf(),
-                source,
-            })
-    }
-}
-
-impl Default for ConfigSubDir {
-    /// # Panics
-    ///
-    /// Never in practice: [`DEFAULT_SCHEMAS_DIR`] is a hardcoded, safe relative
-    /// path.
-    #[inline]
-    #[expect(
-        clippy::expect_used,
-        reason = "DEFAULT_SCHEMAS_DIR is a hardcoded constant"
-    )]
-    fn default() -> Self {
-        Self::try_from(DEFAULT_SCHEMAS_DIR)
-            .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path")
-    }
-}
-
-impl TryFrom<PathBuf> for ConfigSubDir {
-    type Error = PathError;
-
-    #[inline]
-    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
-        RelativePath::parse(&path).map(Self)
-    }
-}
-
-impl TryFrom<&str> for ConfigSubDir {
-    type Error = PathError;
-
-    #[inline]
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        RelativePath::parse(Path::new(s)).map(Self)
-    }
-}
-
-/// Resolved `[schemas]` settings providing the class field name and registry
-/// directory for template lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemasConfig {
-    class_field: FieldName,
     directory: ConfigSubDir,
+    class_field: FieldName,
 }
 
 impl SchemasConfig {
@@ -405,6 +332,28 @@ impl SchemasConfig {
     pub fn directory(&self) -> &Path {
         self.directory.as_path()
     }
+
+    /// Builds schemas config directly for tests that do not exercise TOML
+    /// loading; `class_field` must pass field-name validation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `class_field` is not a valid field key.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "test inputs must validate; Default carries the same \
+                  expectation"
+    )]
+    pub fn for_test(class_field: &str) -> Self {
+        Self {
+            directory: ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
+                .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path"),
+            class_field: FieldName::try_from(class_field)
+                .expect("test class field validates as a field key"),
+        }
+    }
 }
 
 impl Default for SchemasConfig {
@@ -421,32 +370,10 @@ impl Default for SchemasConfig {
     )]
     fn default() -> Self {
         Self {
+            directory: ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
+                .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path"),
             class_field: FieldName::try_from(DEFAULT_CLASS_FIELD)
                 .expect("DEFAULT_CLASS_FIELD is a valid field key"),
-            directory: ConfigSubDir::default(),
-        }
-    }
-}
-
-impl SchemasConfig {
-    /// Builds schemas config directly for tests that do not exercise TOML
-    /// loading; `class_field` must pass field-name validation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `class_field` is not a valid field key.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[must_use]
-    #[expect(
-        clippy::expect_used,
-        reason = "test inputs must validate; Default carries the same \
-                  expectation"
-    )]
-    pub fn for_test(class_field: &str) -> Self {
-        Self {
-            class_field: FieldName::try_from(class_field)
-                .expect("test class field validates as a field key"),
-            directory: ConfigSubDir::default(),
         }
     }
 }
@@ -461,6 +388,10 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
     /// - [`ConfigFileError::InvalidSubDir`] if `directory` fails path
     ///   verification.
     #[inline]
+    #[expect(
+        clippy::expect_used,
+        reason = "DEFAULT_SCHEMAS_DIR is a hardcoded constant"
+    )]
     fn try_from(raw: RawSchemasConfig) -> Result<Self, Self::Error> {
         let class_field = FieldName::try_from(
             raw.class_field.unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
@@ -478,12 +409,13 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
                     }
                 })?
             }
-            None => ConfigSubDir::default(),
+            None => ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
+                .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path"),
         };
 
         Ok(Self {
-            class_field,
             directory,
+            class_field,
         })
     }
 }
@@ -618,75 +550,6 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
     }
 }
 
-/// A frontmatter key name and its date format string.
-#[derive(Clone, Debug)]
-pub struct DateFieldConfig {
-    name: FieldName,
-    format: String,
-}
-
-impl DateFieldConfig {
-    /// Returns the frontmatter key name.
-    #[inline]
-    #[must_use]
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    /// Returns the date format string applied to the key's value.
-    #[inline]
-    #[must_use]
-    pub fn format(&self) -> &str {
-        &self.format
-    }
-
-    /// Builds a default date field config for `name` using the shared
-    /// default date format.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: callers only pass hardcoded, always-valid role-name
-    /// constants (`DEFAULT_DATE_CREATED_FIELD`/`DEFAULT_DATE_MODIFIED_FIELD`).
-    #[inline]
-    #[expect(
-        clippy::expect_used,
-        reason = "callers only pass hardcoded role-name constants; failure \
-                  here means a constant itself is malformed, not a \
-                  recoverable caller error"
-    )]
-    fn default_for(name: &str) -> Self {
-        Self {
-            name: FieldName::try_from(name)
-                .expect("role-name constant is a valid field key"),
-            format: DEFAULT_DATE_FORMAT.to_owned(),
-        }
-    }
-
-    /// Resolves a raw date-role table into a concrete config, filling missing
-    /// `name`/`format` from role-aware defaults.
-    ///
-    /// # Errors
-    ///
-    /// - [`FieldNameError`] if a configured `raw.name` fails validation.
-    #[inline]
-    fn from_raw_or_default(
-        raw: Option<RawDateFieldConfig>,
-        default_name: &str,
-    ) -> Result<Self, FieldNameError> {
-        Ok(match raw {
-            None => Self::default_for(default_name),
-            Some(raw) => Self {
-                name: FieldName::try_from(
-                    raw.name.unwrap_or_else(|| default_name.to_owned()),
-                )?,
-                format: raw
-                    .format
-                    .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
-            },
-        })
-    }
-}
-
 /// Resolved `[tasks]` settings: the task status lookup map and the tag
 /// filters that classify status-marked list items as Tasks.
 #[derive(Clone, Debug)]
@@ -785,6 +648,131 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
         Ok(Self {
             statuses: TaskStatusMap::default(),
             tag_filters,
+        })
+    }
+}
+
+/// Resolved `[schemas]` settings providing the class field name and registry
+/// directory for template lookup.
+/// A safe, root-relative subdirectory path configured in TOML (e.g. `[schemas]
+/// directory`).
+///
+/// Guaranteed to be relative, contain only normal components (no `..`), and be
+/// non-empty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConfigSubDir(RelativePath);
+
+impl ConfigSubDir {
+    /// Returns the subdirectory as a relative [`Path`].
+    #[inline]
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        self.0.as_ref()
+    }
+
+    /// Resolves this subdirectory against `root`, guaranteeing the resolved
+    /// path stays within `root`.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConfigFileError::InvalidSubDir`] if the resolved path escapes `root`
+    ///   or fails verification.
+    pub(crate) fn resolve_against(
+        &self,
+        root: &Path,
+    ) -> Result<PathBuf, ConfigFileError> {
+        SafeRelativePath::parse(root, self.as_path())
+            .map(SafeRelativePath::into_path_buf)
+            .map_err(|source| ConfigFileError::InvalidSubDir {
+                path: self.as_path().to_path_buf(),
+                source,
+            })
+    }
+}
+
+impl TryFrom<PathBuf> for ConfigSubDir {
+    type Error = PathError;
+
+    #[inline]
+    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        RelativePath::parse(&path).map(Self)
+    }
+}
+
+impl TryFrom<&str> for ConfigSubDir {
+    type Error = PathError;
+
+    #[inline]
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        RelativePath::parse(Path::new(s)).map(Self)
+    }
+}
+
+/// A frontmatter key name and its date format string.
+#[derive(Clone, Debug)]
+pub struct DateFieldConfig {
+    name: FieldName,
+    format: String,
+}
+
+impl DateFieldConfig {
+    /// Returns the frontmatter key name.
+    #[inline]
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    /// Returns the date format string applied to the key's value.
+    #[inline]
+    #[must_use]
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    /// Builds a default date field config for `name` using the shared
+    /// default date format.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: callers only pass hardcoded, always-valid role-name
+    /// constants (`DEFAULT_DATE_CREATED_FIELD`/`DEFAULT_DATE_MODIFIED_FIELD`).
+    #[inline]
+    #[expect(
+        clippy::expect_used,
+        reason = "callers only pass hardcoded role-name constants; failure \
+                  here means a constant itself is malformed, not a \
+                  recoverable caller error"
+    )]
+    fn default_for(name: &str) -> Self {
+        Self {
+            name: FieldName::try_from(name)
+                .expect("role-name constant is a valid field key"),
+            format: DEFAULT_DATE_FORMAT.to_owned(),
+        }
+    }
+
+    /// Resolves a raw date-role table into a concrete config, filling missing
+    /// `name`/`format` from role-aware defaults.
+    ///
+    /// # Errors
+    ///
+    /// - [`FieldNameError`] if a configured `raw.name` fails validation.
+    #[inline]
+    fn from_raw_or_default(
+        raw: Option<RawDateFieldConfig>,
+        default_name: &str,
+    ) -> Result<Self, FieldNameError> {
+        Ok(match raw {
+            None => Self::default_for(default_name),
+            Some(raw) => Self {
+                name: FieldName::try_from(
+                    raw.name.unwrap_or_else(|| default_name.to_owned()),
+                )?,
+                format: raw
+                    .format
+                    .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
+            },
         })
     }
 }
