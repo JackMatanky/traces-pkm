@@ -347,10 +347,10 @@ fn bench_query_execution_footprint(c: &mut Criterion) {
 /// budget: 50,000 items in one in-memory `FileIndex`.
 const LIST_ITEM_FOOTPRINT_COUNT: usize = 50_000;
 
-/// Maximum allowed gross bytes allocated per `ListItem`: the 168-byte
-/// `size_of::<ListItem>()` struct plus one heap `raw: String` allocation.
-/// Pre-compaction items cost over 450 bytes each; this bound proves the
-/// required >50% reduction (ticket 12 triage notes).
+/// Maximum allowed gross bytes allocated per `ListItem`. Measured baseline:
+/// 152-byte `size_of::<ListItem>()` struct plus ~29 bytes of heap across two
+/// allocations (~180 gross). Pre-compaction items cost over 450 bytes each;
+/// this bound proves the required >50% reduction (ticket 12 triage notes).
 const MAX_LIST_ITEM_FOOTPRINT_BYTES: usize = 220;
 
 /// Measures gross bytes allocated per `ListItem` for 50,000 flat list items
@@ -369,7 +369,7 @@ const MAX_LIST_ITEM_FOOTPRINT_BYTES: usize = 220;
 ///
 /// Expected outcomes:
 /// - Gross memory per item stays under [`MAX_LIST_ITEM_FOOTPRINT_BYTES`] (~180
-///   bytes/item: 168-byte struct plus one raw-string heap allocation),
+///   bytes/item: 152-byte struct plus ~29 heap bytes across two allocations),
 ///   validating the compacted layout and achieving a >55% reduction over the
 ///   pre-compaction >450 bytes/item layout.
 ///
@@ -395,8 +395,11 @@ fn bench_list_items_memory_footprint(c: &mut Criterion) {
     let bytes_per_item = stats.bytes_allocated / LIST_ITEM_FOOTPRINT_COUNT;
     eprintln!(
         "[memory] list_item_footprint({LIST_ITEM_FOOTPRINT_COUNT}): gross {} \
-         bytes, {} allocs, {bytes_per_item} bytes/item",
-        stats.bytes_allocated, stats.allocations,
+         bytes, {} allocs, {bytes_per_item} bytes/item, size_of::<ListItem>() \
+         = {}",
+        stats.bytes_allocated,
+        stats.allocations,
+        std::mem::size_of::<traces_pkm::ListItem>(),
     );
     assert!(
         bytes_per_item < MAX_LIST_ITEM_FOOTPRINT_BYTES,
@@ -404,7 +407,7 @@ fn bench_list_items_memory_footprint(c: &mut Criterion) {
          {MAX_LIST_ITEM_FOOTPRINT_BYTES}-byte budget",
     );
 
-    group.bench_function("build_50000", |b| {
+    group.bench_function("clone_50000", |b| {
         b.iter_with_large_drop(|| black_box(index.as_ref().clone()));
     });
 

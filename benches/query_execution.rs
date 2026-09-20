@@ -278,9 +278,8 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 /// timing through `task_note_source` and `FileIndex::new_test`.
 ///
 /// Expected outcomes:
-/// - Execution time scales linearly with total expanded task rows
-///   ($\text{file\_count} \times \text{tasks\_per\_note}$), independent of
-///   which factor grows.
+/// - Execution time scales linearly with total expanded task rows (`file_count`
+///   × `tasks_per_note`), independent of which factor grows.
 ///
 /// Unexpected outcomes:
 /// - Super-linear growth with task density at fixed file count, or with file
