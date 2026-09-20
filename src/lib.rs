@@ -68,7 +68,7 @@ mod env_vars;
 mod field;
 mod file;
 mod file_class_expander;
-mod file_store;
+mod file_tracker;
 mod hash;
 mod index;
 mod lexer;
@@ -106,8 +106,8 @@ pub use file::FileBase;
 #[cfg(any(test, feature = "test-utils"))]
 pub use file::FileFormat;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
-pub(crate) use file_store::{
-    FileStateStore, FileStateStoreError, FileStoreCleanMode,
+pub(crate) use file_tracker::{
+    CleanMode, FilePathTracker, FilePathTrackerError,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use hash::{Blake3FileHash, Blake3PathHash};
