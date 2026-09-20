@@ -95,11 +95,8 @@ fn bench_run_pages(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::new("pages", n), &n, |b, _| {
             b.iter_batched(
-                || index.clone(),
-                |index| {
-                    service
-                        .run(&index, QueryBuilder::pages(SourceSelector::All))
-                },
+                || QueryBuilder::pages(SourceSelector::All),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -136,11 +133,8 @@ fn bench_run_tasks(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::new("tasks", n), &n, |b, _| {
             b.iter_batched(
-                || index.clone(),
-                |index| {
-                    service
-                        .run(&index, QueryBuilder::tasks(SourceSelector::All))
-                },
+                || QueryBuilder::tasks(SourceSelector::All),
+                |query| service.run(&index, query),
                 BatchSize::SmallInput,
             );
         });
@@ -157,8 +151,8 @@ fn bench_run_tasks(c: &mut Criterion) {
 /// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports input note throughput.
 ///
 /// Fixture: [`ProjectShape::Plain`] in-memory indexes are built outside timing.
-/// Timed work builds and runs `All pages -> filter("rating > 2") ->
-/// sort("rating")`.
+/// Query construction is untimed setup; timed work runs `All pages ->
+/// filter("rating > 2") -> sort("rating")`.
 ///
 /// This group covers the combined end-to-end path only. The filter-width and
 /// sort-only benchmarks are diagnostic context, but they are not a controlled
@@ -191,17 +185,14 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
             &n,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All)
-                                .filter("rating > 2")
-                                .expect("valid filter")
-                                .sort("rating", false)
-                                .expect("valid sort"),
-                        )
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .filter("rating > 2")
+                            .expect("valid filter")
+                            .sort("rating", false)
+                            .expect("valid sort")
                     },
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -253,13 +244,8 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
             &fields,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All),
-                        )
-                    },
+                    || QueryBuilder::pages(SourceSelector::All),
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
@@ -269,15 +255,12 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
             &fields,
             |b, _| {
                 b.iter_batched(
-                    || index.clone(),
-                    |index| {
-                        service.run(
-                            &index,
-                            QueryBuilder::pages(SourceSelector::All)
-                                .filter("rating > 2")
-                                .expect("valid filter"),
-                        )
+                    || {
+                        QueryBuilder::pages(SourceSelector::All)
+                            .filter("rating > 2")
+                            .expect("valid filter")
                     },
+                    |query| service.run(&index, query),
                     BatchSize::SmallInput,
                 );
             },
