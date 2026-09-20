@@ -160,22 +160,34 @@ impl TaskStatusMap {
     /// consistent.
     #[inline]
     pub(crate) fn insert(&mut self, status: TaskStatus) {
-        // Clean up stale entries from a previous status sharing this symbol
-        // before indexing the new one, so all three lookups stay consistent.
-        if let Some(previous) = self.symbols.get(&status.symbol) {
-            if let Some(bucket) = self.kinds.get_mut(&previous.kind) {
-                bucket.retain(|existing| existing.symbol != previous.symbol);
-            }
-            let previous_key = normalize_name(&previous.name);
-            if self
-                .names
-                .get(&previous_key)
-                .is_some_and(|current| current.symbol == previous.symbol)
-            {
-                self.names.remove(&previous_key);
-            }
+        self.purge_stale_entries(&status);
+        self.index_status(status);
+    }
+
+    /// Removes stale entries left by a previous status sharing the same
+    /// symbol from the `kinds` and `names` maps. No-op if `status.symbol`
+    /// has no predecessor.
+    fn purge_stale_entries(&mut self, status: &TaskStatus) {
+        let Some(previous) = self.symbols.get(&status.symbol) else {
+            return;
+        };
+        if let Some(bucket) = self.kinds.get_mut(&previous.kind) {
+            bucket.retain(|existing| existing.symbol != previous.symbol);
         }
-        // `status` is moved into `names` last; `kinds` gets one clone.
+        let previous_key = normalize_name(&previous.name);
+        if self
+            .names
+            .get(&previous_key)
+            .is_some_and(|current| current.symbol == previous.symbol)
+        {
+            self.names.remove(&previous_key);
+        }
+    }
+
+    /// Indexes `status` into all three lookup maps in one step. Caller must
+    /// call [`Self::purge_stale_entries`] first when overriding an existing
+    /// symbol.
+    fn index_status(&mut self, status: TaskStatus) {
         self.kinds.entry(status.kind).or_default().push(status.clone());
         self.symbols.insert(status.symbol, status.clone());
         self.names.insert(normalize_name(&status.name), status);

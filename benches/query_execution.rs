@@ -434,6 +434,49 @@ fn bench_into_iter_owned(c: &mut Criterion) {
     group.finish();
 }
 
+// ----------------------------------------------------------- //
+//             Benchmarks: Filter-then-Sort Pipeline           //
+// ----------------------------------------------------------- //
+/// Measures the combined cost of filter-then-sort on page rows.
+///
+/// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports page-row throughput.
+/// Fixture: [`ProjectShape::Plain`] indexes built outside timing. Filter
+/// `rating >= 5` selects ~50% of rows; sort orders survivors by `rating`.
+///
+/// Expected outcomes:
+/// - Cost scales with output row count (post-filter), not input row count.
+///
+/// Unexpected outcomes:
+/// - Cost approaches unfiltered sort cost, indicating filter does not reduce
+///   sort input or filter evaluation is dominant.
+fn bench_filter_then_sort(c: &mut Criterion) {
+    let mut group = c.benchmark_group("QueryService::run/filter_then_sort");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    let service = QueryService::new("class");
+    for &n in WORKSPACE_FILE_COUNTS {
+        let index = build_index_arc(n, ProjectShape::Plain);
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    QueryBuilder::pages(SourceSelector::All)
+                        .filter("rating >= 5")
+                        .expect("valid filter")
+                        .sort("rating", false)
+                        .expect("valid sort")
+                },
+                |query| service.run(&index, query),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_run_pages,
@@ -442,6 +485,7 @@ criterion_group!(
     bench_run_pages_by_metadata,
     bench_filter_by_metadata_field_count,
     bench_clone_query_set,
-    bench_into_iter_owned
+    bench_into_iter_owned,
+    bench_filter_then_sort
 );
 criterion_main!(benches);

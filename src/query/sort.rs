@@ -355,7 +355,7 @@ impl<'a> SortKey<'a> {
         match val {
             NoteFieldValueRef::Null => Self::Null,
             NoteFieldValueRef::Bool(b) => Self::Bool(b),
-            NoteFieldValueRef::Number(n) => Self::Number(n),
+            NoteFieldValueRef::Number(n) => Self::Number(normalize_zero(n)),
             NoteFieldValueRef::DateTime(value) => Self::DateTime(value),
             NoteFieldValueRef::Date(value) => {
                 Self::DateTime(DateTimeValue::from(value))

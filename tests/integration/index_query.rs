@@ -353,3 +353,72 @@ priority: normal
     );
     assert_eq!(normal_rows.get(1).and_then(|r| r.task_text()), None);
 }
+
+/// Proves `sort` + `limit` on the builder returns only the top-k rows
+/// (ascending numeric sort, limit 3 out of 10 notes).
+#[test]
+fn sort_then_limit_returns_top_k_rows() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    for i in 0..10 {
+        project.write_note(
+            format!("note{i}.md"),
+            &format!("---\nrating: {i}\n---\n"),
+        );
+    }
+    let index = Arc::new(project.build_index());
+    let query = QueryBuilder::pages(SourceSelector::All)
+        .sort("rating", false)
+        .expect("valid sort")
+        .limit(3)
+        .expect("valid limit");
+    let top = QueryService::new("class").run(&index, query);
+    assert_eq!(top.len(), 3);
+    let paths: Vec<_> =
+        top.iter().map(|r| r.file().path().to_path_buf()).collect();
+    assert_eq!(paths, [
+        Path::new("note0.md"),
+        Path::new("note1.md"),
+        Path::new("note2.md"),
+    ]);
+}
+
+/// Proves sorting an empty result set (filter matches nothing) is a no-op
+/// and returns an empty set without panicking.
+#[test]
+fn sorting_an_empty_query_set_returns_empty() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("a.md", "---\nrating: 5\n---\n");
+    let index = Arc::new(project.build_index());
+    let query = QueryBuilder::pages(SourceSelector::All)
+        .filter("rating > 100")
+        .expect("valid filter")
+        .sort("rating", false)
+        .expect("valid sort");
+    let result = QueryService::new("class").run(&index, query);
+    assert!(result.is_empty());
+}
+
+/// Proves descending sort on a text field orders pages alphabetically
+/// in reverse (Z→A).
+#[test]
+fn sorts_pages_descending_by_text_field() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("alpha.md", "---\nclass: Alpha\n---\n");
+    project.write_note("beta.md", "---\nclass: Beta\n---\n");
+    project.write_note("gamma.md", "---\nclass: Gamma\n---\n");
+    let index = Arc::new(project.build_index());
+    let query = QueryBuilder::pages(SourceSelector::All)
+        .sort("class", true)
+        .expect("valid sort");
+    let sorted = QueryService::new("class").run(&index, query);
+    let paths: Vec<_> =
+        sorted.iter().map(|r| r.file().path().to_path_buf()).collect();
+    assert_eq!(paths, [
+        Path::new("gamma.md"),
+        Path::new("beta.md"),
+        Path::new("alpha.md"),
+    ]);
+}
