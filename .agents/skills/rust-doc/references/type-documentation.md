@@ -1,17 +1,16 @@
 # Type Documentation Guide
 
-Complete guide for documenting types, structs, enums, and traits in Rust.
+Guide for documenting structs, enums, newtypes, fields, and traits.
 
 ---
 
-## Struct Documentation
+## Structs
 
-### Basic Structure
+State what the type represents and any invariant it upholds:
 
 ```rust
-/// Unique identifier for an entity in the system.
-///
-/// Combines entity UUID and web ID for precise references across the API.
+/// Unique identifier for an entity, combining its UUID with the web it
+/// belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EntityId {
     pub entity_uuid: EntityUuid,
@@ -19,144 +18,92 @@ pub struct EntityId {
 }
 ```
 
-### When to Document Fields
+### Fields
 
-✅ **Document when field purpose is NOT obvious:**
+Document a field when its purpose, unit, default, or constraint isn't visible from its name and type alone:
 
 ```rust
 pub struct EntityQuery {
-    /// Maximum number of results to return (default: 100)
+    /// Caps the result set. `None` means unlimited.
     pub limit: Option<usize>,
 
-    /// Include deleted entities in results
+    /// When `true`, soft-deleted entities are included in results.
     pub include_deleted: bool,
 }
 ```
 
-❌ **Don't document obvious fields:**
+A field like `pub id: UserId` or `pub name: String` on a `User` needs no comment: the name already carries the meaning.
+
+## Enums
+
+Document the enum's purpose and what selecting each variant controls, not the variant name restated as prose:
 
 ```rust
-pub struct User {
-    pub id: UserId,        // ID is obvious
-    pub name: String,      // name is obvious
-    pub email: String,     // email is obvious
-}
-```
-
----
-
-## Enum Documentation
-
-### Document WHY, not WHAT
-
-✅ **Good - explains purpose:**
-
-```rust
-/// Entity lifecycle state.
-///
-/// Controls validation rules and access permissions at each stage.
+/// Entity lifecycle state, controlling validation rules and access
+/// permissions at each stage.
 pub enum EntityState {
-    Draft,      // No docs needed - obvious
+    Draft,
     Published,
     Archived,
     Deleted,
 }
 ```
 
-❌ **Bad - restates the obvious:**
-
-```rust
-pub enum EntityState {
-    /// The draft state        // Redundant
-    Draft,
-    /// The published state    // Redundant
-    Published,
-}
-```
-
-### When Variants Need Docs
-
-Document variants only when they:
-
-- Have non-obvious behavior
-- Affect system state in special ways
-- Have constraints or invariants
+Document individual variants when they carry non-obvious behavior, state effects, or constraints:
 
 ```rust
 pub enum CacheStrategy {
-    /// Never cache (always fetch fresh)
+    /// Always fetches fresh; nothing is cached.
     None,
 
-    /// Cache with TTL expiration
+    /// Cached entries expire after `seconds`.
     Timed { seconds: u64 },
 
-    /// Cache until explicitly invalidated
+    /// Cached until explicitly invalidated.
     Persistent,
-
-    /// Adaptive caching based on access patterns (experimental)
-    Adaptive,
 }
 ```
 
----
+## Traits
 
-## Trait Documentation
-
-Focus on contract and guarantees, not restating method signatures:
+Describe the contract and guarantees the trait promises, not a restatement of each method signature:
 
 ```rust
-/// Store for entity data with transactional guarantees.
-///
-/// All operations are atomic and maintain consistency even under
-/// concurrent access.
+/// Store for entity data with transactional guarantees: every operation is
+/// atomic and stays consistent under concurrent access.
 pub trait EntityStore: Send + Sync {
-    /// Retrieves entity if it exists and caller has access.
+    /// Retrieves the entity if it exists and the caller has access.
     ///
     /// # Errors
     ///
-    /// - [`NotFound`] if entity doesn't exist
-    /// - [`AccessDenied`] if caller lacks permission
+    /// - [`NotFound`] if the entity doesn't exist.
+    /// - [`AccessDenied`] if the caller lacks permission.
     ///
-    /// [`NotFound`]: StoreError::NotFound
-    /// [`AccessDenied`]: StoreError::AccessDenied
-    fn get_entity(&self, id: EntityId) -> Result<Entity, Report<StoreError>>;
+    /// [`NotFound`]: EntityError::NotFound
+    /// [`AccessDenied`]: EntityError::AccessDenied
+    fn get_entity(&self, id: EntityId) -> Result<Entity, EntityError>;
 }
 ```
 
----
+For an `unsafe trait`, document the implementer's obligation under `# Safety` instead of the contract prose above. See [error-and-safety-documentation.md](error-and-safety-documentation.md).
 
-## Newtype Pattern
+## Newtypes
 
-Document invariants and guarantees, not the wrapping itself:
-
-✅ **Good - explains guarantees:**
+State the invariant the wrapper guarantees, since that invariant is the entire reason the newtype exists:
 
 ```rust
-/// Non-empty string validated at construction.
-///
-/// Guaranteed to contain at least one non-whitespace character.
+/// Validated email address (RFC 5322 compliant). Construction fails for
+/// anything that doesn't parse.
 #[derive(Debug, Clone)]
-pub struct NonEmptyString(String);
+pub struct Email(String);
 ```
-
-❌ **Bad - states the obvious:**
-
-```rust
-/// A string wrapper
-pub struct NonEmptyString(String);
-```
-
----
 
 ## Generic Types
 
-Document constraints and behavior, not type parameters themselves:
+Document behavioral guarantees and constraints the type parameters carry, not the parameters themselves:
 
 ```rust
-/// LRU cache with configurable eviction.
-///
-/// Evicts least-recently-used items when capacity is reached.
-/// All operations are O(1) amortized.
+/// LRU cache with configurable eviction. All operations are O(1) amortized.
 pub struct LruCache<K, V>
 where
     K: Hash + Eq,
@@ -165,104 +112,12 @@ where
 }
 ```
 
----
+## When a Type Needs No Comment
 
-## Complex Types
-
-Add sections only when behavior is non-obvious:
-
-```rust
-/// Temporal entity with complete version history.
-///
-/// # Version Storage
-///
-/// Versions are stored as deltas from previous state for space efficiency.
-/// Full reconstruction requires replaying deltas (O(n) where n = versions).
-///
-/// # Querying
-///
-/// - `current()` - O(1), returns latest version
-/// - `at_time(t)` - O(log n + m), binary search + delta replay
-///
-/// For frequent historical queries, use snapshot API instead.
-pub struct TemporalEntity {
-    // fields...
-}
-```
-
----
-
-## What NOT to Document
-
-**Skip documentation for:**
-
-1. **Obvious structs:**
-
-   ```rust
-   struct Point { x: f64, y: f64 }  // No docs needed
-   ```
-
-2. **Standard trait implementations:**
-
-   ```rust
-   impl Debug for MyType { ... }    // No docs needed
-   impl From<A> for B { ... }       // No docs needed
-   ```
-
-3. **Self-explanatory type aliases:**
-
-   ```rust
-   type Result<T> = std::result::Result<T, Error>;  // No docs needed
-   ```
-
-4. **Obvious field names:**
-
-   ```rust
-   struct User {
-       pub id: UserId,     // Don't document
-       pub name: String,   // Don't document
-   }
-   ```
-
----
-
-## When TO Document
-
-Document when:
-
-1. **Non-obvious invariants:**
-
-   ```rust
-   /// Validated email address (RFC 5322 compliant)
-   pub struct Email(String);
-   ```
-
-2. **Performance characteristics:**
-
-   ```rust
-   /// Sorted vector with O(log n) lookup
-   pub struct SortedVec<T>(Vec<T>);
-   ```
-
-3. **Special behavior:**
-
-   ```rust
-   /// Cache that prefetches adjacent keys on miss
-   pub struct PredictiveCache<K, V> { ... }
-   ```
-
-4. **Complex state machines:**
-
-   ```rust
-   /// Connection state. Transitions: Idle -> Active -> Closing -> Closed
-   pub enum ConnectionState { ... }
-   ```
-
----
+A struct or enum needs no doc comment when the name and fields already say everything a reader needs (`struct Point { x: f64, y: f64 }`), when it's a standard trait impl with no special behavior, or when it's a self-explanatory type alias (`type Result<T> = std::result::Result<T, Error>`).
 
 ## Related
 
-- [function-documentation.md](function-documentation.md) - Functions and methods
-- [error-documentation.md](error-documentation.md) - Error types
-- [examples-and-links.md](examples-and-links.md) - Examples and links
-- [SKILL.md](../SKILL.md) - Overview
+- [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
+- [error-and-safety-documentation.md](error-and-safety-documentation.md): documenting error enum variants under `# Errors`, or an `unsafe trait`'s obligations under `# Safety`.
+- [module-documentation.md](module-documentation.md): listing a module's key types.

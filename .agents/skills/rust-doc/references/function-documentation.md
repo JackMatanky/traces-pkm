@@ -1,277 +1,116 @@
 # Function Documentation Guide
 
-Complete guide for documenting functions and methods in Rust.
-
----
-
-## Documentation Structure
-
-Every public function must have a doc comment with:
-
-1. **Single-line summary** - What the function does
-2. **Detailed description** - How it behaves
-3. **Parameter descriptions** - Inline (simple) or explicit (complex)
-4. **Return value** - Described in main text
-5. **Error conditions** - `# Errors` section if fallible
-6. **Examples** - `# Examples` section for public APIs
+Guide for documenting functions and methods.
 
 ---
 
 ## Single-Line Summary
 
-Begin every doc comment with a clear, action-oriented summary:
-
-✅ **Good summaries:**
+Start with a clear, action-oriented sentence naming what the function does, not "This function..." or a bare noun phrase:
 
 ```rust
-/// Retrieves an entity by its UUID.
-/// Creates a new web in the system.
-/// Processes the input elements and returns filtered results.
+/// Validates the payload against the entity's type schema.
+/// Spawns a background task to reindex the affected shard.
+/// Compacts the write-ahead log, discarding entries older than `checkpoint`.
 ```
-
-❌ **Bad summaries:**
-
-```rust
-/// This function gets an entity  // "This function" is redundant
-/// Entity getter                  // Too vague
-/// Gets entity                    // Missing "the" or article
-```
-
----
 
 ## Parameter Documentation
 
-### Simple Functions (0-2 parameters)
-
-Describe parameters **inline** in the main description:
+**0-2 parameters:** describe them inline in the main prose.
 
 ```rust
 /// Processes the `input` elements and returns a filtered collection.
 ///
-/// Takes a collection of `input` elements, applies the `filter_fn` predicate
-/// to each, and returns a [`Vec`] containing only the elements that passed
-/// the filter condition.
+/// Applies `filter_fn` to each element of `input` and returns a [`Vec`]
+/// containing only the elements that passed.
 pub fn process<T, F>(input: &[T], filter_fn: F) -> Vec<T>
 where
     F: Fn(&T) -> bool,
 {
 ```
 
-### Complex Functions (3+ parameters)
-
-Use explicit `# Arguments` section with bullet points:
+**3+ parameters whose names alone don't carry the meaning:** use `# Arguments`.
 
 ```rust
 /// Merges multiple data sources and applies transformation rules.
 ///
-/// This function combines data from various sources, applies the specified
-/// transformation rules, and returns a unified data structure.
-///
 /// # Arguments
 ///
-/// * `sources` - Collection of data sources to merge
-/// * `rules` - Transformation rules to apply during merging
-/// * `options` - Configuration options controlling the merge behavior
-/// * `callback` - Optional function called for each merged item
-/// * `context` - Additional context passed to transformation rules
+/// * `sources`: data sources to merge, applied in order.
+/// * `rules`: transformation rules applied during the merge.
+/// * `options`: configuration controlling merge behavior.
+/// * `callback`: called once per merged item, for progress reporting.
+pub fn merge(
+    sources: &[Source],
+    rules: &[Rule],
+    options: MergeOptions,
+    callback: impl FnMut(&Item),
+) -> MergedData {
 ```
 
----
+## Return Value
 
-## Return Value Documentation
-
-**Always** describe return values in the main description, **not** in a separate section:
-
-✅ **Good:**
+State the return value in the opening prose, immediately after describing the behavior that produces it. A separate `# Returns` section duplicates what the signature already states without adding information.
 
 ```rust
-/// Retrieves an entity by its UUID.
+/// Removes expired sessions from the store.
 ///
-/// Loads the entity from the store and verifies access permissions.
-/// Returns the [`Entity`] object if found and accessible.
-pub fn get_entity(&self, id: EntityId) -> Result<Entity, Report<EntityError>> {
+/// Scans every session older than the configured TTL and deletes it.
+/// Returns the number of sessions removed.
+pub fn purge_expired_sessions(&mut self) -> usize {
 ```
 
-❌ **Bad:**
+## When a Function Needs No Comment
+
+Skip the doc comment on a getter/setter whose name and signature already say everything (`fn id(&self) -> UserId`), and on a private helper whose purpose is obvious from its name and call site. Document a private helper when its purpose isn't obvious from name and signature alone; keep that comment to one or two lines, not a full section treatment.
+
+## Async Functions
+
+Document concurrency behavior only when it affects the caller's contract (which runtime it needs, what runs in parallel, what ordering guarantees hold):
 
 ```rust
-/// Retrieves an entity by its UUID.
-///
-/// # Returns
-///
-/// The entity if found  // Don't use separate Returns section
-```
-
----
-
-## Async Function Documentation
-
-Document concurrency considerations when relevant:
-
-```rust
-/// Processes the entity asynchronously.
-///
-/// Fetches entity data, validates it, and stores the result. The operation
-/// runs concurrently with other async tasks but maintains consistency
-/// guarantees through database transactions.
+/// Processes the entity's attributes concurrently and stores the result.
 ///
 /// # Concurrency
 ///
-/// This function spawns multiple tasks to process entity attributes in
-/// parallel. It should be called from a multi-threaded runtime context.
+/// Spawns one task per attribute; requires a multi-threaded runtime. All
+/// writes commit in a single transaction once every task completes.
 ///
 /// # Errors
 ///
-/// - [`ValidationError`] if entity data is invalid
-/// - [`DatabaseError`] if storage operation fails
-pub async fn process_entity(&self, id: EntityId) -> Result<(), Report<ProcessError>> {
+/// - [`ValidationError`] if any attribute fails validation.
+/// - [`DatabaseError`] if the commit fails.
+pub async fn process_entity(&self, id: EntityId) -> Result<(), ProcessError> {
 ```
 
----
+## Trait Implementations
 
-## When to Skip Documentation
-
-**Skip documentation for:**
-
-- Standard trait implementations (`Debug`, `Display`, `From`, `Into`)
-- Trait-derived methods (unless special behavior)
-- Private helper functions (optional)
-- Obvious getters/setters
+Document a trait impl only when its behavior goes beyond what the trait contract already promises: a non-obvious format, a performance characteristic, a compatibility shim. A `Debug`/`Display`/`From` impl that does exactly what the trait says needs no comment.
 
 ```rust
-// Good: No docs needed
-impl Debug for MyType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // implementation
-    }
-}
-
-// Good: No docs needed
-impl From<MyType> for String {
-    fn from(value: MyType) -> Self {
-        value.to_string()
-    }
-}
-```
-
-**Document trait implementations only when:**
-
-- Special behavior beyond trait definition
-- Performance considerations
-- Different failure modes
-- Additional functionality
-
-```rust
-// Good: Documentation needed for special behavior
-/// Custom serialization supporting legacy v1 format.
-///
-/// This implementation handles both current schema and deprecated v1
-/// for backward compatibility with older data.
+/// Serializes using the current schema, falling back to the deprecated v1
+/// format for records written before the 2024 migration.
 impl Serialize for ComplexType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        // special implementation
-    }
-}
 ```
 
----
+## Performance
 
-## Performance Documentation
-
-Add `# Performance` sections for performance-critical functions:
+Add a `# Performance` section when the complexity or cost isn't what a caller would assume from the signature: variable-sized inputs, hot paths, a cheaper alternative that exists:
 
 ```rust
 /// Retrieves all entities matching the filter.
 ///
 /// # Performance
 ///
-/// This operation has O(n) complexity where n is the number of entities
-/// matching the filter. For large result sets, consider using the streaming
-/// version [`get_entities_stream`] instead.
-///
-/// [`get_entities_stream`]: Self::get_entities_stream
+/// O(n) in the number of matching entities. For large result sets, prefer
+/// the streaming variant [`Self::get_entities_stream`], which runs in O(1)
+/// memory.
 ```
-
-**When to document performance:**
-
-- Processing variable-sized inputs
-- Hot path functions
-- Complex algorithms (non-obvious complexity)
-- Public APIs with performance guarantees
-- Resource-intensive operations
-- Operations with tradeoffs
-
-**When to skip:**
-
-- Obvious characteristics (simple getters/setters)
-- Internal implementation details
-- Standard library usage with no special patterns
-- Non-performance-sensitive code
-
----
-
-## Complete Example
-
-````rust
-/// Validates and creates a new entity in the system.
-///
-/// Takes the provided `properties` and validates them against the entity's
-/// type schema. If validation succeeds, creates a new [`Entity`] with a
-/// generated UUID and stores it in the database. Returns the created entity's
-/// ID.
-///
-/// # Arguments
-///
-/// * `type_id` - The entity type defining the schema
-/// * `properties` - Key-value pairs for entity properties
-/// * `web_id` - The web this entity belongs to
-/// * `account` - Account creating the entity (for permissions)
-///
-/// # Errors
-///
-/// - [`ValidationError`] if properties don't match schema
-/// - [`TypeNotFound`] if entity type doesn't exist
-/// - [`AuthorizationError`] if account lacks permission
-/// - [`DatabaseError`] if storage operation fails
-///
-/// # Examples
-///
-/// ```rust
-/// # use hash_graph::entity::*;
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let properties = vec![
-///     ("name".to_string(), "Example".into()),
-///     ("description".to_string(), "An example entity".into()),
-/// ];
-///
-/// let entity_id = store.create_entity(
-///     type_id,
-///     properties,
-///     web_id,
-///     account,
-/// )?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// [`ValidationError`]: EntityError::Validation
-/// [`TypeNotFound`]: EntityError::TypeNotFound
-/// [`AuthorizationError`]: EntityError::Authorization
-/// [`DatabaseError`]: EntityError::Database
-pub fn create_entity(
-    &mut self,
-    type_id: EntityTypeId,
-    properties: Vec<(String, Value)>,
-    web_id: WebId,
-    account: &Account,
-) -> Result<EntityId, Report<EntityError>> {
-````
-
----
 
 ## Related
 
-- [error-documentation.md](error-documentation.md) - Documenting errors
-- [examples-and-links.md](examples-and-links.md) - Examples and links
-- [type-documentation.md](type-documentation.md) - Types and traits
-- [SKILL.md](../SKILL.md) - Overview
+- [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
+- [type-documentation.md](type-documentation.md): the trait contract a `Trait Implementations` doc comment fulfills.
+- [error-and-safety-documentation.md](error-and-safety-documentation.md): `# Errors`, `# Panics`, `# Safety`.
+- [examples-and-links.md](examples-and-links.md): writing the `# Examples` doctest.

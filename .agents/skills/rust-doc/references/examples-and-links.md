@@ -1,323 +1,104 @@
 # Examples and Intra-Doc Links Guide
 
-Complete guide for writing examples and using intra-doc links in Rust documentation.
+Guide for writing `# Examples` doctests and intra-doc links.
 
 ---
 
 ## Intra-Doc Links
 
-### Why Use Them
-
-Intra-doc links make documentation navigable and catch broken references at compile time.
-
-**Link everything:**
-
-- Types you mention
-- Related functions
-- Standard library types
-- Error variants
-
-### Basic Syntax
+Link every type, function, trait, macro, and error variant a doc comment mentions: it makes the docs navigable and `cargo doc` catches a broken reference at build time.
 
 ```rust
-/// Updates the [`Entity`] using [`UserUpdateStrategy`].
+/// Updates the [`Entity`] using the given [`UpdateStrategy`].
 ///
-/// Returns the updated [`Entity`] or [`EntityError`].
-pub fn update(entity: Entity) -> Result<Entity, EntityError> {
+/// Returns the updated [`Entity`], or an [`EntityError`] on failure.
+pub fn update(entity: Entity, strategy: UpdateStrategy) -> Result<Entity, EntityError> {
 ```
 
-### Linking Patterns
+- Same module: `[LocalType]`.
+- Another module, inline path: `` [`crate::validation::user`] ``.
+- Another module, with a link definition (use when the inline path would clutter the sentence):
 
-**Current module items:**
+  ```rust
+  /// See [`validation::user`] for the validation rules.
+  ///
+  /// [`validation::user`]: crate::validation::user
+  ```
 
-```rust
-/// Uses the [`LocalType`] for processing.
-```
+- Standard library: `` [`Vec`] ``, with a definition when linking a specific method: `` [`swap_remove`]: Vec::swap_remove ``.
+- Never link a private item from a `pub` item's doc comment: it breaks `cargo doc` for anyone not building with `--document-private-items`. Link the smallest visible ancestor instead, or name the concept in prose without a link.
 
-**Other modules:**
+### Disambiguation
 
-```rust
-/// See [`crate::validation::user`] for validation rules.
-```
+When an identifier names more than one kind of item (a struct and a function sharing a name), prefix the link so rustdoc resolves the right one:
 
-With link definition:
+| Target | Syntax |
+|---|---|
+| Function/method | `` [`fn@process`] `` or `` [`process()`] `` |
+| Type (struct/enum) | `` [`type@Process`] `` |
+| Trait | `` [`trait@Processable`] `` |
+| Macro | `` [`macro@process`] `` or `` [`process!`] `` |
+| Module | `` [`mod@parser`] `` |
 
-```rust
-/// See [`validation::user`] for validation rules.
-///
-/// [`validation::user`]: crate::validation::user
-```
+## Writing Doctests
 
-**Standard library:**
-
-```rust
-/// Returns a [`Vec`] of [`HashMap`] entries.
-/// Uses [`swap_remove`] for efficient removal.
-///
-/// [`swap_remove`]: Vec::swap_remove
-```
-
-**Trait methods:**
-
-```rust
-/// Implements [`Iterator::next`] for sequential access.
-```
-
-**Error variants:**
-
-```rust
-/// # Errors
-///
-/// - [`NotFound`] if entity doesn't exist
-///
-/// [`NotFound`]: EntityError::NotFound
-```
-
----
-
-## Writing Examples
-
-### Basic Example Structure
+Every code block under `# Examples` compiles and runs via `cargo test --doc` unless its attribute says otherwise. Keep the visible example minimal; hide setup with a leading `# `:
 
 ````rust
 /// # Examples
 ///
-/// ```rust
-/// use hash_graph::entity::Entity;
-///
-/// let entity = Entity::new(id, properties)?;
+/// ```
+/// # use my_crate::entity::*;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let entity = store.get_entity(id)?;
 /// assert_eq!(entity.id(), id);
-/// # Ok::<(), Box<dyn core::error::Error>>(())
-/// ```
-````
-
-### Example Checklist
-
-- [ ] Imports shown (unless obvious)
-- [ ] Error handling included
-- [ ] Assertions demonstrate behavior
-- [ ] Example compiles
-- [ ] Example is minimal but complete
-
----
-
-## Hiding Setup Code
-
-Use `#` to hide necessary setup from docs display:
-
-````rust
-/// # Examples
-///
-/// ```rust
-/// # use hash_graph::entity::*;
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// # let store = create_test_store();
-/// # let type_id = EntityTypeId::new();
-/// let entity = store.get_entity(type_id)?;
-/// println!("Found: {}", entity.name);
 /// # Ok(())
 /// # }
 /// ```
 ````
 
-**What renders:**
+What renders to the reader:
 
 ```rust
-let entity = store.get_entity(type_id)?;
-println!("Found: {}", entity.name);
+let entity = store.get_entity(id)?;
+assert_eq!(entity.id(), id);
 ```
 
----
+Wrap fallible examples in `# fn main() -> Result<(), Box<dyn std::error::Error>> { ... # Ok(()) # }` once, at the top and bottom of the block, rather than an `expect`/`unwrap` on every line.
 
-## Error Handling in Examples
+### Async Examples
 
-### Using `?` Operator
+Hide the runtime behind a `#` line so the visible example reads as plain `await`ed code:
 
 ````rust
 /// # Examples
 ///
-/// ```rust
-/// let result = fallible_operation()?;
-/// assert!(result.is_valid());
-/// # Ok::<(), Box<dyn core::error::Error>>(())
 /// ```
-````
-
-### Using `expect` for Infallible Cases
-
-````rust
-/// # Examples
-///
-/// ```rust
-/// let config = Config::default();
-/// let value = config.get("key").expect("should have default key");
-/// ```
-````
-
----
-
-## Multi-Step Examples
-
-Show realistic usage patterns:
-
-````rust
-/// # Examples
-///
-/// ```rust
-/// # use hash_graph::entity::*;
+/// # use my_crate::entity::*;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create entity
-/// let mut entity = Entity::new(id, properties)?;
-///
-/// // Update properties
-/// entity.set_property("name", "Updated")?;
-/// entity.set_property("status", "active")?;
-///
-/// // Validate and save
-/// entity.validate()?;
-/// store.save(&entity)?;
-/// # Ok(())
-/// # }
-/// ```
-````
-
----
-
-## Module Documentation
-
-Use `//!` for module-level docs:
-
-````rust
-//! Entity management functionality.
-//!
-//! This module provides types and functions for creating, updating,
-//! and querying entities in the system.
-//!
-//! # Main Types
-//!
-//! - [`Entity`] - Core entity type
-//! - [`EntityId`] - Unique identifier
-//! - [`EntityStore`] - Storage trait
-//!
-//! # Examples
-//!
-//! ```rust
-//! use hash_graph::entity::{Entity, EntityStore};
-//!
-//! let entity = Entity::new(id, properties)?;
-//! store.save(&entity)?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-````
-
----
-
-## Performance Notes
-
-Document performance characteristics when relevant:
-
-```rust
-/// Retrieves all entities matching the filter.
-///
-/// # Performance
-///
-/// This operation has O(n) complexity where n is the total number of
-/// entities. Uses pagination internally with 100-item pages.
-///
-/// For large result sets, consider using [`get_entities_stream`] which
-/// provides incremental results with O(1) memory usage.
-///
-/// [`get_entities_stream`]: Self::get_entities_stream
-```
-
----
-
-## Async Documentation
-
-````rust
-/// Processes entity asynchronously.
-///
-/// # Concurrency
-///
-/// Spawns background tasks for parallel processing. Requires multi-threaded
-/// runtime. Returns when all spawned tasks complete.
-///
-/// # Examples
-///
-/// ```rust
-/// # use hash_graph::entity::*;
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # tokio::runtime::Runtime::new()?.block_on(async {
 /// let result = processor.process_async(entity).await?;
 /// assert!(result.is_processed());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # }).unwrap();
 /// # Ok(())
 /// # }
 /// ```
-pub async fn process_async(&self, entity: Entity) -> Result<ProcessResult, Error> {
 ````
 
----
+### Codeblock Attributes
 
-## Complete Example
+Use the attribute that matches what the example can actually do, instead of forcing every block through the default compile-and-run path:
 
-````rust
-/// Validates and creates entity with type checking.
-///
-/// Takes `properties` and validates them against the entity's type schema.
-/// If validation succeeds, creates a new [`Entity`] with generated UUID.
-///
-/// # Arguments
-///
-/// * `type_id` - Entity type defining the schema
-/// * `properties` - Key-value pairs for entity properties
-/// * `web_id` - Web this entity belongs to
-///
-/// # Errors
-///
-/// - [`ValidationError`] if properties don't match schema
-/// - [`TypeNotFound`] if entity type doesn't exist
-/// - [`DatabaseError`] if storage operation fails
-///
-/// # Examples
-///
-/// ```rust
-/// # use hash_graph::entity::*;
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// # let store = create_test_store();
-/// # let type_id = EntityTypeId::new();
-/// # let web_id = WebId::new();
-/// let properties = vec![
-///     ("name".to_string(), "Example".into()),
-///     ("status".to_string(), "active".into()),
-/// ];
-///
-/// let entity_id = store.create_entity(
-///     type_id,
-///     properties,
-///     web_id,
-/// )?;
-///
-/// let entity = store.get_entity(entity_id)?;
-/// assert_eq!(entity.get_property("name"), Some(&"Example".into()));
-/// # Ok(())
-/// # }
-/// ```
-///
-/// [`ValidationError`]: EntityError::Validation
-/// [`TypeNotFound`]: EntityError::TypeNotFound
-/// [`DatabaseError`]: EntityError::Database
-pub fn create_entity(
-    &mut self,
-    type_id: EntityTypeId,
-    properties: Vec<(String, Value)>,
-    web_id: WebId,
-) -> Result<EntityId, Report<EntityError>> {
-````
-
----
+| Attribute | Behavior | When |
+|---|---|---|
+| default (` ```rust ` or bare ` ``` `) | Compiles and runs. | The default; anything that can actually execute. |
+| ` ```rust,no_run ` | Compiles and lints without executing. | I/O, network calls, or anything with a real side effect. |
+| ` ```rust,compile_fail ` | Asserts the code fails to compile. | Demonstrating a type or lifetime constraint. |
+| ` ```rust,ignore ` | Skipped entirely; gets no compiler coverage. | Platform-specific code or pseudocode. Use sparingly. |
+| ` ```text ` | Not Rust; no compilation. | Prose or literal output shown as plain text. |
 
 ## Related
 
-- [function-documentation.md](function-documentation.md) - Function docs
-- [error-documentation.md](error-documentation.md) - Error docs
-- [type-documentation.md](type-documentation.md) - Type docs
-- [SKILL.md](../SKILL.md) - Overview
+- [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
+- [module-documentation.md](module-documentation.md): the `# Examples` block inside a `//!` module comment.
