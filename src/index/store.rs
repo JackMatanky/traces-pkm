@@ -150,7 +150,7 @@ impl IndexStore {
         not(test),
         expect(dead_code, reason = "part of IndexStore surface")
     )]
-    pub(super) fn check_health(&mut self) -> IndexResult<()> {
+    fn check_health(&mut self) -> IndexResult<()> {
         self.db.check_integrity().map_err(|source| {
             IndexError::from(self.raise_source_error(source))
         })?;
@@ -234,7 +234,7 @@ impl IndexStore {
         not(test),
         expect(dead_code, reason = "part of IndexStore surface")
     )]
-    pub(super) fn load_file_metadata(&self) -> IndexResult<Vec<FileBase>> {
+    fn load_file_metadata(&self) -> IndexResult<Vec<FileBase>> {
         let txn = self.begin_read()?;
         Ok(self.read_table(&txn, FILES, FileBase::path)?)
     }
@@ -303,7 +303,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the transaction cannot be started.
-    pub(super) fn begin_read(&self) -> DbResult<ReadTransaction> {
+    fn begin_read(&self) -> DbResult<ReadTransaction> {
         self.db.begin_read().map_err(|source| self.raise_source_error(source))
     }
 
@@ -324,7 +324,7 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the table cannot be read.
     /// - [`DbError::Deserialize`] if stored bytes are corrupt or incompatible.
-    pub(super) fn read_table<T: DeserializeOwned>(
+    fn read_table<T: DeserializeOwned>(
         &self,
         txn: &ReadTransaction,
         table: TableDefinition<&[u8], &[u8]>,
@@ -374,7 +374,7 @@ impl IndexStore {
     /// - [`Store`] if opening the transaction or table fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(crate) fn read_all_notes(&self) -> IndexResult<Vec<Note>> {
+    pub(super) fn read_all_notes(&self) -> IndexResult<Vec<Note>> {
         let txn = self.begin_read()?;
         Ok(self.read_notes_parallel(&txn)?)
     }
@@ -386,7 +386,7 @@ impl IndexStore {
     /// - [`Store`] if reading fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(crate) fn read_files_and_links(
+    pub(super) fn read_files_and_links(
         &self,
     ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
         let txn = self.begin_read()?;
@@ -429,7 +429,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the table cannot be read.
-    pub(super) fn read_links(
+    fn read_links(
         &self,
         txn: &ReadTransaction,
         table_def: MultimapTableDefinition<&[u8], &[u8]>,
@@ -453,7 +453,7 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the table cannot be opened or written.
     /// - [`DbError::Serialize`] if an item cannot be encoded.
-    pub(super) fn write_table<'a, T: Serialize + 'a>(
+    fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
         table: TableDefinition<&[u8], &[u8]>,
@@ -481,7 +481,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the table cannot be opened or written.
-    pub(super) fn write_links(
+    fn write_links(
         &self,
         txn: &WriteTransaction,
         table_def: MultimapTableDefinition<&[u8], &[u8]>,
@@ -1389,15 +1389,12 @@ impl IndexStore {
 /// Batch point-read table selector: maps a variant to its redb table
 /// definition and structured label for [`read_batch`](IndexStore::read_batch).
 #[derive(Copy, Clone, Debug)]
-pub(super) enum ReadSource {
+enum ReadSource {
     Notes,
     Files,
 }
 
 impl ReadSource {
-    #[expect(dead_code, reason = "used in later index phases")]
-    pub(super) const ALL: [Self; 2] = [Self::Notes, Self::Files];
-
     fn definition(
         self,
     ) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
