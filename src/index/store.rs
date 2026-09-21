@@ -1085,14 +1085,14 @@ impl IndexStore {
         entries: &[FileEntry],
         class_field: &str,
     ) -> IndexResult<()> {
-        let write_txn = self.prepare_write_txn()?;
-        self.write_all_parallel(&write_txn, entries, class_field)?;
-        write_txn.commit().map_err(|source| self.raise_source_error(source))?;
+        let txn = self.prepare_txn()?;
+        self.write_all_parallel(&txn, entries, class_field)?;
+        txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
 
     /// Prepares a no-fsync full-rebuild transaction; see [`Self::write_all`].
-    fn prepare_write_txn(&self) -> DbResult<Box<WriteTransaction>> {
+    fn prepare_txn(&self) -> DbResult<Box<WriteTransaction>> {
         let mut txn = Box::new(self.begin_write()?);
         txn.set_durability(redb::Durability::None)
             .map_err(|source| self.raise_source_error(source))?;
@@ -1195,13 +1195,13 @@ impl IndexStore {
     /// Runs every [`WriteTarget`] concurrently against the same write
     fn write_all_parallel(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         entries: &[FileEntry],
         class_field: &str,
     ) -> IndexResult<()> {
-        WriteTarget::ALL.into_par_iter().try_for_each(|target| {
-            target.run(self, write_txn, entries, class_field)
-        })
+        WriteTarget::ALL
+            .into_par_iter()
+            .try_for_each(|target| target.run(self, txn, entries, class_field))
     }
 
     /// Persists `index` by writing all entries.
@@ -1290,12 +1290,12 @@ impl IndexStore {
         {
             return Ok(());
         }
-        let write_txn = self.prepare_incremental_txn()?;
-        self.apply_diff_deletions(&write_txn, delta.deleted())?;
-        self.apply_diff_upserts(&write_txn, delta.upserted())?;
-        self.apply_modified_notes(&write_txn, modified_notes, class_field)?;
-        self.apply_inlink_delta(&write_txn, inlink_delta)?;
-        write_txn.commit().map_err(|source| self.raise_source_error(source))?;
+        let txn = self.prepare_incremental_txn()?;
+        self.apply_diff_deletions(&txn, delta.deleted())?;
+        self.apply_diff_upserts(&txn, delta.upserted())?;
+        self.apply_modified_notes(&txn, modified_notes, class_field)?;
+        self.apply_inlink_delta(&txn, inlink_delta)?;
+        txn.commit().map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }
 
@@ -1315,26 +1315,26 @@ impl IndexStore {
     /// tag/class indexes.
     fn apply_diff_deletions(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         deleted: &[FileBase],
     ) -> IndexResult<()> {
         if deleted.is_empty() {
             return Ok(());
         }
-        self.delete_files_and_notes(write_txn, deleted)?;
-        self.delete_index_entries_for_paths(write_txn, deleted)?;
+        self.delete_files_and_notes(txn, deleted)?;
+        self.delete_index_entries_for_paths(txn, deleted)?;
         Ok(())
     }
 
     fn delete_files_and_notes(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         deleted: &[FileBase],
     ) -> IndexResult<()> {
-        let mut files_table = write_txn
+        let mut files_table = txn
             .open_table(FILES)
             .map_err(|source| self.raise_source_error(source))?;
-        let mut notes_table = write_txn
+        let mut notes_table = txn
             .open_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
         for del in deleted {
@@ -1351,14 +1351,14 @@ impl IndexStore {
 
     fn delete_index_entries_for_paths(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         deleted: &[FileBase],
     ) -> IndexResult<()> {
         for index in IndexDimension::ALL {
             let mut forward =
-                self.open_multimap_for_write(write_txn, index.forward())?;
+                self.open_multimap_for_write(txn, index.forward())?;
             let mut reverse =
-                self.open_multimap_for_write(write_txn, index.reverse())?;
+                self.open_multimap_for_write(txn, index.reverse())?;
             for del in deleted {
                 let path_bytes = IndexPathKey::new(del.path()).as_bytes();
                 self.clear_index_axis_entry(
@@ -1396,10 +1396,10 @@ impl IndexStore {
 
     fn apply_diff_upserts(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         upserted: &[FileBase],
     ) -> IndexResult<()> {
-        let mut files_table = write_txn
+        let mut files_table = txn
             .open_table(FILES)
             .map_err(|source| self.raise_source_error(source))?;
         let mut buf = Vec::new();
@@ -1412,7 +1412,7 @@ impl IndexStore {
     /// Writes upserted notes' rows, list items, and tag/class index entries.
     fn apply_modified_notes<'a, Notes, Iter>(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         modified_notes: Notes,
         class_field: &str,
     ) -> IndexResult<()>
@@ -1423,17 +1423,17 @@ impl IndexStore {
         if modified_notes().next().is_none() {
             return Ok(());
         }
-        self.upsert_notes(write_txn, modified_notes())?;
-        self.upsert_tags_and_classes(write_txn, modified_notes, class_field)?;
+        self.upsert_notes(txn, modified_notes())?;
+        self.upsert_tags_and_classes(txn, modified_notes, class_field)?;
         Ok(())
     }
 
     fn upsert_notes<'a>(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         modified_notes: impl Iterator<Item = &'a Note>,
     ) -> IndexResult<()> {
-        let mut notes_table = write_txn
+        let mut notes_table = txn
             .open_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
         let mut buf = Vec::new();
@@ -1445,7 +1445,7 @@ impl IndexStore {
 
     fn upsert_tags_and_classes<'a, Notes, Iter>(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         modified_notes: Notes,
         class_field: &str,
     ) -> IndexResult<()>
@@ -1454,12 +1454,7 @@ impl IndexStore {
         Iter: Iterator<Item = &'a Note>,
     {
         for index in IndexDimension::ALL {
-            self.upsert_index_axis(
-                write_txn,
-                index,
-                modified_notes(),
-                class_field,
-            )?;
+            self.upsert_index_axis(txn, index, modified_notes(), class_field)?;
         }
         Ok(())
     }
@@ -1470,15 +1465,13 @@ impl IndexStore {
     /// value count, rather than performing a full-table scan.
     fn upsert_index_axis<'a>(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         index: IndexDimension,
         modified_notes: impl Iterator<Item = &'a Note>,
         class_field: &str,
     ) -> IndexResult<()> {
-        let mut forward =
-            self.open_multimap_for_write(write_txn, index.forward())?;
-        let mut reverse =
-            self.open_multimap_for_write(write_txn, index.reverse())?;
+        let mut forward = self.open_multimap_for_write(txn, index.forward())?;
+        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in modified_notes {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
             self.clear_index_axis_entry(
@@ -1501,13 +1494,13 @@ impl IndexStore {
 
     fn apply_inlink_delta(
         &self,
-        write_txn: &WriteTransaction,
+        txn: &WriteTransaction,
         inlink_delta: &InlinkDelta,
     ) -> IndexResult<()> {
         if inlink_delta.is_empty() {
             return Ok(());
         }
-        let mut links_table = write_txn
+        let mut links_table = txn
             .open_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
         for (target, src) in inlink_delta.deleted() {
@@ -1528,7 +1521,7 @@ impl IndexStore {
     }
 
     /// Begins a write transaction with `redb::Durability::None`, matching
-    /// [`Self::prepare_write_txn`]'s durability posture (see
+    /// [`Self::prepare_txn`]'s durability posture (see
     /// [`Self::write_all`]'s doc).
     fn prepare_incremental_txn(&self) -> DbResult<Box<WriteTransaction>> {
         let mut txn = Box::new(self.begin_write()?);
@@ -1588,11 +1581,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let store = IndexStore::open(temp.path()).expect("open store");
         let files = vec![FileBase::note_for_test("a.md")];
-        let write_txn = store.begin_write().expect("write txn");
+        let txn = store.begin_write().expect("write txn");
         store
-            .write_table(&write_txn, FILES, &files, FileBase::path)
+            .write_table(&txn, FILES, &files, FileBase::path)
             .expect("write files");
-        write_txn.commit().expect("commit");
+        txn.commit().expect("commit");
         let loaded = store.load_file_metadata().expect("load metadata");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded.first().map(FileBase::path), Some(Path::new("a.md")));
@@ -1607,11 +1600,11 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             let store = IndexStore::open(root).expect("open store");
-            let write_txn = store.begin_write().expect("begin write txn");
+            let txn = store.begin_write().expect("begin write txn");
             let wrong_table: TableDefinition<&[u8], &[u8]> =
                 TableDefinition::new("paths_by_tag");
-            write_txn.open_table(wrong_table).expect("open wrong table");
-            write_txn.commit().expect("commit wrong table");
+            txn.open_table(wrong_table).expect("open wrong table");
+            txn.commit().expect("commit wrong table");
 
             let error = store.paths_with_tag("x").expect_err("type mismatch");
             assert!(matches!(
@@ -1632,13 +1625,12 @@ mod tests {
         key: &str,
         value: &[u8],
     ) {
-        let write_txn = store.db.begin_write().expect("begin write txn");
+        let txn = store.db.begin_write().expect("begin write txn");
         {
-            let mut table =
-                write_txn.open_table(table_def).expect("open table");
+            let mut table = txn.open_table(table_def).expect("open table");
             table.insert(key.as_bytes(), value).expect("insert raw bytes");
         }
-        write_txn.commit().expect("commit raw insert");
+        txn.commit().expect("commit raw insert");
     }
 
     /// Builds a sorted inlink-map fixture.
@@ -1665,10 +1657,10 @@ mod tests {
 
     /// Writes an orphanable raw `LINKS` row that `write_all` cannot assemble.
     fn write_raw_link(store: &IndexStore, target: &Path, source: &Path) {
-        let write_txn = store.db.begin_write().expect("begin write txn");
+        let txn = store.db.begin_write().expect("begin write txn");
         {
             let mut table =
-                write_txn.open_multimap_table(LINKS).expect("open links table");
+                txn.open_multimap_table(LINKS).expect("open links table");
             table
                 .insert(
                     IndexPathKey::new(target).as_bytes(),
@@ -1676,7 +1668,7 @@ mod tests {
                 )
                 .expect("insert raw link");
         }
-        write_txn.commit().expect("commit raw link");
+        txn.commit().expect("commit raw link");
     }
 
     /// Builds note `FileBase` fixtures in caller-provided order.
@@ -1688,12 +1680,12 @@ mod tests {
     fn persists_records_as_postcard_bytes_not_toml_text() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let db = IndexStore::open(temp.path()).expect("open db");
-        let write_txn = db.begin_write().expect("begin write");
-        db.write_table(&write_txn, TEST_TABLE, &["hello".to_owned()], |s| {
+        let txn = db.begin_write().expect("begin write");
+        db.write_table(&txn, TEST_TABLE, &["hello".to_owned()], |s| {
             Path::new(s.as_str())
         })
         .expect("write table");
-        write_txn.commit().expect("commit");
+        txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
         let loaded: Vec<String> = db
@@ -1708,15 +1700,14 @@ mod tests {
     fn returns_deserialize_error_when_stored_bytes_are_invalid() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let db = IndexStore::open(temp.path()).expect("open db");
-        let write_txn = db.begin_write().expect("begin write");
+        let txn = db.begin_write().expect("begin write");
         {
-            let mut table =
-                write_txn.open_table(TEST_TABLE).expect("open table");
+            let mut table = txn.open_table(TEST_TABLE).expect("open table");
             table
                 .insert("corrupt.md".as_bytes(), [0xFF, 0xFF].as_slice())
                 .expect("insert corrupt");
         }
-        write_txn.commit().expect("commit");
+        txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
         let result: Result<Vec<String>, DbError> =
@@ -2248,16 +2239,15 @@ mod tests {
                     TableDefinition::new("files");
                 let db =
                     redb::Database::create(&db_path).expect("create raw db");
-                let write_txn = db.begin_write().expect("begin write");
+                let txn = db.begin_write().expect("begin write");
                 {
-                    let mut table = write_txn
-                        .open_table(OLD_FILES)
-                        .expect("open old table");
+                    let mut table =
+                        txn.open_table(OLD_FILES).expect("open old table");
                     table
                         .insert("old.md", [1u8, 2, 3].as_slice())
                         .expect("insert old row");
                 }
-                write_txn.commit().expect("commit old schema");
+                txn.commit().expect("commit old schema");
             }
 
             let store = IndexStore::open(root)

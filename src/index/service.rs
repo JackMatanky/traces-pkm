@@ -445,14 +445,14 @@ mod tests {
 
     fn poison_note_row(root: &Path) {
         let store = IndexStore::open(root).expect("open store");
-        let write_txn = store.begin_write().expect("begin write txn");
+        let txn = store.begin_write().expect("begin write txn");
         {
-            let mut notes = write_txn.open_table(NOTES).expect("open notes");
+            let mut notes = txn.open_table(NOTES).expect("open notes");
             notes
                 .insert(b"a.md".as_slice(), &b"\xff\xff\xff"[..])
                 .expect("poison note row");
         }
-        write_txn.commit().expect("commit poisoned note row");
+        txn.commit().expect("commit poisoned note row");
     }
 
     mod empty_delta {
