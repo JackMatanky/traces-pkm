@@ -66,15 +66,15 @@ const TAGS_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
 const FILE_CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("classes_by_path");
 
-/// Path-derived source index, pairing forward and reverse tables so
+/// Path-derived index dimension, pairing forward and reverse tables so
 /// upsert/delete/rebuild logic is shared for tags and file classes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum SourceIndex {
+enum IndexDimension {
     Tag,
     FileClass,
 }
 
-impl SourceIndex {
+impl IndexDimension {
     const ALL: [Self; 2] = [Self::Tag, Self::FileClass];
 
     /// Forward lookup table (`value -> [paths]`) for tag/class queries.
@@ -97,11 +97,11 @@ impl SourceIndex {
         }
     }
 
-    /// Visits `note`'s current normalized values for this index: lowercased
-    /// tag segments, or lowercased values of the configured File Class key.
+    /// Visits `note`'s current normalized values for this index: lowercased tag
+    /// segments, or lowercased values of the configured File Class key.
     ///
-    /// Uses `with_lowercased` to avoid heap allocations when values are
-    /// already ASCII lowercase.
+    /// Uses `with_lowercased` to avoid heap allocations when values are already
+    /// ASCII lowercase.
     fn visit_values(
         self,
         note: &Note,
@@ -130,8 +130,8 @@ impl SourceIndex {
     }
 }
 
-/// Invokes `f` with a lowercased view of `s`, avoiding an owned allocation
-/// when `s` is already lowercase ASCII.
+/// Invokes `f` with a lowercased view of `s`, avoiding an owned allocation when
+/// `s` is already lowercase ASCII.
 #[inline]
 fn with_lowercased<R>(s: &str, f: impl FnOnce(&str) -> R) -> R {
     if s.is_ascii() && !s.bytes().any(|b| b.is_ascii_uppercase()) {
@@ -191,30 +191,59 @@ impl WriteTarget {
             Self::Links => {
                 store.write_links(txn, LINKS, entries).map_err(IndexError::from)
             }
-            Self::PathsByTags => store.write_source_index_forward(
+            Self::PathsByTags => store.write_index_axis_forward(
                 txn,
-                SourceIndex::Tag,
+                IndexDimension::Tag,
                 entries,
                 class_field,
             ),
-            Self::TagsByPath => store.write_source_index_reverse(
+            Self::TagsByPath => store.write_index_axis_reverse(
                 txn,
-                SourceIndex::Tag,
+                IndexDimension::Tag,
                 entries,
                 class_field,
             ),
-            Self::PathsByFileClasses => store.write_source_index_forward(
+            Self::PathsByFileClasses => store.write_index_axis_forward(
                 txn,
-                SourceIndex::FileClass,
+                IndexDimension::FileClass,
                 entries,
                 class_field,
             ),
-            Self::FileClassesByPath => store.write_source_index_reverse(
+            Self::FileClassesByPath => store.write_index_axis_reverse(
                 txn,
-                SourceIndex::FileClass,
+                IndexDimension::FileClass,
                 entries,
                 class_field,
             ),
+        }
+    }
+}
+
+/// Batch point-read table selector: maps a variant to its redb table
+/// definition and structured label for [`read_batch`](IndexStore::read_batch).
+#[derive(Copy, Clone, Debug)]
+pub(super) enum ReadSource {
+    Notes,
+    Files,
+}
+
+impl ReadSource {
+    #[expect(dead_code, reason = "used in later index phases")]
+    pub(super) const ALL: [Self; 2] = [Self::Notes, Self::Files];
+
+    fn definition(
+        self,
+    ) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+        match self {
+            Self::Notes => NOTES,
+            Self::Files => FILES,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Notes => "note",
+            Self::Files => "file",
         }
     }
 }
@@ -385,40 +414,7 @@ impl IndexStore {
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<Note>> {
-        let txn = self.begin_read()?;
-        let table = match txn.open_table(NOTES) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Vec::new());
-            }
-            Err(source) => return Err(self.raise_source_error(source).into()),
-        };
-        Ok(Self::fetch_notes_batch(&table, paths))
-    }
-
-    /// Point-reads and decodes `paths` from an already-open `NOTES` table,
-    /// skipping corrupted rows with `tracing::warn!`.
-    fn fetch_notes_batch<'a>(
-        table: &redb::ReadOnlyTable<&[u8], &[u8]>,
-        paths: impl IntoIterator<Item = &'a Path>,
-    ) -> Vec<Note> {
-        let mut notes = Vec::new();
-        for path in paths {
-            let key = IndexPathKey::new(path).as_bytes();
-            if let Ok(Some(guard)) = table.get(key) {
-                match decode_row::<Note>(path, guard.value()) {
-                    Ok(note) => notes.push(note),
-                    Err(err) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            %err,
-                            "skipping corrupted note row"
-                        );
-                    }
-                }
-            }
-        }
-        notes
+        self.read_batch(ReadSource::Notes, paths)
     }
 
     /// Point-reads file metadata in one transaction, warning and skipping
@@ -433,31 +429,44 @@ impl IndexStore {
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<FileBase>> {
+        self.read_batch(ReadSource::Files, paths)
+    }
+
+    /// Point-reads and decodes `paths` from `source`, warning and skipping
+    /// corrupted rows.
+    fn read_batch<'a, T: DeserializeOwned>(
+        &self,
+        source: ReadSource,
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> IndexResult<Vec<T>> {
         let txn = self.begin_read()?;
-        let table = match txn.open_table(FILES) {
+        let table = match txn.open_table(source.definition()) {
             Ok(t) => t,
             Err(redb::TableError::TableDoesNotExist(_)) => {
                 return Ok(Vec::new());
             }
-            Err(source) => return Err(self.raise_source_error(source).into()),
+            Err(source) => {
+                return Err(self.raise_source_error(source).into());
+            }
         };
-        let mut files = Vec::new();
+        let mut items = Vec::new();
         for path in paths {
             let key = IndexPathKey::new(path).as_bytes();
             if let Ok(Some(guard)) = table.get(key) {
-                match decode_row::<FileBase>(path, guard.value()) {
-                    Ok(file) => files.push(file),
+                match decode_row::<T>(path, guard.value()) {
+                    Ok(item) => items.push(item),
                     Err(err) => {
                         tracing::warn!(
                             path = %path.display(),
+                            table = source.label(),
                             %err,
-                            "skipping corrupted file row"
+                            "skipping corrupted row"
                         );
                     }
                 }
             }
         }
-        Ok(files)
+        Ok(items)
     }
 
     /// Point-reads inbound-link edges for `targets`.
@@ -1082,7 +1091,7 @@ impl IndexStore {
     }
 
     /// Deletes every table's contents ahead of a full rebuild write. The four
-    /// source-index multimaps are best-effort: absent on a fresh database, so a
+    /// index-axis multimaps are best-effort: absent on a fresh database, so a
     /// delete failure there is not fatal.
     fn clear_tables_for_write(&self, txn: &WriteTransaction) -> DbResult<()> {
         txn.delete_table(FILES)
@@ -1130,12 +1139,12 @@ impl IndexStore {
 
     /// Writes `index`'s forward (`value -> [paths]`) table for a full rebuild.
     ///
-    /// Split from [`Self::write_source_index_reverse`] so [`WriteTarget::ALL`]
+    /// Split from [`Self::write_index_axis_reverse`] so [`WriteTarget::ALL`]
     /// can write distinct redb tables concurrently.
-    fn write_source_index_forward(
+    fn write_index_axis_forward(
         &self,
         txn: &WriteTransaction,
-        index: SourceIndex,
+        index: IndexDimension,
         entries: &[FileEntry],
         class_field: &str,
     ) -> IndexResult<()> {
@@ -1153,10 +1162,10 @@ impl IndexStore {
     }
 
     /// Writes `index`'s reverse (`path -> [values]`) table for a full rebuild.
-    fn write_source_index_reverse(
+    fn write_index_axis_reverse(
         &self,
         txn: &WriteTransaction,
-        index: SourceIndex,
+        index: IndexDimension,
         entries: &[FileEntry],
         class_field: &str,
     ) -> IndexResult<()> {
@@ -1303,7 +1312,7 @@ impl IndexStore {
             return Ok(());
         }
         self.delete_files_and_notes(write_txn, deleted)?;
-        self.delete_tags_and_classes_for_paths(write_txn, deleted)?;
+        self.delete_index_entries_for_paths(write_txn, deleted)?;
         Ok(())
     }
 
@@ -1330,19 +1339,19 @@ impl IndexStore {
         Ok(())
     }
 
-    fn delete_tags_and_classes_for_paths(
+    fn delete_index_entries_for_paths(
         &self,
         write_txn: &WriteTransaction,
         deleted: &[FileBase],
     ) -> IndexResult<()> {
-        for index in SourceIndex::ALL {
+        for index in IndexDimension::ALL {
             let mut forward =
                 self.open_multimap_for_write(write_txn, index.forward())?;
             let mut reverse =
                 self.open_multimap_for_write(write_txn, index.reverse())?;
             for del in deleted {
                 let path_bytes = IndexPathKey::new(del.path()).as_bytes();
-                self.clear_source_index_entry(
+                self.clear_index_axis_entry(
                     &mut forward,
                     &mut reverse,
                     path_bytes,
@@ -1355,10 +1364,10 @@ impl IndexStore {
     /// Removes `path_bytes`' current forward-table values via the reverse
     /// (path-keyed) index, then clears its reverse entry - O(that path's value
     /// count), never a full-table scan. Shared by
-    /// [`Self::delete_tags_and_classes_for_paths`] (path fully removed) and
-    /// [`Self::upsert_source_index`] (values about to be replaced).
+    /// [`Self::delete_index_entries_for_paths`] (path fully removed) and
+    /// [`Self::upsert_index_axis`] (values about to be replaced).
     #[inline(never)]
-    fn clear_source_index_entry(
+    fn clear_index_axis_entry(
         &self,
         forward: &mut BytesMultimapTable<'_>,
         reverse: &mut BytesMultimapTable<'_>,
@@ -1432,8 +1441,8 @@ impl IndexStore {
         Notes: Fn() -> Iter,
         Iter: Iterator<Item = &'a Note>,
     {
-        for index in SourceIndex::ALL {
-            self.upsert_source_index(
+        for index in IndexDimension::ALL {
+            self.upsert_index_axis(
                 write_txn,
                 index,
                 modified_notes(),
@@ -1447,10 +1456,10 @@ impl IndexStore {
     /// table, first removing exactly this note's previous values via the
     /// reverse (path-keyed) table in O(k) time where k is this note's previous
     /// value count, rather than performing a full-table scan.
-    fn upsert_source_index<'a>(
+    fn upsert_index_axis<'a>(
         &self,
         write_txn: &WriteTransaction,
-        index: SourceIndex,
+        index: IndexDimension,
         modified_notes: impl Iterator<Item = &'a Note>,
         class_field: &str,
     ) -> IndexResult<()> {
@@ -1460,7 +1469,7 @@ impl IndexStore {
             self.open_multimap_for_write(write_txn, index.reverse())?;
         for note in modified_notes {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            self.clear_source_index_entry(
+            self.clear_index_axis_entry(
                 &mut forward,
                 &mut reverse,
                 path_bytes,
