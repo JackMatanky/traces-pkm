@@ -27,7 +27,7 @@ its definition:
 pub fn create_web(&mut self) -> Result<WebId, WebError> {
 ```
 
-**Prose**, only when the return type wraps a single opaque error
+**Prose**: only when the return type wraps a single opaque error
 (`Box<dyn std::error::Error>`, `anyhow::Error`) so no variant can be linked:
 
 ```rust
