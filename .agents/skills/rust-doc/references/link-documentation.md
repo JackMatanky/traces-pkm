@@ -6,9 +6,6 @@ Guide for intra-doc links and rustdoc lints.
 
 ## Intra-Doc Links
 
-Wrap every referenced type, function, trait, macro, and error variant in an
-intra-doc link: [`Vec`], [`MyType::method`].
-
 ### Link Definition
 
 Use a link definition below the paragraph when an inline path would clutter the

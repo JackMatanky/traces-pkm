@@ -27,8 +27,9 @@ can actually produce, linked to its definition:
 pub fn create_web(&mut self) -> Result<WebId, WebError> {
 ```
 
-When the function forwards a single opaque error without variants worth
-distinguishing, a one-line prose description replaces the bullet list:
+Default to the bullet list. Prose replaces it only when the return type wraps a
+single opaque error (`Box<dyn std::error::Error>`, `anyhow::Error`) so no
+variant can be linked:
 
 ```rust
 /// Parses JSON configuration from `path`.
