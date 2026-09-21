@@ -42,8 +42,8 @@ When a name refers to both a function and a type, prefix the link with `fn@`,
 ## Lints to Know
 
 - `bare_urls`: wrap URLs in angle brackets or a markdown link.
-- `unescaped_backticks`: balance backtick pairs around inline code; an
-  unmatched one breaks rendering silently.
+- `unescaped_backticks`: balance backtick pairs around inline code; an unmatched
+  one breaks rendering silently.
 - `redundant_explicit_links`: reserve explicit link definitions for genuine
   disambiguation; a path that already resolves needs no definition.
 

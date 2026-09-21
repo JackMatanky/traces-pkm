@@ -7,8 +7,8 @@ Guide for writing runnable `# Examples` doctests.
 ## Writing Doctests
 
 Every code block under `# Examples` runs via `cargo test --doc`. Keep examples
-minimal by hiding setup lines with a leading `#` and escaping literal `#`
-characters with `##` so rustdoc doesn't hide them:
+minimal by hiding setup lines with a leading `#`. A literal `#` escapes as `##`
+so rustdoc doesn't hide it:
 
 ````rust
 /// Creates a new [`Worker`] instance.
@@ -23,8 +23,9 @@ characters with `##` so rustdoc doesn't hide them:
 /// ```
 ````
 
-For fallible examples, wrap them once in a `Result`-returning `main` with `#
-Ok(())` at the bottom rather than sprinkling `expect`/`unwrap` everywhere:
+For fallible examples, wrap them once in a `Result`-returning `main` so
+fallible calls can use `?`, with `# Ok(())` at the bottom, rather than
+sprinkling `expect`/`unwrap` everywhere:
 
 ````rust
 /// # Examples
@@ -69,6 +70,7 @@ code looking like plain awaited calls:
 | `no_run` | Compile only | For examples that perform I/O or have side effects |
 | `default` | Compile and run | For runnable examples that don't need I/O or side effects |
 | `should_panic` | Compile and run, expect panic | For demonstrating documented panics |
+| `compile_fail` | Fail to compile | For proving an API can't be misused (e.g. a missing trait impl) |
 
 ## Related
 

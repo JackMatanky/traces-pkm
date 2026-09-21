@@ -8,7 +8,7 @@ caller, or what an `unsafe trait` demands of its implementer.
 ## `# Safety`
 
 Mandatory on every `unsafe fn` and `unsafe trait`. State exactly what the caller
-must uphold: the C-FAILURE guarantee from the Rust API Guidelines. List
+must uphold: the C-FAILURE guideline from the Rust API Guidelines. List
 concrete, checkable conditions, not a restatement of "this is unsafe":
 
 ```rust
