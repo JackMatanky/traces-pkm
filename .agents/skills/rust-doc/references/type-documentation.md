@@ -38,8 +38,8 @@ comment: the name already carries the meaning.
 
 ## Enums
 
-Document the enum's purpose and what selecting each variant controls, not the
-variant name restated as prose:
+**Enum level:** document the enum's purpose and what selecting each variant
+controls, not the variant name restated as prose:
 
 ```rust
 /// Entity lifecycle state, controlling validation rules and access
@@ -52,8 +52,8 @@ pub enum EntityState {
 }
 ```
 
-Document individual variants when they carry non-obvious behavior, state
-effects, or constraints:
+**Variant level:** document individual variants when they carry non-obvious
+behavior, state effects, or constraints:
 
 ```rust
 pub enum CacheStrategy {

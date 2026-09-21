@@ -6,8 +6,8 @@ Guide for `# Errors`: documenting how an item can fail through its return value.
 
 ## `# Errors`
 
-Every function returning `Result` documents every error variant that call path
-can actually produce, linked to its definition:
+**Bullet list** (default): every variant the call path can produce, linked to
+its definition:
 
 ```rust
 /// Creates a new web in the system.
@@ -27,9 +27,8 @@ can actually produce, linked to its definition:
 pub fn create_web(&mut self) -> Result<WebId, WebError> {
 ```
 
-Default to the bullet list. Prose replaces it only when the return type wraps a
-single opaque error (`Box<dyn std::error::Error>`, `anyhow::Error`) so no
-variant can be linked:
+**Prose**, only when the return type wraps a single opaque error
+(`Box<dyn std::error::Error>`, `anyhow::Error`) so no variant can be linked:
 
 ```rust
 /// Parses JSON configuration from `path`.
