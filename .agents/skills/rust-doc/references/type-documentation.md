@@ -20,7 +20,8 @@ pub struct EntityId {
 
 ### Fields
 
-Document a field when its purpose, unit, default, or constraint isn't visible from its name and type alone:
+Document a field when its purpose, unit, default, or constraint isn't visible
+from its name and type alone:
 
 ```rust
 pub struct EntityQuery {
@@ -32,11 +33,13 @@ pub struct EntityQuery {
 }
 ```
 
-A field like `pub id: UserId` or `pub name: String` on a `User` needs no comment: the name already carries the meaning.
+A field like `pub id: UserId` or `pub name: String` on a `User` needs no
+comment: the name already carries the meaning.
 
 ## Enums
 
-Document the enum's purpose and what selecting each variant controls, not the variant name restated as prose:
+Document the enum's purpose and what selecting each variant controls, not the
+variant name restated as prose:
 
 ```rust
 /// Entity lifecycle state, controlling validation rules and access
@@ -49,7 +52,8 @@ pub enum EntityState {
 }
 ```
 
-Document individual variants when they carry non-obvious behavior, state effects, or constraints:
+Document individual variants when they carry non-obvious behavior, state
+effects, or constraints:
 
 ```rust
 pub enum CacheStrategy {
@@ -66,7 +70,8 @@ pub enum CacheStrategy {
 
 ## Traits
 
-Describe the contract and guarantees the trait promises, not a restatement of each method signature:
+Describe the contract and guarantees the trait promises, not a restatement of
+each method signature:
 
 ```rust
 /// Store for entity data with transactional guarantees: every operation is
@@ -85,11 +90,14 @@ pub trait EntityStore: Send + Sync {
 }
 ```
 
-For an `unsafe trait`, document the implementer's obligation under `# Safety` instead of the contract prose above. See [safety-documentation.md](safety-documentation.md).
+For an `unsafe trait`, document the implementer's obligation under `# Safety`
+instead of the contract prose above. See
+[safety-documentation.md](safety-documentation.md).
 
 ## Newtypes
 
-State the invariant the wrapper guarantees, since that invariant is the entire reason the newtype exists:
+State the invariant the wrapper guarantees, since that invariant is the entire
+reason the newtype exists:
 
 ```rust
 /// Validated email address (RFC 5322 compliant). Construction fails for
@@ -100,7 +108,8 @@ pub struct Email(String);
 
 ## Generic Types
 
-Document behavioral guarantees and constraints the type parameters carry, not the parameters themselves:
+Document behavioral guarantees and constraints the type parameters carry, not
+the parameters themselves:
 
 ```rust
 /// LRU cache with configurable eviction. All operations are O(1) amortized.
@@ -114,13 +123,23 @@ where
 
 ## When a Type Needs No Comment
 
-A struct or enum needs no doc comment when the name and fields already say everything a reader needs (`struct Point { x: f64, y: f64 }`), when it's a standard trait impl with no special behavior, or when it's a self-explanatory type alias (`type Result<T> = std::result::Result<T, Error>`).
+A struct or enum needs no doc comment when the name and fields already say
+everything a reader needs (`struct Point { x: f64, y: f64 }`), when it's a
+standard trait impl with no special behavior, or when it's a self-explanatory
+type alias (`type Result<T> = std::result::Result<T, Error>`).
 
 ## Related
 
-- [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
-- [error-documentation.md](error-documentation.md): documenting error enum variants under `# Errors`.
-- [safety-documentation.md](safety-documentation.md): an `unsafe trait`'s obligations under `# Safety`.
-- [module-documentation.md](module-documentation.md): listing a module's key types.
-- [function-documentation.md](function-documentation.md): documenting a trait's methods (parameters, return values) once the trait's own contract is stated.
-- [examples-and-links.md](examples-and-links.md): disambiguating a link when a type and a trait or function share a name (`type@`, `trait@`).
+- [SKILL.md](../SKILL.md): core rules, template, examples, completion criteria.
+- [error-documentation.md](error-documentation.md): the `# Errors` section on a
+  fallible trait method.
+- [safety-documentation.md](safety-documentation.md): an `unsafe trait`'s
+  obligations under `# Safety`.
+- [module-documentation.md](module-documentation.md): listing a module's key
+  types.
+- [function-documentation.md](function-documentation.md): documenting a trait's
+  methods (parameters, return values) once the trait's own contract is stated.
+- [link-documentation.md](link-documentation.md): disambiguating a link when a
+  type and a trait or function share a name (`type@`, `trait@`).
+- [example-documentation.md](example-documentation.md): writing a type-level
+  `# Examples` doctest.

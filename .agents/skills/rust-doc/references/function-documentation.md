@@ -6,7 +6,8 @@ Guide for documenting functions and methods.
 
 ## Single-Line Summary
 
-Start with a clear, action-oriented sentence naming what the function does, not "This function..." or a bare noun phrase:
+Start with a clear, action-oriented sentence naming what the function does, not
+"This function..." or a bare noun phrase:
 
 ```rust
 /// Validates the payload against the entity's type schema.
@@ -48,7 +49,8 @@ pub fn merge(
 ) -> MergedData {
 ```
 
-**3+ simple parameters with self-evident names:** describe them collectively in prose instead of enumerating each one or forcing an `# Arguments` list.
+**3+ simple parameters with self-evident names:** describe them collectively in
+prose instead of enumerating each one or forcing an `# Arguments` list.
 
 ```rust
 /// Creates a bounding box from its four corner coordinates.
@@ -57,7 +59,9 @@ pub fn from_corners(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> BoundingB
 
 ## Return Value
 
-State the return value in the opening prose, immediately after describing the behavior that produces it. A separate `# Returns` section duplicates what the signature already states without adding information.
+State the return value in the opening prose, immediately after describing the
+behavior that produces it. A separate `# Returns` section duplicates what the
+signature already states without adding information.
 
 ```rust
 /// Removes expired sessions from the store.
@@ -69,11 +73,16 @@ pub fn purge_expired_sessions(&mut self) -> usize {
 
 ## When a Function Needs No Comment
 
-Skip the doc comment on a getter/setter whose name and signature already say everything (`fn id(&self) -> UserId`), and on a private helper whose purpose is obvious from its name and call site. Document a private helper when its purpose isn't obvious from name and signature alone; keep that comment to one or two lines, not a full section treatment.
+Skip the doc comment on a getter/setter whose name and signature already say
+everything (`fn id(&self) -> UserId`), and on a private helper whose purpose is
+obvious from its name and call site. Document a private helper when its purpose
+isn't obvious from name and signature alone; keep that comment to one or two
+lines, not a full section treatment.
 
 ## Async Functions
 
-Document concurrency behavior only when it affects the caller's contract (which runtime it needs, what runs in parallel, what ordering guarantees hold):
+Document concurrency behavior only when it affects the caller's contract (which
+runtime it needs, what runs in parallel, what ordering guarantees hold):
 
 ```rust
 /// Processes the entity's attributes concurrently and stores the result.
@@ -95,7 +104,12 @@ pub async fn process_entity(&self, id: EntityId) -> Result<(), ProcessError> {
 
 ## Trait Implementations
 
-Document a trait impl only when its behavior goes beyond what the trait contract already promises: a non-obvious format, a performance characteristic, a compatibility shim. A `Debug`/`Display`/`From` impl that does exactly what the trait says needs no comment. An impl that exists purely for internal plumbing (`From<PrivateError>` for a public error type, just to enable `?`) has no public contract to document; mark it `#[doc(hidden)]` instead.
+Document a trait impl only when its behavior goes beyond what the trait contract
+already promises: a non-obvious format, a performance characteristic, or a
+compatibility shim. An impl that does exactly what the trait says (`Debug`,
+`Display`, `From`) needs no comment. An impl that exists purely for internal
+plumbing (`From<PrivateError>` on a public error type, just to enable `?`) has
+no public contract to document; mark it `#[doc(hidden)]` instead.
 
 ```rust
 /// Serializes using the current schema, falling back to the deprecated v1
@@ -106,7 +120,9 @@ impl Serialize for ComplexType {
 
 ## Performance
 
-Add a `# Performance` section when the complexity or cost isn't what a caller would assume from the signature: variable-sized inputs, hot paths, a cheaper alternative that exists:
+Add a `# Performance` section when the complexity or cost isn't what a caller
+would assume from the signature: variable-sized inputs, hot paths, a cheaper
+alternative that exists:
 
 ```rust
 /// Retrieves all entities matching the filter.
@@ -120,8 +136,11 @@ Add a `# Performance` section when the complexity or cost isn't what a caller wo
 
 ## Related
 
-- [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
-- [type-documentation.md](type-documentation.md): the trait contract a `Trait Implementations` doc comment fulfills.
-- [error-documentation.md](error-documentation.md): `# Errors`, `# Panics`.
+- [SKILL.md](../SKILL.md): core rules, template, examples, completion criteria.
+- [type-documentation.md](type-documentation.md): the trait contract a `Trait
+  Implementations` doc comment fulfills.
+- [error-documentation.md](error-documentation.md): `# Errors`.
+- [panic-documentation.md](panic-documentation.md): `# Panics`.
 - [safety-documentation.md](safety-documentation.md): `# Safety`.
-- [examples-and-links.md](examples-and-links.md): writing the `# Examples` doctest.
+- [example-documentation.md](example-documentation.md): writing the `# Examples`
+  doctest.
