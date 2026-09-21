@@ -85,7 +85,7 @@ pub trait EntityStore: Send + Sync {
 }
 ```
 
-For an `unsafe trait`, document the implementer's obligation under `# Safety` instead of the contract prose above. See [error-and-safety-documentation.md](error-and-safety-documentation.md).
+For an `unsafe trait`, document the implementer's obligation under `# Safety` instead of the contract prose above. See [safety-documentation.md](safety-documentation.md).
 
 ## Newtypes
 
@@ -119,7 +119,8 @@ A struct or enum needs no doc comment when the name and fields already say every
 ## Related
 
 - [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
-- [error-and-safety-documentation.md](error-and-safety-documentation.md): documenting error enum variants under `# Errors`, or an `unsafe trait`'s obligations under `# Safety`.
+- [error-documentation.md](error-documentation.md): documenting error enum variants under `# Errors`.
+- [safety-documentation.md](safety-documentation.md): an `unsafe trait`'s obligations under `# Safety`.
 - [module-documentation.md](module-documentation.md): listing a module's key types.
 - [function-documentation.md](function-documentation.md): documenting a trait's methods (parameters, return values) once the trait's own contract is stated.
 - [examples-and-links.md](examples-and-links.md): disambiguating a link when a type and a trait or function share a name (`type@`, `trait@`).

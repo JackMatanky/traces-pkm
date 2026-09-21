@@ -1,6 +1,6 @@
-# Error, Panic, and Safety Documentation Guide
+# Error and Panic Documentation Guide
 
-Guide for `# Errors`, `# Panics`, and `# Safety`: the three sections that document how an item can fail or what it demands of its caller.
+Guide for `# Errors` and `# Panics`: the two sections that document how an item can fail through its return value or by panicking.
 
 ---
 
@@ -55,41 +55,9 @@ pub fn to_uuid(&self) -> Uuid {
 
 Prefer returning `Result` over panicking in library code; add `# Panics` only when the panic is unavoidable (an internal invariant, an explicit `assert!` on caller input).
 
-## `# Safety`
+## Combining Errors and Panics
 
-Mandatory on every `unsafe fn` and `unsafe trait`. State exactly what the caller must uphold: the C-FAILURE guarantee from the Rust API Guidelines. List concrete, checkable conditions, not a restatement of "this is unsafe":
-
-```rust
-/// Casts an unaligned byte slice into a typed value pointer.
-///
-/// # Safety
-///
-/// The caller must guarantee:
-///
-/// - `ptr` is aligned to `align_of::<T>()`.
-/// - `ptr` points to a properly initialized `T`.
-/// - The memory at `ptr` is valid for reads of `size_of::<T>()` bytes.
-/// - No concurrent writes touch that memory for the duration of the borrow.
-pub unsafe fn read_cast<T>(ptr: *const u8) -> &'static T {
-```
-
-`# Safety` is a doc comment: it states the caller's obligation before calling. It's distinct from a `// SAFETY:` line (a regular comment, not `///`), placed immediately above each `unsafe { }` block or `unsafe fn` implementation, justifying why that specific use upholds the invariant. An `unsafe fn` needs both: `# Safety` for callers, `// SAFETY:` for whoever verifies the body.
-
-An `unsafe trait` documents the invariant implementers must uphold, at the trait definition, not at each `unsafe impl`:
-
-```rust
-/// # Safety
-///
-/// Implementers must guarantee `as_bytes()` returns a slice valid for the
-/// lifetime of `&self` with no interior mutability observable through it.
-pub unsafe trait StableBytes {
-    fn as_bytes(&self) -> &[u8];
-}
-```
-
-## Combining All Three
-
-Sections that apply stack in the order `# Errors` -> `# Panics` -> `# Safety`:
+`# Errors` comes before `# Panics` when both apply. If the item is also `unsafe`, `# Safety` stacks after both; see [safety-documentation.md](safety-documentation.md).
 
 ```rust
 /// Updates entity properties after validating them against the schema.
@@ -122,6 +90,6 @@ pub fn update_entity(
 ## Related
 
 - [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
-- [function-documentation.md](function-documentation.md): where `# Errors`/`# Panics`/`# Safety` sit relative to the rest of a function's doc comment.
+- [function-documentation.md](function-documentation.md): where `# Errors`/`# Panics` sit relative to the rest of a function's doc comment.
+- [safety-documentation.md](safety-documentation.md): where `# Safety` stacks relative to `# Errors` and `# Panics`.
 - [examples-and-links.md](examples-and-links.md): pairing a `should_panic` doctest with a documented `# Panics` precondition.
-- [type-documentation.md](type-documentation.md): where an `unsafe trait`'s `# Safety` contract is placed relative to the rest of its doc comment.

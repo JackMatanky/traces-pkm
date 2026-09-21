@@ -122,5 +122,6 @@ Add a `# Performance` section when the complexity or cost isn't what a caller wo
 
 - [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
 - [type-documentation.md](type-documentation.md): the trait contract a `Trait Implementations` doc comment fulfills.
-- [error-and-safety-documentation.md](error-and-safety-documentation.md): `# Errors`, `# Panics`, `# Safety`.
+- [error-documentation.md](error-documentation.md): `# Errors`, `# Panics`.
+- [safety-documentation.md](safety-documentation.md): `# Safety`.
 - [examples-and-links.md](examples-and-links.md): writing the `# Examples` doctest.

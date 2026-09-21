@@ -39,6 +39,12 @@ Put `//!` at the top of the file, before attributes, imports, and items:
 
 Give a top-level module a `# Key Types` list only when the module has more than one or two public entry points a reader needs to be pointed at; a single-type module states its purpose in prose and skips the list.
 
+## Module Docs vs. Item Docs
+
+A module comment gives a broad overview: what the module is for, and which types matter enough to name in `# Key Types`. It documents no item's full contract itself. Each public item documents itself completely, so a reader who lands directly on that item's page through search, a direct link, or an IDE hover never has to visit the module page first to learn its errors, panics, or invariants.
+
+A small amount of overlap is fine and expected: restating a type's one-line purpose in the module's `# Key Types` list duplicates nothing that matters. What to avoid: leaning on the module comment to carry an item's `# Errors`, `# Panics`, or `# Safety` contract instead of stating it on the item itself, and copying an item's extended explanation into the module comment instead of linking to it.
+
 ## Re-exports and Visibility
 
 Control how a re-export renders instead of leaving rustdoc's default:
