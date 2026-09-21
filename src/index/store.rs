@@ -1024,12 +1024,13 @@ impl IndexStore {
         let mut table = txn
             .open_table(table)
             .map_err(|source| self.raise_source_error(source))?;
+        let mut buf = Vec::new();
         for item in items {
             let path = path_of(item);
             let key = IndexPathKey::new(path);
-            let value = encode_row(key.path(), item)?;
+            let value = encode_row(key.path(), item, &mut buf)?;
             table
-                .insert(key.as_bytes(), value.as_slice())
+                .insert(key.as_bytes(), value)
                 .map_err(|source| self.raise_source_error(source))?;
         }
         Ok(())
@@ -1401,8 +1402,9 @@ impl IndexStore {
         let mut files_table = write_txn
             .open_table(FILES)
             .map_err(|source| self.raise_source_error(source))?;
+        let mut buf = Vec::new();
         for file in upserted {
-            self.upsert_row(&mut files_table, file.path(), file)?;
+            self.upsert_row(&mut files_table, file.path(), file, &mut buf)?;
         }
         Ok(())
     }
@@ -1434,8 +1436,9 @@ impl IndexStore {
         let mut notes_table = write_txn
             .open_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
+        let mut buf = Vec::new();
         for note in modified_notes {
-            self.upsert_row(&mut notes_table, note.path(), note)?;
+            self.upsert_row(&mut notes_table, note.path(), note, &mut buf)?;
         }
         Ok(())
     }
@@ -1539,11 +1542,12 @@ impl IndexStore {
         table: &mut redb::Table<'_, &[u8], &[u8]>,
         path: &Path,
         value: &T,
+        buf: &mut Vec<u8>,
     ) -> IndexResult<()> {
         let key = IndexPathKey::new(path);
-        let bytes = encode_row(key.path(), value)?;
+        let bytes = encode_row(key.path(), value, buf)?;
         table
-            .insert(key.as_bytes(), bytes.as_slice())
+            .insert(key.as_bytes(), bytes)
             .map_err(|source| self.raise_source_error(source))?;
         Ok(())
     }

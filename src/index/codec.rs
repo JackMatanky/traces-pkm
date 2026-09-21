@@ -5,6 +5,7 @@
 //! fallback for non-Unicode paths read from byte-oriented stores.
 
 use std::{
+    mem,
     path::{Path, PathBuf},
     str,
 };
@@ -13,21 +14,29 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::error::{DbError, DbResult};
 
-/// Serializes `value`, capturing `path` in any storage error.
+/// Serializes `value` into `buf`, reusing its existing allocation.
+///
+/// Clears `buf` before writing. The returned slice borrows from `buf`
+/// and is valid until the next call to this function or `buf.clear()`.
 ///
 /// # Errors
 ///
 /// - [`DbError::Serialize`] when postcard serialization fails
 ///
 /// [`DbError::Serialize`]: DbError::Serialize
-pub(super) fn encode_row<T: Serialize>(
+pub(super) fn encode_row<'a, T: Serialize>(
     path: &Path,
     value: &T,
-) -> DbResult<Vec<u8>> {
-    postcard::to_allocvec(value).map_err(|source| DbError::Serialize {
-        path: path.to_path_buf(),
-        source,
-    })
+    buf: &'a mut Vec<u8>,
+) -> DbResult<&'a [u8]> {
+    buf.clear();
+    *buf = postcard::to_extend(value, mem::take(buf)).map_err(|source| {
+        DbError::Serialize {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    Ok(buf)
 }
 
 /// Deserializes `bytes`, capturing `path` in any storage error.
@@ -183,9 +192,11 @@ mod tests {
                 value: "hello".to_owned(),
             };
 
-            let bytes = encode_row(path, &item).expect("encode succeeds");
+            let mut buf = Vec::new();
+            let bytes =
+                encode_row(path, &item, &mut buf).expect("encode succeeds");
             let decoded: Dummy =
-                postcard::from_bytes(&bytes).expect("decode succeeds");
+                postcard::from_bytes(bytes).expect("decode succeeds");
             assert_eq!(decoded, item);
         }
 
@@ -205,7 +216,8 @@ mod tests {
             }
             let path = std::path::Path::new("test.md");
 
-            let result = encode_row(path, &Failing);
+            let mut buf = Vec::new();
+            let result = encode_row(path, &Failing, &mut buf);
 
             assert!(matches!(result, Err(DbError::Serialize { .. })));
         }
