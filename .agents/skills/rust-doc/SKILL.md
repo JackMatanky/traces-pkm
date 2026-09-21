@@ -27,9 +27,6 @@ idiomatic rustdoc conventions.
   function..."/"This struct...".
 - When a file already has doc comments, audit it for violations of this skill's
   rules before introducing a second convention beside them.
-- Order headers, including only the ones that apply: `# Arguments` ->
-  domain-specific sections (`# Concurrency`, `# Performance`) -> `# Errors` ->
-  `# Panics` -> `# Safety` -> `# Examples`.
 - Document an item when its purpose, invariants, or failure modes aren't obvious
   from its name and signature. Skip derived trait impls (`Debug`, `Clone`,
   `From`) and self-explanatory accessors.
@@ -38,6 +35,10 @@ idiomatic rustdoc conventions.
 
 ## Template
 
+Omit any section that doesn't apply; keep the shown order for the ones that
+do. Domain sections (`# Concurrency`, `# Performance`) sit after the arguments
+list.
+
 ````rust
 /// <summary>
 ///
@@ -45,11 +46,13 @@ idiomatic rustdoc conventions.
 ///
 /// # Arguments
 ///
-/// - `arg1`: <description>
+/// - `name`: <meaning>
 ///
 /// # Errors
 ///
-/// - [`ErrorVariant`] if <condition>
+/// - [`Variant`] if <condition>
+///
+/// [`Variant`]: path::to::Variant
 ///
 /// # Panics
 ///

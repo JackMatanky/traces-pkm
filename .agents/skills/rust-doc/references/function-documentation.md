@@ -37,10 +37,10 @@ where
 ///
 /// # Arguments
 ///
-/// * `sources`: data sources to merge, applied in order.
-/// * `rules`: transformation rules applied during the merge.
-/// * `options`: configuration controlling merge behavior.
-/// * `callback`: called once per merged item, for progress reporting.
+/// - `sources`: data sources to merge, applied in order.
+/// - `rules`: transformation rules applied during the merge.
+/// - `options`: configuration controlling merge behavior.
+/// - `callback`: called once per merged item, for progress reporting.
 pub fn merge(
     sources: &[Source],
     rules: &[Rule],
