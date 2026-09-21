@@ -40,9 +40,9 @@ do. Domain sections (`# Concurrency`, `# Performance`) sit after the arguments
 list.
 
 ````rust
-/// <summary>
+/// <summary: one self-contained sentence>
 ///
-/// <behavior>
+/// <behavior: what it does and returns>
 ///
 /// # Arguments
 ///
@@ -50,22 +50,22 @@ list.
 ///
 /// # Errors
 ///
-/// - [`Variant`] if <condition>
+/// - [`Variant`] if <condition: caller-visible trigger>
 ///
 /// [`Variant`]: path::to::Variant
 ///
 /// # Panics
 ///
-/// Panics if <condition>.
+/// Panics if <condition: exact precondition>.
 ///
 /// # Safety
 ///
-/// <safety>
+/// <safety: checkable caller obligations>
 ///
 /// # Examples
 ///
 /// ```
-/// <code>
+/// <code: runnable doctest>
 /// ```
 ````
 
