@@ -85,7 +85,7 @@ pub async fn process_entity(&self, id: EntityId) -> Result<(), ProcessError> {
 
 ## Trait Implementations
 
-Document a trait impl only when its behavior goes beyond what the trait contract already promises: a non-obvious format, a performance characteristic, a compatibility shim. A `Debug`/`Display`/`From` impl that does exactly what the trait says needs no comment.
+Document a trait impl only when its behavior goes beyond what the trait contract already promises: a non-obvious format, a performance characteristic, a compatibility shim. A `Debug`/`Display`/`From` impl that does exactly what the trait says needs no comment. An impl that exists purely for internal plumbing (`From<PrivateError>` for a public error type, just to enable `?`) has no public contract to document; mark it `#[doc(hidden)]` instead.
 
 ```rust
 /// Serializes using the current schema, falling back to the deprecated v1

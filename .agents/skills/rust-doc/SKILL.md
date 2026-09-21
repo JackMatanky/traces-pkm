@@ -12,9 +12,10 @@ Rules for `//!` and `///` doc comments, following the Rust API Guidelines and id
 - Open every doc comment with one self-contained sentence ending in a period. Rustdoc pulls this sentence alone into search results and the parent module's item table (it truncates at the first blank line), so it must stand on its own without the rest of the comment.
 - Describe the return value and any 0-2 simple parameters directly in the opening prose, in terms of behavior and meaning rather than restating a type the signature already shows. Reserve `# Arguments` for 3+ parameters whose names alone don't carry the meaning.
 - Wrap every referenced type, function, trait, macro, and error variant in an intra-doc link: [`Vec`], [`MyType::method`].
-- Use third-person present tense ("Validates...", "Spawns...") and state behavior and invariants as facts, not "This function...".
+- Write in third-person present tense and active voice ("Validates...", "Spawns...", "The engine validates the token" rather than "The token is validated") and state behavior and invariants as facts, not "This function..."/"This struct...".
 - Order headers, including only the ones that apply: `# Arguments` -> domain-specific sections (`# Concurrency`, `# Performance`) -> `# Errors` -> `# Panics` -> `# Safety` -> `# Examples`.
 - Document an item when its purpose, invariants, or failure modes aren't obvious from its name and signature. Skip derived trait impls (`Debug`, `Clone`, `From`) and self-explanatory accessors.
+- Punctuate with commas, colons, semicolons, or a new sentence; reserve the em dash for a genuine grammatical break, used rarely.
 
 ## Canonical Example
 
@@ -38,11 +39,12 @@ pub fn get_entity(&self, id: EntityId) -> Result<Entity, EntityError> {
 
 Before reporting a documentation pass done, verify:
 
-- [ ] Every public module, struct, enum, variant, field, trait, and function has an opening one-line summary ending with a period.
+- [ ] Every public module, struct, enum, variant, field, trait, and function has an opening one-line summary in third-person present tense, ending with a period.
 - [ ] Every `Result`-returning function documents every error variant it can actually produce under `# Errors`; every function that can panic states the exact precondition under `# Panics`.
 - [ ] Every `unsafe fn`/`unsafe trait` states the caller's exact obligations under `# Safety`.
 - [ ] `cargo test --doc` passes.
 - [ ] `cargo doc --no-deps --all-features` builds with zero new warnings.
+- [ ] `harper-cli lint --user-dict-path dictionary.txt <file>` reports no new findings (wired into `hk`'s pre-commit `validate` step for `.rs`/`.md`).
 
 ## References
 

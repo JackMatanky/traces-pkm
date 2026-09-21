@@ -40,9 +40,17 @@ When an identifier names more than one kind of item (a struct and a function sha
 | Macro | `` [`macro@process`] `` or `` [`process!`] `` |
 | Module | `` [`mod@parser`] `` |
 
+### Lints to Know
+
+`rustdoc` mechanically checks these; a violation is a build warning, not a style opinion.
+
+- Wrap a bare URL in angle brackets (`<https://example.com>`) or a proper markdown link; an unwrapped URL trips the `bare_urls` lint.
+- Balance every pair of backticks around inline code; an unmatched backtick silently breaks the rest of the line's rendering (`unescaped_backticks` lint).
+- Don't add an explicit link target that only repeats what the bare path already resolves to (writing ``[`usize`](usize)`` instead of ``[`usize`]``); rustdoc's `redundant_explicit_links` lint flags exactly this. Reserve explicit targets for genuine disambiguation or cross-module references.
+
 ## Writing Doctests
 
-Every code block under `# Examples` compiles and runs via `cargo test --doc` unless its attribute says otherwise. Keep the visible example minimal; hide setup with a leading `# `:
+Every code block under `# Examples` compiles and runs via `cargo test --doc` unless its attribute says otherwise. Keep the visible example minimal; hide setup with a leading `# `. A doc line that must literally start with `#` (a string literal, a macro pattern) escapes with `##` so rustdoc doesn't hide it.
 
 ````rust
 /// # Examples
@@ -94,6 +102,7 @@ Use the attribute that matches what the example can actually do, instead of forc
 |---|---|---|
 | default (` ```rust ` or bare ` ``` `) | Compiles and runs. | The default; anything that can actually execute. |
 | ` ```rust,no_run ` | Compiles and lints without executing. | I/O, network calls, or anything with a real side effect. |
+| ` ```rust,should_panic ` | Compiles, runs, and asserts the code panics. | Demonstrating a documented `# Panics` precondition. |
 | ` ```rust,compile_fail ` | Asserts the code fails to compile. | Demonstrating a type or lifetime constraint. |
 | ` ```rust,ignore ` | Skipped entirely; gets no compiler coverage. | Platform-specific code or pseudocode. Use sparingly. |
 | ` ```text ` | Not Rust; no compilation. | Prose or literal output shown as plain text. |
