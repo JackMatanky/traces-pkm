@@ -12,8 +12,8 @@ use std::{
 use rayon::prelude::*;
 use redb::{
     MultimapTableDefinition, ReadTransaction, ReadableDatabase as _,
-    ReadableMultimapTable as _, ReadableTable as _, TableDefinition,
-    WriteTransaction,
+    ReadableMultimapTable as _, ReadableTable as _, ReadableTableMetadata as _,
+    TableDefinition, WriteTransaction,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -778,7 +778,16 @@ impl IndexStore {
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
     ) -> DbResult<Vec<T>> {
-        let mut items = Vec::new();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::as_conversions,
+            reason = "u64-to-usize cast is safe on 64-bit targets; table \
+                      length fits usize"
+        )]
+        let capacity =
+            table.len().map_err(|source| self.raise_source_error(source))?
+                as usize;
+        let mut items = Vec::with_capacity(capacity);
         let iter = Box::new(
             table.iter().map_err(|source| self.raise_source_error(source))?,
         );
