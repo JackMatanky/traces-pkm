@@ -25,11 +25,15 @@ concrete, checkable conditions, not a restatement of "this is unsafe":
 pub unsafe fn read_cast<T>(ptr: *const u8) -> &'static T {
 ```
 
-`# Safety` is a doc comment: it states the caller's obligation before calling.
-It's distinct from a `// SAFETY:` line (a regular comment, not `///`), placed
-immediately above each `unsafe { }` block or `unsafe fn` implementation,
-justifying why that specific use upholds the invariant. An `unsafe fn` needs
-both: `# Safety` for callers, `// SAFETY:` for whoever verifies the body.
+`# Safety` is distinct from a `// SAFETY:` line:
+
+| Comment | Form | Placement | Audience |
+| :--- | :--- | :--- | :--- |
+| `/// # Safety` | Doc comment | In the doc comment, above the signature | Callers |
+| `// SAFETY:` | Regular comment (not `///`) | Above each `unsafe { }` block or `unsafe fn` implementation | Whoever verifies the body |
+
+An `unsafe fn` needs both: `# Safety` for callers, `// SAFETY:` for whoever
+verifies the body.
 
 An `unsafe trait` documents the invariant implementers must uphold, at the trait
 definition, not at each `unsafe impl`:

@@ -73,11 +73,12 @@ pub fn purge_expired_sessions(&mut self) -> usize {
 
 ## When a Function Needs No Comment
 
-Skip the doc comment on a getter/setter whose name and signature already say
-everything (`fn id(&self) -> UserId`), and on a private helper whose purpose is
-obvious from its name and call site. Document a private helper when its purpose
-isn't obvious from name and signature alone; keep that comment to one or two
-lines, not a full section treatment.
+- **Skip** the doc comment on a getter/setter whose name and signature already
+  say everything (`fn id(&self) -> UserId`) and on a private helper whose
+  purpose is obvious from its name and call site.
+- **Document** a private helper when its purpose isn't obvious from name and
+  signature alone; keep that comment to one or two lines, not a full section
+  treatment.
 
 ## Async Functions
 

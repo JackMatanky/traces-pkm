@@ -123,10 +123,13 @@ where
 
 ## When a Type Needs No Comment
 
-A struct or enum needs no doc comment when the name and fields already say
-everything a reader needs (`struct Point { x: f64, y: f64 }`), when it's a
-standard trait impl with no special behavior, or when it's a self-explanatory
-type alias (`type Result<T> = std::result::Result<T, Error>`).
+A struct or enum needs no doc comment when:
+
+- The name and fields already say everything a reader needs
+  (`struct Point { x: f64, y: f64 }`).
+- It's a standard trait impl with no special behavior.
+- It's a self-explanatory type alias
+  (`type Result<T> = std::result::Result<T, Error>`).
 
 ## Related
 
