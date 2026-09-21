@@ -48,10 +48,8 @@ module states its purpose in prose and skips the list.
 
 A module comment gives a broad overview: what the module is for, and which types
 matter enough to name in `# Key Types`. It documents no item's full contract
-itself. Each public item documents itself completely, so a reader who lands
-directly on that item's page through search, a direct link, or an IDE hover
-never has to visit the module page first to learn its errors, panics, or
-invariants.
+itself. Each public item documents itself completely, so a reader landing on an
+item's page never needs the module page for its errors, panics, or invariants.
 
 A small amount of overlap is fine and expected: restating a type's one-line
 purpose in the module's `# Key Types` list duplicates nothing that matters. What

@@ -12,13 +12,11 @@ idiomatic rustdoc conventions.
 
 - Open every doc comment with one self-contained sentence ending in a period.
   Rustdoc pulls this sentence alone into search results and the parent module's
-  item table (it truncates at the first blank line), so it must stand on its own
-  without the rest of the comment.
+  item table, truncating at the first blank line.
 - Describe the return value and any 0-2 simple parameters directly in the
   opening prose, in terms of behavior and meaning rather than restating a type
-  the signature already shows. For 3+ parameters, describe them collectively in
-  prose when the names are self-evident, or list them under `# Arguments` when
-  the names alone don't carry the meaning.
+  the signature already shows. For 3+, describe them collectively when the
+  names are self-evident; use `# Arguments` when they aren't.
 - Wrap every referenced type, function, trait, macro, and error variant in an
   intra-doc link: [`Vec`], [`MyType::method`].
 - Write in third-person present tense and active voice ("Validates...",
