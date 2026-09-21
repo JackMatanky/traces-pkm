@@ -25,11 +25,11 @@
 //! # Hash map choice
 //!
 //! [`FxHashMap`] is used instead of [`HashMap`] for internal indexes. The keys
-//! are vault-internal file paths, not attacker-controlled input, so
-//! `SipHash`'s denial-of-service resistance is unnecessary.
-//! [`FxHashMap`] uses a simpler, non-cryptographic hash function that avoids
-//! the per-entry computational overhead of `SipHash`, yielding measurable
-//! gains at the thousand-entry scale typical of vault path indexes.
+//! are vault-internal file paths, not attacker-controlled input, so `SipHash`'s
+//! denial-of-service resistance is unnecessary. [`FxHashMap`] uses a simpler,
+//! non-cryptographic hash function that avoids the per-entry computational
+//! overhead of `SipHash`, yielding measurable gains at the thousand-entry scale
+//! typical of vault path indexes.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -452,9 +452,8 @@ impl<'a> StemIndex<'a> {
 /// Folder-component trie for one Wikilink stem's candidates.
 ///
 /// Answers nearest-candidate queries in `O(depth(from))` by precomputing each
-/// folder's nearest same-stem candidate inside its subtree. The trie's
-/// lifetime and mutability shape keeps [`InlinkMap::new`]'s parallel path
-/// `Sync`.
+/// folder's nearest same-stem candidate inside its subtree. The trie's lifetime
+/// and mutability shape keeps [`InlinkMap::new`]'s parallel path `Sync`.
 struct CandidateTrie<'a> {
     arena: Arena<TrieNode<'a>>,
     by_folder: FxHashMap<&'a Path, NodeId>,

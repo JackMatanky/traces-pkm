@@ -30,8 +30,8 @@ pub struct TaskStatus {
 }
 
 impl TaskStatus {
-    /// Creates a task status from its marker symbol, display name, and
-    /// workflow type.
+    /// Creates a task status from its marker symbol, display name, and workflow
+    /// type.
     #[inline]
     #[must_use]
     pub(crate) fn new<S: Into<String>>(
@@ -102,9 +102,8 @@ impl TaskStatusMap {
     ///
     /// Falls back to an incomplete todo status when no configured status uses
     /// `symbol`, preserving `symbol` on the fallback for diagnostics. Unknown
-    /// markers are never downgraded to plain bullets: this is the custom
-    /// marker scanner's only source of truth for marker-to-status
-    /// resolution.
+    /// markers are never downgraded to plain bullets: this is the custom marker
+    /// scanner's only source of truth for marker-to-status resolution.
     #[inline]
     #[must_use]
     pub(crate) fn resolve(&self, symbol: char) -> TaskStatus {
@@ -136,8 +135,8 @@ impl TaskStatusMap {
         self.names.get(&normalize_name(name))
     }
 
-    /// Returns every status sharing `kind`, e.g. every symbol that resolves
-    /// to [`TaskStatusType::Done`].
+    /// Returns every status sharing `kind`, e.g. every symbol that resolves to
+    /// [`TaskStatusType::Done`].
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -164,9 +163,9 @@ impl TaskStatusMap {
         self.index_status(status);
     }
 
-    /// Removes stale entries left by a previous status sharing the same
-    /// symbol from the `kinds` and `names` maps. No-op if `status.symbol`
-    /// has no predecessor.
+    /// Removes stale entries left by a previous status sharing the same symbol
+    /// from the `kinds` and `names` maps. No-op if `status.symbol` has no
+    /// predecessor.
     fn purge_stale_entries(&mut self, status: &TaskStatus) {
         let Some(previous) = self.symbols.get(&status.symbol) else {
             return;
@@ -232,8 +231,8 @@ pub enum TaskStatusType {
 impl TaskStatusType {
     /// Derives the tri-state completion value for this status type.
     ///
-    /// `Some(true)` for [`Self::Done`], `None` for [`Self::Cancelled`]
-    /// (a terminal state outside the complete/incomplete binary), and
+    /// `Some(true)` for [`Self::Done`], `None` for [`Self::Cancelled`] (a
+    /// terminal state outside the complete/incomplete binary), and
     /// `Some(false)` for every other status type.
     #[inline]
     #[must_use]
@@ -413,11 +412,10 @@ impl TaskPriority {
     /// Returns the numeric severity rank of this priority, `0` (`Lowest`)
     /// through `5` (`Highest`), in declaration order.
     ///
-    /// Sort keys use this rank instead of the [`TaskPriority::as_str`]
-    /// display name so `list.priority` orders by severity, not
-    /// alphabetically. `Normal` resolves to rank `2` but is unreachable from
-    /// parsing (no emoji or name maps to it; items with no priority store
-    /// `None`).
+    /// Sort keys use this rank instead of the [`TaskPriority::as_str`] display
+    /// name so `list.priority` orders by severity, not alphabetically. `Normal`
+    /// resolves to rank `2` but is unreachable from parsing (no emoji or name
+    /// maps to it; items with no priority store `None`).
     #[inline]
     #[must_use]
     pub const fn rank(self) -> u8 {
