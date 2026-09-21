@@ -121,3 +121,5 @@ A struct or enum needs no doc comment when the name and fields already say every
 - [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
 - [error-and-safety-documentation.md](error-and-safety-documentation.md): documenting error enum variants under `# Errors`, or an `unsafe trait`'s obligations under `# Safety`.
 - [module-documentation.md](module-documentation.md): listing a module's key types.
+- [function-documentation.md](function-documentation.md): documenting a trait's methods (parameters, return values) once the trait's own contract is stated.
+- [examples-and-links.md](examples-and-links.md): disambiguating a link when a type and a trait or function share a name (`type@`, `trait@`).

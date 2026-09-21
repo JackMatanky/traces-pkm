@@ -17,12 +17,12 @@ Every function returning `Result` documents every error variant that call path c
 /// # Errors
 ///
 /// - [`AlreadyExists`] if a web with the same ID already exists.
-/// - [`AuthorizationError`] if the account lacks permission.
-/// - [`DatabaseError`] if the write fails.
+/// - [`Authorization`] if the account lacks permission.
+/// - [`Database`] if the write fails.
 ///
 /// [`AlreadyExists`]: WebError::AlreadyExists
-/// [`AuthorizationError`]: WebError::Authorization
-/// [`DatabaseError`]: WebError::Database
+/// [`Authorization`]: WebError::Authorization
+/// [`Database`]: WebError::Database
 pub fn create_web(&mut self) -> Result<WebId, WebError> {
 ```
 
@@ -99,16 +99,16 @@ Sections that apply stack in the order `# Errors` -> `# Panics` -> `# Safety`:
 /// # Errors
 ///
 /// - [`NotFound`] if the entity doesn't exist.
-/// - [`ValidationError`] if `changes` violates the schema.
-/// - [`ConcurrencyError`] if the entity was modified concurrently.
+/// - [`Validation`] if `changes` violates the schema.
+/// - [`Concurrency`] if the entity was modified concurrently.
 ///
 /// # Panics
 ///
-/// Panics if `changes` is empty; call `has_changes()` first.
+/// Panics if `changes` is empty; call [`PropertyChanges::has_changes`] first.
 ///
 /// [`NotFound`]: EntityError::NotFound
-/// [`ValidationError`]: EntityError::Validation
-/// [`ConcurrencyError`]: EntityError::Concurrency
+/// [`Validation`]: EntityError::Validation
+/// [`Concurrency`]: EntityError::Concurrency
 pub fn update_entity(
     &mut self,
     id: EntityId,
@@ -123,3 +123,5 @@ pub fn update_entity(
 
 - [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
 - [function-documentation.md](function-documentation.md): where `# Errors`/`# Panics`/`# Safety` sit relative to the rest of a function's doc comment.
+- [examples-and-links.md](examples-and-links.md): pairing a `should_panic` doctest with a documented `# Panics` precondition.
+- [type-documentation.md](type-documentation.md): where an `unsafe trait`'s `# Safety` contract is placed relative to the rest of its doc comment.

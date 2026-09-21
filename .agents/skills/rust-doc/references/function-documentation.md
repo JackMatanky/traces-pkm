@@ -48,6 +48,13 @@ pub fn merge(
 ) -> MergedData {
 ```
 
+**3+ simple parameters with self-evident names:** describe them collectively in prose instead of enumerating each one or forcing an `# Arguments` list.
+
+```rust
+/// Creates a bounding box from its four corner coordinates.
+pub fn from_corners(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> BoundingBox {
+```
+
 ## Return Value
 
 State the return value in the opening prose, immediately after describing the behavior that produces it. A separate `# Returns` section duplicates what the signature already states without adding information.
@@ -78,8 +85,11 @@ Document concurrency behavior only when it affects the caller's contract (which 
 ///
 /// # Errors
 ///
-/// - [`ValidationError`] if any attribute fails validation.
-/// - [`DatabaseError`] if the commit fails.
+/// - [`Validation`] if any attribute fails validation.
+/// - [`Database`] if the commit fails.
+///
+/// [`Validation`]: ProcessError::Validation
+/// [`Database`]: ProcessError::Database
 pub async fn process_entity(&self, id: EntityId) -> Result<(), ProcessError> {
 ```
 

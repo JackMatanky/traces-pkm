@@ -111,3 +111,5 @@ Use the attribute that matches what the example can actually do, instead of forc
 
 - [SKILL.md](../SKILL.md): core rules, canonical example, completion criteria.
 - [module-documentation.md](module-documentation.md): the `# Examples` block inside a `//!` module comment.
+- [function-documentation.md](function-documentation.md): the function or method a doctest under `# Examples` most often demonstrates.
+- [error-and-safety-documentation.md](error-and-safety-documentation.md): pairing a `should_panic` doctest with a documented `# Panics` precondition.
