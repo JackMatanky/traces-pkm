@@ -21,7 +21,7 @@ use super::{
 use crate::index::IndexerService;
 use crate::{
     ListItem,
-    index::{FileIndex, IndexResult, IndexStore, RowIndex},
+    index::{FileIndex, IndexResult, IndexStore, RowIndex, sort::SortedByPath},
 };
 
 /// Evaluates source expressions against a borrowed [`FileIndex`].
@@ -152,8 +152,11 @@ impl QueryService {
         let notes = notes_result?;
         let matching_files = files_result?;
         let inlinks = inlinks_result?;
-        let index =
-            Arc::new(FileIndex::assemble(matching_files, notes, inlinks));
+        let index = Arc::new(FileIndex::assemble(
+            SortedByPath::assumed_sorted(matching_files),
+            SortedByPath::assumed_sorted(notes),
+            inlinks,
+        ));
         let rows = self.rows_for(mode, &index, &source);
         Ok(QuerySet::new(plan.run(rows)))
     }

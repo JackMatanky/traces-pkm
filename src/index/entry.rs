@@ -3,9 +3,9 @@
 //! [`super::service::IndexerService`] is the only producer; construction flows
 //! through its `build`, `load`, or `refresh` methods.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::inlinks::InlinkMap;
+use super::{inlinks::InlinkMap, sort::SortedByPath};
 use crate::{FileBase, Note};
 
 /// Persisted file records with parsed note metadata and derived inbound links.
@@ -33,8 +33,8 @@ impl FileIndex {
     #[inline]
     #[must_use]
     pub fn assemble(
-        files: Vec<FileBase>,
-        notes: Vec<Note>,
+        files: SortedByPath<FileBase>,
+        notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
         Self::assemble_internal(files, notes, inlinks)
@@ -66,7 +66,11 @@ impl FileIndex {
         }
 
         let inlinks = InlinkMap::new(&parsed, &files);
-        Self::assemble(files, parsed, inlinks)
+        Self::assemble(
+            SortedByPath::assumed_sorted(files),
+            SortedByPath::sorted(parsed),
+            inlinks,
+        )
     }
 
     /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
@@ -74,19 +78,20 @@ impl FileIndex {
     #[inline]
     #[must_use]
     pub(crate) fn assemble(
-        files: Vec<FileBase>,
-        notes: Vec<Note>,
+        files: SortedByPath<FileBase>,
+        notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
         Self::assemble_internal(files, notes, inlinks)
     }
 
     fn assemble_internal(
-        files: Vec<FileBase>,
-        notes: Vec<Note>,
+        files: SortedByPath<FileBase>,
+        notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
-        let mut notes_iter = notes.into_iter().peekable();
+        let files = files.into_vec();
+        let mut notes_iter = notes.into_vec().into_iter().peekable();
         let mut entries = Vec::with_capacity(files.len());
         for file in files {
             while notes_iter
@@ -169,6 +174,12 @@ impl FileEntry {
 
     pub(super) fn set_inlinks(&mut self, inlinks: Box<[PathBuf]>) {
         self.inlinks = inlinks;
+    }
+}
+
+impl crate::path::HasPath for FileEntry {
+    fn path(&self) -> &Path {
+        self.file().path()
     }
 }
 

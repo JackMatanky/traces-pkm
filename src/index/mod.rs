@@ -22,6 +22,7 @@ mod error;
 mod inlinks;
 mod refresh;
 mod service;
+pub mod sort;
 mod store;
 
 #[cfg(not(any(test, feature = "test-utils")))]

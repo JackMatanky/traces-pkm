@@ -24,6 +24,7 @@ use super::{
     entry::FileEntry,
     error::{DbError, DbResult, IndexError, IndexResult},
     inlinks::InlinkMap,
+    sort::SortedByPath,
 };
 use crate::{FileBase, Note, Tag, file::FileFormat};
 
@@ -67,7 +68,8 @@ const FILE_CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
     MultimapTableDefinition::new("classes_by_path");
 
 /// Stored files, path-sorted notes, and target-keyed inlinks loaded together.
-pub(super) type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
+pub(super) type IndexSnapshot =
+    (SortedByPath<FileBase>, SortedByPath<Note>, InlinkMap);
 
 /// Store-owned persistence plan for full rebuilds and incremental refreshes.
 pub(super) struct PersistPlan<'a> {
@@ -295,9 +297,9 @@ impl IndexStore {
         not(test),
         expect(dead_code, reason = "part of IndexStore surface")
     )]
-    fn load_file_metadata(&self) -> IndexResult<Vec<FileBase>> {
+    fn load_file_metadata(&self) -> IndexResult<SortedByPath<FileBase>> {
         let txn = self.begin_read()?;
-        Ok(self.read_table(&txn, FILES, FileBase::path)?)
+        Ok(self.read_table(&txn, FILES)?)
     }
 
     // --- Path queries ------------------------------------------------
@@ -379,21 +381,29 @@ impl IndexStore {
 
     // --- Full-table reads ---------------------------------------------
 
-    /// Deserializes every value in `table` and sorts by `path_of`.
+    /// Deserializes every value in `table`, sorted by path.
     ///
     /// # Errors
     ///
     /// - [`DbError::Redb`] if the table cannot be read.
     /// - [`DbError::Deserialize`] if stored bytes are corrupt or incompatible.
-    fn read_table<T: DeserializeOwned>(
+    fn read_table<T>(
         &self,
         txn: &ReadTransaction,
         table: TableDefinition<&[u8], &[u8]>,
-        path_of: impl Fn(&T) -> &Path,
-    ) -> DbResult<Vec<T>> {
-        let mut items = self.read_table_raw(txn, table)?;
-        items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
-        Ok(items)
+    ) -> DbResult<SortedByPath<T>>
+    where
+        T: DeserializeOwned + crate::path::HasPath,
+    {
+        let table = match txn.open_table(table) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Ok(SortedByPath::assumed_sorted(Vec::new()));
+            }
+            Err(source) => return Err(self.raise_source_error(source)),
+        };
+        let items = self.decode_table_rows(&table)?;
+        Ok(SortedByPath::sorted(items))
     }
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
@@ -406,13 +416,14 @@ impl IndexStore {
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let (files_result, notes_result) = rayon::join(
-            || self.read_table(&txn, FILES, FileBase::path),
-            || self.read_notes_parallel(&txn),
+            || self.read_table(&txn, FILES),
+            || self.collect_note_bytes(&txn),
         );
         let files = files_result?;
         let notes = notes_result?;
         let links = {
             let by_bytes: HashMap<&[u8], &Path> = notes
+                .as_slice()
                 .iter()
                 .map(|note| {
                     (IndexPathKey::new(note.path()).as_bytes(), note.path())
@@ -435,9 +446,9 @@ impl IndexStore {
     /// - [`Store`] if opening the transaction or table fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn read_all_notes(&self) -> IndexResult<Vec<Note>> {
+    pub(super) fn read_all_notes(&self) -> IndexResult<SortedByPath<Note>> {
         let txn = self.begin_read()?;
-        Ok(self.read_notes_parallel(&txn)?)
+        Ok(self.collect_note_bytes(&txn)?)
     }
 
     /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge.
@@ -449,7 +460,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_files_and_links(
         &self,
-    ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
+    ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
         let txn = self.begin_read()?;
         self.read_files_and_links_with(&txn)
     }
@@ -467,9 +478,10 @@ impl IndexStore {
     pub(super) fn read_files_and_links_with(
         &self,
         txn: &ReadTransaction,
-    ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
-        let files = self.read_table(txn, FILES, FileBase::path)?;
+    ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
+        let files: SortedByPath<FileBase> = self.read_table(txn, FILES)?;
         let note_paths_by_bytes: HashMap<Vec<u8>, &Path> = files
+            .as_slice()
             .iter()
             .filter(|file| file.format() == FileFormat::Note)
             .map(|file| {
@@ -917,20 +929,6 @@ impl IndexStore {
         Ok(Box::new(iter))
     }
 
-    /// Deserializes every value in `table`, or an empty `Vec` if the table does
-    /// not exist yet.
-    fn read_table_raw<T: DeserializeOwned>(
-        &self,
-        txn: &ReadTransaction,
-        table: TableDefinition<&[u8], &[u8]>,
-    ) -> DbResult<Vec<T>> {
-        match txn.open_table(table) {
-            Ok(table) => self.decode_table_rows(&table),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(Vec::new()),
-            Err(source) => Err(self.raise_source_error(source)),
-        }
-    }
-
     /// Deserializes every row in an already-open `table`.
     fn decode_table_rows<T: DeserializeOwned>(
         &self,
@@ -956,14 +954,14 @@ impl IndexStore {
     }
 
     /// Reads raw `NOTES` rows before parallel decoding.
-    fn read_notes_parallel(
+    fn collect_note_bytes(
         &self,
         txn: &ReadTransaction,
-    ) -> DbResult<Vec<Note>> {
+    ) -> DbResult<SortedByPath<Note>> {
         let table = match txn.open_table(NOTES) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Vec::new());
+                return Ok(SortedByPath::assumed_sorted(Vec::new()));
             }
             Err(source) => return Err(self.raise_source_error(source)),
         };
@@ -975,24 +973,19 @@ impl IndexStore {
             let path = path_from_bytes(key.value());
             raw_entries.push((path, value.value().to_vec()));
         }
-        Self::decode_raw_notes_parallel(raw_entries)
+        Self::decode_note_bytes(raw_entries)
     }
 
     /// Decodes every raw `(path, bytes)` pair in parallel and returns the
     /// results sorted by path.
-    fn decode_raw_notes_parallel(
+    fn decode_note_bytes(
         raw_entries: Vec<(PathBuf, Vec<u8>)>,
-    ) -> DbResult<Vec<Note>> {
-        let results: Vec<DbResult<Note>> = raw_entries
+    ) -> DbResult<SortedByPath<Note>> {
+        let notes: Vec<Note> = raw_entries
             .into_par_iter()
             .map(|(path, bytes)| decode_row(&path, &bytes))
-            .collect();
-        let mut notes = Vec::with_capacity(results.len());
-        for res in results {
-            notes.push(res?);
-        }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
-        Ok(notes)
+            .collect::<DbResult<Vec<Note>>>()?;
+        Ok(SortedByPath::sorted(notes))
     }
 
     /// Collects an already-open `LINKS` table into an [`InlinkMap`].
@@ -1638,8 +1631,11 @@ mod tests {
             .expect("write files");
         txn.commit().expect("commit");
         let loaded = store.load_file_metadata().expect("load metadata");
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded.first().map(FileBase::path), Some(Path::new("a.md")));
+        assert_eq!(loaded.as_slice().len(), 1);
+        assert_eq!(
+            loaded.as_slice().first().map(FileBase::path),
+            Some(Path::new("a.md"))
+        );
     }
 
     mod multimap_paths {
@@ -1701,8 +1697,11 @@ mod tests {
         notes: &[Note],
         links: &InlinkMap,
     ) -> IndexResult<()> {
-        let index =
-            FileIndex::assemble(files.to_vec(), notes.to_vec(), links.clone());
+        let index = FileIndex::assemble(
+            SortedByPath::sorted(files.to_vec()),
+            SortedByPath::sorted(notes.to_vec()),
+            links.clone(),
+        );
         store.persist(&PersistPlan::rebuild(
             IndexAxes::for_class_field("class"),
             index.entries(),
@@ -1735,19 +1734,15 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let db = IndexStore::open(temp.path()).expect("open db");
         let txn = db.begin_write().expect("begin write");
-        db.write_table(&txn, TEST_TABLE, &["hello".to_owned()], |s| {
-            Path::new(s.as_str())
-        })
-        .expect("write table");
+        let rows = [FileBase::note_for_test("hello.md")];
+        db.write_table(&txn, TEST_TABLE, &rows, FileBase::path)
+            .expect("write table");
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let loaded: Vec<String> = db
-            .read_table(&read_txn, TEST_TABLE, |s: &String| {
-                Path::new(s.as_str())
-            })
-            .expect("read table");
-        assert_eq!(loaded, vec!["hello".to_owned()]);
+        let loaded: SortedByPath<FileBase> =
+            db.read_table(&read_txn, TEST_TABLE).expect("read table");
+        assert_eq!(loaded.as_slice(), rows);
     }
 
     #[test]
@@ -1764,10 +1759,8 @@ mod tests {
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let result: Result<Vec<String>, DbError> =
-            db.read_table(&read_txn, TEST_TABLE, |s: &String| {
-                Path::new(s.as_str())
-            });
+        let result: Result<SortedByPath<FileBase>, DbError> =
+            db.read_table(&read_txn, TEST_TABLE);
 
         assert!(matches!(result, Err(DbError::Deserialize { .. })));
     }
@@ -1806,8 +1799,8 @@ mod tests {
             let (files, notes, links) =
                 store.read_all().expect("load empty database");
 
-            assert_eq!(files.len(), 0);
-            assert_eq!(notes.len(), 0);
+            assert_eq!(files.as_slice().len(), 0);
+            assert_eq!(notes.as_slice().len(), 0);
             assert_eq!(links.len(), 0);
         }
 
@@ -1832,8 +1825,8 @@ mod tests {
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
-            assert_eq!(loaded_notes, notes);
+            assert_eq!(loaded_records.as_slice(), files);
+            assert_eq!(loaded_notes.as_slice(), notes);
         }
 
         #[test]
@@ -1855,8 +1848,8 @@ mod tests {
             .expect("persist");
 
             let (_, loaded_notes, _) = store.read_all().expect("read all");
-            assert_eq!(loaded_notes.len(), 1);
-            let loaded_note = loaded_notes.first().expect("note");
+            assert_eq!(loaded_notes.as_slice().len(), 1);
+            let loaded_note = loaded_notes.as_slice().first().expect("note");
             let items: Vec<_> = loaded_note.list_items().collect();
             assert_eq!(items.len(), 3);
             let rec0 = items.first().expect("first item");
@@ -2124,7 +2117,7 @@ mod tests {
             let (loaded_records, _loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, fresh);
+            assert_eq!(loaded_records.as_slice(), fresh);
         }
 
         #[test]
@@ -2137,8 +2130,8 @@ mod tests {
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records.len(), 0);
-            assert_eq!(loaded_notes.len(), 0);
+            assert_eq!(loaded_records.as_slice().len(), 0);
+            assert_eq!(loaded_notes.as_slice().len(), 0);
         }
 
         #[test]
@@ -2153,7 +2146,7 @@ mod tests {
                 .expect("persist records");
             let (loaded_records, ..) = store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
+            assert_eq!(loaded_records.as_slice(), files);
         }
 
         #[test]
@@ -2174,8 +2167,8 @@ mod tests {
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
-            assert_eq!(loaded_notes, notes);
+            assert_eq!(loaded_records.as_slice(), files);
+            assert_eq!(loaded_notes.as_slice(), notes);
         }
 
         #[test]
@@ -2242,7 +2235,7 @@ mod tests {
 
             let (loaded_records, ..) = store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
+            assert_eq!(loaded_records.as_slice(), files);
         }
     }
 
@@ -2311,8 +2304,8 @@ mod tests {
             let (files, notes, links) =
                 store.read_all().expect("load after recovery");
 
-            assert_eq!(files, []);
-            assert_eq!(notes, []);
+            assert_eq!(files.as_slice(), []);
+            assert_eq!(notes.as_slice(), []);
             assert!(links.is_empty());
         }
     }

@@ -15,6 +15,7 @@ use super::{
     FileIndex, INDEX_FILE, IndexError, IndexResult,
     inlinks::InlinkMap,
     refresh::{RefreshPass, RefreshPlan, RefreshReport},
+    sort::SortedByPath,
     store::{IndexAxes, IndexStore, PersistPlan},
 };
 use crate::{
@@ -77,7 +78,11 @@ impl IndexerService {
         let files = Self::scan(&self.root)?;
         let notes = self.parse_notes(&files)?;
         let inlinks = InlinkMap::new(&notes, &files);
-        Ok(FileIndex::assemble(files, notes, inlinks))
+        Ok(FileIndex::assemble(
+            SortedByPath::assumed_sorted(files),
+            SortedByPath::assumed_sorted(notes),
+            inlinks,
+        ))
     }
 
     /// Refreshes the persisted index and returns a full in-memory
@@ -129,7 +134,11 @@ impl IndexerService {
             } => {
                 let notes = store.read_all_notes()?;
                 Ok((
-                    FileIndex::assemble(files, notes, links),
+                    FileIndex::assemble(
+                        SortedByPath::assumed_sorted(files),
+                        notes,
+                        links,
+                    ),
                     RefreshReport::default(),
                 ))
             }
@@ -1159,7 +1168,12 @@ mod tests {
             store
                 .persist(&PersistPlan::rebuild(
                     IndexAxes::for_class_field("class"),
-                    FileIndex::assemble(files, notes, links).entries(),
+                    FileIndex::assemble(
+                        SortedByPath::sorted(files),
+                        SortedByPath::sorted(notes),
+                        links,
+                    )
+                    .entries(),
                 ))
                 .expect("persist index");
             drop(store);

@@ -18,6 +18,7 @@ use super::{
     delta::{IndexDelta, InlinkDelta},
     inlinks::{self, InlinkMap},
     service::IndexerService,
+    sort::SortedByPath,
     store::{IndexAxes, IndexStore, PersistPlan},
 };
 use crate::{FileBase, Note};
@@ -242,12 +243,12 @@ impl NoteScope {
         self,
         store: &IndexStore,
         deleted: &IndexDelta,
-    ) -> IndexResult<Vec<Note>> {
+    ) -> IndexResult<SortedByPath<Note>> {
         match self {
             Self::Modified(notes) => {
                 merge_refreshed_notes(store, deleted, notes)
             }
-            Self::Complete(notes) => Ok(notes),
+            Self::Complete(notes) => Ok(SortedByPath::assumed_sorted(notes)),
         }
     }
 }
@@ -256,7 +257,7 @@ impl NoteScope {
 pub(super) struct RefreshPlan {
     store: IndexStore,
     current_files: Vec<FileBase>,
-    persisted_files: Vec<FileBase>,
+    persisted_files: SortedByPath<FileBase>,
     prev_links: InlinkMap,
     delta: IndexDelta,
 }
@@ -288,7 +289,8 @@ impl RefreshPlan {
         );
         let (store, persisted_files, prev_links) = opened?;
         let current_files = scanned?;
-        let delta = IndexDelta::compute(&current_files, &persisted_files);
+        let delta =
+            IndexDelta::compute(&current_files, persisted_files.as_slice());
         Ok(Self {
             store,
             current_files,
@@ -351,13 +353,14 @@ impl RefreshPlan {
                     &self.delta,
                     modified_notes,
                 )?;
-                let links = InlinkMap::new(&notes, &self.current_files);
+                let links =
+                    InlinkMap::new(notes.as_slice(), &self.current_files);
                 let inlink_delta =
                     InlinkDelta::compute(&links, &self.prev_links);
                 (
                     InlinkReconciliation {
                         links,
-                        notes: NoteScope::Complete(notes),
+                        notes: NoteScope::Complete(notes.into_vec()),
                     },
                     inlink_delta,
                 )
@@ -380,13 +383,11 @@ impl RefreshPlan {
     /// Only this case leaves link resolution for unedited notes invariant.
     fn is_paths_unchanged(
         delta: &IndexDelta,
-        persisted_files: &[FileBase],
+        persisted_files: &SortedByPath<FileBase>,
     ) -> bool {
         delta.deleted().is_empty()
             && delta.upserted().iter().all(|file| {
-                persisted_files
-                    .binary_search_by(|p| p.path().cmp(file.path()))
-                    .is_ok()
+                persisted_files.binary_search_by_path(file.path()).is_ok()
             })
     }
 
@@ -459,7 +460,11 @@ impl IndexUpdate {
             notes,
         } = self.inlinks;
         let notes = notes.resolve(store, &self.delta)?;
-        Ok(FileIndex::assemble(self.current_files, notes, links))
+        Ok(FileIndex::assemble(
+            SortedByPath::assumed_sorted(self.current_files),
+            notes,
+            links,
+        ))
     }
 }
 
@@ -479,8 +484,8 @@ fn merge_refreshed_notes(
     store: &IndexStore,
     delta: &IndexDelta,
     modified_notes: Vec<Note>,
-) -> IndexResult<Vec<Note>> {
-    let mut all_notes = store.read_all_notes()?;
+) -> IndexResult<SortedByPath<Note>> {
+    let mut all_notes = store.read_all_notes()?.into_vec();
 
     if !delta.deleted().is_empty() {
         let deleted: HashSet<&Path> =
@@ -504,8 +509,7 @@ fn merge_refreshed_notes(
             all_notes.push(new_note);
         }
     }
-    all_notes.sort_by(|a, b| a.path().cmp(b.path()));
-    Ok(all_notes)
+    Ok(SortedByPath::sorted(all_notes))
 }
 
 #[cfg(test)]
