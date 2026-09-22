@@ -404,7 +404,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`Store`] if the table cannot be read or stored bytes are not a valid
-    ///   record.
+    ///   row.
     ///
     /// [`Store`]: IndexError::Store
     fn read_table<T>(
@@ -431,7 +431,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`Store`] if a table cannot be read or stored bytes are not a valid
-    ///   record.
+    ///   row.
     ///
     /// [`Store`]: IndexError::Store
     pub(super) fn read_all(&self) -> IndexResult<StoreSnapshot> {
@@ -489,7 +489,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`Store`] if a table cannot be read or stored bytes are not a valid
-    ///   record.
+    ///   row.
     ///
     /// [`Store`]: IndexError::Store
     pub(super) fn read_files_and_links_with(
@@ -614,7 +614,7 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the transaction fails or a record cannot be encoded.
+    /// - [`Store`] if the transaction fails or a row cannot be encoded.
     ///
     /// [`Store`]: IndexError::Store
     pub(super) fn persist(
@@ -774,8 +774,8 @@ impl IndexStore {
 
     // --- Batch read helpers -------------------------------------------
 
-    /// Point-reads and decodes `paths` from `kind`, warning and skipping
-    /// corrupted rows.
+    /// Point-reads and decodes `paths` from `kind`'s table, warning and
+    /// skipping corrupted rows.
     fn read_batch<'a, T: DeserializeOwned>(
         &self,
         kind: RowKind,
@@ -1815,9 +1815,9 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             write_all_parts(&store, &files, &notes, &InlinkMap::default())
-                .expect("persist records");
+                .expect("persist files and notes");
             let (loaded_files, loaded_notes, _) =
-                store.read_all().expect("load records");
+                store.read_all().expect("load files and notes");
 
             assert_eq!(loaded_files.as_slice(), files);
             assert_eq!(loaded_notes.as_slice(), notes);
@@ -2107,7 +2107,7 @@ mod tests {
             write_all_parts(&store, &fresh, &[], &InlinkMap::default())
                 .expect("persist fresh");
             let (loaded_files, _loaded_notes, _) =
-                store.read_all().expect("load records");
+                store.read_all().expect("load files");
 
             assert_eq!(loaded_files.as_slice(), fresh);
         }
@@ -2118,9 +2118,9 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             write_all_parts(&store, &[], &[], &InlinkMap::default())
-                .expect("persist an empty record set");
+                .expect("persist an empty row set");
             let (loaded_files, loaded_notes, _) =
-                store.read_all().expect("load records");
+                store.read_all().expect("load files and notes");
 
             assert_eq!(loaded_files.as_slice().len(), 0);
             assert_eq!(loaded_notes.as_slice().len(), 0);
@@ -2135,8 +2135,8 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             write_all_parts(&store, &files, &[], &InlinkMap::default())
-                .expect("persist records");
-            let (loaded_files, ..) = store.read_all().expect("load records");
+                .expect("persist files");
+            let (loaded_files, ..) = store.read_all().expect("load files");
 
             assert_eq!(loaded_files.as_slice(), files);
         }
@@ -2155,9 +2155,9 @@ mod tests {
             let notes = vec![note];
 
             write_all_parts(&store, &files, &notes, &InlinkMap::default())
-                .expect("persist records");
+                .expect("persist files and notes");
             let (loaded_files, loaded_notes, _) =
-                store.read_all().expect("load records");
+                store.read_all().expect("load files and notes");
 
             assert_eq!(loaded_files.as_slice(), files);
             assert_eq!(loaded_notes.as_slice(), notes);
@@ -2276,9 +2276,9 @@ mod tests {
             let files = IndexerService::scan(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             write_all_parts(&store, &files, &[], &InlinkMap::default())
-                .expect("persist records");
+                .expect("persist files");
 
-            let (loaded_files, ..) = store.read_all().expect("load records");
+            let (loaded_files, ..) = store.read_all().expect("load files");
 
             assert_eq!(loaded_files.as_slice(), files);
         }
@@ -2432,7 +2432,7 @@ mod tests {
             let files = IndexerService::scan(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             write_all_parts(&store, &files, &[], &InlinkMap::default())
-                .expect("persist records");
+                .expect("persist files");
 
             let read_txn = store.db.begin_read().expect("begin read txn");
             let table = read_txn.open_table(FILES).expect("open table");

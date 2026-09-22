@@ -268,7 +268,7 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Store` if the database's parent directory cannot be
-    ///   created, the transaction fails, or a record cannot be encoded.
+    ///   created, the transaction fails, or a row cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &WorkspaceIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist(&PersistRequest::rebuild(
@@ -283,7 +283,7 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Store` if the database cannot be read or stored bytes are
-    ///   not a valid record.
+    ///   not a valid row.
     #[inline]
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -577,7 +577,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_io_error_when_markdown_file_is_not_utf8() {
+        fn returns_io_error_when_markdown_file_has_invalid_utf8() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("bad.md"), [0xFF, 0xFE])
                 .expect("write invalid utf8");
@@ -614,7 +614,7 @@ mod tests {
         #[cfg(unix)]
         use crate::index::tests::fixtures::PermissionsGuard;
 
-        fn names(files: &[FileBase]) -> Vec<&Path> {
+        fn paths(files: &[FileBase]) -> Vec<&Path> {
             files.iter().map(FileBase::path).collect()
         }
 
@@ -628,7 +628,7 @@ mod tests {
 
             let files = IndexerService::scan(root).expect("scan");
 
-            assert_eq!(names(&files), vec![
+            assert_eq!(paths(&files), vec![
                 Path::new("a.md"),
                 Path::new("b/one.md")
             ]);
@@ -646,7 +646,7 @@ mod tests {
 
             let files = IndexerService::scan(root).expect("scan");
 
-            assert_eq!(names(&files), vec![
+            assert_eq!(paths(&files), vec![
                 Path::new("b/one.md"),
                 Path::new("b.txt")
             ]);
@@ -663,7 +663,7 @@ mod tests {
 
             let files = IndexerService::scan(root).expect("scan");
 
-            assert_eq!(names(&files), vec![Path::new("note.md")]);
+            assert_eq!(paths(&files), vec![Path::new("note.md")]);
         }
 
         #[test]
@@ -677,7 +677,7 @@ mod tests {
 
             let files = IndexerService::scan(root).expect("scan");
 
-            assert_eq!(names(&files), vec![Path::new("note.md")]);
+            assert_eq!(paths(&files), vec![Path::new("note.md")]);
         }
 
         #[cfg(unix)]
@@ -695,11 +695,11 @@ mod tests {
 
             let files = IndexerService::scan(root).expect("scan");
 
-            assert_eq!(names(&files), vec![Path::new("note.md")]);
+            assert_eq!(paths(&files), vec![Path::new("note.md")]);
         }
 
         #[test]
-        fn empty_root_yields_no_records() {
+        fn empty_root_yields_no_files() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             let files = IndexerService::scan(temp.path()).expect("scan");
@@ -766,7 +766,7 @@ mod tests {
         }
 
         #[test]
-        fn round_trips_records() {
+        fn round_trips_entries() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
@@ -1231,7 +1231,7 @@ mod tests {
         }
 
         #[test]
-        fn outlink_change_is_not_backdated_and_recomputes_inlinks() {
+        fn outlink_change_modifies_links_and_recomputes_inlinks() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("old-target.md"), "# Old")
                 .expect("write old target");
@@ -1420,8 +1420,8 @@ mod tests {
                 .expect("delete linker");
 
             let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
-            let outcome = query_pages(&refreshed, &SourceSelector::All);
-            let target = outcome.iter().next().expect("target record");
+            let pages = query_pages(&refreshed, &SourceSelector::All);
+            let target = pages.iter().next().expect("target entry");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
             assert_eq!(target.inlinks(), Vec::<std::path::PathBuf>::new());
@@ -1445,19 +1445,15 @@ mod tests {
                 .expect("repoint linker");
 
             let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
-            let outcome = query_pages(&refreshed, &SourceSelector::All);
-            let old_target = outcome
+            let pages = query_pages(&refreshed, &SourceSelector::All);
+            let old_target = pages
                 .iter()
-                .find(|record| {
-                    record.file().path() == Path::new("old-target.md")
-                })
-                .expect("old target record");
-            let new_target = outcome
+                .find(|entry| entry.file().path() == Path::new("old-target.md"))
+                .expect("old target entry");
+            let new_target = pages
                 .iter()
-                .find(|record| {
-                    record.file().path() == Path::new("new-target.md")
-                })
-                .expect("new target record");
+                .find(|entry| entry.file().path() == Path::new("new-target.md"))
+                .expect("new target entry");
 
             assert_eq!(old_target.inlinks(), Vec::<std::path::PathBuf>::new());
             assert_eq!(new_target.inlinks(), [PathBuf::from("linker.md")]);
@@ -1548,11 +1544,11 @@ mod tests {
                 .expect("persist index");
 
             let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
-            let outcome = query_pages(&refreshed, &SourceSelector::All);
-            let target = outcome
+            let pages = query_pages(&refreshed, &SourceSelector::All);
+            let target = pages
                 .iter()
-                .find(|record| record.file().path() == Path::new("target.md"))
-                .expect("target record");
+                .find(|entry| entry.file().path() == Path::new("target.md"))
+                .expect("target entry");
 
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
         }
@@ -1613,13 +1609,11 @@ mod tests {
                 .expect("delete archive/foo.md");
 
             let refreshed = Arc::new(indexer.refresh().expect("refresh index"));
-            let outcome = query_pages(&refreshed, &SourceSelector::All);
-            let target = outcome
+            let pages = query_pages(&refreshed, &SourceSelector::All);
+            let target = pages
                 .iter()
-                .find(|record| {
-                    record.file().path() == Path::new("notes/foo.md")
-                })
-                .expect("notes/foo.md record");
+                .find(|entry| entry.file().path() == Path::new("notes/foo.md"))
+                .expect("notes/foo.md entry");
 
             assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
         }
