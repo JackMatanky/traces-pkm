@@ -30,7 +30,7 @@ use thiserror::Error;
 ///
 /// Implemented by stored index rows so sorted containers can order and search
 /// by path without knowing the concrete row type.
-pub trait HasPath {
+pub(crate) trait HasPath {
     /// Returns the row's project-relative path.
     fn path(&self) -> &Path;
 }

@@ -1490,7 +1490,7 @@ mod tests {
                     );
                     let inlinks = InlinkMap::from_raw(raw);
                     let stale: HashSet<&Path> =
-                        [Path::new("a.md")].into_iter().collect();
+                        std::iter::once(Path::new("a.md")).collect();
 
                     let patched = inlinks.without_sources(&stale);
 
@@ -1501,7 +1501,7 @@ mod tests {
                 fn removing_one_of_several_sources_keeps_the_target() {
                     let inlinks = graph_with_two_sources();
                     let stale: HashSet<&Path> =
-                        [Path::new("a.md")].into_iter().collect();
+                        std::iter::once(Path::new("a.md")).collect();
 
                     let patched = inlinks.without_sources(&stale);
 
@@ -1514,7 +1514,7 @@ mod tests {
                 fn removing_an_absent_source_keeps_the_graph_unchanged() {
                     let inlinks = graph_with_two_sources();
                     let stale: HashSet<&Path> =
-                        [Path::new("missing.md")].into_iter().collect();
+                        std::iter::once(Path::new("missing.md")).collect();
 
                     let patched = inlinks.without_sources(&stale);
 

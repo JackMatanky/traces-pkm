@@ -197,7 +197,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_true_when_delta_is_empty() {
+        fn reports_a_default_delta_as_empty() {
             let delta = FileDelta::default();
             assert!(delta.is_empty());
         }
@@ -283,7 +283,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_true_when_delta_is_empty() {
+        fn reports_a_default_delta_as_empty() {
             let delta = InlinkDelta::default();
             assert!(delta.is_empty());
         }

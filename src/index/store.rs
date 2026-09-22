@@ -274,10 +274,6 @@ pub(crate) struct IndexStore {
 }
 
 impl IndexStore {
-    // ═══════════════════════════════════════════════════════
-    // Public API — the tour of this module's surface
-    // ═══════════════════════════════════════════════════════
-
     // --- Construction ------------------------------------------------
 
     /// Opens the index database under `root`, creating it if absent.
@@ -351,7 +347,7 @@ impl IndexStore {
 
     /// Point-reads inbound-link edges for `targets`.
     ///
-    /// Performs one indexed `LINKS` lookup per target - O(each target's source
+    /// Performs one indexed `LINKS` lookup per target, O(each target's source
     /// count), not a table scan. Query execution uses this for the handful of
     /// files it matched.
     ///
@@ -421,6 +417,12 @@ impl IndexStore {
     }
 
     /// Returns sorted paths within `folder`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Store`] if opening the database or reading the table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn paths_in_folder(
         &self,
         folder: &Path,
@@ -526,6 +528,16 @@ impl IndexStore {
         }
     }
 
+    /// Maps each path to its encoded key bytes for link-row resolution.
+    fn key_path_map<'a>(
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> HashMap<&'a [u8], &'a Path> {
+        paths
+            .into_iter()
+            .map(|path| (IndexPathKey::new(path).as_bytes(), path))
+            .collect()
+    }
+
     // --- Full-table reads ---------------------------------------------
 
     /// Deserializes every value in `table`, sorted by path.
@@ -571,20 +583,10 @@ impl IndexStore {
         );
         let files: SortedByPath<FileBase> = files_result?;
         let notes = notes_result?;
-        let target_paths: HashMap<&[u8], &Path> = files
-            .as_slice()
-            .iter()
-            .map(|file| {
-                (IndexPathKey::new(file.path()).as_bytes(), file.path())
-            })
-            .collect();
-        let source_paths: HashMap<&[u8], &Path> = notes
-            .as_slice()
-            .iter()
-            .map(|note| {
-                (IndexPathKey::new(note.path()).as_bytes(), note.path())
-            })
-            .collect();
+        let target_paths =
+            Self::key_path_map(files.as_slice().iter().map(FileBase::path));
+        let source_paths =
+            Self::key_path_map(notes.as_slice().iter().map(Note::path));
         let links =
             self.read_links(&txn, LINKS, &target_paths, &source_paths)?;
         Ok((files, notes, links))
@@ -622,8 +624,8 @@ impl IndexStore {
     /// Loads persisted [`FileBase`] rows and inlink edges without decoding
     /// `NOTES`.
     ///
-    /// Used by incremental sync and query execution paths that point-read only
-    /// the matched notes' bodies.
+    /// Used by incremental refresh and query execution paths that point-read
+    /// only the matched notes' bodies.
     ///
     /// # Errors
     ///
@@ -636,21 +638,15 @@ impl IndexStore {
         txn: &ReadTransaction,
     ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
         let files: SortedByPath<FileBase> = self.read_table(txn, FILES)?;
-        let target_paths: HashMap<&[u8], &Path> = files
-            .as_slice()
-            .iter()
-            .map(|file| {
-                (IndexPathKey::new(file.path()).as_bytes(), file.path())
-            })
-            .collect();
-        let source_paths: HashMap<&[u8], &Path> = files
-            .as_slice()
-            .iter()
-            .filter(|file| file.format() == FileFormat::Note)
-            .map(|file| {
-                (IndexPathKey::new(file.path()).as_bytes(), file.path())
-            })
-            .collect();
+        let target_paths =
+            Self::key_path_map(files.as_slice().iter().map(FileBase::path));
+        let source_paths = Self::key_path_map(
+            files
+                .as_slice()
+                .iter()
+                .filter(|file| file.format() == FileFormat::Note)
+                .map(FileBase::path),
+        );
         let links =
             self.read_links(txn, LINKS, &target_paths, &source_paths)?;
         Ok((files, links))
@@ -847,7 +843,7 @@ impl IndexStore {
 
     /// Returns `true` if `error` indicates schema drift or corruption that only
     /// a wipe-and-recreate can fix.
-    pub(super) fn is_rebuild_trigger(error: &redb::TableError) -> bool {
+    fn is_rebuild_trigger(error: &redb::TableError) -> bool {
         matches!(
             error,
             redb::TableError::TableTypeMismatch { .. }
@@ -857,10 +853,6 @@ impl IndexStore {
                 | redb::TableError::Storage(redb::StorageError::Corrupted(_))
         )
     }
-
-    // ═══════════════════════════════════════════════════════
-    // Private helpers below this line
-    // ═══════════════════════════════════════════════════════
 
     // --- Construction helpers -----------------------------------------
 
@@ -1239,16 +1231,16 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if the transaction fails.
-    /// - [`StoreError::Serialize`] if a record cannot be encoded.
+    /// - [`StoreError::Redb`] if the transaction cannot be started or the
+    ///   durability hint cannot be set.
     #[inline(never)]
     fn begin_cache_txn(&self) -> StoreResult<WriteTransaction> {
         self.configure_cache_txn(self.begin_write()?)
     }
 
-    /// Deletes every table's contents ahead of a full rebuild write. The four
-    /// index-axis multimaps are best-effort: absent on a fresh database, so a
-    /// delete failure there is not fatal.
+    /// Deletes every table's contents ahead of a full rebuild write.
+    /// Best-effort tables tolerate only a missing table (the fresh-database
+    /// case); every other storage error propagates.
     fn delete_tables(&self, txn: &WriteTransaction) -> IndexResult<()> {
         for spec in &TABLES {
             spec.delete(self, txn)?;
@@ -1769,6 +1761,36 @@ mod tests {
             let paths =
                 reopened.paths_with_tag("x").expect("paths_with_tag works");
             assert_eq!(paths.as_ref(), <&[PathBuf]>::default());
+        }
+    }
+
+    mod path_queries {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        fn store_with_a_tagged_note(root: &Path) -> IndexStore {
+            let store = IndexStore::open(root).expect("open store");
+            let files = vec![FileBase::note_for_test(Path::new("tagged.md"))];
+            let notes = vec![parse("tagged.md", "# T\n\nTagged #x body.")];
+            write_all_parts(&store, &files, &notes, &InlinkMap::default())
+                .expect("persist tagged note");
+            store
+        }
+
+        #[rstest]
+        #[case::bare("x")]
+        #[case::prefixed("#x")]
+        fn resolves_bare_and_prefixed_tags_to_the_same_paths(
+            #[case] tag: &str,
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = store_with_a_tagged_note(temp.path());
+
+            let paths = store.paths_with_tag(tag).expect("read tag paths");
+
+            assert_eq!(paths.as_ref(), [Path::new("tagged.md")]);
         }
     }
 
@@ -2318,6 +2340,8 @@ mod tests {
             assert_eq!(inlinks_of(normal.as_path()), vec![weird]);
         }
 
+        // macOS filename normalization makes the raw non-Unicode fixture
+        // unreliable; run only where it materializes byte-exactly.
         #[cfg(target_os = "linux")]
         #[test]
         fn scan_preserves_a_non_unicode_path() {
@@ -2476,56 +2500,40 @@ mod tests {
     }
 
     mod is_rebuild_trigger {
+        use rstest::rstest;
+
         use super::*;
 
-        #[test]
-        fn accepts_table_type_mismatch_as_a_trigger() {
-            let error = redb::TableError::TableTypeMismatch {
-                table: "files".to_owned(),
-                key: redb::TypeName::new("&str"),
-                value: redb::TypeName::new("&[u8]"),
-            };
-
+        #[rstest]
+        #[case::table_type_mismatch(redb::TableError::TableTypeMismatch {
+            table: "files".to_owned(),
+            key: redb::TypeName::new("&str"),
+            value: redb::TypeName::new("&[u8]"),
+        })]
+        #[case::type_definition_changed(redb::TableError::TypeDefinitionChanged {
+            name: redb::TypeName::new("&[u8]"),
+            alignment: 1,
+            width: None,
+        })]
+        // `open_table` can surface table-local corruption separately from the
+        // container-level corruption `create_db` handles. A real file fixture
+        // would need redb internals to corrupt one table while preserving
+        // container checksums, so this tests the predicate directly.
+        #[case::storage_corrupted(redb::TableError::Storage(
+            redb::StorageError::Corrupted("simulated".to_owned()),
+        ))]
+        fn triggers_a_rebuild(#[case] error: redb::TableError) {
             assert!(IndexStore::is_rebuild_trigger(&error));
         }
 
-        #[test]
-        fn accepts_type_definition_changed_as_a_trigger() {
-            let error = redb::TableError::TypeDefinitionChanged {
-                name: redb::TypeName::new("&[u8]"),
-                alignment: 1,
-                width: None,
-            };
-
-            assert!(IndexStore::is_rebuild_trigger(&error));
-        }
-
-        #[test]
-        fn accepts_storage_corrupted_as_a_trigger() {
-            // `open_table` can surface table-local corruption separately from
-            // the container-level corruption `create_db` handles. A real file
-            // fixture would need redb internals to corrupt one table while
-            // preserving container checksums, so this tests the predicate
-            // directly.
-            let error = redb::TableError::Storage(
-                redb::StorageError::Corrupted("simulated".to_owned()),
-            );
-
-            assert!(IndexStore::is_rebuild_trigger(&error));
-        }
-
-        #[test]
-        fn rejects_table_does_not_exist() {
-            let error = redb::TableError::TableDoesNotExist("files".to_owned());
-
-            assert!(!IndexStore::is_rebuild_trigger(&error));
-        }
-
-        #[test]
-        fn rejects_a_non_corrupted_storage_error() {
-            let error =
-                redb::TableError::Storage(redb::StorageError::DatabaseClosed);
-
+        #[rstest]
+        #[case::table_does_not_exist(redb::TableError::TableDoesNotExist(
+            "files".to_owned(),
+        ))]
+        #[case::non_corrupted_storage(redb::TableError::Storage(
+            redb::StorageError::DatabaseClosed,
+        ))]
+        fn does_not_trigger_a_rebuild(#[case] error: redb::TableError) {
             assert!(!IndexStore::is_rebuild_trigger(&error));
         }
     }

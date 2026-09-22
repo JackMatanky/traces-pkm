@@ -229,7 +229,7 @@ impl IndexerService {
             upserted = report.upserted(),
             deleted = report.deleted(),
             links_modified = report.links_modified(),
-            "index synced"
+            "index refreshed"
         );
     }
 
@@ -299,10 +299,9 @@ impl IndexerService {
         Ok(WorkspaceIndex::assemble(files, notes, inlinks))
     }
 
-    /// Recursively scans `root` for regular files, skipping `.git`
-    /// directories, the index database, and symlinks. Metadata reads run in
-    /// parallel via `rayon` because each is an independent syscall; results are
-    /// path-sorted.
+    /// Recursively scans `root` for regular files, skipping `.git` directories,
+    /// the index database, and symlinks. Metadata reads run in parallel via
+    /// `rayon` because each is an independent syscall; results are path-sorted.
     ///
     /// # Errors
     ///
@@ -394,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn produces_identical_index_through_parallel_and_serial_rebuilds() {
+    fn produces_identical_entries_through_persist_and_load_roundtrip() {
         let temp = tempfile::tempdir().expect("create temp dir");
         fs::write(
             temp.path().join("a.md"),
@@ -738,26 +737,15 @@ mod tests {
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
         };
 
+        // The fixture materializes a raw non-Unicode filename on disk; macOS
+        // filename normalization makes that unreliable, so this helper and the
+        // tests using it run only on Linux.
         #[cfg(target_os = "linux")]
         fn non_unicode_path() -> PathBuf {
-            #[cfg(unix)]
-            {
-                use std::os::unix::ffi::OsStringExt as _;
-                PathBuf::from(std::ffi::OsString::from_vec(
-                    b"weird\xFF.md".to_vec(),
-                ))
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::ffi::OsStringExt as _;
-                PathBuf::from(std::ffi::OsString::from_wide(&[
-                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
-                ]))
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                PathBuf::from("weird.md")
-            }
+            use std::os::unix::ffi::OsStringExt as _;
+            PathBuf::from(std::ffi::OsString::from_vec(
+                b"weird\xFF.md".to_vec(),
+            ))
         }
 
         /// Seeds three notes and returns the service plus untouched `a`/`c`
@@ -1160,6 +1148,8 @@ mod tests {
             assert_eq!(report, RefreshReport::default());
         }
 
+        // See `non_unicode_path`: macOS normalization makes the on-disk
+        // fixture unreliable, so this runs only on Linux.
         #[cfg(target_os = "linux")]
         #[test]
         fn preserves_byte_exact_non_unicode_inlinks_on_unchanged_refresh() {

@@ -16,8 +16,8 @@ use super::error::{StoreError, StoreResult};
 
 /// Serializes `value` into `buf`, reusing its existing allocation.
 ///
-/// Clears `buf` before writing. The returned slice borrows from `buf`
-/// and is valid until the next call to this function or `buf.clear()`.
+/// Clears `buf` before writing. The returned slice borrows from `buf` and is
+/// valid until the next call to this function or `buf.clear()`.
 ///
 /// # Errors
 ///
@@ -44,8 +44,6 @@ pub(super) fn encode_row<'a, T: Serialize>(
 /// # Errors
 ///
 /// - [`StoreError::Deserialize`] when postcard deserialization fails
-///
-/// [`StoreError::Deserialize`]: StoreError::Deserialize
 pub(super) fn decode_row<T: DeserializeOwned>(
     path: &Path,
     bytes: &[u8],
@@ -59,8 +57,8 @@ pub(super) fn decode_row<T: DeserializeOwned>(
 /// Borrowed redb key carrying a project-relative path's native bytes.
 ///
 /// Keys are written with [`Path::as_encoded_bytes`] and read back through the
-/// lossy [`path_from_bytes`] fallback; serde row payloads go through
-/// [`path`] instead.
+/// lossy [`path_from_bytes`] fallback; serde row payloads go through [`path`]
+/// instead.
 ///
 /// Wraps the path rather than the encoded bytes: error construction and row
 /// payloads borrow the same `&Path`, and converting bytes back to an `OsStr`
@@ -88,11 +86,9 @@ impl<'a> IndexPathKey<'a> {
 /// Builds a path from byte-oriented store data.
 ///
 /// Tries UTF-8 first and falls back to lossy decoding for non-Unicode paths.
-/// The lossy fallback affects only refresh-diff link paths:
-/// [`IndexStore::read_all`] resolves stored link bytes against loaded notes
-/// for byte-exact query output.
-///
-/// [`IndexStore::read_all`]: super::store::IndexStore::read_all
+/// The fallback can only surface in row-key decode context and query-output
+/// paths (tag, class, and folder lookups); stored `LINKS` edges resolve
+/// byte-exactly through loaded rows instead, never through this fallback.
 pub(super) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     str::from_utf8(bytes).map_or_else(
         |_| PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),

@@ -8,10 +8,7 @@
 //!
 //! [`IndexerService::refresh`]: super::service::IndexerService::refresh
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
+use std::{cmp::Ordering, collections::HashSet, path::Path};
 
 use super::{
     IndexError, IndexResult, WorkspaceIndex,
@@ -242,12 +239,10 @@ impl NoteScope {
     pub(super) fn resolve(
         self,
         store: &IndexStore,
-        deleted: &FileDelta,
+        delta: &FileDelta,
     ) -> IndexResult<SortedByPath<Note>> {
         match self {
-            Self::Modified(notes) => {
-                merge_refreshed_notes(store, deleted, notes)
-            }
+            Self::Modified(notes) => merge_refreshed_notes(store, delta, notes),
             Self::Complete(notes) => Ok(SortedByPath::assumed_sorted(notes)),
         }
     }
@@ -472,8 +467,9 @@ impl IndexUpdate {
 /// Consumes `modified_notes`, moving rather than cloning each note.
 ///
 /// Bulk-reads all persisted notes because this fallback needs the full note
-/// set. Path-indexed deletes and replacements avoid an O((deleted + modified)
-/// × n) scan over the persisted note count n.
+/// set. Deleted paths are filtered first, then one merge pass over the two
+/// path-ascending inputs folds modified notes in place of persisted rows, so
+/// the result is born sorted.
 ///
 /// # Errors
 ///
@@ -491,23 +487,30 @@ fn merge_refreshed_notes(
         all_notes.retain(|n| !deleted.contains(n.path()));
     }
 
-    let mut index_of_path: HashMap<PathBuf, usize> = all_notes
-        .iter()
-        .enumerate()
-        .map(|(idx, note)| (note.path().to_path_buf(), idx))
-        .collect();
-    for new_note in modified_notes {
-        if let Some(&idx) = index_of_path.get(new_note.path())
-            && let Some(target) = all_notes.get_mut(idx)
-        {
-            *target = new_note;
-        } else {
-            index_of_path
-                .insert(new_note.path().to_path_buf(), all_notes.len());
-            all_notes.push(new_note);
+    // Both inputs are path-ascending: `read_all_notes` returns sorted rows and
+    // `parse_notes` preserves the sorted upsert order, so one merge pass
+    // produces the union with modified notes replacing persisted rows.
+    let mut merged = Vec::with_capacity(
+        all_notes.len().saturating_add(modified_notes.len()),
+    );
+    let mut persisted = all_notes.into_iter().peekable();
+    let mut modified = modified_notes.into_iter().peekable();
+    loop {
+        match (persisted.peek(), modified.peek()) {
+            (None, None) => break,
+            (Some(_), None) => merged.extend(persisted.by_ref()),
+            (None, Some(_)) => merged.extend(modified.by_ref()),
+            (Some(old), Some(new)) => match old.path().cmp(new.path()) {
+                Ordering::Less => merged.extend(persisted.by_ref().take(1)),
+                Ordering::Greater => merged.extend(modified.by_ref().take(1)),
+                Ordering::Equal => {
+                    persisted.next();
+                    merged.extend(modified.by_ref().take(1));
+                }
+            },
         }
     }
-    Ok(SortedByPath::sorted(all_notes))
+    Ok(SortedByPath::assumed_sorted(merged))
 }
 
 #[cfg(test)]
