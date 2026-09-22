@@ -471,7 +471,7 @@ flag "-t --test" {
   help "Smoke-test benchmarks: run each once without measurement"
 }
 arg "[args]" var=#true {
-  help "Extra arguments forwarded to cargo bench"
+  help "Extra arguments forwarded to cargo bench (to bench:model with --model)"
   long_help """
   Forwarded to `cargo bench`. Examples:
 
@@ -479,6 +479,10 @@ arg "[args]" var=#true {
     mise run bench -f note_parsing -- fast  # narrow, then criterion's filter
     mise run bench -m index -- --warm-up 1 # custom warm-up time
     mise run bench -- --noplot             # skip HTML report generation
+
+  With --model, forwarded to bench:model instead of cargo bench:
+
+    mise run bench --model -- --plot       # fitted curves in the terminal
   """
 }
 '''
@@ -546,8 +550,12 @@ fi
 # 06_arguments.md), so shellcheck can't trace the assignment, but the
 # input isn't attacker-controlled free text.
 eval "extra_args=(${usage_args:-})"
-criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
-[[ -n "${usage_args:-}" ]] && has_criterion_args=true
+# Model mode: forwarded args belong to bench:model (bench --model -- --plot);
+# criterion rejects unknown flags such as --plot.
+if [[ "${usage_model:-false}" != "true" ]]; then
+  criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
+  [[ -n "${usage_args:-}" ]] && has_criterion_args=true
+fi
 
 # --- Baseline management ---
 # Outputs a baseline name to save, or empty if no baseline should be
@@ -632,8 +640,14 @@ if [[ -n "${usage_compare:-}" ]]; then
 fi
 
 # --- Model ---
+# --force: the model must run after benchmarking even when its script is
+# unchanged; the outer --force does not propagate to this nested mise run.
 if [[ "${usage_model:-false}" == "true" ]]; then
-  mise run bench:model -- --summary
+  if [[ -n "${usage_args:-}" ]]; then
+    mise run --force bench:model -- "${extra_args[@]}"
+  else
+    mise run --force bench:model -- --summary
+  fi
 fi
 '''
 
