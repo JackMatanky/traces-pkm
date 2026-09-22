@@ -91,6 +91,8 @@ flag "--doc" help="Clean generated docs only"
 flag "--profile <profile>" help="Clean one Cargo profile"
 flag "--target-dir <dir>" help="Cargo target directory" default="target"
 flag "--reports" help="Remove generated coverage/mutation report files"
+flag "--criterion" help="Remove target/criterion: keeps each bench's latest new/ + base/ runs; deletes saved baselines, change/, reports (regenerable via bench)"
+flag "--force" help="With --criterion: also delete the kept new/ and base/ run dirs (full wipe)"
 flag "--all" help="Clean entire Cargo target directory"
 flag "--if-over-gib <gib>" {
   help "Only clean Cargo target if it exceeds this size in GiB"
@@ -111,10 +113,20 @@ source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
 readonly TARGET_DIR="${usage_target_dir?}"
 clean_target=true
 clean_reports=false
+clean_criterion=false
 
 if [[ "${usage_reports:-false}" == "true" ]]; then
   clean_target=false
   clean_reports=true
+fi
+
+# Remove only the criterion tree, never the rest of target. Surgical by
+# default: keep each bench's new/ (latest) and base/ (comparison) runs;
+# saved baselines, change/, and reports are regenerable via bench (-r
+# re-saves baselines). --force or a tree with no keep dirs wipes all.
+if [[ "${usage_criterion:-false}" == "true" ]]; then
+  clean_target=false
+  clean_criterion=true
 fi
 
 if [[ "${usage_all:-false}" == "true" ]]; then
@@ -159,6 +171,57 @@ if [[ "${clean_target}" == "true" ]]; then
     [[ "${usage_doc:-false}" == "true" ]] && cargo_args+=(--doc)
     [[ -n "${usage_profile:-}" ]] && cargo_args+=(--profile "${usage_profile}")
     cargo "${cargo_args[@]}"
+  fi
+fi
+
+if [[ "${clean_criterion}" == "true" ]]; then
+  criterion_dir="${TARGET_DIR}/criterion"
+  if [[ ! -d "${criterion_dir}" ]]; then
+    if [[ "${usage_dry_run:-false}" == "true" ]]; then
+      printf 'no benchmark output at %s\n' "${criterion_dir}"
+    fi
+  else
+    # Keep-set: every dir named new/ or base/ (criterion stores the latest
+    # run in new/, the comparison target in base/; saved baselines are flat
+    # siblings with no nested new/base — verified by tests).
+    keep_count="$(find "${criterion_dir}" -type d \( -name new -o -name base \) -print | wc -l | tr -d ' ')"
+    if [[ "${usage_force:-false}" == "true" ]] || [[ "${keep_count}" -eq 0 ]]; then
+      if [[ "${usage_dry_run:-false}" == "true" ]]; then
+        printf 'would remove benchmark output: %s\n' "${criterion_dir}"
+      else
+        rm -rf "${criterion_dir}"
+        printf 'removed benchmark output: %s\n' "${criterion_dir}"
+      fi
+    else
+      # Pass 1: collect files/symlinks outside every new//base/ subtree.
+      # Paths are newline-delimited in ${victims}, NUL-delimited on the way
+      # to wc/rm: spaces+parens safe (e.g. "IndexStore__encode_row (Note)"),
+      # newline-in-filename unsupported (conservative: that file survives).
+      victims="$(find "${criterion_dir}" ! -type d -not -path '*/new/*' -not -path '*/base/*' -print)"
+      if [[ -n "${victims}" ]]; then
+        victim_count="$(printf '%s\n' "${victims}" | grep -c . || true)"
+        victim_kib="$(printf '%s\n' "${victims}" | tr '\n' '\0' | xargs -0 wc -c 2>/dev/null | awk '$2 != "total" { s += $1 } END { printf "%d", (s + 1023) / 1024 }' || true)"
+        if [[ "${usage_dry_run:-false}" == "true" ]]; then
+          printf 'would keep %s run dir(s), would remove %s file(s) (%s KiB)\n' \
+            "${keep_count}" "${victim_count}" "${victim_kib}"
+          printf '%s\n' "${victims}"
+        else
+          printf '%s\n' "${victims}" | tr '\n' '\0' | xargs -0 rm -f --
+          # Pass 2: prune emptied dirs bottom-up in one -depth pass (each
+          # parent is visited only after its children are already gone).
+          # new//base/ themselves are never deleted even if empty, so the
+          # keep-subtree promise holds in every state of the tree.
+          find "${criterion_dir}" -depth -type d -empty ! -name new ! -name base -delete
+          printf 'kept %s run dir(s), removed %s file(s) (%s KiB)\n' \
+            "${keep_count}" "${victim_count}" "${victim_kib}"
+        fi
+      else
+        if [[ "${usage_dry_run:-false}" != "true" ]]; then
+          find "${criterion_dir}" -depth -type d -empty ! -name new ! -name base -delete
+        fi
+        printf 'kept %s run dir(s), removed 0 file(s) (0 KiB)\n' "${keep_count}"
+      fi
+    fi
   fi
 fi
 
@@ -487,6 +550,17 @@ cargo nextest run "${nextest_args[@]}"
 if [[ "${usage_docs?}" == "true" ]]; then
   cargo test "${cargo_test_args[@]}" --doc -- --quiet
 fi
+'''
+
+[tasks.test-shell]
+description = "Run shell regression tests under .mise/tests/"
+run = '''
+#!/bin/bash
+set -euo pipefail
+
+for f in .mise/tests/*.sh; do
+  bash "${f}"
+done
 '''
 
 [tasks.bench]
@@ -856,7 +930,7 @@ run = [
   # fmt mutates .rs files: it must finish before the readers start
   # (depends gives completion, not order — it cannot express this).
   { task = "fmt" },
-  { tasks = ["check", "lint", "test"] },
+  { tasks = ["check", "lint", "test", "test-shell"] },
 ]
 
 # ------------------------------------------------------------- #
