@@ -107,10 +107,10 @@ Mise skips execution when sources haven't changed.
 
 ### Post-Bench Analysis
 
-- **`bench-report`** (automatic): Runs after every bench via `depends_post`.
+- **`bench:report`** (automatic): Runs after every bench via `depends_post`.
   Prints a summary of which groups were measured.
 
-- **`bench-model`** (hidden): `mise run bench-model`.
+- **`bench:model`** (hidden): `mise run bench:model`.
   Fits linear, n·ln(n), and (with >=5 data points) combined
   `a·n + b·n·ln(n) + c` models to criterion JSON output, per benchmark
   series (a group's flat sweep, or `<group>/<function>` for a group
@@ -126,17 +126,17 @@ Mise skips execution when sources haven't changed.
   near-constant series:
 
   ```bash
-  mise run bench-model -- --summary      # top 10 slowest
-  mise run bench-model -- --summary 20   # top 20 slowest
+  mise run bench:model -- --summary      # top 10 slowest
+  mise run bench:model -- --summary 20   # top 20 slowest
   ```
 
 ### Hidden Tasks
 
-`bench-report` and `bench-model` are hidden from `mise tasks`. Run
+`bench:report` and `bench:model` are hidden from `mise tasks`. Run
 `mise tasks --hidden` to see them, or invoke directly:
 
 ```bash
-mise run bench-model
+mise run bench:model
 ```
 
 ## CPU vs I/O Operations
@@ -148,7 +148,7 @@ mise run bench-model
 | Persist/Load (filesystem) | No — measure at target size |
 | Memory footprint | No — measure at target size |
 
-The `bench-model` script detects poor R² (<0.95) and warns when
+The `bench:model` script detects poor R² (<0.95) and warns when
 extrapolation is unreliable.
 
 ## Profiling

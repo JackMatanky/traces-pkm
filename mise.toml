@@ -434,7 +434,7 @@ fi
 [tasks.bench]
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
-depends_post = ["bench-report"]
+depends_post = ["bench:report"]
 timeout = "20m"
 usage = '''
 flag "-f --files <pattern>" {
@@ -633,7 +633,7 @@ fi
 
 # --- Model ---
 if [[ "${usage_model:-false}" == "true" ]]; then
-  mise run bench-model -- --summary
+  mise run bench:model -- --summary
 fi
 '''
 
