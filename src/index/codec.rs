@@ -56,6 +56,35 @@ pub(super) fn decode_row<T: DeserializeOwned>(
     })
 }
 
+/// Borrowed redb key carrying a project-relative path's native bytes.
+///
+/// Keys are written with [`Path::as_encoded_bytes`] and read back through the
+/// lossy [`path_from_bytes`] fallback; serde row payloads go through
+/// [`path`] instead.
+///
+/// Wraps the path rather than the encoded bytes: error construction and row
+/// payloads borrow the same `&Path`, and converting bytes back to an `OsStr`
+/// would require the unsafe `from_encoded_bytes_unchecked`.
+#[derive(Copy, Clone)]
+pub(super) struct IndexPathKey<'a>(&'a Path);
+
+impl<'a> IndexPathKey<'a> {
+    #[inline]
+    pub(super) fn new(path: &'a Path) -> Self {
+        Self(path)
+    }
+
+    #[inline]
+    pub(super) fn as_bytes(&self) -> &'a [u8] {
+        self.0.as_os_str().as_encoded_bytes()
+    }
+
+    #[inline]
+    pub(super) fn path(&self) -> &'a Path {
+        self.0
+    }
+}
+
 /// Builds a path from byte-oriented store data.
 ///
 /// Tries UTF-8 first and falls back to lossy decoding for non-Unicode paths.

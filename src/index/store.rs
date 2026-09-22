@@ -19,7 +19,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
     INDEX_FILE,
-    codec::{decode_row, encode_row, path_from_bytes},
+    codec::{IndexPathKey, decode_row, encode_row, path_from_bytes},
     delta::{IndexDelta, InlinkDelta},
     entry::FileEntry,
     error::{DbError, DbResult, IndexError, IndexResult},
@@ -1562,31 +1562,6 @@ impl IndexDimension {
             }
         }
         Ok(())
-    }
-}
-
-/// Borrowed redb key carrying a project-relative path's native bytes.
-///
-/// Wraps the path rather than the encoded bytes: error construction and row
-/// payloads borrow the same `&Path`, and converting bytes back to an `OsStr`
-/// would require the unsafe `from_encoded_bytes_unchecked`.
-#[derive(Copy, Clone)]
-struct IndexPathKey<'a>(&'a Path);
-
-impl<'a> IndexPathKey<'a> {
-    #[inline]
-    fn new(path: &'a Path) -> Self {
-        Self(path)
-    }
-
-    #[inline]
-    fn as_bytes(&self) -> &'a [u8] {
-        self.0.as_os_str().as_encoded_bytes()
-    }
-
-    #[inline]
-    fn path(&self) -> &'a Path {
-        self.0
     }
 }
 
