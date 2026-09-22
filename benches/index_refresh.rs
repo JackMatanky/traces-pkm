@@ -38,7 +38,7 @@ use criterion::{
 use tempfile::TempDir;
 use traces_pkm::{
     FileIndex, IndexerService, QueryBuilder, QueryService, QuerySet,
-    SourceSelector, SyncReport,
+    RefreshReport, SourceSelector,
 };
 
 #[expect(
@@ -63,7 +63,7 @@ use common::{
 
 const MUTATION_ANCHOR_COUNTS: &[usize] = &[1_000, 5_000];
 
-fn observe_refresh(indexer: &IndexerService) -> (FileIndex, SyncReport) {
+fn observe_refresh(indexer: &IndexerService) -> (FileIndex, RefreshReport) {
     let (index, report) = indexer.refresh_with_report().expect("refresh index");
     let entries = index.entries();
     let inlink_count: usize =

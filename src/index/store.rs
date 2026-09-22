@@ -18,14 +18,14 @@ use redb::{
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
-    FileIndex, INDEX_FILE,
+    INDEX_FILE,
     codec::{decode_row, encode_row, path_from_bytes},
     delta::{IndexDelta, InlinkDelta},
     entry::FileEntry,
     error::{DbError, DbResult, IndexError, IndexResult},
     inlinks::InlinkMap,
 };
-use crate::{FileBase, Note, Tag};
+use crate::{FileBase, Note, Tag, file::FileFormat};
 
 /// File metadata table.
 ///
@@ -68,6 +68,67 @@ const FILE_CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
 
 /// Stored files, path-sorted notes, and target-keyed inlinks loaded together.
 pub(super) type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
+
+/// Store-owned persistence plan for full rebuilds and incremental refreshes.
+pub(super) struct PersistPlan<'a> {
+    axes: IndexAxes,
+    rows: PersistRows<'a>,
+}
+
+impl<'a> PersistPlan<'a> {
+    /// Replaces every persisted row from an assembled index.
+    #[inline]
+    pub(super) const fn rebuild(
+        axes: IndexAxes,
+        entries: &'a [FileEntry],
+    ) -> Self {
+        Self {
+            axes,
+            rows: PersistRows::Rebuild {
+                entries,
+            },
+        }
+    }
+
+    /// Applies row-level changes from one refresh pass.
+    #[inline]
+    pub(super) const fn incremental(
+        axes: IndexAxes,
+        delta: &'a IndexDelta,
+        notes: &'a [&'a Note],
+        edges: &'a InlinkDelta,
+    ) -> Self {
+        Self {
+            axes,
+            rows: PersistRows::Incremental {
+                delta,
+                notes,
+                edges,
+            },
+        }
+    }
+}
+
+/// Incremental row references shared by the plan and its store application.
+struct IncrementalRows<'a> {
+    delta: &'a IndexDelta,
+    notes: &'a [&'a Note],
+    edges: &'a InlinkDelta,
+}
+
+/// Rows affected by a persistence plan.
+pub(super) enum PersistRows<'a> {
+    /// Full cache rebuild from assembled entries.
+    Rebuild {
+        entries: &'a [FileEntry],
+    },
+    /// Incremental file, note, axis, and inlink changes.
+    Incremental {
+        delta: &'a IndexDelta,
+        notes: &'a [&'a Note],
+        edges: &'a InlinkDelta,
+    },
+}
 
 /// Raw `LINKS` iterator entry before path-byte resolution.
 type LinkEntry<'a> = Result<
@@ -390,7 +451,7 @@ impl IndexStore {
         &self,
     ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
         let txn = self.begin_read()?;
-        self.read_files_and_links_via(&txn)
+        self.read_files_and_links_with(&txn)
     }
 
     /// Loads persisted [`FileBase`] rows and inlink edges without decoding
@@ -403,19 +464,28 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if a table cannot be read.
     /// - [`DbError::Deserialize`] if stored bytes are not a valid record.
-    pub(super) fn read_files_and_links_via(
+    pub(super) fn read_files_and_links_with(
         &self,
         txn: &ReadTransaction,
     ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
-        let (files_result, links_result) = rayon::join(
-            || self.read_table(txn, FILES, FileBase::path),
-            || {
-                self.read_links(txn, LINKS, |bytes| {
-                    Some(path_from_bytes(bytes))
-                })
-            },
-        );
-        Ok((files_result?, links_result?))
+        let files = self.read_table(txn, FILES, FileBase::path)?;
+        let note_paths_by_bytes: HashMap<Vec<u8>, &Path> = files
+            .iter()
+            .filter(|file| file.format() == FileFormat::Note)
+            .map(|file| {
+                (
+                    IndexPathKey::new(file.path()).as_bytes().to_vec(),
+                    file.path(),
+                )
+            })
+            .collect();
+        let links = self.read_links(txn, LINKS, |bytes| {
+            note_paths_by_bytes
+                .get(bytes)
+                .map(|path| (*path).to_path_buf())
+                .or_else(|| Some(path_from_bytes(bytes)))
+        })?;
+        Ok((files, links))
     }
 
     /// Deserializes every `target -> sources` edge from the `links` multimap
@@ -508,73 +578,83 @@ impl IndexStore {
 
     // --- Persistence entry points -------------------------------------
 
-    /// Persists `index` by writing all entries.
+    /// Persists a full rebuild or one incremental refresh pass.
     ///
     /// # Errors
     ///
     /// - [`Store`] if the transaction fails or a record cannot be encoded.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn persist_index(
-        &self,
-        index: &FileIndex,
-        class_field: &str,
-    ) -> IndexResult<()> {
-        self.write_all(index.entries(), class_field)
+    pub(super) fn persist(&self, plan: &PersistPlan<'_>) -> IndexResult<()> {
+        match &plan.rows {
+            PersistRows::Rebuild {
+                entries,
+            } => {
+                let txn = self.begin_cache_txn()?;
+                self.persist_rebuild(txn, entries, &plan.axes)
+            }
+            PersistRows::Incremental {
+                delta,
+                notes,
+                edges,
+            } => {
+                let txn = self.begin_cache_txn()?;
+                self.persist_incremental(txn, &plan.axes, &IncrementalRows {
+                    delta,
+                    notes,
+                    edges,
+                })
+            }
+        }
     }
 
-    /// Row-level incremental write for changes between scans.
+    /// Rebuild arm of [`Self::persist`]: clears and rewrites every table.
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the transaction fails or a record cannot be encoded.
-    ///
-    /// [`Store`]: IndexError::Store
-    pub(super) fn persist_incremental(
+    /// - [`IndexError::Store`] if the transaction fails or a record cannot be
+    ///   encoded.
+    fn persist_rebuild(
         &self,
-        delta: &IndexDelta,
-        modified_notes: &[Note],
-        inlink_delta: &InlinkDelta,
-        class_field: &str,
+        txn: Box<WriteTransaction>,
+        entries: &[FileEntry],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
-        self.persist_incremental_with_notes(
-            delta,
-            || modified_notes.iter(),
-            inlink_delta,
-            class_field,
-        )
+        self.delete_tables(&txn)?;
+        self.write_all_parallel(&txn, entries)?;
+        self.write_axes_parallel(&txn, entries, axes)?;
+        txn.commit().map_err(|source| self.raise_source_error(source))?;
+        Ok(())
     }
 
-    /// Row-level incremental write for a rebuilt note set.
+    /// Incremental arm of [`Self::persist`]: applies row-level changes.
     ///
-    /// Requires `notes` sorted by path: upserted rows are recovered by binary
-    /// search, so an unsorted set would silently skip row writes.
+    /// Empty changes skip the transaction entirely.
     ///
     /// # Errors
     ///
-    /// - [`Store`] if the transaction fails or a record cannot be encoded.
-    ///
-    /// [`Store`]: IndexError::Store
-    pub(super) fn persist_incremental_rebuilt_notes(
+    /// - [`IndexError::Store`] if the transaction fails or a record cannot be
+    ///   encoded.
+    fn persist_incremental(
         &self,
-        delta: &IndexDelta,
-        notes: &[Note],
-        inlink_delta: &InlinkDelta,
-        class_field: &str,
+        txn: Box<WriteTransaction>,
+        axes: &IndexAxes,
+        rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        debug_assert!(
-            notes.windows(2).all(|pair| match pair {
-                [a, b] => a.path() <= b.path(),
-                _ => true,
-            }),
-            "rebuilt notes must be path-sorted for upsert recovery"
-        );
-        self.persist_incremental_with_notes(
+        let IncrementalRows {
             delta,
-            || Self::notes_for_upserted_files(delta.upserted(), notes),
-            inlink_delta,
-            class_field,
-        )
+            notes,
+            edges,
+        } = rows;
+        if delta.is_empty() && notes.is_empty() && edges.is_empty() {
+            return Ok(());
+        }
+        self.apply_diff_deletions(&txn, delta.deleted(), axes)?;
+        self.apply_diff_upserts(&txn, delta.upserted())?;
+        self.apply_modified_notes(&txn, notes, axes)?;
+        self.apply_inlink_delta(&txn, edges)?;
+        txn.commit().map_err(|source| self.raise_source_error(source))?;
+        Ok(())
     }
 
     // --- Error -------------------------------------------------------
@@ -866,10 +946,7 @@ impl IndexStore {
             table.len().map_err(|source| self.raise_source_error(source))?
                 as usize;
         let mut items = Vec::with_capacity(capacity);
-        let iter = Box::new(
-            table.iter().map_err(|source| self.raise_source_error(source))?,
-        );
-        for entry in iter {
+        for entry in self.open_table_iter(table)? {
             let (key, value) =
                 entry.map_err(|source| self.raise_source_error(source))?;
             let path = path_from_bytes(key.value());
@@ -992,30 +1069,17 @@ impl IndexStore {
     ///
     /// - [`DbError::Redb`] if the transaction fails.
     /// - [`DbError::Serialize`] if a record cannot be encoded.
-    fn write_all(
-        &self,
-        entries: &[FileEntry],
-        class_field: &str,
-    ) -> IndexResult<()> {
-        let txn = self.prepare_txn()?;
-        self.write_all_parallel(&txn, entries, class_field)?;
-        txn.commit().map_err(|source| self.raise_source_error(source))?;
-        Ok(())
-    }
-
-    /// Prepares a no-fsync full-rebuild transaction; see [`Self::write_all`].
-    fn prepare_txn(&self) -> DbResult<Box<WriteTransaction>> {
+    fn begin_cache_txn(&self) -> DbResult<Box<WriteTransaction>> {
         let mut txn = Box::new(self.begin_write()?);
         txn.set_durability(redb::Durability::None)
             .map_err(|source| self.raise_source_error(source))?;
-        self.clear_tables_for_write(&txn)?;
         Ok(txn)
     }
 
     /// Deletes every table's contents ahead of a full rebuild write. The four
     /// index-axis multimaps are best-effort: absent on a fresh database, so a
     /// delete failure there is not fatal.
-    fn clear_tables_for_write(&self, txn: &WriteTransaction) -> DbResult<()> {
+    fn delete_tables(&self, txn: &WriteTransaction) -> DbResult<()> {
         txn.delete_table(FILES)
             .map_err(|source| self.raise_source_error(source))?;
         txn.delete_table(NOTES)
@@ -1035,11 +1099,27 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         WriteTarget::ALL
             .into_par_iter()
-            .try_for_each(|target| target.run(self, txn, entries, class_field))
+            .try_for_each(|target| target.run(self, txn, entries))
+    }
+
+    /// Writes every configured secondary index axis for a full rebuild.
+    fn write_axes_parallel(
+        &self,
+        txn: &WriteTransaction,
+        entries: &[FileEntry],
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        axes.iter().try_for_each(|axis| {
+            let (forward, reverse) = rayon::join(
+                || self.write_index_axis_forward(txn, axis, entries),
+                || self.write_index_axis_reverse(txn, axis, entries),
+            );
+            forward?;
+            reverse
+        })
     }
 
     /// Writes `index`'s forward (`value -> [paths]`) table for a full rebuild.
@@ -1049,14 +1129,13 @@ impl IndexStore {
     fn write_index_axis_forward(
         &self,
         txn: &WriteTransaction,
-        index: IndexDimension,
+        index: &IndexDimension,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            index.visit_values(note, class_field, |value| {
+            index.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
@@ -1070,14 +1149,13 @@ impl IndexStore {
     fn write_index_axis_reverse(
         &self,
         txn: &WriteTransaction,
-        index: IndexDimension,
+        index: &IndexDimension,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            index.visit_values(note, class_field, |value| {
+            index.visit_values(note, |value| {
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.raise_source_error(source))?;
@@ -1119,60 +1197,19 @@ impl IndexStore {
 
     // --- Incremental write helpers ------------------------------------
 
-    /// Row-level incremental write shared by [`Self::persist_incremental`] and
-    /// [`Self::persist_incremental_rebuilt_notes`].
-    fn persist_incremental_with_notes<'a, Notes, Iter>(
-        &self,
-        delta: &IndexDelta,
-        modified_notes: Notes,
-        inlink_delta: &InlinkDelta,
-        class_field: &str,
-    ) -> IndexResult<()>
-    where
-        Notes: Fn() -> Iter,
-        Iter: Iterator<Item = &'a Note>,
-    {
-        if delta.is_empty()
-            && modified_notes().next().is_none()
-            && inlink_delta.is_empty()
-        {
-            return Ok(());
-        }
-        let mut txn = Box::new(self.begin_write()?);
-        txn.set_durability(redb::Durability::None)
-            .map_err(|source| self.raise_source_error(source))?;
-        self.apply_diff_deletions(&txn, delta.deleted())?;
-        self.apply_diff_upserts(&txn, delta.upserted())?;
-        self.apply_modified_notes(&txn, modified_notes, class_field)?;
-        self.apply_inlink_delta(&txn, inlink_delta)?;
-        txn.commit().map_err(|source| self.raise_source_error(source))?;
-        Ok(())
-    }
-
-    fn notes_for_upserted_files<'a>(
-        upserted: &'a [FileBase],
-        notes: &'a [Note],
-    ) -> impl Iterator<Item = &'a Note> {
-        upserted.iter().filter_map(move |file| {
-            notes
-                .binary_search_by(|note| note.path().cmp(file.path()))
-                .ok()
-                .and_then(|idx| notes.get(idx))
-        })
-    }
-
     /// Removes every deleted file's rows from `FILES`, `NOTES`, and the
     /// tag/class indexes.
     fn apply_diff_deletions(
         &self,
         txn: &WriteTransaction,
         deleted: &[FileBase],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
         if deleted.is_empty() {
             return Ok(());
         }
         self.delete_files_and_notes(txn, deleted)?;
-        self.delete_index_entries_for_paths(txn, deleted)?;
+        self.delete_index_entries_for_paths(txn, deleted, axes)?;
         Ok(())
     }
 
@@ -1203,8 +1240,9 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         deleted: &[FileBase],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
-        for index in IndexDimension::ALL {
+        for index in axes.iter() {
             let mut forward =
                 self.open_multimap_for_write(txn, index.forward())?;
             let mut reverse =
@@ -1260,21 +1298,17 @@ impl IndexStore {
     }
 
     /// Writes upserted notes' rows, list items, and tag/class index entries.
-    fn apply_modified_notes<'a, Notes, Iter>(
+    fn apply_modified_notes(
         &self,
         txn: &WriteTransaction,
-        modified_notes: Notes,
-        class_field: &str,
-    ) -> IndexResult<()>
-    where
-        Notes: Fn() -> Iter,
-        Iter: Iterator<Item = &'a Note>,
-    {
-        if modified_notes().next().is_none() {
+        modified_notes: &[&Note],
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        if modified_notes.is_empty() {
             return Ok(());
         }
-        self.upsert_notes(txn, modified_notes())?;
-        self.upsert_tags_and_classes(txn, modified_notes, class_field)?;
+        self.upsert_notes(txn, modified_notes.iter().copied())?;
+        self.upsert_tags_and_classes(txn, modified_notes, axes)?;
         Ok(())
     }
 
@@ -1293,18 +1327,14 @@ impl IndexStore {
         Ok(())
     }
 
-    fn upsert_tags_and_classes<'a, Notes, Iter>(
+    fn upsert_tags_and_classes(
         &self,
         txn: &WriteTransaction,
-        modified_notes: Notes,
-        class_field: &str,
-    ) -> IndexResult<()>
-    where
-        Notes: Fn() -> Iter,
-        Iter: Iterator<Item = &'a Note>,
-    {
-        for index in IndexDimension::ALL {
-            self.upsert_index_axis(txn, index, modified_notes(), class_field)?;
+        modified_notes: &[&Note],
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        for index in axes.iter() {
+            self.upsert_index_axis(txn, index, modified_notes.iter().copied())?;
         }
         Ok(())
     }
@@ -1316,9 +1346,8 @@ impl IndexStore {
     fn upsert_index_axis<'a>(
         &self,
         txn: &WriteTransaction,
-        index: IndexDimension,
+        index: &IndexDimension,
         modified_notes: impl Iterator<Item = &'a Note>,
-        class_field: &str,
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
@@ -1329,7 +1358,7 @@ impl IndexStore {
                 &mut reverse,
                 path_bytes,
             )?;
-            index.visit_values(note, class_field, |value| {
+            index.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
@@ -1418,29 +1447,16 @@ enum WriteTarget {
     Files,
     Notes,
     Links,
-    PathsByTags,
-    TagsByPath,
-    PathsByFileClasses,
-    FileClassesByPath,
 }
 
 impl WriteTarget {
-    const ALL: [Self; 7] = [
-        Self::Files,
-        Self::Notes,
-        Self::Links,
-        Self::PathsByTags,
-        Self::TagsByPath,
-        Self::PathsByFileClasses,
-        Self::FileClassesByPath,
-    ];
+    const ALL: [Self; 3] = [Self::Files, Self::Notes, Self::Links];
 
     fn run(
         self,
         store: &IndexStore,
         txn: &WriteTransaction,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         match self {
             Self::Files => store
@@ -1462,62 +1478,63 @@ impl WriteTarget {
             Self::Links => {
                 store.write_links(txn, LINKS, entries).map_err(IndexError::from)
             }
-            Self::PathsByTags => store.write_index_axis_forward(
-                txn,
-                IndexDimension::Tag,
-                entries,
-                class_field,
-            ),
-            Self::TagsByPath => store.write_index_axis_reverse(
-                txn,
-                IndexDimension::Tag,
-                entries,
-                class_field,
-            ),
-            Self::PathsByFileClasses => store.write_index_axis_forward(
-                txn,
-                IndexDimension::FileClass,
-                entries,
-                class_field,
-            ),
-            Self::FileClassesByPath => store.write_index_axis_reverse(
-                txn,
-                IndexDimension::FileClass,
-                entries,
-                class_field,
-            ),
         }
+    }
+}
+
+/// Store-owned dimensions written for tag and file-class indexes.
+pub(super) struct IndexAxes {
+    dimensions: [IndexDimension; 2],
+}
+
+impl IndexAxes {
+    /// Builds the canonical index axes for one configured File Class key.
+    #[must_use]
+    pub(super) fn for_class_field(class_field: &str) -> Self {
+        Self {
+            dimensions: [IndexDimension::Tag, IndexDimension::FileClass {
+                key: class_field.to_owned(),
+            }],
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &IndexDimension> {
+        self.dimensions.iter()
     }
 }
 
 /// Path-derived index dimension, pairing forward and reverse tables so
 /// upsert/delete/rebuild logic is shared for tags and file classes.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum IndexDimension {
     Tag,
-    FileClass,
+    FileClass {
+        key: String,
+    },
 }
 
 impl IndexDimension {
-    const ALL: [Self; 2] = [Self::Tag, Self::FileClass];
-
     /// Forward lookup table (`value -> [paths]`) for tag/class queries.
     const fn forward(
-        self,
+        &self,
     ) -> MultimapTableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
             Self::Tag => PATHS_BY_TAG,
-            Self::FileClass => PATHS_BY_FILE_CLASS,
+            Self::FileClass {
+                ..
+            } => PATHS_BY_FILE_CLASS,
         }
     }
 
     /// Reverse lookup table (`path -> [values]`) for targeted updates.
     const fn reverse(
-        self,
+        &self,
     ) -> MultimapTableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
             Self::Tag => TAGS_BY_PATH,
-            Self::FileClass => FILE_CLASSES_BY_PATH,
+            Self::FileClass {
+                ..
+            } => FILE_CLASSES_BY_PATH,
         }
     }
 
@@ -1527,9 +1544,8 @@ impl IndexDimension {
     /// Uses `with_lowercased` to avoid heap allocations when values are already
     /// ASCII lowercase.
     fn visit_values(
-        self,
+        &self,
         note: &Note,
-        class_field: &str,
         mut visit: impl FnMut(&str) -> Result<(), IndexError>,
     ) -> Result<(), IndexError> {
         match self {
@@ -1539,14 +1555,16 @@ impl IndexDimension {
                     with_lowercased(segment, &mut visit)?;
                 }
             }
-            Self::FileClass => {
+            Self::FileClass {
+                key,
+            } => {
                 let values = note
                     .frontmatter()
                     .into_iter()
-                    .flat_map(|fm| fm.get_values(class_field))
+                    .flat_map(|fm| fm.get_values(key))
                     .filter_map(crate::NoteFieldValue::as_str);
-                for s in values {
-                    with_lowercased(s, &mut visit)?;
+                for value in values {
+                    with_lowercased(value, &mut visit)?;
                 }
             }
         }
@@ -1601,7 +1619,7 @@ mod tests {
     use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
-    use crate::{IndexerService, parse_note as parse};
+    use crate::{FileIndex, IndexerService, parse_note as parse};
     #[test]
     fn check_health_passes_on_healthy_database() {
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -1685,7 +1703,10 @@ mod tests {
     ) -> IndexResult<()> {
         let index =
             FileIndex::assemble(files.to_vec(), notes.to_vec(), links.clone());
-        store.write_all(index.entries(), "class")
+        store.persist(&PersistPlan::rebuild(
+            IndexAxes::for_class_field("class"),
+            index.entries(),
+        ))
     }
 
     /// Writes an orphanable raw `LINKS` row that `write_all` cannot assemble.
@@ -2027,7 +2048,8 @@ mod tests {
         }
 
         #[test]
-        fn read_files_and_links_via_keeps_orphaned_edges_that_read_all_drops() {
+        fn read_files_and_links_with_keeps_orphaned_edges_that_read_all_drops()
+        {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
             let notes: Vec<_> =
@@ -2059,11 +2081,12 @@ mod tests {
                 Path::new("a.md"),
             );
 
-            // Proves `read_files_and_links_via` reconstructs from disk without
+            // Proves `read_files_and_links_with` reconstructs from disk without
             // `read_all`'s note-correlation filter.
             let txn = store.begin_read().expect("read txn");
-            let (_, reconstructed) =
-                store.read_files_and_links_via(&txn).expect("reconstruct load");
+            let (_, reconstructed) = store
+                .read_files_and_links_with(&txn)
+                .expect("reconstruct load");
 
             assert_eq!(reconstructed, links);
         }

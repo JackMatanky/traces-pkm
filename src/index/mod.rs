@@ -11,8 +11,8 @@
 //! evaluation.
 //!
 //! Fresh builds run through [`IndexerService::build`]; cold CLI reads use
-//! [`IndexerService::sync`](service::IndexerService::sync) to load and refresh
-//! an existing store.
+//! [`IndexerService::current_store`](service::IndexerService::current_store) to
+//! load and refresh an existing store.
 //!
 //! [`store`]: mod@store
 mod codec;
@@ -20,9 +20,9 @@ mod delta;
 mod entry;
 mod error;
 mod inlinks;
+mod refresh;
 mod service;
 mod store;
-mod sync;
 
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use codec::path;
@@ -33,10 +33,10 @@ pub use entry::{FileEntry, FileIndex};
 pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;
+#[cfg(any(test, feature = "test-utils"))]
+pub use refresh::RefreshReport;
 pub use service::IndexerService;
 pub(crate) use store::IndexStore;
-#[cfg(any(test, feature = "test-utils"))]
-pub use sync::SyncReport;
 
 /// Project-relative index database path.
 const INDEX_FILE: &str = ".traces/index.redb";

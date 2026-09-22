@@ -307,12 +307,13 @@ fn refresh_query<'a>(
     mode: QueryMode,
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
-    let store = IndexerService::new(root).with_config(config).sync().map_err(
-        |source| CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        },
-    )?;
+    let store = IndexerService::new(root)
+        .with_config(config)
+        .current_store()
+        .map_err(|source| CliError::Index {
+        root: root.to_path_buf(),
+        source,
+    })?;
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut builder = match mode {
@@ -1278,7 +1279,7 @@ mod tests {
             // exactly what the CLI command just queried - via the same
             // `run_from_store` seam `table`'s render path uses internally.
             let store = IndexerService::new(&project)
-                .sync()
+                .current_store()
                 .expect("store already current after the second cli call");
             let rendered = QueryService::new("class")
                 .run_from_store(

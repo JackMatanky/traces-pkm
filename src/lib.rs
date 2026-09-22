@@ -117,7 +117,7 @@ pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileEntry, FileIndex, IndexerService, InlinkMap, SyncReport,
+    FileEntry, FileIndex, IndexerService, InlinkMap, RefreshReport,
     path as path_codec,
 };
 pub(crate) use lexer::{
@@ -464,7 +464,7 @@ mod test_support {
         /// - Panics if the build or persist fails. Fixture-only code.
         #[inline]
         #[must_use]
-        pub fn persist_index(&self) -> (IndexerService, FileIndex) {
+        pub fn build_and_persist(&self) -> (IndexerService, FileIndex) {
             let indexer = self.indexer();
             let index = indexer.build().expect("build index");
             indexer.persist(&index).expect("persist index");
@@ -744,7 +744,7 @@ mod test_support {
                 project.write_schema("tag_schema", "fields = {}\n");
                 project.write_schema_value("vals.toml", "vals = []\n");
 
-                let (indexer, index) = project.persist_index();
+                let (indexer, index) = project.build_and_persist();
                 let reloaded = indexer.load().expect("load persisted index");
                 assert_eq!(reloaded.entries().len(), index.entries().len());
                 assert!(

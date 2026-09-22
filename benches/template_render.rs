@@ -88,7 +88,7 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
         "table_report.md",
         r#"{{ query.from().where("rating >= 5").sort("file.name", false).table(["Path", "Rating", "Status"], ["file.path", "rating", "status"]) }}"#,
     );
-    let _ = project.persist_index();
+    let _ = project.build_and_persist();
     let config = Config::test_default(&root).with_templates();
     (temp, root, config)
 }

@@ -1,11 +1,11 @@
 //! Index lifecycle service.
 //!
-//! [`IndexerService`] scans, parses, persists, loads, refreshes, and syncs one
+//! [`IndexerService`] scans, parses, persists, loads, refreshes, and opens one
 //! project root's [`super::FileIndex`] through `IndexStore`.
 //!
-//! `refresh` and `sync` share one incremental core: content-only deltas patch
-//! inbound links from touched notes, while path-set changes force a full
-//! recompute because wikilink resolution depends on every indexed path.
+//! `refresh` and `current_store` share one incremental core: content-only
+//! deltas patch inbound links from touched notes, while path-set changes force
+//! a full recompute because wikilink resolution depends on every indexed path.
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +14,8 @@ use rayon::prelude::*;
 use super::{
     FileIndex, INDEX_FILE, IndexError, IndexResult,
     inlinks::InlinkMap,
-    store::IndexStore,
-    sync::{RefreshPlan, SyncReport},
+    refresh::{RefreshPass, RefreshPlan, RefreshReport},
+    store::{IndexAxes, IndexStore, PersistPlan},
 };
 use crate::{
     Config, DirTree, Note, TaskConfig,
@@ -27,9 +27,9 @@ use crate::{
 
 /// Drives the file-index lifecycle for one project root.
 ///
-/// `refresh` returns a full [`FileIndex`] and logs persist failures; `sync`
-/// keeps only the persisted store current and propagates persist failures
-/// because it has no in-memory fallback.
+/// `refresh` returns a full [`FileIndex`] and logs persist failures;
+/// `current_store` keeps only the persisted store current and propagates
+/// persist failures because it has no in-memory fallback.
 #[derive(Clone, Debug)]
 pub struct IndexerService {
     root: PathBuf,
@@ -118,34 +118,50 @@ impl IndexerService {
     ///   project-relative path.
     /// - `IndexError::Store` if the persisted index cannot be opened or read.
     #[inline]
-    pub fn refresh_with_report(&self) -> IndexResult<(FileIndex, SyncReport)> {
-        let plan = RefreshPlan::collect(&self.root)?;
-        if plan.is_empty() {
-            return Self::refresh_unchanged(plan);
-        }
-        let modified_notes = self.parse_notes(plan.upserted_files())?;
-        let (store, update) = plan.reconcile(modified_notes)?;
-        let report = update.report();
-        match update.persist(&store, &self.class_field) {
-            Ok(()) => Self::log_sync_report(&report),
-            Err(source) => {
-                tracing::warn!(%source, "failed to persist refreshed index");
+    pub fn refresh_with_report(
+        &self,
+    ) -> IndexResult<(FileIndex, RefreshReport)> {
+        match self.plan_pass()? {
+            RefreshPass::Unchanged {
+                store,
+                files,
+                links,
+            } => {
+                let notes = store.read_all_notes()?;
+                Ok((
+                    FileIndex::assemble(files, notes, links),
+                    RefreshReport::default(),
+                ))
+            }
+            RefreshPass::Reconciled(pending) => {
+                let report = pending.report();
+                let axes = IndexAxes::for_class_field(&self.class_field);
+                let index = match pending.apply(axes) {
+                    Ok(persisted) => {
+                        Self::log_report(&report);
+                        persisted.into_index()?
+                    }
+                    Err(failed) => {
+                        tracing::warn!(
+                            source = %failed.source(),
+                            "failed to persist refreshed index"
+                        );
+                        failed.into_index()?
+                    }
+                };
+                Ok((index, report))
             }
         }
-        let index = update.into_index(&store)?;
-        Ok((index, report))
     }
 
-    /// Materializes an unchanged-delta refresh from the store it opened.
-    ///
-    /// # Errors
-    ///
-    /// - `IndexError::Store` if the persisted index cannot be read.
-    fn refresh_unchanged(
-        plan: RefreshPlan,
-    ) -> IndexResult<(FileIndex, SyncReport)> {
-        let (files, notes, inlinks) = plan.into_store().read_all()?;
-        Ok((FileIndex::assemble(files, notes, inlinks), SyncReport::default()))
+    fn plan_pass(&self) -> IndexResult<RefreshPass> {
+        let plan = RefreshPlan::collect(&self.root)?;
+        if plan.is_empty() {
+            return Ok(plan.into_unchanged());
+        }
+        let modified_notes = self.parse_notes(plan.upserted_files())?;
+        let pending = plan.reconcile(modified_notes)?;
+        Ok(RefreshPass::Reconciled(pending))
     }
 
     /// Rebuilds and persists the index from scratch, returning it.
@@ -184,19 +200,27 @@ impl IndexerService {
     /// - `IndexError::Store` if the database cannot be opened or read, required
     ///   note bodies cannot be read, or incremental persistence fails.
     #[inline]
-    pub(crate) fn sync(&self) -> IndexResult<IndexStore> {
-        let plan = RefreshPlan::collect(&self.root)?;
-        if plan.is_empty() {
-            return Ok(plan.into_store());
+    pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
+        match self.plan_pass()? {
+            RefreshPass::Unchanged {
+                store,
+                ..
+            } => Ok(store),
+            RefreshPass::Reconciled(pending) => {
+                let report = pending.report();
+                let axes = IndexAxes::for_class_field(&self.class_field);
+                match pending.apply(axes) {
+                    Ok(persisted) => {
+                        Self::log_report(&report);
+                        Ok(persisted.into_store())
+                    }
+                    Err(failed) => Err(failed.into_error()),
+                }
+            }
         }
-        let modified_notes = self.parse_notes(plan.upserted_files())?;
-        let (store, update) = plan.reconcile(modified_notes)?;
-        update.persist(&store, &self.class_field)?;
-        Self::log_sync_report(&update.report());
-        Ok(store)
     }
 
-    fn log_sync_report(report: &SyncReport) {
+    fn log_report(report: &RefreshReport) {
         tracing::debug!(
             upserted = report.upserted(),
             deleted = report.deleted(),
@@ -208,17 +232,12 @@ impl IndexerService {
     /// Parses every Markdown-classified file in `files` in parallel, stopping
     /// at the first parse failure.
     fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<Note>> {
-        let note_files: Vec<&FileBase> =
-            files.iter().filter(|f| f.format() == FileFormat::Note).collect();
-        let results: Vec<IndexResult<Note>> = note_files
-            .into_par_iter()
+        let results: Vec<IndexResult<Note>> = files
+            .par_iter()
+            .filter(|file| file.format() == FileFormat::Note)
             .map(|file| self.parse_note(file))
             .collect();
-        let mut notes = Vec::with_capacity(results.len());
-        for res in results {
-            notes.push(res?);
-        }
-        Ok(notes)
+        results.into_iter().collect()
     }
 
     /// Reads and parses the Markdown file at `file`'s path, resolved relative
@@ -249,7 +268,10 @@ impl IndexerService {
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
-        IndexStore::open(&self.root)?.persist_index(index, &self.class_field)
+        IndexStore::open(&self.root)?.persist(&PersistPlan::rebuild(
+            IndexAxes::for_class_field(&self.class_field),
+            index.entries(),
+        ))
     }
 
     /// Loads the index previously persisted for this service's root, or an
@@ -459,7 +481,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn sync_skips_note_decode_on_empty_delta() {
+        fn current_store_skips_note_decode_on_empty_delta() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::write(root.join("a.md"), "# A").expect("write note");
@@ -468,7 +490,7 @@ mod tests {
             service.persist(&index).expect("persist index");
             poison_note_row(root);
 
-            service.sync().expect("empty delta sync");
+            service.current_store().expect("empty delta sync");
         }
 
         #[test]
@@ -730,6 +752,27 @@ mod tests {
             DurationValue, Tag,
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
         };
+
+        fn non_unicode_path() -> PathBuf {
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_vec(
+                    b"weird\xFF.md".to_vec(),
+                ))
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::ffi::OsStringExt as _;
+                PathBuf::from(std::ffi::OsString::from_wide(&[
+                    119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
+                ]))
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                PathBuf::from("weird.md")
+            }
+        }
 
         /// Seeds three notes and returns the service plus untouched `a`/`c`
         /// baselines.
@@ -1090,7 +1133,66 @@ mod tests {
             let (_, report) =
                 indexer.refresh_with_report().expect("noop refresh");
 
-            assert_eq!(report, SyncReport::default());
+            assert_eq!(report, RefreshReport::default());
+        }
+
+        #[test]
+        fn preserves_byte_exact_non_unicode_inlinks_on_unchanged_refresh() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let weird = non_unicode_path();
+            let normal = PathBuf::from("normal.md");
+            let mut files = vec![
+                FileBase::note_for_test(weird.clone()),
+                FileBase::note_for_test(normal.clone()),
+            ];
+            files.sort_by(|a, b| a.path().cmp(b.path()));
+            let mut notes = vec![
+                crate::parse_note(&weird, "link to [[normal]]"),
+                crate::parse_note(&normal, "link to [[weird]]"),
+            ];
+            notes.sort_by(|a, b| a.path().cmp(b.path()));
+            let mut links = std::collections::HashMap::new();
+            links.insert(weird.clone(), vec![normal.clone()].into());
+            links.insert(normal.clone(), vec![weird.clone()].into());
+            let links = InlinkMap::from_raw(links);
+            store
+                .persist(&PersistPlan::rebuild(
+                    IndexAxes::for_class_field("class"),
+                    FileIndex::assemble(files, notes, links).entries(),
+                ))
+                .expect("persist index");
+            drop(store);
+
+            let service = IndexerService::new(temp.path());
+            // Persisted files match disk metadata on an unchanged scan only
+            // where the scanner can create the same paths (Linux); on APFS,
+            // where invalid bytes cannot be written, the scan reports no
+            // matching file and every persisted row is deleted. Gate the
+            // unchanged path on scan actually seeing the weird note.
+            let scanned = IndexerService::scan(temp.path()).expect("scan root");
+            let weird_visible = scanned.iter().any(|file| file.path() == weird);
+            if !weird_visible {
+                return;
+            }
+
+            let (refreshed, report) =
+                service.refresh_with_report().expect("refresh unchanged");
+
+            assert_eq!(report, RefreshReport::default());
+            let inlinks_of = |path: &Path| -> Vec<PathBuf> {
+                refreshed
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.file().path() == path)
+                    .expect("entry exists")
+                    .inlinks()
+                    .to_vec()
+            };
+            let weird_inlinks = inlinks_of(&weird);
+            let normal_inlinks = inlinks_of(&normal);
+            assert_eq!(weird_inlinks, [normal]);
+            assert_eq!(normal_inlinks, [weird]);
         }
 
         #[test]
