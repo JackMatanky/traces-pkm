@@ -305,8 +305,8 @@ impl PathError {
 
 /// Serde support for paths using platform-native encodings.
 ///
-/// This is the crate's bytes-of-a-path codec; the index's bytes-of-a-row
-/// codec lives at `crate::index::codec`.
+/// This is the crate's bytes-of-a-path codec; the index's bytes-of-a-row codec
+/// lives at `crate::index::codec`.
 pub mod codec {
     use std::path::{Path, PathBuf};
 
