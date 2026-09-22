@@ -16,7 +16,7 @@ use super::{
     inlinks::InlinkMap,
     refresh::{RefreshPass, RefreshPlan, RefreshReport},
     sort::SortedByPath,
-    store::{IndexAxes, IndexStore, PersistPlan},
+    store::{IndexAxes, IndexStore, PersistRequest},
 };
 use crate::{
     Config, DirTree, Note, TaskConfig,
@@ -271,7 +271,7 @@ impl IndexerService {
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &WorkspaceIndex) -> IndexResult<()> {
-        IndexStore::open(&self.root)?.persist(&PersistPlan::rebuild(
+        IndexStore::open(&self.root)?.persist(&PersistRequest::rebuild(
             IndexAxes::for_class_field(&self.class_field),
             index.entries(),
         ))
@@ -1177,7 +1177,7 @@ mod tests {
             links.insert(normal.clone(), vec![weird.clone()].into());
             let links = InlinkMap::from_raw(links);
             store
-                .persist(&PersistPlan::rebuild(
+                .persist(&PersistRequest::rebuild(
                     IndexAxes::for_class_field("class"),
                     WorkspaceIndex::assemble(
                         SortedByPath::sorted(files),
