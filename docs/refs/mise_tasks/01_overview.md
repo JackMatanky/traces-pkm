@@ -1,23 +1,28 @@
 # Tasks
 
-> Define and run project _tasks_ for building, testing, linting, deploying, and
+> Define and run project *tasks* for building, testing, linting, deploying, and
 > everyday development workflows.
 
-You can define tasks in `mise.toml` files or as standalone shell scripts. These are useful for
-things like running linters, tests, builders, servers, and other tasks that are specific to a
-project. Of
-course, tasks launched with mise will include the mise environment—your tools and env vars defined
-in `mise.toml`.
+You can define tasks in `mise.toml` files or as standalone shell scripts. These
+are useful for things like running linters, tests, builders, servers, and other
+tasks that are specific to a project. Of course, tasks launched with mise will
+include the mise environment—your tools and env vars defined in `mise.toml`.
 
 Here's my favorite features about mise's task runner:
 
 - building dependencies in parallel—by default with no configuration required
-- last-modified checking to avoid rebuilding when there are no changes—requires minimal config
-- [mise watch](./running-tasks.html#watching-files) to automatically rebuild on changes—no configuration required, but it helps
-- ability to write tasks as actual bash script files and not inside yml/json/toml strings that lack
-  syntax highlighting and linting/checking support
+- last-modified checking to avoid rebuilding when there are no changes—requires
+  minimal config
+- [mise watch](./03_running_tasks.md#watching-files) to automatically rebuild on
+  changes—no configuration required, but it helps
+- ability to write tasks as actual bash script files and not inside
+  yml/json/toml strings that lack syntax highlighting and linting/checking
+  support
 
-There are 2 ways to define tasks: [inside of `mise.toml` files](./toml-tasks.html) or as [standalone shell scripts](./file-tasks.html). You can also use [task templates](./templates.html) to create reusable task definitions.
+There are 2 ways to define tasks: [inside of `mise.toml`
+files](./04_toml_tasks.md) or as [standalone shell scripts](./05_file_tasks.md).
+You can also use [task templates](./09_templates.md) to create reusable task
+definitions.
 
 ## Tasks in `mise.toml` files
 
@@ -29,14 +34,16 @@ description = "Build the CLI"
 run = "cargo build"
 ```
 
-You can then run the task with `mise run build` (or `mise build` if it doesn't conflict with an existing command).
+You can then run the task with `mise run build` (or `mise build` if it doesn't
+conflict with an existing command).
 
-- See [TOML tasks](./toml-tasks.html) for more information.
-- See [Running Tasks](./running-tasks.html) to learn how to run tasks.
+- See [TOML tasks](./04_toml_tasks.md) for more information.
+- See [Running Tasks](./03_running_tasks.md) to learn how to run tasks.
 
 ## File Tasks
 
-You can also define tasks as standalone shell scripts. All you have to do is to create an `executable` file in a specific directory like `mise-tasks`.
+You can also define tasks as standalone shell scripts. All you have to do is to
+create an `executable` file in a specific directory like `mise-tasks`.
 
 ```sh [mise-tasks/build]
 #!/usr/bin/env bash
@@ -45,22 +52,29 @@ cargo build
 ```
 
 You can then run the task with `mise run build` like for TOML tasks.
-See the [file tasks reference](./file-tasks.html) for more information.
+See the [file tasks reference](./05_file_tasks.md) for more information.
 
 ## Environment variables passed to tasks
 
 The following environment variables are passed to the task:
 
-- `MISE_ORIGINAL_CWD`: The original working directory from where the task was run.
-- `MISE_CONFIG_ROOT`: The directory containing the `mise.toml` file where the task was defined or if the config path is something like `~/src/myproj/.config/mise.toml`, it will be `~/src/myproj`.
-- `MISE_PROJECT_ROOT`: The root of the project that defines the task. For monorepo subproject tasks this is the subproject's directory and is stable regardless of the directory the task is invoked from.
-- `MISE_MONOREPO_ROOT`: The root of the monorepo (the directory containing the config with `monorepo_root = true`). Only set inside a monorepo.
+- `MISE_ORIGINAL_CWD`: The original working directory from where the task was
+  run.
+- `MISE_CONFIG_ROOT`: The directory containing the `mise.toml` file where the
+  task was defined or if the config path is something like
+  `~/src/myproj/.config/mise.toml`, it will be `~/src/myproj`.
+- `MISE_PROJECT_ROOT`: The root of the project that defines the task. For
+  monorepo subproject tasks this is the subproject's directory and is stable
+  regardless of the directory the task is invoked from.
+- `MISE_MONOREPO_ROOT`: The root of the monorepo (the directory containing the
+  config with `monorepo_root = true`). Only set inside a monorepo.
 - `MISE_TASK_NAME`: The name of the task being run.
-- `MISE_TASK_COLOR`: The ANSI sequence that starts the task's prefix color and emphasis. This is
-  set to an empty string when colors are disabled or the selected output mode does not display a
-  task prefix. Add an ANSI reset after the text, for example
-  `printf '%smessage\033[0m\n' "$MISE_TASK_COLOR"`. Replacing output also provides the value when
-  it uses the text fallback; this describes the task label style and does not imply that every line
-  is automatically prefixed.
+- `MISE_TASK_COLOR`: The ANSI sequence that starts the task's prefix color and
+  emphasis. This is set to an empty string when colors are disabled or the
+  selected output mode does not display a task prefix. Add an ANSI reset after
+  the text, for example `printf '%smessage\033[0m\n' "$MISE_TASK_COLOR"`.
+  Replacing output also provides the value when it uses the text fallback; this
+  describes the task label style and does not imply that every line is
+  automatically prefixed.
 - `MISE_TASK_DIR`: The directory containing the task script.
 - `MISE_TASK_FILE`: The full path to the task script.

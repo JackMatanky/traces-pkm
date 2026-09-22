@@ -1,14 +1,18 @@
 # Task System Architecture
 
-Understanding how mise's task system works helps you write more efficient tasks and troubleshoot dependency issues.
+Understanding how mise's task system works helps you write more efficient tasks
+and troubleshoot dependency issues.
 
 ## Task Dependency System
 
-mise uses a sophisticated dependency graph system to manage task execution order and parallelism. This ensures tasks run in the correct order while maximizing performance through parallel execution.
+mise uses a sophisticated dependency graph system to manage task execution order
+and parallelism. This ensures tasks run in the correct order while maximizing
+performance through parallel execution.
 
 ### Dependency Graph Resolution
 
-When you run `mise run build`, mise creates a directed acyclic graph (DAG) of all tasks and their dependencies:
+When you run `mise run build`, mise creates a directed acyclic graph (DAG) of
+all tasks and their dependencies:
 
 ```mermaid
 graph TD
@@ -52,14 +56,16 @@ depends_post = ["cleanup", "notify"]
 run = "kubectl apply -f deployment.yaml"
 ```
 
-Regular dependencies of cleanup tasks belong to the same post-phase subtree and do not start until
-the parent task has completed. Mise runs that subtree if the parent started, even when the parent
-fails, but skips the entire subtree when a regular dependency fails before the parent can start. A
-task used as both a regular and post-dependency is a separate execution occurrence in each phase.
+Regular dependencies of cleanup tasks belong to the same post-phase subtree and
+do not start until the parent task has completed. Mise runs that subtree if the
+parent started, even when the parent fails, but skips the entire subtree when a
+regular dependency fails before the parent can start. A task used as both a
+regular and post-dependency is a separate execution occurrence in each phase.
 
 #### `wait_for` - Soft Dependencies
 
-Tasks that should run first if they're in the current execution, but don't fail if they're not available:
+Tasks that should run first if they're in the current execution, but don't fail
+if they're not available:
 
 ```toml
 [tasks.integration-test]
@@ -109,11 +115,11 @@ run = "npm run build"
 
 Execution with `--jobs 2`:
 
-```
+```text
 Time →
 0s:   [lint]
 5s:   [test-unit] [test-integration]  # Run in parallel after lint
-15s:  [build]                        # Waits for both tests
+15s:  [build]                         # Waits for both tests
 ```
 
 ## Task Discovery and Resolution
@@ -140,14 +146,15 @@ When you run `mise run build`, mise:
 
 Tasks from parent directories are available in subdirectories and can be overridden:
 
-```
+```text
 project/
 ├── mise.toml              # defines: lint, test, build
 └── frontend/
     └── mise.toml          # overrides: test, adds: bundle
 ```
 
-In `frontend/`, you have access to: `lint` (from parent), `test` (overridden), `build` (from parent), `bundle` (local).
+In `frontend/`, you have access to: `lint` (from parent), `test` (overridden),
+`build` (from parent), `bundle` (local).
 
 ## Advanced Dependency Features
 
@@ -167,12 +174,11 @@ npm test
 '''
 ```
 
-The shebang ensures the script runs under bash on every platform. Without
-it, mise uses the platform default inline shell (`sh -c` on Unix,
-`cmd /c` on Windows), so the bash `[ ... ]` test would fail to parse on a
-Windows host. For richer argument handling, prefer the
-[`usage` field](/tasks/task-arguments#usage-field) instead of positional
-parameters.
+The shebang ensures the script runs under bash on every platform. Without it,
+mise uses the platform default inline shell (`sh -c` on Unix, `cmd /c` on
+Windows), so the bash `[ ... ]` test would fail to parse on a Windows host. For
+richer argument handling, prefer the [`usage`
+field](/tasks/task-arguments#usage-field) instead of positional parameters.
 
 ### Dynamic Dependencies
 
@@ -262,7 +268,7 @@ mise run --dry-run build       # Show what would run without executing
 
 **Circular Dependencies**:
 
-```
+```text
 Error: Circular dependency detected: test → build → test
 ```
 
@@ -270,7 +276,7 @@ Solution: Remove the circular reference or use `wait_for` instead of `depends`.
 
 **Missing Dependencies**:
 
-```
+```text
 Error: Task 'build' depends on 'lint' but 'lint' was not found
 ```
 

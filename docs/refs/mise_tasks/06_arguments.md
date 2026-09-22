@@ -34,7 +34,7 @@ Arguments defined in the usage field are automatically available as environment 
 
 ```shell
 # Execute with arguments
-$ mise run deploy staging --verbose --region us-west-2
+mise run deploy staging --verbose --region us-west-2
 
 # Inside the task, these are available as:
 # $usage_environment = "staging"
@@ -85,9 +85,10 @@ used with Tera's `for` loops and filters like `length`. The `usage` map is
 `flag()`) described later on this page—you should not mix the two approaches in
 the same task.
 
-<span v-pre>`{{usage.*}}`</span> templates can also be used in `depends`, `depends_post`, and
-`wait_for` to forward arguments to dependency tasks. See
-[Passing parent task arguments to dependencies](/tasks/task-configuration#passing-parent-task-arguments-to-dependencies)
+`{{usage.*}}` templates can also be used in `depends`, `depends_post`, and
+`wait_for` to forward arguments to dependency tasks. See [Passing parent task
+arguments to
+dependencies](./07_configuration.md#passing-parent-task-arguments-to-dependencies)
 for details.
 
 **Help output example:**
@@ -109,7 +110,8 @@ Options:
 
 ### 2. File Task Headers {#file-task-headers}
 
-For file tasks, you can define arguments directly in the file using special `#MISE` or `#USAGE` comment syntax:
+For file tasks, you can define arguments directly in the file using special
+`#MISE` or `#USAGE` comment syntax:
 
 ```bash [.mise/tasks/deploy]
 #!/usr/bin/env bash
@@ -132,9 +134,11 @@ else
 fi
 ```
 
-::: tip Syntax Options
-Use `#MISE` (uppercase, recommended) or `#USAGE` for defining arguments in file tasks. `# [MISE]` or `# [USAGE]` are also accepted as workarounds for formatters.
-:::
+> [!tip] Syntax Options
+>
+> Use `#MISE` (uppercase, recommended) or `#USAGE` for defining arguments in file
+> tasks. `# [MISE]` or `# [USAGE]` are also accepted as workarounds for
+> formatters.
 
 #### Mounting Generated Specs
 
@@ -183,23 +187,23 @@ arg "<files>" var=#true var_max=5              // Maximum 5 files allowed
 arg "<files>" var=#true var_min=1 var_max=3    // Between 1 and 3 files
 ```
 
-::: tip Handling Variadic Args with Spaces in Bash
-Variadic arguments are passed as a shell-escaped string. To properly handle arguments containing spaces as a bash array, wrap the variable in parentheses:
-
-```bash
-# Convert to bash array:
-eval "files=($usage_files)"
-
-# Use as array:
-for f in "${files[@]}"; do
-  echo "Processing: $f"
-done
-
-# Or pass to commands:
-touch "${files[@]}"
-```
-
-:::
+> [!tip] Handling Variadic Args with Spaces in Bash
+>
+> Variadic arguments are passed as a shell-escaped string. To properly handle
+> arguments containing spaces as a bash array, wrap the variable in parentheses:
+>
+> ```bash
+> # Convert to bash array:
+> eval "files=($usage_files)"
+>
+> # Use as array:
+> for f in "${files[@]}"; do
+>   echo "Processing: $f"
+> done
+>
+> # Or pass to commands:
+> touch "${files[@]}"
+> ```
 
 #### Environment Variable Backing
 
@@ -335,7 +339,7 @@ complete "plugin" run="mycli plugins list" descriptions=#true
 
 Output format (split on `:` for value and description):
 
-```
+```text
 nodejs:JavaScript runtime
 python:Python language
 ruby:Ruby language
@@ -345,7 +349,7 @@ ruby:Ruby language
 
 For detailed help text, use multi-line format:
 
-```mise-toml
+```toml
 [tasks.complex]
 usage = '''
 arg "<input>" {
@@ -388,7 +392,7 @@ flag "--internal-debug" hide=#true
 
 ### Combining Features Example
 
-```mise-toml [mise.toml]
+```toml [mise.toml]
 [tasks.deploy]
 description = "Deploy application to cloud"
 usage = '''
@@ -469,7 +473,9 @@ fi
 
 ## Bash Variable Expansion for Usage Variables {#bash-variable-expansion}
 
-When accessing usage-defined variables in bash scripts, use parameter expansion syntax to help [shellcheck](https://www.shellcheck.net/) understand these variables and provide default values for boolean flags.
+When accessing usage-defined variables in bash scripts, use parameter expansion
+syntax to help [shellcheck](https://www.shellcheck.net/) understand these
+variables and provide default values for boolean flags.
 
 ### Common Patterns
 
@@ -521,25 +527,33 @@ Use `${usage_var:+value}` to pass flags only when set:
 mycli deploy ${usage_verbose:+--verbose}
 ```
 
-These expansions help [shellcheck](https://www.shellcheck.net/) understand your script and prevent warnings about potentially unset variables while maintaining proper error handling.
+These expansions help [shellcheck](https://www.shellcheck.net/) understand your
+script and prevent warnings about potentially unset variables while maintaining
+proper error handling.
 
 ## Deprecated Method
 
 ### Tera Template Functions <Badge type="danger" text="deprecated" /> {#tera-templates}
 
 ::: danger Deprecated - Removal in 2026.11.0
-The Tera template method for defining task arguments is **deprecated** and will be **removed in mise 2026.11.0**.
+The Tera template method for defining task arguments is **deprecated** and will
+be **removed in mise 2026.11.0**.
 
 **Why it's being removed:**
 
-- **Two-pass parsing issues**: Template functions return empty strings during spec collection, causing unexpected behavior when trying to use them as normal template values
+- **Two-pass parsing issues**: Template functions return empty strings during
+  spec collection, causing unexpected behavior when trying to use them as normal
+  template values
 - **Complex escaping rules**: Shell escaping rules are confusing and error-prone
-- **Inconsistent behavior**: Doesn't work the same way between TOML and file tasks
+- **Inconsistent behavior**: Doesn't work the same way between TOML and file
+  tasks
 - **Poor user experience**: Mixes argument definitions with script logic
 
-**Migration required:** Please migrate to the [usage field](#usage-field) method before 2026.11.0.
+**Migration required:** Please migrate to the [usage field](#usage-field) method
+before 2026.11.0.
 
-**Opt-out setting:** If you want to disable the two-pass parsing behavior immediately (before removal), you can set:
+**Opt-out setting:** If you want to disable the two-pass parsing behavior
+immediately (before removal), you can set:
 
 ```toml
 # ~/.config/mise/config.toml
@@ -549,21 +563,24 @@ task.disable_spec_from_run_scripts = true
 
 Or via environment variable: `MISE_TASK_DISABLE_SPEC_FROM_RUN_SCRIPTS=1`
 
-When enabled, mise will only use the `usage` field for spec generation, ignoring any `arg()`, `option()`, or `flag()` functions in run scripts. See [Settings](/configuration/settings) for more details.
+When enabled, mise will only use the `usage` field for spec generation, ignoring
+any `arg()`, `option()`, or `flag()` functions in run scripts. See
+[Settings](/configuration/settings) for more details.
 :::
 
 <details>
 <summary>Click to see deprecated Tera template syntax (not recommended)</summary>
 
-Previously, you could define arguments inline in run scripts using Tera template functions:
+Previously, you could define arguments inline in run scripts using Tera template
+functions:
 
-```mise-toml [mise.toml]
+```toml [mise.toml]
 # ❌ DEPRECATED - Do not use
 [tasks.test]
 run = 'cargo test {{arg(name="file", default="all")}}'
 ```
 
-```mise-toml [mise.toml]
+```toml [mise.toml]
 # ❌ DEPRECATED - Do not use
 [tasks.build]
 run = [
@@ -574,7 +591,9 @@ run = [
 
 **Problems with this approach:**
 
-1. **Empty strings during parsing**: During spec collection (first pass), template functions return empty strings, so you can't use them in templates like:
+1. **Empty strings during parsing**: During spec collection (first pass),
+   template functions return empty strings, so you can't use them in templates
+   like:
 
    ```toml
    # This doesn't work as expected!
@@ -599,13 +618,9 @@ Here's how to migrate from Tera templates to the usage field:
 
 #### Example 1: Simple Arguments
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-
-<div>
-
 **Old (Deprecated):**
 
-```mise-toml
+```toml
 [tasks.test]
 run = '''
 cargo test {{arg(
@@ -616,31 +631,19 @@ cargo test {{arg(
 '''
 ```
 
-</div>
-
-<div>
-
 **New (Preferred):**
 
-```mise-toml
+```toml
 [tasks.test]
 usage = 'arg "<file>" help="Test file" default="all"'
 run = 'cargo test ${usage_file?}'
 ```
 
-</div>
-
-</div>
-
 #### Example 2: Multiple Arguments with Flags
-
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-
-<div>
 
 **Old (Deprecated):**
 
-```mise-toml
+```toml
 [tasks.build]
 run = [
   'cargo build {{arg(name="target", default="debug")}}',
@@ -648,13 +651,9 @@ run = [
 ]
 ```
 
-</div>
-
-<div>
-
 **New (Preferred):**
 
-```mise-toml
+```toml
 [tasks.build]
 usage = '''
 arg "<target>" default="debug"
@@ -666,19 +665,11 @@ run = [
 ]
 ```
 
-</div>
-
-</div>
-
 #### Example 3: Options with Choices
-
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-
-<div>
 
 **Old (Deprecated):**
 
-```mise-toml
+```toml
 [tasks.deploy]
 run = '''
 deploy {{option(
@@ -688,13 +679,9 @@ deploy {{option(
 '''
 ```
 
-</div>
-
-<div>
-
 **New (Preferred):**
 
-```mise-toml
+```toml
 [tasks.deploy]
 usage = '''
 flag "--env <env>" {
@@ -705,59 +692,45 @@ flag "--force"
 run = 'deploy --env ${usage_env?} ${usage_force:+--force}'
 ```
 
-</div>
-
-</div>
-
 #### Example 4: Variadic Arguments
-
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-
-<div>
 
 **Old (Deprecated):**
 
-```mise-toml
+```toml
 [tasks.lint]
 run = 'eslint {{arg(name="files", var=true)}}'
 ```
 
-</div>
-
-<div>
-
 **New (Preferred):**
 
-```mise-toml
+```toml
 [tasks.lint]
 usage = 'arg "<files>" var=#true'
 run = 'eslint ${usage_files?}'
 ```
 
-</div>
-
-</div>
-
-::: tip Handling Arguments with Spaces
-If your variadic arguments may contain spaces, convert the variable to a bash array:
-
-```mise-toml
-[tasks.process]
-usage = 'arg "<files>" var=#true'
-run = '''
-eval "files=($usage_files)"
-for f in "${files[@]}"; do
-  process "$f"
-done
-'''
-```
-
-:::
+> [!tip] Handling Arguments with Spaces
+>
+> If your variadic arguments may contain spaces, convert the variable to a bash
+> array:
+>
+> ```toml
+> [tasks.process]
+> usage = 'arg "<files>" var=#true'
+> run = '''
+> eval "files=($usage_files)"
+> for f in "${files[@]}"; do
+>   process "$f"
+> done
+> '''
+> ```
 
 ## See Also
 
-- [Task Configuration](/tasks/task-configuration) - Complete task configuration reference
+- [Task Configuration](/tasks/task-configuration) - Complete task configuration
+  reference
 - [TOML Tasks](/tasks/toml-tasks) - TOML task syntax
 - [File Tasks](/tasks/file-tasks) - File-based task syntax
 - [Running Tasks](/tasks/running-tasks) - How to execute tasks
-- [Usage Spec Documentation](https://usage.jdx.dev/spec/) - Complete usage specification reference
+- [Usage Spec Documentation](https://usage.jdx.dev/spec/) - Complete usage
+  specification reference
