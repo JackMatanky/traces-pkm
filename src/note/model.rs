@@ -20,7 +20,7 @@ use crate::{FieldKey, FieldKeyRef, Tag};
 /// to tasks instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {
-    #[serde(with = "crate::index::path")]
+    #[serde(with = "crate::path::codec")]
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Box<[ListItem]>,

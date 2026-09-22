@@ -25,10 +25,6 @@ mod service;
 mod sort;
 mod store;
 
-#[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use codec::path;
-#[cfg(any(test, feature = "test-utils"))]
-pub use codec::path;
 pub(crate) use entry::RowIndex;
 pub use entry::{FileEntry, WorkspaceIndex};
 pub(crate) use error::{IndexError, IndexResult};
