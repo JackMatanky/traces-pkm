@@ -25,6 +25,7 @@ mod service;
 mod sort;
 mod store;
 mod tables;
+mod trie;
 
 pub(crate) use entry::RowIndex;
 pub use entry::{FileEntry, WorkspaceIndex};
