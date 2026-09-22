@@ -57,7 +57,7 @@ Research compiled from rust-analyzer, TypeScript/tsserver, clangd, gopls, Biome,
 
 **Who uses it:**
 - **Marksman**: `Doc.withText` feeds the whole buffer to `Parser.parse`, then `Index.ofCst` rebuilds the document's catalog. Full re-parse on every `didChange`.
-- **rumdl LSP**: `IndexWorker` re-parses changed file's content into a new `FileIndex`, diffs structural data.
+- **rumdl LSP**: `IndexWorker` re-parses changed file's content into a new `WorkspaceIndex`, diffs structural data.
 - **Markdown Oxide**: `Vault::update_vault` mutates just that file's in-memory entry.
 - **rust-analyzer**: Even with salsa, `parse()` re-runs on every file change (but downstream queries may short-circuit via early cutoff).
 
@@ -70,7 +70,7 @@ Research compiled from rust-analyzer, TypeScript/tsserver, clangd, gopls, Biome,
 **Pattern:** After re-parsing a file, diff the extracted structural data (headings, links, anchors) against the previous version. Only trigger re-computation of dependent files if the diff is non-empty.
 
 **Who uses it:**
-- **rumdl LSP**: `extracted_data_differs` compares heading anchors + links between old and new `FileIndex`. Only re-lints dependent files if cross-file data actually changed.
+- **rumdl LSP**: `extracted_data_differs` compares heading anchors + links between old and new `WorkspaceIndex`. Only re-lints dependent files if cross-file data actually changed.
 - **rust-analyzer**: Salsa's "early cutoff" — if a query's result is unchanged despite a changed input, dependent queries are not recomputed.
 - **gopls**: Compares export data (package interface) before invalidating dependents. Only re-analyzes files that imported from the changed file.
 - **pyright**: Tracks import-level dependencies; only re-analyzes files that imported from the changed file.

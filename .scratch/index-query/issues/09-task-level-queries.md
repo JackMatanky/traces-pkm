@@ -34,8 +34,8 @@
   and `task.text` (string). Resolve to `Null` on page-level records — the
   same "well-formed path, no value" contract every other field already
   documents.
-- **`FileIndex::query_tasks`** (`src/index/mod.rs`): selects the same Notes
-  `FileIndex::query` would (via `Source::is_match`, shared through
+- **`WorkspaceIndex::query_tasks`** (`src/index/mod.rs`): selects the same Notes
+  `WorkspaceIndex::query` would (via `Source::is_match`, shared through
   `matched_pairs`), then expands each matched Note into one `IndexRecord` per
   `Note::tasks()` item instead of one record per Note. Follow-up Rust review
   refactored `Note::tasks()` to a lazy depth-first `TaskIter` and changed
@@ -43,7 +43,7 @@
   eager task-reference collection and per-note row collection.
 - **`traces task` CLI** (`src/cli/task.rs`, new): `--from <#tag|folder>`
   (omitted = every task) and `--where <expr>` flags, refreshes the
-  `FileIndex`, prints one markdown checkbox line per task to stdout,
+  `WorkspaceIndex`, prints one markdown checkbox line per task to stdout,
   diagnostics to stderr. `Task::lines()` is split out from `Task::run()` so
   tests assert on rendered content without capturing process stdout.
   `CliError::Query` added for `--where` filter-parse failures, mirroring
@@ -51,7 +51,7 @@
 - **`tasks` template namespace** (`src/template/engine/query_ops.rs`):
   `TaskOps` mirrors `QueryOps` exactly (`all()`/`from_tags()`/
   `from_folder()`, same trusted-root plumbing) but calls
-  `FileIndex::query_tasks` instead of `FileIndex::query`. `record.task.*`
+  `WorkspaceIndex::query_tasks` instead of `WorkspaceIndex::query`. `record.task.*`
   resolves through a `TaskFields` wrapper mirroring `FileFields`, needed
   because minijinja resolves a dotted attribute path one segment at a
   time. Registered as the `tasks` global in `TemplateEngine::new` alongside

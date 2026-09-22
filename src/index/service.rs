@@ -1,7 +1,7 @@
 //! Index lifecycle service.
 //!
 //! [`IndexerService`] scans, parses, persists, loads, refreshes, and opens one
-//! project root's [`super::FileIndex`] through `IndexStore`.
+//! project root's [`super::WorkspaceIndex`] through `IndexStore`.
 //!
 //! `refresh` and `current_store` share one incremental core: content-only
 //! deltas patch inbound links from touched notes, while path-set changes force
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use super::{
-    FileIndex, INDEX_FILE, IndexError, IndexResult,
+    INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
     inlinks::InlinkMap,
     refresh::{RefreshPass, RefreshPlan, RefreshReport},
     sort::SortedByPath,
@@ -28,7 +28,7 @@ use crate::{
 
 /// Drives the file-index lifecycle for one project root.
 ///
-/// `refresh` returns a full [`FileIndex`] and logs persist failures;
+/// `refresh` returns a full [`WorkspaceIndex`] and logs persist failures;
 /// `current_store` keeps only the persisted store current and propagates
 /// persist failures because it has no in-memory fallback.
 #[derive(Clone, Debug)]
@@ -64,7 +64,7 @@ impl IndexerService {
         self
     }
 
-    /// Scans this service's root and builds a [`FileIndex`] in memory.
+    /// Scans this service's root and builds a [`WorkspaceIndex`] in memory.
     ///
     /// # Errors
     ///
@@ -74,11 +74,11 @@ impl IndexerService {
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     #[inline]
-    pub fn build(&self) -> IndexResult<FileIndex> {
+    pub fn build(&self) -> IndexResult<WorkspaceIndex> {
         let files = Self::scan(&self.root)?;
         let notes = self.parse_notes(&files)?;
         let inlinks = InlinkMap::new(&notes, &files);
-        Ok(FileIndex::assemble(
+        Ok(WorkspaceIndex::assemble(
             SortedByPath::assumed_sorted(files),
             SortedByPath::assumed_sorted(notes),
             inlinks,
@@ -86,7 +86,7 @@ impl IndexerService {
     }
 
     /// Refreshes the persisted index and returns a full in-memory
-    /// [`FileIndex`].
+    /// [`WorkspaceIndex`].
     ///
     /// Unchanged Markdown notes reuse persisted parses; changed notes are
     /// parsed from disk; deleted files vanish with the fresh scan. Persist
@@ -106,7 +106,7 @@ impl IndexerService {
     ///   project-relative path.
     /// - `IndexError::Store` if the persisted index cannot be opened or read.
     #[inline]
-    pub fn refresh(&self) -> IndexResult<FileIndex> {
+    pub fn refresh(&self) -> IndexResult<WorkspaceIndex> {
         let (index, _) = self.refresh_with_report()?;
         Ok(index)
     }
@@ -125,7 +125,7 @@ impl IndexerService {
     #[inline]
     pub fn refresh_with_report(
         &self,
-    ) -> IndexResult<(FileIndex, RefreshReport)> {
+    ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.plan_pass()? {
             RefreshPass::Unchanged {
                 store,
@@ -134,7 +134,7 @@ impl IndexerService {
             } => {
                 let notes = store.read_all_notes()?;
                 Ok((
-                    FileIndex::assemble(
+                    WorkspaceIndex::assemble(
                         SortedByPath::assumed_sorted(files),
                         notes,
                         links,
@@ -187,13 +187,14 @@ impl IndexerService {
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     /// - `IndexError::Store` if persisting the rebuilt index fails.
-    pub(crate) fn rebuild(&self) -> IndexResult<FileIndex> {
+    pub(crate) fn rebuild(&self) -> IndexResult<WorkspaceIndex> {
         let index = self.build()?;
         self.persist(&index)?;
         Ok(index)
     }
 
-    /// Synchronizes the persisted index without materializing a [`FileIndex`].
+    /// Synchronizes the persisted index without materializing a
+    /// [`WorkspaceIndex`].
     ///
     /// Cold empty deltas return the opened store without decoding notes or
     /// writing rows. Persist failures are propagated because callers read
@@ -277,7 +278,7 @@ impl IndexerService {
     /// - `IndexError::Store` if the database's parent directory cannot be
     ///   created, the transaction fails, or a record cannot be encoded.
     #[inline]
-    pub fn persist(&self, index: &FileIndex) -> IndexResult<()> {
+    pub fn persist(&self, index: &WorkspaceIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist(&PersistPlan::rebuild(
             IndexAxes::for_class_field(&self.class_field),
             index.entries(),
@@ -285,7 +286,7 @@ impl IndexerService {
     }
 
     /// Loads the index previously persisted for this service's root, or an
-    /// empty [`FileIndex`] if none exists.
+    /// empty [`WorkspaceIndex`] if none exists.
     ///
     /// # Errors
     ///
@@ -300,10 +301,10 @@ impl IndexerService {
                       lifecycle symmetry and tests"
         )
     )]
-    pub fn load(&self) -> IndexResult<FileIndex> {
+    pub fn load(&self) -> IndexResult<WorkspaceIndex> {
         let (files, notes, inlinks) =
             IndexStore::open(&self.root)?.read_all()?;
-        Ok(FileIndex::assemble(files, notes, inlinks))
+        Ok(WorkspaceIndex::assemble(files, notes, inlinks))
     }
 
     /// Recursively scans `root` for regular files, skipping `.git`
@@ -373,7 +374,7 @@ mod tests {
     };
 
     fn query_pages(
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
@@ -467,7 +468,10 @@ mod tests {
             .expect("restore bad_z");
     }
 
-    fn find_note<'a>(index: &'a FileIndex, path: &str) -> Option<&'a Note> {
+    fn find_note<'a>(
+        index: &'a WorkspaceIndex,
+        path: &str,
+    ) -> Option<&'a Note> {
         index
             .entries()
             .iter()
@@ -1163,7 +1167,7 @@ mod tests {
             store
                 .persist(&PersistPlan::rebuild(
                     IndexAxes::for_class_field("class"),
-                    FileIndex::assemble(
+                    WorkspaceIndex::assemble(
                         SortedByPath::sorted(files),
                         SortedByPath::sorted(notes),
                         links,

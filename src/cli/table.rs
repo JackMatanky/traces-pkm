@@ -1,10 +1,10 @@
 //! Page-level table query command.
 //!
-//! Handles `traces table` by refreshing the trusted root's [`FileIndex`],
+//! Handles `traces table` by refreshing the trusted root's [`WorkspaceIndex`],
 //! selecting a source scope, applying the optional filter, and printing
 //! matching pages as a Markdown table.
 //!
-//! [`FileIndex`]: crate::index::FileIndex
+//! [`WorkspaceIndex`]: crate::index::WorkspaceIndex
 
 use clap::Args;
 
@@ -37,7 +37,7 @@ pub(super) struct Table {
 impl Table {
     /// Runs `traces table` for the trusted project root.
     ///
-    /// Refreshes the root's [`FileIndex`] and writes a Markdown table of
+    /// Refreshes the root's [`WorkspaceIndex`] and writes a Markdown table of
     /// matching pages to stdout.
     ///
     /// # Errors
@@ -46,12 +46,12 @@ impl Table {
     ///   read.
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
-    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Index`] if refreshing the [`WorkspaceIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     #[expect(
         clippy::print_stdout,
         reason = "table output is primary command output, not diagnostic \
@@ -66,20 +66,20 @@ impl Table {
         Ok(())
     }
 
-    /// Renders matching pages from `root`'s [`FileIndex`] as a Markdown table,
-    /// alongside the matched row count.
+    /// Renders matching pages from `root`'s [`WorkspaceIndex`] as a Markdown
+    /// table, alongside the matched row count.
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content without
     /// capturing process stdout.
     ///
     /// # Errors
     ///
-    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Index`] if refreshing the [`WorkspaceIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let order = self.sort.resolve(root)?;

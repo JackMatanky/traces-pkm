@@ -153,7 +153,8 @@ enum Commands {
     Trust(trust::Trust),
     /// Revoke trust from one or more project roots.
     Untrust(untrust::Untrust),
-    /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
+    /// Build or rebuild the persisted
+    /// [`WorkspaceIndex`](crate::index::WorkspaceIndex).
     Index(index::Index),
     /// Query pages and print matching file paths as a Markdown bullet list.
     List(list::List),
@@ -1080,7 +1081,7 @@ mod tests {
     /// `list`/`table`/`task` write their primary output to stdout, which
     /// this module doesn't capture (see [`super::list::List::render`]'s
     /// docs for why). Their CLI-equivalent assertions below drive
-    /// [`FileIndex`] directly instead, the same shared interface those
+    /// [`WorkspaceIndex`] directly instead, the same shared interface those
     /// commands' `render`/`lines` methods call. [`Cli::run`] dispatch is
     /// still exercised directly wherever the observable is on the
     /// [`Result`] itself, in the diagnostics tests below and every
@@ -1118,7 +1119,7 @@ mod tests {
         /// resolves unambiguously regardless of proximity tie-breaking.
         ///
         /// Returns the trusted [`ConfigService`] (for [`Cli::run`]
-        /// dispatch) and the project root (for direct [`FileIndex`]/
+        /// dispatch) and the project root (for direct [`WorkspaceIndex`]/
         /// [`TemplateService`] calls).
         fn seed_book_project(root: &Path) -> (ConfigService, PathBuf) {
             let project = TestProject::trusted(root.join("project"));

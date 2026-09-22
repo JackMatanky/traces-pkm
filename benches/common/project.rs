@@ -9,9 +9,9 @@
 //!   Every helper returning a [`TempDir`] expects the caller to keep it alive
 //!   for the full measured operation.
 //! - **In-memory fixtures** (`build_index`, `build_index_arc`,
-//!   `build_index_arc_from_note_source`): a [`FileIndex`] assembled entirely on
-//!   the heap via `FileIndex::new_test`, with zero disk I/O. Use these for
-//!   query, sort, and filter benchmarks.
+//!   `build_index_arc_from_note_source`): a [`WorkspaceIndex`] assembled
+//!   entirely on the heap via `WorkspaceIndex::new_test`, with zero disk I/O.
+//!   Use these for query, sort, and filter benchmarks.
 //!
 //! Do not add ad-hoc path-writing helpers. All writes must flow through
 //! `write_text_file` or `write_binary_file`, which reject absolute paths and
@@ -21,7 +21,8 @@ use std::{fs, path::Path, sync::Arc};
 
 use tempfile::TempDir;
 use traces_pkm::{
-    FileIndex, IndexerService, build_test_index, resolve_safe_path, write_note,
+    IndexerService, WorkspaceIndex, build_test_index, resolve_safe_path,
+    write_note,
 };
 
 use super::content::{ProjectShape, note_path, note_source};
@@ -69,17 +70,20 @@ pub(crate) fn create_project(
     }
     temp
 }
-/// Builds an in-memory [`FileIndex`] for a `ProjectShape` without touching the
-/// filesystem.
+/// Builds an in-memory [`WorkspaceIndex`] for a `ProjectShape` without touching
+/// the filesystem.
 ///
-/// - Notes are parsed on the heap via `FileIndex::new_test`.
+/// - Notes are parsed on the heap via `WorkspaceIndex::new_test`.
 /// - File records carry each source's exact byte length.
 /// - Inbound links are compiled in-process.
 ///
 /// Use this for query, sort, and filter benchmarks. Fixture setup is excluded
 /// from measurements: call this once before the benchmark loop and clone the
 /// returned `Arc` inside iterations.
-pub(crate) fn build_index(note_count: usize, shape: ProjectShape) -> FileIndex {
+pub(crate) fn build_index(
+    note_count: usize,
+    shape: ProjectShape,
+) -> WorkspaceIndex {
     let pairs: Vec<(String, String)> = (0..note_count)
         .map(|i| {
             (
@@ -90,9 +94,9 @@ pub(crate) fn build_index(note_count: usize, shape: ProjectShape) -> FileIndex {
         .collect();
     let refs: Vec<(&str, &str)> =
         pairs.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
-    FileIndex::new_test(&refs)
+    WorkspaceIndex::new_test(&refs)
 }
-/// Builds a shareable, in-memory [`FileIndex`] for a `ProjectShape`.
+/// Builds a shareable, in-memory [`WorkspaceIndex`] for a `ProjectShape`.
 ///
 /// Clone the returned [`Arc`] inside Criterion iterations to exclude fixture
 /// setup from the measurement.
@@ -103,11 +107,11 @@ pub(crate) fn build_index(note_count: usize, shape: ProjectShape) -> FileIndex {
 pub(crate) fn build_index_arc(
     note_count: usize,
     shape: ProjectShape,
-) -> Arc<FileIndex> {
+) -> Arc<WorkspaceIndex> {
     Arc::new(build_index(note_count, shape))
 }
 
-/// Builds an in-memory [`FileIndex`] from generated note content.
+/// Builds an in-memory [`WorkspaceIndex`] from generated note content.
 ///
 /// `note_source` receives `(note_index, note_count)` and must return full
 /// Markdown content. Notes are written as `note-{i}.md` in memory only.
@@ -115,7 +119,7 @@ pub(crate) fn build_index_arc(
 pub(crate) fn build_index_arc_from_note_source(
     note_count: usize,
     note_source: impl Fn(usize, usize) -> String,
-) -> Arc<FileIndex> {
+) -> Arc<WorkspaceIndex> {
     let pairs: Vec<(String, String)> = (0..note_count)
         .map(|i| (format!("note-{i}.md"), note_source(i, note_count)))
         .collect();
@@ -178,7 +182,7 @@ pub fn setup_persisted_project(
 ///
 /// Use this when the measured operation is the first persistence write. Keep
 /// the [`TempDir`] alive with the returned [`IndexerService`] and
-/// [`FileIndex`].
+/// [`WorkspaceIndex`].
 ///
 /// **Criterion trap**: same as [`setup_persisted_project`] — use
 /// `b.iter_batched_ref`, never consume this tuple by value inside `routine`.
@@ -189,7 +193,7 @@ pub fn setup_persisted_project(
 pub(crate) fn setup_unpersisted_project(
     note_count: usize,
     shape: ProjectShape,
-) -> (TempDir, IndexerService, FileIndex) {
+) -> (TempDir, IndexerService, WorkspaceIndex) {
     let temp = create_project(note_count, shape);
     let indexer = IndexerService::new(temp.path());
     let index = indexer.build().expect("build index");

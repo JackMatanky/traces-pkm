@@ -19,7 +19,7 @@ Scope: `src/template/`, `src/query/` integration, `benches/template_render.rs`, 
 | Pre-fetch `QueryBuilder::sort` | `builder.rs:122` | No — gated behind `test-utils` | Same |
 | Pre-fetch `QueryBuilder::limit` | `builder.rs:156` | No — gated behind `test-utils` | Same |
 | Multi-field sort (`SortOrder::parse`) | `sort.rs:145` (+field,-field grammar) | No — only single-field `sort_field` exposed | Templates can't compose multi-field sorts |
-| Index-store resolution (`run_from_store`) | `service.rs:116` | No — always uses full `FileIndex` refresh | Pays for full index scan even when store multimap indexes could resolve candidates directly |
+| Index-store resolution (`run_from_store`) | `service.rs:116` | No — always uses full `WorkspaceIndex` refresh | Pays for full index scan even when store multimap indexes could resolve candidates directly |
 | Dialect-aware errors (`QueryDialect`) | `error.rs:241` | No — generic `query_error` discards dialect | Users see "query failed" without knowing if it's a source-expression or filter-expression syntax error |
 | Typo suggestions (`FieldPathError`) | `field.rs:222` | No — buried in generic error | "Did you mean `file.name`?" suggestions lost |
 | `TaskPathStyle` control | `format.rs:11` | Always `None` | Templates can't request suffix-style task paths |
@@ -32,7 +32,7 @@ Scope: `src/template/`, `src/query/` integration, `benches/template_render.rs`, 
 
 **c. Expose multi-field sort.** Add a `sort_multi` method or extend `sort` to accept comma-separated field specs (`"rating,-date"`). The grammar parser already handles this.
 
-**d. Consider `run_from_store` for hot paths.** If template renders become frequent (daemon mode, watch mode), switching from full `FileIndex` refresh to `SourceResolver`-based store queries would skip materializing non-matching notes.
+**d. Consider `run_from_store` for hot paths.** If template renders become frequent (daemon mode, watch mode), switching from full `WorkspaceIndex` refresh to `SourceResolver`-based store queries would skip materializing non-matching notes.
 
 ---
 

@@ -1,11 +1,11 @@
 //! Task query CLI command implementation.
 //!
 //! Handles `traces task` by refreshing the trusted project root's
-//! [`FileIndex`], selecting task rows via optional source and filter
+//! [`WorkspaceIndex`], selecting task rows via optional source and filter
 //! expressions, and formatting matching tasks as Markdown checkbox lines or a
 //! table.
 //!
-//! [`FileIndex`]: crate::index::FileIndex
+//! [`WorkspaceIndex`]: crate::index::WorkspaceIndex
 
 use clap::Args;
 
@@ -168,7 +168,7 @@ pub(super) struct Task {
 impl Task {
     /// Runs `traces task` for the trusted project root.
     ///
-    /// Refreshes the root's [`FileIndex`] and writes each matching task to
+    /// Refreshes the root's [`WorkspaceIndex`] and writes each matching task to
     /// stdout as a Markdown checkbox line or formatted table.
     ///
     /// # Errors
@@ -177,12 +177,12 @@ impl Task {
     ///   read.
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
-    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Index`] if refreshing the [`WorkspaceIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
@@ -200,19 +200,20 @@ impl Task {
         Ok(())
     }
 
-    /// Renders matching tasks from `root`'s [`FileIndex`] as a Markdown task
-    /// list, table, or count-only output, alongside the matched row count.
+    /// Renders matching tasks from `root`'s [`WorkspaceIndex`] as a Markdown
+    /// task list, table, or count-only output, alongside the matched row
+    /// count.
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content
     /// without capturing process stdout.
     /// # Errors
     ///
-    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Index`] if refreshing the [`WorkspaceIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let status_filter = self.filters.status_filter();

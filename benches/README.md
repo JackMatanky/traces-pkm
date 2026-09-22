@@ -75,7 +75,7 @@ Several benchmark suites provide baseline floor rungs to isolate specific subsys
   scan/diff prelude.
 - **`full_vault_scan - zero-row`** (`index_refresh.rs`): Isolates full-table row decode from
   the scan/diff prelude.
-- **`refresh no-op - zero-row`** (`index_refresh.rs`): Isolates full `FileIndex` materialization.
+- **`refresh no-op - zero-row`** (`index_refresh.rs`): Isolates full `WorkspaceIndex` materialization.
 - **`list - refresh_floor`** (`template_render.rs`): Isolates template parsing, AST execution,
   and Markdown formatting from the project refresh prelude.
 - **`filter - rows_floor`** (`query_execution.rs`): Isolates filter predicate evaluation
@@ -145,7 +145,7 @@ Every benchmark file documents its flamegraph command. Example:
 
 ```bash
 cargo flamegraph --bench index_refresh -- --bench \
-  "FileIndex::refresh/no-op/1000"
+  "WorkspaceIndex::refresh/no-op/1000"
 ```
 
 ## Adding New Benchmarks

@@ -13,8 +13,8 @@
 //!   [`FileBase`](traces_pkm::FileBase) collections for in-memory benches. It
 //!   does not create files on disk.
 //! - [`project`] owns [`TempDir`](tempfile::TempDir)-backed project trees and
-//!   [`FileIndex`](traces_pkm::FileIndex) builders for scanner, persistence,
-//!   and query benches that need real filesystem state.
+//!   [`WorkspaceIndex`](traces_pkm::WorkspaceIndex) builders for scanner,
+//!   persistence, and query benches that need real filesystem state.
 //!
 //! # Usage rules
 //!

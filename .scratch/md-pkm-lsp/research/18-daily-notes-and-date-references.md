@@ -328,7 +328,7 @@ pub struct FileEntry {
 
 | Constraint | Status |
 |-----------|--------|
-| Reuse existing Traces semantics/services | ✅ Reuses `DateValue`, `FileIndex`, `LinkResolver`, `RefreshPlan` |
+| Reuse existing Traces semantics/services | ✅ Reuses `DateValue`, `WorkspaceIndex`, `LinkResolver`, `RefreshPlan` |
 | Performance is first-class | ✅ Index-time ~0.5ms; lazy LSP features |
 | LSP protocol DTOs stay at boundary | ✅ `CreateFile` is protocol-level |
 | Preserve existing architecture | ✅ Extends `FileEntry`, doesn't restructure |
@@ -402,7 +402,7 @@ pub struct FileEntry {
 | Existing Service | Used For | Ticket |
 |-----------------|----------|--------|
 | `DateValue` (`src/date.rs`) | Date parsing from filenames | Existing |
-| `FileIndex` / `FileEntry` (`src/index/entry.rs`) | Index-time storage | Existing |
+| `WorkspaceIndex` / `FileEntry` (`src/index/entry.rs`) | Index-time storage | Existing |
 | `LinkResolver` (ticket 15) | Wikilink resolution | Ticket 15 |
 | Inverted index (ticket 33) | O(1) stem → path lookup | Ticket 33 |
 | `RefreshPlan` (ticket 13) | Single-file index updates | Ticket 13 |

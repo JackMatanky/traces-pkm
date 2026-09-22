@@ -1,7 +1,7 @@
 //! Promotes `src/index/mod.rs`'s internal
 //! `persist_then_load_recovers_the_same_records_and_notes` test to prove the
-//! public round-trip contract: `FileIndex::build` → `persist` → `load` in a
-//! fresh `FileIndex` value, simulating a new process. Also covers redb
+//! public round-trip contract: `WorkspaceIndex::build` → `persist` → `load` in
+//! a fresh `WorkspaceIndex` value, simulating a new process. Also covers redb
 //! persistence invariance without the `LISTS` table (ADR 0005) and recovery
 //! from a corrupted `.traces/index.redb` file, both through the public
 //! `IndexerService` surface alone.
@@ -14,7 +14,7 @@ use traces_pkm::{
     FileEntry, QueryBuilder, QueryService, QuerySet, SourceLine,
     SourceSelector, TaskListItem, TaskPriority, TaskStatusType, TestProject,
 };
-/// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
+/// Builds an index, persists it, and reloads it into a fresh `WorkspaceIndex`,
 /// checking records survive intact.
 ///
 /// `src/index/mod.rs` covers the identical round trip with an internal unit

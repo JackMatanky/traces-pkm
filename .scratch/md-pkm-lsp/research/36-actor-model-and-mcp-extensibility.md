@@ -3,7 +3,7 @@
 Resolves ticket 36.
 
 ## Overview
-This document investigates whether an actor/message-passing model provides material benefits over an `Arc<FileIndex>` shared-snapshot model for Traces' analysis host, specifically concerning the ease of adding a future MCP (Model Context Protocol) server alongside the LSP.
+This document investigates whether an actor/message-passing model provides material benefits over an `Arc<WorkspaceIndex>` shared-snapshot model for Traces' analysis host, specifically concerning the ease of adding a future MCP (Model Context Protocol) server alongside the LSP.
 
 ## Findings on Precedents
 
@@ -42,7 +42,7 @@ If Traces were to adopt an actor model, the Rust ecosystem offers several paths,
 
 ## Concrete Recommendation
 
-**Reject the actor model (c) and proceed with the `Arc<FileIndex>` swap-on-refresh facade (a).**
+**Reject the actor model (c) and proceed with the `Arc<WorkspaceIndex>` swap-on-refresh facade (a).**
 
 - **Performance:** `Arc`-swap allows N threads (LSP handlers, MCP handlers) to read the index concurrently and lock-free.
 - **Simplicity:** Exposing a standard Rust `impl Coordinator { pub fn query(...) }` API is far less boilerplate than defining message enums and oneshot response channels.

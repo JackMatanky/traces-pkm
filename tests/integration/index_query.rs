@@ -1,6 +1,6 @@
-//! Proves `FileIndex::build` → `QueryBuilder` execution works across real files
-//! through the test-utils surface alone. Unit coverage inside `src/query/`
-//! exercises crate-internal transforms.
+//! Proves `WorkspaceIndex::build` → `QueryBuilder` execution works across real
+//! files through the test-utils surface alone. Unit coverage inside
+//! `src/query/` exercises crate-internal transforms.
 
 use std::{path::Path, sync::Arc};
 

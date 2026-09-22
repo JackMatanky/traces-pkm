@@ -7,16 +7,16 @@ construction.
 
 ### Index Model
 
-#### File Index
+#### Workspace Index
 
 An immutable in-memory snapshot of indexed files, parsed notes, and derived
 inbound links across a project root.
-*Avoid*: NoteIndex, database handle, cache, vault
+*Avoid*: File Index, NoteIndex, database handle, cache, vault
 
 #### Index Store
 
 The durable on-disk cache of indexed file records, parsed notes, and derived
-relationships for one project root, distinct from the in-memory File Index.
+relationships for one project root, distinct from the in-memory Workspace Index.
 *Avoid*: database, persistence layer, cache handle
 
 #### Indexer Service
@@ -53,7 +53,7 @@ type: relative path, size, timestamps, and format classification.
 #### File Entry
 
 One indexed file's File Base together with its optional parsed Note and derived
-inbound links in a File Index.
+inbound links in a Workspace Index.
 *Avoid*: index row, file record, indexed note
 
 #### Note

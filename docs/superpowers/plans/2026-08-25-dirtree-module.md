@@ -24,7 +24,7 @@
 | Bypassers | `template/loader.rs::stems_in` migrates now (explicit discard arm); `file_store.rs::read_dir_entries` deferred |
 | Deferred defect | `FileBase::from_metadata` `strip_prefix(..).unwrap_or(path)` silently stores absolute paths — recorded as TODO comment in `file.rs`, not fixed here |
 
-**Naming rationale:** `DirTreeError` over `DirScanError` because the module serves registry loading, template listing, and config discovery — "scan" is the FileIndex's word. Variant names state precisely *where* the failure struck: the root is absent (`MissingRoot`), the root is present but unusable (`RootInaccessible`), or something beneath the root failed (`NodeInaccessible`). `Node` reuses the module's `DirNode` vocabulary and echoes the codebase's existing `DiscoveryError::PathInaccessible`.
+**Naming rationale:** `DirTreeError` over `DirScanError` because the module serves registry loading, template listing, and config discovery — "scan" is the WorkspaceIndex's word. Variant names state precisely *where* the failure struck: the root is absent (`MissingRoot`), the root is present but unusable (`RootInaccessible`), or something beneath the root failed (`NodeInaccessible`). `Node` reuses the module's `DirNode` vocabulary and echoes the codebase's existing `DiscoveryError::PathInaccessible`.
 
 ## Verified walkdir facts this design rests on (walkdir 2.5.0 source)
 
@@ -1225,7 +1225,7 @@ Under `## Language` in the Core section, append:
 ```markdown
 ### Directory Tree
 
-The shared traversal vocabulary behind the FileIndex scan, Schema registry load, config subtree discovery, and Template Directory listing: `dirtree::children(dir)` reads a directory's immediate entries; `dirtree::descendants(root)` walks a whole tree (`skipping` prunes subtrees). Both yield **DirNodes** and classified **Dir Tree Errors** — `MissingRoot`, `RootInaccessible`, `NodeInaccessible` — whose degrade-or-fail policy each caller states explicitly in its match arms.
+The shared traversal vocabulary behind the WorkspaceIndex scan, Schema registry load, config subtree discovery, and Template Directory listing: `dirtree::children(dir)` reads a directory's immediate entries; `dirtree::descendants(root)` walks a whole tree (`skipping` prunes subtrees). Both yield **DirNodes** and classified **Dir Tree Errors** — `MissingRoot`, `RootInaccessible`, `NodeInaccessible` — whose degrade-or-fail policy each caller states explicitly in its match arms.
 *Avoid*: walker, walk adapter, DirEntry
 ```
 

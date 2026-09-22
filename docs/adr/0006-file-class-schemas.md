@@ -63,7 +63,7 @@ registry. Schema TOML files deny unknown fields via
 `#[serde(deny_unknown_fields)]` on both RawSchema and RawSchemaFieldDef, so typos
 fail loudly at parse time. A Field Definition has a `type` (input, select,
 boolean, number, date, file) with type-specific options plus optional `required`
-and `multi` flags; `file` fields resolve their option list from the FileIndex
+and `multi` flags; `file` fields resolve their option list from the WorkspaceIndex
 via an AND-composed filter of `folders` (array), `ext`, and `class` (array),
 with no regex.
 

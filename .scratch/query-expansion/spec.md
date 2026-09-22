@@ -4,11 +4,11 @@ Status: needs-triage
 
 ## Problem Statement
 
-The FileIndex can answer basic page-level and task-level queries, but several common PKM patterns are impractical or impossible. A User cannot filter pages by properties of their task list (e.g., "show notes with incomplete tasks"), cannot start a query from link relationships (e.g., "notes that link to this note"), and cannot query periodic notes by their date-derived filename (e.g., "all daily notes from January"). Tag-based source queries (`query.from_tags()`) scan every Note in memory rather than using an indexed lookup. The existing filter expression engine supports only comparisons and `contains()` — no date/duration constructors, no string functions, no list-element predicates.
+The WorkspaceIndex can answer basic page-level and task-level queries, but several common PKM patterns are impractical or impossible. A User cannot filter pages by properties of their task list (e.g., "show notes with incomplete tasks"), cannot start a query from link relationships (e.g., "notes that link to this note"), and cannot query periodic notes by their date-derived filename (e.g., "all daily notes from January"). Tag-based source queries (`query.from_tags()`) scan every Note in memory rather than using an indexed lookup. The existing filter expression engine supports only comparisons and `contains()` — no date/duration constructors, no string functions, no list-element predicates.
 
 ## Solution
 
-Extend the FileIndex with: (1) a `date` field on FileRecord extracted from filename patterns and any frontmatter key with a date value, configured via a `[periodic]` table in the Config File; (2) a TAGS multimap table in redb for O(1) tag-based source lookups; (3) `from_inlinks(path)` and `from_outlinks(path)` as new QuerySource variants; (4) `any(field, FilterExpr)` and `all(field, FilterExpr)` filter expression functions that bind list-element fields in a temporary scope during predicate evaluation; (5) additional WHERE expression capabilities including string functions (with regex), date/duration constructors, and date accessors; and (6) task implicit fields (`task.status`, `task.tags` from parent Note) accessible in WHERE expressions.
+Extend the WorkspaceIndex with: (1) a `date` field on FileRecord extracted from filename patterns and any frontmatter key with a date value, configured via a `[periodic]` table in the Config File; (2) a TAGS multimap table in redb for O(1) tag-based source lookups; (3) `from_inlinks(path)` and `from_outlinks(path)` as new QuerySource variants; (4) `any(field, FilterExpr)` and `all(field, FilterExpr)` filter expression functions that bind list-element fields in a temporary scope during predicate evaluation; (5) additional WHERE expression capabilities including string functions (with regex), date/duration constructors, and date accessors; and (6) task implicit fields (`task.status`, `task.tags` from parent Note) accessible in WHERE expressions.
 
 Rename the existing LINKS redb table to INLINKS for clarity — it already stores inbound links. Do not add an OUTLINKS table — outlinks are already O(1) via `Note::outlinks()`.
 
@@ -91,7 +91,7 @@ Rename the existing LINKS redb table to INLINKS for clarity — it already store
 
 ### Query Engine
 
-- **QuerySource**: Add `Inlinks(PathBuf)` and `Outlinks(PathBuf)` variants. `Inlinks` reads from the INLINKS multimap; `Outlinks` filters `FileIndex::notes()` in memory against `Note::outlinks()`.
+- **QuerySource**: Add `Inlinks(PathBuf)` and `Outlinks(PathBuf)` variants. `Inlinks` reads from the INLINKS multimap; `Outlinks` filters `WorkspaceIndex::notes()` in memory against `Note::outlinks()`.
 - **FilterExpr**: Add `Any { field: FieldPath, predicate: Box<FilterExpr> }` and `All { field: FieldPath, predicate: Box<FilterExpr> }` variants. During evaluation, iterate the list field's elements, temporarily bind element fields in scope, evaluate the predicate, and aggregate with any/all semantics.
 - **FilterFunction**: Add `Date(String)`, `Duration(String)`, `StartsWith { field, target }`, `EndsWith { field, target }`, `Regex { field, pattern }` variants. The existing `Contains` is already implemented.
 - **FieldPath**: Add `FileDate` variant to `FileField` for `file.date` access. Add `TaskStatus` (maps ListItem's `task_status` enum to string: "incomplete" / "complete") and `TaskTags` (returns parent Note's tags) variants to `TaskField`. `task.completed` is already wired for task-level queries — `any()`/`all()` predicates gain access to it automatically when binding list-element fields.
@@ -99,7 +99,7 @@ Rename the existing LINKS redb table to INLINKS for clarity — it already store
 
 ### Indexer
 
-- **`FileIndex::replace_all`**: Populate `TAGS` multimap during write. Populate `file.date` from config patterns + frontmatter date fields during `FileRecord` construction.
+- **`WorkspaceIndex::replace_all`**: Populate `TAGS` multimap during write. Populate `file.date` from config patterns + frontmatter date fields during `FileRecord` construction.
 - **Pattern matching**: Evaluate patterns most-specific-first (hardcoded order: daily → weekly → monthly → quarterly → yearly). For each non-empty pattern:
   - **Weekly** (`%Y-W%V`): regex-extract year and week number from the stem, then call `NaiveDate::from_isoywd_opt(year, week, Weekday::Mon)` to resolve to Monday. `NaiveDate::parse_from_str` with `%Y-W%V` alone cannot resolve to a date (chrono needs weekday, which is not in the pattern).
   - **All others**: attempt `NaiveDate::parse_from_str(stem, pattern)`. First successful parse wins. Monthly/quarterly/yearly resolve to day 1 of the period.
@@ -116,10 +116,10 @@ Rename the existing LINKS redb table to INLINKS for clarity — it already store
 - **Key test seams**:
   - `src/index/query/filter.rs` — filter expression parsing and evaluation (existing, add cases for `any`/`all`, date/duration constructors, string functions including regex)
   - `src/index/query.rs` — QuerySource matching and IndexRecord field resolution (existing, add `Inlinks`/`Outlinks` source tests, `file.date` field tests)
-  - `src/index/mod.rs` — FileIndex build/query integration (existing, add TAGS table population, periodic note extraction, link-based query integration)
+  - `src/index/mod.rs` — WorkspaceIndex build/query integration (existing, add TAGS table population, periodic note extraction, link-based query integration)
   - `src/index/file.rs` — FileRecord construction (existing, add `date` field computation from patterns and frontmatter)
   - `src/index/store.rs` — redb persistence (existing, add TAGS table round-trip, INLINKS rename)
-- **Integration tests**: Add end-to-end tests that build a FileIndex from fixture Notes with periodic filenames, tag-only Notes, and cross-linked Notes, then run queries verifying the new features work together.
+- **Integration tests**: Add end-to-end tests that build a WorkspaceIndex from fixture Notes with periodic filenames, tag-only Notes, and cross-linked Notes, then run queries verifying the new features work together.
 
 ## Out of Scope
 
@@ -135,4 +135,4 @@ Rename the existing LINKS redb table to INLINKS for clarity — it already store
 - All periodic note pattern specifiers are standard chrono strftime tokens (`%Y`, `%m`, `%d`, `%V`, `%q`). No custom placeholders needed. Weekly patterns require two-step parsing: regex-extract year + week, then `from_isoywd_opt(year, week, Weekday::Mon)` — `parse_from_str` with `%Y-W%V` alone cannot resolve to a date without a weekday component.
 - Task emoji shorthands (🗓️, ✅, ➕, 🛫, ⏳) are already implemented in `extract_task_inline_fields` — no work needed there.
 - Task implicit fields (`task.status`, `task.tags`) require wiring ListItem's `task_status` and parent Note tags through `IndexRecord::field()`. `task.completed` is already available in task-level queries and will automatically be accessible in `any()`/`all()` predicates when list-element fields are bound.
-- ADR-0005 documents the original FileIndex design. These changes extend it — no new ADR is warranted since the decisions are implementation details within the established architecture.
+- ADR-0005 documents the original WorkspaceIndex design. These changes extend it — no new ADR is warranted since the decisions are implementation details within the established architecture.

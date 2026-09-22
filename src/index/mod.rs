@@ -2,12 +2,12 @@
 //! project root.
 //!
 //! [`IndexerService`] scans the filesystem, parses Markdown notes, derives
-//! inbound links, and stores the resulting [`FileIndex`] through the
+//! inbound links, and stores the resulting [`WorkspaceIndex`] through the
 //! redb-backed [`store`] module.
 //!
-//! [`FileIndex`] is an in-memory snapshot of file entries, parsed metadata, and
-//! link data. It carries no root path; callers inspect its sorted
-//! [`FileIndex::entries`] view and use [`crate::query::QueryService`] for
+//! [`WorkspaceIndex`] is an in-memory snapshot of file entries, parsed
+//! metadata, and link data. It carries no root path; callers inspect its sorted
+//! [`WorkspaceIndex::entries`] view and use [`crate::query::QueryService`] for
 //! evaluation.
 //!
 //! Fresh builds run through [`IndexerService::build`]; cold CLI reads use
@@ -30,7 +30,7 @@ pub(crate) use codec::path;
 #[cfg(any(test, feature = "test-utils"))]
 pub use codec::path;
 pub(crate) use entry::RowIndex;
-pub use entry::{FileEntry, FileIndex};
+pub use entry::{FileEntry, WorkspaceIndex};
 pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;

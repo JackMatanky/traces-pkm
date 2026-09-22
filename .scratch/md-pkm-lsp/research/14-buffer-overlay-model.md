@@ -8,7 +8,7 @@ Sources: `docs/digests/lsp_rvben-rumdl-digest.txt`, `docs/digests/lsp_rvben-rumd
 
 ## Executive summary
 
-All three studied markdown PKM LSPs (Marksman, rumdl, markdown-oxide) use the same pattern: **editor content replaces disk content while the file is open**. There is no layered overlay with fallback — the rust-analyzer VFS "upper/lower layer" pattern is not used by any markdown LSP. For Traces, this means the "overlay" is a **transient replacement map**, not a merge layer: the persisted `FileIndex` is the baseline; open files temporarily override entries in it.
+All three studied markdown PKM LSPs (Marksman, rumdl, markdown-oxide) use the same pattern: **editor content replaces disk content while the file is open**. There is no layered overlay with fallback — the rust-analyzer VFS "upper/lower layer" pattern is not used by any markdown LSP. For Traces, this means the "overlay" is a **transient replacement map**, not a merge layer: the persisted `WorkspaceIndex` is the baseline; open files temporarily override entries in it.
 
 The hardest cross-file problem is **inlinks**: the `InlinkMap` requires the full file list for stem-based wikilink resolution and cannot be computed from a single file alone. The recommended approach is per-request inlink adjustment using the existing `patch_links` pattern from `src/index/sync.rs:216-226`, keeping the disk-based inlink graph as baseline and computing overlay-adjusted inlinks on-demand.
 
@@ -26,13 +26,13 @@ DashMap's sharded concurrent access is unnecessary overhead with `concurrency_le
 
 Storing `parsed_note: Option<Note>` in `BufferState` creates a staleness vector: the parsed note may reference schemas/templates that have changed on disk but the index hasn't refreshed yet. Since pulldown-cmark is fast (~0.02ms per 10KB), compute the parsed note on-demand from `content` when needed.
 
-### C3: FileIndex API gaps block per-request inlink adjustment
+### C3: WorkspaceIndex API gaps block per-request inlink adjustment
 
 Two API gaps prevent per-request inlink adjustment:
-- `FileIndex` does not expose `&[FileBase]` — `LinkResolver::new(files: &'a [FileBase])` needs the full sorted file list, but only `entries() -> &[FileEntry]` exists.
+- `WorkspaceIndex` does not expose `&[FileBase]` — `LinkResolver::new(files: &'a [FileBase])` needs the full sorted file list, but only `entries() -> &[FileEntry]` exists.
 - `FileEntry.inlinks()` returns `&[PathBuf]` (read-only), not an `InlinkMap` that can be patched.
 
-**Fix**: Add `FileIndex::files() -> &[FileBase]`. Redesign inlink patching to work with reconstructed per-entry inlink data.
+**Fix**: Add `WorkspaceIndex::files() -> &[FileBase]`. Redesign inlink patching to work with reconstructed per-entry inlink data.
 
 ### C4: Cost model for inlink adjustment is incomplete
 
@@ -48,7 +48,7 @@ The stated cost `O(overlay_count × outlinks_per_overlay)` omits the `LinkResolv
 
 ### C7: Two unsaved buffers referencing each other can't resolve links
 
-If file A (new, unsaved) links to file B (new, unsaved), neither is in the `FileIndex`, so `LinkResolver` can't resolve the link. **Fix**: The overlay layer must maintain its own `LinkResolver` over the union of `(FileIndex files ∪ DocumentStore overlay files)`.
+If file A (new, unsaved) links to file B (new, unsaved), neither is in the `WorkspaceIndex`, so `LinkResolver` can't resolve the link. **Fix**: The overlay layer must maintain its own `LinkResolver` over the union of `(WorkspaceIndex files ∪ DocumentStore overlay files)`.
 
 ---
 
@@ -179,7 +179,7 @@ impl OverlayStore {
 If memory is a concern:
 - Use LRU eviction with capacity = 2x expected open documents
 - Evict on `didClose` immediately (release the overlay entry)
-- Keep the immutable FileIndex (on-disk index) always available
+- Keep the immutable WorkspaceIndex (on-disk index) always available
 
 ```rust
 struct OverlayStore {
@@ -252,7 +252,7 @@ fn did_close(&mut self, uri: DocumentUri) {
 │                                             │
 │  1. Check overlay store (open in editor?)   │
 │     YES → use overlay content              │
-│     NO  → read from FileIndex (disk)        │
+│     NO  → read from WorkspaceIndex (disk)        │
 │                                             │
 │  2. Index is always built from whichever    │
 │     source is authoritative                │
@@ -261,7 +261,7 @@ fn did_close(&mut self, uri: DocumentUri) {
 
 For cross-file references (links from unsaved doc to other docs):
 - Parse links from the **overlay content** (what user is editing)
-- Resolve targets from the **FileIndex** (what's on disk)
+- Resolve targets from the **WorkspaceIndex** (what's on disk)
 - This ensures link resolution works even for unsaved changes
 
 ---
@@ -346,7 +346,7 @@ fn on_document_change(&mut self, uri: DocumentUri, new_content: String) {
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  ┌──────────────────┐    ┌──────────────────────────┐  │
-│  │ DocumentStore    │    │ FileIndex (immutable, Arc)│  │
+│  │ DocumentStore    │    │ WorkspaceIndex (immutable, Arc)│  │
 │  │ RwLock<HashMap>  │    │ - entries (sorted)        │  │
 │  │ <Url, Buffer>    │    │ - inlinks (per-entry)     │  │
 │  │                  │    │ - files() accessor [NEW]  │  │
@@ -511,7 +511,7 @@ fn on_document_change(&mut self, uri: DocumentUri, new_content: String) {
 5. **Debounce at 150ms within handler flow** — sequential dispatch prevents staleness
 6. **pulldown-cmark full re-parse is viable** — ~0.02ms per 10KB, no incremental parsing needed
 7. **No LRU needed** for typical PKM vaults — memory is negligible
-8. **Per-request inlink adjustment needs API fixes** — FileIndex must expose &[FileBase] (C3)
+8. **Per-request inlink adjustment needs API fixes** — WorkspaceIndex must expose &[FileBase] (C3)
 9. **Cache LinkResolver between requests** — O(files) build cost dominates (C4)
 10. **didSave triggers refresh directly** — not via didChangeWatchedFiles (C5)
 11. **FileBase needs new_buffer constructor** — for unsaved/new files (C6)

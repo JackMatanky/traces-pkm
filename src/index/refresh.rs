@@ -14,7 +14,7 @@ use std::{
 };
 
 use super::{
-    FileIndex, IndexError, IndexResult,
+    IndexError, IndexResult, WorkspaceIndex,
     delta::{IndexDelta, InlinkDelta},
     inlinks::{self, InlinkMap},
     service::IndexerService,
@@ -123,13 +123,13 @@ impl PendingApply {
         }
     }
 
-    /// Materializes this pass into an in-memory [`FileIndex`].
+    /// Materializes this pass into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
     /// - [`IndexError::Store`] if content-only materialization cannot read
     ///   persisted notes.
-    pub(super) fn into_index(self) -> IndexResult<FileIndex> {
+    pub(super) fn into_index(self) -> IndexResult<WorkspaceIndex> {
         let Self {
             store,
             update,
@@ -150,14 +150,14 @@ impl Persisted {
         self.pass.store
     }
 
-    /// Materializes the persisted pass into an in-memory [`FileIndex`].
+    /// Materializes the persisted pass into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
     /// - [`IndexError::Store`] if content-only materialization cannot read
     ///   persisted notes.
     #[inline]
-    pub(super) fn into_index(self) -> IndexResult<FileIndex> {
+    pub(super) fn into_index(self) -> IndexResult<WorkspaceIndex> {
         self.pass.into_index()
     }
 }
@@ -184,14 +184,14 @@ impl PersistFailed {
         self.source
     }
 
-    /// Materializes the unpersisted pass into an in-memory [`FileIndex`].
+    /// Materializes the unpersisted pass into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
     /// - [`IndexError::Store`] if content-only materialization cannot read
     ///   persisted notes.
     #[inline]
-    pub(super) fn into_index(self) -> IndexResult<FileIndex> {
+    pub(super) fn into_index(self) -> IndexResult<WorkspaceIndex> {
         (*self.pass).into_index()
     }
 }
@@ -445,7 +445,7 @@ impl IndexUpdate {
         self.inlinks.notes.to_upsert(self.delta.upserted())
     }
 
-    /// Materializes this update into an in-memory [`FileIndex`].
+    /// Materializes this update into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
@@ -454,13 +454,13 @@ impl IndexUpdate {
     pub(super) fn into_index(
         self,
         store: &IndexStore,
-    ) -> IndexResult<FileIndex> {
+    ) -> IndexResult<WorkspaceIndex> {
         let InlinkReconciliation {
             links,
             notes,
         } = self.inlinks;
         let notes = notes.resolve(store, &self.delta)?;
-        Ok(FileIndex::assemble(
+        Ok(WorkspaceIndex::assemble(
             SortedByPath::assumed_sorted(self.current_files),
             notes,
             links,

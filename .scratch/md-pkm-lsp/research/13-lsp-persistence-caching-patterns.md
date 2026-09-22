@@ -14,17 +14,17 @@ Sources: `docs/digests/lsp_rvben-rumdl-digest.txt` (rumdl LSP), `docs/digests/ls
 
 1. **CLI lint cache** (`src/cache.rs`): File-level JSON cache of lint results keyed by `(blake3(content_hash), blake3(config_hash), blake3(rules_hash), dependency_fingerprint)`. Stored at `.rumdl_cache/{version}/{hash}.json`. Caches `Vec<LintWarning>` per file. Version-pinned — entries are discarded when the rumdl version changes. Atomic writes via temp-file + rename. Configurable via `--cache-dir`, `RUMDL_CACHE_DIR`, or `cache-dir` in config. Disabled via `--no-cache`.
 
-2. **Workspace index** (`workspace_index.rs`, persisted as `.rumdl_cache/workspace_index.bin`): Binary-serialized cross-file heading/link index. Loaded at startup via `WorkspaceIndex::load_from_cache`, saved after each CLI run via `workspace_index.save_to_cache`. Contains `FileIndex` per file (heading anchors, cross-file links). Used for MD051 (link fragment) and MD057 (relative link) rules.
+2. **Workspace index** (`workspace_index.rs`, persisted as `.rumdl_cache/workspace_index.bin`): Binary-serialized cross-file heading/link index. Loaded at startup via `WorkspaceIndex::load_from_cache`, saved after each CLI run via `workspace_index.save_to_cache`. Contains `WorkspaceIndex` per file (heading anchors, cross-file links). Used for MD051 (link fragment) and MD057 (relative link) rules.
 
 **In-memory (LSP):** The LSP server (`src/lsp/`) keeps a `WorkspaceIndex` behind `Arc<RwLock<WorkspaceIndex>>` shared between the server and a background `IndexWorker`. No disk persistence from the LSP — the LSP relies entirely on in-memory state and re-scans on workspace open.
 
-**Cache invalidation:** Per-file content hash (blake3) for CLI cache. For the workspace index: debounced `IndexUpdate::FileChanged` events (100ms debounce) trigger `update_single_file`. The worker diffs `extracted_data_differs` (heading anchors + links) against the previous `FileIndex` to decide whether dependent files need re-linting. `IndexUpdate::FileRemoved` immediately removes the entry. `FullRescan` rebuilds the entire in-memory index.
+**Cache invalidation:** Per-file content hash (blake3) for CLI cache. For the workspace index: debounced `IndexUpdate::FileChanged` events (100ms debounce) trigger `update_single_file`. The worker diffs `extracted_data_differs` (heading anchors + links) against the previous `WorkspaceIndex` to decide whether dependent files need re-linting. `IndexUpdate::FileRemoved` immediately removes the entry. `FullRescan` rebuilds the entire in-memory index.
 
 **Startup handling:** CLI: loads workspace index cache, skips files whose content hash matches, lints only stale files, then saves the updated cache. LSP: full workspace scan on initialization (no disk cache used by the LSP server itself).
 
 **Schema versioning:** The CLI cache version-pins entries by `CARGO_PKG_VERSION`. The workspace index is a simple binary blob with no explicit version field — a version bump silently invalidates the cache (old `.bin` files are simply overwritten).
 
-**File changed while editing:** For the LSP, each `did_change` sends the full new content to the `IndexWorker` via channel. The worker debounces, then does a full re-parse of the changed file's content into a new `FileIndex`, diffs against the previous entry, and triggers re-linting only if cross-file data (headings, links) actually changed. For the CLI, the content hash comparison handles this: if the file on disk matches the cached hash, it's skipped.
+**File changed while editing:** For the LSP, each `did_change` sends the full new content to the `IndexWorker` via channel. The worker debounces, then does a full re-parse of the changed file's content into a new `WorkspaceIndex`, diffs against the previous entry, and triggers re-linting only if cross-file data (headings, links) actually changed. For the CLI, the content hash comparison handles this: if the file on disk matches the cached hash, it's skipped.
 
 ### Markdown Oxide
 
@@ -75,7 +75,7 @@ Sources: `docs/digests/lsp_rvben-rumdl-digest.txt` (rumdl LSP), `docs/digests/ls
 | **Markdown Oxide** | Nothing | Entire Vault (MDFile + Rope per note) |
 | **Marksman** | Nothing | SuffixTree + docsBySlug |
 | **rust-analyzer** | Incremental compilation results, file fingerprints | Salsa query database, VFS |
-| **Traces** (current) | redb: FILES, NOTES, LINKS, LISTS, PATHS_BY_TAG, PATHS_BY_FILE_CLASS, TAGS_BY_PATH, FILE_CLASSES_BY_PATH | FileIndex (files + notes + inlinks) |
+| **Traces** (current) | redb: FILES, NOTES, LINKS, LISTS, PATHS_BY_TAG, PATHS_BY_FILE_CLASS, TAGS_BY_PATH, FILE_CLASSES_BY_PATH | WorkspaceIndex (files + notes + inlinks) |
 
 **Key insight:** Of the markdown/PKM LSPs researched, only Traces and rumdl (CLI mode) persist anything. The LSP-mode servers (rumdl LSP, Markdown Oxide, Marksman) all keep their index entirely in-memory. rust-analyzer is the only tool that persists a rich incremental computation graph. The pattern is: **LSP servers typically don't persist their workspace index** — they re-scan on startup.
 
@@ -156,7 +156,7 @@ The LSP should follow rumdl's pattern:
 3. Scan the filesystem, compute `IndexDelta` against persisted state (already implemented).
 4. Re-parse only changed files (already implemented in `service.rs`).
 5. Persist the delta (already implemented).
-6. The in-memory `FileIndex` is now the working copy for all LSP queries.
+6. The in-memory `WorkspaceIndex` is now the working copy for all LSP queries.
 
 This is exactly what `IndexerService::refresh()` already does. The LSP just needs to call this at startup and keep the result in memory.
 

@@ -36,7 +36,7 @@ class BenchmarkDataPoint:
     a specific workspace size.
 
     Attributes:
-        group: Benchmark group name (e.g. ``FileIndex::build``).
+        group: Benchmark group name (e.g. ``WorkspaceIndex::build``).
             Corresponds to the subdirectory under ``target/criterion/``.
         file_count: Parameter value — the number of files in the
             workspace that was benchmarked.
@@ -156,7 +156,7 @@ def load_benchmark_data(
     The expected directory layout is::
 
         criterion_dir/
-        ├── FileIndex__build/
+        ├── WorkspaceIndex__build/
         │   ├── 50/new/{benchmark,estimates}.json          <- flat
         │   └── ...
         └── QueryService__run__sort_by_metadata/
@@ -234,7 +234,7 @@ def _parse_benchmark_result(
 
     Args:
         group: Benchmark group name (the parent directory name,
-            e.g. ``FileIndex__build``).
+            e.g. ``WorkspaceIndex__build``).
         function: Sub-benchmark name, or empty for a flat sweep.
         results_dir: Path to the ``new/`` directory containing
             ``benchmark.json`` and ``estimates.json``.

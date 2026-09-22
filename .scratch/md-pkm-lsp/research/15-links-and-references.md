@@ -154,11 +154,11 @@ At 20K files, these indexes total ~7.3MB — well within the always-resident met
 ### Benchmark plan for link/reference operations
 
 **Extend existing (index_lifecycle.rs):**
-- `FileIndex::refresh/single-file-didchange`: reparse one file + update index + recompute backlinks
-- `FileIndex::refresh/parallel-cold-start`: rayon-parallelized vs single-threaded
+- `WorkspaceIndex::refresh/single-file-didchange`: reparse one file + update index + recompute backlinks
+- `WorkspaceIndex::refresh/parallel-cold-start`: rayon-parallelized vs single-threaded
 
 **New file (lsp_latency.rs):**
 - Interactive latency: simulated gotodef/completion/find-refs at 1K/5K/10K/20K files
-- Memory footprint: measure FileIndex memory at each workspace size
+- Memory footprint: measure WorkspaceIndex memory at each workspace size
 - Debounce effectiveness: simulate 100ms keystroke bursts
 - Schema intelligence: frontmatter completion/validation latency

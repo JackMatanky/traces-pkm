@@ -40,7 +40,7 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 - Error conversion carrying template context, mirroring `query_ops`/`ui_ops`.
 
 **Out of scope:**
-- `file`-field label/value pairs and FileIndex filtering — ticket 04.
+- `file`-field label/value pairs and WorkspaceIndex filtering — ticket 04.
 - `query.from_class`/`tasks.from_class` — ticket 05.
 - Predicate-reference degradation (that's the query and file-field surfaces).
 
@@ -62,7 +62,7 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 ### Key design decisions
 
 - **Lazy, per-render-cached registry load, not eager at `TemplateEngine::new` time.** No Schema TOML is read until a template actually calls `schema.get(...)`; a Template that never touches `schema` never reads the registry directory, so a broken Schema file elsewhere in it can't break that Template. This is the literal, architecturally-honest reading of the "broken Schema only breaks the Template that touches it" AC given ticket 02's `resolve()` contract: `resolve()` returns one `Result` for the *entire* directory (a single malformed sibling Schema fails the whole load), so a Template that *does* call into `schema` still fails if any Schema file in the registry is broken — documented in the module doc and covered by `a_broken_sibling_schema_still_breaks_a_template_that_touches_schema` alongside `a_broken_schema_never_breaks_a_template_that_never_touches_schema`. Widening ticket 02's `resolve()` to isolate failures per-Schema was out of scope for this ticket (that's a ticket-02-shaped change, not a namespace-wiring one).
-- **`Arc<SchemaRegistry>` in the cache, not a clone-per-call.** `query.rs`'s `cached_refresh` clones the cached `FileIndex` on every call (cheap enough there); `SchemaRegistry` wraps a `BTreeMap<SchemaName, Schema>`, so `CachedRegistry` holds an `Arc<SchemaRegistry>` and clones the `Arc` instead, avoiding a deep map clone per `schema.get()` call within one render.
+- **`Arc<SchemaRegistry>` in the cache, not a clone-per-call.** `query.rs`'s `cached_refresh` clones the cached `WorkspaceIndex` on every call (cheap enough there); `SchemaRegistry` wraps a `BTreeMap<SchemaName, Schema>`, so `CachedRegistry` holds an `Arc<SchemaRegistry>` and clones the `Arc` instead, avoiding a deep map clone per `schema.get()` call within one render.
 - **`FieldDefinition::selectable_values()`, not a re-exported `FieldOptions`.** `template::engine::schema` never learns `FieldOptions`'s variants; it asks the one question it needs answered.
 
 ### Verification

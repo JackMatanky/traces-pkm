@@ -117,7 +117,7 @@
     the guarantee there reduces to "the source file itself is never
     rewritten," which holds trivially since nothing in this ticket writes
     to note source files.
-  - FileIndex round-trip —
+  - WorkspaceIndex round-trip —
     `index::tests::persistence::persist_then_load_recovers_inline_fields_and_tags`.
   - Parser tests at the markdown event seam covering body text, list
     items, fenced code, indented code, inline code — all of
@@ -181,7 +181,7 @@
     mirroring the existing top-level cases; document order across a body
     paragraph and a list item in both directions; a field value directly
     abutting excluded inline code; and all three `InlineFieldForm`
-    variants through the FileIndex persistence round-trip (previously
+    variants through the WorkspaceIndex persistence round-trip (previously
     only `Body` was exercised).
   - Rustdoc cleanup: `inline.rs`'s module doc had an intra-doc link whose
     display text named `ParserContext` but whose target resolved to the
@@ -201,7 +201,7 @@
     the source *file*, not a `Note` field. Added
     `index::tests::build::indexing_never_rewrites_the_source_markdown_file`,
     which writes a note with a body field, a list-item field+tag, and a
-    heading tag, runs `FileIndex::build`, then reads the file back from
+    heading tag, runs `WorkspaceIndex::build`, then reads the file back from
     disk and asserts it is byte-identical to what was written.
   - **Bug — tags (and fields) in headings were not indexed.** The prior
     review's "Finding 2" wrongly treated this as an acceptable scope
@@ -412,7 +412,7 @@ Inline Fields must not be indexed when their source bytes are inside fenced code
 - `MetadataField` captures `key: String` and `value: FieldValue`; `InlineField` embeds a `MetadataField` with its `InlineFieldForm`.
 - `FieldValue` supports `Null`, `Bool(bool)`, `Number(f64)`, `String(String)`, `Date(String)`, `Link(Outlink)`, `List(Vec<FieldValue>)`, and `Object(BTreeMap<String, FieldValue>)`.
 - `CodeRegion` ranges from #02 are the exclusion source for fenced code, indented code, and inline code.
-- The FileIndex persistence boundary round-trips the updated Note Metadata fields through the existing Note table.
+- The WorkspaceIndex persistence boundary round-trips the updated Note Metadata fields through the existing Note table.
 
 **Acceptance criteria:**
 - [x] `Key:: Value` in normal body text is indexed as an Inline Field.
@@ -425,7 +425,7 @@ Inline Fields must not be indexed when their source bytes are inside fenced code
 - [x] `FieldValue` preserves types: strings, numbers, booleans, nulls, dates, links, lists, and nested objects.
 - [x] `Note::fields()` iterator yields frontmatter fields first, then inline body fields.
 - [x] Inline Fields and tags remain in the plain text of their enclosing body/list item component, matching links remaining in list item text.
-- [x] Inline Fields, frontmatter fields, and tags survive FileIndex build, persist, and load round-trips.
+- [x] Inline Fields, frontmatter fields, and tags survive WorkspaceIndex build, persist, and load round-trips.
 - [x] Parser tests cover the markdown event seam and include body text, list items, fenced code, indented code, inline code, and YAML frontmatter cases.
 **Out of scope:**
 - List/task extraction, outlinks, and `Note::tasks()` from #02.

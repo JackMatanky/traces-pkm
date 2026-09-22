@@ -8,7 +8,7 @@ use crate::{DirTreeError, path::PathError};
 
 pub type IndexResult<T> = std::result::Result<T, IndexError>;
 
-/// Failures returned by [`super::FileIndex`] operations.
+/// Failures returned by [`super::WorkspaceIndex`] operations.
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,

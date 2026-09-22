@@ -184,7 +184,7 @@ shortcuts (`--todo`, `--done`, `--status <char>`), sorting, and table output.
 67. As a maintainer, I want list persistence to follow ADR 0005 strictly,
     avoiding extra redb tables and $O(\text{depth}^2)$ write amplification.
 68. As a maintainer, I want `QueryRow` list evaluation to be zero-allocation,
-    borrowing strings and statuses on demand from `FileIndex`.
+    borrowing strings and statuses on demand from `WorkspaceIndex`.
 69. As a maintainer, I want recurrence, dependencies, and mutation operations
     deferred, so that the task-system implementation stays focused.
 
@@ -248,7 +248,7 @@ shortcuts (`--todo`, `--done`, `--status <char>`), sorting, and table output.
   return `Null` for task fields via a single pattern match arm.
 - Represent list query rows via zero-allocation positional indexing on
   `QueryRow`: `RowKind::List { item_idx: u32 }`. Row evaluation borrows strings
-  and statuses directly from the in-memory `Note` in `FileIndex`.
+  and statuses directly from the in-memory `Note` in `WorkspaceIndex`.
 - Support `file.tags` on list rows to access note-level tags, while `list.tags`
   accesses item-level tags.
 - On list rows, item-level inline fields take precedence over note frontmatter.
@@ -299,7 +299,7 @@ shortcuts (`--todo`, `--done`, `--status <char>`), sorting, and table output.
   - `benches/query_sort.rs`: Assert zero heap allocations during list row
     sorting across text, due date, priority, and status fields (`SortKey<'a>`).
   - `benches/memory_footprint.rs`: Assert average memory footprint under 100
-    bytes per `ListItem` across 50,000 items in `FileIndex`.
+    bytes per `ListItem` across 50,000 items in `WorkspaceIndex`.
   - `benches/query_execution.rs`: Measure query throughput scaling across task
     densities (1, 10, 100 tasks per note).
 
@@ -315,4 +315,4 @@ shortcuts (`--todo`, `--done`, `--status <char>`), sorting, and table output.
 - Machine-readable `--json` and `--plain` CLI flags.
 - Nested tag matching for task classification.
 - Backward compatibility aliases for `task.<field>`.
-- Splitting or redesigning the FileIndex.
+- Splitting or redesigning the WorkspaceIndex.

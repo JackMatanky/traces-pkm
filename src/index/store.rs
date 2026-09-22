@@ -1734,7 +1734,7 @@ mod tests {
     use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
-    use crate::{FileIndex, IndexerService, parse_note as parse};
+    use crate::{IndexerService, WorkspaceIndex, parse_note as parse};
     mod multimap_paths {
 
         use super::*;
@@ -1797,7 +1797,7 @@ mod tests {
         notes: &[Note],
         links: &InlinkMap,
     ) -> IndexResult<()> {
-        let index = FileIndex::assemble(
+        let index = WorkspaceIndex::assemble(
             SortedByPath::sorted(files.to_vec()),
             SortedByPath::sorted(notes.to_vec()),
             links.clone(),

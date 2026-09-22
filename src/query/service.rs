@@ -2,7 +2,7 @@
 //! storage.
 //!
 //! This module provides [`QueryService`], the central coordination engine that
-//! executes queries against either an in-memory [`FileIndex`] or directly
+//! executes queries against either an in-memory [`WorkspaceIndex`] or directly
 //! against on-disk [`IndexStore`] tables without loading the full index into
 //! memory.
 //! It resolves candidate paths from [`SourceSelector`] expressions, expands
@@ -21,10 +21,12 @@ use super::{
 use crate::index::IndexerService;
 use crate::{
     ListItem,
-    index::{FileIndex, IndexResult, IndexStore, RowIndex, sort::SortedByPath},
+    index::{
+        IndexResult, IndexStore, RowIndex, WorkspaceIndex, sort::SortedByPath,
+    },
 };
 
-/// Evaluates source expressions against a borrowed [`FileIndex`].
+/// Evaluates source expressions against a borrowed [`WorkspaceIndex`].
 ///
 /// Supports page/list/task modes, optional File Class expansion, and pending
 /// plan transformations.
@@ -99,7 +101,7 @@ impl QueryService {
     #[inline]
     pub fn run(
         &self,
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         builder: QueryBuilder,
     ) -> QuerySet {
         let (mode, mut source, plan) = builder.into_parts();
@@ -109,7 +111,7 @@ impl QueryService {
     }
 
     /// Runs `builder` against persisted records without building a full
-    /// [`FileIndex`].
+    /// [`WorkspaceIndex`].
     ///
     /// Resolves candidate paths, reads only matching notes/files/inlinks,
     /// assembles a temporary index, and applies the query plan.
@@ -152,7 +154,7 @@ impl QueryService {
         let notes = notes_result?;
         let matching_files = files_result?;
         let inlinks = inlinks_result?;
-        let index = Arc::new(FileIndex::assemble(
+        let index = Arc::new(WorkspaceIndex::assemble(
             SortedByPath::assumed_sorted(matching_files),
             SortedByPath::assumed_sorted(notes),
             inlinks,
@@ -185,7 +187,7 @@ impl QueryService {
     fn rows_for(
         &self,
         mode: QueryMode,
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
         match mode {
@@ -197,7 +199,7 @@ impl QueryService {
 
     fn page_rows(
         &self,
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
         self.matched_file_rows(index, source).collect()
@@ -207,7 +209,7 @@ impl QueryService {
     /// plain bullets, checkboxes, and tasks, in document order.
     fn list_rows(
         &self,
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
         self.item_rows(index, source, |_| true)
@@ -216,7 +218,7 @@ impl QueryService {
     /// Expands matching notes into one [`QueryRow`] per task list item.
     fn task_rows(
         &self,
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
         self.item_rows(index, source, |item| item.kind().is_task())
@@ -226,7 +228,7 @@ impl QueryService {
     /// satisfies `is_wanted`, in document order.
     fn item_rows(
         &self,
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
         is_wanted: impl Fn(&ListItem) -> bool,
     ) -> Vec<QueryRow> {
@@ -251,7 +253,7 @@ impl QueryService {
     /// rows via [`Self::item_rows`].
     fn matched_file_rows<'b>(
         &'b self,
-        index: &'b Arc<FileIndex>,
+        index: &'b Arc<WorkspaceIndex>,
         source: &'b SourceSelector,
     ) -> impl Iterator<Item = QueryRow> + 'b {
         (0..index.entries().len())
@@ -396,12 +398,12 @@ mod tests {
     use super::*;
     use crate::{
         Note,
-        index::{FileIndex, IndexerService},
+        index::{IndexerService, WorkspaceIndex},
         query::{QueryBuilder, QueryRow, QuerySet, SourceSelector},
     };
 
     fn query_pages(
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
@@ -409,7 +411,7 @@ mod tests {
     }
 
     fn query_tasks(
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
@@ -417,7 +419,7 @@ mod tests {
     }
 
     fn query_lists(
-        index: &Arc<FileIndex>,
+        index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> QuerySet {
         QueryService::new("class")
@@ -568,7 +570,7 @@ mod tests {
                 .collect()
         }
 
-        fn build_book_index() -> Arc<FileIndex> {
+        fn build_book_index() -> Arc<WorkspaceIndex> {
             crate::build_test_index(&[(
                 "book.md",
                 "---\ntitle: Dune\n---\nGenre:: Sci-fi\n\nShelved as #book.",

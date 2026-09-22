@@ -10,7 +10,7 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [FileIndex] + [Template] + [Note]
+//! [WorkspaceIndex] + [Template] + [Note]
 //!   └──(TemplateService::render_to_file)──► [rendered output]
 //!       (DryRun — no disk write)
 //! ```

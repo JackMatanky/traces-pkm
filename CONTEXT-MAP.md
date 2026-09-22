@@ -58,7 +58,7 @@ graph TD
 - **Index & Note**: `Index` scans files into `FileBase` and delegates markdown
   content parsing to `Note`.
 - **Query & Schema (Decoupled)**: `Query` evaluates source expressions against
-  `FileIndex` and expands `@Class*` hierarchies via the `FileClassExpander`
+  `WorkspaceIndex` and expands `@Class*` hierarchies via the `FileClassExpander`
   seam without direct dependency on `Schema`.
 - **Template Composition**: `Template` registers `query`, `lists`, `tasks`,
   `schema`, `ui`, `file`, and `date` helpers into the minijinja runtime and

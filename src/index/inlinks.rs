@@ -3,7 +3,7 @@
 //! [`InlinkMap`] stores deduplicated source paths keyed by each indexed target.
 //! [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
 //! construct and persist it; query execution reads inlinks from
-//! [`super::FileEntry`] through [`super::FileIndex`].
+//! [`super::FileEntry`] through [`super::WorkspaceIndex`].
 //!
 //! # Link resolution
 //!

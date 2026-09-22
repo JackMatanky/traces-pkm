@@ -55,7 +55,7 @@ Query strings appear inside `{{ query.pages("...") }}` calls, registered via `sr
 | Start of source expression | Tags, paths, file classes, boolean keywords | Vault index + SchemaService |
 | After `#` | Tag names from vault index | `IndexStore` tags |
 | After `@` | File class names | `SchemaService::schemas()` |
-| After path prefix | Directory/file paths | FileIndex paths |
+| After path prefix | Directory/file paths | WorkspaceIndex paths |
 | Start of filter expression | Field names from schemas | `Schema::fields()` |
 | After field name | Operators | Hardcoded operator set |
 | After operator | Values matching field type | `SchemaFieldDef::select_values()` |

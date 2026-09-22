@@ -43,7 +43,7 @@ pub type CliResult = std::result::Result<(), CliError>;
               inside crate::cli, callers use CliError's Display/Diagnostic \
               surface, never these types directly. TemplateError and \
               IndexError are pub only under cfg(any(test, feature = \
-              \"test-utils\")), where FileIndex::build/refresh and \
+              \"test-utils\")), where WorkspaceIndex::build/refresh and \
               TemplateService::render_to_file are themselves pub for external \
               benchmark/test use"
 )]
@@ -171,7 +171,7 @@ pub enum CliError {
     Index {
         /// The project root being indexed.
         root: PathBuf,
-        /// Source `FileIndex` error.
+        /// Source `WorkspaceIndex` error.
         #[source]
         source: IndexError,
     },

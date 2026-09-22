@@ -1,8 +1,8 @@
 //! Persisted index rebuild command.
 //!
 //! Handles `traces index` by loading the trusted project root, refreshing its
-//! [`FileIndex`](crate::index::FileIndex), and replacing the stored index. Task
-//! queries live in the task command module.
+//! [`WorkspaceIndex`](crate::index::WorkspaceIndex), and replacing the stored
+//! index. Task queries live in the task command module.
 
 use clap::Args;
 
@@ -12,7 +12,7 @@ use crate::{ConfigService, IndexerService};
 /// Arguments for `traces index`.
 ///
 /// Takes no positional or optional arguments. Scans the trusted project root
-/// and persists a fresh [`FileIndex`](crate::index::FileIndex).
+/// and persists a fresh [`WorkspaceIndex`](crate::index::WorkspaceIndex).
 #[derive(Debug, Args)]
 pub(super) struct Index;
 
@@ -20,15 +20,15 @@ impl Index {
     /// Runs `traces index` for the trusted project root.
     ///
     /// Scans the root, persists the fresh
-    /// [`FileIndex`](crate::index::FileIndex), and reports the indexed file
-    /// count to stderr. # Errors
+    /// [`WorkspaceIndex`](crate::index::WorkspaceIndex), and reports the
+    /// indexed file count to stderr. # Errors
     ///
     /// - [`CliError::CurrentDirectory`] if the current directory cannot be
     ///   read.
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
     /// - [`CliError::Index`] if scanning the project root or persisting the
-    ///   [`FileIndex`](crate::index::FileIndex) fails.
+    ///   [`WorkspaceIndex`](crate::index::WorkspaceIndex) fails.
     #[expect(
         clippy::unused_self,
         reason = "keeps the dispatch signature consistent with every other \
@@ -59,9 +59,9 @@ mod tests {
     use super::*;
 
     mod fixtures {
-        use crate::FileIndex;
+        use crate::WorkspaceIndex;
 
-        pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
+        pub(super) fn record_paths(index: &WorkspaceIndex) -> Vec<String> {
             index
                 .entries()
                 .iter()

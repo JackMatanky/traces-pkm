@@ -30,7 +30,7 @@ Porting these conventions directly to Rust causes several critical defects:
    sorting architecture established in recent refactors.
 4. **Dead persistence:** The redb `LISTS` table is maintained on every note
    write, yet has zero production consumers. Queries read entirely from the
-   in-memory `FileIndex`.
+   in-memory `WorkspaceIndex`.
 5. **Nomenclature confusion:** Attempting to match Dataview's exact property
    names while also supporting Obsidian Tasks emojis creates an inconsistent
    hybrid.
@@ -118,9 +118,9 @@ must align with:
   `SortKeys<'a>` project sort terms without heap allocations by borrowing string
   slices directly.
 - **Positional Query Rows (`src/query/results.rs`):** `QueryRow` holds an
-  `Arc<FileIndex>` and a `RowIndex`, resolving file metadata via $O(1)$ index
+  `Arc<WorkspaceIndex>` and a `RowIndex`, resolving file metadata via $O(1)$ index
   lookups.
-- **In-Memory Store (`src/index/`):** `FileIndex` holds all indexed files in
+- **In-Memory Store (`src/index/`):** `WorkspaceIndex` holds all indexed files in
   memory as `Box<[FileEntry]>`, assembled from the `NOTES`, `FILES`, and `LINKS`
   tables.
 
@@ -135,7 +135,7 @@ indexing, and synchronized on every note update. However, **no query or
 production path reads from `LISTS`**.
 
 - `QueryService::task_rows` iterates `note.tasks()`, walking in-memory
-  `Note.lists` within `FileIndex`.
+  `Note.lists` within `WorkspaceIndex`.
 - `read_lists`, `read_lists_for_path`, and `read_all_lists` are invoked
   exclusively by their own tests.
 - Every note update incurs 100% redundant write amplification: updating a note

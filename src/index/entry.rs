@@ -12,16 +12,16 @@ use crate::{FileBase, Note};
 ///
 /// Every regular file under the project root contributes one [`FileEntry`].
 /// Markdown files include a parsed [`Note`]; all entries may carry backlinks.
-/// [`IndexerService`] produces, persists, and loads it; `FileIndex` itself
+/// [`IndexerService`] produces, persists, and loads it; `WorkspaceIndex` itself
 /// carries no `&Path`.
 ///
 /// [`IndexerService`]: super::service::IndexerService
 #[derive(Clone, Debug)]
-pub struct FileIndex {
+pub struct WorkspaceIndex {
     entries: Box<[FileEntry]>,
 }
 
-impl FileIndex {
+impl WorkspaceIndex {
     pub(super) fn new(entries: Box<[FileEntry]>) -> Self {
         Self {
             entries,
@@ -183,7 +183,7 @@ impl crate::path::HasPath for FileEntry {
     }
 }
 
-/// Position of a [`FileEntry`] within [`FileIndex::entries`].
+/// Position of a [`FileEntry`] within [`WorkspaceIndex::entries`].
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RowIndex(usize);
 
@@ -296,7 +296,7 @@ mod tests {
 
         #[test]
         fn assembles_index_from_note_tuples() {
-            let index = FileIndex::new_test(&[
+            let index = WorkspaceIndex::new_test(&[
                 ("a.md", "# A\nLink to [[b]]"),
                 ("b.md", "# B"),
             ]);
@@ -318,7 +318,7 @@ mod tests {
             let count_entries =
                 || std::fs::read_dir(".").map_or(0, std::iter::Iterator::count);
             let before = count_entries();
-            let _index = FileIndex::new_test(&[(
+            let _index = WorkspaceIndex::new_test(&[(
                 "ephemeral_test_note.md",
                 "# Ephemeral\ncontent with [[link]]",
             )]);
