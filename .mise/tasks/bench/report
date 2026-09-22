@@ -125,6 +125,49 @@ print_footer() {
 }
 
 #######################################
+# Inject responsive CSS into criterion HTML reports.
+#
+# Criterion 0.8.2 hardcodes plot width (plotters_backend SIZE = 960x540)
+# and the page container (.body { width: 960px } in index.html.tt) with
+# no configuration knob, so reports overflow narrow windows and render
+# oversized plots on laptops. Injects one marker-tagged <style> before
+# </head>: the page body tracks the viewport (capped at 960px) and
+# embedded plots shrink to at most 720px wide, height auto.
+#
+# Skips files already carrying the mise-responsive marker; criterion
+# rewrites the HTML on the next bench run, dropping the marker so the
+# patch reapplies then. Patches only *.html under CRITERION_DIR, quoted
+# throughout: benchmark parameter names contain spaces.
+#
+# Arguments:
+#   None
+# Outputs:
+#   Writes a count line when at least one page was patched
+# Returns:
+#   0 — patching is best-effort and must not break the summary
+#######################################
+apply_responsive_styles() {
+  local style='<style id="mise-responsive">.body{width:100%;max-width:960px}img{max-width:min(100%,720px);height:auto}</style>'
+  local html tmp count=0
+
+  while IFS= read -r -d '' html; do
+    grep -q 'mise-responsive' "${html}" && continue
+    tmp="${html}.mise-patch"
+    if awk -v inject="${style}" '/<\/head>/ && !done { print inject; done=1 } { print }' \
+        "${html}" > "${tmp}" && grep -q 'mise-responsive' "${tmp}"; then
+      mv "${tmp}" "${html}"
+      count=$(( count + 1 ))
+    else
+      rm -f "${tmp}"
+    fi
+  done < <(find "${CRITERION_DIR}" -name '*.html' -print0)
+
+  if (( count > 0 )); then
+    echo "Applied responsive styles to ${count} report page(s)."
+  fi
+}
+
+#######################################
 # Main entry point.
 #
 # Arguments:
@@ -137,6 +180,8 @@ main() {
     echo "No criterion output found at ${CRITERION_DIR}"
     return 0
   fi
+
+  apply_responsive_styles
 
   echo "## Benchmark Summary"
   echo ""
