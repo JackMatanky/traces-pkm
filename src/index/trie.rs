@@ -159,7 +159,7 @@ impl<'a> CandidateTrie<'a> {
         let mut best = NearestCandidate::EMPTY;
         let mut node_id = Some(start_node);
         let mut prev_child: Option<NodeId> = None;
-        let mut i = extra_up;
+        let mut up_steps = extra_up;
         while let Some(id) = node_id {
             let node = Self::node_data(&self.arena, id);
             let agg = match prev_child {
@@ -172,8 +172,9 @@ impl<'a> CandidateTrie<'a> {
                     .unwrap_or_default(),
             };
             if agg.count > 0 {
-                let distance =
-                    i.saturating_add(agg.min_depth).saturating_sub(node.depth);
+                let distance = up_steps
+                    .saturating_add(agg.min_depth)
+                    .saturating_sub(node.depth);
                 best = best.merge(NearestCandidate {
                     min_depth: distance,
                     count: agg.count,
@@ -182,7 +183,7 @@ impl<'a> CandidateTrie<'a> {
             }
             prev_child = Some(id);
             node_id = id.parent(&self.arena);
-            i = i.saturating_add(1);
+            up_steps = up_steps.saturating_add(1);
         }
 
         if best.count == 1 {
@@ -266,17 +267,17 @@ impl<'a> CandidateTrie<'a> {
         children: &[NodeId],
         child_aggs: &[SubtreeAggregate<'a>],
     ) -> Vec<(NodeId, SubtreeAggregate<'a>)> {
-        let n = children.len();
+        let child_count = children.len();
         let mut prefix: Vec<SubtreeAggregate<'a>> =
-            Vec::with_capacity(n.saturating_add(1));
+            Vec::with_capacity(child_count.saturating_add(1));
         prefix.push(SubtreeAggregate::default());
         for agg in child_aggs {
             let last = prefix.last().cloned().unwrap_or_default();
             prefix.push(last.merge(agg.clone()));
         }
         let mut suffix: Vec<SubtreeAggregate<'a>> =
-            vec![SubtreeAggregate::default(); n.saturating_add(1)];
-        for i in (0..n).rev() {
+            vec![SubtreeAggregate::default(); child_count.saturating_add(1)];
+        for i in (0..child_count).rev() {
             let after =
                 suffix.get(i.saturating_add(1)).cloned().unwrap_or_default();
             let child_agg = child_aggs.get(i).cloned().unwrap_or_default();
