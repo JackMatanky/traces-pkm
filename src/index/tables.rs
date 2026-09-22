@@ -161,7 +161,7 @@ impl TableSpec {
             {
                 Ok(())
             }
-            Err(source) => Err(store.raise_source_error(source)),
+            Err(source) => Err(store.wrap_redb_error(source)),
         }
     }
 }
