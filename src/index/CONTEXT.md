@@ -13,6 +13,12 @@ An immutable in-memory snapshot of indexed files, parsed notes, and derived
 inbound links across a project root.
 *Avoid*: NoteIndex, database handle, cache, vault
 
+#### Index Store
+
+The durable on-disk cache of indexed file records, parsed notes, and derived
+relationships for one project root, distinct from the in-memory File Index.
+*Avoid*: database, persistence layer, cache handle
+
 #### Indexer Service
 
 The service driving the index lifecycle: building fresh indexes, persisting to
@@ -25,6 +31,17 @@ The computed change set and recomputed state from one incremental
 synchronization, not yet applied.
 *Avoid*: sync outcome, reconciliation result, sync delta
 
+#### Refresh Pass
+
+One comparison-and-reconciliation cycle between current project files and the
+persisted index, producing either an unchanged result or an Index Update.
+*Avoid*: sync pass, scan pass, refresh transaction
+
+#### Refresh Report
+
+The changed-file and changed-link counts observed during a Refresh Pass.
+*Avoid*: sync report, update result, refresh outcome
+
 ### Indexed Data
 
 #### File Base
@@ -32,6 +49,12 @@ synchronization, not yet applied.
 The filesystem metadata captured for every regular file regardless of document
 type: relative path, size, timestamps, and format classification.
 *Avoid*: file metadata, fs entry, raw record
+
+#### File Entry
+
+One indexed file's File Base together with its optional parsed Note and derived
+inbound links in a File Index.
+*Avoid*: index row, file record, indexed note
 
 #### Note
 
