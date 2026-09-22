@@ -1,14 +1,16 @@
 #!/bin/bash
 #MISE description="Post-bench summary: parse criterion JSON output"
 #MISE hide=true
-#
+#USAGE arg "[criterion_dir]" default="target/criterion" help="Criterion output directory (default: target/criterion, env CRITERION_DIR)"
+
 # Prints a summary of which benchmark groups were measured after every bench
 # execution. Runs automatically via depends_post.
 
-CRITERION_DIR="${CRITERION_DIR:-target/criterion}"
+CRITERION_DIR="${usage_criterion_dir:-${CRITERION_DIR:-target/criterion}}"
 
 #######################################
 # Check if criterion output directory exists.
+#
 # Arguments:
 #   None
 # Returns:
@@ -22,10 +24,11 @@ has_criterion_output() {
 # Count parameter sizes with results in a benchmark group.
 #
 # Handles both directory layouts: flat sweeps
-# (<group>/<size>/new/estimates.json, BenchmarkId::from_parameter) and
-# nested multi-function sweeps (<group>/<function>/<size>/new/estimates.json,
-# BenchmarkId::new(name, n)) are summed together so multi-function groups
-# aren't silently omitted from the printed summary.
+# (<group>/<size>/new/estimates.json, BenchmarkId::from_parameter) and nested
+# multi-function sweeps (<group>/<function>/<size>/new/estimates.json,
+# BenchmarkId::new(name, n)) are summed together so multi-function groups aren't
+# silently omitted from the printed summary.
+#
 # Arguments:
 #   group_dir — path to the group directory
 # Outputs:
@@ -55,6 +58,7 @@ count_sizes_with_results() {
 
 #######################################
 # Print a single benchmark group entry.
+#
 # Arguments:
 #   group_dir — path to the group directory
 # Outputs:
@@ -74,6 +78,7 @@ print_group_entry() {
 
 #######################################
 # Iterate groups and print those with results.
+#
 # Outputs:
 #   Writes group entries to stdout
 # Returns:
@@ -107,6 +112,7 @@ print_groups() {
 
 #######################################
 # Print the summary footer with usage hints.
+#
 # Outputs:
 #   Writes footer to stdout
 #######################################
@@ -120,6 +126,7 @@ print_footer() {
 
 #######################################
 # Main entry point.
+#
 # Arguments:
 #   None
 # Outputs:
