@@ -226,9 +226,9 @@ impl IndexerService {
 
     fn log_report(report: &RefreshReport) {
         tracing::debug!(
-            upserted = report.upserted(),
-            deleted = report.deleted(),
-            links_modified = report.links_modified(),
+            upserted = report.upserted_count(),
+            deleted = report.deleted_count(),
+            links_modified = report.links_modified_count(),
             "index refreshed"
         );
     }
@@ -1090,8 +1090,8 @@ mod tests {
             let (_refreshed, report) =
                 indexer.refresh_with_report().expect("refresh index");
 
-            assert_eq!(report.upserted(), 1);
-            assert_eq!(report.deleted(), 0);
+            assert_eq!(report.upserted_count(), 1);
+            assert_eq!(report.deleted_count(), 0);
             let store = IndexStore::open(temp.path()).expect("open store");
             let notes = store
                 .read_notes_batch([Path::new("b.md")])
@@ -1226,8 +1226,8 @@ mod tests {
             let (_, report) =
                 indexer.refresh_with_report().expect("refresh index");
 
-            assert_eq!(report.upserted(), 1);
-            assert_eq!(report.links_modified(), 0);
+            assert_eq!(report.upserted_count(), 1);
+            assert_eq!(report.links_modified_count(), 0);
         }
 
         #[test]
@@ -1249,8 +1249,8 @@ mod tests {
 
             let (_, report) =
                 indexer.refresh_with_report().expect("refresh index");
-            assert_eq!(report.upserted(), 1);
-            assert!(report.links_modified() > 0);
+            assert_eq!(report.upserted_count(), 1);
+            assert!(report.links_modified_count() > 0);
 
             let store = IndexStore::open(temp.path()).expect("open store");
             let (_, _, links) = store.read_all().expect("read all");
@@ -1277,7 +1277,7 @@ mod tests {
 
             let (_, report) =
                 indexer.refresh_with_report().expect("refresh index");
-            assert_eq!(report.links_modified(), 0);
+            assert_eq!(report.links_modified_count(), 0);
         }
 
         #[test]
@@ -1294,7 +1294,7 @@ mod tests {
 
             let (_, report) =
                 indexer.refresh_with_report().expect("refresh index");
-            assert_eq!(report.upserted(), 1);
+            assert_eq!(report.upserted_count(), 1);
         }
     }
 
