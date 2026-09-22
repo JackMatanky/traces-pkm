@@ -368,7 +368,7 @@ mod tests {
     use crate::{
         Note,
         file::FileBase,
-        index::{FileEntry, store::NOTES},
+        index::FileEntry,
         query::{QueryBuilder, QueryService, QuerySet, SourceSelector},
     };
 
@@ -475,18 +475,6 @@ mod tests {
             .and_then(FileEntry::note)
     }
 
-    fn poison_note_row(root: &Path) {
-        let store = IndexStore::open(root).expect("open store");
-        let txn = store.begin_write().expect("begin write txn");
-        {
-            let mut notes = txn.open_table(NOTES).expect("open notes");
-            notes
-                .insert(b"a.md".as_slice(), &b"\xff\xff\xff"[..])
-                .expect("poison note row");
-        }
-        txn.commit().expect("commit poisoned note row");
-    }
-
     mod empty_delta {
         use super::*;
 
@@ -498,7 +486,10 @@ mod tests {
             let service = IndexerService::new(root);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
-            poison_note_row(root);
+            IndexStore::open(root)
+                .expect("open store")
+                .poison_note_row(Path::new("a.md"))
+                .expect("poison note row");
 
             service.current_store().expect("empty delta sync");
         }
@@ -511,7 +502,10 @@ mod tests {
             let service = IndexerService::new(root);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
-            poison_note_row(root);
+            IndexStore::open(root)
+                .expect("open store")
+                .poison_note_row(Path::new("a.md"))
+                .expect("poison note row");
 
             service.refresh().expect_err("refresh reads poisoned note");
         }

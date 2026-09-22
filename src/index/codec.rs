@@ -1,6 +1,6 @@
 //! Index store row codec and platform-native path serialization.
 //!
-//! Rows use postcard with [`DbError`] context. Path serde preserves platform
+//! Rows use postcard with [`StoreError`] context. Path serde preserves platform
 //! path bytes where Rust exposes them, and [`path_from_bytes`] has a lossy
 //! fallback for non-Unicode paths read from byte-oriented stores.
 
@@ -12,7 +12,7 @@ use std::{
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::error::{DbError, DbResult};
+use super::error::{StoreError, StoreResult};
 
 /// Serializes `value` into `buf`, reusing its existing allocation.
 ///
@@ -21,17 +21,17 @@ use super::error::{DbError, DbResult};
 ///
 /// # Errors
 ///
-/// - [`DbError::Serialize`] when postcard serialization fails
+/// - [`StoreError::Serialize`] when postcard serialization fails
 ///
-/// [`DbError::Serialize`]: DbError::Serialize
+/// [`StoreError::Serialize`]: StoreError::Serialize
 pub(super) fn encode_row<'a, T: Serialize>(
     path: &Path,
     value: &T,
     buf: &'a mut Vec<u8>,
-) -> DbResult<&'a [u8]> {
+) -> StoreResult<&'a [u8]> {
     buf.clear();
     *buf = postcard::to_extend(value, mem::take(buf)).map_err(|source| {
-        DbError::Serialize {
+        StoreError::Serialize {
             path: path.to_path_buf(),
             source,
         }
@@ -43,14 +43,14 @@ pub(super) fn encode_row<'a, T: Serialize>(
 ///
 /// # Errors
 ///
-/// - [`DbError::Deserialize`] when postcard deserialization fails
+/// - [`StoreError::Deserialize`] when postcard deserialization fails
 ///
-/// [`DbError::Deserialize`]: DbError::Deserialize
+/// [`StoreError::Deserialize`]: StoreError::Deserialize
 pub(super) fn decode_row<T: DeserializeOwned>(
     path: &Path,
     bytes: &[u8],
-) -> DbResult<T> {
-    postcard::from_bytes(bytes).map_err(|source| DbError::Deserialize {
+) -> StoreResult<T> {
+    postcard::from_bytes(bytes).map_err(|source| StoreError::Deserialize {
         path: path.to_path_buf(),
         source,
     })
@@ -207,7 +207,7 @@ mod tests {
         use serde::{Deserialize, Serialize};
 
         use super::super::encode_row;
-        use crate::index::error::DbError;
+        use crate::index::error::StoreError;
 
         #[derive(Debug, PartialEq, Deserialize, Serialize)]
         struct Dummy {
@@ -248,7 +248,7 @@ mod tests {
             let mut buf = Vec::new();
             let result = encode_row(path, &Failing, &mut buf);
 
-            assert!(matches!(result, Err(DbError::Serialize { .. })));
+            assert!(matches!(result, Err(StoreError::Serialize { .. })));
         }
     }
 
@@ -257,7 +257,7 @@ mod tests {
         use serde::{Deserialize, Serialize};
 
         use super::super::decode_row;
-        use crate::index::error::DbError;
+        use crate::index::error::StoreError;
 
         #[derive(Debug, PartialEq, Deserialize, Serialize)]
         struct Dummy {
@@ -282,7 +282,7 @@ mod tests {
         fn fails_on_corrupt_bytes() {
             let path = std::path::Path::new("test.md");
             let result: Result<Dummy, _> = decode_row(path, &[0xFF, 0x00]);
-            assert!(matches!(result, Err(DbError::Deserialize { .. })));
+            assert!(matches!(result, Err(StoreError::Deserialize { .. })));
         }
     }
 
