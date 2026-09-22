@@ -125,4 +125,4 @@ Expected: PASS (fmt, check, lint, test — 0 failures)
 - [ ] **Step 2: Confirm no stray references**
 
 Run: `rg 'frontmatter' src/template/`
-Expected: no matches (only `src/note/`, `src/index/`, etc. keep their unrelated frontmatter code)
+Expected: no matches for the removed filter — i.e. no `| frontmatter` usages, no `add_filter("frontmatter"`, no references to `extract_frontmatter_str` or the filter function. Matches about *note* frontmatter metadata (e.g. in `engine/query.rs`) are legitimate and expected to remain.
