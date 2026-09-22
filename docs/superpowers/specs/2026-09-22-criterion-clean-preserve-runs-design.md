@@ -46,15 +46,22 @@ Run only when `target/criterion` exists; missing dir keeps current behavior
 1. **Protect detection:** `find "$criterion_dir" -type d \( -name new -o -name base \) -print -quit`
    finds nothing → nothing to protect → fall back to full `rm -rf` (same as
    `--force`).
-2. **Pass 1 — delete non-kept files:** delete all non-directory nodes
+2. **Pass 1 — collect non-kept files:** list all non-directory nodes
    (regular files, symlinks, etc.) whose path does **not** contain a `new/`
-   or `base/` path segment, in depth order so children go before parents:
-   `find "$criterion_dir" -depth \( -type f -o -type l \) -not -path '*/new/*' -not -path '*/base/*' -delete`
-   (any other non-dir node kinds handled by the same predicate).
+   or `base/` path segment:
+   `find "$criterion_dir" ! -type d -not -path '*/new/*' -not -path '*/base/*' -print`
+   Count the paths and sum byte sizes in one batched pass (`wc -c` over the
+   NUL-converted list, `|| true` so an unreadable/dangling path yields a
+   partial sum instead of aborting). Real mode deletes the collected list via
+   `xargs -0 rm -f --`; dry-mode stops after reporting (paths + counts).
+   Newline-in-filename is unsupported — conservative failure: that file
+   survives, keep subtrees are never at risk.
 3. **Pass 2 — prune empty dirs bottom-up:**
-   `find "$criterion_dir" -depth -type d -empty -delete`
-   Directories that still contain a `new/` or `base/` subtree are never empty
-   and survive; ancestors survive because they still hold the kept subtree.
+   `find "$criterion_dir" -depth -type d -empty ! -name new ! -name base -delete`
+   The `! -name` guard makes the keep-dir promise unconditional (even an
+   unexpectedly-empty `new/`/`base/` survives). Directories that still
+   contain a `new/` or `base/` subtree are never empty and survive;
+   ancestors survive because they still hold the kept subtree.
 4. **Report:** real mode prints
    `kept N run dir(s), removed X file(s) (Y KiB)`; dry-run prints
    `would keep N run dir(s), would remove X file(s) (Y KiB)` — same `find`
@@ -88,8 +95,9 @@ future custom baseline names) is treated as deletable by construction.
 TDD, red-green, temp sandbox fixtures (never the real `target/criterion`):
 
 1. **Red first:** fixture with `new/`, `base/`, `main-x/`, `change/`,
-   `report/` per bench → assert `new/`+`base/` survive and the rest is gone
-   → fails against today's `rm -rf` implementation.
+   `report/` per bench, a group with no keep dirs, a spaced/parenthesized
+   group name, and a dangling symlink victim → assert `new/`+`base/` survive
+   and the rest is gone → fails against today's `rm -rf` implementation.
 2. Green: surgical pass keeps exactly the protected subtrees (contents
    byte-identical), removes all other files/dirs, exits 0.
 3. `--dry-run`: tree byte-identical after run (checksum before/after), prints
