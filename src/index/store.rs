@@ -37,13 +37,13 @@ use crate::{FileBase, Note, Tag, file::FileFormat};
 pub(super) type IndexSnapshot =
     (SortedByPath<FileBase>, SortedByPath<Note>, InlinkMap);
 
-/// Store-owned persistence plan for full rebuilds and incremental refreshes.
-pub(super) struct PersistPlan<'a> {
+/// Store-owned persistence request for full rebuilds and incremental refreshes.
+pub(super) struct PersistRequest<'a> {
     axes: IndexAxes,
     rows: PersistRows<'a>,
 }
 
-impl<'a> PersistPlan<'a> {
+impl<'a> PersistRequest<'a> {
     /// Replaces every persisted row from an assembled index.
     #[inline]
     pub(super) const fn rebuild(
@@ -85,7 +85,7 @@ struct IncrementalRows<'a> {
     edges: &'a InlinkDelta,
 }
 
-/// Rows affected by a persistence plan.
+/// Rows affected by a persistence request.
 pub(super) enum PersistRows<'a> {
     /// Full cache rebuild from assembled entries.
     Rebuild {
@@ -620,11 +620,14 @@ impl IndexStore {
     /// - [`Store`] if the transaction fails or a record cannot be encoded.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn persist(&self, plan: &PersistPlan<'_>) -> IndexResult<()> {
-        match &plan.rows {
+    pub(super) fn persist(
+        &self,
+        request: &PersistRequest<'_>,
+    ) -> IndexResult<()> {
+        match &request.rows {
             PersistRows::Rebuild {
                 entries,
-            } => self.apply_rebuild(entries, &plan.axes),
+            } => self.apply_rebuild(entries, &request.axes),
             PersistRows::Incremental {
                 delta,
                 notes,
@@ -633,7 +636,7 @@ impl IndexStore {
                 if delta.is_empty() && notes.is_empty() && edges.is_empty() {
                     return Ok(());
                 }
-                self.apply_incremental(&plan.axes, &IncrementalRows {
+                self.apply_incremental(&request.axes, &IncrementalRows {
                     delta,
                     notes,
                     edges,
@@ -1699,7 +1702,7 @@ mod tests {
             SortedByPath::sorted(notes.to_vec()),
             links.clone(),
         );
-        store.persist(&PersistPlan::rebuild(
+        store.persist(&PersistRequest::rebuild(
             IndexAxes::for_class_field("class"),
             index.entries(),
         ))

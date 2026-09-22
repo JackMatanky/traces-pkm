@@ -16,7 +16,7 @@ use super::{
     inlinks::{self, InlinkMap},
     service::IndexerService,
     sort::SortedByPath,
-    store::{IndexAxes, IndexStore, PersistPlan},
+    store::{IndexAxes, IndexStore, PersistRequest},
 };
 use crate::{FileBase, Note};
 
@@ -102,7 +102,7 @@ impl PendingApply {
     ) -> Result<Persisted, PersistFailed> {
         let result = {
             let notes = self.update.notes_to_upsert();
-            self.store.persist(&PersistPlan::incremental(
+            self.store.persist(&PersistRequest::incremental(
                 axes,
                 self.update.delta(),
                 &notes,
