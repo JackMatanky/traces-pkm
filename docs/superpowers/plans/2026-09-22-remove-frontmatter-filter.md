@@ -67,7 +67,7 @@ Remove the entire `mod frontmatter { ... }` block (the last submodule inside `mo
 - [ ] **Step 5: Run the template unit tests**
 
 Run: `mise run test -m template`
-Expected: PASS (yaml `to_yaml`/`from_yaml` tests pass; no `frontmatter` references remain)
+Expected: PASS except `evaluates_frontmatter_filter` and `evaluates_frontmatter_accessor` (both in `engine.rs`, Task 2's scope — they fail with `UnknownFilter: frontmatter` until Task 2 removes them). The yaml module's own tests must pass: `mise run test -m template -- template::engine::yaml` → 21/21 PASS.
 
 - [ ] **Step 6: Commit**
 
