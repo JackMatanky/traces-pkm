@@ -1,7 +1,8 @@
 //! Redb persistence for [`FileBase`], [`Note`], and derived inlinks.
 //!
-//! [`IndexStore`] owns the database connection and table schema; callers use
-//! [`super::IndexerService`] rather than direct table access.
+//! [`IndexStore`] owns the database connection and drives the schema in
+//! `super::tables`; callers use [`super::IndexerService`] rather than direct
+//! table access.
 
 use std::{
     collections::HashMap,
