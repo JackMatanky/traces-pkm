@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-22
 **Status:** approved (approach A)
-**Depends on:** `clean --criterion` flag (added 2026-09-22, currently a full `rm -rf target/criterion`)
+**Depends on:** `clean --criterion` flag (introduced by this work — no `clean --criterion` existed before it; the surgical keep mode is its first committed form)
 
 ## Context
 
@@ -43,9 +43,10 @@ move-aside whitelist and reports-only narrowing).
 Run only when `target/criterion` exists; missing dir keeps current behavior
 (exit 0, message in dry-run only).
 
-1. **Protect detection:** `find "$criterion_dir" -type d \( -name new -o -name base \) -print -quit`
-   finds nothing → nothing to protect → fall back to full `rm -rf` (same as
-   `--force`).
+1. **Protect detection:** `find "$criterion_dir" -type d \( -name new -o -name base \) -print | wc -l`
+   (kept as `keep_count`, fail-closed: an unreadable tree aborts before any
+   deletion) equals `0` → nothing to protect → fall back to full `rm -rf`
+   (same as `--force`).
 2. **Pass 1 — collect non-kept files:** list all non-directory nodes
    (regular files, symlinks, etc.) whose path does **not** contain a `new/`
    or `base/` path segment:

@@ -91,7 +91,7 @@ flag "--doc" help="Clean generated docs only"
 flag "--profile <profile>" help="Clean one Cargo profile"
 flag "--target-dir <dir>" help="Cargo target directory" default="target"
 flag "--reports" help="Remove generated coverage/mutation report files"
-flag "--criterion" help="Remove target/criterion: keeps each bench's latest new/ + base/ runs; deletes saved baselines, change/, reports (regenerable via bench)"
+flag "--criterion" help="Remove target/criterion: keeps each bench's latest new/ + base/ runs; deletes saved baselines, change/, reports (regenerable via bench); --force wipes the kept runs too"
 flag "--force" help="With --criterion: also delete the kept new/ and base/ run dirs (full wipe)"
 flag "--all" help="Clean entire Cargo target directory"
 flag "--if-over-gib <gib>" {
@@ -218,8 +218,10 @@ if [[ "${clean_criterion}" == "true" ]]; then
       else
         if [[ "${usage_dry_run:-false}" != "true" ]]; then
           find "${criterion_dir}" -depth -type d -empty ! -name new ! -name base -delete
+          printf 'kept %s run dir(s), removed 0 file(s) (0 KiB)\n' "${keep_count}"
+        else
+          printf 'would keep %s run dir(s), would remove 0 file(s) (0 KiB)\n' "${keep_count}"
         fi
-        printf 'kept %s run dir(s), removed 0 file(s) (0 KiB)\n' "${keep_count}"
       fi
     fi
   fi
