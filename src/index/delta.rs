@@ -105,22 +105,22 @@ impl InlinkDelta {
         let mut upserted = Vec::new();
         let mut deleted = Vec::new();
 
-        for (target, cur_sources) in current_links.iter() {
-            let prev_sources = persisted_links.inlinks_of(target);
+        for (target, current_sources) in current_links.iter() {
+            let persisted_sources = persisted_links.inlinks_of(target);
             diff_sorted_sources(
                 target,
-                cur_sources,
-                prev_sources,
+                current_sources,
+                persisted_sources,
                 &mut upserted,
             );
         }
 
-        for (target, prev_sources) in persisted_links.iter() {
-            let cur_sources = current_links.inlinks_of(target);
+        for (target, persisted_sources) in persisted_links.iter() {
+            let current_sources = current_links.inlinks_of(target);
             diff_sorted_sources(
                 target,
-                prev_sources,
-                cur_sources,
+                persisted_sources,
+                current_sources,
                 &mut deleted,
             );
         }

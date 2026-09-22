@@ -1064,11 +1064,10 @@ impl IndexStore {
         source_paths: &HashMap<&[u8], &Path>,
     ) -> StoreResult<Box<[PathBuf]>> {
         let mut values = Vec::new();
-        for source in sources {
-            let source =
-                source.map_err(|source| self.wrap_redb_error(source))?;
+        for src in sources {
+            let guard = src.map_err(|source| self.wrap_redb_error(source))?;
             if let Some(path) =
-                source_paths.get(source.value()).map(|path| path.to_path_buf())
+                source_paths.get(guard.value()).map(|path| path.to_path_buf())
             {
                 values.push(path);
             }
@@ -2312,7 +2311,7 @@ mod tests {
             let root = temp.path();
             fs::set_permissions(root, fs::Permissions::from_mode(0o500))
                 .expect("revoke write permission");
-            let _restore = PermissionsGuard(root);
+            let _guard = PermissionsGuard(root);
 
             let error = IndexStore::open(root)
                 .expect_err("unwritable root fails to open store");

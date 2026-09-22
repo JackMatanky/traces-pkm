@@ -577,7 +577,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_io_error_when_markdown_file_has_invalid_utf8() {
+        fn returns_parse_error_when_markdown_file_has_invalid_utf8() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("bad.md"), [0xFF, 0xFE])
                 .expect("write invalid utf8");
@@ -718,7 +718,7 @@ mod tests {
             fs::create_dir(&locked).expect("create locked dir");
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
                 .expect("revoke read permission");
-            let _restore = PermissionsGuard(&locked);
+            let _guard = PermissionsGuard(&locked);
 
             let error =
                 IndexerService::scan(root).expect_err("unreadable dir fails");
