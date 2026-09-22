@@ -42,20 +42,23 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 # ------------------------------------------------------------- #
-#                          Constants                            #
+#                           Constants                           #
 # ------------------------------------------------------------- #
 
+# Defaults & sweep sizes
 DEFAULT_CRITERION_DIR: Final = "target/criterion"
 WORKSPACE_POINTS: Final = frozenset({50, 200, 1000, 5000, 20000, 40000})
 EXTRAPOLATION_TARGETS: Final = (50_000, 100_000)
 SUMMARY_TARGET: Final = 100_000
 DEFAULT_WORST_COUNT: Final = 10
 
+# Fit-quality thresholds
 MIN_POINTS_TO_FIT: Final = 2
 MIN_POINTS_FOR_COMBINED: Final = 5
 COMBINED_MIN_RESIDUAL_DOF: Final = 3
 CONSTANT_SPREAD_EPSILON: Final = 1e-4
 
+# R² quality grades
 R2_RELIABLE_THRESHOLD: Final = 0.95
 R2_QUALITY_LEVELS: Final = (
     (0.99, "excellent"),
@@ -64,6 +67,7 @@ R2_QUALITY_LEVELS: Final = (
 )
 R_SQUARED: Final = "R²"
 
+# Report box dimensions
 SERIES_BOX_WIDTH: Final = 60
 SUMMARY_BOX_WIDTH: Final = 64
 SUMMARY_NAME_WIDTH: Final = 32
@@ -742,7 +746,7 @@ def build_summary(
 
 
 # ------------------------------------------------------------- #
-#                          Formatting                           #
+#                           Formatting                          #
 # ------------------------------------------------------------- #
 
 
@@ -850,7 +854,7 @@ class Box:
 
 
 # ------------------------------------------------------------- #
-#                          Reporting                            #
+#                           Reporting                           #
 # ------------------------------------------------------------- #
 
 
@@ -1107,7 +1111,7 @@ class SeriesPlotRenderer:
 
 
 # ------------------------------------------------------------- #
-#                             CLI                               #
+#                              CLI                              #
 # ------------------------------------------------------------- #
 
 
