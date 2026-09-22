@@ -1157,11 +1157,16 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
             let weird = non_unicode_path();
             let normal = PathBuf::from("normal.md");
-            let mut files = vec![
-                FileBase::note_for_test(weird.clone()),
-                FileBase::note_for_test(normal.clone()),
-            ];
-            files.sort_by(|a, b| a.path().cmp(b.path()));
+            fs::write(temp.path().join(&weird), "link to [[normal]]")
+                .expect("write weird note");
+            fs::write(temp.path().join(&normal), "link to [[weird]]")
+                .expect("write normal note");
+            let files = IndexerService::scan(temp.path()).expect("scan root");
+            assert!(
+                files.iter().any(|file| file.path() == weird),
+                "fixture requires a filesystem that materializes the \
+                 non-Unicode path"
+            );
             let mut notes = vec![
                 crate::parse_note(&weird, "link to [[normal]]"),
                 crate::parse_note(&normal, "link to [[weird]]"),
@@ -1185,13 +1190,6 @@ mod tests {
             drop(store);
 
             let service = IndexerService::new(temp.path());
-            let scanned = IndexerService::scan(temp.path()).expect("scan root");
-            assert!(
-                scanned.iter().any(|file| file.path() == weird),
-                "fixture requires a filesystem that materializes the \
-                 non-Unicode path"
-            );
-
             let (refreshed, report) =
                 service.refresh_with_report().expect("refresh unchanged");
 
@@ -1205,8 +1203,8 @@ mod tests {
                     .inlinks()
                     .to_vec()
             };
-            assert_eq!(inlinks_of(&weird), [normal.clone()]);
-            assert_eq!(inlinks_of(&normal), [weird]);
+            assert_eq!(inlinks_of(&weird), std::slice::from_ref(&normal));
+            assert_eq!(inlinks_of(&normal), std::slice::from_ref(&weird));
         }
 
         #[test]
