@@ -22,6 +22,11 @@ use crate::{FileBase, Note};
 
 /// Changed-row counts from an incremental refresh.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "upserted_count/deleted_count/links_modified_count disambiguate \
+              these counts from FileDelta/InlinkDelta collection accessors"
+)]
 pub struct RefreshReport {
     upserted_count: usize,
     deleted_count: usize,
