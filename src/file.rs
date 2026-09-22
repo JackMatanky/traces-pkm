@@ -38,10 +38,10 @@ use crate::path::{FolderRef, RelativePath};
 /// project directory.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct FileBase {
-    #[serde(with = "crate::index::path")]
+    #[serde(with = "crate::path::codec")]
     path: PathBuf,
     name: BaseName,
-    #[serde(with = "crate::index::path")]
+    #[serde(with = "crate::path::codec")]
     folder: PathBuf,
     format: FileFormat,
     created_at: Option<SystemTime>,

@@ -59,6 +59,13 @@ owner of duration recognition, parsing, and unit registry; compares and hashes
 by total seconds, not spelling, so `1h 30m` and `90m` are the same value.
 *Avoid*: elapsed time, time span, interval
 
+#### Path Codec
+
+The platform-native (de)serialization of `PathBuf` fields crossing a
+serialized format. `src/path.rs` is the crate's single owner; every such
+field funnels through `crate::path::codec`.
+*Avoid*: path serde, path serialization, filesystem encoding
+
 ### Traversal & State
 
 #### Directory Tree

@@ -118,7 +118,6 @@ pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
     FileEntry, IndexerService, InlinkMap, RefreshReport, WorkspaceIndex,
-    path as path_codec,
 };
 pub(crate) use lexer::{
     LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
@@ -128,6 +127,8 @@ pub use note::{
     ListItem, ListItemType, ListText, MarkdownParserInput, Note,
     NoteFieldValue, NoteFieldValueRef, TaskListItem, parse_markdown,
 };
+#[cfg(any(test, feature = "test-utils"))]
+pub use path::codec as path_codec;
 pub(crate) use position::ByteOffset;
 pub use position::SourceLine;
 #[cfg(any(test, feature = "test-utils"))]
