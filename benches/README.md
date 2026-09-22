@@ -118,6 +118,10 @@ Mise skips execution when sources haven't changed.
   sort).
   Reports R² and extrapolated values for 50K/100K notes per series.
 
+  Default output shows per-series reports with human-readable formulas
+  and coefficient explanations. Use `--summary` for a high-level
+  overview of all series.
+
 ### Hidden Tasks
 
 `bench-report` and `bench-model` are hidden from `mise tasks`. Run

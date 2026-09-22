@@ -112,8 +112,10 @@ print_groups() {
 #######################################
 print_footer() {
   echo ""
+  echo "Open \`target/criterion/report/index.html\` for detailed charts."
   echo "Run \`mise run bench --compare <baseline>\` for comparison."
-  echo "Run \`mise run bench --model\` for performance modeling."
+  echo "Run \`mise run bench --model\` for performance summary."
+  echo "Run \`mise run bench --model -- --plot\` for fitted curves in the terminal."
 }
 
 #######################################

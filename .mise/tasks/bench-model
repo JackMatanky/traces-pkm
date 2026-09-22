@@ -1,10 +1,12 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# dependencies = ["numpy", "scikit-learn"]
+# dependencies = ["numpy", "scikit-learn", "plotext<6"]
 # ///
 # [MISE] description="Fit performance models to criterion output"
 # [MISE] hide=true
 # [USAGE] arg "[criterion_dir]" help="Criterion output directory" default="target/criterion"
+# [USAGE] flag "-p --plot" help="Render scatter plots with fitted curves in the terminal"
+# [USAGE] flag "-s --summary" help="Print high-level summary of all series"
 
 from __future__ import annotations
 
@@ -432,6 +434,139 @@ def extrapolate_to_target_sizes(
 
 
 # ------------------------------------------------------------- #
+#                        Terminal Plots                         #
+# ------------------------------------------------------------- #
+
+
+def plot_series(
+    name: str,
+    data_points: list[BenchmarkDataPoint],
+    fitted_models: list[FittedModel],
+) -> None:
+    """Render a scatter plot with fitted curves using plotext.
+
+    Draws measured data points as scatter markers and overlays the best
+    model's fitted curve.  Each series gets its own plot block.
+
+    Args:
+        name: Series name (printed as the plot title).
+        data_points: Measured benchmark data.
+        fitted_models: Fitted models sorted best-first.
+    """
+    import plotext as plt
+
+    x = [dp.file_count for dp in data_points]
+    y = [dp.mean_seconds for dp in data_points]
+
+    plt.clear_terminal()
+    plt.title(name)
+    plt.xlabel("n (files)")
+    plt.ylabel("time (s)")
+
+    # Measured data points
+    plt.scatter(x, y, label="measured", color="cyan")
+
+    # Best fitted curve — sample across the data range
+    best = fitted_models[0]
+    x_min, x_max = min(x), max(x)
+    pad = max((x_max - x_min) * 0.1, 1)
+    x_curve = np.linspace(max(x_min - pad, 1), x_max + pad, 200)
+    y_curve = np.array([best.predict(float(xi)) for xi in x_curve])
+
+    plt.plot(x_curve.tolist(), y_curve.tolist(), label=best.name, color="yellow")
+
+    # R² annotation — place text at top-left of the plot area
+    plt.text(
+        f"R²={best.r_squared:.4f}  {best.formula}",
+        x_min,
+        y_curve.max(),
+    )
+
+    plt.show()
+    print()  # blank line after plot
+
+
+# ------------------------------------------------------------- #
+#                         Formatting                            #
+# ------------------------------------------------------------- #
+
+# Unicode symbols
+R_SQUARED = "R²"
+BOX_H = "─"
+BOX_V = "│"
+BOX_TL = "┌"
+BOX_TR = "┐"
+BOX_BL = "└"
+BOX_BR = "┘"
+
+# Human-readable model descriptions
+MODEL_DESCRIPTIONS = {
+    "linear": "O(n) + constant",
+    "log": "O(n·ln n) + constant",
+    "combined": "O(n) + O(n·ln n) + constant",
+}
+
+# Coefficient explanations per model type
+COEFF_EXPLANATIONS = {
+    "linear": [
+        ("a", "per-file linear cost"),
+        ("b", "fixed overhead"),
+    ],
+    "log": [
+        ("a", "sort/comparison overhead per file"),
+        ("b", "fixed overhead"),
+    ],
+    "combined": [
+        ("a", "per-file linear cost"),
+        ("b", "sort/comparison overhead per file"),
+        ("c", "fixed overhead"),
+    ],
+}
+
+
+def _box_line(content: str, width: int = 60) -> str:
+    """Format a line inside a box with padding."""
+    padding = width - 4 - len(content)
+    if padding < 0:
+        padding = 0
+    return f"{BOX_V} {content}{' ' * padding}{BOX_V}"
+
+
+def _box_top(title: str, width: int = 60) -> str:
+    """Box top border with title."""
+    inner = width - 2
+    title_part = f" {title} "
+    remaining = inner - len(title_part)
+    if remaining < 0:
+        remaining = 0
+    return f"{BOX_TL}{BOX_H * remaining}{title_part}{BOX_H * (width - len(title_part) - 2)}{BOX_TR}"
+
+
+def _box_bottom(width: int = 60) -> str:
+    """Box bottom border."""
+    return f"{BOX_BL}{BOX_H * (width - 2)}{BOX_BR}"
+
+
+def _box_separator(width: int = 60) -> str:
+    """Thin separator line inside a box."""
+    return f"{BOX_V} {'─' * (width - 4)}{BOX_V}"
+
+
+def _format_scientific(value: float, precision: int = 2) -> str:
+    """Format a float in scientific notation."""
+    return f"{value:.{precision}e}"
+
+
+def _format_seconds(seconds: float) -> str:
+    """Format seconds with appropriate unit."""
+    if seconds < 0.001:
+        return f"{seconds * 1_000_000:.1f}µs"
+    if seconds < 1.0:
+        return f"{seconds * 1_000:.1f}ms"
+    return f"{seconds:.2f}s"
+
+
+# ------------------------------------------------------------- #
 #                           Reporting                           #
 # ------------------------------------------------------------- #
 
@@ -443,13 +578,11 @@ def print_report(
 ) -> None:
     """Print a human-readable performance model report.
 
-    Outputs three sections:
-
-    1. **Data summary** — number of data points and file counts used.
-    2. **Fitted models** — each model's formula, coefficients, and R-squared,
-       with the best model marked.
-    3. **Extrapolation** — predicted times at target sizes (only shown if best
-       R-squared >= 0.95; otherwise a warning is printed instead).
+    Outputs a box-formatted report with:
+    1. **Data summary** — number of data points and file count range.
+    2. **Best model** — human-readable formula with coefficient explanations.
+    3. **Extrapolation** — predicted times at target sizes.
+    4. **Scaling note** — which cost component dominates at scale.
 
     Args:
         data_points: The benchmark data that was fitted.
@@ -457,62 +590,196 @@ def print_report(
         extrapolations: Extrapolated predictions.  May be empty if R-squared was
             below the threshold.
     """
-    print(f"\nData points: {len(data_points)}")
-    print(
-        "File counts: "
-        + ", ".join(str(int(dp.file_count)) for dp in data_points)
-    )
-
-    print("\nFitted models:")
+    W = 60  # box width
     best: FittedModel = fitted_models[0]
-    for model in fitted_models:
-        marker: str = " <- best" if model is best else ""
-        if model.name == "combined":
-            print(
-                f"  {model.formula}: "
-                f"a={model.coeff_n:.6f}, "
-                f"b={model.coeff_nlogn:.6f}, "
-                f"c={model.coeff_intercept:.4f}, "
-                f"R2={model.r_squared:.4f}{marker}"
-            )
-        else:
-            print(
-                f"  {model.formula}: "
-                f"a={model.coeff_n:.6f}, "
-                f"b={model.coeff_intercept:.4f}, "
-                f"R2={model.r_squared:.4f}{marker}"
-            )
+    name = data_points[0].group if data_points else "unknown"
+    sizes = [int(dp.file_count) for dp in data_points]
 
+    # Header
+    print()
+    print(_box_top(name, W))
+    print(_box_line("", W))
+
+    # Data summary
+    size_range = f"{min(sizes):,} → {max(sizes):,}"
+    print(_box_line(f"Data: {len(data_points)} points  |  Sizes: {size_range}", W))
+
+    # Best model
+    desc = MODEL_DESCRIPTIONS.get(best.name, best.name)
+    print(_box_line("", W))
+    print(_box_line(f"Best fit: {desc}", W))
+    print(_box_line("─" * (W - 4), W))
+
+    # Coefficients with explanations
+    coeffs = [
+        ("a", best.coeff_n),
+        ("b" if best.name != "combined" else "c", best.coeff_intercept),
+    ]
     if best.name == "combined":
-        residual_df: int = len(data_points) - 3
+        coeffs.insert(1, ("b", best.coeff_nlogn))
+
+    explanations = COEFF_EXPLANATIONS.get(best.name, [])
+    for (label, value), (_, explanation) in zip(coeffs, explanations):
+        print(_box_line(f"  {label} = {_format_scientific(value)}   {explanation}", W))
+
+    # R²
+    r2_quality = (
+        "excellent" if best.r_squared >= 0.99
+        else "good" if best.r_squared >= 0.95
+        else "fair" if best.r_squared >= 0.90
+        else "poor"
+    )
+    print(_box_line(f"  {R_SQUARED} = {best.r_squared:.4f}     {r2_quality} fit", W))
+
+    # Low DOF warning
+    if best.name == "combined":
+        residual_df = len(data_points) - 3
         if residual_df < 3:
-            print(
-                f"\nNote: combined model has only {residual_df} residual "
-                "degree(s) of freedom "
-                f"(n_points={len(data_points)}); R2 may be optimistic."
-            )
+            print(_box_line("", W))
+            print(_box_line(f"  ⚠ {residual_df} residual DOF — R² may be optimistic", W))
 
+    # Extrapolation
     if best.r_squared < 0.95:
-        print(
-            f"\nWarning: low R2 ({best.r_squared:.4f})"
-            " -- extrapolation unreliable."
-        )
-        print("  Measure directly at target sizes instead.")
-        return
+        print(_box_line("", W))
+        print(_box_line(f"  ⚠ Low R² — extrapolation unreliable", W))
+        print(_box_line(f"  Measure directly at target sizes instead.", W))
+    elif extrapolations:
+        if any(ext.predicted_seconds < 0 for ext in extrapolations):
+            print(_box_line("", W))
+            print(_box_line(f"  ⚠ Predictions negative — extrapolation suppressed", W))
+        else:
+            print(_box_line("", W))
+            print(_box_line("Extrapolation:", W))
+            for ext in extrapolations:
+                print(_box_line(f"    {ext.file_count:>6,} notes → {_format_seconds(ext.predicted_seconds)}", W))
 
-    if not extrapolations:
-        return
+            # Scaling note
+            if best.name == "combined":
+                n = float(max(sizes) * 2.5)  # extrapolation point
+                linear = abs(best.coeff_n * n)
+                log = abs(best.coeff_nlogn * n * np.log(n))
+                if linear > 2 * log:
+                    dominant = "linear"
+                elif log > 2 * linear:
+                    dominant = "O(n·ln n) sort"
+                else:
+                    dominant = "mixed"
+                print(_box_line("", W))
+                print(_box_line(f"Scaling: {dominant} dominates at extrapolation point", W))
 
-    if any(ext.predicted_seconds < 0 for ext in extrapolations):
-        print(
-            "\nWarning: model predictions went negative"
-            " -- extrapolation suppressed."
-        )
-        return
+    print(_box_bottom(W))
 
-    print(f"\nExtrapolation (best: {best.name}, R2={best.r_squared:.4f}):")
-    for ext in extrapolations:
-        print(f"  {ext.file_count:>6,} notes: {ext.predicted_seconds:.3f}s")
+
+def print_summary(
+    all_series: dict[str, tuple[list[BenchmarkDataPoint], list[FittedModel]]],
+) -> None:
+    """Print a high-level summary of all series.
+
+    Shows worst performers, unreliable fits, scaling breakdown, and
+    near-constant series in a single box-formatted report.
+
+    Args:
+        all_series: Dict mapping series name to (data_points, fitted_models).
+    """
+    W = 64
+    TARGET = 100_000
+
+    # Classify series
+    good_fits: list[tuple[str, FittedModel, float]] = []  # (name, model, predicted)
+    bad_fits: list[tuple[str, FittedModel]] = []  # (name, model)
+    constant: list[tuple[str, float]] = []  # (name, mean_time)
+    scaling_counts: dict[str, int] = {
+        "O(n)": 0,
+        "O(n·ln n)": 0,
+        "O(n) + O(n·ln n)": 0,
+    }
+
+    for name, (data_points, models) in all_series.items():
+        if not models:
+            continue
+        best = models[0]
+
+        # Check if near-constant
+        times = [dp.mean_seconds for dp in data_points]
+        if max(times) - min(times) < 0.0001:
+            constant.append((name, np.mean(times)))
+            continue
+
+        # Classify scaling
+        desc = MODEL_DESCRIPTIONS.get(best.name, best.name)
+        # Map model name to scaling label
+        scale_label = {
+            "linear": "O(n)",
+            "log": "O(n·ln n)",
+            "combined": "O(n) + O(n·ln n)",
+        }.get(best.name)
+        if scale_label and scale_label in scaling_counts:
+            scaling_counts[scale_label] += 1
+
+        # Check fit quality
+        if best.r_squared < 0.95:
+            bad_fits.append((name, best))
+        else:
+            # Predict at target
+            predicted = best.predict(float(TARGET))
+            if predicted > 0:
+                good_fits.append((name, best, predicted))
+
+    # Sort by predicted time (worst first)
+    good_fits.sort(key=lambda x: x[2], reverse=True)
+
+    # Print summary
+    print()
+    print(_box_top("Performance Summary", W))
+    print(_box_line("", W))
+
+    # Stats
+    total = len(all_series)
+    n_good = len(good_fits)
+    n_bad = len(bad_fits)
+    n_const = len(constant)
+    print(_box_line(f"{total} series  |  {n_good} good fits  |  {n_bad} unreliable  |  {n_const} constant", W))
+
+    # Worst at target
+    if good_fits:
+        print(_box_line("", W))
+        print(_box_line(f"WORST AT {TARGET // 1000}K NOTES:", W))
+        print(_box_line("─" * (W - 4), W))
+        for name, model, predicted in good_fits[:8]:  # top 8
+            desc = MODEL_DESCRIPTIONS.get(model.name, model.name).split(" +")[0]
+            r2_str = f"{R_SQUARED}={model.r_squared:.3f}"
+            print(_box_line(f"  {name:<30s} {_format_seconds(predicted):>8s}  {desc:<15s} {r2_str}", W))
+
+    # Bad fits
+    if bad_fits:
+        print(_box_line("", W))
+        print(_box_line("UNRELIABLE FITS (R² < 0.95):", W))
+        print(_box_line("─" * (W - 4), W))
+        for name, model in bad_fits:
+            print(_box_line(f"  {name:<30s} {R_SQUARED}={model.r_squared:.3f}  poor fit", W))
+
+    # Scaling breakdown
+    print(_box_line("", W))
+    print(_box_line("SCALING BREAKDOWN:", W))
+    print(_box_line("─" * (W - 4), W))
+    for scale, count in scaling_counts.items():
+        if count > 0:
+            label = {
+                "O(n)": "O(n)            linear per-file cost",
+                "O(n·ln n)": "O(n·ln n)         sort/comparison cost",
+                "O(n) + O(n·ln n)": "O(n) + O(n·ln n)  mixed cost",
+            }.get(scale, scale)
+            print(_box_line(f"  {label}: {count} series", W))
+
+    # Near-constant
+    if constant:
+        print(_box_line("", W))
+        print(_box_line("NEAR-CONSTANT (no scaling concern):", W))
+        print(_box_line("─" * (W - 4), W))
+        for name, mean_t in constant[:6]:  # top 6
+            print(_box_line(f"  {name:<30s} {_format_seconds(mean_t):>8s}  all sizes", W))
+
+    print(_box_bottom(W))
 
 
 # ------------------------------------------------------------- #
@@ -543,6 +810,8 @@ def main() -> None:
             sys.argv[1] if len(sys.argv) > 1 else "target/criterion",
         )
     )
+    plot: bool = os.environ.get("usage_plot", "false") == "true"
+    summary: bool = os.environ.get("usage_summary", "false") == "true"
 
     try:
         series: dict[str, list[BenchmarkDataPoint]] = load_benchmark_data(
@@ -565,9 +834,10 @@ def main() -> None:
     # series printed successfully. Under mise.toml's `set -euo pipefail`, this
     # fails `mise run bench --model` outright.
     had_failure = False
+    all_fitted: dict[str, tuple[list[BenchmarkDataPoint], list[FittedModel]]] = {}
+
     for name in sorted(series):
         data_points: list[BenchmarkDataPoint] = series[name]
-        print(f"\n=== {name} ===")
 
         if len(data_points) < 2:
             print(
@@ -583,17 +853,25 @@ def main() -> None:
             had_failure = True
             continue
 
-        best_model: FittedModel = fitted_models[0]
-        is_workspace_series = set(
-            int(dp.file_count) for dp in data_points
-        ).issubset(WORKSPACE_POINTS)
-        extrapolations: list[ExtrapolationResult] = (
-            extrapolate_to_target_sizes(best_model, [50_000, 100_000])
-            if (best_model.r_squared >= 0.95 and is_workspace_series)
-            else []
-        )
+        all_fitted[name] = (data_points, fitted_models)
 
-        print_report(data_points, fitted_models, extrapolations)
+        if not summary:
+            best_model: FittedModel = fitted_models[0]
+            is_workspace_series = set(
+                int(dp.file_count) for dp in data_points
+            ).issubset(WORKSPACE_POINTS)
+            extrapolations: list[ExtrapolationResult] = (
+                extrapolate_to_target_sizes(best_model, [50_000, 100_000])
+                if (best_model.r_squared >= 0.95 and is_workspace_series)
+                else []
+            )
+
+            print_report(data_points, fitted_models, extrapolations)
+            if plot:
+                plot_series(name, data_points, fitted_models)
+
+    if summary:
+        print_summary(all_fitted)
 
     sys.exit(1 if had_failure else 0)
 

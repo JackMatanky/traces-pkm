@@ -535,7 +535,7 @@ elif [[ "${usage_quick:-false}" == "true" ]]; then
 else
   # Normal mode: fast, responsive developer defaults (~3-4m full) instead of Criterion's 8s/bench
   criterion_args+=(
-    --sample-size 20 --measurement-time 1.0 --warm-up-time 0.5 --noplot
+    --sample-size 20 --measurement-time 1.0 --warm-up-time 0.5
   )
   has_criterion_args=true
 fi
@@ -633,7 +633,7 @@ fi
 
 # --- Model ---
 if [[ "${usage_model:-false}" == "true" ]]; then
-  mise run bench-model
+  mise run bench-model -- --summary
 fi
 '''
 
