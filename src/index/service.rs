@@ -1205,7 +1205,7 @@ mod tests {
                     .inlinks()
                     .to_vec()
             };
-            assert_eq!(inlinks_of(&weird), [normal]);
+            assert_eq!(inlinks_of(&weird), [normal.clone()]);
             assert_eq!(inlinks_of(&normal), [weird]);
         }
 
