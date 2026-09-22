@@ -64,8 +64,8 @@ impl UiOps {
 }
 
 /// Hand-written rather than `#[derive(Debug)]`: deriving would require
-/// `DialogProvider: Debug`, widening that public trait's contract for
-/// every implementor just to satisfy this one internal consumer (minijinja's
+/// `DialogProvider: Debug`, widening that public trait's contract for every
+/// implementor just to satisfy this one internal consumer (minijinja's
 /// [`Object`] trait requires `Self: Debug`). There's nothing useful to print
 /// for an opaque `dyn DialogProvider` anyway.
 impl std::fmt::Debug for UiOps {
@@ -220,9 +220,9 @@ impl SelectOptions {
 
 /// Maps a [`DialogError`] into a [`minijinja::Error`].
 ///
-/// The original dialog error is preserved as [`source`]. The minijinja
-/// message stays generic so crate-level error reporting can print the source
-/// chain without repeating the same user-facing message twice.
+/// The original dialog error is preserved as [`source`]. The minijinja message
+/// stays generic so crate-level error reporting can print the source chain
+/// without repeating the same user-facing message twice.
 ///
 /// [`source`]: std::error::Error::source
 fn dialog_error(source: DialogError) -> Error {

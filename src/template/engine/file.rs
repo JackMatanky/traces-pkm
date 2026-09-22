@@ -12,9 +12,9 @@
 //! rendering completes.
 //!
 //! `file.include()` confines its `path` argument to `root` via
-//! [`SafeRelativePath::parse`], the same seam [`TemplateWriteTarget`] uses
-//! for `-o` and `file.write_to()` candidates. Symlink escapes are rejected the
-//! same way on the read and write sides.
+//! [`SafeRelativePath::parse`], the same seam [`TemplateWriteTarget`] uses for
+//! `-o` and `file.write_to()` candidates. Symlink escapes are rejected the same
+//! way on the read and write sides.
 //!
 //! [`Config::root`]: crate::config::Config::root
 //! [`SafeRelativePath::parse`]: crate::path::SafeRelativePath::parse
