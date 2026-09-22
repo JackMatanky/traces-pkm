@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use super::{inlinks::InlinkMap, sort::SortedByPath};
 use crate::{FileBase, Note};
 
-/// Persisted file records with parsed note metadata and derived inbound links.
+/// Persisted file entries with parsed note metadata and derived inbound links.
 ///
 /// Every regular file under the project root contributes one [`FileEntry`].
-/// Markdown files include a parsed [`Note`]; all entries may carry backlinks.
+/// Markdown files include a parsed [`Note`]; all entries may carry inlinks.
 /// [`IndexerService`] produces, persists, and loads it; `WorkspaceIndex` itself
 /// carries no `&Path`.
 ///
@@ -51,18 +51,18 @@ impl WorkspaceIndex {
     #[inline]
     #[must_use]
     pub fn new_test(notes: &[(&str, &str)]) -> Self {
-        let mut items = Vec::with_capacity(notes.len());
-        items.extend(notes.iter().map(|(path_str, src)| {
+        let mut prepared = Vec::with_capacity(notes.len());
+        prepared.extend(notes.iter().map(|(path_str, src)| {
             let p = std::path::Path::new(path_str);
             let note = crate::parse_note(p, src);
             let size = u64::try_from(src.len()).unwrap_or(u64::MAX);
             (note, size)
         }));
-        items.sort_by(|(a, _), (b, _)| a.path().cmp(b.path()));
+        prepared.sort_by(|(a, _), (b, _)| a.path().cmp(b.path()));
 
-        let mut parsed = Vec::with_capacity(items.len());
-        let mut files = Vec::with_capacity(items.len());
-        for (note, size) in items {
+        let mut parsed = Vec::with_capacity(prepared.len());
+        let mut files = Vec::with_capacity(prepared.len());
+        for (note, size) in prepared {
             files.push(FileBase::note_with_size_for_test(note.path(), size));
             parsed.push(note);
         }
@@ -118,7 +118,9 @@ impl WorkspaceIndex {
     )]
     #[inline]
     pub(crate) fn entry_at(&self, position: RowIndex) -> &FileEntry {
-        self.entries.get(position.get()).expect("RowIndex is always in bounds")
+        self.entries
+            .get(position.as_usize())
+            .expect("RowIndex is always in bounds")
     }
 }
 
@@ -142,7 +144,7 @@ impl FileEntry {
         }
     }
 
-    /// Returns the record's [`FileBase`] metadata.
+    /// Returns the entry's [`FileBase`] metadata.
     #[inline]
     #[must_use]
     pub fn file(&self) -> &FileBase {
@@ -187,7 +189,7 @@ impl RowIndex {
 
     #[inline]
     #[must_use]
-    const fn get(self) -> usize {
+    const fn as_usize(self) -> usize {
         self.0
     }
 }
