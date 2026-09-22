@@ -1,10 +1,12 @@
-//! Validate relative paths and confine them to a root.
+//! Validate relative paths, confine them to a root, and serialize them with
+//! platform-native encodings.
 //!
 //! Main types:
 //! - [`HasPath`] - Path-addressable row trait for sorted storage views
 //! - [`RelativePath`] - Relative path accepted by lexical checks only
 //! - [`SafeRelativePath`] - Path accepted by lexical and filesystem checks
 //! - [`PathError`] - Path validation failure
+//! - [`codec`] - Serde support for `PathBuf` fields in serialized formats
 //!
 //! Confinement happens in two phases:
 //! - Lexical validation rejects absolute paths, parent-directory components,
@@ -301,6 +303,109 @@ impl PathError {
     }
 }
 
+/// Serde support for paths using platform-native encodings.
+///
+/// This is the crate's bytes-of-a-path codec; the index's bytes-of-a-row
+/// codec lives at `crate::index::codec`.
+pub mod codec {
+    use std::path::{Path, PathBuf};
+
+    use serde::{Deserialize, Deserializer, Serializer};
+    /// Emits raw path bytes.
+    ///
+    /// # Errors
+    ///
+    /// - The serializer rejects the byte payload.
+    #[cfg(unix)]
+    #[inline]
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        serializer.serialize_bytes(path.as_os_str().as_bytes())
+    }
+
+    /// Rebuilds a path from raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// - The deserializer rejects the byte payload.
+    #[cfg(unix)]
+    #[inline]
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use std::os::unix::ffi::OsStringExt as _;
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+    }
+
+    /// Emits Windows wide path units.
+    ///
+    /// # Errors
+    ///
+    /// - The serializer rejects the wide-character payload.
+    #[cfg(windows)]
+    #[inline]
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        use serde::Serialize as _;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        wide.serialize(serializer)
+    }
+
+    /// Rebuilds a path from Windows wide units.
+    ///
+    /// # Errors
+    ///
+    /// - The deserializer rejects the wide-character payload.
+    #[cfg(windows)]
+    #[inline]
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use std::os::windows::ffi::OsStringExt as _;
+        let wide = <Vec<u16>>::deserialize(deserializer)?;
+        Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+    }
+
+    /// Emits `to_string_lossy` output.
+    ///
+    /// # Errors
+    ///
+    /// - The serializer rejects the string payload.
+    #[cfg(not(any(unix, windows)))]
+    #[inline]
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&path.to_string_lossy())
+    }
+
+    /// Rebuilds a path from a string.
+    ///
+    /// # Errors
+    ///
+    /// - The deserializer rejects the string payload.
+    #[cfg(not(any(unix, windows)))]
+    #[inline]
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <String>::deserialize(deserializer)?;
+        Ok(PathBuf::from(s))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +667,69 @@ mod tests {
                 FolderRef::of(Path::new("root.md")).as_path(),
                 Path::new("")
             );
+        }
+    }
+
+    mod path_codec {
+        use std::path::PathBuf;
+
+        use pretty_assertions::assert_eq;
+        use serde::{Deserialize, Serialize};
+
+        use super::super::codec;
+
+        #[derive(Debug, PartialEq, Deserialize, Serialize)]
+        struct PathWrapper {
+            #[serde(with = "codec")]
+            path: PathBuf,
+        }
+
+        #[test]
+        fn round_trips_valid_utf8() {
+            let path = PathBuf::from("hello.md");
+            let item = PathWrapper {
+                path,
+            };
+            let bytes = postcard::to_allocvec(&item).expect("serialize path");
+            let decoded: PathWrapper =
+                postcard::from_bytes(&bytes).expect("deserialize path");
+
+            assert_eq!(decoded, item);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn round_trips_non_unicode_on_unix() {
+            use std::os::unix::ffi::OsStringExt as _;
+            let weird_os =
+                std::ffi::OsString::from_vec(b"weird\xFF.md".to_vec());
+            let path = PathBuf::from(weird_os);
+            let item = PathWrapper {
+                path,
+            };
+            let bytes = postcard::to_allocvec(&item).expect("serialize path");
+            let decoded: PathWrapper =
+                postcard::from_bytes(&bytes).expect("deserialize path");
+
+            assert_eq!(decoded, item);
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn round_trips_non_unicode_on_windows() {
+            use std::os::windows::ffi::OsStringExt as _;
+            let weird_os = std::ffi::OsString::from_wide(&[
+                119, 101, 105, 114, 100, 0xD800, 46, 109, 100,
+            ]);
+            let path = PathBuf::from(weird_os);
+            let item = PathWrapper {
+                path,
+            };
+            let bytes = postcard::to_allocvec(&item).expect("serialize path");
+            let decoded: PathWrapper =
+                postcard::from_bytes(&bytes).expect("deserialize path");
+
+            assert_eq!(decoded, item);
         }
     }
 }
