@@ -15,7 +15,7 @@ use crate::path::HasPath;
 /// [`SortedByPath::assumed_sorted`] (debug-asserts); lookup methods rely on
 /// that order.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SortedByPath<T>(Vec<T>);
+pub(crate) struct SortedByPath<T>(Vec<T>);
 
 impl<T> Default for SortedByPath<T> {
     fn default() -> Self {
@@ -24,16 +24,17 @@ impl<T> Default for SortedByPath<T> {
 }
 
 impl<T> SortedByPath<T> {
-    /// Wraps already-sorted rows without reordering.
+    /// Unwraps into the underlying rows, still path-sorted.
     #[inline]
-    pub(super) fn into_vec(self) -> Vec<T> {
+    #[must_use]
+    pub(crate) fn into_vec(self) -> Vec<T> {
         self.0
     }
 }
 
 impl<T: HasPath> SortedByPath<T> {
     /// Sorts `rows` ascending by path.
-    pub fn sorted(mut rows: Vec<T>) -> Self {
+    pub(crate) fn sorted(mut rows: Vec<T>) -> Self {
         rows.sort_by(|a, b| a.path().cmp(b.path()));
         Self(rows)
     }
@@ -44,7 +45,7 @@ impl<T: HasPath> SortedByPath<T> {
     ///
     /// Panics in debug builds when `rows` is not ascending by path.
     #[inline]
-    pub fn assumed_sorted(rows: Vec<T>) -> Self {
+    pub(crate) fn assumed_sorted(rows: Vec<T>) -> Self {
         debug_assert!(
             rows.windows(2).all(|pair| match pair {
                 [a, b] => a.path() <= b.path(),
@@ -58,13 +59,23 @@ impl<T: HasPath> SortedByPath<T> {
     /// Returns the rows as a path-ascending slice.
     #[inline]
     #[must_use]
-    pub fn as_slice(&self) -> &[T] {
+    pub(crate) fn as_slice(&self) -> &[T] {
         &self.0
+    }
+
+    /// Returns the row stored at `path` for in-place payload mutation.
+    ///
+    /// The returned row's path must stay unchanged: replacing it would break
+    /// the sorted invariant [`SortedByPath`] witnesses.
+    #[inline]
+    pub(crate) fn get_mut_by_path(&mut self, path: &Path) -> Option<&mut T> {
+        let index = self.binary_search_by_path(path).ok()?;
+        self.0.get_mut(index)
     }
 
     /// Binary-searches for `path`; see [`slice::binary_search_by`].
     #[inline]
-    pub(super) fn binary_search_by_path(
+    pub(crate) fn binary_search_by_path(
         &self,
         path: &Path,
     ) -> Result<usize, usize> {
@@ -179,28 +190,32 @@ mod tests {
         }
     }
 
-    mod redistribute {
+    mod payload_mutation {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        /// Mutating payload fields must not disturb path-order lookup: this
-        /// mirrors `redistribute_inlinks`, which only rewrites entry inlinks.
         #[test]
-        fn keeps_rows_findable_after_payload_mutation() {
+        fn finds_row_for_payload_mutation_and_stays_sorted() {
             let mut sorted =
                 SortedByPath::sorted(vec![row("a.md", 1), row("b.md", 2)]);
-            {
-                let rows = sorted.0.as_mut_slice();
-                let first = rows.first_mut().expect("two rows sorted");
-                first.payload = 99;
-            }
+
+            let first = sorted.get_mut_by_path(Path::new("a.md")).expect("hit");
+            first.payload = 99;
 
             let index = sorted
                 .binary_search_by_path(Path::new("a.md"))
                 .expect("still findable");
             let found = sorted.as_slice().get(index).expect("hit in bounds");
             assert_eq!(found.payload, 99);
+        }
+
+        #[test]
+        fn returns_none_for_a_missing_path() {
+            let mut sorted =
+                SortedByPath::sorted(vec![row("a.md", 1), row("b.md", 2)]);
+
+            assert!(sorted.get_mut_by_path(Path::new("missing.md")).is_none());
         }
     }
 }

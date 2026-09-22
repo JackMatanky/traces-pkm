@@ -2,26 +2,34 @@
 
 use std::path::PathBuf;
 
-use super::inlinks::InlinkMap;
+use super::{inlinks::InlinkMap, sort::SortedByPath};
 use crate::FileBase;
 
 /// Computed difference between disk files and persisted index metadata.
+///
+/// Both result slices remain ascending by path: [`Self::compute` performs a
+/// single merge over its path-sorted inputs, so upserted and deleted rows
+/// inherit that order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct IndexDelta {
+pub(super) struct FileDelta {
     upserted: Box<[FileBase]>,
     deleted: Box<[FileBase]>,
 }
 
-impl IndexDelta {
+impl FileDelta {
     /// Computes added, modified, and deleted files.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds when either input is not ascending by path.
     pub(super) fn compute(
-        current: &[FileBase],
-        persisted: &[FileBase],
+        current: &SortedByPath<FileBase>,
+        persisted: &SortedByPath<FileBase>,
     ) -> Self {
         let mut upserted = Vec::new();
         let mut deleted = Vec::new();
-        let mut cur = current.iter().peekable();
-        let mut prev = persisted.iter().peekable();
+        let mut cur = current.as_slice().iter().peekable();
+        let mut prev = persisted.as_slice().iter().peekable();
         loop {
             match (cur.peek(), prev.peek()) {
                 (Some(c), Some(p)) => match c.path().cmp(p.path()) {
@@ -64,12 +72,14 @@ impl IndexDelta {
         self.upserted.is_empty() && self.deleted.is_empty()
     }
 
+    /// Returns added or changed files, ascending by path.
     #[inline]
     #[must_use]
     pub(super) fn upserted(&self) -> &[FileBase] {
         &self.upserted
     }
 
+    /// Returns removed files, ascending by path.
     #[inline]
     #[must_use]
     pub(super) fn deleted(&self) -> &[FileBase] {
@@ -177,73 +187,97 @@ fn diff_sorted_sources(
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
     use super::*;
 
-    mod file_diff {
-        use std::fs;
-
+    mod file_delta {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::IndexerService;
 
         #[test]
-        fn returns_true_when_diff_is_empty() {
-            let diff = IndexDelta::default();
-            assert!(diff.is_empty());
+        fn returns_true_when_delta_is_empty() {
+            let delta = FileDelta::default();
+            assert!(delta.is_empty());
         }
 
         #[test]
-        fn deleted_note_sets_has_deleted_note() {
+        fn returns_deleted_note_when_note_is_removed() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "content").expect("write a");
-            let previous = IndexerService::scan(temp.path()).expect("scan");
+            let previous = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
             fs::remove_file(temp.path().join("a.md")).expect("delete a");
-            let current = IndexerService::scan(temp.path()).expect("scan");
+            let current = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
 
-            let diff = IndexDelta::compute(&current, &previous);
+            let delta = FileDelta::compute(&current, &previous);
 
             let deleted_paths: Vec<_> =
-                diff.deleted().iter().map(FileBase::path).collect();
-            assert_eq!(deleted_paths, [std::path::Path::new("a.md")]);
+                delta.deleted().iter().map(FileBase::path).collect();
+            assert_eq!(deleted_paths, [Path::new("a.md")]);
         }
 
         #[test]
-        fn deleted_non_note_file_does_not_set_has_deleted_note() {
+        fn returns_deleted_file_when_non_note_is_removed() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("image.png"), "fake")
                 .expect("write image");
-            let previous = IndexerService::scan(temp.path()).expect("scan");
+            let previous = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
             fs::remove_file(temp.path().join("image.png"))
                 .expect("delete image");
-            let current = IndexerService::scan(temp.path()).expect("scan");
+            let current = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
 
-            let diff = IndexDelta::compute(&current, &previous);
+            let delta = FileDelta::compute(&current, &previous);
 
             let deleted_paths: Vec<_> =
-                diff.deleted().iter().map(FileBase::path).collect();
-            assert_eq!(deleted_paths, [std::path::Path::new("image.png")]);
+                delta.deleted().iter().map(FileBase::path).collect();
+            assert_eq!(deleted_paths, [Path::new("image.png")]);
         }
 
         #[test]
-        fn upserted_note_does_not_set_has_deleted_note() {
+        fn returns_upserted_note_without_deletion_when_contents_change() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "v1").expect("write a");
-            let previous = IndexerService::scan(temp.path()).expect("scan");
+            let previous = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
             fs::write(temp.path().join("a.md"), "v2, longer content")
                 .expect("rewrite a");
-            let current = IndexerService::scan(temp.path()).expect("scan");
+            let current = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
 
-            let diff = IndexDelta::compute(&current, &previous);
+            let delta = FileDelta::compute(&current, &previous);
 
             let upserted_paths: Vec<_> =
-                diff.upserted().iter().map(FileBase::path).collect();
-            assert_eq!(upserted_paths, [std::path::Path::new("a.md")]);
-            assert_eq!(diff.deleted(), []);
+                delta.upserted().iter().map(FileBase::path).collect();
+            assert_eq!(upserted_paths, [Path::new("a.md")]);
+            assert_eq!(delta.deleted(), []);
+        }
+
+        #[test]
+        fn treats_identical_unsorted_inputs_as_unchanged() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "same").expect("write a");
+            fs::write(temp.path().join("b.md"), "same").expect("write b");
+            let persisted = SortedByPath::sorted(
+                crate::IndexerService::scan(temp.path()).expect("scan"),
+            );
+            let current = persisted.clone();
+
+            assert!(FileDelta::compute(&current, &persisted).is_empty());
         }
     }
 
-    mod inlink_delta {
+    mod inlink {
         use pretty_assertions::assert_eq;
 
         use super::*;

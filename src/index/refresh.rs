@@ -15,7 +15,7 @@ use std::{
 
 use super::{
     IndexError, IndexResult, WorkspaceIndex,
-    delta::{IndexDelta, InlinkDelta},
+    delta::{FileDelta, InlinkDelta},
     inlinks::{self, InlinkMap},
     service::IndexerService,
     sort::SortedByPath,
@@ -74,7 +74,7 @@ pub(super) enum RefreshPass {
     /// No file metadata changed; the opened store remains current.
     Unchanged {
         store: IndexStore,
-        files: Vec<FileBase>,
+        files: SortedByPath<FileBase>,
         links: InlinkMap,
     },
     /// File metadata changed and is reconciled but not yet persisted.
@@ -97,8 +97,8 @@ impl PendingApply {
     /// Persists this pass through [`IndexStore::persist`].
     ///
     /// The update remains owned by the returned state in both success and error
-    /// cases, so callers can retry or materialize from exactly the rows that
-    /// failed to persist.
+    /// cases, so a failed apply can still materialize an in-memory index from
+    /// exactly the rows that failed to persist.
     pub(super) fn apply(
         self,
         axes: IndexAxes,
@@ -242,7 +242,7 @@ impl NoteScope {
     pub(super) fn resolve(
         self,
         store: &IndexStore,
-        deleted: &IndexDelta,
+        deleted: &FileDelta,
     ) -> IndexResult<SortedByPath<Note>> {
         match self {
             Self::Modified(notes) => {
@@ -256,10 +256,10 @@ impl NoteScope {
 /// Scanned-and-diffed state of one index root, before note parsing.
 pub(super) struct RefreshPlan {
     store: IndexStore,
-    current_files: Vec<FileBase>,
+    current_files: SortedByPath<FileBase>,
     persisted_files: SortedByPath<FileBase>,
     prev_links: InlinkMap,
-    delta: IndexDelta,
+    delta: FileDelta,
 }
 
 impl RefreshPlan {
@@ -272,11 +272,11 @@ impl RefreshPlan {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::NoteParse` if file metadata cannot be inspected.
-    /// - `IndexError::Path` if a walked file cannot be derived as a safe
+    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
+    /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
-    /// - `IndexError::Store` if opening or reading the store fails.
+    /// - [`IndexError::Store`] if opening or reading the store fails.
     pub(super) fn collect(root: &Path) -> IndexResult<Self> {
         let (opened, scanned) = rayon::join(
             || -> IndexResult<_> {
@@ -288,9 +288,8 @@ impl RefreshPlan {
             || IndexerService::scan(root),
         );
         let (store, persisted_files, prev_links) = opened?;
-        let current_files = scanned?;
-        let delta =
-            IndexDelta::compute(&current_files, persisted_files.as_slice());
+        let current_files = SortedByPath::assumed_sorted(scanned?);
+        let delta = FileDelta::compute(&current_files, &persisted_files);
         Ok(Self {
             store,
             current_files,
@@ -326,7 +325,8 @@ impl RefreshPlan {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Store` if a path-set rebuild cannot read persisted notes.
+    /// - [`IndexError::Store`] if a path-set rebuild cannot read persisted
+    ///   notes.
     pub(super) fn reconcile(
         self,
         modified_notes: Vec<Note>,
@@ -336,7 +336,7 @@ impl RefreshPlan {
                 let links = Self::patch_links(
                     &self.prev_links,
                     &modified_notes,
-                    &self.current_files,
+                    self.current_files.as_slice(),
                 );
                 let inlink_delta =
                     InlinkDelta::compute(&links, &self.prev_links);
@@ -353,8 +353,10 @@ impl RefreshPlan {
                     &self.delta,
                     modified_notes,
                 )?;
-                let links =
-                    InlinkMap::new(notes.as_slice(), &self.current_files);
+                let links = InlinkMap::new(
+                    notes.as_slice(),
+                    self.current_files.as_slice(),
+                );
                 let inlink_delta =
                     InlinkDelta::compute(&links, &self.prev_links);
                 (
@@ -382,7 +384,7 @@ impl RefreshPlan {
     ///
     /// Only this case leaves link resolution for unedited notes invariant.
     fn is_paths_unchanged(
-        delta: &IndexDelta,
+        delta: &FileDelta,
         persisted_files: &SortedByPath<FileBase>,
     ) -> bool {
         delta.deleted().is_empty()
@@ -411,8 +413,8 @@ impl RefreshPlan {
 /// Computed facts from one reconciliation pass, not yet applied. Pure data: no
 /// store handle, constructible and assertable without a database.
 pub(super) struct IndexUpdate {
-    current_files: Vec<FileBase>,
-    delta: IndexDelta,
+    current_files: SortedByPath<FileBase>,
+    delta: FileDelta,
     inlinks: InlinkReconciliation,
     inlink_delta: InlinkDelta,
 }
@@ -431,7 +433,7 @@ impl IndexUpdate {
     }
 
     #[inline]
-    fn delta(&self) -> &IndexDelta {
+    fn delta(&self) -> &FileDelta {
         &self.delta
     }
 
@@ -449,7 +451,7 @@ impl IndexUpdate {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Store` if content-only materialization cannot read
+    /// - [`IndexError::Store`] if content-only materialization cannot read
     ///   persisted notes.
     pub(super) fn into_index(
         self,
@@ -460,11 +462,7 @@ impl IndexUpdate {
             notes,
         } = self.inlinks;
         let notes = notes.resolve(store, &self.delta)?;
-        Ok(WorkspaceIndex::assemble(
-            SortedByPath::assumed_sorted(self.current_files),
-            notes,
-            links,
-        ))
+        Ok(WorkspaceIndex::assemble(self.current_files, notes, links))
     }
 }
 
@@ -479,10 +477,10 @@ impl IndexUpdate {
 ///
 /// # Errors
 ///
-/// - `IndexError::Store` if persisted notes cannot be read or decoded.
+/// - [`IndexError::Store`] if persisted notes cannot be read or decoded.
 fn merge_refreshed_notes(
     store: &IndexStore,
-    delta: &IndexDelta,
+    delta: &FileDelta,
     modified_notes: Vec<Note>,
 ) -> IndexResult<SortedByPath<Note>> {
     let mut all_notes = store.read_all_notes()?.into_vec();
@@ -523,16 +521,16 @@ mod tests {
 
         #[test]
         fn counts_upserts_deletes_and_link_edges() {
-            let delta =
-                IndexDelta::compute(&[FileBase::note_for_test("a.md")], &[
-                    FileBase::note_for_test("b.md"),
-                ]);
+            let delta = FileDelta::compute(
+                &SortedByPath::sorted(vec![FileBase::note_for_test("a.md")]),
+                &SortedByPath::sorted(vec![FileBase::note_for_test("b.md")]),
+            );
             let inlink_delta = InlinkDelta::compute(
                 &InlinkMap::default(),
                 &InlinkMap::default(),
             );
             let update = IndexUpdate {
-                current_files: vec![],
+                current_files: SortedByPath::default(),
                 delta,
                 inlinks: InlinkReconciliation {
                     links: InlinkMap::default(),

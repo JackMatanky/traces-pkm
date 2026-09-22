@@ -20,7 +20,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::{
     INDEX_FILE,
     codec::{IndexPathKey, decode_row, encode_row, path_from_bytes},
-    delta::{IndexDelta, InlinkDelta},
+    delta::{FileDelta, InlinkDelta},
     entry::FileEntry,
     error::{IndexError, IndexResult, StoreError, StoreResult},
     inlinks::InlinkMap,
@@ -146,8 +146,8 @@ impl TableDef {
 impl TableSpec {
     /// Deletes this table's contents per its [`DeletePolicy`].
     ///
-    /// `Required` propagates every storage error; `BestEffort` tolerates only
-    /// a missing table (the fresh-database case) and propagates the rest.
+    /// `Required` propagates every storage error; `BestEffort` tolerates only a
+    /// missing table (the fresh-database case) and propagates the rest.
     fn delete(
         &self,
         store: &IndexStore,
@@ -200,7 +200,7 @@ impl<'a> PersistPlan<'a> {
     #[inline]
     pub(super) const fn incremental(
         axes: IndexAxes,
-        delta: &'a IndexDelta,
+        delta: &'a FileDelta,
         notes: &'a [&'a Note],
         edges: &'a InlinkDelta,
     ) -> Self {
@@ -215,9 +215,10 @@ impl<'a> PersistPlan<'a> {
     }
 }
 
-/// Incremental row references shared by the plan and its store application.
+/// Incremental row references passed from [`IndexStore::persist`] to its
+/// transaction body.
 struct IncrementalRows<'a> {
-    delta: &'a IndexDelta,
+    delta: &'a FileDelta,
     notes: &'a [&'a Note],
     edges: &'a InlinkDelta,
 }
@@ -230,7 +231,7 @@ pub(super) enum PersistRows<'a> {
     },
     /// Incremental file, note, axis, and inlink changes.
     Incremental {
-        delta: &'a IndexDelta,
+        delta: &'a FileDelta,
         notes: &'a [&'a Note],
         edges: &'a InlinkDelta,
     },
@@ -286,11 +287,11 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Io`] if the database's parent directory cannot be
-    ///   created, or if a corrupted or schema-mismatched file cannot be deleted
-    ///   during recovery.
-    /// - [`StoreError::Redb`] if the database file cannot be opened, or a
-    ///   post-recovery re-create fails.
+    /// - [`Store`] if the database's parent directory cannot be created, the
+    ///   database file cannot be opened, or a corrupted or schema-mismatched
+    ///   file cannot be replaced during recovery.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn open(root: &Path) -> IndexResult<Self> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
@@ -531,9 +532,10 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if the table cannot be read.
-    /// - [`StoreError::Deserialize`] if stored bytes are corrupt or
-    ///   incompatible.
+    /// - [`Store`] if the table cannot be read or stored bytes are not a valid
+    ///   record.
+    ///
+    /// [`Store`]: IndexError::Store
     fn read_table<T>(
         &self,
         txn: &ReadTransaction,
@@ -552,30 +554,39 @@ impl IndexStore {
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
     /// derived inlink edge. Stale or orphaned edges are dropped.
     ///
+    /// Targets resolve through every stored [`FileBase`] because attachments
+    /// can carry inlinks; sources resolve through stored [`Note`] rows only.
+    ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if a table cannot be read.
-    /// - [`StoreError::Deserialize`] if stored bytes are not a valid record.
+    /// - [`Store`] if a table cannot be read or stored bytes are not a valid
+    ///   record.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let (files_result, notes_result) = rayon::join(
             || self.read_table(&txn, FILES),
             || self.collect_note_bytes(&txn),
         );
-        let files = files_result?;
+        let files: SortedByPath<FileBase> = files_result?;
         let notes = notes_result?;
-        let links = {
-            let by_bytes: HashMap<&[u8], &Path> = notes
-                .as_slice()
-                .iter()
-                .map(|note| {
-                    (IndexPathKey::new(note.path()).as_bytes(), note.path())
-                })
-                .collect();
-            self.read_links(&txn, LINKS, |bytes| {
-                by_bytes.get(bytes).map(|path| path.to_path_buf())
-            })?
-        };
+        let target_paths: HashMap<&[u8], &Path> = files
+            .as_slice()
+            .iter()
+            .map(|file| {
+                (IndexPathKey::new(file.path()).as_bytes(), file.path())
+            })
+            .collect();
+        let source_paths: HashMap<&[u8], &Path> = notes
+            .as_slice()
+            .iter()
+            .map(|note| {
+                (IndexPathKey::new(note.path()).as_bytes(), note.path())
+            })
+            .collect();
+        let links =
+            self.read_links(&txn, LINKS, &target_paths, &source_paths)?;
         Ok((files, notes, links))
     }
 
@@ -616,44 +627,48 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if a table cannot be read.
-    /// - [`StoreError::Deserialize`] if stored bytes are not a valid record.
+    /// - [`Store`] if a table cannot be read or stored bytes are not a valid
+    ///   record.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(super) fn read_files_and_links_with(
         &self,
         txn: &ReadTransaction,
     ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
         let files: SortedByPath<FileBase> = self.read_table(txn, FILES)?;
-        let note_paths_by_bytes: HashMap<Vec<u8>, &Path> = files
+        let target_paths: HashMap<&[u8], &Path> = files
+            .as_slice()
+            .iter()
+            .map(|file| {
+                (IndexPathKey::new(file.path()).as_bytes(), file.path())
+            })
+            .collect();
+        let source_paths: HashMap<&[u8], &Path> = files
             .as_slice()
             .iter()
             .filter(|file| file.format() == FileFormat::Note)
             .map(|file| {
-                (
-                    IndexPathKey::new(file.path()).as_bytes().to_vec(),
-                    file.path(),
-                )
+                (IndexPathKey::new(file.path()).as_bytes(), file.path())
             })
             .collect();
-        let links = self.read_links(txn, LINKS, |bytes| {
-            note_paths_by_bytes
-                .get(bytes)
-                .map(|path| (*path).to_path_buf())
-                .or_else(|| Some(path_from_bytes(bytes)))
-        })?;
+        let links =
+            self.read_links(txn, LINKS, &target_paths, &source_paths)?;
         Ok((files, links))
     }
 
     /// Deserializes every `target -> sources` edge from the `links` multimap
-    /// table, resolving each stored path's raw bytes through `resolve`.
+    /// table, resolving stored path bytes through `target_paths` and
+    /// `source_paths`.
     ///
-    /// `resolve` maps a stored key/value's raw bytes to the authoritative path
-    /// to use, or `None` to drop it. A target that resolves to `None` drops its
-    /// whole edge set; a source that resolves to `None` is skipped; an entry
-    /// left with no surviving sources is omitted entirely.
+    /// A target missing from `target_paths` drops its whole edge set; a source
+    /// missing from `source_paths` is skipped; an entry left with no surviving
+    /// sources is omitted entirely.
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if the table cannot be read.
+    /// - [`Store`] if the table cannot be read.
+    ///
+    /// [`Store`]: IndexError::Store
     fn read_links(
         &self,
         txn: &ReadTransaction,
@@ -662,12 +677,13 @@ impl IndexStore {
             &'static [u8],
             &'static [u8],
         >,
-        resolve: impl Fn(&[u8]) -> Option<PathBuf>,
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
     ) -> IndexResult<InlinkMap> {
         let Some(table) = self.open_multimap_for_read(txn, table_def)? else {
             return Ok(InlinkMap::default());
         };
-        Ok(self.collect_multimap_links(&table, &resolve)?)
+        Ok(self.collect_multimap_links(&table, target_paths, source_paths)?)
     }
 
     // --- Write primitives ---------------------------------------------
@@ -676,8 +692,10 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if the table cannot be opened or written.
-    /// - [`StoreError::Serialize`] if an item cannot be encoded.
+    /// - [`Store`] if the table cannot be opened or written, or an item cannot
+    ///   be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
     fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
@@ -705,7 +723,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`StoreError::Redb`] if the table cannot be opened or written.
+    /// - [`Store`] if the table cannot be opened or written.
+    ///
+    /// [`Store`]: IndexError::Store
     fn write_links(
         &self,
         txn: &WriteTransaction,
@@ -735,6 +755,8 @@ impl IndexStore {
 
     /// Persists a full rebuild or one incremental refresh pass.
     ///
+    /// Incremental passes with no changed rows skip the transaction entirely.
+    ///
     /// # Errors
     ///
     /// - [`Store`] if the transaction fails or a record cannot be encoded.
@@ -744,35 +766,35 @@ impl IndexStore {
         match &plan.rows {
             PersistRows::Rebuild {
                 entries,
-            } => self.persist_rebuild(entries, &plan.axes),
+            } => self.apply_rebuild(entries, &plan.axes),
             PersistRows::Incremental {
                 delta,
                 notes,
                 edges,
-            } => self.persist_incremental(&plan.axes, &IncrementalRows {
-                delta,
-                notes,
-                edges,
-            }),
+            } => {
+                if delta.is_empty() && notes.is_empty() && edges.is_empty() {
+                    return Ok(());
+                }
+                self.apply_incremental(&plan.axes, &IncrementalRows {
+                    delta,
+                    notes,
+                    edges,
+                })
+            }
         }
     }
 
     /// Rebuild arm of [`Self::persist`]: clears and rewrites every table.
-    ///
-    /// # Errors
-    ///
-    /// - [`IndexError::Store`] if the transaction fails or a record cannot be
-    ///   encoded.
-    fn persist_rebuild(
+    fn apply_rebuild(
         &self,
         entries: &[FileEntry],
         axes: &IndexAxes,
     ) -> IndexResult<()> {
-        self.persist_rebuild_in(self.begin_cache_txn()?, entries, axes)
+        self.apply_rebuild_in(self.begin_cache_txn()?, entries, axes)
     }
 
     #[inline(never)]
-    fn persist_rebuild_in(
+    fn apply_rebuild_in(
         &self,
         txn: WriteTransaction,
         entries: &[FileEntry],
@@ -786,31 +808,16 @@ impl IndexStore {
     }
 
     /// Incremental arm of [`Self::persist`]: applies row-level changes.
-    ///
-    /// Empty changes skip the transaction entirely.
-    ///
-    /// # Errors
-    ///
-    /// - [`IndexError::Store`] if the transaction fails or a record cannot be
-    ///   encoded.
-    fn persist_incremental(
+    fn apply_incremental(
         &self,
         axes: &IndexAxes,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        let IncrementalRows {
-            delta,
-            notes,
-            edges,
-        } = rows;
-        if delta.is_empty() && notes.is_empty() && edges.is_empty() {
-            return Ok(());
-        }
-        self.persist_incremental_in(self.begin_cache_txn()?, axes, rows)
+        self.apply_incremental_in(self.begin_cache_txn()?, axes, rows)
     }
 
     #[inline(never)]
-    fn persist_incremental_in(
+    fn apply_incremental_in(
         &self,
         txn: WriteTransaction,
         axes: &IndexAxes,
@@ -1079,15 +1086,10 @@ impl IndexStore {
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
     ) -> StoreResult<Vec<T>> {
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::as_conversions,
-            reason = "u64-to-usize cast is safe on 64-bit targets; table \
-                      length fits usize"
-        )]
-        let capacity =
-            table.len().map_err(|source| self.raise_source_error(source))?
-                as usize;
+        let capacity = usize::try_from(
+            table.len().map_err(|source| self.raise_source_error(source))?,
+        )
+        .unwrap_or(usize::MAX);
         self.decode_rows(self.open_table_iter(table)?, capacity)
     }
 
@@ -1150,11 +1152,13 @@ impl IndexStore {
     fn collect_multimap_links(
         &self,
         table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
     ) -> StoreResult<InlinkMap> {
         self.collect_resolved_links(
             table.iter().map_err(|source| self.raise_source_error(source))?,
-            resolve,
+            target_paths,
+            source_paths,
         )
     }
 
@@ -1162,12 +1166,13 @@ impl IndexStore {
     fn collect_resolved_links<'a>(
         &self,
         iter: impl Iterator<Item = LinkEntry<'a>>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
     ) -> StoreResult<InlinkMap> {
         let mut links = HashMap::new();
         for entry in iter {
             if let Some((target, sources)) =
-                self.resolve_link_entry(entry, resolve)?
+                self.resolve_link_entry(entry, target_paths, source_paths)?
             {
                 links.insert(target, sources);
             }
@@ -1176,20 +1181,23 @@ impl IndexStore {
     }
 
     /// Extracts one `target -> sources` row from a `LINKS` multimap iterator
-    /// entry, resolving raw bytes through `resolve`. Returns `None` when the
-    /// target resolves to no path or when every source dropped.
+    /// entry, resolving raw bytes through the path maps. Returns `None` when
+    /// the target resolves to no path or when every source dropped.
     #[inline(never)]
     fn resolve_link_entry(
         &self,
         entry: LinkEntry<'_>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
     ) -> StoreResult<ResolvedLink> {
         let (target, sources) =
             entry.map_err(|source| self.raise_source_error(source))?;
-        let Some(target) = resolve(target.value()) else {
+        let Some(target) =
+            target_paths.get(target.value()).map(|path| path.to_path_buf())
+        else {
             return Ok(None);
         };
-        let sources = self.collect_source_paths(sources, resolve)?;
+        let sources = self.collect_source_paths(sources, source_paths)?;
         if sources.is_empty() {
             return Ok(None);
         }
@@ -1202,13 +1210,15 @@ impl IndexStore {
     fn collect_source_paths(
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
+        source_paths: &HashMap<&[u8], &Path>,
     ) -> StoreResult<Box<[PathBuf]>> {
         let mut values = Vec::new();
         for source in sources {
             let source =
                 source.map_err(|source| self.raise_source_error(source))?;
-            if let Some(path) = resolve(source.value()) {
+            if let Some(path) =
+                source_paths.get(source.value()).map(|path| path.to_path_buf())
+            {
                 values.push(path);
             }
         }
@@ -2144,19 +2154,11 @@ mod tests {
         }
 
         #[test]
-        fn read_files_and_links_with_keeps_orphaned_edges_that_read_all_drops()
-        {
+        fn read_files_and_links_with_drops_orphaned_edges_like_read_all() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
             let notes: Vec<_> =
                 ["a.md", "target.md"].iter().map(|p| parse(*p, "")).collect();
-            let links = test_inlinks(&[
-                (PathBuf::from("target.md"), &[
-                    PathBuf::from("a.md"),
-                    PathBuf::from("ghost.md"),
-                ]),
-                (PathBuf::from("ghost-target.md"), &[PathBuf::from("a.md")]),
-            ]);
             write_all_parts(
                 &store,
                 &note_files(&["a.md", "target.md"]),
@@ -2178,13 +2180,19 @@ mod tests {
             );
 
             // Proves `read_files_and_links_with` reconstructs from disk without
-            // `read_all`'s note-correlation filter.
+            // `read_all`'s note decode, under the same drop-orphaned-edges
+            // policy.
             let txn = store.begin_read().expect("read txn");
             let (_, reconstructed) = store
                 .read_files_and_links_with(&txn)
                 .expect("reconstruct load");
 
-            assert_eq!(reconstructed, links);
+            assert_eq!(
+                reconstructed,
+                test_inlinks(&[(PathBuf::from("target.md"), &[
+                    PathBuf::from("a.md"),
+                ])])
+            );
         }
 
         #[test]
@@ -2321,6 +2329,57 @@ mod tests {
             let files = IndexerService::scan(temp.path()).expect("scan root");
 
             assert!(files.iter().any(|file| file.path() == weird));
+        }
+
+        #[test]
+        fn load_resolves_attachment_targets_and_note_sources() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let attachment = PathBuf::from("attachment.png");
+            let note_path = PathBuf::from("note.md");
+            let files = vec![
+                FileBase::for_test(attachment.clone(), FileFormat::Other),
+                FileBase::note_for_test(note_path.clone()),
+            ];
+            let notes = vec![parse(&note_path, "# Note")];
+            let links = test_inlinks(&[(
+                attachment.clone(),
+                std::slice::from_ref(&note_path),
+            )]);
+            write_all_parts(&store, &files, &notes, &links).expect("persist");
+
+            let (_, _, loaded_links) = store.read_all().expect("load index");
+
+            assert_eq!(loaded_links.inlinks_of(&attachment), [
+                note_path.as_path()
+            ]);
+        }
+
+        #[test]
+        fn load_resolves_a_non_unicode_attachment_target_byte_exactly() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let weird = non_unicode_path();
+            let note_path = PathBuf::from("note.md");
+            let files = vec![
+                FileBase::for_test(weird.clone(), FileFormat::Other),
+                FileBase::note_for_test(note_path.clone()),
+            ];
+            let notes = vec![parse(&note_path, "# Note")];
+            let links = test_inlinks(&[(
+                weird.clone(),
+                std::slice::from_ref(&note_path),
+            )]);
+            write_all_parts(&store, &files, &notes, &links).expect("persist");
+
+            let (loaded_files, loaded_links) =
+                store.read_files_and_links().expect("load files and links");
+
+            assert_eq!(loaded_links.inlinks_of(&weird), [note_path.as_path()]);
+            assert!(
+                loaded_files.as_slice().iter().any(|file| file.path() == weird),
+                "attachment row must round-trip byte-exactly"
+            );
         }
 
         #[test]

@@ -22,7 +22,7 @@ mod error;
 mod inlinks;
 mod refresh;
 mod service;
-pub mod sort;
+mod sort;
 mod store;
 
 #[cfg(not(any(test, feature = "test-utils")))]
@@ -37,6 +37,7 @@ pub use inlinks::InlinkMap;
 #[cfg(any(test, feature = "test-utils"))]
 pub use refresh::RefreshReport;
 pub use service::IndexerService;
+pub(crate) use sort::SortedByPath;
 pub(crate) use store::IndexStore;
 
 /// Project-relative index database path.

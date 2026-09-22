@@ -21,9 +21,7 @@ use super::{
 use crate::index::IndexerService;
 use crate::{
     ListItem,
-    index::{
-        IndexResult, IndexStore, RowIndex, WorkspaceIndex, sort::SortedByPath,
-    },
+    index::{IndexResult, IndexStore, RowIndex, SortedByPath, WorkspaceIndex},
 };
 
 /// Evaluates source expressions against a borrowed [`WorkspaceIndex`].

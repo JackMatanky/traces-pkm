@@ -29,10 +29,12 @@ impl WorkspaceIndex {
     }
 
     /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
-    #[cfg(any(test, feature = "test-utils"))]
+    ///
+    /// Both slices must be path-ascending; [`SortedByPath`] carries that
+    /// invariant so only in-crate producers can call this.
     #[inline]
     #[must_use]
-    pub fn assemble(
+    pub(crate) fn assemble(
         files: SortedByPath<FileBase>,
         notes: SortedByPath<Note>,
         inlinks: InlinkMap,
@@ -73,18 +75,6 @@ impl WorkspaceIndex {
         )
     }
 
-    /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
-    #[cfg(not(any(test, feature = "test-utils")))]
-    #[inline]
-    #[must_use]
-    pub(crate) fn assemble(
-        files: SortedByPath<FileBase>,
-        notes: SortedByPath<Note>,
-        inlinks: InlinkMap,
-    ) -> Self {
-        Self::assemble_internal(files, notes, inlinks)
-    }
-
     fn assemble_internal(
         files: SortedByPath<FileBase>,
         notes: SortedByPath<Note>,
@@ -103,8 +93,9 @@ impl WorkspaceIndex {
             let note = notes_iter.next_if(|note| note.path() == file.path());
             entries.push(FileEntry::new(file, note));
         }
+        let mut entries = SortedByPath::assumed_sorted(entries);
         redistribute_inlinks(&mut entries, inlinks);
-        Self::new(entries.into_boxed_slice())
+        Self::new(entries.into_vec().into_boxed_slice())
     }
 
     /// Returns [`FileEntry`]s, sorted by path.
@@ -202,15 +193,16 @@ impl RowIndex {
 }
 
 /// Moves inlink sources into their matching [`FileEntry`]s.
+///
+/// `entries` is a typed path-sorted view, so each lookup is a binary search
+/// against the same order the index stores rows in; a miss means a genuinely
+/// unknown target, not an unsorted slice.
 pub(super) fn redistribute_inlinks(
-    entries: &mut [FileEntry],
+    entries: &mut SortedByPath<FileEntry>,
     inlinks: InlinkMap,
 ) {
     for (target, sources) in inlinks.into_entries() {
-        if let Ok(index) =
-            entries.binary_search_by(|entry| entry.file().path().cmp(&target))
-            && let Some(entry) = entries.get_mut(index)
-        {
+        if let Some(entry) = entries.get_mut_by_path(&target) {
             entry.set_inlinks(sources);
         }
     }
@@ -287,6 +279,50 @@ mod tests {
                 .expect("attachment entry exists");
             assert!(png_entry.note().is_none());
             assert_eq!(png_entry.inlinks(), [PathBuf::from("note.md")]);
+        }
+    }
+    mod inlink_distribution {
+        use std::collections::HashMap;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn entry_rows(paths: &[&str]) -> Vec<FileEntry> {
+            paths
+                .iter()
+                .map(|&p| FileEntry::new(FileBase::note_for_test(p), None))
+                .collect()
+        }
+
+        #[test]
+        fn redistributes_inlinks_and_keeps_rows_findable_by_path() {
+            let mut entries =
+                SortedByPath::sorted(entry_rows(&["a.md", "b.md"]));
+            let links = InlinkMap::from_raw(HashMap::from([
+                (
+                    PathBuf::from("a.md"),
+                    vec![PathBuf::from("b.md")].into_boxed_slice(),
+                ),
+                (
+                    PathBuf::from("missing.md"),
+                    vec![PathBuf::from("a.md")].into_boxed_slice(),
+                ),
+            ]));
+
+            redistribute_inlinks(&mut entries, links);
+
+            let a = entries
+                .get_mut_by_path(Path::new("a.md"))
+                .expect("a.md still findable");
+            assert_eq!(a.inlinks(), [PathBuf::from("b.md")]);
+            let b = entries
+                .get_mut_by_path(Path::new("b.md"))
+                .expect("b.md still findable");
+            assert_eq!(b.inlinks(), Vec::<PathBuf>::new());
+            assert!(
+                entries.binary_search_by_path(Path::new("missing.md")).is_err()
+            );
         }
     }
     mod new_test {

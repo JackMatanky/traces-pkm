@@ -75,14 +75,11 @@ impl IndexerService {
     ///   project-relative path.
     #[inline]
     pub fn build(&self) -> IndexResult<WorkspaceIndex> {
-        let files = Self::scan(&self.root)?;
-        let notes = self.parse_notes(&files)?;
-        let inlinks = InlinkMap::new(&notes, &files);
-        Ok(WorkspaceIndex::assemble(
-            SortedByPath::assumed_sorted(files),
-            SortedByPath::assumed_sorted(notes),
-            inlinks,
-        ))
+        let files = SortedByPath::assumed_sorted(Self::scan(&self.root)?);
+        let notes =
+            SortedByPath::assumed_sorted(self.parse_notes(files.as_slice())?);
+        let inlinks = InlinkMap::new(notes.as_slice(), files.as_slice());
+        Ok(WorkspaceIndex::assemble(files, notes, inlinks))
     }
 
     /// Refreshes the persisted index and returns a full in-memory
@@ -134,11 +131,7 @@ impl IndexerService {
             } => {
                 let notes = store.read_all_notes()?;
                 Ok((
-                    WorkspaceIndex::assemble(
-                        SortedByPath::assumed_sorted(files),
-                        notes,
-                        links,
-                    ),
+                    WorkspaceIndex::assemble(files, notes, links),
                     RefreshReport::default(),
                 ))
             }
@@ -181,12 +174,12 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::Inspect` if file metadata cannot be inspected.
-    /// - `IndexError::NoteParse` if a note cannot be read or parsed.
-    /// - `IndexError::Path` if a walked file cannot be derived as a safe
+    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
+    /// - [`IndexError::NoteParse`] if a note cannot be read or parsed.
+    /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
-    /// - `IndexError::Store` if persisting the rebuilt index fails.
+    /// - [`IndexError::Store`] if persisting the rebuilt index fails.
     pub(crate) fn rebuild(&self) -> IndexResult<WorkspaceIndex> {
         let index = self.build()?;
         self.persist(&index)?;
@@ -202,14 +195,14 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::Inspect` if file metadata cannot be inspected.
-    /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
+    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
+    /// - [`IndexError::NoteParse`] if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
-    /// - `IndexError::Path` if a walked file cannot be derived as a safe
+    /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
-    /// - `IndexError::Store` if the database cannot be opened or read, required
-    ///   note bodies cannot be read, or incremental persistence fails.
+    /// - [`IndexError::Store`] if the database cannot be opened or read,
+    ///   required note bodies cannot be read, or incremental persistence fails.
     #[inline]
     pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
         match self.plan_pass()? {
@@ -243,12 +236,11 @@ impl IndexerService {
     /// Parses every Markdown-classified file in `files` in parallel, stopping
     /// at the first parse failure.
     fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<Note>> {
-        let results: Vec<IndexResult<Note>> = files
+        files
             .par_iter()
             .filter(|file| file.format() == FileFormat::Note)
             .map(|file| self.parse_note(file))
-            .collect();
-        results.into_iter().collect()
+            .collect::<IndexResult<Vec<Note>>>()
     }
 
     /// Reads and parses the Markdown file at `file`'s path, resolved relative
@@ -315,7 +307,7 @@ impl IndexerService {
     /// # Errors
     ///
     /// - [`IndexError::Walk`] if a directory cannot be read.
-    /// - [`IndexError::NoteParse`] if a file's metadata cannot be inspected.
+    /// - [`IndexError::Inspect`] if a file's metadata cannot be inspected.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
     pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileBase>> {
@@ -435,37 +427,22 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn preserves_deterministic_first_error_on_parallel_parse_failure() {
+    fn returns_note_parse_error_when_a_note_is_unreadable() {
         use std::os::unix::fs::PermissionsExt;
+
         let temp = tempfile::tempdir().expect("create temp dir");
-        let a_dir = temp.path().join("a");
-        let z_dir = temp.path().join("z");
-        fs::create_dir_all(&a_dir).expect("mkdir a");
-        fs::create_dir_all(&z_dir).expect("mkdir z");
-        let bad_a = a_dir.join("bad.md");
-        let bad_z = z_dir.join("bad.md");
-        fs::write(&bad_a, "# Bad A\n").expect("write bad_a");
-        fs::write(&bad_z, "# Bad Z\n").expect("write bad_z");
-        fs::set_permissions(&bad_a, fs::Permissions::from_mode(0o000))
-            .expect("chmod bad_a");
-        fs::set_permissions(&bad_z, fs::Permissions::from_mode(0o000))
-            .expect("chmod bad_z");
+        let bad = temp.path().join("bad.md");
+        fs::write(&bad, "# Bad\n").expect("write bad");
+        fs::set_permissions(&bad, fs::Permissions::from_mode(0o000))
+            .expect("chmod bad");
 
         let result = IndexerService::new(temp.path()).build();
         let err = result.expect_err("must fail on unreadable file");
-        let IndexError::NoteParse {
-            path,
-            ..
-        } = err
-        else {
-            return;
-        };
-        assert_eq!(path, bad_a);
 
-        fs::set_permissions(&bad_a, fs::Permissions::from_mode(0o600))
-            .expect("restore bad_a");
-        fs::set_permissions(&bad_z, fs::Permissions::from_mode(0o600))
-            .expect("restore bad_z");
+        fs::set_permissions(&bad, fs::Permissions::from_mode(0o600))
+            .expect("restore bad");
+
+        assert!(matches!(err, IndexError::NoteParse { .. }));
     }
 
     fn find_note<'a>(
@@ -761,6 +738,7 @@ mod tests {
             note::{Frontmatter, Link, LinkType, NoteFieldValue},
         };
 
+        #[cfg(target_os = "linux")]
         fn non_unicode_path() -> PathBuf {
             #[cfg(unix)]
             {
@@ -814,6 +792,44 @@ mod tests {
             let loaded = indexer.load().expect("load index");
 
             assert_eq!(loaded.entries(), built.entries());
+        }
+
+        #[test]
+        fn load_keeps_inlinks_to_non_markdown_attachments() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("attachment.png"), [
+                0x89, 0x50, 0x4E, 0x47,
+            ])
+            .expect("write attachment");
+            fs::write(
+                temp.path().join("note.md"),
+                "# Note\n\n[[attachment.png]]\n",
+            )
+            .expect("write note");
+
+            let service = IndexerService::new(temp.path());
+            let built = service.build().expect("build index");
+            let built_inlinks = attachment_inlinks(&built);
+            service.persist(&built).expect("persist index");
+            let loaded = service.load().expect("load index");
+
+            let loaded_inlinks = attachment_inlinks(&loaded);
+
+            assert_eq!(built_inlinks, [PathBuf::from("note.md")]);
+            assert_eq!(loaded_inlinks, [PathBuf::from("note.md")]);
+        }
+
+        /// Returns the attachment entry's inbound links in `index`.
+        fn attachment_inlinks(index: &WorkspaceIndex) -> Vec<PathBuf> {
+            index
+                .entries()
+                .iter()
+                .find(|entry| {
+                    entry.file().path() == Path::new("attachment.png")
+                })
+                .expect("attachment entry exists")
+                .inlinks()
+                .to_vec()
         }
 
         #[test]
@@ -1101,7 +1117,7 @@ mod tests {
         }
 
         #[test]
-        fn persist_incremental_preserves_unchanged_notes_and_updates_changed_note()
+        fn incremental_persist_preserves_unchanged_notes_and_updates_changed_note()
          {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (indexer, original_a, original_c) =
@@ -1144,6 +1160,7 @@ mod tests {
             assert_eq!(report, RefreshReport::default());
         }
 
+        #[cfg(target_os = "linux")]
         #[test]
         fn preserves_byte_exact_non_unicode_inlinks_on_unchanged_refresh() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1178,16 +1195,12 @@ mod tests {
             drop(store);
 
             let service = IndexerService::new(temp.path());
-            // Persisted files match disk metadata on an unchanged scan only
-            // where the scanner can create the same paths (Linux); on APFS,
-            // where invalid bytes cannot be written, the scan reports no
-            // matching file and every persisted row is deleted. Gate the
-            // unchanged path on scan actually seeing the weird note.
             let scanned = IndexerService::scan(temp.path()).expect("scan root");
-            let weird_visible = scanned.iter().any(|file| file.path() == weird);
-            if !weird_visible {
-                return;
-            }
+            assert!(
+                scanned.iter().any(|file| file.path() == weird),
+                "fixture requires a filesystem that materializes the \
+                 non-Unicode path"
+            );
 
             let (refreshed, report) =
                 service.refresh_with_report().expect("refresh unchanged");
@@ -1202,10 +1215,8 @@ mod tests {
                     .inlinks()
                     .to_vec()
             };
-            let weird_inlinks = inlinks_of(&weird);
-            let normal_inlinks = inlinks_of(&normal);
-            assert_eq!(weird_inlinks, [normal]);
-            assert_eq!(normal_inlinks, [weird]);
+            assert_eq!(inlinks_of(&weird), [normal]);
+            assert_eq!(inlinks_of(&normal), [weird]);
         }
 
         #[test]
