@@ -612,7 +612,7 @@ mod tests {
 
         use super::*;
         #[cfg(unix)]
-        use crate::index::tests::fixtures::RestorePermissions;
+        use crate::index::tests::fixtures::PermissionsGuard;
 
         fn names(files: &[FileBase]) -> Vec<&Path> {
             files.iter().map(FileBase::path).collect()
@@ -718,7 +718,7 @@ mod tests {
             fs::create_dir(&locked).expect("create locked dir");
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
                 .expect("revoke read permission");
-            let _restore = RestorePermissions(&locked);
+            let _restore = PermissionsGuard(&locked);
 
             let error =
                 IndexerService::scan(root).expect_err("unreadable dir fails");

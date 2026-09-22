@@ -12,7 +12,8 @@ pub type IndexResult<T> = std::result::Result<T, IndexError>;
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
-    reason = "DirTreeError and PathError are pub(crate), IndexError is pub"
+    reason = "StoreError, DirTreeError, and PathError are pub(crate), \
+              IndexError is pub"
 )]
 pub enum IndexError {
     /// Database access or record serialization/deserialization failed.
@@ -40,11 +41,11 @@ pub enum IndexError {
     },
 }
 
-pub type StoreResult<T> = std::result::Result<T, StoreError>;
+pub(crate) type StoreResult<T> = std::result::Result<T, StoreError>;
 
 /// Low-level index persistence failure.
 #[derive(Debug, Error)]
-pub enum StoreError {
+pub(crate) enum StoreError {
     /// Filesystem access failed.
     #[error("failed to access {path}")]
     Io {

@@ -29,7 +29,7 @@ mod trie;
 
 pub(crate) use entry::RowIndex;
 pub use entry::{FileEntry, WorkspaceIndex};
-pub(crate) use error::{IndexError, IndexResult};
+pub use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;
 #[cfg(any(test, feature = "test-utils"))]
@@ -50,10 +50,10 @@ mod tests {
         /// Restores locked directory permissions on drop so tempdir cleanup
         /// works.
         #[cfg(unix)]
-        pub struct RestorePermissions<'a>(pub &'a Path);
+        pub struct PermissionsGuard<'a>(pub &'a Path);
 
         #[cfg(unix)]
-        impl Drop for RestorePermissions<'_> {
+        impl Drop for PermissionsGuard<'_> {
             fn drop(&mut self) {
                 use std::os::unix::fs::PermissionsExt as _;
 

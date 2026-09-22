@@ -1603,7 +1603,7 @@ mod tests {
 
     use super::{super::IndexError, *};
     #[cfg(unix)]
-    use crate::index::tests::fixtures::RestorePermissions;
+    use crate::index::tests::fixtures::PermissionsGuard;
     use crate::{IndexerService, WorkspaceIndex, parse_note as parse};
     mod multimap_paths {
 
@@ -2321,7 +2321,7 @@ mod tests {
             let root = temp.path();
             fs::set_permissions(root, fs::Permissions::from_mode(0o500))
                 .expect("revoke write permission");
-            let _restore = RestorePermissions(root);
+            let _restore = PermissionsGuard(root);
 
             let error = IndexStore::open(root)
                 .expect_err("unwritable root fails to open store");
