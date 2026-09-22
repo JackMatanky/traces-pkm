@@ -98,9 +98,9 @@ impl PathOps {
     }
 }
 
-/// Resolves `path` against `root` via [`InspectTarget::resolve`], then
-/// answers `query` against the resolved target. A missing target
-/// answers `false` for every query.
+/// Resolves `path` against `root` via [`InspectTarget::resolve`], then answers
+/// `query` against the resolved target. A missing target answers `false` for
+/// every query.
 ///
 /// # Errors
 ///

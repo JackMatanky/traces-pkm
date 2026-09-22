@@ -12,11 +12,10 @@
 //! [`Environment::add_filter`]. None carry shared state, so there is no
 //! [`Object`] dispatch.
 //!
-//! Case conversion delegates to [`convert_case`]'s
-//! [`Casing::to_case`]. The stdlib-backed
-//! filters wrap `str::strip_prefix`, `str::strip_suffix`, `str::repeat`, and
-//! [`str::split_whitespace`] directly. `regex_replace` and `regex_match`
-//! compile their pattern fresh on every call via [`Regex::new`].
+//! Case conversion delegates to [`convert_case`]'s [`Casing::to_case`]. The
+//! stdlib-backed filters wrap `str::strip_prefix`, `str::strip_suffix`,
+//! `str::repeat`, and [`str::split_whitespace`] directly. `regex_replace` and
+//! `regex_match` compile their pattern fresh on every call via [`Regex::new`].
 //!
 //! [`Object`]: minijinja::value::Object
 //! [`Casing::to_case`]: convert_case::Casing::to_case
@@ -100,9 +99,9 @@ fn truncate(
         return Ok(value.to_owned());
     }
 
-    // The ellipsis alone doesn't fit within `length`, leaving no room
-    // for `value`; return the ellipsis itself truncated to
-    // `length` rather than underflowing `length - ellipsis_len`.
+    // The ellipsis alone doesn't fit within `length`, leaving no room for
+    // `value`; return the ellipsis itself truncated to `length` rather than
+    // underflowing `length - ellipsis_len`.
     let ellipsis_len = ellipsis.chars().count();
     if ellipsis_len >= length {
         return Ok(ellipsis.chars().take(length).collect());
@@ -148,10 +147,10 @@ fn truncate_words(
         kept.push_str(word);
     }
 
-    // `words` already yielded its first `count` items above; if it's
-    // now exhausted, every word fit within `count` and no truncation
-    // happened, so return `value` unchanged, preserving its original
-    // whitespace rather than the single-space-joined `kept` buffer.
+    // `words` already yielded its first `count` items above; if it's now
+    // exhausted, every word fit within `count` and no truncation happened, so
+    // return `value` unchanged, preserving its original whitespace rather than
+    // the single-space-joined `kept` buffer.
     if words.next().is_none() {
         return Ok(value.to_owned());
     }
@@ -183,9 +182,9 @@ fn ellipsis_kwarg(kwargs: &Kwargs) -> TemplateEngineResult<&str> {
 /// Replaces regex pattern matches in `value` with a replacement string.
 ///
 /// Replaces every non-overlapping match of `pattern` with `replacement`, which
-/// may reference capture groups as `$1`/`$2` using
-/// [`Regex::replace_all`]'s replacement syntax. The pattern is compiled fresh
-/// on every call via [`Regex::new`] rather than cached.
+/// may reference capture groups as `$1`/`$2` using [`Regex::replace_all`]'s
+/// replacement syntax. The pattern is compiled fresh on every call via
+/// [`Regex::new`] rather than cached.
 ///
 /// # Errors
 ///
@@ -217,8 +216,8 @@ fn regex_match(value: &str, pattern: &str) -> TemplateEngineResult<bool> {
 
 /// Wraps a [`regex::Error`] in a [`minijinja::Error`].
 ///
-/// Used by `regex_replace` and `regex_match` to return a template error
-/// instead of letting an invalid pattern panic.
+/// Used by `regex_replace` and `regex_match` to return a template error instead
+/// of letting an invalid pattern panic.
 fn regex_compile_error(pattern: &str, source: regex::Error) -> Error {
     super::error::invalid_operation(
         format!("invalid regex pattern {pattern:?}"),

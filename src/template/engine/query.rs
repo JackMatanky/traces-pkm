@@ -6,8 +6,8 @@
 //! - [`QueryOps::list`] creates the `lists` global
 //! - [`QueryOps::task`] creates the `tasks` global.
 //!
-//! Each namespace starts a query with `.from([expr])`, whose expression
-//! forms mirror [`SourceSelector`]'s variants:
+//! Each namespace starts a query with `.from([expr])`, whose expression forms
+//! mirror [`SourceSelector`]'s variants:
 //!
 //! - `.from()`: every indexed Note.
 //! - `.from("#tag")`: Notes with an exact or nested tag.
@@ -117,8 +117,8 @@ pub(super) struct QueryOps {
 impl QueryOps {
     /// Wires the shared pipeline every namespace dispatches through: one
     /// [`QueryService`] pre-configured with `class_field` and the File Class
-    /// `schema` expander, for registration as the `name` global at `mode`'s
-    /// row granularity.
+    /// `schema` expander, for registration as the `name` global at `mode`'s row
+    /// granularity.
     fn new(
         name: &'static str,
         mode: QueryMode,
@@ -193,9 +193,9 @@ impl QueryOps {
         env.add_filter("with_descendants", with_descendants_filter);
     }
 
-    /// Runs this namespace's query method for `source` against `state`'s
-    /// cached [`WorkspaceIndex`], refreshing it first if not already cached
-    /// this render. See [`INDEX_CACHE_KEY`].
+    /// Runs this namespace's query method for `source` against `state`'s cached
+    /// [`WorkspaceIndex`], refreshing it first if not already cached this
+    /// render. See [`INDEX_CACHE_KEY`].
     ///
     /// # Errors
     ///
@@ -212,8 +212,8 @@ impl QueryOps {
     }
 
     /// Returns this render's cached [`WorkspaceIndex`] for `self.root`,
-    /// refreshing and caching it first if not already cached this render.
-    /// See [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
+    /// refreshing and caching it first if not already cached this render. See
+    /// [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
     ///
     /// # Errors
     ///
@@ -495,8 +495,8 @@ fn with_descendants_filter(source: &SourceSelector) -> Value {
 }
 
 /// Replaces every `Class` atom's [`ClassExpansionMode`] in `source` with
-/// `mode`, keeping each atom's match set empty: the selector stays
-/// unresolved, and `resolve_classes` fills the match sets in at query time.
+/// `mode`, keeping each atom's match set empty: the selector stays unresolved,
+/// and `resolve_classes` fills the match sets in at query time.
 fn set_class_depth(
     mut source: SourceSelector,
     mode: impl Fn(BTreeSet<String>) -> ClassExpansionMode,

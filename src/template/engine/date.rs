@@ -17,9 +17,9 @@
 //! - Tests: `is_past`, `is_future`, and `is_leap_year` inspect a piped value.
 //!
 //! Date/time string parsing funnels through [`ParsedDate::parse`] and
-//! [`parse_date`]. A full datetime is tried first, falling back to a bare
-//! ISO date (`YYYY-MM-DD` or reduced-precision `YYYY-MM`) at midnight.
-//! Arithmetic filters re-serialize at the input's original precision via
+//! [`parse_date`]. A full datetime is tried first, falling back to a bare ISO
+//! date (`YYYY-MM-DD` or reduced-precision `YYYY-MM`) at midnight. Arithmetic
+//! filters re-serialize at the input's original precision via
 //! [`format_precise`].
 
 use std::{fmt::Write as _, sync::Arc};

@@ -8,8 +8,8 @@
 //! stash/retrieve mechanism without a load step, for a value that's cheap to
 //! build (an `Arc` clone) rather than expensive to load: `schema.rs` seeds the
 //! render's [`SchemaService`](crate::schema::SchemaService) this way so
-//! [`Schema`](crate::schema::Schema)'s own minijinja `Object` impl can reach
-//! it without holding a reference itself.
+//! [`Schema`](crate::schema::Schema)'s own minijinja `Object` impl can reach it
+//! without holding a reference itself.
 
 use std::fmt;
 
@@ -27,8 +27,8 @@ struct Cached<T>(T);
 impl<T: fmt::Debug + Send + Sync + 'static> Object for Cached<T> {}
 
 /// Stashes `value` in `state`'s temp storage under `key`, for later retrieval
-/// via [`get_temp`] within the same render. Overwrites any previous value
-/// under `key`.
+/// via [`get_temp`] within the same render. Overwrites any previous value under
+/// `key`.
 pub(super) fn set_temp<T>(state: &State, key: &'static str, value: T)
 where
     T: Clone + fmt::Debug + Send + Sync + 'static,
