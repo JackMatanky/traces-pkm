@@ -4,9 +4,7 @@
 # ///
 # [MISE] description="Fit performance models to criterion output"
 # [MISE] hide=true
-# [USAGE] arg "[criterion_dir]" {
-# [USAGE]   help="Criterion output directory (default: target/criterion)"
-# [USAGE] }
+# [USAGE] arg "[criterion_dir]" help="Criterion output directory" default="target/criterion"
 
 from __future__ import annotations
 
