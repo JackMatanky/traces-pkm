@@ -118,9 +118,17 @@ Mise skips execution when sources haven't changed.
   sort).
   Reports R² and extrapolated values for 50K/100K notes per series.
 
-  Default output shows per-series reports with human-readable formulas
-  and coefficient explanations. Use `--summary` for a high-level
-  overview of all series.
+  Default output is one box per series: complexity label
+  (`O(n·ln n) + constant`), coefficient meanings, R² quality, warnings,
+  and extrapolation. `--summary [count]` prints a single overview box
+  instead — series counts, the `count` slowest series at 100K notes
+  (default 10), unreliable fits, the scaling breakdown, and
+  near-constant series:
+
+  ```bash
+  mise run bench-model -- --summary      # top 10 slowest
+  mise run bench-model -- --summary 20   # top 20 slowest
+  ```
 
 ### Hidden Tasks
 
