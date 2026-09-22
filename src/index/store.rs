@@ -1671,7 +1671,7 @@ mod tests {
     }
 
     /// Builds a sorted inlink-map fixture.
-    fn test_inlinks(entries: &[(PathBuf, &[PathBuf])]) -> InlinkMap {
+    fn make_inlinks(entries: &[(PathBuf, &[PathBuf])]) -> InlinkMap {
         let mut map = HashMap::new();
         for (target, sources) in entries {
             let mut sorted = sources.to_vec();
@@ -1947,7 +1947,7 @@ mod tests {
         fn write_all_parts_then_read_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let links = test_inlinks(&[
+            let links = make_inlinks(&[
                 (PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                     PathBuf::from("b.md"),
@@ -1982,7 +1982,7 @@ mod tests {
                 &store,
                 &note_files(&["a.md", "target.md"]),
                 &notes,
-                &test_inlinks(&[(PathBuf::from("target.md"), &[
+                &make_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])]),
             )
@@ -2001,7 +2001,7 @@ mod tests {
 
             assert_eq!(
                 loaded_links,
-                test_inlinks(&[(PathBuf::from("target.md"), &[
+                make_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])])
             );
@@ -2018,7 +2018,7 @@ mod tests {
                 &store,
                 &note_files(&["a.md", "b.md"]),
                 &notes,
-                &test_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
+                &make_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
                     "a.md",
                 )])]),
             )
@@ -2028,7 +2028,7 @@ mod tests {
 
             assert_eq!(
                 loaded_links,
-                test_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
+                make_inlinks(&[(PathBuf::from("b.md"), &[PathBuf::from(
                     "a.md"
                 )])])
             );
@@ -2044,7 +2044,7 @@ mod tests {
                 &store,
                 &note_files(&["a.md", "target.md"]),
                 &notes,
-                &test_inlinks(&[(PathBuf::from("target.md"), &[
+                &make_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])]),
             )
@@ -2070,7 +2070,7 @@ mod tests {
 
             assert_eq!(
                 reconstructed,
-                test_inlinks(&[(PathBuf::from("target.md"), &[
+                make_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
                 ])])
             );
@@ -2179,7 +2179,7 @@ mod tests {
                 parse(&normal, "link to [[weird]]"),
             ];
             notes.sort_by(|a, b| a.path().cmp(b.path()));
-            let links = test_inlinks(&[
+            let links = make_inlinks(&[
                 (weird.clone(), std::slice::from_ref(&normal)),
                 (normal.clone(), std::slice::from_ref(&weird)),
             ]);
@@ -2225,7 +2225,7 @@ mod tests {
                 FileBase::note_for_test(note_path.clone()),
             ];
             let notes = vec![parse(&note_path, "# Note")];
-            let links = test_inlinks(&[(
+            let links = make_inlinks(&[(
                 attachment.clone(),
                 std::slice::from_ref(&note_path),
             )]);
@@ -2249,7 +2249,7 @@ mod tests {
                 FileBase::note_for_test(note_path.clone()),
             ];
             let notes = vec![parse(&note_path, "# Note")];
-            let links = test_inlinks(&[(
+            let links = make_inlinks(&[(
                 weird.clone(),
                 std::slice::from_ref(&note_path),
             )]);

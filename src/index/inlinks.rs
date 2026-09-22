@@ -26,11 +26,11 @@
 //! # Hash map choice
 //!
 //! [`FxHashMap`] is used instead of [`HashMap`] for internal indexes. The keys
-//! are vault-internal file paths, not attacker-controlled input, so `SipHash`'s
-//! denial-of-service resistance is unnecessary. [`FxHashMap`] uses a simpler,
-//! non-cryptographic hash function that avoids the per-entry computational
-//! overhead of `SipHash`, yielding measurable gains at the thousand-entry scale
-//! typical of vault path indexes.
+//! are project-internal file paths, not attacker-controlled input, so
+//! `SipHash`'s denial-of-service resistance is unnecessary. [`FxHashMap`] uses
+//! a simpler, non-cryptographic hash function that avoids the per-entry
+//! computational overhead of `SipHash`, yielding measurable gains at the
+//! thousand-entry scale typical of project path indexes.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -690,8 +690,7 @@ mod tests {
             use super::*;
 
             #[test]
-            fn returns_none_for_unmatched_qualified_path_without_stem_fallback()
-            {
+            fn skips_stem_fallback_for_qualified_paths() {
                 let files =
                     files_from_notes(&["archive/foo.md", "notes/bar.md"]);
 
