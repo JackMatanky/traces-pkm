@@ -1,0 +1,11 @@
+# Nextest repository configuration — applies to every `cargo nextest run`
+# (mise run test, direct CLI, CI). Precedence: CLI flags > NEXTEST_* env >
+# this file > built-in defaults. Verbose escape hatches:
+#   mise run test <filter> -- --status-level all
+#   NEXTEST_PROFILE=<profile> (see [profile.<name>] below)
+[profile.default]
+# During the run, list only failing tests; the final Summary line keeps counts.
+status-level = "fail"
+# Never replay captured stdout of passing tests (failure output unaffected:
+# failure-output defaults to immediate).
+success-output = "never"

@@ -55,6 +55,14 @@ ADR_DIRECTORY = "docs/adr/"
 global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 
 [task_config.cache]
+# Global default for "build if stale" tasks whose declared sources cover every
+# input that can change the result. Opt out per task with cache = { enabled =
+# false } when either:
+#   1. inputs are incomplete (check/fmt declare no rust sources; a skip would
+#      let stale code pass the gate), or
+#   2. the task means "execute now" (lint/test/sweep/verify are gates that must
+#      run on invocation; clean/setup are destructive or install actions that
+#      must never be skipped as "fresh"; watch is an interactive session).
 enabled = true
 
 [task_config.input_groups]
@@ -68,11 +76,13 @@ bench = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "benches/**/*
 [tasks.setup]
 description = "Install git hooks via hk"
 outputs = []
+cache = { enabled = false }
 run = "hk install --mise --quiet"
 
 [tasks.clean]
 description = "Clean Cargo artifacts and optional generated reports"
 outputs = []
+cache = { enabled = false }
 confirm = "Clean Cargo artifacts and reports?"
 usage = '''
 flag "--dry-run" help="Show what would be deleted"
@@ -96,6 +106,8 @@ run = '''
 #!/bin/bash
 set -euo pipefail
 
+source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
+
 readonly TARGET_DIR="${usage_target_dir?}"
 clean_target=true
 clean_reports=false
@@ -110,15 +122,10 @@ if [[ "${usage_all:-false}" == "true" ]]; then
 fi
 
 if [[ -n "${usage_if_over_gib:-}" && -d "${TARGET_DIR}" ]]; then
-  [[ "${usage_if_over_gib}" =~ ^[0-9]+$ ]] || {
-    printf "clean: --if-over-gib must be a non-negative integer, got '%s'\n" \
-      "${usage_if_over_gib}" >&2
-    exit 2
-  }
-  TARGET_KIB="$(du -sk "${TARGET_DIR}" | cut -f1)"
+  require_nonneg_int clean --if-over-gib "${usage_if_over_gib}"
+  TARGET_KIB="$(dir_size_kib "${TARGET_DIR}")"
   readonly TARGET_KIB
-  # 10# forces base 10; a leading zero would otherwise read as octal.
-  readonly LIMIT_KIB="$(( 10#${usage_if_over_gib} * 1024 * 1024 ))"
+  readonly LIMIT_KIB="$(gib_to_kib "${usage_if_over_gib}")"
 
   if (( TARGET_KIB <= LIMIT_KIB )); then
     TARGET_GIB="$(awk "BEGIN { print ${TARGET_KIB} / 1024 / 1024 }")"
@@ -136,13 +143,15 @@ if [[ "${clean_target}" == "true" ]]; then
       exit 2
     fi
 
-    declare -a sweep_args=()
-    [[ "${usage_dry_run:-false}" == "true" ]] && sweep_args+=(--dry-run)
+    # cargo-sweep flags live in one place: the sweep task. The size gate above
+    # (when given) has already run, matching pre-delegation behavior.
+    declare -a sweep_task=(mise run sweep)
+    [[ "${usage_dry_run:-false}" == "true" ]] && sweep_task+=(--dry-run)
     [[ -n "${usage_sweep_days:-}" ]] \
-      && sweep_args+=(--time "${usage_sweep_days}")
+      && sweep_task+=(--days "${usage_sweep_days}")
     [[ -n "${usage_sweep_max_size:-}" ]] \
-      && sweep_args+=(--maxsize "${usage_sweep_max_size}")
-    cargo sweep "${sweep_args[@]}"
+      && sweep_task+=(--max-size "${usage_sweep_max_size}")
+    "${sweep_task[@]}"
   else
     declare -a cargo_args=(clean --target-dir "${TARGET_DIR}")
     [[ "${usage_dry_run:-false}" == "true" ]] && cargo_args+=(--dry-run)
@@ -171,36 +180,48 @@ fi
 
 # bash-only by design (no run_windows): macOS dev + Linux CI only.
 [tasks.sweep]
-description = "Prune stale Cargo incremental sessions (newest kept) when target exceeds --max-gib GiB (default 10)"
+description = "Reclaim Cargo target space: prune stale incremental sessions (default, gated by --max-gib) or run cargo-sweep by age/size (--days/--max-size)"
 outputs = []
 cache = { enabled = false }
 usage = '''
-flag "--max-gib <gib>" help="Only sweep when target exceeds this size in GiB (non-negative integer)" default="10"
+flag "--max-gib <gib>" help="Incremental-prune mode: only prune when target exceeds this size in GiB (non-negative integer)" default="10"
+flag "--days <days>" help="cargo-sweep mode: remove target artifacts older than DAYS"
+flag "--max-size <size>" help="cargo-sweep mode: shrink target below SIZE (e.g. 10GB)"
+flag "--dry-run" help="Show what would be removed without removing it"
 '''
 run = '''
 #!/bin/bash
-# shellcheck disable=SC2154  # usage_max_gib is injected by mise
+# shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
+
+source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
 
 # Fail fast with a clear message when run outside mise's usage injection.
 : "${usage_max_gib?}"
-[[ "${usage_max_gib}" =~ ^[0-9]+$ ]] || {
-  printf "sweep: --max-gib must be a non-negative integer, got '%s'\n" \
-    "${usage_max_gib}" >&2
-  exit 2
-}
+require_nonneg_int sweep --max-gib "${usage_max_gib}"
 
-# The tree whose size gates the sweep is the tree whose incrementals get
-# pruned; TARGET_DIR is the single source of that coupling.
+# The tree whose size gates the sweep is the tree whose incrementals get pruned;
+# TARGET_DIR is the single source of that coupling.
 readonly TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 readonly INCREMENTAL_DIR="${TARGET_DIR}/debug/incremental"
-# 10# forces base 10; a leading zero would otherwise read as octal.
-readonly LIMIT_KIB=$(( 10#${usage_max_gib} * 1024 * 1024 ))
+readonly LIMIT_KIB="$(gib_to_kib "${usage_max_gib}")"
 
-# Prune stale cargo incremental sessions once target exceeds LIMIT_KIB,
-# always keeping the most recently touched session. Reads
-# INCREMENTAL_DIR and LIMIT_KIB; writes status lines to stdout.
+# cargo-sweep mode: an explicit age/size request runs cargo-sweep directly and
+# is not gated by --max-gib (reclamation was asked for by name).
+run_cargo_sweep() {
+  declare -a args=()
+  [[ "${usage_dry_run:-false}" == "true" ]] && args+=(--dry-run)
+  [[ -n "${usage_days:-}" ]] && args+=(--time "${usage_days}")
+  [[ -n "${usage_max_size:-}" ]] && args+=(--maxsize "${usage_max_size}")
+  cargo sweep "${args[@]}"
+}
+
 main() {
+  if [[ -n "${usage_days:-}" || -n "${usage_max_size:-}" ]]; then
+    run_cargo_sweep
+    return 0
+  fi
+
   # count replaces the bash array-length expansion: mise renders TOML
   # run bodies as Tera, which would parse that form as a comment
   # opener (docs/refs/mise_tasks/04_toml_tasks.md).
@@ -212,7 +233,7 @@ main() {
     return 0
   fi
 
-  size_kib="$(du -sk "${TARGET_DIR}" | cut -f1)"
+  size_kib="$(dir_size_kib "${TARGET_DIR}")"
   if (( size_kib <= LIMIT_KIB )); then
     echo "sweep: target under threshold, skipping"
     return 0
@@ -240,6 +261,12 @@ main() {
     return 0
   fi
 
+  if [[ "${usage_dry_run:-false}" == "true" ]]; then
+    printf 'sweep: would remove %d stale incremental session(s):\n' "${count}"
+    printf '  %s\n' "${stale[@]}"
+    return 0
+  fi
+
   rm -rf "${stale[@]}"
   echo "sweep: removed stale incremental sessions"
 }
@@ -254,22 +281,45 @@ main
 [tasks.check]
 description = "Fast compile check, then hk project checks"
 alias = "c"
-raw_args = true
 outputs = []
 cache = { enabled = false }
-run = ["cargo check --workspace", "hk check"]
+usage = '''
+arg "[args]" var=#true help="Extra arguments forwarded to cargo check (hk check never receives them)"
+'''
+run = '''
+#!/bin/bash
+# extra (below) is populated via eval from mise's usage_args
+# (var=#true arg); see docs/refs/mise_tasks/06_arguments.md.
+# shellcheck disable=SC2154
+set -euo pipefail
+
+declare -a extra
+eval "extra=(${usage_args:-})"
+
+cargo check --workspace "${extra[@]+"${extra[@]}"}"
+hk check
+'''
 
 [tasks.build]
 description = "Debug build"
 alias = "b"
-raw_args = true
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
-run = "cargo build"
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo build"'
+run = '''
+#!/bin/bash
+# extra is populated via eval from mise's usage_args (var=#true arg).
+# shellcheck disable=SC2154
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+cargo build "${extra[@]+"${extra[@]}"}"
+'''
 
 [tasks.watch]
 description = "Watch Cargo check/test on changes"
 outputs = []
+cache = { enabled = false }
 run = "cargo watch -x check -x test"
 
 # ------------------------------------------------------------- #
@@ -359,9 +409,17 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 
 [tasks.audit]
 description = "Run cargo deny audit"
-raw_args = true
 outputs = []
-run = "cargo deny check"
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo deny check"'
+run = '''
+#!/bin/bash
+# extra is populated via eval from mise's usage_args (var=#true arg).
+# shellcheck disable=SC2154
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+cargo deny check "${extra[@]+"${extra[@]}"}"
+'''
 
 # ------------------------------------------------------------- #
 #                    Testing & Benchmarking                     #
@@ -427,7 +485,7 @@ nextest_args+=("${nextest_extra[@]+"${nextest_extra[@]}"}")
 cargo nextest run "${nextest_args[@]}"
 
 if [[ "${usage_docs?}" == "true" ]]; then
-  cargo test "${cargo_test_args[@]}" --doc
+  cargo test "${cargo_test_args[@]}" --doc -- --quiet
 fi
 '''
 
@@ -761,23 +819,45 @@ depends_post = ["mutants:report"]
 [tasks.release]
 description = "Release build"
 alias = "r"
-raw_args = true
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
-run = "cargo build --release"
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo build --release"'
+run = '''
+#!/bin/bash
+# extra is populated via eval from mise's usage_args (var=#true arg).
+# shellcheck disable=SC2154
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+cargo build --release "${extra[@]+"${extra[@]}"}"
+'''
 
 [tasks.doc]
 description = "Build documentation (warnings as errors)"
-raw_args = true
 env = { RUSTDOCFLAGS = "-D warnings" }
 sources = ["@group:rust"]
 outputs = ["target/doc"]
-run = "cargo doc --no-deps"
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo doc --no-deps"'
+run = '''
+#!/bin/bash
+# extra is populated via eval from mise's usage_args (var=#true arg).
+# shellcheck disable=SC2154
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+cargo doc --no-deps "${extra[@]+"${extra[@]}"}"
+'''
 
 [tasks.verify]
-description = "Full verification gate: check, lint, all tests"
+description = "Full verification gate: fmt first, then check/lint/tests in parallel"
 alias = "v"
-depends = ["check", "lint", "test"]
+cache = { enabled = false }
+run = [
+  # fmt mutates .rs files: it must finish before the readers start
+  # (depends gives completion, not order — it cannot express this).
+  { task = "fmt" },
+  { tasks = ["check", "lint", "test"] },
+]
 
 # ------------------------------------------------------------- #
 #                        Lifecycle Hooks                        #

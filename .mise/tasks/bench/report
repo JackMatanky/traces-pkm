@@ -1,7 +1,7 @@
 #!/bin/bash
 #MISE description="Post-bench summary: parse criterion JSON output"
 #MISE hide=true
-#USAGE arg "[criterion_dir]" default="target/criterion" help="Criterion output directory (default: target/criterion, env CRITERION_DIR)"
+#USAGE arg "[criterion_dir]" default="target/criterion" env="CRITERION_DIR" help="Criterion output directory"
 
 # Prints a summary of which benchmark groups were measured after every bench
 # execution. Runs automatically via depends_post.

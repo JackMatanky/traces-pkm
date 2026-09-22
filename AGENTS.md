@@ -52,7 +52,7 @@ Multi-context — `CONTEXT-MAP.md` + per-module `CONTEXT.md` under `src/`. See `
 | `bench` | — | Criterion benchmarks; scope with `-m <module>`/`-f <pattern>`; auto-tags a comparable git baseline, `--compare <name>` diffs via critcmp |
 | `lint` | `l` | Strict clippy: workspace, all targets, all features. `--fix` applies known lints; depends on `fmt` |
 | `fmt` | `f` | Format before diffing/committing |
-| `verify` | `v` | Full gate (fmt→lint→clippy→test --all) — run before yielding/committing non-trivial changes |
+| `verify` | `v` | Full gate: fmt first, then check/lint/test in parallel — run before yielding/committing non-trivial changes |
 <!-- mise:end -->
 
 <!-- hk:start -->
