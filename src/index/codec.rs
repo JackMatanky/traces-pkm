@@ -64,9 +64,9 @@ pub(super) fn decode_row<T: DeserializeOwned>(
 /// payloads borrow the same `&Path`, and converting bytes back to an `OsStr`
 /// would require the unsafe `from_encoded_bytes_unchecked`.
 #[derive(Copy, Clone)]
-pub(super) struct IndexPathKey<'a>(&'a Path);
+pub(super) struct PathKey<'a>(&'a Path);
 
-impl<'a> IndexPathKey<'a> {
+impl<'a> PathKey<'a> {
     #[inline]
     pub(super) fn new(path: &'a Path) -> Self {
         Self(path)
@@ -106,23 +106,23 @@ mod tests {
         use crate::index::error::StoreError;
 
         #[derive(Debug, PartialEq, Deserialize, Serialize)]
-        struct Dummy {
+        struct TestRow {
             value: String,
         }
 
         #[test]
         fn serializes_successfully() {
             let path = std::path::Path::new("test.md");
-            let item = Dummy {
+            let row = TestRow {
                 value: "hello".to_owned(),
             };
 
             let mut buf = Vec::new();
             let bytes =
-                encode_row(path, &item, &mut buf).expect("encode succeeds");
-            let decoded: Dummy =
+                encode_row(path, &row, &mut buf).expect("encode succeeds");
+            let decoded: TestRow =
                 postcard::from_bytes(bytes).expect("decode succeeds");
-            assert_eq!(decoded, item);
+            assert_eq!(decoded, row);
         }
 
         #[test]
@@ -156,28 +156,28 @@ mod tests {
         use crate::index::error::StoreError;
 
         #[derive(Debug, PartialEq, Deserialize, Serialize)]
-        struct Dummy {
+        struct TestRow {
             value: String,
         }
 
         #[test]
         fn deserializes_successfully() {
             let path = std::path::Path::new("test.md");
-            let item = Dummy {
+            let row = TestRow {
                 value: "hello".to_owned(),
             };
-            let bytes = postcard::to_allocvec(&item).unwrap();
+            let bytes = postcard::to_allocvec(&row).unwrap();
 
-            let decoded: Dummy =
+            let decoded: TestRow =
                 decode_row(path, &bytes).expect("decode succeeds");
 
-            assert_eq!(decoded, item);
+            assert_eq!(decoded, row);
         }
 
         #[test]
         fn fails_on_corrupt_bytes() {
             let path = std::path::Path::new("test.md");
-            let result: Result<Dummy, _> = decode_row(path, &[0xFF, 0x00]);
+            let result: Result<TestRow, _> = decode_row(path, &[0xFF, 0x00]);
             assert!(matches!(result, Err(StoreError::Deserialize { .. })));
         }
     }

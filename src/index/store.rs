@@ -20,7 +20,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
     INDEX_FILE,
-    codec::{IndexPathKey, decode_row, encode_row, path_from_bytes},
+    codec::{PathKey, decode_row, encode_row, path_from_bytes},
     delta::{FileDelta, InlinkDelta},
     entry::FileEntry,
     error::{IndexError, IndexResult, StoreError, StoreResult},
@@ -228,7 +228,7 @@ impl IndexStore {
         };
         let mut edges = HashMap::new();
         for target in targets {
-            let key = IndexPathKey::new(target).as_bytes();
+            let key = PathKey::new(target).as_bytes();
             let sources = self.collect_stored_paths(&table, key)?;
             if !sources.is_empty() {
                 edges.insert(target.to_path_buf(), sources.into_boxed_slice());
@@ -350,10 +350,7 @@ impl IndexStore {
                 .open_table(NOTES)
                 .map_err(|source| self.raise_source_error(source))?;
             notes
-                .insert(
-                    IndexPathKey::new(path).as_bytes(),
-                    &b"\xff\xff\xff"[..],
-                )
+                .insert(PathKey::new(path).as_bytes(), &b"\xff\xff\xff"[..])
                 .map_err(|source| self.raise_source_error(source))?;
         }
         self.commit(txn)?;
@@ -396,7 +393,7 @@ impl IndexStore {
     ) -> HashMap<&'a [u8], &'a Path> {
         paths
             .into_iter()
-            .map(|path| (IndexPathKey::new(path).as_bytes(), path))
+            .map(|path| (PathKey::new(path).as_bytes(), path))
             .collect()
     }
 
@@ -567,7 +564,7 @@ impl IndexStore {
         let mut buf = Vec::new();
         for item in items {
             let path = path_of(item);
-            let key = IndexPathKey::new(path);
+            let key = PathKey::new(path);
             let value = encode_row(key.path(), item, &mut buf)?;
             table
                 .insert(key.as_bytes(), value)
@@ -598,9 +595,9 @@ impl IndexStore {
             if inlinks.is_empty() {
                 continue;
             }
-            let target_key = IndexPathKey::new(entry.file().path());
+            let target_key = PathKey::new(entry.file().path());
             for source in inlinks {
-                let source_key = IndexPathKey::new(source);
+                let source_key = PathKey::new(source);
                 table
                     .insert(target_key.as_bytes(), source_key.as_bytes())
                     .map_err(|err| self.raise_source_error(err))?;
@@ -795,7 +792,7 @@ impl IndexStore {
         };
         let mut items = Vec::new();
         for path in paths {
-            let key = IndexPathKey::new(path).as_bytes();
+            let key = PathKey::new(path).as_bytes();
             if let Some(guard) = table
                 .get(key)
                 .map_err(|error| self.raise_source_error(error))?
@@ -1157,7 +1154,7 @@ impl IndexStore {
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
-            let path_bytes = IndexPathKey::new(note.path()).as_bytes();
+            let path_bytes = PathKey::new(note.path()).as_bytes();
             index.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
@@ -1177,7 +1174,7 @@ impl IndexStore {
     ) -> IndexResult<()> {
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
-            let path_bytes = IndexPathKey::new(note.path()).as_bytes();
+            let path_bytes = PathKey::new(note.path()).as_bytes();
             index.visit_values(note, |value| {
                 reverse
                     .insert(path_bytes, value.as_bytes())
@@ -1249,7 +1246,7 @@ impl IndexStore {
             .open_table(NOTES)
             .map_err(|source| self.raise_source_error(source))?;
         for del in deleted {
-            let key = IndexPathKey::new(del.path()).as_bytes();
+            let key = PathKey::new(del.path()).as_bytes();
             files_table
                 .remove(key)
                 .map_err(|source| self.raise_source_error(source))?;
@@ -1272,7 +1269,7 @@ impl IndexStore {
             let mut reverse =
                 self.open_multimap_for_write(txn, index.reverse())?;
             for del in deleted {
-                let path_bytes = IndexPathKey::new(del.path()).as_bytes();
+                let path_bytes = PathKey::new(del.path()).as_bytes();
                 self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
             }
         }
@@ -1372,7 +1369,7 @@ impl IndexStore {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in modified_notes {
-            let path_bytes = IndexPathKey::new(note.path()).as_bytes();
+            let path_bytes = PathKey::new(note.path()).as_bytes();
             self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
             index.visit_values(note, |value| {
                 forward
@@ -1399,15 +1396,15 @@ impl IndexStore {
             .open_multimap_table(LINKS)
             .map_err(|source| self.raise_source_error(source))?;
         for (target, src) in inlink_delta.deleted() {
-            let target_key = IndexPathKey::new(target);
-            let source_key = IndexPathKey::new(src);
+            let target_key = PathKey::new(target);
+            let source_key = PathKey::new(src);
             links_table
                 .remove(target_key.as_bytes(), source_key.as_bytes())
                 .map_err(|err| self.raise_source_error(err))?;
         }
         for (target, src) in inlink_delta.upserted() {
-            let target_key = IndexPathKey::new(target);
-            let source_key = IndexPathKey::new(src);
+            let target_key = PathKey::new(target);
+            let source_key = PathKey::new(src);
             links_table
                 .insert(target_key.as_bytes(), source_key.as_bytes())
                 .map_err(|err| self.raise_source_error(err))?;
@@ -1422,7 +1419,7 @@ impl IndexStore {
         value: &T,
         buf: &mut Vec<u8>,
     ) -> IndexResult<()> {
-        let key = IndexPathKey::new(path);
+        let key = PathKey::new(path);
         let bytes = encode_row(key.path(), value, buf)?;
         table
             .insert(key.as_bytes(), bytes)
@@ -1716,8 +1713,8 @@ mod tests {
                 txn.open_multimap_table(LINKS).expect("open links table");
             table
                 .insert(
-                    IndexPathKey::new(target).as_bytes(),
-                    IndexPathKey::new(source).as_bytes(),
+                    PathKey::new(target).as_bytes(),
+                    PathKey::new(source).as_bytes(),
                 )
                 .expect("insert raw link");
         }
