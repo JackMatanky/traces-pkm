@@ -32,40 +32,144 @@ use crate::{FileBase, Note, Tag, file::FileFormat};
 ///
 /// Key: project-relative path as UTF-8 bytes
 /// Value: serialized [`FileBase`]
-const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("files");
+const FILES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("files");
 
 /// Parsed note metadata table.
 ///
 /// Key: project-relative path as UTF-8 bytes
 /// Value: serialized [`Note`]
-pub(super) const NOTES: TableDefinition<&[u8], &[u8]> =
+pub(super) const NOTES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("notes");
 
 /// Inbound link multimap table.
 ///
 /// Key: target note path as UTF-8 bytes
 /// Value: one source note path per entry
-const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
+const LINKS: MultimapTableDefinition<'static, &'static [u8], &'static [u8]> =
     MultimapTableDefinition::new("links");
 
 /// Path lookup by tag multimap table.
-const PATHS_BY_TAG: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("paths_by_tag");
+const PATHS_BY_TAG: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("paths_by_tag");
 
 /// Path lookup by file class multimap table.
-const PATHS_BY_FILE_CLASS: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("paths_by_file_class");
+const PATHS_BY_FILE_CLASS: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("paths_by_file_class");
 
 /// Reverse tag index: path -> current normalized tags.
 ///
 /// Lets incremental upserts and deletes touch O(path tag count) entries instead
 /// of scanning [`PATHS_BY_TAG`].
-const TAGS_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("tags_by_path");
+const TAGS_BY_PATH: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("tags_by_path");
 
 /// Reverse file-class index: path -> current normalized classes.
-const FILE_CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("classes_by_path");
+const FILE_CLASSES_BY_PATH: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("classes_by_path");
+
+/// One of the seven schema tables: plain row or multimap.
+enum TableDef {
+    Row(TableDefinition<'static, &'static [u8], &'static [u8]>),
+    Multimap(MultimapTableDefinition<'static, &'static [u8], &'static [u8]>),
+}
+
+/// How a table's rows are treated during a rebuild wipe.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum DeletePolicy {
+    /// A delete error fails the rebuild.
+    Required,
+    /// Only a missing table is tolerated; other errors propagate.
+    BestEffort,
+}
+
+/// One schema fact: a table definition plus its rebuild delete policy.
+struct TableSpec {
+    definition: TableDef,
+    policy: DeletePolicy,
+}
+
+/// Every table in the schema, in declaration order.
+const TABLES: [TableSpec; 7] = [
+    TableSpec {
+        definition: TableDef::Row(FILES),
+        policy: DeletePolicy::Required,
+    },
+    TableSpec {
+        definition: TableDef::Row(NOTES),
+        policy: DeletePolicy::Required,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(LINKS),
+        policy: DeletePolicy::Required,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(PATHS_BY_TAG),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(PATHS_BY_FILE_CLASS),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(TAGS_BY_PATH),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(FILE_CLASSES_BY_PATH),
+        policy: DeletePolicy::BestEffort,
+    },
+];
+
+impl TableDef {
+    /// Probes the definition against `txn` without reading rows.
+    fn probe(&self, txn: &ReadTransaction) -> Result<(), redb::TableError> {
+        match self {
+            Self::Row(def) => txn.open_table(*def).map(|_| ()),
+            Self::Multimap(def) => txn.open_multimap_table(*def).map(|_| ()),
+        }
+    }
+}
+
+impl TableSpec {
+    /// Deletes this table's contents per its [`DeletePolicy`].
+    ///
+    /// `Required` propagates every storage error; `BestEffort` tolerates only
+    /// a missing table (the fresh-database case) and propagates the rest.
+    fn delete(
+        &self,
+        store: &IndexStore,
+        txn: &WriteTransaction,
+    ) -> DbResult<()> {
+        let run = || match &self.definition {
+            TableDef::Row(def) => txn.delete_table(*def).map(|_| ()),
+            TableDef::Multimap(def) => {
+                txn.delete_multimap_table(*def).map(|_| ())
+            }
+        };
+        match run() {
+            Ok(()) => Ok(()),
+            Err(redb::TableError::TableDoesNotExist(_))
+                if self.policy == DeletePolicy::BestEffort =>
+            {
+                Ok(())
+            }
+            Err(source) => Err(store.raise_source_error(source)),
+        }
+    }
+}
 
 /// Stored files, path-sorted notes, and target-keyed inlinks loaded together.
 pub(super) type IndexSnapshot =
@@ -690,6 +794,8 @@ impl IndexStore {
         matches!(
             error,
             redb::TableError::TableTypeMismatch { .. }
+                | redb::TableError::TableIsMultimap(_)
+                | redb::TableError::TableIsNotMultimap(_)
                 | redb::TableError::TypeDefinitionChanged { .. }
                 | redb::TableError::Storage(redb::StorageError::Corrupted(_))
         )
@@ -745,15 +851,10 @@ impl IndexStore {
                 });
             }
         };
-        for probe in [
-            read_txn.open_table(FILES).err(),
-            read_txn.open_table(NOTES).err(),
-            read_txn.open_multimap_table(LINKS).err(),
-        ] {
-            let Some(error) = probe else {
-                continue;
-            };
-            if Self::is_rebuild_trigger(&error) {
+        for spec in &TABLES {
+            if let Err(error) = spec.definition.probe(&read_txn)
+                && Self::is_rebuild_trigger(&error)
+            {
                 return Ok(true);
             }
         }
@@ -1073,16 +1174,9 @@ impl IndexStore {
     /// index-axis multimaps are best-effort: absent on a fresh database, so a
     /// delete failure there is not fatal.
     fn delete_tables(&self, txn: &WriteTransaction) -> DbResult<()> {
-        txn.delete_table(FILES)
-            .map_err(|source| self.raise_source_error(source))?;
-        txn.delete_table(NOTES)
-            .map_err(|source| self.raise_source_error(source))?;
-        txn.delete_multimap_table(LINKS)
-            .map_err(|source| self.raise_source_error(source))?;
-        let _ = txn.delete_multimap_table(PATHS_BY_TAG);
-        let _ = txn.delete_multimap_table(PATHS_BY_FILE_CLASS);
-        let _ = txn.delete_multimap_table(TAGS_BY_PATH);
-        let _ = txn.delete_multimap_table(FILE_CLASSES_BY_PATH);
+        for spec in &TABLES {
+            spec.delete(self, txn)?;
+        }
         Ok(())
     }
 
@@ -1618,7 +1712,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_database_path_when_table_type_mismatches() {
+        fn repairs_a_wrong_typed_table_at_open() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             let store = IndexStore::open(root).expect("open store");
@@ -1627,13 +1721,16 @@ mod tests {
                 TableDefinition::new("paths_by_tag");
             txn.open_table(wrong_table).expect("open wrong table");
             txn.commit().expect("commit wrong table");
+            drop(store);
 
-            let error = store.paths_with_tag("x").expect_err("type mismatch");
-            assert!(matches!(
-                &error,
-                IndexError::Store(DbError::Redb { path, .. })
-                    if path == &root.join(INDEX_FILE)
-            ));
+            let reopened = IndexStore::open(root).expect("reopen heals drift");
+            let (files, notes, _) =
+                reopened.read_all().expect("read_all after recovery");
+            assert_eq!(files.as_slice(), []);
+            assert_eq!(notes.as_slice(), []);
+            let paths =
+                reopened.paths_with_tag("x").expect("paths_with_tag works");
+            assert_eq!(paths.as_ref(), <&[PathBuf]>::default());
         }
     }
 
