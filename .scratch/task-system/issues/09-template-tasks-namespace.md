@@ -66,7 +66,7 @@ exposing all universal and task fields.
   to yield all list items from matching notes:
 
   ```rust
-  fn list_rows(&self, index: &Arc<FileIndex>, source: &SourceSelector) -> Vec<QueryRow> {
+  fn list_rows(&self, index: &Arc<WorkspaceIndex>, source: &SourceSelector) -> Vec<QueryRow> {
       let mut out = Vec::new();
       for base in self.matched_file_rows(index, source) {
           let Some(note) = base.note() else { continue; };

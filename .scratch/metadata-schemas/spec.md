@@ -12,7 +12,7 @@ A User also cannot query Notes by what kind of thing they are: Traces has `query
 
 Add a Schema concept modeled on the Obsidian Metadata Menu plugin's fileClass. A Schema is a TOML file in `.traces/schemas/<name>.toml` defining Field Definitions that govern Notes of a File Class. A Note's File Class(es) are read from the frontmatter key configured by `[schemas] class_field` (default `class`); the filename stem is the Schema name and the filesystem is the registry.
 
-Template authors stop hard-coding values: a `schema` minijinja namespace exposes `schema.get("book").field("status")`, returning the selectable values for a field, and `file`-typed fields resolve their options live from the FileIndex. The Schema supplies values only; the Template author still picks the interactive `ui.*` function.
+Template authors stop hard-coding values: a `schema` minijinja namespace exposes `schema.get("book").field("status")`, returning the selectable values for a field, and `file`-typed fields resolve their options live from the WorkspaceIndex. The Schema supplies values only; the Template author still picks the interactive `ui.*` function.
 
 Query and task authors gain `query.from_class("book")` / `query.from_class(["book", "movie"])` and the mirroring `tasks.from_class(...)` (any-of), with is-a matching: a class that `extends` another matches queries for its parents transitively, so querying "book" also finds "sci-fi" Notes.
 
@@ -31,7 +31,7 @@ File Classes form hierarchies via `extends` (is-a) and `excludes`, resolved dete
 9. As a Template author, I want `field()` on a non-list field type to return `None`, so that only list-bearing fields produce prompt options.
 10. As a Template author, I want the Schema to supply values only, so that I choose the interactive `ui.*` function myself and keep the No-Declaration Template Format.
 11. As a Template author, I want an unknown Schema or field name in `schema.get(...)`/`field(...)` to hard-error during render, so that typos surface immediately with template context.
-12. As a Template author, I want `file` fields to resolve their option list from the FileIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array), so that options stay as fresh as the index.
+12. As a Template author, I want `file` fields to resolve their option list from the WorkspaceIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array), so that options stay as fresh as the index.
 13. As a Template author, I want `file` field filters to avoid regex, so that the filter surface stays small and predictable.
 14. As a Template author, I want a broken Schema to only break the Template that touches it, so that lazy validation means no `enabled` flag and no global failure.
 15. As a Template author, I want to mark a Schema's field as `required = true` even when it references a global field, so that the requirement is declared where it is used.
@@ -53,7 +53,7 @@ File Classes form hierarchies via `extends` (is-a) and `excludes`, resolved dete
 - A Schema is a TOML file in `.traces/schemas/<name>.toml`; the filename stem is the Schema name and the directory is the registry. The `[schemas] directory` config key relocates the directory (default `.traces/schemas/`).
 - A Note's File Class(es) come from the frontmatter key named by `[schemas] class_field` (default `class`). A Note may carry several File Classes; each value names a Schema.
 - A Field Definition has a `type` (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options, plus optional `required` and `multi` flags.
-- `file` fields resolve their option list from the FileIndex via an AND-composed filter of `folders` (array), `ext`, and `class` (array). No regex in filters. Option lists are index-derived at use-time, so only as fresh as the index.
+- `file` fields resolve their option list from the WorkspaceIndex via an AND-composed filter of `folders` (array), `ext`, and `class` (array). No regex in filters. Option lists are index-derived at use-time, so only as fresh as the index.
 - The `schema` minijinja namespace follows the existing namespace-Object pattern (`file`/`ui`/`date`/`query`). `schema.get("book")` binds a resolved Schema; `book.field("status")` returns selectable values. `select`-type fields return plain strings; `file`-type fields return label/value pairs (label = `[frontmatter]` aliases value, else configured title value, else filename stem; value = path), reusing ADR-0003 index-based selection; non-list types return `None`.
 - The Schema supplies values only; the Template author picks the interactive `ui.*` function. The No-Declaration Template Format is preserved — a Schema is vault-level metadata, not a Template declaration.
 - Errors: structural references (`schema.get` of an unknown Schema, `field` of an unknown field) hard-error during render with template context; predicate references (`from_class`, `file`-field `class` filter) and a broken `extends` target degrade to exact match with a warning.

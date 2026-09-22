@@ -26,7 +26,7 @@ No markdown/PKM LSP persists its workspace index to disk — rumdl LSP, Markdown
 
 ### 2. In-memory mutable index (editor buffer is authoritative)
 
-The LSP maintains a `FileIndex`-like structure in memory as the working copy for all queries. On `didChange`, reparse from editor-sent content, update the in-memory index, diff structural data (links/headings/tags), recompute affected backlinks. redb persists periodically or on shutdown for warm-start next launch. This matches the universal pattern (rumdl's `IndexWorker`, Marksman's `Doc.withText`) and aligns with ticket 10's `Arc<FileIndex>` swap-on-refresh architecture. Design rule: editor buffer is authoritative for open documents — `did_change` uses editor-sent content, not disk reads; `did_change_watched_files` reads disk only for non-open files.
+The LSP maintains a `WorkspaceIndex`-like structure in memory as the working copy for all queries. On `didChange`, reparse from editor-sent content, update the in-memory index, diff structural data (links/headings/tags), recompute affected backlinks. redb persists periodically or on shutdown for warm-start next launch. This matches the universal pattern (rumdl's `IndexWorker`, Marksman's `Doc.withText`) and aligns with ticket 10's `Arc<WorkspaceIndex>` swap-on-refresh architecture. Design rule: editor buffer is authoritative for open documents — `did_change` uses editor-sent content, not disk reads; `did_change_watched_files` reads disk only for non-open files.
 
 ### 3. Expand `RefreshPlan` with single-file input mode (not a separate method)
 

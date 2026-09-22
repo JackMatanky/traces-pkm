@@ -57,7 +57,7 @@ path can mis-reconstruct on load") without eliminating it.
 
 Traced the actual current impact: production callers (`cli`
 list/table/task, the minijinja `query`/`tasks` namespace) only ever call
-`refresh()`, whose final in-memory `FileIndex` always derives inlinks
+`refresh()`, whose final in-memory `WorkspaceIndex` always derives inlinks
 fresh from `derive_inlinks(&notes)` — real `Path` refs, no
 reconstruction. The loaded/reconstructed `LINKS` data only feeds
 `diff_inlinks`'s "previous" side (deciding what to write in the

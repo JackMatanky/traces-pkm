@@ -2,8 +2,8 @@
 //! transformations.
 //!
 //! The query subsystem evaluates declarative queries over indexed Markdown
-//! notes and flat list items stored in a [`FileIndex`]. It provides a query
-//! planning and execution engine supporting filtering, sorting, limiting,
+//! notes and flat list items stored in a [`WorkspaceIndex`]. It provides a
+//! query planning and execution engine supporting filtering, sorting, limiting,
 //! grouping, flattening, and formatting into Markdown tables and lists.
 //!
 //! # Architecture and Pipeline
@@ -11,8 +11,8 @@
 //! 1. **Specification**: Callers construct a [`QueryBuilder`] in page, list, or
 //!    task row granularity using a [`SourceSelector`].
 //! 2. **Evaluation**: [`QueryService::run`] evaluates the source expression
-//!    against a [`FileIndex`], optionally expanding File Class hierarchies via
-//!    a [`FileClassExpander`].
+//!    against a [`WorkspaceIndex`], optionally expanding File Class hierarchies
+//!    via a [`FileClassExpander`].
 //! 3. **Row Instantiation**: Matching notes generate [`QueryRow`] items. For
 //!    page queries, each note forms one row. For list and task queries, each
 //!    list item (or task item) within matching notes forms a zero-allocation
@@ -73,7 +73,7 @@
 //! ```
 //!
 //! [`FileBase`]: crate::file::FileBase
-//! [`FileIndex`]: crate::index::FileIndex
+//! [`WorkspaceIndex`]: crate::index::WorkspaceIndex
 //! [`FileClassExpander`]: crate::query::grammar::FileClassExpander
 //! [`Note`]: crate::note::Note
 mod builder;

@@ -53,7 +53,7 @@ This means the `enableLinkCompletions`/`enableLinkNavigation` toggles are really
 - `MD039` (link-spacing trim) explicitly **exempts wikilinks** ("a wikilink has no destination to rewrite the text against") — zero formatting overlap risk for wikilinks. Standard-link formatting (space-trimming, etc.) is rumdl's alone; Traces should register **zero** `documentFormattingProvider`/`documentRangeFormattingProvider` capability (confirms the product goal's clean split).
 
 **Workspace-index model**
-- The LSP server (not just the CLI) maintains its own `WorkspaceIndex` (paths + headings) for its own link/heading-anchor completion, updated via `workspace/didChangeWatchedFiles` and `textDocument/didChange` — i.e. rumdl runs a **second**, independent file index in parallel to Traces' own `FileIndex` when both are active; no shared-index opportunity exists (different processes, different languages/runtimes).
+- The LSP server (not just the CLI) maintains its own `WorkspaceIndex` (paths + headings) for its own link/heading-anchor completion, updated via `workspace/didChangeWatchedFiles` and `textDocument/didChange` — i.e. rumdl runs a **second**, independent file index in parallel to Traces' own `WorkspaceIndex` when both are active; no shared-index opportunity exists (different processes, different languages/runtimes).
 
 **Config interop**: none documented. rumdl resolves `.rumdl.toml`/`rumdl.toml`/`.config/rumdl.toml`/`pyproject.toml`/`.markdownlint.*` independently of `.traces/config.toml`; a joint project needs both config files maintained separately (or `configPath` passed explicitly via LSP `init_options`).
 

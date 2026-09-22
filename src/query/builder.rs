@@ -31,7 +31,8 @@ pub(crate) enum QueryMode {
 /// Declarative query specification for index queries.
 ///
 /// Plans stay inert until [`QueryService::run`](super::QueryService::run)
-/// evaluates them against a borrowed [`FileIndex`](crate::index::FileIndex).
+/// evaluates them against a borrowed
+/// [`WorkspaceIndex`](crate::index::WorkspaceIndex).
 ///
 /// # Examples
 ///

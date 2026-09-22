@@ -2,17 +2,17 @@
 //! project root.
 //!
 //! [`IndexerService`] scans the filesystem, parses Markdown notes, derives
-//! inbound links, and stores the resulting [`FileIndex`] through the
+//! inbound links, and stores the resulting [`WorkspaceIndex`] through the
 //! redb-backed [`store`] module.
 //!
-//! [`FileIndex`] is an in-memory snapshot of file entries, parsed metadata, and
-//! link data. It carries no root path; callers inspect its sorted
-//! [`FileIndex::entries`] view and use [`crate::query::QueryService`] for
+//! [`WorkspaceIndex`] is an in-memory snapshot of file entries, parsed
+//! metadata, and link data. It carries no root path; callers inspect its sorted
+//! [`WorkspaceIndex::entries`] view and use [`crate::query::QueryService`] for
 //! evaluation.
 //!
 //! Fresh builds run through [`IndexerService::build`]; cold CLI reads use
-//! [`IndexerService::sync`](service::IndexerService::sync) to load and refresh
-//! an existing store.
+//! [`IndexerService::current_store`](service::IndexerService::current_store) to
+//! load and refresh an existing store.
 //!
 //! [`store`]: mod@store
 mod codec;
@@ -20,23 +20,25 @@ mod delta;
 mod entry;
 mod error;
 mod inlinks;
+mod refresh;
 mod service;
+mod sort;
 mod store;
-mod sync;
 
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use codec::path;
 #[cfg(any(test, feature = "test-utils"))]
 pub use codec::path;
 pub(crate) use entry::RowIndex;
-pub use entry::{FileEntry, FileIndex};
+pub use entry::{FileEntry, WorkspaceIndex};
 pub(crate) use error::{IndexError, IndexResult};
 #[cfg(any(test, feature = "test-utils"))]
 pub use inlinks::InlinkMap;
-pub use service::IndexerService;
-pub(crate) use store::IndexStore;
 #[cfg(any(test, feature = "test-utils"))]
-pub use sync::SyncReport;
+pub use refresh::RefreshReport;
+pub use service::IndexerService;
+pub(crate) use sort::SortedByPath;
+pub(crate) use store::IndexStore;
 
 /// Project-relative index database path.
 const INDEX_FILE: &str = ".traces/index.redb";

@@ -1,7 +1,7 @@
 //! Promotes `src/index/mod.rs`'s internal
 //! `persist_then_load_recovers_the_same_records_and_notes` test to prove the
-//! public round-trip contract: `FileIndex::build` → `persist` → `load` in a
-//! fresh `FileIndex` value, simulating a new process. Also covers redb
+//! public round-trip contract: `WorkspaceIndex::build` → `persist` → `load` in
+//! a fresh `WorkspaceIndex` value, simulating a new process. Also covers redb
 //! persistence invariance without the `LISTS` table (ADR 0005) and recovery
 //! from a corrupted `.traces/index.redb` file, both through the public
 //! `IndexerService` surface alone.
@@ -14,7 +14,7 @@ use traces_pkm::{
     FileEntry, QueryBuilder, QueryService, QuerySet, SourceLine,
     SourceSelector, TaskListItem, TaskPriority, TaskStatusType, TestProject,
 };
-/// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
+/// Builds an index, persists it, and reloads it into a fresh `WorkspaceIndex`,
 /// checking records survive intact.
 ///
 /// `src/index/mod.rs` covers the identical round trip with an internal unit
@@ -26,7 +26,7 @@ fn persist_then_load_recovers_the_same_file_count_and_paths() {
     let project = TestProject::trusted(temp.path().join("project"));
     project.write_note("a.md", "# A\n");
     project.write_note("b.md", "# B\n");
-    let (indexer, built) = project.persist_index();
+    let (indexer, built) = project.build_and_persist();
 
     let loaded = indexer.load().expect("load persisted index");
 
@@ -59,7 +59,7 @@ fn reloads_flat_list_items_with_metadata_and_hierarchy() {
     project.write_note("tasks.md", markdown);
 
     // Arrange done; build, persist, then reload from a fresh service.
-    let (_, _) = project.persist_index();
+    let (_, _) = project.build_and_persist();
     let fresh_indexer = project.indexer();
     let loaded = fresh_indexer.load().expect("load persisted index");
     let note = loaded
@@ -167,7 +167,7 @@ owner: alice
     project.write_note("outlines.md", outlines_md);
 
     // 1. Build and persist to disk (redb NOTES and FILES tables).
-    let (_indexer, built) = project.persist_index();
+    let (_indexer, built) = project.build_and_persist();
     let built_arc = Arc::new(built);
 
     // 2. Evaluate queries against the in-memory index.
@@ -305,7 +305,7 @@ fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_del
     let project = TestProject::trusted(temp.path().join("project"));
     project.write_note("a.md", "# A\n");
     project.write_note("b.md", "# B\n");
-    let (indexer, built) = project.persist_index();
+    let (indexer, built) = project.build_and_persist();
     assert_eq!(built.entries().len(), 2);
 
     let db_path = project.root().join(".traces/index.redb");

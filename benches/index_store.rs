@@ -2,22 +2,22 @@
 //! (`IndexStore`).
 //!
 //! Exposes and monitors the execution cost of database transaction commits,
-//! full table deserialization into in-memory [`FileIndex`], list-heavy index
-//! loads, and multi-project concurrent database access.
+//! full table deserialization into in-memory [`WorkspaceIndex`], list-heavy
+//! index loads, and multi-project concurrent database access.
 //!
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [FileIndex] ──(Persist Txn)──► [redb Database Tables]
+//! [WorkspaceIndex] ──(Persist Txn)──► [redb Database Tables]
 //!                                      │
-//! [FileIndex] ◄──(Load Tables)─────────┘
+//! [WorkspaceIndex] ◄──(Load Tables)─────────┘
 //! ```
 //!
 //! ### Profiling Integration
 //!
 //! To profile index store CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench index_store -- --bench "FileIndex::load/1000"
+//! cargo flamegraph --bench index_store -- --bench "WorkspaceIndex::load/1000"
 //! ```
 //!
 //! Run via `mise run bench -f index_store` (or `mise run bench -m index`): this
@@ -36,7 +36,7 @@ use criterion::{
     Throughput, criterion_group, criterion_main,
 };
 use tempfile::TempDir;
-use traces_pkm::{FileIndex, IndexerService};
+use traces_pkm::{IndexerService, WorkspaceIndex};
 
 #[expect(
     dead_code,
@@ -64,7 +64,7 @@ const PERSIST_CONTRAST_SHAPES: &[ProjectShape] = &[
 const LOAD_CONTRAST_SHAPES: &[ProjectShape] =
     &[ProjectShape::RichRealistic, ProjectShape::AttachmentProject];
 
-fn observe_index(index: &FileIndex) {
+fn observe_index(index: &WorkspaceIndex) {
     let entries = index.entries();
     let note_count =
         entries.iter().filter(|entry| entry.note().is_some()).count();
@@ -73,7 +73,7 @@ fn observe_index(index: &FileIndex) {
     black_box((entries.len(), note_count, inlink_count));
 }
 
-fn observe_load(indexer: &IndexerService) -> FileIndex {
+fn observe_load(indexer: &IndexerService) -> WorkspaceIndex {
     let index = indexer.load().expect("load index");
     observe_index(&index);
     index
@@ -84,7 +84,9 @@ fn observe_load(indexer: &IndexerService) -> FileIndex {
 /// redb enforces at most one open [`redb::Database`] handle per file per
 /// process, so multi-project workflows (such as batch importers) spawn one
 /// thread per project.
-fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
+fn load_concurrently(
+    projects: &[(TempDir, IndexerService)],
+) -> Vec<WorkspaceIndex> {
     std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(projects.len());
         for (_, indexer) in projects {
@@ -105,8 +107,8 @@ fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
 /// Measures full database persistence transaction overhead for plain notes.
 ///
 /// Parameters: varies note count across [`WORKSPACE_FILE_COUNTS`]; reports note
-/// throughput. Fixture: [`FileIndex`] compiled in-memory outside timing; timed
-/// work persists that index into a fresh redb database in a temporary
+/// throughput. Fixture: [`WorkspaceIndex`] compiled in-memory outside timing;
+/// timed work persists that index into a fresh redb database in a temporary
 /// directory. Disk sync and fsync incur a fixed transaction commit floor (~34
 /// ms) for small vaults (< 1,000 notes) before scaling linearly with table row
 /// volume.
@@ -120,7 +122,7 @@ fn load_concurrently(projects: &[(TempDir, IndexerService)]) -> Vec<FileIndex> {
 /// - Super-linear scaling at 5K or 20K notes, indicating write amplification,
 ///   redundant table scans during commit, or unindexed B-tree splits.
 fn bench_index_persist(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::persist");
+    let mut group = c.benchmark_group("WorkspaceIndex::persist");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -150,7 +152,7 @@ fn bench_index_persist(c: &mut Criterion) {
 ///
 /// Parameters: varies note shape across [`PERSIST_CONTRAST_SHAPES`] and size
 /// across [`PROFILE_CONTRAST_COUNTS`]; reports note throughput.
-/// Fixture: [`FileIndex`] compiled in-memory outside timing; timed work
+/// Fixture: [`WorkspaceIndex`] compiled in-memory outside timing; timed work
 /// persists that index into a fresh redb database.
 /// Evaluates row encoding and secondary table write costs for dense links, rich
 /// frontmatter, and list items across [`PROFILE_CONTRAST_COUNTS`].
@@ -163,7 +165,7 @@ fn bench_index_persist(c: &mut Criterion) {
 /// - List-heavy or dense link profiles growing super-linearly, indicating table
 ///   lock contention or disproportionate index serialization overhead.
 fn bench_index_persist_profiles(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::persist/profiles");
+    let mut group = c.benchmark_group("WorkspaceIndex::persist/profiles");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -208,7 +210,7 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
 /// rich/attachment shapes over [`PROFILE_CONTRAST_COUNTS`]; reports note
 /// throughput. Fixture: persisted project created outside timing. Timed work
 /// opens the store, reads all files/notes/inlinks, and assembles the complete
-/// [`FileIndex`].
+/// [`WorkspaceIndex`].
 ///
 /// Opening the redb store and reading all table keys introduces a fixed
 /// open/iteration floor of ~14.5 ms. Above this floor, load time scales
@@ -223,7 +225,7 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
 /// - Load time growing super-linearly, indicating redundant inlink graph
 ///   recomputation or secondary table lookups during initial load.
 fn bench_index_load(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::load");
+    let mut group = c.benchmark_group("WorkspaceIndex::load");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -282,7 +284,7 @@ fn bench_index_load(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Disproportionate latency per row or non-linear scaling across sizes.
 fn bench_load_list_heavy(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::load_list_heavy");
+    let mut group = c.benchmark_group("WorkspaceIndex::load_list_heavy");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -332,7 +334,7 @@ fn bench_load_list_heavy(c: &mut Criterion) {
 /// Unexpected outcomes:
 /// - Latency spikes indicating process-wide mutex contention in table reads.
 fn bench_concurrent_operations(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::concurrent");
+    let mut group = c.benchmark_group("WorkspaceIndex::concurrent");
     let n = 250_usize;
     group.throughput(Throughput::Elements(1_000));
     group.bench_function("concurrent-load-4-independent-projects", |b| {

@@ -15,9 +15,9 @@
 //! - `.from("@Class*")`: Notes whose File Class is `Class` or a transitive
 //!   descendant.
 //!
-//! Each call reuses the render's cached [`FileIndex`], refreshing it once per
-//! render (see [`QueryOps::cached_index`]), and returns a [`QuerySet`] wrapped
-//! in a [`Value`].
+//! Each call reuses the render's cached [`WorkspaceIndex`], refreshing it once
+//! per render (see [`QueryOps::cached_index`]), and returns a [`QuerySet`]
+//! wrapped in a [`Value`].
 //!
 //! # Row Shape
 //!
@@ -46,7 +46,7 @@
 //!
 //! [`QuerySet`] and [`QueryRow`] get their [`Object`] impls here instead of in
 //! [`crate::index`], keeping that module independent from minijinja so `traces
-//! task` can reuse [`FileIndex`], [`QuerySet`], and [`QueryRow`] without
+//! task` can reuse [`WorkspaceIndex`], [`QuerySet`], and [`QueryRow`] without
 //! pulling in rendering concerns.
 //!
 //! `record` attributes other than `file` and `list` forward to
@@ -75,7 +75,7 @@ use minijinja::{
 use super::error::TemplateEngineResult;
 use crate::{
     NoteFieldValue,
-    index::{FileIndex, IndexerService},
+    index::{IndexerService, WorkspaceIndex},
     query::{
         ClassExpansionMode, FieldPath, FileField, ListField, QueryBuilder,
         QueryError, QueryMode, QueryRow, QueryService, QuerySet, SortDirection,
@@ -88,8 +88,8 @@ use crate::{
 /// [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["from"];
 
-/// The [`State::set_temp`] key used to cache one refreshed [`FileIndex`] for
-/// the current render.
+/// The [`State::set_temp`] key used to cache one refreshed [`WorkspaceIndex`]
+/// for the current render.
 ///
 /// Shared by the `query`, `lists`, and `tasks` namespaces (all dispatch
 /// through [`QueryOps::run`]) so a render calling into multiple pays for one
@@ -194,8 +194,8 @@ impl QueryOps {
     }
 
     /// Runs this namespace's query method for `source` against `state`'s
-    /// cached [`FileIndex`], refreshing it first if not already cached this
-    /// render. See [`INDEX_CACHE_KEY`].
+    /// cached [`WorkspaceIndex`], refreshing it first if not already cached
+    /// this render. See [`INDEX_CACHE_KEY`].
     ///
     /// # Errors
     ///
@@ -211,9 +211,9 @@ impl QueryOps {
         Ok(Value::from_object(self.service.run(&index, builder)))
     }
 
-    /// Returns this render's cached [`FileIndex`] for `self.root`, refreshing
-    /// and caching it first if not already cached this render. See
-    /// [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
+    /// Returns this render's cached [`WorkspaceIndex`] for `self.root`,
+    /// refreshing and caching it first if not already cached this render.
+    /// See [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
     ///
     /// # Errors
     ///
@@ -227,7 +227,7 @@ impl QueryOps {
     fn cached_index(
         &self,
         state: &State,
-    ) -> TemplateEngineResult<Arc<FileIndex>> {
+    ) -> TemplateEngineResult<Arc<WorkspaceIndex>> {
         super::cache::cached(state, INDEX_CACHE_KEY, || {
             IndexerService::new(self.root.as_ref())
                 .refresh()
@@ -1666,7 +1666,7 @@ mod tests {
             let env = Environment::new();
             let state = env.empty_state();
 
-            // Populates state's cached FileIndex; both namespaces dispatch
+            // Populates state's cached WorkspaceIndex; both namespaces dispatch
             // through the same INDEX_CACHE_KEY.
             page_from.call(&state, &[]).expect("query.from succeeds");
             // Written after the index was cached: a cache-sharing tasks.from()

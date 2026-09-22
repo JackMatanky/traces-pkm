@@ -6,13 +6,13 @@ Status: ready-for-agent
 
 Traces can instantiate Templates, but it cannot yet treat the project root as a queryable personal knowledge base. A User who has many markdown Notes needs Dataview-like access to File Records, Note Metadata, Inline Fields, tasks, lists, tags, and links from both Templates and CLI commands.
 
-Without a FileIndex, Templates cannot ask questions such as "which books match this tag?", "which unfinished tasks belong to active projects?", or "which Note should the User select from indexed metadata?" The User also cannot run quick terminal queries over the same indexed data.
+Without a WorkspaceIndex, Templates cannot ask questions such as "which books match this tag?", "which unfinished tasks belong to active projects?", or "which Note should the User select from indexed metadata?" The User also cannot run quick terminal queries over the same indexed data.
 
 ## Solution
 
-Add a FileIndex backed by redb. The FileIndex scans every file under the trusted project root, stores general File Records for all files, stores richer Note Metadata for markdown Notes, and refreshes stale entries lazily by comparing `created_at`, `modified_at`, and `size`.
+Add a WorkspaceIndex backed by redb. The WorkspaceIndex scans every file under the trusted project root, stores general File Records for all files, stores richer Note Metadata for markdown Notes, and refreshes stale entries lazily by comparing `created_at`, `modified_at`, and `size`.
 
-Expose the FileIndex through a QueryOps minijinja namespace Object. QueryOps supports method chaining for query construction and returns QueryOutcome objects that are iterable, indexable, and usable as input to `ui.select` and `ui.multi_select`. QueryOutcome terminal methods and pipeline filters render markdown tables, lists, task lists, and counts for simple Template output. Template authors use `{% for %}` loops when they need custom value manipulation.
+Expose the WorkspaceIndex through a QueryOps minijinja namespace Object. QueryOps supports method chaining for query construction and returns QueryOutcome objects that are iterable, indexable, and usable as input to `ui.select` and `ui.multi_select`. QueryOutcome terminal methods and pipeline filters render markdown tables, lists, task lists, and counts for simple Template output. Template authors use `{% for %}` loops when they need custom value manipulation.
 
 Expose secondary CLI query commands as top-level commands: `traces list`, `traces table`, and `traces task`. These commands use flags, not a Dataview Query Language parser.
 
@@ -21,9 +21,9 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 1. As a User, I want Traces to index every file in my project root, so that I can query the same project I use for Templates and Notes.
 2. As a User, I want every indexed file to have a File Record, so that non-markdown files can still be discovered by path, name, folder, timestamps, and size.
 3. As a User, I want markdown Notes to have richer Note Metadata, so that queries can use frontmatter, Inline Fields, tags, tasks, lists, and links.
-4. As a User, I want the FileIndex to persist to disk, so that query commands do not need to parse the entire project from scratch every time.
-5. As a User, I want the FileIndex to refresh stale entries automatically, so that I do not need to remember to run `traces index` before querying.
-6. As a User, I want a `traces index` command, so that I can explicitly build or rebuild the FileIndex when I want to.
+4. As a User, I want the WorkspaceIndex to persist to disk, so that query commands do not need to parse the entire project from scratch every time.
+5. As a User, I want the WorkspaceIndex to refresh stale entries automatically, so that I do not need to remember to run `traces index` before querying.
+6. As a User, I want a `traces index` command, so that I can explicitly build or rebuild the WorkspaceIndex when I want to.
 7. As a User, I want `created_at`, `modified_at`, and `size` stored for each File Record, so that Traces can detect changed files cheaply.
 8. As a User, I want `ctime`, `cdate`, `mtime`, and `mdate` accessors, so that Dataview-style metadata expressions feel familiar.
 9. As a User, I want frontmatter metadata indexed from markdown Notes, so that existing YAML note metadata becomes queryable.
@@ -74,23 +74,23 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 54. As a CLI User, I want diagnostics on stderr, so that machine-readable output is not polluted.
 55. As a CLI User, I want table output to be readable in a terminal, so that common queries are useful without additional tools.
 56. As a CLI User, I want JSON output available later if needed, so that automation can consume structured query results.
-57. As a maintainer, I want the FileIndex behind a small interface, so that persistence, parsing, and freshness can change internally without spreading across callers.
+57. As a maintainer, I want the WorkspaceIndex behind a small interface, so that persistence, parsing, and freshness can change internally without spreading across callers.
 58. As a maintainer, I want parser behavior tested at the markdown event seam, so that edge cases do not require redb or CLI setup.
 59. As a maintainer, I want QueryOps tested through TemplateEngine rendering, so that tests cover the same seam Template authors use.
 60. As a maintainer, I want CLI behavior tested through command dispatch, so that tests cover config loading, trust, index refresh, and output together.
 
 ## Implementation Decisions
 
-- The canonical index module is FileIndex, not NoteIndex, because it indexes all files and only adds Note Metadata for markdown Notes.
-- FileIndex persists to redb.
-- FileIndex stores File Records for every file under the project root.
-- FileIndex stores Note Metadata for markdown Notes only.
-- FileIndex uses two redb tables: one keyed by path for File Records, one keyed by path for Note Metadata.
+- The canonical index module is WorkspaceIndex, not NoteIndex, because it indexes all files and only adds Note Metadata for markdown Notes.
+- WorkspaceIndex persists to redb.
+- WorkspaceIndex stores File Records for every file under the project root.
+- WorkspaceIndex stores Note Metadata for markdown Notes only.
+- WorkspaceIndex uses two redb tables: one keyed by path for File Records, one keyed by path for Note Metadata.
 - File Records include `file.path`, `file.name`, `file.folder`, `file.created_at`, `file.modified_at`, and `file.size`.
 - File Records expose Dataview-style accessors for `ctime`, `cdate`, `mtime`, and `mdate`.
-- FileIndex freshness uses `(created_at, modified_at, size)` comparison.
-- Query execution lazily refreshes stale FileIndex entries before returning data.
-- `traces index` explicitly builds or rebuilds the FileIndex.
+- WorkspaceIndex freshness uses `(created_at, modified_at, size)` comparison.
+- Query execution lazily refreshes stale WorkspaceIndex entries before returning data.
+- `traces index` explicitly builds or rebuilds the WorkspaceIndex.
 - A future file-watching mode is allowed but out of scope for this spec.
 - Note Metadata includes frontmatter, Inline Fields, tags, tasks, lists, and links.
 - Inline Fields use Dataview-compatible syntax: `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`.
@@ -121,16 +121,16 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 - CLI query commands are top-level commands: `list`, `table`, and `task`.
 - CLI query commands use flags, not a DQL parser.
 - Calendar queries are out of scope.
-- ADR 5 records the FileIndex, QueryOps namespace, and pipeline terminal filter decisions.
+- ADR 5 records the WorkspaceIndex, QueryOps namespace, and pipeline terminal filter decisions.
 
 ## Testing Decisions
 
 - Tests should cover external behavior at module interfaces, not internal implementation details.
 - The preferred highest seam is CLI command dispatch, using isolated trusted project roots.
 - CLI tests should verify `traces index`, `traces list`, `traces table`, `traces task`, and `traces template` behavior from parsed command arguments through output.
-- FileIndex tests should use the FileIndex interface: build, refresh, load, and query from a project root.
-- FileIndex tests should verify redb persistence through observable reload behavior, not by inspecting redb internals.
-- FileIndex tests should verify freshness by changing file metadata/content and observing that stale entries refresh.
+- WorkspaceIndex tests should use the WorkspaceIndex interface: build, refresh, load, and query from a project root.
+- WorkspaceIndex tests should verify redb persistence through observable reload behavior, not by inspecting redb internals.
+- WorkspaceIndex tests should verify freshness by changing file metadata/content and observing that stale entries refresh.
 - Template tests should use TemplateEngine rendering as the seam.
 - Template tests should verify QueryOps namespace registration, method chaining, QueryOutcome iteration, terminal filters, and `ui.select` integration through rendered output.
 - Template diagnostics tests should assert that query failures surface as useful render errors with template context.
@@ -157,10 +157,10 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 
 ## Further Notes
 
-- The first implementation tickets should preserve a deep FileIndex interface and avoid leaking redb table details to CLI or Template modules.
+- The first implementation tickets should preserve a deep WorkspaceIndex interface and avoid leaking redb table details to CLI or Template modules.
 - The parsing stage should be split carefully: `pulldown-cmark` provides markdown structure, but Dataview Inline Field syntax likely remains custom logic layered on top of event ranges.
 - Terminal helpers are deliberately convenience features. Complex formatting belongs in Template loops.
-- The term FileIndex replaces NoteIndex everywhere in new design work.
+- The term WorkspaceIndex replaces NoteIndex everywhere in new design work.
 - ADR 5 is proposed and should be reviewed before acceptance.
 - `QuerySource` uses a composable `QuerySourceExpr` AST (`Tag`, `Path`, `Class`, `And`, `Or`, `Not`), parsed via Logos tokenizer and recursive-descent parser.
 - Class querying uses an Incremental Depth Mental Model: `ClassExpansionMode::Exact` (`@Book` / `class(Book)` — self only), `ClassExpansionMode::Children` (`@Book+` / `class(Book).with_children()` — self + direct children), and `ClassExpansionMode::Descendants` (`@Book*` / `class(Book).with_descendants()` — self + transitive descendants).

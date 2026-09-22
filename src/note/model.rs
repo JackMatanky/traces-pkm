@@ -214,6 +214,12 @@ impl Note {
     }
 }
 
+impl crate::path::HasPath for Note {
+    fn path(&self) -> &Path {
+        Self::path(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

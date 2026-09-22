@@ -68,7 +68,7 @@ Class query surface per spec User Stories 16–20 and Implementation Decisions (
 - **`from_class` lives in `index/query.rs` (`QuerySource::Class`), not `schema/`.** Keeps `src/index/` free of any `schema` dependency: the pure `QuerySource::is_match` primitive stays allocation-free, while `SchemaRegistry::matching_classes` (the only schema-aware step) runs once per query call and hands the index layer a plain `BTreeSet<String>`.
 - **`class_field` accepts scalar-string or list values** — `class_values` mirrors the existing tag-matching conventions in the same module (non-string list elements silently contribute nothing, matching the file's established degrade-soft style).
 - **Querying the reserved `global` Schema is a hard error, not a silent degrade** (`reserved_class_error()`, `ErrorKind::InvalidOperation`) — stricter than the "missing Schema" degrade path, because naming the reserved pool is a caller mistake, not a data-quality issue.
-- **`CachedRegistry` mirrors `CachedIndex`**: `SchemaRegistry` loaded once per render via `State::set_temp`/`get_temp`, reusing the render-scoped caching pattern already established for `FileIndex`.
+- **`CachedRegistry` mirrors `CachedIndex`**: `SchemaRegistry` loaded once per render via `State::set_temp`/`get_temp`, reusing the render-scoped caching pattern already established for `WorkspaceIndex`.
 
 ### Verification
 

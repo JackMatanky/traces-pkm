@@ -22,7 +22,7 @@ Accepted
 
 ## Context
 
-Traces needs a queryable FileIndex to replace Obsidian Dataview in the terminal.
+Traces needs a queryable WorkspaceIndex to replace Obsidian Dataview in the terminal.
 The index must scan the project root, extract general metadata from every file,
 extract richer metadata from markdown Notes (frontmatter, inline fields, tags,
 tasks, lists, links), and expose a query API from within minijinja templates and
@@ -33,7 +33,7 @@ inline field parsing scope; (5) CLI command structure.
 
 ## Decision
 
-Use a redb database with eight tables for the FileIndex. Expose the query API
+Use a redb database with eight tables for the WorkspaceIndex. Expose the query API
 through a QueryOps minijinja namespace Object with a single from() method,
 method chaining for transforms, and pipeline terminal filters for output
 rendering.

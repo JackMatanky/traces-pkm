@@ -153,7 +153,8 @@ enum Commands {
     Trust(trust::Trust),
     /// Revoke trust from one or more project roots.
     Untrust(untrust::Untrust),
-    /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
+    /// Build or rebuild the persisted
+    /// [`WorkspaceIndex`](crate::index::WorkspaceIndex).
     Index(index::Index),
     /// Query pages and print matching file paths as a Markdown bullet list.
     List(list::List),
@@ -307,12 +308,13 @@ fn refresh_query<'a>(
     mode: QueryMode,
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
-    let store = IndexerService::new(root).with_config(config).sync().map_err(
-        |source| CliError::Index {
-            root: root.to_path_buf(),
-            source,
-        },
-    )?;
+    let store = IndexerService::new(root)
+        .with_config(config)
+        .current_store()
+        .map_err(|source| CliError::Index {
+        root: root.to_path_buf(),
+        source,
+    })?;
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut builder = match mode {
@@ -1079,7 +1081,7 @@ mod tests {
     /// `list`/`table`/`task` write their primary output to stdout, which
     /// this module doesn't capture (see [`super::list::List::render`]'s
     /// docs for why). Their CLI-equivalent assertions below drive
-    /// [`FileIndex`] directly instead, the same shared interface those
+    /// [`WorkspaceIndex`] directly instead, the same shared interface those
     /// commands' `render`/`lines` methods call. [`Cli::run`] dispatch is
     /// still exercised directly wherever the observable is on the
     /// [`Result`] itself, in the diagnostics tests below and every
@@ -1117,7 +1119,7 @@ mod tests {
         /// resolves unambiguously regardless of proximity tie-breaking.
         ///
         /// Returns the trusted [`ConfigService`] (for [`Cli::run`]
-        /// dispatch) and the project root (for direct [`FileIndex`]/
+        /// dispatch) and the project root (for direct [`WorkspaceIndex`]/
         /// [`TemplateService`] calls).
         fn seed_book_project(root: &Path) -> (ConfigService, PathBuf) {
             let project = TestProject::trusted(root.join("project"));
@@ -1278,7 +1280,7 @@ mod tests {
             // exactly what the CLI command just queried - via the same
             // `run_from_store` seam `table`'s render path uses internally.
             let store = IndexerService::new(&project)
-                .sync()
+                .current_store()
                 .expect("store already current after the second cli call");
             let rendered = QueryService::new("class")
                 .run_from_store(

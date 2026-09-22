@@ -3,25 +3,25 @@
 //! [`super::service::IndexerService`] is the only producer; construction flows
 //! through its `build`, `load`, or `refresh` methods.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::inlinks::InlinkMap;
+use super::{inlinks::InlinkMap, sort::SortedByPath};
 use crate::{FileBase, Note};
 
 /// Persisted file records with parsed note metadata and derived inbound links.
 ///
 /// Every regular file under the project root contributes one [`FileEntry`].
 /// Markdown files include a parsed [`Note`]; all entries may carry backlinks.
-/// [`IndexerService`] produces, persists, and loads it; `FileIndex` itself
+/// [`IndexerService`] produces, persists, and loads it; `WorkspaceIndex` itself
 /// carries no `&Path`.
 ///
 /// [`IndexerService`]: super::service::IndexerService
 #[derive(Clone, Debug)]
-pub struct FileIndex {
+pub struct WorkspaceIndex {
     entries: Box<[FileEntry]>,
 }
 
-impl FileIndex {
+impl WorkspaceIndex {
     pub(super) fn new(entries: Box<[FileEntry]>) -> Self {
         Self {
             entries,
@@ -29,12 +29,14 @@ impl FileIndex {
     }
 
     /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
-    #[cfg(any(test, feature = "test-utils"))]
+    ///
+    /// Both slices must be path-ascending; [`SortedByPath`] carries that
+    /// invariant so only in-crate producers can call this.
     #[inline]
     #[must_use]
-    pub fn assemble(
-        files: Vec<FileBase>,
-        notes: Vec<Note>,
+    pub(crate) fn assemble(
+        files: SortedByPath<FileBase>,
+        notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
         Self::assemble_internal(files, notes, inlinks)
@@ -66,27 +68,20 @@ impl FileIndex {
         }
 
         let inlinks = InlinkMap::new(&parsed, &files);
-        Self::assemble(files, parsed, inlinks)
-    }
-
-    /// Assembles an index from sorted `files`, sorted `notes`, and `inlinks`.
-    #[cfg(not(any(test, feature = "test-utils")))]
-    #[inline]
-    #[must_use]
-    pub(crate) fn assemble(
-        files: Vec<FileBase>,
-        notes: Vec<Note>,
-        inlinks: InlinkMap,
-    ) -> Self {
-        Self::assemble_internal(files, notes, inlinks)
+        Self::assemble(
+            SortedByPath::assumed_sorted(files),
+            SortedByPath::sorted(parsed),
+            inlinks,
+        )
     }
 
     fn assemble_internal(
-        files: Vec<FileBase>,
-        notes: Vec<Note>,
+        files: SortedByPath<FileBase>,
+        notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
-        let mut notes_iter = notes.into_iter().peekable();
+        let files = files.into_vec();
+        let mut notes_iter = notes.into_vec().into_iter().peekable();
         let mut entries = Vec::with_capacity(files.len());
         for file in files {
             while notes_iter
@@ -98,8 +93,9 @@ impl FileIndex {
             let note = notes_iter.next_if(|note| note.path() == file.path());
             entries.push(FileEntry::new(file, note));
         }
+        let mut entries = SortedByPath::assumed_sorted(entries);
         redistribute_inlinks(&mut entries, inlinks);
-        Self::new(entries.into_boxed_slice())
+        Self::new(entries.into_vec().into_boxed_slice())
     }
 
     /// Returns [`FileEntry`]s, sorted by path.
@@ -172,7 +168,13 @@ impl FileEntry {
     }
 }
 
-/// Position of a [`FileEntry`] within [`FileIndex::entries`].
+impl crate::path::HasPath for FileEntry {
+    fn path(&self) -> &Path {
+        self.file().path()
+    }
+}
+
+/// Position of a [`FileEntry`] within [`WorkspaceIndex::entries`].
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RowIndex(usize);
 
@@ -191,15 +193,16 @@ impl RowIndex {
 }
 
 /// Moves inlink sources into their matching [`FileEntry`]s.
-pub(super) fn redistribute_inlinks(
-    entries: &mut [FileEntry],
+///
+/// `entries` is a typed path-sorted view, so each lookup is a binary search
+/// against the same order the index stores rows in; a miss means a genuinely
+/// unknown target, not an unsorted slice.
+fn redistribute_inlinks(
+    entries: &mut SortedByPath<FileEntry>,
     inlinks: InlinkMap,
 ) {
     for (target, sources) in inlinks.into_entries() {
-        if let Ok(index) =
-            entries.binary_search_by(|entry| entry.file().path().cmp(&target))
-            && let Some(entry) = entries.get_mut(index)
-        {
+        if let Some(entry) = entries.get_mut_by_path(&target) {
             entry.set_inlinks(sources);
         }
     }
@@ -278,6 +281,50 @@ mod tests {
             assert_eq!(png_entry.inlinks(), [PathBuf::from("note.md")]);
         }
     }
+    mod inlink_distribution {
+        use std::collections::HashMap;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn entry_rows(paths: &[&str]) -> Vec<FileEntry> {
+            paths
+                .iter()
+                .map(|&p| FileEntry::new(FileBase::note_for_test(p), None))
+                .collect()
+        }
+
+        #[test]
+        fn redistributes_inlinks_and_keeps_rows_findable_by_path() {
+            let mut entries =
+                SortedByPath::sorted(entry_rows(&["a.md", "b.md"]));
+            let links = InlinkMap::from_raw(HashMap::from([
+                (
+                    PathBuf::from("a.md"),
+                    vec![PathBuf::from("b.md")].into_boxed_slice(),
+                ),
+                (
+                    PathBuf::from("missing.md"),
+                    vec![PathBuf::from("a.md")].into_boxed_slice(),
+                ),
+            ]));
+
+            redistribute_inlinks(&mut entries, links);
+
+            let a = entries
+                .get_mut_by_path(Path::new("a.md"))
+                .expect("a.md still findable");
+            assert_eq!(a.inlinks(), [PathBuf::from("b.md")]);
+            let b = entries
+                .get_mut_by_path(Path::new("b.md"))
+                .expect("b.md still findable");
+            assert_eq!(b.inlinks(), Vec::<PathBuf>::new());
+            assert!(
+                entries.binary_search_by_path(Path::new("missing.md")).is_err()
+            );
+        }
+    }
     mod new_test {
         use pretty_assertions::assert_eq;
 
@@ -285,7 +332,7 @@ mod tests {
 
         #[test]
         fn assembles_index_from_note_tuples() {
-            let index = FileIndex::new_test(&[
+            let index = WorkspaceIndex::new_test(&[
                 ("a.md", "# A\nLink to [[b]]"),
                 ("b.md", "# B"),
             ]);
@@ -307,7 +354,7 @@ mod tests {
             let count_entries =
                 || std::fs::read_dir(".").map_or(0, std::iter::Iterator::count);
             let before = count_entries();
-            let _index = FileIndex::new_test(&[(
+            let _index = WorkspaceIndex::new_test(&[(
                 "ephemeral_test_note.md",
                 "# Ephemeral\ncontent with [[link]]",
             )]);

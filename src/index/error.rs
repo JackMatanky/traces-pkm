@@ -8,7 +8,7 @@ use crate::{DirTreeError, path::PathError};
 
 pub type IndexResult<T> = std::result::Result<T, IndexError>;
 
-/// Failures returned by [`super::FileIndex`] operations.
+/// Failures returned by [`super::WorkspaceIndex`] operations.
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
@@ -17,7 +17,7 @@ pub type IndexResult<T> = std::result::Result<T, IndexError>;
 pub enum IndexError {
     /// Database access or record serialization/deserialization failed.
     #[error(transparent)]
-    Store(#[from] DbError),
+    Store(#[from] StoreError),
     /// Directory traversal failed during scan.
     #[error(transparent)]
     Walk(#[from] DirTreeError),
@@ -31,13 +31,20 @@ pub enum IndexError {
         #[source]
         source: io::Error,
     },
+    /// File metadata could not be inspected during scan.
+    #[error("failed to inspect {path}")]
+    Inspect {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }
 
-pub type DbResult<T> = std::result::Result<T, DbError>;
+pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 /// Low-level index persistence failure.
 #[derive(Debug, Error)]
-pub enum DbError {
+pub enum StoreError {
     /// Filesystem access failed.
     #[error("failed to access {path}")]
     Io {
@@ -74,12 +81,12 @@ mod tests {
 
     use super::*;
 
-    mod db_error_display {
+    mod store_error_display {
         use super::*;
 
         #[test]
         fn io_includes_path_in_message() {
-            let err = DbError::Io {
+            let err = StoreError::Io {
                 path: PathBuf::from("data.csv"),
                 source: io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -92,7 +99,7 @@ mod tests {
 
         #[test]
         fn redb_includes_path_in_message() {
-            let err = DbError::Redb {
+            let err = StoreError::Redb {
                 path: PathBuf::from(".traces/index.redb"),
                 source: Box::new(redb::Error::DatabaseAlreadyOpen),
             };
@@ -102,7 +109,7 @@ mod tests {
 
         #[test]
         fn serialize_includes_path_in_message() {
-            let err = DbError::Serialize {
+            let err = StoreError::Serialize {
                 path: PathBuf::from("note.md"),
                 source: postcard::Error::DeserializeUnexpectedEnd,
             };
@@ -112,7 +119,7 @@ mod tests {
 
         #[test]
         fn deserialize_includes_path_in_message() {
-            let err = DbError::Deserialize {
+            let err = StoreError::Deserialize {
                 path: PathBuf::from("note.md"),
                 source: postcard::Error::DeserializeUnexpectedEnd,
             };
@@ -133,22 +140,49 @@ mod tests {
 
             assert!(err.to_string().contains("bad.md"));
         }
+
+        #[test]
+        fn inspect_message_starts_with_failed_to_inspect() {
+            let err = IndexError::Inspect {
+                path: PathBuf::from("notes/gone.md"),
+                source: io::Error::new(io::ErrorKind::NotFound, "missing"),
+            };
+
+            assert_eq!(err.to_string(), "failed to inspect notes/gone.md");
+        }
+
+        #[test]
+        fn inspect_exposes_the_io_source() {
+            let source =
+                io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+            let err = IndexError::Inspect {
+                path: PathBuf::from("notes/locked.md"),
+                source,
+            };
+
+            let reported = err
+                .source()
+                .expect("io source")
+                .downcast_ref::<io::Error>()
+                .expect("io::Error");
+            assert_eq!(reported.kind(), io::ErrorKind::PermissionDenied);
+        }
     }
 
     mod transparent_forwarding {
         use super::*;
 
         #[test]
-        fn store_display_matches_the_wrapped_db_error_with_no_added_text() {
-            let db_error = DbError::Redb {
+        fn store_display_matches_the_wrapped_store_error_with_no_added_text() {
+            let store_error = StoreError::Redb {
                 path: PathBuf::from(".traces/index.redb"),
                 source: Box::new(redb::Error::DatabaseAlreadyOpen),
             };
-            let db_message = db_error.to_string();
+            let store_message = store_error.to_string();
 
-            let wrapped = IndexError::Store(db_error);
+            let wrapped = IndexError::Store(store_error);
 
-            assert_eq!(wrapped.to_string(), db_message);
+            assert_eq!(wrapped.to_string(), store_message);
         }
 
         #[test]
@@ -166,17 +200,17 @@ mod tests {
         }
 
         #[test]
-        fn store_source_skips_straight_to_the_db_errors_own_source() {
+        fn store_source_skips_straight_to_the_store_errors_own_source() {
             // `#[error(transparent)]` hides the wrapping variant from the
             // source chain: `.source()` returns the wrapped error's source,
-            // not the `DbError`.
-            let err = IndexError::Store(DbError::Io {
+            // not the `StoreError`.
+            let err = IndexError::Store(StoreError::Io {
                 path: PathBuf::from("x"),
                 source: io::Error::new(io::ErrorKind::BrokenPipe, "pipe"),
             });
 
             let source = err.source().expect("source present");
-            assert!(source.downcast_ref::<DbError>().is_none());
+            assert!(source.downcast_ref::<StoreError>().is_none());
             assert_eq!(
                 source.downcast_ref::<io::Error>().map(io::Error::kind),
                 Some(io::ErrorKind::BrokenPipe)
@@ -213,15 +247,18 @@ mod tests {
         }
 
         #[test]
-        fn db_error_converts_to_the_store_variant() {
-            let db_error = DbError::Io {
+        fn store_error_converts_to_the_store_variant() {
+            let store_error = StoreError::Io {
                 path: PathBuf::from("x"),
                 source: io::Error::other("boom"),
             };
 
-            let converted: IndexError = db_error.into();
+            let converted: IndexError = store_error.into();
 
-            assert!(matches!(converted, IndexError::Store(DbError::Io { .. })));
+            assert!(matches!(
+                converted,
+                IndexError::Store(StoreError::Io { .. })
+            ));
         }
 
         #[test]

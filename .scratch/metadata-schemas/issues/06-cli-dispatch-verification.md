@@ -2,7 +2,7 @@
 
 **What to build:** Schema-driven Templates render and write through the real config-loading + trust pipeline: on a trusted project fixture with `.traces/schemas/*.toml` Schemas and Notes carrying `class:` frontmatter, `traces template` renders a Schema-backed Template (schema namespace, file-field options, and/or class queries) and writes the output. This proves the pieces compose end-to-end through parsed command arguments and the CLI's error presentation.
 
-**Blocked by:** 04 — File-Field Options from the FileIndex
+**Blocked by:** 04 — File-Field Options from the WorkspaceIndex
 
 **Status:** implemented
 
@@ -31,7 +31,7 @@ A Schema-backed Template — one that calls `schema.get(...).field(...)`, consum
 - Test fixture pattern: `ConfigService::at` with isolated trust stores, `CwdGuard::enter`, trusted project fixture with Templates and Schemas.
 
 **Fixture guidance:**
-- The happy-path fixture should exercise all three consumer surfaces: `schema.get(...)` with `.field(...)`, a `file`-typed field resolving options from the FileIndex, and `query.from_class(...)`/`tasks.from_class(...)`. A single template combining these proves the pieces compose; separate templates per surface are also acceptable if clearer.
+- The happy-path fixture should exercise all three consumer surfaces: `schema.get(...)` with `.field(...)`, a `file`-typed field resolving options from the WorkspaceIndex, and `query.from_class(...)`/`tasks.from_class(...)`. A single template combining these proves the pieces compose; separate templates per surface are also acceptable if clearer.
 - The error-path fixture uses a template referencing an unknown Schema name, asserting the CLI surfaces a render error (not a panic).
 - Follow the existing `cli/template.rs` test pattern: `create_test_project` / `service(temp)` / `trust_config` helpers, `CwdGuard::enter`, `Template::new(...).run(...)`.
 
@@ -115,7 +115,7 @@ re-derived from source, not trusted).
   `field.selectable_values()` joined by the template's own `| join(',')` →
   `"reading,read"`. `.field('cover')` → `file_filter` is `Some`, so
   `file_field_values` (`schema.rs:220-252`) calls
-  `FileIndex::file_options` and maps each hit through `file_option_value`
+  `WorkspaceIndex::file_options` and maps each hit through `file_option_value`
   (`schema.rs:321-327`), whose `value` is `FileRecord`'s path
   **relative to the project root** (`index/file.rs:47`,
   `path.strip_prefix(root)`) — confirms the asserted `covers/dune.md` (not an

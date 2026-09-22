@@ -21,7 +21,7 @@
 
 ### Discussion
 
-- **Why `Note` doesn't already have this:** `derive_inlinks`/`resolve_target` (`inlinks.rs`) take `&[Note]` only; `Note` (`note/model.rs`) stores `path: PathBuf` but not folder-proximity-friendly data beyond that path. `FileRecord::name` (`index/file.rs:25`) is already a `BaseName`, but `FileRecord` and `Note` are separate parallel collections (`FileIndex::records`, `FileIndex::notes`) joined by path only where needed (`matched_pairs` in `mod.rs`). Obsidian's real algorithm needs to compare each ambiguous candidate's folder depth/shared-ancestor distance to the *linking* Note's folder, which isn't in scope for a function that only sees `&[Note]`.
+- **Why `Note` doesn't already have this:** `derive_inlinks`/`resolve_target` (`inlinks.rs`) take `&[Note]` only; `Note` (`note/model.rs`) stores `path: PathBuf` but not folder-proximity-friendly data beyond that path. `FileRecord::name` (`index/file.rs:25`) is already a `BaseName`, but `FileRecord` and `Note` are separate parallel collections (`WorkspaceIndex::records`, `WorkspaceIndex::notes`) joined by path only where needed (`matched_pairs` in `mod.rs`). Obsidian's real algorithm needs to compare each ambiguous candidate's folder depth/shared-ancestor distance to the *linking* Note's folder, which isn't in scope for a function that only sees `&[Note]`.
 - **Why not just call `BaseName::from` today:** `BaseName` stores an owned `String` and is built via a two-step fallible conversion (`file_name.rs` `TryFrom<&Path> for FileName` → `From<&FileName> for BaseName`). `find_unique_by_stem`'s O(n) fallback scan runs per unresolved wikilink outlink; allocating a `BaseName` per candidate per scan is wasted work when `Path::file_stem()` gives the same string borrowed. A `BaseNameRef` (borrowed, `Deref<Target = str>` or similar, mirroring `&str` next to `String`) would let this path and any future proximity comparison reuse the shared type without paying for an allocation it doesn't need.
 - **Existing precedent for "ambiguous → error, don't guess":** `template/loader.rs::find_name_in` (`rejects_an_ambiguous_stem_match` test) already rejects ambiguous stem matches for template resolution rather than picking one. Any proximity rule added here should keep that same fallback: resolve when Obsidian's rule *can* disambiguate, still return `None`/error when it can't (e.g. two equally-nested candidates).
 - **Perf groundwork lands here, not a separate ticket:** the current `find_unique_by_stem` (`inlinks.rs:142-148`) rescans every Note per unresolved wikilink — the O(l·n) worst case already documented in `derive_inlinks`'s `# Performance` note. The proximity rule this ticket introduces needs the same thing that fixes that cost: a `HashMap<&str, Vec<&Path>>` stem→candidates index built once per `derive_inlinks` call and threaded through `resolve_target` (as `find_unique_by_stem`'s new argument). It turns both uniqueness checks and candidate enumeration into O(1)-average lookups — O(n) to build, O(l) total for `l` outlinks — and is a strict precondition for the proximity comparison, which cannot pick the nearest candidate without first enumerating every same-stem candidate. Building it here avoids shipping an intermediate form that scans the same Notes twice.
@@ -66,7 +66,7 @@ When a wikilink's stem matches more than one indexed Note, resolution picks the 
 **Key interfaces:**
 - `index/inlinks.rs` — `resolve_target`, `find_unique_by_stem`, and `derive_inlinks`'s doc comment (which currently states the O(n) stem-fallback cost and the ambiguous-resolves-to-`None` behavior; both need updating if the algorithm changes complexity or ambiguity handling).
 - `file_name.rs` — add `BaseNameRef` alongside `FileName`/`BaseName`, following the module's existing pattern of distinct newtypes for distinct semantics (see the module doc's rationale for keeping `FileName`/`BaseName` separate).
-- `index/mod.rs` — `FileIndex::records`/`FileIndex::notes` and `matched_pairs`, if the resolution path ends up needing both collections together.
+- `index/mod.rs` — `WorkspaceIndex::records`/`WorkspaceIndex::notes` and `matched_pairs`, if the resolution path ends up needing both collections together.
 - `index/file.rs` — `FileRecord::name`/`FileRecord::folder`, the data a proximity comparison would read.
 
 **Out of scope:**
@@ -101,7 +101,7 @@ in `file_name.rs`.
 ### Adversarial Review
 
 Re-audited the merged implementation against every checklist item and the
-broader systems it touches (`FileIndex::build`/`refresh`/`load`/`persist`,
+broader systems it touches (`WorkspaceIndex::build`/`refresh`/`load`/`persist`,
 `store.rs`'s redb `LINKS` table, `query.rs`'s `IndexRecord::inlinks`, and
 `template/loader.rs`'s separate stem-resolution path), not just the diff.
 
@@ -120,7 +120,7 @@ broader systems it touches (`FileIndex::build`/`refresh`/`load`/`persist`,
   correct direction).
 
 **Systemic checks (no issues found):**
-- `FileIndex::refresh`'s `dirty = records != previous.records || notes !=
+- `WorkspaceIndex::refresh`'s `dirty = records != previous.records || notes !=
   previous.notes` (`mod.rs`) already catches every add/remove/modify as a
   full-collection comparison, so it correctly forces a full `derive_inlinks`
   recompute whenever the candidate set proximity resolution depends on could
@@ -141,7 +141,7 @@ broader systems it touches (`FileIndex::build`/`refresh`/`load`/`persist`,
   no schema/algorithm version stamp, so a vault indexed before this feature
   shipped keeps serving pre-proximity-resolved inlinks via `load()` until an
   unrelated file change next triggers `dirty`. This is a property of the
-  whole `FileIndex` caching design (any `derive_inlinks` algorithm change has
+  whole `WorkspaceIndex` caching design (any `derive_inlinks` algorithm change has
   it), not a defect introduced here.
 
 **Findings fixed in place:**

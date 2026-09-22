@@ -10,7 +10,7 @@ with `FieldPath::List(ListField)`, embedding `TaskField` within `ListField` to
 represent task-specific fields while presenting a unified, canonical
 `list.<field>` query interface with no `task.*` aliasing. Resolve list field
 values as borrowed references directly from the in-memory `Note` in
-`FileIndex`. Implement inline metadata precedence and add `file.tags`.
+`WorkspaceIndex`. Implement inline metadata precedence and add `file.tags`.
 
 **Blocked by:** 07 (needs flat `Note.lists` storage and compacted `ListItem`).
 
@@ -32,7 +32,7 @@ values as borrowed references directly from the in-memory `Note` in
   equivalent `list.<field>`.
 - [x] Implement `QueryRow::resolve_ref` for `ListField`, borrowing text slices
   (`list.text`, `list.raw_text`, `list.status`, `list.priority`) directly from
-  `FileIndex`.
+  `WorkspaceIndex`.
 - [x] Implement tri-state completion on `list.completed`: `Some(true)` (Done),
   `Some(false)` (Incomplete: Todo, In Progress, On Hold), `None` (Cancelled and
   non-task items).

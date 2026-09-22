@@ -187,6 +187,12 @@ impl FileBase {
     }
 }
 
+impl crate::path::HasPath for FileBase {
+    fn path(&self) -> &Path {
+        Self::path(self)
+    }
+}
+
 /// Final path component of a file, including any extension.
 ///
 /// Wraps the text returned by [`Path::file_name`]. For `todo.md`, stores

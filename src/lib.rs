@@ -50,7 +50,7 @@
 //!
 //! - `Config`, `ConfigService`, `TrustRequest`: Project configuration and trust
 //!   verification.
-//! - `FileIndex`, `IndexerService`: Persistent index engine and services.
+//! - `WorkspaceIndex`, `IndexerService`: Persistent index engine and services.
 //! - `QueryBuilder`, `QuerySet`, `QueryService`: Query planning and execution.
 //! - `Schema`, `SchemaService`: Schema registry and inheritance graph.
 //! - `TemplateService`, `CommitPolicy`, `WriteMode`: Template rendering and
@@ -117,7 +117,7 @@ pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 pub(crate) use index::IndexerService;
 #[cfg(any(test, feature = "test-utils"))]
 pub use index::{
-    FileEntry, FileIndex, IndexerService, InlinkMap, SyncReport,
+    FileEntry, IndexerService, InlinkMap, RefreshReport, WorkspaceIndex,
     path as path_codec,
 };
 pub(crate) use lexer::{
@@ -186,8 +186,8 @@ mod test_support {
     };
 
     use crate::{
-        Config, ConfigService, FileIndex, IndexerService, MarkdownParserInput,
-        Note, Tag,
+        Config, ConfigService, IndexerService, MarkdownParserInput, Note, Tag,
+        WorkspaceIndex,
         config::{Discovered, LocalConfigFile, TrustRequest},
         parse_markdown,
     };
@@ -453,7 +453,7 @@ mod test_support {
         /// - Panics if the index build fails. Fixture-only code.
         #[inline]
         #[must_use]
-        pub fn build_index(&self) -> FileIndex {
+        pub fn build_index(&self) -> WorkspaceIndex {
             self.indexer().build().expect("build index")
         }
 
@@ -464,7 +464,7 @@ mod test_support {
         /// - Panics if the build or persist fails. Fixture-only code.
         #[inline]
         #[must_use]
-        pub fn persist_index(&self) -> (IndexerService, FileIndex) {
+        pub fn build_and_persist(&self) -> (IndexerService, WorkspaceIndex) {
             let indexer = self.indexer();
             let index = indexer.build().expect("build index");
             indexer.persist(&index).expect("persist index");
@@ -502,8 +502,8 @@ mod test_support {
         parse_note(Path::new("note.md"), src)
     }
 
-    /// Builds an in-memory [`FileIndex`] wrapped in an [`Arc`] from note path
-    /// and content pairs with zero disk I/O.
+    /// Builds an in-memory [`WorkspaceIndex`] wrapped in an [`Arc`] from note
+    /// path and content pairs with zero disk I/O.
     ///
     /// # Examples
     ///
@@ -514,8 +514,8 @@ mod test_support {
     /// ```
     #[inline]
     #[must_use]
-    pub fn build_test_index(notes: &[(&str, &str)]) -> Arc<FileIndex> {
-        Arc::new(FileIndex::new_test(notes))
+    pub fn build_test_index(notes: &[(&str, &str)]) -> Arc<WorkspaceIndex> {
+        Arc::new(WorkspaceIndex::new_test(notes))
     }
 
     /// Parses a [`Tag`] string slice for tests.
@@ -744,7 +744,7 @@ mod test_support {
                 project.write_schema("tag_schema", "fields = {}\n");
                 project.write_schema_value("vals.toml", "vals = []\n");
 
-                let (indexer, index) = project.persist_index();
+                let (indexer, index) = project.build_and_persist();
                 let reloaded = indexer.load().expect("load persisted index");
                 assert_eq!(reloaded.entries().len(), index.entries().len());
                 assert!(

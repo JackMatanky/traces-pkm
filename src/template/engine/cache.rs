@@ -1,12 +1,12 @@
 //! Cache render-scoped resources in `State`'s temp storage.
 //!
-//! [`cached`] backs `query.rs`'s [`FileIndex`](crate::index::FileIndex)
-//! cache: it stashes a load result behind a fixed key so a render calling
-//! into a namespace several times pays for one load, instead of
-//! hand-rolling its own downcastable wrapper and get-or-load body per
-//! resource. [`set_temp`]/[`get_temp`] are the same stash/retrieve
-//! mechanism without a load step, for a value that's cheap to build (an
-//! `Arc` clone) rather than expensive to load: `schema.rs` seeds the
+//! [`cached`] backs `query.rs`'s
+//! [`WorkspaceIndex`](crate::index::WorkspaceIndex) cache: it stashes a load
+//! result behind a fixed key so a render calling into a namespace several times
+//! pays for one load, instead of hand-rolling its own downcastable wrapper and
+//! get-or-load body per resource. [`set_temp`]/[`get_temp`] are the same
+//! stash/retrieve mechanism without a load step, for a value that's cheap to
+//! build (an `Arc` clone) rather than expensive to load: `schema.rs` seeds the
 //! render's [`SchemaService`](crate::schema::SchemaService) this way so
 //! [`Schema`](crate::schema::Schema)'s own minijinja `Object` impl can reach
 //! it without holding a reference itself.

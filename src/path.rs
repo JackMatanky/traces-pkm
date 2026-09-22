@@ -1,6 +1,7 @@
 //! Validate relative paths and confine them to a root.
 //!
 //! Main types:
+//! - [`HasPath`] - Path-addressable row trait for sorted storage views
 //! - [`RelativePath`] - Relative path accepted by lexical checks only
 //! - [`SafeRelativePath`] - Path accepted by lexical and filesystem checks
 //! - [`PathError`] - Path validation failure
@@ -24,6 +25,15 @@ use std::{
 
 use strict_path::{PathBoundary, StrictPathError};
 use thiserror::Error;
+
+/// A row addressable by its project-relative path.
+///
+/// Implemented by stored index rows so sorted containers can order and search
+/// by path without knowing the concrete row type.
+pub(crate) trait HasPath {
+    /// Returns the row's project-relative path.
+    fn path(&self) -> &Path;
+}
 
 /// Stores a relative path proven safe by lexical checks.
 ///

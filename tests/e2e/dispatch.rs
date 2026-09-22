@@ -10,7 +10,7 @@ mod trust_and_diagnostics {
     /// Trusts a project, writes a note, runs `index`, and checks
     /// `.traces/index.redb` gets persisted.
     ///
-    /// A `FileIndex::persist` unit test proves the write; only a spawned
+    /// A `WorkspaceIndex::persist` unit test proves the write; only a spawned
     /// process proves the CLI's `index` subcommand actually wires argv to
     /// it and the result survives process exit.
     #[test]
@@ -473,10 +473,10 @@ mod template {
     #[test]
     fn dry_run_prints_rendered_content_to_stdout_without_writing() {
         let sandbox = Sandbox::trusted();
-        // Notes live under `notes/`, scoped away from `templates/`: `FileIndex`
-        // indexes every markdown file under the project root, including the
-        // template file itself, so an unscoped `query.from()` here would also
-        // count `report.md`.
+        // Notes live under `notes/`, scoped away from `templates/`:
+        // `WorkspaceIndex` indexes every markdown file under the
+        // project root, including the template file itself, so an
+        // unscoped `query.from()` here would also count `report.md`.
         sandbox.write_note("notes/a.md", "# A\n");
         sandbox.write_note("notes/b.md", "# B\n");
         sandbox.write_template(

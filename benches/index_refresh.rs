@@ -2,7 +2,7 @@
 //! reconciliation (`IndexerService::refresh`).
 //!
 //! Exposes and monitors the execution cost of filesystem scan/diffing, store
-//! updates, and incremental [`FileIndex`] reconciliation across clean and
+//! updates, and incremental [`WorkspaceIndex`] reconciliation across clean and
 //! mutated states.
 //!
 //! ### Data Flow Diagram
@@ -10,14 +10,14 @@
 //! ```text
 //! [Disk Files] ──(mtime / diff)──► [Store Txn / Updates]
 //!                                          │
-//!                                          └──(Reconcile)──► [FileIndex]
+//!                                          └──(Reconcile)──► [WorkspaceIndex]
 //! ```
 //!
 //! ### Profiling Integration
 //!
 //! To profile index refresh CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench index_refresh -- --bench "FileIndex::refresh/no-op/1000"
+//! cargo flamegraph --bench index_refresh -- --bench "WorkspaceIndex::refresh/no-op/1000"
 //! ```
 //!
 //! Run via `mise run bench -f index_refresh` (or `mise run bench -m index`):
@@ -37,8 +37,8 @@ use criterion::{
 };
 use tempfile::TempDir;
 use traces_pkm::{
-    FileIndex, IndexerService, QueryBuilder, QueryService, QuerySet,
-    SourceSelector, SyncReport,
+    IndexerService, QueryBuilder, QueryService, QuerySet, RefreshReport,
+    SourceSelector, WorkspaceIndex,
 };
 
 #[expect(
@@ -63,7 +63,9 @@ use common::{
 
 const MUTATION_ANCHOR_COUNTS: &[usize] = &[1_000, 5_000];
 
-fn observe_refresh(indexer: &IndexerService) -> (FileIndex, SyncReport) {
+fn observe_refresh(
+    indexer: &IndexerService,
+) -> (WorkspaceIndex, RefreshReport) {
     let (index, report) = indexer.refresh_with_report().expect("refresh index");
     let entries = index.entries();
     let inlink_count: usize =
@@ -160,7 +162,7 @@ fn bench_sync_and_run_scenario<F>(
 /// `linked-single-upsert`) across [`MUTATION_ANCHOR_COUNTS`] (`[1_000,
 /// 5_000]`); reports note throughput. Fixture: persisted project created
 /// outside timing. Timed work scans mtimes, reconciles deltas, and updates the
-/// in-memory [`FileIndex`].
+/// in-memory [`WorkspaceIndex`].
 ///
 /// Expected outcomes:
 /// - No-op refresh scales with directory scan/diff without note parsing or
@@ -172,7 +174,7 @@ fn bench_sync_and_run_scenario<F>(
 /// - No-op refresh scaling with full vault parse time, or single-note mutations
 ///   taking time proportional to full index rebuilds.
 fn bench_file_index_refresh(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::refresh");
+    let mut group = c.benchmark_group("WorkspaceIndex::refresh");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -283,8 +285,8 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 /// Subtraction formulas:
 /// - `no-op - zero-row`: Isolates tag index lookup cost.
 /// - `full_vault_scan - zero-row`: Isolates full-table row decode cost.
-/// - `refresh no-op - zero-row`: Isolates full [`FileIndex`] materialization
-///   cost.
+/// - `refresh no-op - zero-row`: Isolates full [`WorkspaceIndex`]
+///   materialization cost.
 ///
 /// Expected outcomes:
 /// - `zero-row` tracks filesystem scan/diff time without query work.
@@ -367,7 +369,7 @@ fn bench_sync_and_run(c: &mut Criterion) {
 /// - Multi-upsert or delete triggering secondary index reconstruction beyond
 ///   the modified delta.
 fn bench_file_index_refresh_profiles(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::refresh/profiles");
+    let mut group = c.benchmark_group("WorkspaceIndex::refresh/profiles");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );

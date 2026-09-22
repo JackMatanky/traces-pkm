@@ -2,7 +2,7 @@
 //! queries.
 //!
 //! This module evaluates document-level source expressions against candidate
-//! notes in a [`FileIndex`](crate::index::FileIndex). It supports:
+//! notes in a [`WorkspaceIndex`](crate::index::WorkspaceIndex). It supports:
 //! - Tags: `#tag` and `#nested/tag` patterns with hierarchical matching.
 //! - Paths: Exact files, directory prefixes (`folder/`), and glob patterns
 //!   (`**/*.md`).
@@ -927,7 +927,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::{FileIndex, IndexerService};
+        use crate::{IndexerService, WorkspaceIndex};
 
         fn find_entry<'a>(
             entries: &'a [crate::index::FileEntry],
@@ -941,7 +941,7 @@ mod tests {
         fn indexed_note(
             content: &str,
             path: &str,
-        ) -> (tempfile::TempDir, FileIndex) {
+        ) -> (tempfile::TempDir, WorkspaceIndex) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let full_path = temp.path().join(path);
             if let Some(parent) = full_path.parent() {

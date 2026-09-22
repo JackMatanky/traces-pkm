@@ -615,7 +615,7 @@ archive. Verdicts and weaknesses below.
 | Q1 | Sound | `NoteFieldValue::Null` on required fields correctly detected. Object on non-Object rejected. Prereq: ticket 19 for byte spans. |
 | Q2 | Sound with fix | Check canonical match first — `suggest_field("Status")` returns `Some("status")` via canonical match, causing false Warning. Skip diagnostic if field matches any schema field canonically. |
 | Q3 | Sound with prereqs | Schema name → file path trivial (`{dir}/{name}.toml`). Needs `origin` on `SchemaFieldDef` and `parent_order` on `Schema`. No source positions in schema TOML in v1. |
-| Q4 | Sound with improvement | Merge `DocumentStore` overlays (unsaved buffers) with `FileIndex` results. Sort by relevance. Skip `_`/`.`-prefixed files. |
+| Q4 | Sound with improvement | Merge `DocumentStore` overlays (unsaved buffers) with `WorkspaceIndex` results. Sort by relevance. Skip `_`/`.`-prefixed files. |
 | Q5 | Sound | Schema resolution via class field → `SchemaService::get()`. Suggested-but-unset = set difference. Needs `parent_order` for ancestor chain. |
 | Q6 | Sound | Empty `values` list = skip validation (not "must be empty"). Key insight. Case-sensitive by convention. |
 | Q7 | Sound with caveat | Parallel map clean. `#[serde(skip)]` preserves postcard. YAML offset tracking unsolved — `serde_yaml` lacks per-field positions. Phase 1: stub. Phase 2: line-offset re-scan. Manual `PartialEq` required. |
@@ -695,7 +695,7 @@ default — `Information` severity is already more opinionated.
 | File-Class | `src/file_class_expander.rs`, `src/query/grammar/source.rs` |
 | Query/diagnostics | `src/query/error.rs`, `src/query/service.rs` |
 | Config | `src/config/` (SchemasConfig, schema directory resolution) |
-| Index | `src/index/entry.rs` (FileIndex, FileEntry) |
+| Index | `src/index/entry.rs` (WorkspaceIndex, FileEntry) |
 | Position | `src/position.rs` (ByteOffset, SourceLine, ByteTracker) |
 
 ### Research sub-documents

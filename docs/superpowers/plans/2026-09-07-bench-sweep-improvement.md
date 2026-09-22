@@ -546,7 +546,7 @@ class BenchmarkDataPoint:
     """A single measured benchmark result extracted from Criterion output.
 
     Attributes:
-        group: The benchmark group name (e.g. ``FileIndex::build``).
+        group: The benchmark group name (e.g. ``WorkspaceIndex::build``).
         file_count: The parameter value — number of files in the workspace.
         mean_seconds: Mean wall-clock time in seconds (from ``mean.point_estimate``).
     """
@@ -1074,7 +1074,7 @@ Every benchmark file documents its flamegraph command. Example:
 
 ```bash
 cargo flamegraph --bench index_lifecycle -- --bench \
-  "FileIndex::refresh/no-op/1000"
+  "WorkspaceIndex::refresh/no-op/1000"
 ```
 
 ## Adding New Benchmarks

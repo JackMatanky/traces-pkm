@@ -21,7 +21,7 @@
 
 **Blocker status (2026-08-04):** #07, #08, #09, #10 are all `completed` and merged to `main`. **#11 (Obsidian Wikilink Ambiguity Resolution) is the sole live blocker** — implementation is in progress on branch `feat/wikilink-proximity-resolution` (worktree `.worktrees/wikilink-proximity`). This ticket should not be picked up until #11 merges.
 
-**Already satisfied:** criterion 6 ("no implementation ticket leaves redb internals exposed to Template or CLI callers") appears already satisfied — grep for `redb` in `src/template/` and `src/cli/` returns zero hits; the `FileIndex` interface is deep. The agent should verify this holds after #11 lands rather than rebuild it.
+**Already satisfied:** criterion 6 ("no implementation ticket leaves redb internals exposed to Template or CLI callers") appears already satisfied — grep for `redb` in `src/template/` and `src/cli/` returns zero hits; the `WorkspaceIndex` interface is deep. The agent should verify this holds after #11 lands rather than rebuild it.
 
 ## Agent Brief
 
@@ -76,7 +76,7 @@ Query failures surface as raw minijinja render errors (templates) or `CliError::
 - Added `cli::mod::tests::query_workflows`: one shared seeded project
   (frontmatter, `#book` tags, a task, a wikilink) exercised through
   `traces index`/`list`/`table`/`task` via real `Cli::run` dispatch, a
-  Template-QueryOps-vs-`FileIndex` parity check, derived-inlink queries from
+  Template-QueryOps-vs-`WorkspaceIndex` parity check, derived-inlink queries from
   both CLI-equivalent and Template paths, and two diagnostics tests (bad
   `--sort`/`--where` field paths, and a malformed template query) asserting
   on the actual `CliError` diagnostic text.
@@ -119,7 +119,7 @@ process-level suite that spawns the compiled `traces` binary via
   continuation glyph that can land mid-path with no original whitespace
   there, so reconstructed wrapped text is unreliable — assertions stick to
   diagnostic codes (always their own short line) and primary stdout
-  content instead. `FileIndex` indexes the `templates/` directory itself,
+  content instead. `WorkspaceIndex` indexes the `templates/` directory itself,
   so an unscoped `query.all()` inside a template counts the template file
   alongside project notes — the dry-run fixture scopes its query to a
   `notes/` subfolder to avoid an off-by-one.

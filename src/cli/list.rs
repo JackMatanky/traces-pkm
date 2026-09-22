@@ -1,10 +1,10 @@
 //! Page-level list query command.
 //!
-//! Handles `traces list` by refreshing the trusted root's [`FileIndex`],
+//! Handles `traces list` by refreshing the trusted root's [`WorkspaceIndex`],
 //! selecting a source scope, applying the optional filter, and printing
 //! matching pages as a Markdown bullet list.
 //!
-//! [`FileIndex`]: crate::index::FileIndex
+//! [`WorkspaceIndex`]: crate::index::WorkspaceIndex
 
 use clap::Args;
 
@@ -39,8 +39,8 @@ pub(super) struct List {
 impl List {
     /// Runs `traces list` for the trusted project root.
     ///
-    /// Refreshes the root's [`FileIndex`] and writes one Markdown bullet per
-    /// matching page to stdout.
+    /// Refreshes the root's [`WorkspaceIndex`] and writes one Markdown bullet
+    /// per matching page to stdout.
     ///
     /// # Errors
     ///
@@ -48,11 +48,11 @@ impl List {
     ///   read.
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
-    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Index`] if refreshing the [`WorkspaceIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression or
     ///   `--sort` names a malformed field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     #[expect(
         clippy::print_stdout,
         reason = "list output is primary command output, not diagnostic text; \
@@ -67,19 +67,19 @@ impl List {
         Ok(())
     }
 
-    /// Renders matching pages from `root`'s [`FileIndex`] as a Markdown bullet
-    /// list, alongside the matched row count.
+    /// Renders matching pages from `root`'s [`WorkspaceIndex`] as a Markdown
+    /// bullet list, alongside the matched row count.
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content without
     /// capturing process stdout.
     ///
     /// # Errors
     ///
-    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Index`] if refreshing the [`WorkspaceIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression or
     ///   `--sort` names a malformed field path.
     ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let order = self.sort.resolve(root)?;

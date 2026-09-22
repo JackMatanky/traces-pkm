@@ -18,56 +18,224 @@ use redb::{
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
-    FileIndex, INDEX_FILE,
-    codec::{decode_row, encode_row, path_from_bytes},
-    delta::{IndexDelta, InlinkDelta},
+    INDEX_FILE,
+    codec::{IndexPathKey, decode_row, encode_row, path_from_bytes},
+    delta::{FileDelta, InlinkDelta},
     entry::FileEntry,
-    error::{DbError, DbResult, IndexError, IndexResult},
+    error::{IndexError, IndexResult, StoreError, StoreResult},
     inlinks::InlinkMap,
+    sort::SortedByPath,
 };
-use crate::{FileBase, Note, Tag};
+use crate::{FileBase, Note, Tag, file::FileFormat};
 
 /// File metadata table.
 ///
 /// Key: project-relative path as UTF-8 bytes
 /// Value: serialized [`FileBase`]
-const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("files");
+const FILES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("files");
 
 /// Parsed note metadata table.
 ///
 /// Key: project-relative path as UTF-8 bytes
 /// Value: serialized [`Note`]
-pub(super) const NOTES: TableDefinition<&[u8], &[u8]> =
+const NOTES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("notes");
 
 /// Inbound link multimap table.
 ///
 /// Key: target note path as UTF-8 bytes
 /// Value: one source note path per entry
-const LINKS: MultimapTableDefinition<&[u8], &[u8]> =
+const LINKS: MultimapTableDefinition<'static, &'static [u8], &'static [u8]> =
     MultimapTableDefinition::new("links");
 
 /// Path lookup by tag multimap table.
-const PATHS_BY_TAG: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("paths_by_tag");
+const PATHS_BY_TAG: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("paths_by_tag");
 
 /// Path lookup by file class multimap table.
-const PATHS_BY_FILE_CLASS: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("paths_by_file_class");
+const PATHS_BY_FILE_CLASS: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("paths_by_file_class");
 
 /// Reverse tag index: path -> current normalized tags.
 ///
 /// Lets incremental upserts and deletes touch O(path tag count) entries instead
 /// of scanning [`PATHS_BY_TAG`].
-const TAGS_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("tags_by_path");
+const TAGS_BY_PATH: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("tags_by_path");
 
 /// Reverse file-class index: path -> current normalized classes.
-const FILE_CLASSES_BY_PATH: MultimapTableDefinition<&[u8], &[u8]> =
-    MultimapTableDefinition::new("classes_by_path");
+const FILE_CLASSES_BY_PATH: MultimapTableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = MultimapTableDefinition::new("classes_by_path");
+
+/// One of the seven schema tables: plain row or multimap.
+enum TableDef {
+    Row(TableDefinition<'static, &'static [u8], &'static [u8]>),
+    Multimap(MultimapTableDefinition<'static, &'static [u8], &'static [u8]>),
+}
+
+/// How a table's rows are treated during a rebuild wipe.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum DeletePolicy {
+    /// A delete error fails the rebuild.
+    Required,
+    /// Only a missing table is tolerated; other errors propagate.
+    BestEffort,
+}
+
+/// One schema fact: a table definition plus its rebuild delete policy.
+struct TableSpec {
+    definition: TableDef,
+    policy: DeletePolicy,
+}
+
+/// Every table in the schema, in declaration order.
+const TABLES: [TableSpec; 7] = [
+    TableSpec {
+        definition: TableDef::Row(FILES),
+        policy: DeletePolicy::Required,
+    },
+    TableSpec {
+        definition: TableDef::Row(NOTES),
+        policy: DeletePolicy::Required,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(LINKS),
+        policy: DeletePolicy::Required,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(PATHS_BY_TAG),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(PATHS_BY_FILE_CLASS),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(TAGS_BY_PATH),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Multimap(FILE_CLASSES_BY_PATH),
+        policy: DeletePolicy::BestEffort,
+    },
+];
+
+impl TableDef {
+    /// Probes the definition against `txn` without reading rows.
+    fn probe(&self, txn: &ReadTransaction) -> Result<(), redb::TableError> {
+        match self {
+            Self::Row(def) => txn.open_table(*def).map(|_| ()),
+            Self::Multimap(def) => txn.open_multimap_table(*def).map(|_| ()),
+        }
+    }
+}
+
+impl TableSpec {
+    /// Deletes this table's contents per its [`DeletePolicy`].
+    ///
+    /// `Required` propagates every storage error; `BestEffort` tolerates only a
+    /// missing table (the fresh-database case) and propagates the rest.
+    fn delete(
+        &self,
+        store: &IndexStore,
+        txn: &WriteTransaction,
+    ) -> StoreResult<()> {
+        let run = || match &self.definition {
+            TableDef::Row(def) => txn.delete_table(*def).map(|_| ()),
+            TableDef::Multimap(def) => {
+                txn.delete_multimap_table(*def).map(|_| ())
+            }
+        };
+        match run() {
+            Ok(()) => Ok(()),
+            Err(redb::TableError::TableDoesNotExist(_))
+                if self.policy == DeletePolicy::BestEffort =>
+            {
+                Ok(())
+            }
+            Err(source) => Err(store.raise_source_error(source)),
+        }
+    }
+}
 
 /// Stored files, path-sorted notes, and target-keyed inlinks loaded together.
-pub(super) type IndexSnapshot = (Vec<FileBase>, Vec<Note>, InlinkMap);
+pub(super) type IndexSnapshot =
+    (SortedByPath<FileBase>, SortedByPath<Note>, InlinkMap);
+
+/// Store-owned persistence plan for full rebuilds and incremental refreshes.
+pub(super) struct PersistPlan<'a> {
+    axes: IndexAxes,
+    rows: PersistRows<'a>,
+}
+
+impl<'a> PersistPlan<'a> {
+    /// Replaces every persisted row from an assembled index.
+    #[inline]
+    pub(super) const fn rebuild(
+        axes: IndexAxes,
+        entries: &'a [FileEntry],
+    ) -> Self {
+        Self {
+            axes,
+            rows: PersistRows::Rebuild {
+                entries,
+            },
+        }
+    }
+
+    /// Applies row-level changes from one refresh pass.
+    #[inline]
+    pub(super) const fn incremental(
+        axes: IndexAxes,
+        delta: &'a FileDelta,
+        notes: &'a [&'a Note],
+        edges: &'a InlinkDelta,
+    ) -> Self {
+        Self {
+            axes,
+            rows: PersistRows::Incremental {
+                delta,
+                notes,
+                edges,
+            },
+        }
+    }
+}
+
+/// Incremental row references passed from [`IndexStore::persist`] to its
+/// transaction body.
+struct IncrementalRows<'a> {
+    delta: &'a FileDelta,
+    notes: &'a [&'a Note],
+    edges: &'a InlinkDelta,
+}
+
+/// Rows affected by a persistence plan.
+pub(super) enum PersistRows<'a> {
+    /// Full cache rebuild from assembled entries.
+    Rebuild {
+        entries: &'a [FileEntry],
+    },
+    /// Incremental file, note, axis, and inlink changes.
+    Incremental {
+        delta: &'a FileDelta,
+        notes: &'a [&'a Note],
+        edges: &'a InlinkDelta,
+    },
+}
 
 /// Raw `LINKS` iterator entry before path-byte resolution.
 type LinkEntry<'a> = Result<
@@ -81,8 +249,18 @@ type LinkEntry<'a> = Result<
 /// Resolved `LINKS` row, or `None` when target/source filtering empties it.
 type ResolvedLink = Option<(PathBuf, Box<[PathBuf]>)>;
 
-/// A boxed range iterator over redb table entries.
-type BoxedRange<'a> = Box<redb::Range<'a, &'static [u8], &'static [u8]>>;
+/// Raw note rows collected before parallel decoding.
+type RawNoteRows = Vec<(PathBuf, Vec<u8>)>;
+
+/// Read-only table typed for raw byte keys and values.
+type BytesReadTable = redb::ReadOnlyTable<&'static [u8], &'static [u8]>;
+
+/// Read-only multimap table typed for raw byte keys and values.
+type BytesReadMultimapTable =
+    redb::ReadOnlyMultimapTable<&'static [u8], &'static [u8]>;
+
+/// Unboxed range iterator over redb table entries.
+type TableRange<'a> = redb::Range<'a, &'static [u8], &'static [u8]>;
 
 /// A multimap table typed for raw byte keys and values.
 type BytesMultimapTable<'txn> =
@@ -96,10 +274,6 @@ pub(crate) struct IndexStore {
 }
 
 impl IndexStore {
-    // ═══════════════════════════════════════════════════════
-    // Public API — the tour of this module's surface
-    // ═══════════════════════════════════════════════════════
-
     // --- Construction ------------------------------------------------
 
     /// Opens the index database under `root`, creating it if absent.
@@ -109,15 +283,15 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`DbError::Io`] if the database's parent directory cannot be created,
-    ///   or if a corrupted or schema-mismatched file cannot be deleted during
-    ///   recovery.
-    /// - [`DbError::Redb`] if the database file cannot be opened, or a
-    ///   post-recovery re-create fails.
+    /// - [`Store`] if the database's parent directory cannot be created, the
+    ///   database file cannot be opened, or a corrupted or schema-mismatched
+    ///   file cannot be replaced during recovery.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn open(root: &Path) -> IndexResult<Self> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| DbError::Io {
+            fs::create_dir_all(parent).map_err(|source| StoreError::Io {
                 path: parent.to_path_buf(),
                 source,
             })?;
@@ -125,7 +299,7 @@ impl IndexStore {
         let db = Self::create_db(&path)?;
         let db = if Self::check_rebuild_needed(&db, &path)? {
             drop(db);
-            fs::remove_file(&path).map_err(|source| DbError::Io {
+            fs::remove_file(&path).map_err(|source| StoreError::Io {
                 path: path.clone(),
                 source,
             })?;
@@ -137,24 +311,6 @@ impl IndexStore {
             db,
             path,
         })
-    }
-
-    /// Checks database integrity.
-    ///
-    /// # Errors
-    ///
-    /// - [`Store`] if database integrity check fails.
-    ///
-    /// [`Store`]: IndexError::Store
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "part of IndexStore surface")
-    )]
-    fn check_health(&mut self) -> IndexResult<()> {
-        self.db.check_integrity().map_err(|source| {
-            IndexError::from(self.raise_source_error(source))
-        })?;
-        Ok(())
     }
 
     // --- Batch reads -------------------------------------------------
@@ -191,7 +347,7 @@ impl IndexStore {
 
     /// Point-reads inbound-link edges for `targets`.
     ///
-    /// Performs one indexed `LINKS` lookup per target - O(each target's source
+    /// Performs one indexed `LINKS` lookup per target, O(each target's source
     /// count), not a table scan. Query execution uses this for the handful of
     /// files it matched.
     ///
@@ -205,38 +361,18 @@ impl IndexStore {
         targets: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
-        let table = match txn.open_multimap_table(LINKS) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(InlinkMap::default());
-            }
-            Err(source) => return Err(self.raise_source_error(source).into()),
+        let Some(table) = self.open_multimap_for_read(&txn, LINKS)? else {
+            return Ok(InlinkMap::default());
         };
         let mut edges = HashMap::new();
         for target in targets {
             let key = IndexPathKey::new(target).as_bytes();
-            let sources = self.collect_link_sources(&table, key)?;
+            let sources = self.collect_stored_paths(&table, key)?;
             if !sources.is_empty() {
                 edges.insert(target.to_path_buf(), sources.into_boxed_slice());
             }
         }
         Ok(InlinkMap::from_raw(edges))
-    }
-
-    /// Loads persisted file metadata from the `FILES` table.
-    ///
-    /// # Errors
-    ///
-    /// - [`Store`] if reading fails.
-    ///
-    /// [`Store`]: IndexError::Store
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "part of IndexStore surface")
-    )]
-    fn load_file_metadata(&self) -> IndexResult<Vec<FileBase>> {
-        let txn = self.begin_read()?;
-        Ok(self.read_table(&txn, FILES, FileBase::path)?)
     }
 
     // --- Path queries ------------------------------------------------
@@ -281,19 +417,21 @@ impl IndexStore {
     }
 
     /// Returns sorted paths within `folder`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Store`] if opening the database or reading the table fails.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(crate) fn paths_in_folder(
         &self,
         folder: &Path,
     ) -> IndexResult<Box<[PathBuf]>> {
         let txn = self.begin_read()?;
-        let table = match txn.open_table(FILES) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Box::new([]));
-            }
-            Err(e) => return Err(self.raise_source_error(e).into()),
+        let Some(table) = self.open_table_for_read(&txn, FILES)? else {
+            return Ok(Box::default());
         };
-        self.collect_folder_paths(&table, folder)
+        Ok(self.collect_folder_paths(&table, folder)?)
     }
 
     // --- Transaction lifecycle ----------------------------------------
@@ -302,8 +440,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the transaction cannot be started.
-    fn begin_read(&self) -> DbResult<ReadTransaction> {
+    /// - [`StoreError::Redb`] if the transaction cannot be started.
+    fn begin_read(&self) -> StoreResult<ReadTransaction> {
         self.db.begin_read().map_err(|source| self.raise_source_error(source))
     }
 
@@ -311,56 +449,146 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the transaction cannot be started.
-    pub(super) fn begin_write(&self) -> DbResult<WriteTransaction> {
+    /// - [`StoreError::Redb`] if the transaction cannot be started.
+    #[inline(never)]
+    fn begin_write(&self) -> StoreResult<WriteTransaction> {
         self.db.begin_write().map_err(|source| self.raise_source_error(source))
+    }
+
+    #[inline(never)]
+    fn commit(&self, txn: WriteTransaction) -> StoreResult<()> {
+        txn.commit().map_err(|source| self.raise_source_error(source))
+    }
+
+    #[inline(never)]
+    fn configure_cache_txn(
+        &self,
+        mut txn: WriteTransaction,
+    ) -> StoreResult<WriteTransaction> {
+        txn.set_durability(redb::Durability::None)
+            .map_err(|source| self.raise_source_error(source))?;
+        Ok(txn)
+    }
+
+    /// Replaces one note row with invalid bytes for fault-injection tests.
+    #[cfg(test)]
+    pub(super) fn poison_note_row(&self, path: &Path) -> IndexResult<()> {
+        self.poison_note_row_in(self.begin_write()?, path)
+    }
+
+    #[cfg(test)]
+    #[inline(never)]
+    fn poison_note_row_in(
+        &self,
+        txn: WriteTransaction,
+        path: &Path,
+    ) -> IndexResult<()> {
+        {
+            let mut notes = txn
+                .open_table(NOTES)
+                .map_err(|source| self.raise_source_error(source))?;
+            notes
+                .insert(
+                    IndexPathKey::new(path).as_bytes(),
+                    &b"\xff\xff\xff"[..],
+                )
+                .map_err(|source| self.raise_source_error(source))?;
+        }
+        self.commit(txn)?;
+        Ok(())
+    }
+
+    /// Opens a row table for reads; a missing table is an empty cache.
+    fn open_table_for_read(
+        &self,
+        txn: &ReadTransaction,
+        definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
+    ) -> StoreResult<Option<BytesReadTable>> {
+        match txn.open_table(definition) {
+            Ok(table) => Ok(Some(table)),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+            Err(source) => Err(self.raise_source_error(source)),
+        }
+    }
+
+    /// Opens a multimap for reads; a missing table is an empty cache.
+    fn open_multimap_for_read(
+        &self,
+        txn: &ReadTransaction,
+        definition: MultimapTableDefinition<
+            'static,
+            &'static [u8],
+            &'static [u8],
+        >,
+    ) -> StoreResult<Option<BytesReadMultimapTable>> {
+        match txn.open_multimap_table(definition) {
+            Ok(table) => Ok(Some(table)),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+            Err(source) => Err(self.raise_source_error(source)),
+        }
+    }
+
+    /// Maps each path to its encoded key bytes for link-row resolution.
+    fn key_path_map<'a>(
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> HashMap<&'a [u8], &'a Path> {
+        paths
+            .into_iter()
+            .map(|path| (IndexPathKey::new(path).as_bytes(), path))
+            .collect()
     }
 
     // --- Full-table reads ---------------------------------------------
 
-    /// Deserializes every value in `table` and sorts by `path_of`.
+    /// Deserializes every value in `table`, sorted by path.
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the table cannot be read.
-    /// - [`DbError::Deserialize`] if stored bytes are corrupt or incompatible.
-    fn read_table<T: DeserializeOwned>(
+    /// - [`Store`] if the table cannot be read or stored bytes are not a valid
+    ///   record.
+    ///
+    /// [`Store`]: IndexError::Store
+    fn read_table<T>(
         &self,
         txn: &ReadTransaction,
-        table: TableDefinition<&[u8], &[u8]>,
-        path_of: impl Fn(&T) -> &Path,
-    ) -> DbResult<Vec<T>> {
-        let mut items = self.read_table_raw(txn, table)?;
-        items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
-        Ok(items)
+        definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
+    ) -> IndexResult<SortedByPath<T>>
+    where
+        T: DeserializeOwned + crate::path::HasPath,
+    {
+        let Some(table) = self.open_table_for_read(txn, definition)? else {
+            return Ok(SortedByPath::assumed_sorted(Vec::new()));
+        };
+        let items = self.decode_table_rows(&table)?;
+        Ok(SortedByPath::sorted(items))
     }
 
     /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
     /// derived inlink edge. Stale or orphaned edges are dropped.
     ///
+    /// Targets resolve through every stored [`FileBase`] because attachments
+    /// can carry inlinks; sources resolve through stored [`Note`] rows only.
+    ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if a table cannot be read.
-    /// - [`DbError::Deserialize`] if stored bytes are not a valid record.
+    /// - [`Store`] if a table cannot be read or stored bytes are not a valid
+    ///   record.
+    ///
+    /// [`Store`]: IndexError::Store
     pub(super) fn read_all(&self) -> IndexResult<IndexSnapshot> {
         let txn = self.begin_read()?;
         let (files_result, notes_result) = rayon::join(
-            || self.read_table(&txn, FILES, FileBase::path),
-            || self.read_notes_parallel(&txn),
+            || self.read_table(&txn, FILES),
+            || self.collect_note_bytes(&txn),
         );
-        let files = files_result?;
+        let files: SortedByPath<FileBase> = files_result?;
         let notes = notes_result?;
-        let links = {
-            let by_bytes: HashMap<&[u8], &Path> = notes
-                .iter()
-                .map(|note| {
-                    (IndexPathKey::new(note.path()).as_bytes(), note.path())
-                })
-                .collect();
-            self.read_links(&txn, LINKS, |bytes| {
-                by_bytes.get(bytes).map(|path| path.to_path_buf())
-            })?
-        };
+        let target_paths =
+            Self::key_path_map(files.as_slice().iter().map(FileBase::path));
+        let source_paths =
+            Self::key_path_map(notes.as_slice().iter().map(Note::path));
+        let links =
+            self.read_links(&txn, LINKS, &target_paths, &source_paths)?;
         Ok((files, notes, links))
     }
 
@@ -374,9 +602,9 @@ impl IndexStore {
     /// - [`Store`] if opening the transaction or table fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn read_all_notes(&self) -> IndexResult<Vec<Note>> {
+    pub(super) fn read_all_notes(&self) -> IndexResult<SortedByPath<Note>> {
         let txn = self.begin_read()?;
-        Ok(self.read_notes_parallel(&txn)?)
+        Ok(self.collect_note_bytes(&txn)?)
     }
 
     /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge.
@@ -388,61 +616,70 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_files_and_links(
         &self,
-    ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
+    ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
         let txn = self.begin_read()?;
-        self.read_files_and_links_via(&txn)
+        self.read_files_and_links_with(&txn)
     }
 
     /// Loads persisted [`FileBase`] rows and inlink edges without decoding
     /// `NOTES`.
     ///
-    /// Used by incremental sync and query execution paths that point-read only
-    /// the matched notes' bodies.
+    /// Used by incremental refresh and query execution paths that point-read
+    /// only the matched notes' bodies.
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if a table cannot be read.
-    /// - [`DbError::Deserialize`] if stored bytes are not a valid record.
-    pub(super) fn read_files_and_links_via(
+    /// - [`Store`] if a table cannot be read or stored bytes are not a valid
+    ///   record.
+    ///
+    /// [`Store`]: IndexError::Store
+    pub(super) fn read_files_and_links_with(
         &self,
         txn: &ReadTransaction,
-    ) -> IndexResult<(Vec<FileBase>, InlinkMap)> {
-        let (files_result, links_result) = rayon::join(
-            || self.read_table(txn, FILES, FileBase::path),
-            || {
-                self.read_links(txn, LINKS, |bytes| {
-                    Some(path_from_bytes(bytes))
-                })
-            },
+    ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
+        let files: SortedByPath<FileBase> = self.read_table(txn, FILES)?;
+        let target_paths =
+            Self::key_path_map(files.as_slice().iter().map(FileBase::path));
+        let source_paths = Self::key_path_map(
+            files
+                .as_slice()
+                .iter()
+                .filter(|file| file.format() == FileFormat::Note)
+                .map(FileBase::path),
         );
-        Ok((files_result?, links_result?))
+        let links =
+            self.read_links(txn, LINKS, &target_paths, &source_paths)?;
+        Ok((files, links))
     }
 
     /// Deserializes every `target -> sources` edge from the `links` multimap
-    /// table, resolving each stored path's raw bytes through `resolve`.
+    /// table, resolving stored path bytes through `target_paths` and
+    /// `source_paths`.
     ///
-    /// `resolve` maps a stored key/value's raw bytes to the authoritative path
-    /// to use, or `None` to drop it. A target that resolves to `None` drops its
-    /// whole edge set; a source that resolves to `None` is skipped; an entry
-    /// left with no surviving sources is omitted entirely.
+    /// A target missing from `target_paths` drops its whole edge set; a source
+    /// missing from `source_paths` is skipped; an entry left with no surviving
+    /// sources is omitted entirely.
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the table cannot be read.
+    /// - [`Store`] if the table cannot be read.
+    ///
+    /// [`Store`]: IndexError::Store
     fn read_links(
         &self,
         txn: &ReadTransaction,
-        table_def: MultimapTableDefinition<&[u8], &[u8]>,
-        resolve: impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<InlinkMap> {
-        let table = match txn.open_multimap_table(table_def) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(InlinkMap::default());
-            }
-            Err(source) => return Err(self.raise_source_error(source)),
+        table_def: MultimapTableDefinition<
+            'static,
+            &'static [u8],
+            &'static [u8],
+        >,
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
+    ) -> IndexResult<InlinkMap> {
+        let Some(table) = self.open_multimap_for_read(txn, table_def)? else {
+            return Ok(InlinkMap::default());
         };
-        self.collect_multimap_links(&table, &resolve)
+        Ok(self.collect_multimap_links(&table, target_paths, source_paths)?)
     }
 
     // --- Write primitives ---------------------------------------------
@@ -451,15 +688,17 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the table cannot be opened or written.
-    /// - [`DbError::Serialize`] if an item cannot be encoded.
+    /// - [`Store`] if the table cannot be opened or written, or an item cannot
+    ///   be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
     fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
         table: TableDefinition<&[u8], &[u8]>,
         items: impl IntoIterator<Item = &'a T>,
         path_of: impl Fn(&T) -> &Path,
-    ) -> DbResult<()> {
+    ) -> IndexResult<()> {
         let mut table = txn
             .open_table(table)
             .map_err(|source| self.raise_source_error(source))?;
@@ -480,13 +719,15 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the table cannot be opened or written.
+    /// - [`Store`] if the table cannot be opened or written.
+    ///
+    /// [`Store`]: IndexError::Store
     fn write_links(
         &self,
         txn: &WriteTransaction,
         table_def: MultimapTableDefinition<&[u8], &[u8]>,
         entries: &[FileEntry],
-    ) -> DbResult<()> {
+    ) -> IndexResult<()> {
         let mut table = txn
             .open_multimap_table(table_def)
             .map_err(|source| self.raise_source_error(source))?;
@@ -508,83 +749,91 @@ impl IndexStore {
 
     // --- Persistence entry points -------------------------------------
 
-    /// Persists `index` by writing all entries.
+    /// Persists a full rebuild or one incremental refresh pass.
+    ///
+    /// Incremental passes with no changed rows skip the transaction entirely.
     ///
     /// # Errors
     ///
     /// - [`Store`] if the transaction fails or a record cannot be encoded.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn persist_index(
-        &self,
-        index: &FileIndex,
-        class_field: &str,
-    ) -> IndexResult<()> {
-        self.write_all(index.entries(), class_field)
+    pub(super) fn persist(&self, plan: &PersistPlan<'_>) -> IndexResult<()> {
+        match &plan.rows {
+            PersistRows::Rebuild {
+                entries,
+            } => self.apply_rebuild(entries, &plan.axes),
+            PersistRows::Incremental {
+                delta,
+                notes,
+                edges,
+            } => {
+                if delta.is_empty() && notes.is_empty() && edges.is_empty() {
+                    return Ok(());
+                }
+                self.apply_incremental(&plan.axes, &IncrementalRows {
+                    delta,
+                    notes,
+                    edges,
+                })
+            }
+        }
     }
 
-    /// Row-level incremental write for changes between scans.
-    ///
-    /// # Errors
-    ///
-    /// - [`Store`] if the transaction fails or a record cannot be encoded.
-    ///
-    /// [`Store`]: IndexError::Store
-    pub(super) fn persist_incremental(
+    /// Rebuild arm of [`Self::persist`]: clears and rewrites every table.
+    fn apply_rebuild(
         &self,
-        delta: &IndexDelta,
-        modified_notes: &[Note],
-        inlink_delta: &InlinkDelta,
-        class_field: &str,
+        entries: &[FileEntry],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
-        self.persist_incremental_with_notes(
-            delta,
-            || modified_notes.iter(),
-            inlink_delta,
-            class_field,
-        )
+        self.apply_rebuild_in(self.begin_cache_txn()?, entries, axes)
     }
 
-    /// Row-level incremental write for a rebuilt note set.
-    ///
-    /// Requires `notes` sorted by path: upserted rows are recovered by binary
-    /// search, so an unsorted set would silently skip row writes.
-    ///
-    /// # Errors
-    ///
-    /// - [`Store`] if the transaction fails or a record cannot be encoded.
-    ///
-    /// [`Store`]: IndexError::Store
-    pub(super) fn persist_incremental_rebuilt_notes(
+    #[inline(never)]
+    fn apply_rebuild_in(
         &self,
-        delta: &IndexDelta,
-        notes: &[Note],
-        inlink_delta: &InlinkDelta,
-        class_field: &str,
+        txn: WriteTransaction,
+        entries: &[FileEntry],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
-        debug_assert!(
-            notes.windows(2).all(|pair| match pair {
-                [a, b] => a.path() <= b.path(),
-                _ => true,
-            }),
-            "rebuilt notes must be path-sorted for upsert recovery"
-        );
-        self.persist_incremental_with_notes(
-            delta,
-            || Self::notes_for_upserted_files(delta.upserted(), notes),
-            inlink_delta,
-            class_field,
-        )
+        self.delete_tables(&txn)?;
+        self.write_all_parallel(&txn, entries)?;
+        self.write_axes_parallel(&txn, entries, axes)?;
+        self.commit(txn)?;
+        Ok(())
+    }
+
+    /// Incremental arm of [`Self::persist`]: applies row-level changes.
+    fn apply_incremental(
+        &self,
+        axes: &IndexAxes,
+        rows: &IncrementalRows<'_>,
+    ) -> IndexResult<()> {
+        self.apply_incremental_in(self.begin_cache_txn()?, axes, rows)
+    }
+
+    #[inline(never)]
+    fn apply_incremental_in(
+        &self,
+        txn: WriteTransaction,
+        axes: &IndexAxes,
+        rows: &IncrementalRows<'_>,
+    ) -> IndexResult<()> {
+        self.apply_diff_deletions(&txn, rows.delta.deleted(), axes)?;
+        self.apply_diff_upserts(&txn, rows.delta.upserted())?;
+        self.apply_modified_notes(&txn, rows.notes, axes)?;
+        self.apply_inlink_delta(&txn, rows.edges)?;
+        self.commit(txn)?;
+        Ok(())
     }
 
     // --- Error -------------------------------------------------------
 
     /// Wraps a redb error with this store's database path.
-    pub(super) fn raise_source_error(
-        &self,
-        source: impl Into<redb::Error>,
-    ) -> DbError {
-        DbError::Redb {
+    #[cold]
+    #[inline(never)]
+    fn raise_source_error(&self, source: impl Into<redb::Error>) -> StoreError {
+        StoreError::Redb {
             path: self.path.clone(),
             source: Box::new(source.into()),
         }
@@ -594,18 +843,16 @@ impl IndexStore {
 
     /// Returns `true` if `error` indicates schema drift or corruption that only
     /// a wipe-and-recreate can fix.
-    pub(super) fn is_rebuild_trigger(error: &redb::TableError) -> bool {
+    fn is_rebuild_trigger(error: &redb::TableError) -> bool {
         matches!(
             error,
             redb::TableError::TableTypeMismatch { .. }
+                | redb::TableError::TableIsMultimap(_)
+                | redb::TableError::TableIsNotMultimap(_)
                 | redb::TableError::TypeDefinitionChanged { .. }
                 | redb::TableError::Storage(redb::StorageError::Corrupted(_))
         )
     }
-
-    // ═══════════════════════════════════════════════════════
-    // Private helpers below this line
-    // ═══════════════════════════════════════════════════════
 
     // --- Construction helpers -----------------------------------------
 
@@ -613,8 +860,8 @@ impl IndexStore {
     ///
     /// Recovers by wipe-and-recreate if `Database::create` itself reports
     /// container-level corruption.
-    fn create_db(path: &Path) -> DbResult<redb::Database> {
-        let wrap = |source: redb::DatabaseError| DbError::Redb {
+    fn create_db(path: &Path) -> StoreResult<redb::Database> {
+        let wrap = |source: redb::DatabaseError| StoreError::Redb {
             path: path.to_path_buf(),
             source: Box::new(source.into()),
         };
@@ -623,7 +870,7 @@ impl IndexStore {
             Err(redb::DatabaseError::Storage(
                 redb::StorageError::Corrupted(_),
             )) => {
-                fs::remove_file(path).map_err(|source| DbError::Io {
+                fs::remove_file(path).map_err(|source| StoreError::Io {
                     path: path.to_path_buf(),
                     source,
                 })?;
@@ -638,7 +885,7 @@ impl IndexStore {
     fn check_rebuild_needed(
         db: &redb::Database,
         path: &Path,
-    ) -> DbResult<bool> {
+    ) -> StoreResult<bool> {
         let read_txn = match db.begin_read() {
             Ok(txn) => txn,
             Err(redb::TransactionError::Storage(
@@ -647,21 +894,16 @@ impl IndexStore {
                 return Ok(true);
             }
             Err(source) => {
-                return Err(DbError::Redb {
+                return Err(StoreError::Redb {
                     path: path.to_path_buf(),
                     source: Box::new(source.into()),
                 });
             }
         };
-        for probe in [
-            read_txn.open_table(FILES).err(),
-            read_txn.open_table(NOTES).err(),
-            read_txn.open_multimap_table(LINKS).err(),
-        ] {
-            let Some(error) = probe else {
-                continue;
-            };
-            if Self::is_rebuild_trigger(&error) {
+        for spec in &TABLES {
+            if let Err(error) = spec.definition.probe(&read_txn)
+                && Self::is_rebuild_trigger(&error)
+            {
                 return Ok(true);
             }
         }
@@ -678,19 +920,18 @@ impl IndexStore {
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<T>> {
         let txn = self.begin_read()?;
-        let table = match txn.open_table(source.definition()) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Vec::new());
-            }
-            Err(err) => {
-                return Err(self.raise_source_error(err).into());
-            }
+        let Some(table) =
+            self.open_table_for_read(&txn, source.definition())?
+        else {
+            return Ok(Vec::new());
         };
         let mut items = Vec::new();
         for path in paths {
             let key = IndexPathKey::new(path).as_bytes();
-            if let Ok(Some(guard)) = table.get(key) {
+            if let Some(guard) = table
+                .get(key)
+                .map_err(|error| self.raise_source_error(error))?
+            {
                 match decode_row::<T>(path, guard.value()) {
                     Ok(item) => items.push(item),
                     Err(err) => {
@@ -707,21 +948,21 @@ impl IndexStore {
         Ok(items)
     }
 
-    /// Reads `key`'s current inbound-link source paths out of `table`.
+    /// Collects path values stored under `key` and propagates lookup errors.
     #[inline(never)]
-    fn collect_link_sources(
+    fn collect_stored_paths(
         &self,
-        table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
+        table: &BytesReadMultimapTable,
         key: &[u8],
     ) -> IndexResult<Vec<PathBuf>> {
-        let mut sources = Vec::new();
-        if let Ok(iter) = table.get(key) {
-            for entry in iter {
-                let guard = entry.map_err(|e| self.raise_source_error(e))?;
-                sources.push(path_from_bytes(guard.value()));
-            }
-        }
-        Ok(sources)
+        let iter =
+            table.get(key).map_err(|source| self.raise_source_error(source))?;
+        iter.map(|entry| {
+            let guard =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            Ok(path_from_bytes(guard.value()))
+        })
+        .collect()
     }
 
     // --- Path query helpers -------------------------------------------
@@ -730,38 +971,21 @@ impl IndexStore {
     /// `table_def`.
     fn paths_from_multimap(
         &self,
-        table_def: MultimapTableDefinition<&[u8], &[u8]>,
+        table_def: MultimapTableDefinition<
+            'static,
+            &'static [u8],
+            &'static [u8],
+        >,
         key: &[u8],
     ) -> IndexResult<Box<[PathBuf]>> {
         let txn = self.begin_read()?;
-        let table = match txn.open_multimap_table(table_def) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Box::new([]));
-            }
-            Err(e) => return Err(self.raise_source_error(e).into()),
+        let Some(table) = self.open_multimap_for_read(&txn, table_def)? else {
+            return Ok(Box::default());
         };
-        let mut paths = self.collect_multimap_key_paths(&table, key)?;
+        let mut paths = self.collect_stored_paths(&table, key)?;
         paths.sort();
         paths.dedup();
         Ok(paths.into_boxed_slice())
-    }
-
-    /// Collects every path value stored under `key` in an already-open multimap
-    /// table.
-    fn collect_multimap_key_paths(
-        &self,
-        table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
-        key: &[u8],
-    ) -> IndexResult<Vec<PathBuf>> {
-        let mut paths = Vec::new();
-        if let Ok(iter) = table.get(key) {
-            for entry in iter {
-                let guard = entry.map_err(|e| self.raise_source_error(e))?;
-                paths.push(path_from_bytes(guard.value()));
-            }
-        }
-        Ok(paths)
     }
 
     /// Dispatches to a full-table or prefix-range scan depending on whether
@@ -770,7 +994,7 @@ impl IndexStore {
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
         folder: &Path,
-    ) -> IndexResult<Box<[PathBuf]>> {
+    ) -> StoreResult<Box<[PathBuf]>> {
         let folder_str = folder.to_string_lossy();
         if folder_str.is_empty() || folder_str == "." {
             self.collect_all_folder_paths(table)
@@ -788,15 +1012,20 @@ impl IndexStore {
     fn collect_all_folder_paths(
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
-    ) -> IndexResult<Box<[PathBuf]>> {
-        let iter = self.open_table_iter(table)?;
-        let mut paths = Vec::new();
-        for entry in iter {
-            let (k, _) = entry.map_err(|e| self.raise_source_error(e))?;
-            paths.push(path_from_bytes(k.value()));
-        }
-        paths.sort();
-        Ok(paths.into_boxed_slice())
+    ) -> StoreResult<Box<[PathBuf]>> {
+        self.collect_sorted_path_keys(self.open_table_iter(table)?)
+    }
+
+    #[inline(never)]
+    fn open_prefix_iter<'a>(
+        &self,
+        table: &'a redb::ReadOnlyTable<&[u8], &[u8]>,
+        prefix: &[u8],
+        end_prefix: &[u8],
+    ) -> StoreResult<TableRange<'a>> {
+        table
+            .range(prefix..end_prefix)
+            .map_err(|source| self.raise_source_error(source))
     }
 
     /// Collects and sorts every path in `table` whose key starts with `prefix`,
@@ -805,21 +1034,29 @@ impl IndexStore {
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
         prefix: &str,
-    ) -> IndexResult<Box<[PathBuf]>> {
+    ) -> StoreResult<Box<[PathBuf]>> {
         let prefix_bytes = prefix.as_bytes();
         let mut end_prefix = prefix_bytes.to_vec();
         if let Some(last) = end_prefix.last_mut() {
             *last = last.saturating_add(1);
         }
-        let range = Box::new(
-            table
-                .range(prefix_bytes..end_prefix.as_slice())
-                .map_err(|e| self.raise_source_error(e))?,
-        );
+        self.collect_sorted_path_keys(self.open_prefix_iter(
+            table,
+            prefix_bytes,
+            end_prefix.as_slice(),
+        )?)
+    }
+
+    #[inline(never)]
+    fn collect_sorted_path_keys(
+        &self,
+        iter: TableRange<'_>,
+    ) -> StoreResult<Box<[PathBuf]>> {
         let mut paths = Vec::new();
-        for entry in range {
-            let (k, _) = entry.map_err(|e| self.raise_source_error(e))?;
-            paths.push(path_from_bytes(k.value()));
+        for entry in iter {
+            let (key, _) =
+                entry.map_err(|source| self.raise_source_error(source))?;
+            paths.push(path_from_bytes(key.value()));
         }
         paths.sort();
         Ok(paths.into_boxed_slice())
@@ -828,47 +1065,33 @@ impl IndexStore {
     // --- Read helpers ------------------------------------------------
 
     /// Opens a full-range iterator over `table`.
+    #[inline(never)]
     fn open_table_iter<'a>(
         &self,
         table: &'a redb::ReadOnlyTable<&[u8], &[u8]>,
-    ) -> DbResult<BoxedRange<'a>> {
-        let iter =
-            table.iter().map_err(|source| self.raise_source_error(source))?;
-        Ok(Box::new(iter))
-    }
-
-    /// Deserializes every value in `table`, or an empty `Vec` if the table does
-    /// not exist yet.
-    fn read_table_raw<T: DeserializeOwned>(
-        &self,
-        txn: &ReadTransaction,
-        table: TableDefinition<&[u8], &[u8]>,
-    ) -> DbResult<Vec<T>> {
-        match txn.open_table(table) {
-            Ok(table) => self.decode_table_rows(&table),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(Vec::new()),
-            Err(source) => Err(self.raise_source_error(source)),
-        }
+    ) -> StoreResult<TableRange<'a>> {
+        table.iter().map_err(|source| self.raise_source_error(source))
     }
 
     /// Deserializes every row in an already-open `table`.
     fn decode_table_rows<T: DeserializeOwned>(
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
-    ) -> DbResult<Vec<T>> {
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::as_conversions,
-            reason = "u64-to-usize cast is safe on 64-bit targets; table \
-                      length fits usize"
-        )]
-        let capacity =
-            table.len().map_err(|source| self.raise_source_error(source))?
-                as usize;
+    ) -> StoreResult<Vec<T>> {
+        let capacity = usize::try_from(
+            table.len().map_err(|source| self.raise_source_error(source))?,
+        )
+        .unwrap_or(usize::MAX);
+        self.decode_rows(self.open_table_iter(table)?, capacity)
+    }
+
+    #[inline(never)]
+    fn decode_rows<T: DeserializeOwned>(
+        &self,
+        iter: TableRange<'_>,
+        capacity: usize,
+    ) -> StoreResult<Vec<T>> {
         let mut items = Vec::with_capacity(capacity);
-        let iter = Box::new(
-            table.iter().map_err(|source| self.raise_source_error(source))?,
-        );
         for entry in iter {
             let (key, value) =
                 entry.map_err(|source| self.raise_source_error(source))?;
@@ -879,58 +1102,69 @@ impl IndexStore {
     }
 
     /// Reads raw `NOTES` rows before parallel decoding.
-    fn read_notes_parallel(
+    fn collect_note_bytes(
         &self,
         txn: &ReadTransaction,
-    ) -> DbResult<Vec<Note>> {
-        let table = match txn.open_table(NOTES) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Vec::new());
-            }
-            Err(source) => return Err(self.raise_source_error(source)),
+    ) -> StoreResult<SortedByPath<Note>> {
+        let Some(table) = self.open_table_for_read(txn, NOTES)? else {
+            return Ok(SortedByPath::assumed_sorted(Vec::new()));
         };
-        let mut raw_entries = Vec::new();
-        let iter = self.open_table_iter(&table)?;
+        Self::decode_note_bytes(
+            self.collect_raw_note_bytes(self.open_table_iter(&table)?)?,
+        )
+    }
+
+    #[inline(never)]
+    fn collect_raw_note_bytes(
+        &self,
+        iter: TableRange<'_>,
+    ) -> StoreResult<RawNoteRows> {
+        let mut rows = Vec::new();
         for entry in iter {
             let (key, value) =
                 entry.map_err(|source| self.raise_source_error(source))?;
-            let path = path_from_bytes(key.value());
-            raw_entries.push((path, value.value().to_vec()));
+            rows.push((path_from_bytes(key.value()), value.value().to_vec()));
         }
-        Self::decode_raw_notes_parallel(raw_entries)
+        Ok(rows)
     }
 
     /// Decodes every raw `(path, bytes)` pair in parallel and returns the
     /// results sorted by path.
-    fn decode_raw_notes_parallel(
-        raw_entries: Vec<(PathBuf, Vec<u8>)>,
-    ) -> DbResult<Vec<Note>> {
-        let results: Vec<DbResult<Note>> = raw_entries
+    fn decode_note_bytes(
+        raw_entries: RawNoteRows,
+    ) -> StoreResult<SortedByPath<Note>> {
+        let notes: Vec<Note> = raw_entries
             .into_par_iter()
             .map(|(path, bytes)| decode_row(&path, &bytes))
-            .collect();
-        let mut notes = Vec::with_capacity(results.len());
-        for res in results {
-            notes.push(res?);
-        }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
-        Ok(notes)
+            .collect::<Result<Vec<Note>, StoreError>>()?;
+        Ok(SortedByPath::sorted(notes))
     }
 
     /// Collects an already-open `LINKS` table into an [`InlinkMap`].
     fn collect_multimap_links(
         &self,
         table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<InlinkMap> {
-        let mut links = HashMap::new();
-        let iter = Box::new(
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
+    ) -> StoreResult<InlinkMap> {
+        self.collect_resolved_links(
             table.iter().map_err(|source| self.raise_source_error(source))?,
-        );
+            target_paths,
+            source_paths,
+        )
+    }
+
+    #[inline(never)]
+    fn collect_resolved_links<'a>(
+        &self,
+        iter: impl Iterator<Item = LinkEntry<'a>>,
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
+    ) -> StoreResult<InlinkMap> {
+        let mut links = HashMap::new();
         for entry in iter {
             if let Some((target, sources)) =
-                self.process_link_entry(entry, resolve)?
+                self.resolve_link_entry(entry, target_paths, source_paths)?
             {
                 links.insert(target, sources);
             }
@@ -939,19 +1173,23 @@ impl IndexStore {
     }
 
     /// Extracts one `target -> sources` row from a `LINKS` multimap iterator
-    /// entry, resolving raw bytes through `resolve`. Returns `None` when the
-    /// target resolves to no path or when every source dropped.
-    fn process_link_entry(
+    /// entry, resolving raw bytes through the path maps. Returns `None` when
+    /// the target resolves to no path or when every source dropped.
+    #[inline(never)]
+    fn resolve_link_entry(
         &self,
         entry: LinkEntry<'_>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<ResolvedLink> {
+        target_paths: &HashMap<&[u8], &Path>,
+        source_paths: &HashMap<&[u8], &Path>,
+    ) -> StoreResult<ResolvedLink> {
         let (target, sources) =
             entry.map_err(|source| self.raise_source_error(source))?;
-        let Some(target) = resolve(target.value()) else {
+        let Some(target) =
+            target_paths.get(target.value()).map(|path| path.to_path_buf())
+        else {
             return Ok(None);
         };
-        let sources = self.collect_sources(sources, resolve)?;
+        let sources = self.collect_source_paths(sources, source_paths)?;
         if sources.is_empty() {
             return Ok(None);
         }
@@ -960,16 +1198,19 @@ impl IndexStore {
 
     /// Collects source paths from a `MultimapValue` iterator, skipping
     /// unresolvable entries.
-    fn collect_sources(
+    #[inline(never)]
+    fn collect_source_paths(
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
-        resolve: &impl Fn(&[u8]) -> Option<PathBuf>,
-    ) -> DbResult<Box<[PathBuf]>> {
+        source_paths: &HashMap<&[u8], &Path>,
+    ) -> StoreResult<Box<[PathBuf]>> {
         let mut values = Vec::new();
         for source in sources {
             let source =
                 source.map_err(|source| self.raise_source_error(source))?;
-            if let Some(path) = resolve(source.value()) {
+            if let Some(path) =
+                source_paths.get(source.value()).map(|path| path.to_path_buf())
+            {
                 values.push(path);
             }
         }
@@ -990,42 +1231,20 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`DbError::Redb`] if the transaction fails.
-    /// - [`DbError::Serialize`] if a record cannot be encoded.
-    fn write_all(
-        &self,
-        entries: &[FileEntry],
-        class_field: &str,
-    ) -> IndexResult<()> {
-        let txn = self.prepare_txn()?;
-        self.write_all_parallel(&txn, entries, class_field)?;
-        txn.commit().map_err(|source| self.raise_source_error(source))?;
-        Ok(())
+    /// - [`StoreError::Redb`] if the transaction cannot be started or the
+    ///   durability hint cannot be set.
+    #[inline(never)]
+    fn begin_cache_txn(&self) -> StoreResult<WriteTransaction> {
+        self.configure_cache_txn(self.begin_write()?)
     }
 
-    /// Prepares a no-fsync full-rebuild transaction; see [`Self::write_all`].
-    fn prepare_txn(&self) -> DbResult<Box<WriteTransaction>> {
-        let mut txn = Box::new(self.begin_write()?);
-        txn.set_durability(redb::Durability::None)
-            .map_err(|source| self.raise_source_error(source))?;
-        self.clear_tables_for_write(&txn)?;
-        Ok(txn)
-    }
-
-    /// Deletes every table's contents ahead of a full rebuild write. The four
-    /// index-axis multimaps are best-effort: absent on a fresh database, so a
-    /// delete failure there is not fatal.
-    fn clear_tables_for_write(&self, txn: &WriteTransaction) -> DbResult<()> {
-        txn.delete_table(FILES)
-            .map_err(|source| self.raise_source_error(source))?;
-        txn.delete_table(NOTES)
-            .map_err(|source| self.raise_source_error(source))?;
-        txn.delete_multimap_table(LINKS)
-            .map_err(|source| self.raise_source_error(source))?;
-        let _ = txn.delete_multimap_table(PATHS_BY_TAG);
-        let _ = txn.delete_multimap_table(PATHS_BY_FILE_CLASS);
-        let _ = txn.delete_multimap_table(TAGS_BY_PATH);
-        let _ = txn.delete_multimap_table(FILE_CLASSES_BY_PATH);
+    /// Deletes every table's contents ahead of a full rebuild write.
+    /// Best-effort tables tolerate only a missing table (the fresh-database
+    /// case); every other storage error propagates.
+    fn delete_tables(&self, txn: &WriteTransaction) -> IndexResult<()> {
+        for spec in &TABLES {
+            spec.delete(self, txn)?;
+        }
         Ok(())
     }
 
@@ -1035,11 +1254,27 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         WriteTarget::ALL
             .into_par_iter()
-            .try_for_each(|target| target.run(self, txn, entries, class_field))
+            .try_for_each(|target| target.run(self, txn, entries))
+    }
+
+    /// Writes every configured secondary index axis for a full rebuild.
+    fn write_axes_parallel(
+        &self,
+        txn: &WriteTransaction,
+        entries: &[FileEntry],
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        axes.iter().try_for_each(|axis| {
+            let (forward, reverse) = rayon::join(
+                || self.write_index_axis_forward(txn, axis, entries),
+                || self.write_index_axis_reverse(txn, axis, entries),
+            );
+            forward?;
+            reverse
+        })
     }
 
     /// Writes `index`'s forward (`value -> [paths]`) table for a full rebuild.
@@ -1049,14 +1284,13 @@ impl IndexStore {
     fn write_index_axis_forward(
         &self,
         txn: &WriteTransaction,
-        index: IndexDimension,
+        index: &IndexDimension,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            index.visit_values(note, class_field, |value| {
+            index.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
@@ -1070,14 +1304,13 @@ impl IndexStore {
     fn write_index_axis_reverse(
         &self,
         txn: &WriteTransaction,
-        index: IndexDimension,
+        index: &IndexDimension,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            index.visit_values(note, class_field, |value| {
+            index.visit_values(note, |value| {
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.raise_source_error(source))?;
@@ -1093,8 +1326,9 @@ impl IndexStore {
         txn: &'txn WriteTransaction,
         def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> IndexResult<BytesMultimapTable<'txn>> {
-        txn.open_multimap_table(def)
-            .map_err(|source| self.raise_source_error(source).into())
+        Ok(txn
+            .open_multimap_table(def)
+            .map_err(|source| self.raise_source_error(source))?)
     }
 
     /// Reads `key`'s current values out of `table` into owned byte vectors.
@@ -1119,60 +1353,19 @@ impl IndexStore {
 
     // --- Incremental write helpers ------------------------------------
 
-    /// Row-level incremental write shared by [`Self::persist_incremental`] and
-    /// [`Self::persist_incremental_rebuilt_notes`].
-    fn persist_incremental_with_notes<'a, Notes, Iter>(
-        &self,
-        delta: &IndexDelta,
-        modified_notes: Notes,
-        inlink_delta: &InlinkDelta,
-        class_field: &str,
-    ) -> IndexResult<()>
-    where
-        Notes: Fn() -> Iter,
-        Iter: Iterator<Item = &'a Note>,
-    {
-        if delta.is_empty()
-            && modified_notes().next().is_none()
-            && inlink_delta.is_empty()
-        {
-            return Ok(());
-        }
-        let mut txn = Box::new(self.begin_write()?);
-        txn.set_durability(redb::Durability::None)
-            .map_err(|source| self.raise_source_error(source))?;
-        self.apply_diff_deletions(&txn, delta.deleted())?;
-        self.apply_diff_upserts(&txn, delta.upserted())?;
-        self.apply_modified_notes(&txn, modified_notes, class_field)?;
-        self.apply_inlink_delta(&txn, inlink_delta)?;
-        txn.commit().map_err(|source| self.raise_source_error(source))?;
-        Ok(())
-    }
-
-    fn notes_for_upserted_files<'a>(
-        upserted: &'a [FileBase],
-        notes: &'a [Note],
-    ) -> impl Iterator<Item = &'a Note> {
-        upserted.iter().filter_map(move |file| {
-            notes
-                .binary_search_by(|note| note.path().cmp(file.path()))
-                .ok()
-                .and_then(|idx| notes.get(idx))
-        })
-    }
-
     /// Removes every deleted file's rows from `FILES`, `NOTES`, and the
     /// tag/class indexes.
     fn apply_diff_deletions(
         &self,
         txn: &WriteTransaction,
         deleted: &[FileBase],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
         if deleted.is_empty() {
             return Ok(());
         }
         self.delete_files_and_notes(txn, deleted)?;
-        self.delete_index_entries_for_paths(txn, deleted)?;
+        self.delete_index_entries_for_paths(txn, deleted, axes)?;
         Ok(())
     }
 
@@ -1203,19 +1396,16 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         deleted: &[FileBase],
+        axes: &IndexAxes,
     ) -> IndexResult<()> {
-        for index in IndexDimension::ALL {
+        for index in axes.iter() {
             let mut forward =
                 self.open_multimap_for_write(txn, index.forward())?;
             let mut reverse =
                 self.open_multimap_for_write(txn, index.reverse())?;
             for del in deleted {
                 let path_bytes = IndexPathKey::new(del.path()).as_bytes();
-                self.clear_index_axis_entry(
-                    &mut forward,
-                    &mut reverse,
-                    path_bytes,
-                )?;
+                self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
             }
         }
         Ok(())
@@ -1227,7 +1417,7 @@ impl IndexStore {
     /// [`Self::delete_index_entries_for_paths`] (path fully removed) and
     /// [`Self::upsert_index_axis`] (values about to be replaced).
     #[inline(never)]
-    fn clear_index_axis_entry(
+    fn remove_axis_entry(
         &self,
         forward: &mut BytesMultimapTable<'_>,
         reverse: &mut BytesMultimapTable<'_>,
@@ -1260,21 +1450,17 @@ impl IndexStore {
     }
 
     /// Writes upserted notes' rows, list items, and tag/class index entries.
-    fn apply_modified_notes<'a, Notes, Iter>(
+    fn apply_modified_notes(
         &self,
         txn: &WriteTransaction,
-        modified_notes: Notes,
-        class_field: &str,
-    ) -> IndexResult<()>
-    where
-        Notes: Fn() -> Iter,
-        Iter: Iterator<Item = &'a Note>,
-    {
-        if modified_notes().next().is_none() {
+        modified_notes: &[&Note],
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        if modified_notes.is_empty() {
             return Ok(());
         }
-        self.upsert_notes(txn, modified_notes())?;
-        self.upsert_tags_and_classes(txn, modified_notes, class_field)?;
+        self.upsert_notes(txn, modified_notes.iter().copied())?;
+        self.upsert_tags_and_classes(txn, modified_notes, axes)?;
         Ok(())
     }
 
@@ -1293,18 +1479,14 @@ impl IndexStore {
         Ok(())
     }
 
-    fn upsert_tags_and_classes<'a, Notes, Iter>(
+    fn upsert_tags_and_classes(
         &self,
         txn: &WriteTransaction,
-        modified_notes: Notes,
-        class_field: &str,
-    ) -> IndexResult<()>
-    where
-        Notes: Fn() -> Iter,
-        Iter: Iterator<Item = &'a Note>,
-    {
-        for index in IndexDimension::ALL {
-            self.upsert_index_axis(txn, index, modified_notes(), class_field)?;
+        modified_notes: &[&Note],
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        for index in axes.iter() {
+            self.upsert_index_axis(txn, index, modified_notes.iter().copied())?;
         }
         Ok(())
     }
@@ -1316,20 +1498,15 @@ impl IndexStore {
     fn upsert_index_axis<'a>(
         &self,
         txn: &WriteTransaction,
-        index: IndexDimension,
+        index: &IndexDimension,
         modified_notes: impl Iterator<Item = &'a Note>,
-        class_field: &str,
     ) -> IndexResult<()> {
         let mut forward = self.open_multimap_for_write(txn, index.forward())?;
         let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
         for note in modified_notes {
             let path_bytes = IndexPathKey::new(note.path()).as_bytes();
-            self.clear_index_axis_entry(
-                &mut forward,
-                &mut reverse,
-                path_bytes,
-            )?;
-            index.visit_values(note, class_field, |value| {
+            self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
+            index.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.raise_source_error(source))?;
@@ -1418,106 +1595,88 @@ enum WriteTarget {
     Files,
     Notes,
     Links,
-    PathsByTags,
-    TagsByPath,
-    PathsByFileClasses,
-    FileClassesByPath,
 }
 
 impl WriteTarget {
-    const ALL: [Self; 7] = [
-        Self::Files,
-        Self::Notes,
-        Self::Links,
-        Self::PathsByTags,
-        Self::TagsByPath,
-        Self::PathsByFileClasses,
-        Self::FileClassesByPath,
-    ];
+    const ALL: [Self; 3] = [Self::Files, Self::Notes, Self::Links];
 
     fn run(
         self,
         store: &IndexStore,
         txn: &WriteTransaction,
         entries: &[FileEntry],
-        class_field: &str,
     ) -> IndexResult<()> {
         match self {
-            Self::Files => store
-                .write_table(
-                    txn,
-                    FILES,
-                    entries.iter().map(FileEntry::file),
-                    FileBase::path,
-                )
-                .map_err(IndexError::from),
-            Self::Notes => store
-                .write_table(
-                    txn,
-                    NOTES,
-                    entries.iter().filter_map(FileEntry::note),
-                    Note::path,
-                )
-                .map_err(IndexError::from),
-            Self::Links => {
-                store.write_links(txn, LINKS, entries).map_err(IndexError::from)
-            }
-            Self::PathsByTags => store.write_index_axis_forward(
+            Self::Files => store.write_table(
                 txn,
-                IndexDimension::Tag,
-                entries,
-                class_field,
+                FILES,
+                entries.iter().map(FileEntry::file),
+                FileBase::path,
             ),
-            Self::TagsByPath => store.write_index_axis_reverse(
+            Self::Notes => store.write_table(
                 txn,
-                IndexDimension::Tag,
-                entries,
-                class_field,
+                NOTES,
+                entries.iter().filter_map(FileEntry::note),
+                Note::path,
             ),
-            Self::PathsByFileClasses => store.write_index_axis_forward(
-                txn,
-                IndexDimension::FileClass,
-                entries,
-                class_field,
-            ),
-            Self::FileClassesByPath => store.write_index_axis_reverse(
-                txn,
-                IndexDimension::FileClass,
-                entries,
-                class_field,
-            ),
+            Self::Links => store.write_links(txn, LINKS, entries),
         }
+    }
+}
+
+/// Store-owned dimensions written for tag and file-class indexes.
+pub(super) struct IndexAxes {
+    dimensions: [IndexDimension; 2],
+}
+
+impl IndexAxes {
+    /// Builds the canonical index axes for one configured File Class key.
+    #[must_use]
+    pub(super) fn for_class_field(class_field: &str) -> Self {
+        Self {
+            dimensions: [IndexDimension::Tag, IndexDimension::FileClass {
+                key: class_field.to_owned(),
+            }],
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &IndexDimension> {
+        self.dimensions.iter()
     }
 }
 
 /// Path-derived index dimension, pairing forward and reverse tables so
 /// upsert/delete/rebuild logic is shared for tags and file classes.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum IndexDimension {
     Tag,
-    FileClass,
+    FileClass {
+        key: String,
+    },
 }
 
 impl IndexDimension {
-    const ALL: [Self; 2] = [Self::Tag, Self::FileClass];
-
     /// Forward lookup table (`value -> [paths]`) for tag/class queries.
     const fn forward(
-        self,
+        &self,
     ) -> MultimapTableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
             Self::Tag => PATHS_BY_TAG,
-            Self::FileClass => PATHS_BY_FILE_CLASS,
+            Self::FileClass {
+                ..
+            } => PATHS_BY_FILE_CLASS,
         }
     }
 
     /// Reverse lookup table (`path -> [values]`) for targeted updates.
     const fn reverse(
-        self,
+        &self,
     ) -> MultimapTableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
             Self::Tag => TAGS_BY_PATH,
-            Self::FileClass => FILE_CLASSES_BY_PATH,
+            Self::FileClass {
+                ..
+            } => FILE_CLASSES_BY_PATH,
         }
     }
 
@@ -1527,9 +1686,8 @@ impl IndexDimension {
     /// Uses `with_lowercased` to avoid heap allocations when values are already
     /// ASCII lowercase.
     fn visit_values(
-        self,
+        &self,
         note: &Note,
-        class_field: &str,
         mut visit: impl FnMut(&str) -> Result<(), IndexError>,
     ) -> Result<(), IndexError> {
         match self {
@@ -1539,43 +1697,20 @@ impl IndexDimension {
                     with_lowercased(segment, &mut visit)?;
                 }
             }
-            Self::FileClass => {
+            Self::FileClass {
+                key,
+            } => {
                 let values = note
                     .frontmatter()
                     .into_iter()
-                    .flat_map(|fm| fm.get_values(class_field))
+                    .flat_map(|fm| fm.get_values(key))
                     .filter_map(crate::NoteFieldValue::as_str);
-                for s in values {
-                    with_lowercased(s, &mut visit)?;
+                for value in values {
+                    with_lowercased(value, &mut visit)?;
                 }
             }
         }
         Ok(())
-    }
-}
-
-/// Borrowed redb key carrying a project-relative path's native bytes.
-///
-/// Wraps the path rather than the encoded bytes: error construction and row
-/// payloads borrow the same `&Path`, and converting bytes back to an `OsStr`
-/// would require the unsafe `from_encoded_bytes_unchecked`.
-#[derive(Copy, Clone)]
-struct IndexPathKey<'a>(&'a Path);
-
-impl<'a> IndexPathKey<'a> {
-    #[inline]
-    fn new(path: &'a Path) -> Self {
-        Self(path)
-    }
-
-    #[inline]
-    fn as_bytes(&self) -> &'a [u8] {
-        self.0.as_os_str().as_encoded_bytes()
-    }
-
-    #[inline]
-    fn path(&self) -> &'a Path {
-        self.0
     }
 }
 
@@ -1601,35 +1736,13 @@ mod tests {
     use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;
-    use crate::{IndexerService, parse_note as parse};
-    #[test]
-    fn check_health_passes_on_healthy_database() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let mut store = IndexStore::open(temp.path()).expect("open store");
-        assert!(store.check_health().is_ok());
-    }
-
-    #[test]
-    fn load_file_metadata_returns_persisted_records() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = IndexStore::open(temp.path()).expect("open store");
-        let files = vec![FileBase::note_for_test("a.md")];
-        let txn = store.begin_write().expect("write txn");
-        store
-            .write_table(&txn, FILES, &files, FileBase::path)
-            .expect("write files");
-        txn.commit().expect("commit");
-        let loaded = store.load_file_metadata().expect("load metadata");
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded.first().map(FileBase::path), Some(Path::new("a.md")));
-    }
-
+    use crate::{IndexerService, WorkspaceIndex, parse_note as parse};
     mod multimap_paths {
 
         use super::*;
 
         #[test]
-        fn returns_database_path_when_table_type_mismatches() {
+        fn repairs_a_wrong_typed_table_at_open() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             let store = IndexStore::open(root).expect("open store");
@@ -1638,13 +1751,46 @@ mod tests {
                 TableDefinition::new("paths_by_tag");
             txn.open_table(wrong_table).expect("open wrong table");
             txn.commit().expect("commit wrong table");
+            drop(store);
 
-            let error = store.paths_with_tag("x").expect_err("type mismatch");
-            assert!(matches!(
-                &error,
-                IndexError::Store(DbError::Redb { path, .. })
-                    if path == &root.join(INDEX_FILE)
-            ));
+            let reopened = IndexStore::open(root).expect("reopen heals drift");
+            let (files, notes, _) =
+                reopened.read_all().expect("read_all after recovery");
+            assert_eq!(files.as_slice(), []);
+            assert_eq!(notes.as_slice(), []);
+            let paths =
+                reopened.paths_with_tag("x").expect("paths_with_tag works");
+            assert_eq!(paths.as_ref(), <&[PathBuf]>::default());
+        }
+    }
+
+    mod path_queries {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        fn store_with_a_tagged_note(root: &Path) -> IndexStore {
+            let store = IndexStore::open(root).expect("open store");
+            let files = vec![FileBase::note_for_test(Path::new("tagged.md"))];
+            let notes = vec![parse("tagged.md", "# T\n\nTagged #x body.")];
+            write_all_parts(&store, &files, &notes, &InlinkMap::default())
+                .expect("persist tagged note");
+            store
+        }
+
+        #[rstest]
+        #[case::bare("x")]
+        #[case::prefixed("#x")]
+        fn resolves_bare_and_prefixed_tags_to_the_same_paths(
+            #[case] tag: &str,
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = store_with_a_tagged_note(temp.path());
+
+            let paths = store.paths_with_tag(tag).expect("read tag paths");
+
+            assert_eq!(paths.as_ref(), [Path::new("tagged.md")]);
         }
     }
 
@@ -1683,9 +1829,15 @@ mod tests {
         notes: &[Note],
         links: &InlinkMap,
     ) -> IndexResult<()> {
-        let index =
-            FileIndex::assemble(files.to_vec(), notes.to_vec(), links.clone());
-        store.write_all(index.entries(), "class")
+        let index = WorkspaceIndex::assemble(
+            SortedByPath::sorted(files.to_vec()),
+            SortedByPath::sorted(notes.to_vec()),
+            links.clone(),
+        );
+        store.persist(&PersistPlan::rebuild(
+            IndexAxes::for_class_field("class"),
+            index.entries(),
+        ))
     }
 
     /// Writes an orphanable raw `LINKS` row that `write_all` cannot assemble.
@@ -1714,19 +1866,15 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let db = IndexStore::open(temp.path()).expect("open db");
         let txn = db.begin_write().expect("begin write");
-        db.write_table(&txn, TEST_TABLE, &["hello".to_owned()], |s| {
-            Path::new(s.as_str())
-        })
-        .expect("write table");
+        let rows = [FileBase::note_for_test("hello.md")];
+        db.write_table(&txn, TEST_TABLE, &rows, FileBase::path)
+            .expect("write table");
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let loaded: Vec<String> = db
-            .read_table(&read_txn, TEST_TABLE, |s: &String| {
-                Path::new(s.as_str())
-            })
-            .expect("read table");
-        assert_eq!(loaded, vec!["hello".to_owned()]);
+        let loaded: SortedByPath<FileBase> =
+            db.read_table(&read_txn, TEST_TABLE).expect("read table");
+        assert_eq!(loaded.as_slice(), rows);
     }
 
     #[test]
@@ -1743,12 +1891,13 @@ mod tests {
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let result: Result<Vec<String>, DbError> =
-            db.read_table(&read_txn, TEST_TABLE, |s: &String| {
-                Path::new(s.as_str())
-            });
+        let result: IndexResult<SortedByPath<FileBase>> =
+            db.read_table(&read_txn, TEST_TABLE);
 
-        assert!(matches!(result, Err(DbError::Deserialize { .. })));
+        assert!(matches!(
+            result,
+            Err(IndexError::Store(StoreError::Deserialize { .. }))
+        ));
     }
 
     mod persistence {
@@ -1785,8 +1934,8 @@ mod tests {
             let (files, notes, links) =
                 store.read_all().expect("load empty database");
 
-            assert_eq!(files.len(), 0);
-            assert_eq!(notes.len(), 0);
+            assert_eq!(files.as_slice().len(), 0);
+            assert_eq!(notes.as_slice().len(), 0);
             assert_eq!(links.len(), 0);
         }
 
@@ -1811,8 +1960,8 @@ mod tests {
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
-            assert_eq!(loaded_notes, notes);
+            assert_eq!(loaded_records.as_slice(), files);
+            assert_eq!(loaded_notes.as_slice(), notes);
         }
 
         #[test]
@@ -1834,8 +1983,8 @@ mod tests {
             .expect("persist");
 
             let (_, loaded_notes, _) = store.read_all().expect("read all");
-            assert_eq!(loaded_notes.len(), 1);
-            let loaded_note = loaded_notes.first().expect("note");
+            assert_eq!(loaded_notes.as_slice().len(), 1);
+            let loaded_note = loaded_notes.as_slice().first().expect("note");
             let items: Vec<_> = loaded_note.list_items().collect();
             assert_eq!(items.len(), 3);
             let rec0 = items.first().expect("first item");
@@ -2027,18 +2176,11 @@ mod tests {
         }
 
         #[test]
-        fn read_files_and_links_via_keeps_orphaned_edges_that_read_all_drops() {
+        fn read_files_and_links_with_drops_orphaned_edges_like_read_all() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
             let notes: Vec<_> =
                 ["a.md", "target.md"].iter().map(|p| parse(*p, "")).collect();
-            let links = test_inlinks(&[
-                (PathBuf::from("target.md"), &[
-                    PathBuf::from("a.md"),
-                    PathBuf::from("ghost.md"),
-                ]),
-                (PathBuf::from("ghost-target.md"), &[PathBuf::from("a.md")]),
-            ]);
             write_all_parts(
                 &store,
                 &note_files(&["a.md", "target.md"]),
@@ -2059,13 +2201,20 @@ mod tests {
                 Path::new("a.md"),
             );
 
-            // Proves `read_files_and_links_via` reconstructs from disk without
-            // `read_all`'s note-correlation filter.
+            // Proves `read_files_and_links_with` reconstructs from disk without
+            // `read_all`'s note decode, under the same drop-orphaned-edges
+            // policy.
             let txn = store.begin_read().expect("read txn");
-            let (_, reconstructed) =
-                store.read_files_and_links_via(&txn).expect("reconstruct load");
+            let (_, reconstructed) = store
+                .read_files_and_links_with(&txn)
+                .expect("reconstruct load");
 
-            assert_eq!(reconstructed, links);
+            assert_eq!(
+                reconstructed,
+                test_inlinks(&[(PathBuf::from("target.md"), &[
+                    PathBuf::from("a.md"),
+                ])])
+            );
         }
 
         #[test]
@@ -2101,7 +2250,7 @@ mod tests {
             let (loaded_records, _loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, fresh);
+            assert_eq!(loaded_records.as_slice(), fresh);
         }
 
         #[test]
@@ -2114,8 +2263,8 @@ mod tests {
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records.len(), 0);
-            assert_eq!(loaded_notes.len(), 0);
+            assert_eq!(loaded_records.as_slice().len(), 0);
+            assert_eq!(loaded_notes.as_slice().len(), 0);
         }
 
         #[test]
@@ -2130,7 +2279,7 @@ mod tests {
                 .expect("persist records");
             let (loaded_records, ..) = store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
+            assert_eq!(loaded_records.as_slice(), files);
         }
 
         #[test]
@@ -2151,8 +2300,8 @@ mod tests {
             let (loaded_records, loaded_notes, _) =
                 store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
-            assert_eq!(loaded_notes, notes);
+            assert_eq!(loaded_records.as_slice(), files);
+            assert_eq!(loaded_notes.as_slice(), notes);
         }
 
         #[test]
@@ -2191,6 +2340,8 @@ mod tests {
             assert_eq!(inlinks_of(normal.as_path()), vec![weird]);
         }
 
+        // macOS filename normalization makes the raw non-Unicode fixture
+        // unreliable; run only where it materializes byte-exactly.
         #[cfg(target_os = "linux")]
         #[test]
         fn scan_preserves_a_non_unicode_path() {
@@ -2202,6 +2353,57 @@ mod tests {
             let files = IndexerService::scan(temp.path()).expect("scan root");
 
             assert!(files.iter().any(|file| file.path() == weird));
+        }
+
+        #[test]
+        fn load_resolves_attachment_targets_and_note_sources() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let attachment = PathBuf::from("attachment.png");
+            let note_path = PathBuf::from("note.md");
+            let files = vec![
+                FileBase::for_test(attachment.clone(), FileFormat::Other),
+                FileBase::note_for_test(note_path.clone()),
+            ];
+            let notes = vec![parse(&note_path, "# Note")];
+            let links = test_inlinks(&[(
+                attachment.clone(),
+                std::slice::from_ref(&note_path),
+            )]);
+            write_all_parts(&store, &files, &notes, &links).expect("persist");
+
+            let (_, _, loaded_links) = store.read_all().expect("load index");
+
+            assert_eq!(loaded_links.inlinks_of(&attachment), [
+                note_path.as_path()
+            ]);
+        }
+
+        #[test]
+        fn load_resolves_a_non_unicode_attachment_target_byte_exactly() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let weird = non_unicode_path();
+            let note_path = PathBuf::from("note.md");
+            let files = vec![
+                FileBase::for_test(weird.clone(), FileFormat::Other),
+                FileBase::note_for_test(note_path.clone()),
+            ];
+            let notes = vec![parse(&note_path, "# Note")];
+            let links = test_inlinks(&[(
+                weird.clone(),
+                std::slice::from_ref(&note_path),
+            )]);
+            write_all_parts(&store, &files, &notes, &links).expect("persist");
+
+            let (loaded_files, loaded_links) =
+                store.read_files_and_links().expect("load files and links");
+
+            assert_eq!(loaded_links.inlinks_of(&weird), [note_path.as_path()]);
+            assert!(
+                loaded_files.as_slice().iter().any(|file| file.path() == weird),
+                "attachment row must round-trip byte-exactly"
+            );
         }
 
         #[test]
@@ -2219,7 +2421,7 @@ mod tests {
 
             let (loaded_records, ..) = store.read_all().expect("load records");
 
-            assert_eq!(loaded_records, files);
+            assert_eq!(loaded_records.as_slice(), files);
         }
     }
 
@@ -2236,7 +2438,10 @@ mod tests {
             let error = IndexStore::open(root)
                 .expect_err("directory at db path fails to open");
 
-            assert!(matches!(error, IndexError::Store(DbError::Redb { .. })));
+            assert!(matches!(
+                error,
+                IndexError::Store(StoreError::Redb { .. })
+            ));
         }
 
         #[cfg(unix)]
@@ -2253,7 +2458,7 @@ mod tests {
             let error = IndexStore::open(root)
                 .expect_err("unwritable root fails to open store");
 
-            assert!(matches!(error, IndexError::Store(DbError::Io { .. })));
+            assert!(matches!(error, IndexError::Store(StoreError::Io { .. })));
         }
 
         #[test]
@@ -2288,63 +2493,47 @@ mod tests {
             let (files, notes, links) =
                 store.read_all().expect("load after recovery");
 
-            assert_eq!(files, []);
-            assert_eq!(notes, []);
+            assert_eq!(files.as_slice(), []);
+            assert_eq!(notes.as_slice(), []);
             assert!(links.is_empty());
         }
     }
 
     mod is_rebuild_trigger {
+        use rstest::rstest;
+
         use super::*;
 
-        #[test]
-        fn accepts_table_type_mismatch_as_a_trigger() {
-            let error = redb::TableError::TableTypeMismatch {
-                table: "files".to_owned(),
-                key: redb::TypeName::new("&str"),
-                value: redb::TypeName::new("&[u8]"),
-            };
-
+        #[rstest]
+        #[case::table_type_mismatch(redb::TableError::TableTypeMismatch {
+            table: "files".to_owned(),
+            key: redb::TypeName::new("&str"),
+            value: redb::TypeName::new("&[u8]"),
+        })]
+        #[case::type_definition_changed(redb::TableError::TypeDefinitionChanged {
+            name: redb::TypeName::new("&[u8]"),
+            alignment: 1,
+            width: None,
+        })]
+        // `open_table` can surface table-local corruption separately from the
+        // container-level corruption `create_db` handles. A real file fixture
+        // would need redb internals to corrupt one table while preserving
+        // container checksums, so this tests the predicate directly.
+        #[case::storage_corrupted(redb::TableError::Storage(
+            redb::StorageError::Corrupted("simulated".to_owned()),
+        ))]
+        fn triggers_a_rebuild(#[case] error: redb::TableError) {
             assert!(IndexStore::is_rebuild_trigger(&error));
         }
 
-        #[test]
-        fn accepts_type_definition_changed_as_a_trigger() {
-            let error = redb::TableError::TypeDefinitionChanged {
-                name: redb::TypeName::new("&[u8]"),
-                alignment: 1,
-                width: None,
-            };
-
-            assert!(IndexStore::is_rebuild_trigger(&error));
-        }
-
-        #[test]
-        fn accepts_storage_corrupted_as_a_trigger() {
-            // `open_table` can surface table-local corruption separately from
-            // the container-level corruption `create_db` handles. A real file
-            // fixture would need redb internals to corrupt one table while
-            // preserving container checksums, so this tests the predicate
-            // directly.
-            let error = redb::TableError::Storage(
-                redb::StorageError::Corrupted("simulated".to_owned()),
-            );
-
-            assert!(IndexStore::is_rebuild_trigger(&error));
-        }
-
-        #[test]
-        fn rejects_table_does_not_exist() {
-            let error = redb::TableError::TableDoesNotExist("files".to_owned());
-
-            assert!(!IndexStore::is_rebuild_trigger(&error));
-        }
-
-        #[test]
-        fn rejects_a_non_corrupted_storage_error() {
-            let error =
-                redb::TableError::Storage(redb::StorageError::DatabaseClosed);
-
+        #[rstest]
+        #[case::table_does_not_exist(redb::TableError::TableDoesNotExist(
+            "files".to_owned(),
+        ))]
+        #[case::non_corrupted_storage(redb::TableError::Storage(
+            redb::StorageError::DatabaseClosed,
+        ))]
+        fn does_not_trigger_a_rebuild(#[case] error: redb::TableError) {
             assert!(!IndexStore::is_rebuild_trigger(&error));
         }
     }
@@ -2369,7 +2558,7 @@ mod tests {
 
             assert!(matches!(
                 &error,
-                IndexError::Store(DbError::Deserialize { path, .. })
+                IndexError::Store(StoreError::Deserialize { path, .. })
                     if path == Path::new("bad.md")
             ));
         }

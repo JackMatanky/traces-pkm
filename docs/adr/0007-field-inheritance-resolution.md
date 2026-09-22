@@ -79,7 +79,7 @@ Bad, because:
 
 - Multiple inheritance with first-listed-wins is an authoring contract —
   declaration order matters and can surprise
-- Resolution purity is scoped to the `extends`/`$ref`/Kahn's-sort linearization specifically — a `file` field's option list still resolves live from the `FileIndex` outside `resolve()`.
+- Resolution purity is scoped to the `extends`/`$ref`/Kahn's-sort linearization specifically — a `file` field's option list still resolves live from the `WorkspaceIndex` outside `resolve()`.
 - `$ref` is deliberately bounded to global + ancestors, so cross-schema field
   reuse outside the extends chain is not expressible (redefine or restructure
   instead)
@@ -95,7 +95,7 @@ are unit-testable with no vault. This is narrower than the original unqualified
 claim: a `select` field's declared `values` and a `file` field's
 `folders`/`ext`/`class` filter are validated against the field's resolved type
 by `schema/fields.rs`'s `SchemaFieldBuilder`, itself pure, but a `file` field's
-*option list* still resolves live from the `FileIndex` outside `resolve()`
+*option list* still resolves live from the `WorkspaceIndex` outside `resolve()`
 entirely (per ADR-6), and ticket `07-schema-service-refactor` confirmed no third
 case needs threading through `resolve()`'s signature to stay pure. Tests assert:
 transitive is-a matching (a sci-fi note matches a book class query);

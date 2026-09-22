@@ -2,22 +2,22 @@
 //! (`IndexerService::build`).
 //!
 //! Exposes and monitors the execution cost of full filesystem scanning, note
-//! parsing, file path sorting, and in-memory [`FileIndex`] compilation from
-//! disk state.
+//! parsing, file path sorting, and in-memory [`WorkspaceIndex`] compilation
+//! from disk state.
 //!
 //! ### Data Flow Diagram
 //!
 //! ```text
 //! [Files on Disk] ──(WalkDir Scan)──► [FileBase / Notes]
 //!                                             │
-//!                                             └──(Compile)──► [FileIndex]
+//!                                             └──(Compile)──► [WorkspaceIndex]
 //! ```
 //!
 //! ### Profiling Integration
 //!
 //! To profile index build CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench index_build -- --bench "FileIndex::build/1000"
+//! cargo flamegraph --bench index_build -- --bench "WorkspaceIndex::build/1000"
 //! ```
 //!
 //! Run via `mise run bench -f index_build` (or `mise run bench -m index`): this
@@ -35,7 +35,7 @@ use criterion::{
     AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput,
     criterion_group, criterion_main,
 };
-use traces_pkm::{FileIndex, IndexerService};
+use traces_pkm::{IndexerService, WorkspaceIndex};
 #[expect(
     dead_code,
     reason = "shared benchmark common helpers are compiled into each bench \
@@ -58,7 +58,7 @@ const BUILD_CONTRAST_SHAPES: &[ProjectShape] = &[
     ProjectShape::AttachmentProject,
 ];
 
-fn observe_index(index: &FileIndex) {
+fn observe_index(index: &WorkspaceIndex) {
     let entries = index.entries();
     let note_count =
         entries.iter().filter(|entry| entry.note().is_some()).count();
@@ -78,8 +78,8 @@ fn observe_index(index: &FileIndex) {
 ///
 /// Fixture: temporary plain-note project created once per tier outside timing.
 /// Timed work scans the filesystem, parses notes, extracts tags, resolves
-/// links, and compiles inlinks into a complete [`FileIndex`]. Path sorting adds
-/// an $n \cdot \ln(n)$ component to the linear scan and parse baseline.
+/// links, and compiles inlinks into a complete [`WorkspaceIndex`]. Path sorting
+/// adds an $n \cdot \ln(n)$ component to the linear scan and parse baseline.
 ///
 /// Expected outcomes:
 /// - Near-linear $O(n \log n)$ scaling governed primarily by single-pass note
@@ -90,7 +90,7 @@ fn observe_index(index: &FileIndex) {
 ///   accidental duplicate walks, or avoidable intermediate collections in link
 ///   graph construction.
 fn bench_file_index_build(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::build");
+    let mut group = c.benchmark_group("WorkspaceIndex::build");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
@@ -134,7 +134,7 @@ fn bench_file_index_build(c: &mut Criterion) {
 /// - Dense link or attachment profiles growing super-linearly, indicating graph
 ///   allocation churn or quadratic link resolution overhead.
 fn bench_file_index_build_profiles(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FileIndex::build/profiles");
+    let mut group = c.benchmark_group("WorkspaceIndex::build/profiles");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );

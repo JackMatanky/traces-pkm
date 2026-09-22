@@ -19,7 +19,7 @@
 ### Indexing (`src/index/`)
 
 - `query.rs`: `IndexRecord` has `TaskInfo { completed: bool, text: String }` for task-level rows
-- `FileIndex::query_tasks()` expands each Note into one row per task item
+- `WorkspaceIndex::query_tasks()` expands each Note into one row per task item
 - `QueryOutcome::task_list()` renders task records as markdown checkboxes
 - Tasks stored in redb `note_metadata` table as part of Note serialization
 
@@ -33,7 +33,7 @@
 
 ### Template Engine (`src/template/engine/`)
 
-- `query.rs`: `tasks` namespace registered as `QueryOps` with `query: FileIndex::query_tasks`
+- `query.rs`: `tasks` namespace registered as `QueryOps` with `query: WorkspaceIndex::query_tasks`
 - Methods: `all()`, `from_tags()`, `from_folder()`, `from_class()`
 - Terminal: `task_list()`, `table()`, `list()`, `count()`
 - Non-terminal: `where()`/`filter()`, `sort()`, `limit()`, `group_by()`, `flatten()`
@@ -486,7 +486,7 @@ type = "ON_HOLD"
 
 - Contains all input parameters for markdown parser
 - Avoids constant re-allocation for config values
-- Larger refactor: split FileIndex into separate file indexer (future, irrelevant to task system)
+- Larger refactor: split WorkspaceIndex into separate file indexer (future, irrelevant to task system)
 
 #### Q47 — Task Annotation Timing
 
@@ -526,7 +526,7 @@ pub struct NoteConfigSpec {
 
 - pulldown-cmark research completed; byte→line via `line_starts` vec with `partition_point`
 
-#### Q51 — FileIndex Split
+#### Q51 — WorkspaceIndex Split
 
 **Decision:** Future refactor, irrelevant to task system.
 

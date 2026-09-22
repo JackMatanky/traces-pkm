@@ -3,7 +3,7 @@
 //! This module implements the runtime data representations produced by query
 //! execution:
 //! - [`QueryRow`]: A lightweight, zero-allocation view over an indexed note or
-//!   list item. It pairs a [`FileIndex`] handle with a row position and an
+//!   list item. It pairs a [`WorkspaceIndex`] handle with a row position and an
 //!   optional positional list item offset (`item_idx: u32`). Field resolution
 //!   borrows directly from in-memory note storage without string or status
 //!   allocations.
@@ -24,7 +24,7 @@ use crate::{
     DateTimeValue, DateValue, SourceLine, TaskListItem, TaskPriority,
     TaskStatusSymbol,
     file::FileBase,
-    index::{FileEntry, FileIndex, RowIndex},
+    index::{FileEntry, RowIndex, WorkspaceIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
 };
 
@@ -42,7 +42,7 @@ enum RowKind {
 /// `list.*`, frontmatter, inline fields, `tags`, and inlinks.
 #[derive(Clone)]
 pub struct QueryRow {
-    index: Arc<FileIndex>,
+    index: Arc<WorkspaceIndex>,
     position: RowIndex,
     /// Field overrides for exploded rows from [`QuerySet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
@@ -52,7 +52,10 @@ pub struct QueryRow {
 impl QueryRow {
     /// Constructs a row for `position`, sharing `index` instead of cloning the
     /// matched [`FileEntry`].
-    pub(super) fn from_row(index: &Arc<FileIndex>, position: RowIndex) -> Self {
+    pub(super) fn from_row(
+        index: &Arc<WorkspaceIndex>,
+        position: RowIndex,
+    ) -> Self {
         Self {
             index: Arc::clone(index),
             position,
@@ -422,7 +425,7 @@ impl QueryRow {
         }
     }
 
-    /// Orders two rows by their position in the underlying [`FileIndex`]:
+    /// Orders two rows by their position in the underlying [`WorkspaceIndex`]:
     /// document order for note rows, and item order within their note for
     /// list and task rows. This is the total order behind minijinja's row
     /// comparisons and `sort` filter.

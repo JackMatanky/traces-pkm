@@ -849,18 +849,17 @@ mod tests {
                     .expect("valid test field name"),
                 SchemaFieldDef::new(SchemaFieldType::Input, true, true),
             );
-            let resolved: IndexMap<SchemaName, Schema> = [(
+            let resolved: IndexMap<SchemaName, Schema> = std::iter::once((
                 SchemaName::new_test("book"),
                 Schema::new(
                     SchemaName::new_test("book"),
                     fields,
                     IndexSet::new(),
                 ),
-            )]
-            .into_iter()
+            ))
             .collect();
             let ancestors: IndexSet<SchemaName> =
-                [SchemaName::new_test("book")].into_iter().collect();
+                std::iter::once(SchemaName::new_test("book")).collect();
             let context = SchemaFieldBuildContext::for_test();
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(

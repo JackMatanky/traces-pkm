@@ -133,7 +133,7 @@ fn bench_note_construction_allocation(c: &mut Criterion) {
 ///
 /// Fixture: temporary [`ProjectShape::Plain`] projects are created before the
 /// allocation probe. The measured build includes filesystem scan/read, parsing,
-/// inlink construction, and [`FileIndex`] assembly.
+/// inlink construction, and [`WorkspaceIndex`] assembly.
 ///
 /// Expected outcomes:
 /// - Allocation bytes and calls grow roughly linearly with note count.
@@ -156,7 +156,7 @@ fn bench_file_index_footprint(c: &mut Criterion) {
         drop(index);
 
         eprintln!(
-            "[memory] FileIndex::build({n}): gross {} bytes, {} allocs",
+            "[memory] WorkspaceIndex::build({n}): gross {} bytes, {} allocs",
             stats.bytes_allocated, stats.allocations
         );
 
@@ -179,8 +179,8 @@ fn bench_file_index_footprint(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 
 /// Measures gross allocation cost across vault sizes for a narrow
-/// [`QueryService::sync_and_run`] query vs. a full [`FileIndex`]-materializing
-/// refresh.
+/// [`QueryService::sync_and_run`] query vs. a full
+/// [`WorkspaceIndex`]-materializing refresh.
 ///
 /// Parameters: varies note count; holds one matching `#rare_0` tag selector
 /// fixed; reports gross allocated bytes and allocation calls.
@@ -199,8 +199,8 @@ fn bench_file_index_footprint(c: &mut Criterion) {
 ///
 /// Unexpected outcomes:
 /// - `sync_and_run`'s allocation count converging toward
-///   `refresh_with_report`'s as `n` grows, indicating a full [`FileIndex`] or
-///   full-note read snuck back into the store-query path.
+///   `refresh_with_report`'s as `n` grows, indicating a full [`WorkspaceIndex`]
+///   or full-note read snuck back into the store-query path.
 fn bench_sync_and_run_footprint(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory/sync_and_run");
     group.sample_size(10);
@@ -344,7 +344,7 @@ fn bench_query_execution_footprint(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 
 /// Total flat `ListItem` count asserted against the post-compaction memory
-/// budget: 50,000 items in one in-memory `FileIndex`.
+/// budget: 50,000 items in one in-memory `WorkspaceIndex`.
 const LIST_ITEM_FOOTPRINT_COUNT: usize = 50_000;
 
 /// Maximum allowed gross bytes allocated per `ListItem`. Measured baseline:
@@ -354,7 +354,7 @@ const LIST_ITEM_FOOTPRINT_COUNT: usize = 50_000;
 const MAX_LIST_ITEM_FOOTPRINT_BYTES: usize = 220;
 
 /// Measures gross bytes allocated per `ListItem` for 50,000 flat list items
-/// in `FileIndex` via `Region::new(GLOBAL)`, asserting the required >50%
+/// in `WorkspaceIndex` via `Region::new(GLOBAL)`, asserting the required >50%
 /// reduction over the pre-compaction (`>450` bytes/item) layout.
 ///
 /// Parameters: fixed at [`LIST_ITEM_FOOTPRINT_COUNT`] items built through
@@ -363,7 +363,7 @@ const MAX_LIST_ITEM_FOOTPRINT_BYTES: usize = 220;
 ///
 /// Fixture: [`build_index_arc_from_note_source`] parses the note in-memory
 /// with zero disk I/O. The [`Region`] probe measures `index.as_ref().clone()`,
-/// capturing the exact resident heap bytes requested by the `FileIndex`'s
+/// capturing the exact resident heap bytes requested by the `WorkspaceIndex`'s
 /// entries and list items (struct layout + heap strings) while excluding
 /// transient Markdown parser scratch buffers.
 ///

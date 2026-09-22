@@ -16,7 +16,7 @@
 //! - [`number`] parses `min`/`max`/`step`.
 //! - [`date`] parses `format`.
 //! - [`mod@file`] parses `folders`/`ext`/`class` and provides
-//!   [`SchemaFileFieldRef`] for `FileIndex` queries.
+//!   [`SchemaFileFieldRef`] for `WorkspaceIndex` queries.
 
 use std::sync::Arc;
 

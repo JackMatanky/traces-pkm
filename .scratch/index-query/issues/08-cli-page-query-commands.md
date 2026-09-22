@@ -1,6 +1,6 @@
 # 08 — CLI Page Query Commands
 
-**What to build:** `traces list` and `traces table` run page-level queries from the FileIndex using flags. Query output goes to stdout, diagnostics go to stderr, and results are useful in a terminal.
+**What to build:** `traces list` and `traces table` run page-level queries from the WorkspaceIndex using flags. Query output goes to stdout, diagnostics go to stderr, and results are useful in a terminal.
 
 **Blocked by:** 05 — QueryOutcome Filtering and Ordering
 
@@ -9,7 +9,7 @@
 - [x] `traces list` runs a page-level query and prints list output to stdout.
 - [x] `traces table` runs a page-level query and prints tabular output to stdout.
 - [x] Commands accept source and transformation flags (`--from`, `--where`, table column flags) instead of a DQL parser.
-- [x] Commands refresh stale FileIndex entries before printing results.
+- [x] Commands refresh stale WorkspaceIndex entries before printing results.
 - [x] Primary output is written to stdout; diagnostics and errors to stderr.
 - [x] Table output is readable in a terminal (pipe-safe: no control codes that break other tools).
 - [x] CLI dispatch tests cover trusted project setup through command output, following the spec's testing decisions and the existing `index`/`task` test fixtures.
@@ -22,8 +22,8 @@ Triage pass (category: `enhancement`, state: `ready-for-agent` unchanged).
 Redundancy check: the `Commands` enum (`src/cli/mod.rs`) has `Index` and
 `Task` but no `List`/`Table` page-query variants; `src/index/query.rs` and
 `src/index/mod.rs` have no page-level `list`/`table` query helpers. All the
-building blocks for this ticket already exist upstream — `FileIndex::refresh`
-(refreshes stale entries), `FileIndex::query(&Source)` (page-level
+building blocks for this ticket already exist upstream — `WorkspaceIndex::refresh`
+(refreshes stale entries), `WorkspaceIndex::query(&Source)` (page-level
 `QueryOutcome`), `QueryOutcome::filter`/`sort`/`limit` (#05), and
 `QueryOutcome::table`/`list` terminal renderers (#07) — so this is
 unimplemented wiring, not duplicated work. No `.out-of-scope/` directory
@@ -31,7 +31,7 @@ exists; no prior-rejection match. `Blocked by: 05` is satisfied (#05
 `completed`). Spec fully specifies the ticket (user stories 49-55, 60;
 implementation decisions 120-121; out-of-scope 146-156); no grilling needed.
 Strong prior art: `traces task` (`src/cli/task.rs`) is the same command shape
-— trusted-root load, `FileIndex::refresh`, `--from`/`--where` flags, stdout
+— trusted-root load, `WorkspaceIndex::refresh`, `--from`/`--where` flags, stdout
 for rows, stderr for diagnostics, `CliError::Query` on unparsable filters.
 
 ## Agent Brief
@@ -40,12 +40,12 @@ for rows, stderr for diagnostics, `CliError::Query` on unparsable filters.
 **Summary:** Add `traces list` and `traces table` page-level query subcommands, mirroring the existing `traces task` command shape.
 
 **Current behavior:**
-The CLI offers `traces index` (rebuild the persisted FileIndex), `traces task`
+The CLI offers `traces index` (rebuild the persisted WorkspaceIndex), `traces task`
 (task-level queries), `traces template`, plus trust/init/completions. There
 are no page-level query commands: `traces list` and `traces table` are not
 registered in the CLI `Commands` enum. The underlying pieces exist and are
-reusable — `FileIndex::refresh` returns a freshly-indexed `FileIndex`,
-`FileIndex::query` produces a page-level `QueryOutcome` from a `Source`
+reusable — `WorkspaceIndex::refresh` returns a freshly-indexed `WorkspaceIndex`,
+`WorkspaceIndex::query` produces a page-level `QueryOutcome` from a `Source`
 (all / tag / folder), and `QueryOutcome` already supports filtering, sorting,
 limiting, and the `table`/`list` terminal renderers.
 
@@ -54,7 +54,7 @@ limiting, and the `table`/`list` terminal renderers.
 same flags as `traces task`: `--from` (a `#tag`, including nested sub-tags, or
 a folder path; omitted means all pages) and `--where <filter expression>`.
 Commands use flags, not a Dataview Query Language parser. Both refresh stale
-FileIndex entries before querying (`FileIndex::refresh`). Primary output goes
+WorkspaceIndex entries before querying (`WorkspaceIndex::refresh`). Primary output goes
 to stdout; diagnostics and the result count go to stderr.
 
 - `traces list` prints one markdown bullet per matching page (the page-level
@@ -72,7 +72,7 @@ to stdout; diagnostics and the result count go to stderr.
 - New `#[derive(Debug, clap::Args)]` structs per command — mirror the
   `task::Task` flags (`--from`, `--where`), and any flags needed to name table
   columns.
-- `FileIndex::query(&Source)` — the page-level query seam (same visibility as
+- `WorkspaceIndex::query(&Source)` — the page-level query seam (same visibility as
   the already-CLI-used `query_tasks`).
 - `QueryOutcome::table(headers, columns)` and `QueryOutcome::list(path)` —
   reuse the #07 renderers directly; report row counts via `QueryOutcome::len`.
@@ -95,7 +95,7 @@ See the checklist at the top of this ticket.
 ### Implementation Notes
 
 - **`traces list`** (`src/cli/list.rs`, new): `--from`/`--where` (mirroring
-  `task::Task`), refreshes the `FileIndex`, renders the page-level
+  `task::Task`), refreshes the `WorkspaceIndex`, renders the page-level
   `QueryOutcome::list("file.path")` to stdout, `"<n> page(s) from <root>"`
   to stderr. `List::render` is split from `List::run` so tests assert on
   rendered content without capturing process stdout, matching the
@@ -149,7 +149,7 @@ See the checklist at the top of this ticket.
     swap left genuinely dead — caught via `index/mod.rs`'s module-wide
     `#![cfg_attr(not(test), expect(dead_code, ...))]`, written anticipating
     this ticket. Confirmed the suppression is still needed for other
-    legitimately-unwired items (`FileIndex::notes`, `FileRecord::created_at`,
+    legitimately-unwired items (`WorkspaceIndex::notes`, `FileRecord::created_at`,
     `Timestamp` helpers, `QueryOutcome::is_empty`/`r#where`) and kept it
     with an updated reason.
 - **Tests:**
@@ -216,7 +216,7 @@ code changes were made.
   3. Flags, not a DQL parser — `--from`/`--where`/`--sort`/`--order`
      (`list.rs`), plus `--column` (`table.rs`); no query-language parser
      in either file.
-  4. Refreshes stale entries before querying — `FileIndex::refresh(root)`
+  4. Refreshes stale entries before querying — `WorkspaceIndex::refresh(root)`
      in both `render()` methods.
   5. stdout = output, stderr = diagnostics/errors — `eprintln!("{count}
      page(s)…")` in both `run()`s; top-level `CliError`s reach stderr via

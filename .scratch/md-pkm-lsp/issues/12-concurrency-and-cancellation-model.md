@@ -39,9 +39,9 @@ No `CancellationToken` infrastructure is needed. Cooperative cancellation (check
 
 ### 3. Read/write exclusivity during index refresh: sequential
 
-With N=1 sequential dispatch, refresh and queries never overlap. The refresh handler (triggered by `workspace/didChangeWatchedFiles`) performs the full cycle — filesystem diff, parallel rayon parse, redb persist, `Arc<FileIndex>` swap — then returns. The next handler sees the new `FileIndex`.
+With N=1 sequential dispatch, refresh and queries never overlap. The refresh handler (triggered by `workspace/didChangeWatchedFiles`) performs the full cycle — filesystem diff, parallel rayon parse, redb persist, `Arc<WorkspaceIndex>` swap — then returns. The next handler sees the new `WorkspaceIndex`.
 
-The swap is an atomic `Arc` pointer replacement (instantaneous, happens between handlers). No `RwLock` needed — `FileIndex` is immutable after construction (ticket 10). Queries before the swap see the old snapshot; queries after see the new one. With sequential dispatch, there is no "mid-swap" state.
+The swap is an atomic `Arc` pointer replacement (instantaneous, happens between handlers). No `RwLock` needed — `WorkspaceIndex` is immutable after construction (ticket 10). Queries before the swap see the old snapshot; queries after see the new one. With sequential dispatch, there is no "mid-swap" state.
 
 If refresh time becomes a problem at large vault scale, background refresh can be layered on later (kick off diff/parse/persist on a `spawn_blocking` thread, return immediately, swap when complete). But the initial model should be the simplest correct thing.
 

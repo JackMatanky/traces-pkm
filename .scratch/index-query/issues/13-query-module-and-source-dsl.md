@@ -50,7 +50,7 @@ Class expansion uses a caller-side AST pre-pass (`resolve_sources`) that walks t
 - [x] Template `query` and `tasks` namespaces replace four methods with single `.from([expr])` (zero args or `""` → `QuerySource::All`)
 - [x] `ClassExpansionMode` implements Incremental Depth: `Exact` (self), `Children` (self + direct), `Descendants` (self + transitive)
 - [x] CLI `--from` supports full DSL: sigils (`@Book`, `@Book+`, `@Book*`), function forms (`class(Name)`, `.with_children()`, `.with_descendants()`), `#tag`, `"path"`, `and`/`or`/`not`, parens
-- [x] `IndexerService` is NOT created (write methods stay on `FileIndex`)
+- [x] `IndexerService` is NOT created (write methods stay on `WorkspaceIndex`)
 - [x] Full existing test suite (`mise test`) passes clean
 - [x] `mise clippy` clean
 
@@ -72,7 +72,7 @@ Implemented on branch `issue-13-query-source-dsl` in three commits:
 - `src/query/option.rs` owns `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys`; no compatibility re-export remains under `src/index/`.
 - Existing filter, operator, sort, field, and error modules moved from `src/index/query/` under `src/query/`.
 - `QueryOutcome` remains in `src/query/mod.rs`; no `outcome.rs` was introduced.
-- `FileIndex::query`, `FileIndex::query_tasks`, and `FileIndex::file_options` remain thin read-side delegators. Index build, refresh, load, persistence, and other write ownership remain on `FileIndex`; no `IndexerService` was added.
+- `WorkspaceIndex::query`, `WorkspaceIndex::query_tasks`, and `WorkspaceIndex::file_options` remain thin read-side delegators. Index build, refresh, load, persistence, and other write ownership remain on `WorkspaceIndex`; no `IndexerService` was added.
 
 ### Source parsing and matching
 
@@ -97,7 +97,7 @@ Implemented on branch `issue-13-query-source-dsl` in three commits:
 - Spec review found stale CLI `--from` help text; the help was updated to describe the shared source expression grammar before the implementation commit.
 
 **Out of scope:**
-- Creating an `IndexerService` — `FileIndex` write methods remain on `FileIndex`
+- Creating an `IndexerService` — `WorkspaceIndex` write methods remain on `WorkspaceIndex`
 - Link-based sources (`FROM [[Page]]` / `FROM outgoing([[Page]])`)
 - Any change to `FilterExpr` or `.where()` syntax
 
@@ -117,7 +117,7 @@ Implemented on branch `issue-13-query-source-dsl` in three commits:
 ```
 src/
   index/
-    mod.rs       FileIndex build/refresh/load/persist ownership plus thin
+    mod.rs       WorkspaceIndex build/refresh/load/persist ownership plus thin
                  query(), query_tasks(), and file_options() delegators
   query/
     mod.rs       Module root, query execution, QueryOutcome transformations,

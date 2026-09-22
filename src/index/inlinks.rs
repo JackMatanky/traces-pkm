@@ -3,7 +3,7 @@
 //! [`InlinkMap`] stores deduplicated source paths keyed by each indexed target.
 //! [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
 //! construct and persist it; query execution reads inlinks from
-//! [`super::FileEntry`] through [`super::FileIndex`].
+//! [`super::FileEntry`] through [`super::WorkspaceIndex`].
 //!
 //! # Link resolution
 //!
@@ -262,7 +262,7 @@ pub(super) fn resolve_edges_for(
 /// Path and stem index used during link resolution.
 struct LinkResolver<'a> {
     files: &'a [FileBase],
-    stem_index: FxHashMap<BaseNameRef<'a>, StemIndex<'a>>,
+    stem_index: FxHashMap<BaseNameRef<'a>, BaseNameIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
@@ -278,7 +278,7 @@ impl<'a> LinkResolver<'a> {
         }
         let stem_index = by_stem
             .into_iter()
-            .map(|(stem, candidates)| (stem, StemIndex::build(candidates)))
+            .map(|(stem, candidates)| (stem, BaseNameIndex::build(candidates)))
             .collect();
         Self {
             files,
@@ -383,15 +383,16 @@ impl Source<'_> {
 ///
 /// Dispatches to flat scan or [`CandidateTrie`] based on candidate count
 /// (see [`TRIE_THRESHOLD`]).
-enum StemIndex<'a> {
+enum BaseNameIndex<'a> {
     Flat(Vec<&'a Path>),
     Trie(Box<CandidateTrie<'a>>),
 }
 
-/// Candidate count at which [`StemIndex::build`] switches to [`CandidateTrie`].
+/// Candidate count at which [`BaseNameIndex::build`] switches to
+/// [`CandidateTrie`].
 const TRIE_THRESHOLD: usize = 64;
 
-impl<'a> StemIndex<'a> {
+impl<'a> BaseNameIndex<'a> {
     fn build(candidates: Vec<&'a Path>) -> Self {
         if candidates.len() >= TRIE_THRESHOLD {
             Self::Trie(Box::new(CandidateTrie::build(&candidates)))
@@ -550,7 +551,7 @@ impl<'a> CandidateTrie<'a> {
         TrieNode {
             depth,
             locals: Vec::new(),
-            full: NodeAgg::default(),
+            full: SubtreeAggregate::default(),
             excluding: Vec::new(),
         }
     }
@@ -583,15 +584,15 @@ impl<'a> CandidateTrie<'a> {
         let insertion_order: Vec<NodeId> = arena.iter_node_ids().collect();
         for &id in insertion_order.iter().rev() {
             let children: Vec<NodeId> = id.children(arena).collect();
-            let mut local_agg = NodeAgg::default();
+            let mut local_agg = SubtreeAggregate::default();
             for &(ext, path) in &Self::node_data(arena, id).locals {
-                local_agg = local_agg.merge(NodeAgg::from_local(
+                local_agg = local_agg.merge(SubtreeAggregate::from_local(
                     Self::node_data(arena, id).depth,
                     ext,
                     path,
                 ));
             }
-            let child_aggs: Vec<NodeAgg<'a>> = children
+            let child_aggs: Vec<SubtreeAggregate<'a>> = children
                 .iter()
                 .map(|&c| Self::node_data(arena, c).full.clone())
                 .collect();
@@ -616,20 +617,20 @@ impl<'a> CandidateTrie<'a> {
     /// Prefix and suffix vectors are sized to `children.len() + 1`; fallback
     /// reads are defensive only.
     fn excluding_per_child(
-        local_agg: &NodeAgg<'a>,
+        local_agg: &SubtreeAggregate<'a>,
         children: &[NodeId],
-        child_aggs: &[NodeAgg<'a>],
-    ) -> Vec<(NodeId, NodeAgg<'a>)> {
+        child_aggs: &[SubtreeAggregate<'a>],
+    ) -> Vec<(NodeId, SubtreeAggregate<'a>)> {
         let n = children.len();
-        let mut prefix: Vec<NodeAgg<'a>> =
+        let mut prefix: Vec<SubtreeAggregate<'a>> =
             Vec::with_capacity(n.saturating_add(1));
-        prefix.push(NodeAgg::default());
+        prefix.push(SubtreeAggregate::default());
         for agg in child_aggs {
             let last = prefix.last().cloned().unwrap_or_default();
             prefix.push(last.merge(agg.clone()));
         }
-        let mut suffix: Vec<NodeAgg<'a>> =
-            vec![NodeAgg::default(); n.saturating_add(1)];
+        let mut suffix: Vec<SubtreeAggregate<'a>> =
+            vec![SubtreeAggregate::default(); n.saturating_add(1)];
         for i in (0..n).rev() {
             let after =
                 suffix.get(i.saturating_add(1)).cloned().unwrap_or_default();
@@ -702,13 +703,13 @@ struct TrieNode<'a> {
     /// extensions.
     locals: Vec<(Option<&'a str>, &'a Path)>,
     /// Aggregate for this node's locals and every descendant.
-    full: NodeAgg<'a>,
+    full: SubtreeAggregate<'a>,
     /// Per-child aggregate excluding that child's subtree.
     ///
     /// Queries walking up through child `c` use this instead of `full` to
     /// avoid counting shallower candidates twice. Stored in a small `Vec`
     /// because same-stem subfolders are usually few.
-    excluding: Vec<(NodeId, NodeAgg<'a>)>,
+    excluding: Vec<(NodeId, SubtreeAggregate<'a>)>,
 }
 
 /// Subtree aggregate with optional per-extension buckets.
@@ -716,12 +717,12 @@ struct TrieNode<'a> {
 /// `by_ext` is a `Vec`, not a `HashMap`: same-stem candidates rarely span
 /// enough extensions for hashing and per-node allocation to win.
 #[derive(Clone, Debug, Default)]
-struct NodeAgg<'a> {
+struct SubtreeAggregate<'a> {
     combined: NearestCandidate<'a>,
     by_ext: Vec<(&'a str, NearestCandidate<'a>)>,
 }
 
-impl<'a> NodeAgg<'a> {
+impl<'a> SubtreeAggregate<'a> {
     fn from_local(depth: usize, ext: Option<&'a str>, path: &'a Path) -> Self {
         let agg = NearestCandidate::candidate(depth, path);
         Self {
@@ -1489,7 +1490,7 @@ mod tests {
                     );
                     let inlinks = InlinkMap::from_raw(raw);
                     let stale: HashSet<&Path> =
-                        [Path::new("a.md")].into_iter().collect();
+                        std::iter::once(Path::new("a.md")).collect();
 
                     let patched = inlinks.without_sources(&stale);
 
@@ -1500,7 +1501,7 @@ mod tests {
                 fn removing_one_of_several_sources_keeps_the_target() {
                     let inlinks = graph_with_two_sources();
                     let stale: HashSet<&Path> =
-                        [Path::new("a.md")].into_iter().collect();
+                        std::iter::once(Path::new("a.md")).collect();
 
                     let patched = inlinks.without_sources(&stale);
 
@@ -1513,7 +1514,7 @@ mod tests {
                 fn removing_an_absent_source_keeps_the_graph_unchanged() {
                     let inlinks = graph_with_two_sources();
                     let stale: HashSet<&Path> =
-                        [Path::new("missing.md")].into_iter().collect();
+                        std::iter::once(Path::new("missing.md")).collect();
 
                     let patched = inlinks.without_sources(&stale);
 

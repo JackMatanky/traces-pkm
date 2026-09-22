@@ -94,13 +94,13 @@ scope but needs one reference updated — see its own file.
       recovers by rebuilding rather than propagating `TableTypeMismatch`.
 - [x] `IndexerService::refresh()` persists its own result before
       returning — no new method, no per-call-site `persist()` call
-      required. Its doc comment (currently "Returns the fresh FileIndex
+      required. Its doc comment (currently "Returns the fresh WorkspaceIndex
       without persisting...") is rewritten to describe this.
 - [x] A persist failure inside `refresh()` is caught and logged via
       `tracing::warn!` (matching the existing schema-registry warning
       precedent in `src/cli/mod.rs`) and does not fail `refresh()`'s own
       `Result` — the caller still gets its fresh, correct in-memory
-      `FileIndex`.
+      `WorkspaceIndex`.
 - [x] `persist()`/`persist_incremental` skip opening a write transaction
       entirely when the computed `IncrementalDelta` is empty. This check
       is `IncrementalDelta::is_empty(&self) -> bool` — a method on the
@@ -164,7 +164,7 @@ scope but needs one reference updated — see its own file.
 - [x] `IndexerService::refresh()` is rewritten to open the store once,
       scope the read transaction to a block that ends before persisting:
       ```rust
-      pub fn refresh(&self) -> Result<FileIndex, IndexError> {
+      pub fn refresh(&self) -> Result<WorkspaceIndex, IndexError> {
           let store = IndexStore::open(&self.root)?;
           let index = {
               let read_txn = store.begin_read()?;
@@ -473,7 +473,7 @@ scope but needs one reference updated — see its own file.
     `build_fresh` (which never touches `IndexStore` at all) can't safely
     be re-expressed as "incremental reconciliation against an empty
     `RefreshCache`," even though the two produce an identical in-memory
-    `FileIndex` for that case. The persistence side does not: `Full`
+    `WorkspaceIndex` for that case. The persistence side does not: `Full`
     (`replace_all`) unconditionally wipes all three tables before
     rewriting, so it never needs to know what was deleted; `Incremental`
     (`persist_incremental`) only deletes paths its diff explicitly names,

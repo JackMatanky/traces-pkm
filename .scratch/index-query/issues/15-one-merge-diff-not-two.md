@@ -168,7 +168,7 @@ not reconciliation-algorithm shape).
       Note's *own* fresh value was already successfully parsed via
       `parse_note` regardless of whether this comparison succeeds — only
       the "can we skip the inlink recompute" decision is at stake, never
-      correctness of the returned `FileIndex`.
+      correctness of the returned `WorkspaceIndex`.
 - [x] `IndexBuilder::build_with_cache` (renamed from `build_with_reuse`)
       assembles `stale` starting from `diff_bases`'s `has_deleted_note`,
       then `|=`s in each reconciled Note's `outlinks_changed`:
@@ -177,7 +177,7 @@ not reconciliation-algorithm shape).
           bases: Vec<FileBase>,
           root: &Path,
           cache: RefreshCache<'a>,
-      ) -> Result<FileIndex, IndexBuilderError> {
+      ) -> Result<WorkspaceIndex, IndexBuilderError> {
           let (upserted, deleted, mut stale) = cache.diff_bases(&bases);
           let mut upserted_iter = upserted.iter().peekable();
           let mut notes = Vec::with_capacity(bases.len());
@@ -206,7 +206,7 @@ not reconciliation-algorithm shape).
           let delta = IndexDelta::Incremental(Box::new(IncrementalDelta {
               upserted, deleted, links_upserted, links_deleted,
           }));
-          Ok(FileIndex::new(bases, notes, inlinks, delta))
+          Ok(WorkspaceIndex::new(bases, notes, inlinks, delta))
       }
       ```
       The upserted-membership check — and consuming a match — runs
@@ -254,14 +254,14 @@ not reconciliation-algorithm shape).
               self.cache = Some(Box::new(cache));
               self
           }
-          pub(super) fn build(self, root: &Path) -> Result<FileIndex, IndexBuilderError> {
+          pub(super) fn build(self, root: &Path) -> Result<WorkspaceIndex, IndexBuilderError> {
               match self.cache {
                   None => Self::build_fresh(self.bases, root),
                   Some(cache) => Self::build_with_cache(self.bases, root, *cache),
               }
           }
-          fn build_fresh(bases: Vec<FileBase>, root: &Path) -> Result<FileIndex, IndexBuilderError> { ... } // unchanged
-          fn build_with_cache(bases: Vec<FileBase>, root: &Path, cache: RefreshCache<'a>) -> Result<FileIndex, IndexBuilderError> { ... } // see above
+          fn build_fresh(bases: Vec<FileBase>, root: &Path) -> Result<WorkspaceIndex, IndexBuilderError> { ... } // unchanged
+          fn build_with_cache(bases: Vec<FileBase>, root: &Path, cache: RefreshCache<'a>) -> Result<WorkspaceIndex, IndexBuilderError> { ... } // see above
       }
       ```
       `from_scan` and `reuse_unchanged` are deleted — `new` takes an
@@ -287,12 +287,12 @@ not reconciliation-algorithm shape).
       drops `mod scan;`.
 - [x] `IndexerService::build`/`refresh` are rewritten to the final shape:
       ```rust
-      pub fn build(&self) -> Result<FileIndex, IndexError> {
+      pub fn build(&self) -> Result<WorkspaceIndex, IndexError> {
           let bases = self.scan()?;
           Ok(builder::IndexBuilder::new(bases).build(&self.root)?)
       }
 
-      pub fn refresh(&self) -> Result<FileIndex, IndexError> {
+      pub fn refresh(&self) -> Result<WorkspaceIndex, IndexError> {
           let store = IndexStore::open(&self.root)?;
           let bases = self.scan()?;
           let index = {

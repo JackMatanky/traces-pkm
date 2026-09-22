@@ -35,7 +35,7 @@ Informed by zk's daily-note/date conventions research (ticket 04). Decide:
 
 8. **`[periodic]` config designed from scratch.** Short granularity names, flat independent-per-granularity sub-tables. `format` optional with per-granularity defaults (`%Y-%m-%d`, `%G-W%V`, `%Y-%m`, `%Y-Q%q`, `%Y`). `folder` and `template` optional. `match` defaults to `"file"`. No `enabled` field — granularity enabled when table exists.
 
-9. **Explicit reuse.** Builds on `DateValue` (existing), `FileEntry`/`FileIndex` (existing), `LinkResolver` (ticket 15), inverted index (ticket 33), `RefreshPlan` (ticket 13). Completion dispatch deferred to ticket 24.
+9. **Explicit reuse.** Builds on `DateValue` (existing), `FileEntry`/`WorkspaceIndex` (existing), `LinkResolver` (ticket 15), inverted index (ticket 33), `RefreshPlan` (ticket 13). Completion dispatch deferred to ticket 24.
 
 ### What NOT to build
 

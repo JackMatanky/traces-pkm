@@ -2,8 +2,8 @@
 //!
 //! Exposes and monitors the CPU cost of [`parse_markdown`], the crate's
 //! markdown/frontmatter/task lexer. Every indexed note passes through this on
-//! [`FileIndex::build`] and [`FileIndex::refresh`], so its cost sets a floor
-//! under indexing throughput.
+//! [`WorkspaceIndex::build`] and [`WorkspaceIndex::refresh`], so its cost sets
+//! a floor under indexing throughput.
 //!
 //! ### Data Flow Diagram
 //!

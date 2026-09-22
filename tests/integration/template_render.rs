@@ -1,6 +1,6 @@
 //! Proves `TemplateService::render_to_file` crosses `template` + `index` +
-//! `note` end-to-end (real files → `FileIndex` → minijinja `query` global →
-//! rendered file content on disk), through the public surface only.
+//! `note` end-to-end (real files → `WorkspaceIndex` → minijinja `query` global
+//! → rendered file content on disk), through the public surface only.
 
 use std::sync::Arc;
 

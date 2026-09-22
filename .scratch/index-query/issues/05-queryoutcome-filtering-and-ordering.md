@@ -23,7 +23,7 @@
     plus their `#[cfg(test)]` suites (`source_is_match`, `index_record`,
     `limit`, `group_by`, `flatten`, `query_outcome`).
   - `src/index/query/error.rs` — `QueryError` (mirrors `src/index/error.rs`
-    holding `FileIndexError`), with its own `Display` formatting tests.
+    holding `WorkspaceIndexError`), with its own `Display` formatting tests.
   - `src/index/query/field.rs` — `FieldPath`/`FileField` parsing and
     resolution, with field-path tests.
   - `src/index/query/filter.rs` — the `FilterExpr` AST, tokenizer
@@ -90,4 +90,4 @@
 **Out of scope:**
 - Registering the `QueryOps` minijinja namespace Object or pipeline terminal filters (belongs to #06).
 - Terminal formatting (`table`, `list`, `task_list`, `count`) and CLI query commands (belongs to #06/#07).
-- Modifying `FileIndex` freshness or redb persistence logic.
+- Modifying `WorkspaceIndex` freshness or redb persistence logic.

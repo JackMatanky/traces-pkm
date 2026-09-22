@@ -10,7 +10,7 @@ subsystem across `benches/query_sort.rs`, `benches/memory_footprint.rs`,
 In `benches/query_sort.rs`, benchmark list row sorting across text, due date,
 priority, and status fields to verify zero heap allocations during comparator
 evaluation. In `benches/memory_footprint.rs`, benchmark the memory footprint
-of 50,000 flat `ListItem`s in `FileIndex` using `Region::new(GLOBAL)`, verifying
+of 50,000 flat `ListItem`s in `WorkspaceIndex` using `Region::new(GLOBAL)`, verifying
 gross memory per item remains bounded under 220 bytes per item (demonstrating
 a >50% reduction against the pre-compaction >450 bytes/item layout). In
 `benches/query_execution.rs`, upgrade task density benchmarking to sweep
@@ -35,11 +35,11 @@ include expected and unexpected outcome doc comments matching repo conventions.
   sorting by `list.status` (borrowed status name string slices).
 - [x] Add `bench_list_items_memory_footprint` in `benches/memory_footprint.rs`
   measuring gross bytes allocated per `ListItem` via `Region::new(GLOBAL)` over
-  50,000 flat list items in `FileIndex`, asserting gross memory per item stays
+  50,000 flat list items in `WorkspaceIndex`, asserting gross memory per item stays
   under 220 bytes (validating the 152-byte struct layout + heap string storage,
   achieving >50% reduction over pre-compaction >450 bytes/item).
 - [x] Build every fixture through existing helpers — `project::build_index_arc_from_note_source`
-  (in-memory, wraps `test_support::build_test_index` → `FileIndex::new_test`, zero
+  (in-memory, wraps `test_support::build_test_index` → `WorkspaceIndex::new_test`, zero
   disk I/O) for `query_sort.rs`/`query_execution.rs`/`memory_footprint.rs`'s new
   list-item benchmark, and the new `task_sort_fixture_source` note generator for
   content. Do not add ad-hoc `IndexerService`/filesystem setup, hand-rolled Markdown
@@ -69,7 +69,7 @@ include expected and unexpected outcome doc comments matching repo conventions.
     diverging significantly from primitive integer sorting.
 
 - **Compacted Memory Footprint (`benches/memory_footprint.rs`):**
-  Measure gross allocated bytes and allocation calls for `FileIndex`
+  Measure gross allocated bytes and allocation calls for `WorkspaceIndex`
   construction over vaults with 50,000 list items:
   - Exercise notes with sparse inline fields and shared raw/clean text.
   - Expected: Average gross memory consumption under 220 bytes per list item
@@ -100,7 +100,7 @@ include expected and unexpected outcome doc comments matching repo conventions.
   `benches/common` wrappers over the crate's `test_support` module (feature-gated
   `test-utils`, exposed from `src/lib.rs`):
   - `project::build_index_arc_from_note_source(note_count, |i, n| ...)` — wraps
-    `test_support::build_test_index` → `FileIndex::new_test`. Zero disk I/O.
+    `test_support::build_test_index` → `WorkspaceIndex::new_test`. Zero disk I/O.
     Already the established pattern in `query_sort.rs` and `query_execution.rs`
     (`bench_sort_task_rows`, `bench_run_tasks_density`); reuse it verbatim rather
     than reaching for `project::create_project` + `IndexerService::build()` (the
@@ -126,7 +126,7 @@ include expected and unexpected outcome doc comments matching repo conventions.
 1. **Dependency Resolution & Runtime Readiness:**
    - All functional task system capabilities (tickets 01–10) are merged on `main`.
    - Ticket 11 (integration test suite) is implemented in `.worktrees/task-11-integration-tests` (commit `e663866`). Crucially, ticket 11 modifies only `tests/` and does not touch `src/` or `benches/`.
-   - All query pipelines (`QueryBuilder::lists`, `QueryBuilder::tasks`), sorting comparators (`SortKey<'a>`), and `FileIndex` APIs required by ticket 12 are available and fully functional in `main`.
+   - All query pipelines (`QueryBuilder::lists`, `QueryBuilder::tasks`), sorting comparators (`SortKey<'a>`), and `WorkspaceIndex` APIs required by ticket 12 are available and fully functional in `main`.
 
 2. **Memory Footprint Grounding:**
    - Analysis of `ListItem` structure:
@@ -165,18 +165,18 @@ include expected and unexpected outcome doc comments matching repo conventions.
 **Summary:** Implement Criterion benchmarks validating zero-allocation list sorting, memory footprint reduction, and task query throughput scaling.
 
 **Current behavior:**
-`benches/query_sort.rs` only has `bench_sort_task_rows` sorting by `"list.completed"`, with no coverage for `list.text`, `list.due`, `list.priority`, or `list.status`. `benches/memory_footprint.rs` lacks a benchmark measuring `FileIndex` memory consumption for 50,000 list items. `benches/query_execution.rs` has a legacy `bench_run_tasks_density` that only sweeps `{1, 3, 10, 20}` tasks per note on 1,000 files without multi-file-count scaling.
+`benches/query_sort.rs` only has `bench_sort_task_rows` sorting by `"list.completed"`, with no coverage for `list.text`, `list.due`, `list.priority`, or `list.status`. `benches/memory_footprint.rs` lacks a benchmark measuring `WorkspaceIndex` memory consumption for 50,000 list items. `benches/query_execution.rs` has a legacy `bench_run_tasks_density` that only sweeps `{1, 3, 10, 20}` tasks per note on 1,000 files without multi-file-count scaling.
 
 **Desired behavior:**
 1. Implement `task_sort_fixture_source` in `benches/common/content.rs` generating high-entropy task distributions (varied markers `[ ]`, `[/]`, `[x]`, `[-]`, `[!]`, due dates, priorities, and text).
 2. Add `bench_sort_list_rows_by_text`, `bench_sort_list_rows_by_due`, `bench_sort_list_rows_by_priority`, and `bench_sort_list_rows_by_status` in `benches/query_sort.rs`.
-3. Add `bench_list_items_memory_footprint` in `benches/memory_footprint.rs` using `Region::new(GLOBAL)` to assert that 50,000 list items in `FileIndex` allocate <220 bytes gross per item (>50% reduction over pre-compaction layout).
+3. Add `bench_list_items_memory_footprint` in `benches/memory_footprint.rs` using `Region::new(GLOBAL)` to assert that 50,000 list items in `WorkspaceIndex` allocate <220 bytes gross per item (>50% reduction over pre-compaction layout).
 4. Upgrade `benches/query_execution.rs` to `bench_query_tasks_density` sweeping `[1, 10, 100]` tasks per note across workspace sizes `[100, 1_000, 10_000]`.
 5. Ensure all benchmark functions include expected and unexpected outcome doc comments per repo standards.
 
 **Key interfaces:**
 - `benches/common/project.rs`: `build_index_arc_from_note_source(note_count, note_source_fn)` —
-  wraps `test_support::build_test_index` → `FileIndex::new_test` (in-memory, zero disk
+  wraps `test_support::build_test_index` → `WorkspaceIndex::new_test` (in-memory, zero disk
   I/O). Use for all three new benchmarks; do not call `test_support`/`IndexerService`
   directly from a `benches/*.rs` file.
 - `benches/query_sort.rs`: `QueryBuilder::tasks(SourceSelector::All).sort("list.<field>", false)`

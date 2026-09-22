@@ -6,14 +6,14 @@ Status: resolved
 
 ## Question
 
-Grounding: the only existing performance signal is `benches/index_lifecycle.rs`, which benchmarks CLI-scale refresh latency up to 1,000 files and asserts near-instantaneous no-op refresh; `benches/index_codec.rs` benchmarks `postcard` (de)serialization cost per read/write. Indexing/query execution is single-threaded throughout (no `rayon`), and query source-resolution is a linear scan of the `FileIndex` (`src/query/service.rs:132-139`), not an inverted index. No numbers exist today for interactive per-keystroke LSP latency, large-workspace (10k+ note) scale, or memory footprint.
+Grounding: the only existing performance signal is `benches/index_lifecycle.rs`, which benchmarks CLI-scale refresh latency up to 1,000 files and asserts near-instantaneous no-op refresh; `benches/index_codec.rs` benchmarks `postcard` (de)serialization cost per read/write. Indexing/query execution is single-threaded throughout (no `rayon`), and query source-resolution is a linear scan of the `WorkspaceIndex` (`src/query/service.rs:132-139`), not an inverted index. No numbers exist today for interactive per-keystroke LSP latency, large-workspace (10k+ note) scale, or memory footprint.
 
 Once the analysis-host (10), concurrency (12), and persistence/caching (13) decisions are made, set concrete, falsifiable targets and the strategy to hit them:
 
 - Initial full-workspace indexing time targets at stated workspace sizes. **The "1k / 10k / 50k notes" figures in this ticket's own earlier draft were illustrative placeholders I invented while charting the map, not evidence of actual or expected Traces vault sizes** — before setting a falsifiable target, find or establish a real basis for target scale (e.g. ask the user directly, check for any existing user/vault-size data, or look at what comparable PKM tools cite as "large vault" in their own docs/issue trackers — Markdown Oxide's `MAX_INDEXED_LINES = 10_000`-per-file cap and any vault-size discussion in the zk/Marksman research are a starting point, not a substitute). Then decide whether the existing single-threaded, linear-scan approach needs parallelization (e.g. `rayon` — not used elsewhere in Traces today, but that's not a reason to withhold it here if the LSP's indexing hot path genuinely benefits; evaluate it on its own merits for this workload) or an inverted index (tag→files, folder→files) to hit the target, or whether the current approach is provably sufficient at target scale.
 - Incremental single-edit (`didChange`) latency budget (interactive-feel threshold, typically sub-100ms for completion) and what specifically must stay off that hot path (e.g. full-tree redb diffing must not run per keystroke — ties directly to ticket 13's per-keystroke-vs-per-save invalidation granularity decision).
 - Interactive request latency budgets per capability (hover, completion, definition should be near-instant; workspace-wide rename/diagnostics may tolerate higher latency, potentially with `$/progress` reporting per ticket 12).
-- Memory budget for large PKM workspaces — does keeping the full parsed `Note` AST (not just `FileBase`) resident in memory for every file (as `FileIndex` does today) remain viable at 50k+ notes, or does LSP mode need a different residency policy (e.g. lazily-loaded/evictable parsed-note cache) than the CLI's always-full-index model.
+- Memory budget for large PKM workspaces — does keeping the full parsed `Note` AST (not just `FileBase`) resident in memory for every file (as `WorkspaceIndex` does today) remain viable at 50k+ notes, or does LSP mode need a different residency policy (e.g. lazily-loaded/evictable parsed-note cache) than the CLI's always-full-index model.
 - Which existing benchmarks get extended/adapted for LSP scenarios (e.g. a new `benches/lsp_incremental.rs`) vs which need a genuinely new benchmark harness (e.g. simulated keystroke-latency benchmarks).
 
 ## Answer
@@ -37,7 +37,7 @@ Target vault sizes from `benches/common/mod.rs:64-65`: `WORKSPACE_FILE_COUNTS` =
 | Operation | Target | Strategy |
 |-----------|--------|----------|
 | Single-file reparse + index update | **<10ms** | pulldown-cmark: 0.20ms/48KB; extraction overhead on top; full re-parse per edit (universal pattern — no incremental parsing within markdown documents) |
-| Structural diff (links/headings/tags) | **<1ms** | Compare extracted structural data against previous FileIndex entry; skip cascade if unchanged |
+| Structural diff (links/headings/tags) | **<1ms** | Compare extracted structural data against previous WorkspaceIndex entry; skip cascade if unchanged |
 | Backlink recomputation | **<5ms** | Update inlink multimap for changed file + its neighbors; O(link-count), not O(vault-size) |
 | Debounce window | **100ms** | Matches rumdl; avoids re-indexing on every keystroke |
 | Full-tree redb diff | **Never on hot path** | Ticket 13: expand `RefreshPlan` with single-file constructor; `didChange` bypasses `RefreshPlan::collect` entirely |
@@ -92,13 +92,13 @@ Metadata (paths, tags, links, headings, file-classes, frontmatter field names) a
 ### 5. Benchmark plan
 
 **Extend existing** (`benches/index_lifecycle.rs`):
-- Add `FileIndex::refresh/single-file-didchange` group — reparse one file + update in-memory index + recompute affected backlinks at each workspace size
-- Add `FileIndex::refresh/parallel-cold-start` group — benchmark `rayon`-parallelized cold start vs existing single-threaded path
-- Extend `FileIndex::build` to track peak memory via `jemalloc` stats or `std::mem::size_of_val`
+- Add `WorkspaceIndex::refresh/single-file-didchange` group — reparse one file + update in-memory index + recompute affected backlinks at each workspace size
+- Add `WorkspaceIndex::refresh/parallel-cold-start` group — benchmark `rayon`-parallelized cold start vs existing single-threaded path
+- Extend `WorkspaceIndex::build` to track peak memory via `jemalloc` stats or `std::mem::size_of_val`
 
 **New file** (`benches/lsp_latency.rs`):
 - **Interactive latency group**: simulated hover/completion/gotodef/find-refs at 1K/5K/10K/20K files; pure in-memory lookups against the inverted index
-- **Memory footprint group**: measure `FileIndex` memory at each workspace size; track LRU cache hit/miss rates
+- **Memory footprint group**: measure `WorkspaceIndex` memory at each workspace size; track LRU cache hit/miss rates
 - **Debounce effectiveness group**: simulate 100ms keystroke bursts; measure how debounce reduces reparse count
 - **Schema intelligence group**: frontmatter completion/validation latency with 5/20/50/100 field schemas
 

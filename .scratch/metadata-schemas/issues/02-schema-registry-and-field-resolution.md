@@ -90,7 +90,7 @@ mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
 
 ### Out of scope (unchanged)
 
-Confirmed nothing beyond pure Schema parsing/resolution was touched: no `schema` minijinja namespace, no `file`-field FileIndex resolution, no `query.from_class`/`tasks.from_class`, no vault/index interaction, and `SchemaRegistry` is not yet called from `ConfigService`/CLI. `global` being rejected as a Note's File Class value (issue bullet 17's other half) is deferred to whichever later ticket reads Note frontmatter — this ticket exposes `GLOBAL_SCHEMA_NAME` for that consumer and implements the pure-resolution half (stray `required` degrade) that is testable without vault access.
+Confirmed nothing beyond pure Schema parsing/resolution was touched: no `schema` minijinja namespace, no `file`-field WorkspaceIndex resolution, no `query.from_class`/`tasks.from_class`, no vault/index interaction, and `SchemaRegistry` is not yet called from `ConfigService`/CLI. `global` being rejected as a Note's File Class value (issue bullet 17's other half) is deferred to whichever later ticket reads Note frontmatter — this ticket exposes `GLOBAL_SCHEMA_NAME` for that consumer and implements the pure-resolution half (stray `required` degrade) that is testable without vault access.
 
 ### Adversarial re-review (2026-08-07)
 
