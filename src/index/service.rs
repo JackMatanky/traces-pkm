@@ -69,8 +69,8 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::NoteParse` if a file's metadata cannot be inspected, or a
-    ///   Markdown file cannot be parsed.
+    /// - `IndexError::Inspect` if a file's metadata cannot be inspected.
+    /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     #[inline]
@@ -99,9 +99,9 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::NoteParse` if file metadata cannot be inspected, a
-    ///   Markdown file cannot be parsed, or an unchanged note cannot be
-    ///   recalled.
+    /// - `IndexError::Inspect` if file metadata cannot be inspected.
+    /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
+    ///   or an unchanged note cannot be recalled.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     /// - `IndexError::Store` if the persisted index cannot be opened or read.
@@ -116,9 +116,9 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::NoteParse` if file metadata cannot be inspected, a
-    ///   Markdown file cannot be parsed, or an unchanged note cannot be
-    ///   recalled.
+    /// - `IndexError::Inspect` if file metadata cannot be inspected.
+    /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
+    ///   or an unchanged note cannot be recalled.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     /// - `IndexError::Store` if the persisted index cannot be opened or read.
@@ -182,7 +182,8 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::NoteParse` if a note cannot be parsed.
+    /// - `IndexError::Inspect` if file metadata cannot be inspected.
+    /// - `IndexError::NoteParse` if a note cannot be read or parsed.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     /// - `IndexError::Store` if persisting the rebuilt index fails.
@@ -201,9 +202,9 @@ impl IndexerService {
     /// # Errors
     ///
     /// - `IndexError::Walk` if a directory cannot be read.
-    /// - `IndexError::NoteParse` if file metadata cannot be inspected, a
-    ///   Markdown file cannot be parsed, or an unchanged note cannot be
-    ///   recalled.
+    /// - `IndexError::Inspect` if file metadata cannot be inspected.
+    /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
+    ///   or an unchanged note cannot be recalled.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
     /// - `IndexError::Store` if the database cannot be opened or read, required
@@ -343,12 +344,12 @@ impl IndexerService {
 fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileBase> {
     let relative = RelativePath::derive(root, path)?;
     let metadata =
-        std::fs::metadata(path).map_err(|source| IndexError::NoteParse {
+        std::fs::metadata(path).map_err(|source| IndexError::Inspect {
             path: path.to_path_buf(),
             source,
         })?;
     FileBase::from_metadata(relative, &metadata).map_err(|source| {
-        IndexError::NoteParse {
+        IndexError::Inspect {
             path: path.to_path_buf(),
             source,
         }

@@ -31,6 +31,13 @@ pub enum IndexError {
         #[source]
         source: io::Error,
     },
+    /// File metadata could not be inspected during scan.
+    #[error("failed to inspect {path}")]
+    Inspect {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }
 
 pub type DbResult<T> = std::result::Result<T, DbError>;
@@ -132,6 +139,33 @@ mod tests {
             };
 
             assert!(err.to_string().contains("bad.md"));
+        }
+
+        #[test]
+        fn inspect_message_starts_with_failed_to_inspect() {
+            let err = IndexError::Inspect {
+                path: PathBuf::from("notes/gone.md"),
+                source: io::Error::new(io::ErrorKind::NotFound, "missing"),
+            };
+
+            assert_eq!(err.to_string(), "failed to inspect notes/gone.md");
+        }
+
+        #[test]
+        fn inspect_exposes_the_io_source() {
+            let source =
+                io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+            let err = IndexError::Inspect {
+                path: PathBuf::from("notes/locked.md"),
+                source,
+            };
+
+            let reported = err
+                .source()
+                .expect("io source")
+                .downcast_ref::<io::Error>()
+                .expect("io::Error");
+            assert_eq!(reported.kind(), io::ErrorKind::PermissionDenied);
         }
     }
 
