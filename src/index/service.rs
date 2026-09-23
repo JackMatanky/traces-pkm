@@ -1574,9 +1574,9 @@ mod tests {
             let (second, second_report) =
                 indexer.refresh_with_report().expect("unchanged refresh");
 
-            assert!(first.entries().is_empty());
+            assert_eq!(first.entries(), []);
             assert_eq!(first_report, RefreshReport::default());
-            assert!(second.entries().is_empty());
+            assert_eq!(second.entries(), []);
             assert_eq!(second_report, RefreshReport::default());
         }
 

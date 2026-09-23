@@ -662,6 +662,7 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
 }
 
 impl From<RawTaskStatusKind> for TaskStatusType {
+    #[inline]
     fn from(kind: RawTaskStatusKind) -> Self {
         match kind {
             RawTaskStatusKind::Todo => Self::Todo,
