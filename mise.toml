@@ -492,6 +492,14 @@ fi
 [tasks.bench]
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
+# Measurement gate: must run on invocation. Criterion output is
+# non-deterministic and baselines must never be skipped as "fresh"
+# (policy: mise.toml task_config.cache rationale; mirrors [tasks.test]).
+outputs = []
+cache = { enabled = false }
+# Raw criterion output: verbose statistical tables are unreadable when
+# every line is prefixed `bench: …` (07_configuration.md:1199-1208).
+output = "interleave"
 depends_post = ["bench:report"]
 timeout = "20m"
 usage = '''

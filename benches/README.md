@@ -101,9 +101,13 @@ use common::project::setup_persisted_project;
 
 ### Task Freshness
 
-The `bench` task declares `sources = ["@group:bench"]` covering
-`Cargo.toml`, `Cargo.lock`, `src/**/*.rs`, and `benches/**/*.rs`.
-Mise skips execution when sources haven't changed.
+The `bench` task declares `sources = ["@group:bench"]` but sets
+`outputs = []` and `cache = { enabled = false }`: benchmark runs are
+measurement gates, not build steps. Mise never skips them as "fresh" —
+Criterion output is non-deterministic and baseline re-runs on an
+unchanged commit must always execute. Should a skip ever be observed
+anyway, `mise run --force bench` bypasses freshness checks
+(`02_architecture.md:232-238`).
 
 ### Post-Bench Analysis
 
