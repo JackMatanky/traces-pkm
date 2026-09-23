@@ -16,7 +16,7 @@ pub type IndexResult<T> = std::result::Result<T, IndexError>;
               IndexError is pub"
 )]
 pub enum IndexError {
-    /// Database access or record serialization/deserialization failed.
+    /// Database access or row serialization/deserialization failed.
     #[error(transparent)]
     Store(#[from] StoreError),
     /// Directory traversal failed during scan.
@@ -60,15 +60,15 @@ pub(crate) enum StoreError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// Record serialization failed.
-    #[error("failed to serialize the record for {path}")]
+    /// Row serialization failed.
+    #[error("failed to serialize the row for {path}")]
     Serialize {
         path: PathBuf,
         #[source]
         source: postcard::Error,
     },
-    /// Stored record deserialization failed.
-    #[error("failed to deserialize the record for {path}")]
+    /// Stored row deserialization failed.
+    #[error("failed to deserialize the row for {path}")]
     Deserialize {
         path: PathBuf,
         #[source]
