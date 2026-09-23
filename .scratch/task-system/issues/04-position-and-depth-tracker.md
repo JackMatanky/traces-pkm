@@ -158,8 +158,8 @@ without depending on `note::`.
     (10–5000 items, `Throughput::Elements`), `nesting_depth` (200 items at depths
     1–50), `line_density` (50KB doc at line lengths 10–1000 bytes), and
     `frontmatter_field_scaling` (5–200 YAML fields). Baseline saved as
-    `position-refactor` via `mise run bench -b position-refactor` and comparable
-    via `critcmp position-refactor` or `mise run bench --baseline-compare position-refactor`.
+    `position-refactor` via `mise run bench -r position-refactor` and comparable
+    via `critcmp position-refactor`.
 
 ### Verification
 

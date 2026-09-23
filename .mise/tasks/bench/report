@@ -41,6 +41,10 @@ count_sizes_with_results() {
 
   for child_dir in "${group_dir}"*/; do
     [[ -d "${child_dir}" ]] || continue
+    # Parses criterion's private per-benchmark estimates.json layout —
+    # version-coupled and unspecified (criterion's sanctioned machine
+    # interfaces are raw.csv via the csv_output feature, or a
+    # --message-format=json stream). Grep this file on criterion bumps.
     if [[ -f "${child_dir}/new/estimates.json" ]]; then
       (( count += 1 ))
       continue
@@ -91,9 +95,6 @@ print_groups() {
   for group_dir in "${CRITERION_DIR}"/*/; do
     [[ -d "${group_dir}" ]] || continue
     group_name="$(basename "${group_dir}")"
-
-    # Skip baseline comparison directories (contain /)
-    [[ "${group_name}" == *"/"* ]] && continue
 
     if [[ "${has_groups}" == "false" ]]; then
       echo "### Groups measured:"

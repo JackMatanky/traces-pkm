@@ -21,6 +21,19 @@ license = "MIT"
 keywords = ["notes", "pkm", "templates"]
 categories = ["command-line-utilities", "development-tools"]
 
+# Criterion flags (--verbose, --save-baseline, …) panic libtest with
+# "unrecognized option" on any bare `cargo bench` that reaches the default
+# harness. The bench task always passes --bench selection, but these two
+# sections make the whole failure class impossible even for direct cargo
+# invocations (criterion book 06_faq.md:21-66).
+[lib]
+bench = false
+
+[[bin]]
+bench = false
+name = "traces-pkm"
+path = "src/main.rs"
+
 # ------------------------------------------------------------- #
 #                          Benchmarks                           #
 # ------------------------------------------------------------- #
