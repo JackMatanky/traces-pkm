@@ -1,10 +1,11 @@
 //! Persisted configuration epoch markers for index repair detection.
 //!
 //! Tracks configuration snapshots that affect note parsing (task statuses,
-//! task tag filters) and axis index projection (the File Class field). When a
-//! sync pass opens an index whose persisted epochs differ from current
-//! configuration, [`super::refresh::RepairScope`] computes the minimal repair
-//! action required without requiring file mtime changes.
+//! task tag filters) and axis index projection (the File Class field). Missing
+//! or invalid persisted rows make the whole snapshot unknown. When a sync pass
+//! opens an index whose persisted epochs differ from current configuration,
+//! [`super::refresh::RepairScope`] computes the minimal repair action without
+//! requiring file mtime changes.
 
 use std::path::Path;
 

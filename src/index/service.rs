@@ -100,7 +100,9 @@ impl IndexerService {
     ///   or an unchanged note cannot be recalled.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
-    /// - `IndexError::Store` if the persisted index cannot be opened or read.
+    /// - `IndexError::Store` if the persisted store cannot be opened or read, a
+    ///   required configuration repair cannot be written, or content-only
+    ///   materialization cannot read stored notes.
     #[inline]
     pub fn refresh(&self) -> IndexResult<WorkspaceIndex> {
         let (index, _) = self.refresh_with_report()?;
@@ -117,7 +119,9 @@ impl IndexerService {
     ///   or an unchanged note cannot be recalled.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
     ///   project-relative path.
-    /// - `IndexError::Store` if the persisted index cannot be opened or read.
+    /// - `IndexError::Store` if the persisted store cannot be opened or read, a
+    ///   required configuration repair cannot be written, or content-only
+    ///   materialization cannot read stored notes.
     #[inline]
     pub fn refresh_with_report(
         &self,

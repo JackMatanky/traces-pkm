@@ -301,12 +301,12 @@ pub(super) struct RefreshPlan {
 }
 
 impl RefreshPlan {
-    /// Opens `IndexStore`, scans the filesystem, and reads persisted files and
-    /// inlinks.
+    /// Opens [`IndexStore`], scans the filesystem, and reads persisted files
+    /// and configuration epochs.
     ///
-    /// The filesystem walk runs concurrently with `IndexStore::open` and the
-    /// store read. Only the read waits on open; the scan continues
-    /// independently.
+    /// The filesystem walk runs concurrently with [`IndexStore::open`] and the
+    /// store read. This pass does not decode link rows; reconciliation or final
+    /// index materialization loads them only when needed.
     ///
     /// # Errors
     ///

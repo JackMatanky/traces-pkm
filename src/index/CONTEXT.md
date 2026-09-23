@@ -81,7 +81,8 @@ patches only modified files, notes, and affected link targets.
 
 The persisted snapshot of configuration settings that shape indexing (task
 statuses, tag filters, File Class field), compared per sync so configuration
-changes trigger repair without file edits.
+changes trigger repair without file edits. A missing or invalid row makes the
+entire marker unknown and forces a safe Note reparse.
 *Avoid*: config fingerprint, config hash, schema marker
 
 #### Repair Scope

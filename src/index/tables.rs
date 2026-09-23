@@ -1,7 +1,7 @@
 //! Redb table definitions and rebuild delete policies for the index store.
 //!
 //! [`IndexStore`] owns connections and row payloads; this module owns the
-//! static schema: seven [`TableSpec`] entries pairing each table's definition
+//! static schema: eight [`TableSpec`] entries pairing each table's definition
 //! with its rebuild wipe policy.
 //!
 //! [`IndexStore`]: super::store::IndexStore

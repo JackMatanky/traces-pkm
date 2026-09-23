@@ -134,7 +134,7 @@ impl QueryOps {
         }
     }
 
-    /// Wraps `root` for page-level dispatch under the `query` global.
+    /// Builds page-level dispatch around the configured indexer under `query`.
     #[inline]
     #[must_use]
     pub(super) fn page(
@@ -145,9 +145,9 @@ impl QueryOps {
         Self::new("query", QueryMode::Pages, indexer, class_field, schema)
     }
 
-    /// Wraps `root` for list-level dispatch under the `lists` global. Each row
-    /// is one list item (plain bullets, checkboxes, and tasks) instead of one
-    /// Note.
+    /// Builds list-level dispatch around the configured indexer under `lists`.
+    /// Each row is one list item (plain bullets, checkboxes, and tasks) instead
+    /// of one Note.
     #[inline]
     #[must_use]
     pub(super) fn list(
@@ -158,8 +158,8 @@ impl QueryOps {
         Self::new("lists", QueryMode::Lists, indexer, class_field, schema)
     }
 
-    /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
-    /// is one task item instead of one Note; see the module docs.
+    /// Builds task-level dispatch around the configured indexer under `tasks`.
+    /// Each row is one task item instead of one Note; see the module docs.
     #[inline]
     #[must_use]
     pub(super) fn task(
@@ -214,13 +214,14 @@ impl QueryOps {
     /// Returns this render's cached [`WorkspaceIndex`], refreshing and
     /// caching it first if not already cached this render. See
     /// [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
+    ///
     /// # Errors
     ///
     /// - [`ErrorKind::InvalidOperation`] if refreshing the index fails,
-    ///   including I/O errors while scanning `root`, database access errors,
-    ///   and TOML (de)serialization errors on stored records. The original
-    ///   error is preserved as [`source`], matching [`super::ui`]'s
-    ///   `dialog_error`.
+    ///   including filesystem errors while scanning the configured root,
+    ///   database access errors, and postcard decoding errors on stored rows.
+    ///   The original error is preserved as [`source`], matching
+    ///   [`super::ui`]'s `dialog_error`.
     ///
     /// [`source`]: std::error::Error::source
     fn cached_index(
