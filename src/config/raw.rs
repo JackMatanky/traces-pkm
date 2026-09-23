@@ -115,4 +115,37 @@ pub(crate) struct RawTaskConfig {
     /// filter is configured: every status-marked list item becomes a Task.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) tag_filters: Vec<String>,
+    /// Task statuses that augment or override defaults by marker symbol.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) statuses: Vec<RawTaskStatus>,
+}
+
+/// Raw `[[tasks.statuses]]` entry exactly as written in TOML.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawTaskStatus {
+    /// Marker character inside `[<char>]`.
+    pub(crate) symbol: char,
+    /// Display name for the status.
+    pub(crate) name: String,
+    /// Workflow classification for the status.
+    pub(crate) kind: RawTaskStatusKind,
+}
+
+/// Raw workflow classification accepted by `[[tasks.statuses]]`.
+#[derive(Copy, Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum RawTaskStatusKind {
+    /// Not yet started.
+    Todo,
+    /// Actively being worked on.
+    InProgress,
+    /// Paused, waiting on something external.
+    OnHold,
+    /// Finished.
+    Done,
+    /// Abandoned.
+    Cancelled,
+    /// A status-marked item that is not a Task.
+    NonTask,
 }

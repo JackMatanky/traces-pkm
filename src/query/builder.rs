@@ -204,7 +204,9 @@ mod tests {
             fs::write(temp.path().join("c.md"), "---\nrating: 9\n---\n")
                 .expect("write c.md");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let request = QueryBuilder::pages(SourceSelector::All)
                 .limit(2)
@@ -238,7 +240,9 @@ mod tests {
                 .expect("write note");
             }
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let request = QueryBuilder::pages(SourceSelector::All)
                 .sort("rating", true)
@@ -272,7 +276,9 @@ mod tests {
                 .expect("write note");
             }
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
 
             for n in [5_usize, 50, 100] {
@@ -335,7 +341,9 @@ mod tests {
                 .expect("write note");
             }
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             // Fusing sort+limit across the filter would return only [b].
             // Correct order leaves [b, e].
@@ -377,7 +385,9 @@ mod tests {
                 .expect("write note");
             }
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
 
             let fused_request = QueryBuilder::pages(SourceSelector::All)
@@ -443,7 +453,9 @@ mod tests {
             fs::write(temp.path().join("book.md"), "---\nclass: book\n---\n")
                 .expect("write book.md");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let request = QueryBuilder::pages(
                 SourceSelector::parse("@book").expect("source"),

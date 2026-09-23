@@ -65,6 +65,12 @@ impl DurationValue {
     /// [`MissingUnit`]: DurationError::MissingUnit
     /// [`UnknownUnit`]: DurationError::UnknownUnit
     /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "mul_add fuses to a single rounding step and would silently \
+                  change user-visible Duration floats that tests pin with \
+                  exact equality; not a hot path"
+    )]
     pub(crate) fn parse(input: &str) -> Result<Self, DurationError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -128,6 +134,12 @@ impl DurationValue {
     /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if
     /// `input` does not start with a valid duration segment, if no parts could
     /// be parsed, or if a part after the first carries an explicit `-` sign.
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "mul_add fuses to a single rounding step and would silently \
+                  change user-visible Duration floats that tests pin with \
+                  exact equality; not a hot path"
+    )]
     pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
         let bytes = input.as_bytes();
         let len = bytes.len();

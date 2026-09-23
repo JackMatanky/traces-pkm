@@ -12,8 +12,8 @@
 //! 5. **Merge** global config before local so local values win
 //!    ([`service::ConfigService`]).
 //!
-//! Path resolution and default filling happen in [`model`], which produces
-//! the final [`Config`].
+//! Path resolution and default filling happen in [`model`], which produces the
+//! final [`Config`].
 //!
 //! # Main Types
 //!
@@ -45,7 +45,12 @@ pub(crate) use error::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
-pub use model::{Config, FrontmatterConfig, SchemasConfig, TaskConfig};
+#[cfg_attr(
+    not(test),
+    expect(unused_imports, reason = "used in tests and test-utils")
+)]
+pub use model::SchemasConfig;
+pub use model::{Config, FrontmatterConfig, TaskConfig};
 pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;

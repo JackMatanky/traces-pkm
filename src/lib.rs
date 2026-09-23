@@ -444,7 +444,7 @@ mod test_support {
         #[inline]
         #[must_use]
         pub fn indexer(&self) -> IndexerService {
-            IndexerService::new(&self.root).with_config(&self.config())
+            IndexerService::from(&self.config())
         }
 
         /// Builds an in-memory index from disk files.

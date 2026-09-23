@@ -820,7 +820,7 @@ impl ItemFrame {
     /// inline HTML) occupies the item's leading slot, so the item does not
     /// start with a marker.
     fn reject_marker(&mut self) {
-        if let ItemClassificationState::Pending = self.classification {
+        if self.classification == ItemClassificationState::Pending {
             self.classification = ItemClassificationState::Plain;
         }
     }
@@ -834,7 +834,7 @@ impl ItemFrame {
     /// Decides a pending marker using end-of-line semantics. Always leaves the
     /// classification non-pending.
     fn decide_pending_at_line_end(&mut self) {
-        if let ItemClassificationState::Pending = self.classification {
+        if self.classification == ItemClassificationState::Pending {
             let decision = match scan_marker_at_line_end(&self.text_buffer) {
                 Some(scan) => {
                     let symbol = scan.symbol();

@@ -10,8 +10,9 @@ use std::sync::Arc;
 use chrono::NaiveDate;
 use pretty_assertions::{assert_eq, assert_ne};
 use traces_pkm::{
-    ListItem, ListItemType, QueryBuilder, QueryService, QuerySet,
-    SourceSelector, TaskConfig, TaskPriority, TaskStatusType, TestProject,
+    IndexerService, ListItem, ListItemType, QueryBuilder, QueryService,
+    QuerySet, SourceSelector, TaskConfig, TaskPriority, TaskStatusType,
+    TestProject,
 };
 
 #[test]
@@ -32,9 +33,8 @@ fn config_with_tag_filters_classifies_tasks_and_checkboxes_correctly() {
 
     let config =
         project.config().with_tasks(TaskConfig::from_tags(&["#task", "#todo"]));
-    let index = Arc::new(
-        project.indexer().with_config(&config).build().expect("build index"),
-    );
+    let index =
+        Arc::new(IndexerService::from(&config).build().expect("build index"));
 
     let query_service = QueryService::new("class");
     let task_rows =
@@ -154,9 +154,8 @@ fn classifies_multi_note_vault_lifecycle_with_custom_markers_and_computes_comple
     project.write_note("projects/beta.md", beta_md);
 
     let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
-    let index = Arc::new(
-        project.indexer().with_config(&config).build().expect("build index"),
-    );
+    let index =
+        Arc::new(IndexerService::from(&config).build().expect("build index"));
 
     let query_service = QueryService::new("class");
     let task_rows =

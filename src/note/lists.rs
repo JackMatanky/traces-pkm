@@ -29,6 +29,12 @@ pub(crate) type ListFieldMap = IndexMap<FieldKey, Box<[NoteFieldValue]>>;
 
 /// A Markdown list item with a classified [`ListItemType`], inline fields,
 /// tags, and source line positioning information.
+//
+// NOTE: `Eq` is deliberately not derived. `ListFieldMap` contains
+// `NoteFieldValue`, whose `Number` variant holds `f64`, so `Eq` is
+// unrepresentable on this struct and the clippy nursery lint
+// `derive_partial_eq_without_eq` (visible only under `-W clippy::nursery`)
+// flags it in error — its suggestion does not compile.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: ListText,
@@ -222,7 +228,7 @@ impl ListItem {
 ///   from [`super::Note::tasks`].
 /// - [`Self::Task`]: Status-marked item classified as an active task, carrying
 ///   an encapsulated [`TaskListItem`].
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ListItemType {
     /// A plain bullet with no marker.
     Plain,

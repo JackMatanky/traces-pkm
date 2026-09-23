@@ -18,11 +18,12 @@ use super::{
     error::ConfigFileError,
     raw::{
         RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
-        RawTaskConfig,
+        RawTaskConfig, RawTaskStatusKind,
     },
 };
 use crate::{
-    FieldName, FieldNameError, Tag, TaskStatusMap,
+    FieldName, FieldNameError, Tag, TaskStatus, TaskStatusMap,
+    TaskStatusSymbol, TaskStatusType,
     path::{PathError, RelativePath, SafeRelativePath},
 };
 
@@ -632,6 +633,14 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
     ///   not normalize into a valid [`Tag`].
     #[inline]
     fn try_from(raw: RawTaskConfig) -> Result<Self, Self::Error> {
+        let mut statuses = TaskStatusMap::default();
+        for status in raw.statuses {
+            statuses.insert(TaskStatus::new(
+                TaskStatusSymbol::new(status.symbol),
+                status.name,
+                status.kind.into(),
+            ));
+        }
         let tag_filters = raw
             .tag_filters
             .into_iter()
@@ -646,9 +655,23 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            statuses: TaskStatusMap::default(),
+            statuses,
             tag_filters,
         })
+    }
+}
+
+impl From<RawTaskStatusKind> for TaskStatusType {
+    #[inline]
+    fn from(kind: RawTaskStatusKind) -> Self {
+        match kind {
+            RawTaskStatusKind::Todo => Self::Todo,
+            RawTaskStatusKind::InProgress => Self::InProgress,
+            RawTaskStatusKind::OnHold => Self::OnHold,
+            RawTaskStatusKind::Done => Self::Done,
+            RawTaskStatusKind::Cancelled => Self::Cancelled,
+            RawTaskStatusKind::NonTask => Self::NonTask,
+        }
     }
 }
 
@@ -893,6 +916,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::config::raw::RawTaskStatus;
 
         #[test]
         fn defaults_to_empty_tag_filters_and_default_statuses() {
@@ -906,6 +930,7 @@ mod tests {
         fn normalizes_entries_with_and_without_a_leading_hash() {
             let raw = RawTaskConfig {
                 tag_filters: vec!["task".to_owned(), "#todo".to_owned()],
+                statuses: Vec::new(),
             };
 
             let config = TaskConfig::try_from(raw).expect("valid tag filters");
@@ -920,6 +945,7 @@ mod tests {
         fn allows_an_empty_tag_filters_list() {
             let raw = RawTaskConfig {
                 tag_filters: Vec::new(),
+                statuses: Vec::new(),
             };
 
             let config = TaskConfig::try_from(raw).expect("empty is valid");
@@ -928,9 +954,51 @@ mod tests {
         }
 
         #[test]
+        fn adds_a_custom_status_with_its_configured_kind() {
+            let raw = RawTaskConfig {
+                statuses: vec![RawTaskStatus {
+                    symbol: '?',
+                    name: "Blocked".to_owned(),
+                    kind: RawTaskStatusKind::OnHold,
+                }],
+                ..RawTaskConfig::default()
+            };
+
+            let config = TaskConfig::try_from(raw).expect("valid status");
+
+            let status =
+                config.statuses().by_symbol('?'.into()).expect("custom status");
+            assert_eq!(status.name(), "Blocked");
+            assert_eq!(status.kind(), TaskStatusType::OnHold);
+        }
+
+        #[test]
+        fn overriding_a_symbol_removes_the_replaced_name() {
+            let raw = RawTaskConfig {
+                statuses: vec![RawTaskStatus {
+                    symbol: '!',
+                    name: "Waiting".to_owned(),
+                    kind: RawTaskStatusKind::Todo,
+                }],
+                ..RawTaskConfig::default()
+            };
+
+            let config = TaskConfig::try_from(raw).expect("valid status");
+
+            let status = config
+                .statuses()
+                .by_symbol('!'.into())
+                .expect("overridden status");
+            assert_eq!(status.name(), "Waiting");
+            assert_eq!(status.kind(), TaskStatusType::Todo);
+            assert!(config.statuses().by_name("On Hold").is_none());
+        }
+
+        #[test]
         fn rejects_an_invalid_tag_filter_entry() {
             let raw = RawTaskConfig {
                 tag_filters: vec!["1invalid".to_owned()],
+                statuses: Vec::new(),
             };
 
             let error = TaskConfig::try_from(raw).expect_err("invalid entry");
@@ -945,6 +1013,7 @@ mod tests {
         fn rejects_a_whitespace_only_tag_filter_entry() {
             let raw = RawTaskConfig {
                 tag_filters: vec!["   ".to_owned()],
+                statuses: Vec::new(),
             };
 
             let error = TaskConfig::try_from(raw).expect_err("blank entry");

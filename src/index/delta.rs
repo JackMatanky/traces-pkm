@@ -18,10 +18,6 @@ pub(super) struct FileDelta {
 
 impl FileDelta {
     /// Computes added, modified, and deleted files.
-    ///
-    /// # Panics
-    ///
-    /// Panics in debug builds when either input is not ascending by path.
     pub(super) fn compute(
         current: &SortedByPath<FileBase>,
         persisted: &SortedByPath<FileBase>,

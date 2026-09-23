@@ -135,7 +135,7 @@ fn bench_index_persist(c: &mut Criterion) {
             b.iter_batched_ref(
                 || {
                     let temp = tempfile::tempdir().expect("create temp dir");
-                    let indexer = IndexerService::new(temp.path());
+                    let indexer = IndexerService::for_tests(temp.path());
                     (temp, indexer)
                 },
                 |(_temp, indexer)| {
@@ -183,7 +183,8 @@ fn bench_index_persist_profiles(c: &mut Criterion) {
                         || {
                             let temp =
                                 tempfile::tempdir().expect("create temp dir");
-                            let indexer = IndexerService::new(temp.path());
+                            let indexer =
+                                IndexerService::for_tests(temp.path());
                             (temp, indexer)
                         },
                         |(_temp, indexer)| {

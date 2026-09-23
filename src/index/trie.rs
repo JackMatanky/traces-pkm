@@ -30,8 +30,8 @@ enum ResolutionStrategy<'a> {
 pub(super) const TRIE_THRESHOLD: usize = 64;
 
 impl<'a> BaseNameIndex<'a> {
-    /// Builds the index for one stem's `candidates`, selecting the strategy
-    /// by [`TRIE_THRESHOLD`].
+    /// Builds the index for one stem's `candidates`, selecting the strategy by
+    /// [`TRIE_THRESHOLD`].
     pub(super) fn build(candidates: Vec<&'a Path>) -> Self {
         Self(if candidates.len() >= TRIE_THRESHOLD {
             ResolutionStrategy::Trie(Box::new(CandidateTrie::build(

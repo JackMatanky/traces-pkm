@@ -236,8 +236,9 @@ mod tests {
             std::fs::write(temp.path().join("b.txt"), "plain text")
                 .expect("write b.txt");
             std::fs::write(temp.path().join("c.md"), "# C").expect("write c");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             for (i, entry) in index.entries().iter().enumerate() {
                 let position = RowIndex::new(i);
@@ -250,8 +251,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             std::fs::write(temp.path().join("plain.txt"), "no frontmatter")
                 .expect("write plain.txt");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             assert_eq!(index.entries().len(), 1);
             assert_eq!(index.entry_at(RowIndex::new(0)).note(), None);
@@ -269,8 +271,9 @@ mod tests {
                 "# Note\n\n[[attachment.png]]\n",
             )
             .expect("write note.md");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             let png_entry = index
                 .entries()

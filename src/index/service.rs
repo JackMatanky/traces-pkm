@@ -14,13 +14,13 @@ use rayon::prelude::*;
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
     inlinks::InlinkMap,
-    refresh::{RefreshPass, RefreshPlan, RefreshReport},
+    refresh::{PendingApply, RefreshPass, RefreshPlan, RefreshReport},
     sort::SortedByPath,
     store::{IndexAxes, IndexStore, PersistRequest},
 };
 use crate::{
     Config, DirTree, Note, TaskConfig,
-    config::{FrontmatterConfig, SchemasConfig},
+    config::FrontmatterConfig,
     file::{FileBase, FileFormat},
     note::{MarkdownParserInput, parse_markdown},
     path::RelativePath,
@@ -39,29 +39,25 @@ pub struct IndexerService {
     class_field: String,
 }
 
-impl IndexerService {
-    /// Creates a service scoped to `root`.
+impl From<&Config> for IndexerService {
     #[inline]
-    #[must_use]
-    pub fn new<P: Into<PathBuf>>(root: P) -> Self {
+    fn from(config: &Config) -> Self {
         Self {
-            root: root.into(),
-            tasks: TaskConfig::default(),
-            frontmatter: FrontmatterConfig::default(),
-            class_field: SchemasConfig::default().class_field_name().to_owned(),
+            root: config.root().to_path_buf(),
+            tasks: config.tasks().clone(),
+            frontmatter: config.frontmatter().clone(),
+            class_field: config.schemas().class_field_name().to_owned(),
         }
     }
+}
 
-    /// Attaches resolved [`Config`] settings for task and frontmatter
-    /// classification, and the File Class key used when persisting class index
-    /// entries.
+impl IndexerService {
+    /// Builds a default-configured service for tests.
+    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn with_config(mut self, config: &Config) -> Self {
-        self.tasks = config.tasks().clone();
-        self.frontmatter = config.frontmatter().clone();
-        config.schemas().class_field_name().clone_into(&mut self.class_field);
-        self
+    pub fn for_tests<P: Into<PathBuf>>(root: P) -> Self {
+        Self::from(&Config::test_default(root))
     }
 
     /// Scans this service's root and builds a [`WorkspaceIndex`] in memory.
@@ -124,36 +120,41 @@ impl IndexerService {
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.plan_pass()? {
-            RefreshPass::Unchanged {
-                store,
-                files,
-                links,
-            } => {
-                let notes = store.read_all_notes()?;
-                Ok((
-                    WorkspaceIndex::assemble(files, notes, links),
-                    RefreshReport::default(),
-                ))
-            }
-            RefreshPass::Reconciled(pending) => {
-                let report = pending.report();
-                let axes = IndexAxes::for_class_field(&self.class_field);
-                let index = match pending.apply(axes) {
-                    Ok(persisted) => {
-                        Self::log_report(&report);
-                        persisted.into_index()?
-                    }
-                    Err(failed) => {
-                        tracing::warn!(
-                            source = %failed.source(),
-                            "failed to persist refreshed index"
-                        );
-                        failed.into_index()?
-                    }
-                };
-                Ok((index, report))
-            }
+            RefreshPass::Unchanged(store) => Self::assemble_unchanged(&store),
+            RefreshPass::Reconciled(pending) => self.apply_reconciled(pending),
         }
+    }
+
+    fn assemble_unchanged(
+        store: &IndexStore,
+    ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
+        let (files, notes, links) = store.read_all()?;
+        Ok((
+            WorkspaceIndex::assemble(files, notes, links),
+            RefreshReport::default(),
+        ))
+    }
+
+    fn apply_reconciled(
+        &self,
+        pending: PendingApply,
+    ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
+        let report = pending.report();
+        let axes = IndexAxes::for_class_field(&self.class_field);
+        let index = match pending.apply(axes) {
+            Ok(persisted) => {
+                Self::log_report(&report);
+                persisted.into_index()?
+            }
+            Err(failed) => {
+                tracing::warn!(
+                    source = %failed.source(),
+                    "failed to persist refreshed index"
+                );
+                failed.into_index()?
+            }
+        };
+        Ok((index, report))
     }
 
     fn plan_pass(&self) -> IndexResult<RefreshPass> {
@@ -206,10 +207,7 @@ impl IndexerService {
     #[inline]
     pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
         match self.plan_pass()? {
-            RefreshPass::Unchanged {
-                store,
-                ..
-            } => Ok(store),
+            RefreshPass::Unchanged(store) => Ok(store),
             RefreshPass::Reconciled(pending) => {
                 let report = pending.report();
                 let axes = IndexAxes::for_class_field(&self.class_field);
@@ -382,8 +380,9 @@ mod tests {
         fs::write(temp.path().join("notes-x.md"), "# Sibling\n")
             .expect("write notes-x.md");
 
-        let index =
-            IndexerService::new(temp.path()).build().expect("build index");
+        let index = IndexerService::for_tests(temp.path())
+            .build()
+            .expect("build index");
         let paths: Vec<_> = index
             .entries()
             .iter()
@@ -407,7 +406,7 @@ mod tests {
         .expect("write b");
         fs::write(temp.path().join("c.md"), "# Note C\n").expect("write c");
 
-        let service = IndexerService::new(temp.path());
+        let service = IndexerService::for_tests(temp.path());
         let fresh = service.build().expect("build");
         service.persist(&fresh).expect("persist");
         let loaded = service.load().expect("load");
@@ -435,7 +434,7 @@ mod tests {
         fs::set_permissions(&bad, fs::Permissions::from_mode(0o000))
             .expect("chmod bad");
 
-        let result = IndexerService::new(temp.path()).build();
+        let result = IndexerService::for_tests(temp.path()).build();
         let err = result.expect_err("must fail on unreadable file");
 
         fs::set_permissions(&bad, fs::Permissions::from_mode(0o600))
@@ -463,7 +462,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::write(root.join("a.md"), "# A").expect("write note");
-            let service = IndexerService::new(root);
+            let service = IndexerService::for_tests(root);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
             IndexStore::open(root)
@@ -479,7 +478,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::write(root.join("a.md"), "# A").expect("write note");
-            let service = IndexerService::new(root);
+            let service = IndexerService::for_tests(root);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
             IndexStore::open(root)
@@ -505,8 +504,9 @@ mod tests {
             fs::write(temp.path().join("readme.txt"), "text content")
                 .expect("write txt");
 
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             assert_eq!(index.entries().len(), 2);
             assert_eq!(
@@ -533,8 +533,9 @@ mod tests {
             fs::write(temp.path().join("todo.md"), "---\ntitle: Todo\n---")
                 .expect("write note");
 
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             assert_eq!(
                 find_note(&index, "todo.md")
@@ -550,8 +551,9 @@ mod tests {
             fs::write(temp.path().join("todo.md"), "- [ ] task 1")
                 .expect("write note");
 
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             assert_eq!(
                 find_note(&index, "todo.md")
@@ -569,7 +571,9 @@ mod tests {
             fs::write(temp.path().join("note.md"), original)
                 .expect("write note");
 
-            IndexerService::new(temp.path()).build().expect("build index");
+            IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             let after = fs::read_to_string(temp.path().join("note.md"))
                 .expect("read note back");
@@ -582,7 +586,7 @@ mod tests {
             fs::write(temp.path().join("bad.md"), [0xFF, 0xFE])
                 .expect("write invalid utf8");
 
-            let result = IndexerService::new(temp.path()).build();
+            let result = IndexerService::for_tests(temp.path()).build();
 
             assert!(matches!(result, Err(IndexError::NoteParse { .. })));
         }
@@ -592,8 +596,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
 
             let paths: Vec<&Path> = index
                 .entries()
@@ -757,7 +762,7 @@ mod tests {
                 .expect("write b");
             fs::write(root.join("c.md"), "---\ntitle: C\n---\nBody C.")
                 .expect("write c");
-            let indexer = IndexerService::new(root);
+            let indexer = IndexerService::for_tests(root);
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let a = find_note(&built, "a.md").expect("note a").clone();
@@ -774,7 +779,7 @@ mod tests {
             )
             .expect("write note");
 
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -795,7 +800,7 @@ mod tests {
             )
             .expect("write note");
 
-            let service = IndexerService::new(temp.path());
+            let service = IndexerService::for_tests(temp.path());
             let built = service.build().expect("build index");
             let built_inlinks = attachment_inlinks(&built);
             service.persist(&built).expect("persist index");
@@ -828,7 +833,7 @@ mod tests {
                 "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
             )
             .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -852,7 +857,7 @@ mod tests {
                 "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
             )
             .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -870,7 +875,7 @@ mod tests {
                 "---\nrelated: \"[[Project Alpha|Alpha]]\"\n---\nBody text.",
             )
             .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -902,7 +907,7 @@ mod tests {
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), source).expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -931,7 +936,7 @@ mod tests {
                 "[duration:: 7 hours]\n[values:: 1, 2]",
             )
             .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -964,7 +969,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "Filed under #book today.")
                 .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             let built = indexer.build().expect("build index");
             indexer.persist(&built).expect("persist index");
             let loaded = indexer.load().expect("load index");
@@ -980,8 +985,9 @@ mod tests {
         fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            let index =
-                IndexerService::new(temp.path()).load().expect("load index");
+            let index = IndexerService::for_tests(temp.path())
+                .load()
+                .expect("load index");
 
             assert_eq!(index.entries().len(), 0);
             assert_eq!(
@@ -999,7 +1005,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("first.md"), "- [ ] first")
                 .expect("write first");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build first index"))
                 .expect("persist first index");
@@ -1048,7 +1054,7 @@ mod tests {
                 .expect("write keep");
             fs::write(temp.path().join("gone.md"), "# Gone")
                 .expect("write gone");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1189,7 +1195,7 @@ mod tests {
                 .expect("persist index");
             drop(store);
 
-            let service = IndexerService::new(temp.path());
+            let service = IndexerService::for_tests(temp.path());
             let (refreshed, report) =
                 service.refresh_with_report().expect("refresh unchanged");
 
@@ -1215,7 +1221,7 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]\n- [ ] task")
                 .expect("write linker");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1239,7 +1245,7 @@ mod tests {
                 .expect("write new target");
             fs::write(temp.path().join("linker.md"), "[[old-target]]")
                 .expect("write linker");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1267,7 +1273,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("linker.md"), "[[a]]\n[[b]]")
                 .expect("write linker");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1284,7 +1290,7 @@ mod tests {
         fn brand_new_note_always_contributes_to_staleness() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1310,7 +1316,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1339,7 +1345,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "Status:: Draft")
                 .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1361,7 +1367,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("first.md"), "# First")
                 .expect("write first");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1385,7 +1391,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("gone.md"), "# Gone")
                 .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1411,7 +1417,7 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1436,7 +1442,7 @@ mod tests {
                 .expect("write new target");
             fs::write(temp.path().join("linker.md"), "[[old-target]]")
                 .expect("write linker");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1467,7 +1473,7 @@ mod tests {
                 .expect("write target");
             fs::write(root.join("linker.md"), "- [ ] first")
                 .expect("write linker");
-            let indexer = IndexerService::new(root);
+            let indexer = IndexerService::for_tests(root);
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1490,7 +1496,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
                 .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1518,7 +1524,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "# Note")
                 .expect("write note");
 
-            let refreshed = IndexerService::new(temp.path())
+            let refreshed = IndexerService::for_tests(temp.path())
                 .refresh()
                 .expect("refresh index");
             assert_eq!(
@@ -1538,7 +1544,7 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1558,7 +1564,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "---\ntitle: Draft\n---")
                 .expect("write note");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1600,7 +1606,7 @@ mod tests {
             fs::write(temp.path().join("archive/foo.md"), "# Old Foo")
                 .expect("write archive/foo.md");
             fs::write(temp.path().join("a.md"), "[[foo]]").expect("write a");
-            let indexer = IndexerService::new(temp.path());
+            let indexer = IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1641,7 +1647,7 @@ mod tests {
             .expect("write a");
             let config = Config::test_default(root.to_path_buf())
                 .with_schemas(SchemasConfig::for_test("kind"));
-            let service = IndexerService::new(root).with_config(&config);
+            let service = IndexerService::from(&config);
             let index = service.build().expect("build index");
 
             // Act
@@ -1663,7 +1669,7 @@ mod tests {
             let root = temp.path();
             fs::write(root.join("a.md"), "---\nclass: Book\n---\n# A")
                 .expect("write a");
-            let service = IndexerService::new(root);
+            let service = IndexerService::for_tests(root);
             let index = service.build().expect("build index");
 
             // Act
@@ -1687,7 +1693,7 @@ mod tests {
                 .expect("write b");
             let config = Config::test_default(root.to_path_buf())
                 .with_schemas(SchemasConfig::for_test("kind"));
-            let service = IndexerService::new(root).with_config(&config);
+            let service = IndexerService::from(&config);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
 
@@ -1718,7 +1724,7 @@ mod tests {
             let root = temp.path();
             fs::write(root.join("a.md"), format!("---\n{key}: Book\n---\n# A"))
                 .expect("write a");
-            let service = IndexerService::new(root);
+            let service = IndexerService::for_tests(root);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
 
@@ -1739,7 +1745,7 @@ mod tests {
             .expect("write a");
             let config = Config::test_default(root.to_path_buf())
                 .with_schemas(SchemasConfig::for_test("kind"));
-            let service = IndexerService::new(root).with_config(&config);
+            let service = IndexerService::from(&config);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
 
@@ -1759,7 +1765,7 @@ mod tests {
                 .expect("write a");
             let config = Config::test_default(root.to_path_buf())
                 .with_schemas(SchemasConfig::for_test("kind"));
-            let service = IndexerService::new(root).with_config(&config);
+            let service = IndexerService::from(&config);
             let index = service.build().expect("build index");
             service.persist(&index).expect("persist index");
 

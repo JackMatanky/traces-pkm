@@ -172,7 +172,7 @@ pub fn setup_persisted_project(
     shape: ProjectShape,
 ) -> (TempDir, IndexerService) {
     let temp = create_project(note_count, shape);
-    let indexer = IndexerService::new(temp.path());
+    let indexer = IndexerService::for_tests(temp.path());
     let index = indexer.build().expect("build index");
     indexer.persist(&index).expect("persist index");
     (temp, indexer)
@@ -195,7 +195,7 @@ pub(crate) fn setup_unpersisted_project(
     shape: ProjectShape,
 ) -> (TempDir, IndexerService, WorkspaceIndex) {
     let temp = create_project(note_count, shape);
-    let indexer = IndexerService::new(temp.path());
+    let indexer = IndexerService::for_tests(temp.path());
     let index = indexer.build().expect("build index");
     (temp, indexer, index)
 }

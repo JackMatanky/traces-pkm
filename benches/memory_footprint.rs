@@ -148,7 +148,7 @@ fn bench_file_index_footprint(c: &mut Criterion) {
     group.warm_up_time(Duration::from_millis(500));
     for &n in WORKSPACE_FILE_COUNTS {
         let temp = create_project(n, ProjectShape::Plain);
-        let indexer = IndexerService::new(temp.path());
+        let indexer = IndexerService::for_tests(temp.path());
 
         let region = Region::new(GLOBAL);
         let index = black_box(indexer.build().expect("build index"));

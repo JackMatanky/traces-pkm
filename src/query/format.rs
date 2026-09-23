@@ -280,7 +280,7 @@ mod tests {
         ) -> crate::query::QuerySet {
             fs::write(temp.join("todo.md"), source).expect("write todo.md");
             let index = Arc::new(
-                IndexerService::new(temp).build().expect("build index"),
+                IndexerService::for_tests(temp).build().expect("build index"),
             );
             QueryService::new("class")
                 .run(&index, QueryBuilder::tasks(SourceSelector::All))
@@ -348,7 +348,9 @@ mod tests {
             fs::write(temp.path().join("page.md"), "# Heading\n")
                 .expect("write page.md");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All));

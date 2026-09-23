@@ -142,6 +142,11 @@ impl ConfigBuilder {
             } else {
                 local_raw.tasks.tag_filters.clone()
             },
+            statuses: if local_raw.tasks.statuses.is_empty() {
+                global_raw.map(|g| g.tasks.statuses.clone()).unwrap_or_default()
+            } else {
+                local_raw.tasks.statuses.clone()
+            },
         };
         Ok(TaskConfig::try_from(raw_tasks)?)
     }
@@ -321,6 +326,70 @@ directory = "global_schemas"
                 "#todo"
             )
             .unwrap()]);
+        }
+
+        #[test]
+        fn uses_local_task_statuses_over_global_when_local_is_non_empty() {
+            let root = PathBuf::from("/project");
+            let local = LocalConfigFile::<Parsed>::from_content_for_test(
+                root.clone(),
+                root.join(".traces/config.toml"),
+                "[[tasks.statuses]]\nsymbol = \"?\"\nname = \"Blocked\"\nkind \
+                 = \"on-hold\"\n",
+            )
+            .unwrap();
+            let global_root = PathBuf::from("/global");
+            let global = GlobalConfigFile::<Parsed>::from_content_for_test(
+                global_root.clone(),
+                global_root.join("config.toml"),
+                "[[tasks.statuses]]\nsymbol = \"~\"\nname = \"Waiting\"\nkind \
+                 = \"todo\"\n",
+            )
+            .unwrap();
+
+            let config = ConfigBuilder::new(root, local, Some(global))
+                .build()
+                .expect("build merged config");
+
+            let status = config
+                .tasks()
+                .statuses()
+                .by_symbol('?'.into())
+                .expect("local status");
+            assert_eq!(status.name(), "Blocked");
+            assert_eq!(status.kind(), crate::TaskStatusType::OnHold);
+            assert!(config.tasks().statuses().by_symbol('~'.into()).is_none());
+        }
+
+        #[test]
+        fn falls_back_to_global_task_statuses_when_local_is_empty() {
+            let root = PathBuf::from("/project");
+            let local = LocalConfigFile::<Parsed>::from_content_for_test(
+                root.clone(),
+                root.join(".traces/config.toml"),
+                "",
+            )
+            .unwrap();
+            let global_root = PathBuf::from("/global");
+            let global = GlobalConfigFile::<Parsed>::from_content_for_test(
+                global_root.clone(),
+                global_root.join("config.toml"),
+                "[[tasks.statuses]]\nsymbol = \"?\"\nname = \"Blocked\"\nkind \
+                 = \"on-hold\"\n",
+            )
+            .unwrap();
+
+            let config = ConfigBuilder::new(root, local, Some(global))
+                .build()
+                .expect("build merged config");
+
+            let status = config
+                .tasks()
+                .statuses()
+                .by_symbol('?'.into())
+                .expect("global status");
+            assert_eq!(status.name(), "Blocked");
+            assert_eq!(status.kind(), crate::TaskStatusType::OnHold);
         }
 
         #[test]
