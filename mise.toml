@@ -60,10 +60,17 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # false } when either:
 #   1. inputs are incomplete (check/fmt declare no rust sources; a skip would
 #      let stale code pass the gate), or
-#   2. the task means "execute now" (lint/test/sweep/verify/bench are
+#   2. the task means "execute now" (lint/test/sweep/verify/bench/mutants are
 #      gates that must run on invocation; clean/setup are destructive or
 #      install actions that must never be skipped as "fresh"; watch is an
 #      interactive session).
+# mutants is opted out because it is nondeterministic (wall-clock --timeout,
+# --baseline run, run ordering): log replay would mask flakiness, so the cache
+# key cannot assert equivalent logs (07_configuration.md, "Cache correctness
+# and deterministic tasks": enabling cache is a correctness assertion).
+# Other cache-eligible tasks stay on: coverage/crap carry explicit outputs
+# (freshness defined, not gates); build/release/doc are build-if-stale by
+# design. Cite refs by task name / doc section — never mise.toml line numbers.
 enabled = true
 
 [task_config.input_groups]
@@ -525,6 +532,7 @@ run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 description = "Run parallel mutation testing with cargo-mutants"
 sources = ["@group:rust"]
 outputs = []
+cache = { enabled = false }
 depends = ["test"]
 timeout = "1h"
 usage = '''
