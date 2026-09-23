@@ -19,9 +19,11 @@
 #USAGE flag "-r --report [name]" value_optional=#true {
 #USAGE   help "Save a named baseline (default: auto-named from git branch+sha)"
 #USAGE   long_help """
-#USAGE   Bare -r auto-names the baseline `<branch>-<short-sha>[-dirty][-quick]`: rerunning on the *same* commit overwrites one bounded baseline dir, while a new commit/branch gets its own comparable checkpoint. Pass a value for an explicit, memorable name instead, e.g. for a long-lived comparison point:
+#USAGE   Bare -r auto-names the baseline `<branch>-<short-sha>[-dirty][-quick]`: rerunning on the *same* commit overwrites that auto-name's stored results, while a new commit/branch gets its own comparable checkpoint — but distinct auto-names accumulate rather than replace (one nested copy under every benchmark each), so total baseline storage grows with every commit you checkpoint. Pass a value for an explicit, memorable name instead, e.g. for a long-lived comparison point:
 #USAGE
 #USAGE     mise run bench -r position-refactor
+#USAGE
+#USAGE   A first run on a commit has no `change:` line — the verdict appears only once the same auto-name runs again; compare across commits with `--compare <name>` (`critcmp <name> new`).
 #USAGE
 #USAGE   Under --mode quick every saved baseline — explicit names included — is saved as <name>-quick instead (e.g. -r foo saves foo-quick, not foo), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
 #USAGE
@@ -208,15 +210,23 @@ build_criterion_args() {
 # (criterion-0.8.2 src/lib.rs conflict matrix); we do not pre-validate — let it
 # fail loudly.
 #
+# Auto-names embed branch+short-sha; `-dirty` means the worktree has ANY
+# tracked-modified or untracked non-ignored file (`git status --porcelain`
+# lists both; gitignored paths such as target/ never appear). A git failure
+# (not a repository, broken index, …) is an error — message on stderr,
+# non-zero return — never a silent `-dirty`.
+#
 # Globals:
 #   usage_no_report, usage_report — flags parsed by mise
 # Outputs:
-#   Baseline name on stdout (no trailing newline)
+#   Baseline name on stdout (no trailing newline); error message on stderr
+#   when auto-naming fails
 # Returns:
-#   0
+#   0 on success (also for --no-report and explicit names), 1 when git state
+#   cannot be read for auto-naming
 #######################################
 resolve_baseline_name() {
-  local branch sha dirty
+  local branch sha porcelain dirty
 
   if [[ "${usage_no_report:-false}" == "true" ]]; then
     return
@@ -228,16 +238,27 @@ resolve_baseline_name() {
     return
   fi
 
-  # Auto-name from git state: branch-sha[-dirty]
+  # Auto-name from git state: branch-sha[-dirty]; -dirty iff porcelain is
+  # non-empty (tracked-modified OR untracked non-ignored; gitignored files
+  # like target/ are invisible to it). Git failures error out — never -dirty.
   if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
     branch="${branch//\//-}"
     [[ "${branch}" == "HEAD" ]] && branch="detached"
-    sha="$(git rev-parse --short HEAD)"
+    if ! sha="$(git rev-parse --short HEAD 2>&1)"; then
+      printf 'bench: git rev-parse --short HEAD failed: %s\n' "${sha}" >&2
+      return 1
+    fi
+    if ! porcelain="$(git status --porcelain 2>&1)"; then
+      printf 'bench: git status --porcelain failed: %s\n' "${porcelain}" >&2
+      return 1
+    fi
     dirty=""
-    git diff --quiet HEAD || dirty="-dirty"
+    [[ -n "${porcelain}" ]] && dirty="-dirty"
     printf '%s' "${branch}-${sha}${dirty}"
   else
-    printf '%s' "$(date +%Y%m%d-%H%M%S)"
+    printf 'bench: cannot auto-name baseline: git rev-parse failed %s\n' \
+      '(not a git repository?)' >&2
+    return 1
   fi
 }
 

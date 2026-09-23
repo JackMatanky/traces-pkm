@@ -29,6 +29,43 @@ mise run bench --compare main-abc123
 mise run bench:model
 ```
 
+## Baselines
+
+`mise run bench -r` saves a named baseline under `target/criterion`. Bare
+`-r` auto-names it `<branch>-<short-sha>[-dirty][-quick]`, making every
+commit its own comparable checkpoint; `-r <name>` uses an explicit,
+memorable name instead (e.g. `-r position-refactor`).
+
+- **`-dirty`** — the worktree has any tracked-modified or untracked
+  non-ignored file. Gitignored paths (such as `target/`) never count. A
+  git failure (not a repository, broken index) is an error, not a
+  `-dirty` suffix.
+- **`-quick`** — `--mode quick` runs append `-quick` to every saved name,
+  explicit names included (e.g. `-r foo` saves `foo-quick`), so quick runs
+  never clobber normal-mode baselines.
+- **First run / `change:`** — a first run on a commit saves data but has
+  no `change:` line: criterion's regression verdict for a per-sha name
+  appears only when the same commit runs a second time. Compare across
+  commits instead by saving a baseline on one commit and running
+  `critcmp <name> new` (or `mise run bench --compare <name>`) on another.
+- **Growth & pruning** — re-running the same name overwrites that name's
+  stored results, but each distinct name also keeps a nested copy under
+  every benchmark (one directory per case, per name), so total storage
+  under `target/criterion` grows without bound as you checkpoint commits.
+  Prune a single name everywhere:
+
+  ```bash
+  find target/criterion -type d -name <baseline> -prune -exec rm -rf {} +
+  ```
+
+  To archive before pruning, export the baseline to JSON; the file can be
+  passed back to critcmp in place of the name:
+
+  ```bash
+  critcmp --export <name> > <name>.json
+  critcmp <name>.json new
+  ```
+
 ## Size Sweep
 
 All workspace-scale benchmarks use `WORKSPACE_FILE_COUNTS`:
