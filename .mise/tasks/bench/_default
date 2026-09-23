@@ -44,6 +44,11 @@
 #USAGE }
 #USAGE flag "--mode <mode>" {
 #USAGE   help "Execution mode: normal (default), quick (fast, indicative), test (smoke)"
+#USAGE // DELIBERATE single-line encoding — do not reflow to """ block:
+#USAGE // mise trim()s every #USAGE line (extract_usage_from_comments),
+#USAGE // so block form silently collapses the continuation indent and
+#USAGE // changes --help bytes. Keep one line with \n escapes; verify by
+#USAGE // diffing a known-good render against `mise run bench --help`.
 #USAGE   long_help "normal — measure with project defaults from benches/common::criterion_config()\n         (20 samples, 1s measurement, 0.5s warm-up); [args] flags override per run.\nquick  — criterion's native --quick: stop as soon as the significance level is\n         reached, --noplot; indicative-and-comparative only (book 02_user_guide/quick_mode.md).\ntest   — smoke: run each selected target once without measurement via\n         cargo test (criterion's documented CI path)."
 #USAGE   choices "quick" "test" "normal"
 #USAGE   default "normal"
@@ -105,27 +110,27 @@ declare -a criterion_args=()
 #   otherwise 0
 #######################################
 collect_bench_files() {
-	local f bf name
+  local f bf name
 
-	for f in benches/*.rs; do
-		bf="${f##*/}"
-		bf="${bf%.rs}"
-		if [[ -n "${usage_mod:-}" ]]; then
-			[[ "${bf}" == "${usage_mod}"* ]] || continue
-		elif [[ -n "${usage_files:-}" ]]; then
-			[[ "${bf}" == *"${usage_files}"* ]] || continue
-		fi
-		bench_files+=("${bf}")
-	done
+  for f in benches/*.rs; do
+    bf="${f##*/}"
+    bf="${bf%.rs}"
+    if [[ -n "${usage_mod:-}" ]]; then
+      [[ "${bf}" == "${usage_mod}"* ]] || continue
+    elif [[ -n "${usage_files:-}" ]]; then
+      [[ "${bf}" == *"${usage_files}"* ]] || continue
+    fi
+    bench_files+=("${bf}")
+  done
 
-	if [[ "${#bench_files[@]}" -eq 0 ]]; then
-		printf 'no benchmark files match\n' >&2
-		return 2
-	fi
+  if [[ "${#bench_files[@]}" -eq 0 ]]; then
+    printf 'no benchmark files match\n' >&2
+    return 2
+  fi
 
-	for name in "${bench_files[@]}"; do
-		targets+=(--bench "${name}")
-	done
+  for name in "${bench_files[@]}"; do
+    targets+=(--bench "${name}")
+  done
 }
 
 #######################################
@@ -147,18 +152,18 @@ collect_bench_files() {
 #   Does not return: exec replaces this shell with cargo test
 #######################################
 run_smoke() {
-	local count="${#bench_files[@]}"
+  local count="${#bench_files[@]}"
 
-	if [[ -n "${usage_args:-}" ]]; then
-		printf \
-			'note: [args] ignored in --mode test (smoke runs raw cargo test)\n' >&2
-	fi
-	if [[ -n "${usage_compare:-}" ]]; then
-		printf \
-			'note: --compare ignored in --mode test (no measurement to compare)\n' >&2
-	fi
-	printf '==> Smoke-testing %d benchmark target(s)\n' "${count}"
-	exec cargo test --no-fail-fast --features test-utils "${targets[@]}"
+  if [[ -n "${usage_args:-}" ]]; then
+    printf \
+      'note: [args] ignored in --mode test (smoke runs raw cargo test)\n' >&2
+  fi
+  if [[ -n "${usage_compare:-}" ]]; then
+    printf \
+      'note: --compare ignored in --mode test (no measurement to compare)\n' >&2
+  fi
+  printf '==> Smoke-testing %d benchmark target(s)\n' "${count}"
+  exec cargo test --no-fail-fast --features test-utils "${targets[@]}"
 }
 
 #######################################
@@ -176,14 +181,14 @@ run_smoke() {
 #   None
 #######################################
 build_criterion_args() {
-	declare -a extra_args
-	eval "extra_args=(${usage_args:-})"
+  declare -a extra_args
+  eval "extra_args=(${usage_args:-})"
 
-	# Quick = criterion native early-stop; timing defaults live in
-	# benches/common::criterion_config() and are overridden by [args].
-	[[ "${usage_mode?}" == "quick" ]] && criterion_args+=(--quick --noplot)
-	[[ "${usage_verbose?}" == "true" ]] && criterion_args+=(--verbose)
-	criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
+  # Quick = criterion native early-stop; timing defaults live in
+  # benches/common::criterion_config() and are overridden by [args].
+  [[ "${usage_mode?}" == "quick" ]] && criterion_args+=(--quick --noplot)
+  [[ "${usage_verbose?}" == "true" ]] && criterion_args+=(--verbose)
+  criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 }
 
 #######################################
@@ -202,80 +207,80 @@ build_criterion_args() {
 #   0
 #######################################
 resolve_baseline_name() {
-	local branch sha dirty
+  local branch sha dirty
 
-	if [[ "${usage_no_report:-false}" == "true" ]]; then
-		return
-	fi
+  if [[ "${usage_no_report:-false}" == "true" ]]; then
+    return
+  fi
 
-	# Explicit name via -r <name>
-	if [[ -n "${usage_report:-}" && "${usage_report}" != "true" ]]; then
-		printf '%s' "${usage_report}"
-		return
-	fi
+  # Explicit name via -r <name>
+  if [[ -n "${usage_report:-}" && "${usage_report}" != "true" ]]; then
+    printf '%s' "${usage_report}"
+    return
+  fi
 
-	# Auto-name from git state: branch-sha[-dirty]
-	if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
-		branch="${branch//\//-}"
-		[[ "${branch}" == "HEAD" ]] && branch="detached"
-		sha="$(git rev-parse --short HEAD)"
-		dirty=""
-		git diff --quiet HEAD || dirty="-dirty"
-		printf '%s' "${branch}-${sha}${dirty}"
-	else
-		printf '%s' "$(date +%Y%m%d-%H%M%S)"
-	fi
+  # Auto-name from git state: branch-sha[-dirty]
+  if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
+    branch="${branch//\//-}"
+    [[ "${branch}" == "HEAD" ]] && branch="detached"
+    sha="$(git rev-parse --short HEAD)"
+    dirty=""
+    git diff --quiet HEAD || dirty="-dirty"
+    printf '%s' "${branch}-${sha}${dirty}"
+  else
+    printf '%s' "$(date +%Y%m%d-%H%M%S)"
+  fi
 }
 
 main() {
-	if ! collect_bench_files; then
-		return 2
-	fi
+  if ! collect_bench_files; then
+    return 2
+  fi
 
-	local count="${#bench_files[@]}"
+  local count="${#bench_files[@]}"
 
-	if [[ "${usage_mode?}" == "test" ]]; then
-		run_smoke
-	fi
+  if [[ "${usage_mode?}" == "test" ]]; then
+    run_smoke
+  fi
 
-	# Compare pre-check: fail fast before any measurement. `critcmp <unknown>
-	# new` exits 0 and silently drops the unknown column: one-column table,
-	# every ratio 1.00 — the task would "succeed" with misleading output after a
-	# full measurement run. This check converts that into a named fail-fast.
-	local known_baselines
-	if [[ -n "${usage_compare:-}" ]]; then
-		known_baselines="$(critcmp --baselines 2>/dev/null || true)"
-		if ! grep -Fxq -- "${usage_compare}" <<<"${known_baselines}"; then
-			printf 'unknown baseline: %s (list with: critcmp --baselines)\n' \
-				"${usage_compare}" >&2
-			exit 2
-		fi
-	fi
+  # Compare pre-check: fail fast before any measurement. `critcmp <unknown>
+  # new` exits 0 and silently drops the unknown column: one-column table,
+  # every ratio 1.00 — the task would "succeed" with misleading output after a
+  # full measurement run. This check converts that into a named fail-fast.
+  local known_baselines
+  if [[ -n "${usage_compare:-}" ]]; then
+    known_baselines="$(critcmp --baselines 2>/dev/null || true)"
+    if ! grep -Fxq -- "${usage_compare}" <<<"${known_baselines}"; then
+      printf 'unknown baseline: %s (list with: critcmp --baselines)\n' \
+        "${usage_compare}" >&2
+      exit 2
+    fi
+  fi
 
-	build_criterion_args
+  build_criterion_args
 
-	local baseline
-	baseline="$(resolve_baseline_name)"
-	if [[ -n "${baseline}" ]]; then
-		[[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
-		criterion_args+=(--save-baseline "${baseline}")
-	fi
+  local baseline
+  baseline="$(resolve_baseline_name)"
+  if [[ -n "${baseline}" ]]; then
+    [[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
+    criterion_args+=(--save-baseline "${baseline}")
+  fi
 
-	# Single cargo invocation; --no-fail-fast continues past failing targets.
-	printf '==> Running %d benchmark target(s) (mode: %s)\n' \
-		"${count}" "${usage_mode?}"
-	local -a run_cmd=(
-		cargo bench --no-fail-fast --features test-utils "${targets[@]}"
-	)
-	if [[ "${#criterion_args[@]}" -gt 0 ]]; then
-		run_cmd+=(-- "${criterion_args[@]}")
-	fi
-	"${run_cmd[@]}"
+  # Single cargo invocation; --no-fail-fast continues past failing targets.
+  printf '==> Running %d benchmark target(s) (mode: %s)\n' \
+    "${count}" "${usage_mode?}"
+  local -a run_cmd=(
+    cargo bench --no-fail-fast --features test-utils "${targets[@]}"
+  )
+  if [[ "${#criterion_args[@]}" -gt 0 ]]; then
+    run_cmd+=(-- "${criterion_args[@]}")
+  fi
+  "${run_cmd[@]}"
 
-	# Compare: saved baseline (positional 1) vs this run ("new").
-	if [[ -n "${usage_compare:-}" ]]; then
-		critcmp "${usage_compare}" new
-	fi
+  # Compare: saved baseline (positional 1) vs this run ("new").
+  if [[ -n "${usage_compare:-}" ]]; then
+    critcmp "${usage_compare}" new
+  fi
 }
 
 main "$@"
