@@ -7,14 +7,14 @@ workspace sizes from 50 to 20,000 notes.
 ## Quick Start
 
 ```bash
-# Smoke-test all benchmark targets in one fast pass (~15s)
-mise run bench -- -t
+# Smoke-test all benchmark targets in one fast pass
+mise run bench --mode test
 
 # Run all benchmarks
 mise run bench
 
-# Quick iteration mode (10 samples, 1s measurement)
-mise run bench -- -q
+# Quick iteration (criterion --quick: fast, indicative only)
+mise run bench --mode quick
 
 # Run one module (e.g. all 5 index targets)
 mise run bench -m index
@@ -164,6 +164,17 @@ cargo flamegraph --bench index_refresh -- --bench \
   "WorkspaceIndex::refresh/no-op/1000"
 ```
 
+Prefer adding criterion's `--profile-time` when profiling: it runs each
+matched benchmark in a tight loop for N seconds doing no analysis and
+**storing no results** — cleaner flamegraphs, deterministic duration, and
+no writes to `target/criterion` or auto-baselines
+(book `02_user_guide/14_profiling.md`):
+
+```bash
+cargo flamegraph --bench index_refresh -- --bench \
+  "WorkspaceIndex::refresh/no-op/1000" --profile-time 5
+```
+
 ## Adding New Benchmarks
 
 1. Create `benches/new_bench.rs`
@@ -172,4 +183,5 @@ cargo flamegraph --bench index_refresh -- --bench \
 4. Use `common::project::*` for filesystem fixtures
 5. Use `common::notes::*` for in-memory fixtures
 6. Document expected/unexpected outcomes in doc comments
-7. Run `mise run bench -f new_bench` to verify
+7. If the filename introduces a new module prefix, add it to `-m`'s `choices` in the `bench` usage spec (`mise.toml`) — `choices` validates before the prefix match runs
+8. Run `mise run bench -f new_bench` to verify

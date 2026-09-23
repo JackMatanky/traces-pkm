@@ -1,4 +1,4 @@
-//! Shared benchmark fixtures for synthetic Traces projects and parsed notes.
+//! Shared benchmark fixtures and Criterion run defaults for bench targets.
 //!
 //! This module is the only shared benchmark-support surface. Keep one-off
 //! workloads in the benchmark file that owns them; move code here only when it
@@ -84,13 +84,13 @@ pub(crate) const FRONTMATTER_FIELD_COUNTS: &[usize] = &[5, 20, 50, 100, 200];
 
 /// Project-wide Criterion timing defaults for `criterion_group!` configs.
 ///
-/// Criterion has no config file for timing knobs (book:
-/// `02_user_guide/07_advanced_configuration.md`), so code is the only home
-/// for run defaults. Values mirror what the `bench` task used to inject on
-/// the CLI (`--sample-size 20 --measurement-time 1.0 --warm-up-time 0.5`);
-/// CLI flags forwarded via `[args]` still override them per run. `--quick`
-/// ignores `sample_size`/`warm_up_time` entirely — its loop stops at
-/// `significance_level`, capped by `measurement_time`
+/// Criterion has no config file for timing knobs; code-based configuration
+/// is documented at book `02_user_guide/07_advanced_configuration.md`, so
+/// run defaults live here. Values mirror what the `bench` task used to
+/// inject on the CLI (`--sample-size 20 --measurement-time 1.0
+/// --warm-up-time 0.5`); CLI flags forwarded via `[args]` still override
+/// them per run. `--quick` ignores `sample_size`/`warm_up_time` entirely —
+/// its loop stops at `significance_level`, capped by `measurement_time`
 /// (criterion-0.8.2 `src/routine.rs`).
 ///
 /// Per-group pins in individual bench files (e.g. expensive groups that set
