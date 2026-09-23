@@ -57,7 +57,8 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 [task_config.cache]
 # Global default for "build if stale" tasks whose declared sources cover every
 # input that can change the result. Opt out per task with cache = { enabled =
-# false } when either:
+# false } (gate tasks inherit the standard pair via extends =
+# "gate:never-skip") when either:
 #   1. inputs are incomplete (check/fmt declare no rust sources; a skip would
 #      let stale code pass the gate), or
 #   2. the task means "execute now" (lint/test/sweep/verify/bench/mutants are
@@ -69,7 +70,8 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # so the cache key cannot assert equivalent logs (07_configuration.md, "Cache
 # correctness and deterministic tasks": enabling cache is a correctness
 # assertion).
-# Verdict (mutants): drift — pre-fix config/comment were stale, not a deliberate cache exception.
+# Verdict (mutants): drift — pre-fix config/comment were stale, not a
+# deliberate cache exception.
 # Classification of other tasks: coverage/crap carry explicit outputs
 # (freshness defined, not gates); build/release/doc are build-if-stale by
 # design; audit is opted out (reason 1: cargo deny reads deny.toml, which
@@ -654,11 +656,15 @@ run = [
 timeout = "20m"
 
 # Never-skip payload: the complete local opt-out for tasks in the
-# task_config.cache rationale above whose entire payload is exactly this pair.
+# task_config.cache rationale above whose entire payload is exactly this pair
+# (pair kept byte-identical to the pre-template local payloads; cache off
+# alone forbids skip, outputs [] pins the no-artifacts contract).
 # Members inherit via extends instead of repeating both lines locally.
+# File tasks take a single extends target (array form silently drops in
+# 2026.9.12) — bench-shaped gates cannot join without the local-payload dance.
 # Exempt: bench (its file task spends its only extends on [task_templates.bench]);
-# verify (resolves outputs {auto:true}, not []); clean/setup/watch (different
-# policy reasons, not the gate payload).
+# verify (resolves outputs {auto:true}, not []); clean/setup/watch (same
+# payload, different policy class: destructive/install/interactive).
 [task_templates."gate:never-skip"]
 outputs = []
 cache = { enabled = false }
