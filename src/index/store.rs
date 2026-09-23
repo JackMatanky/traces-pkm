@@ -16,6 +16,7 @@ use redb::{
     ReadableMultimapTable as _, ReadableTable as _, ReadableTableMetadata as _,
     TableDefinition, WriteTransaction,
 };
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
@@ -390,11 +391,14 @@ impl IndexStore {
     /// Maps each path to its encoded key bytes for link-row resolution.
     fn key_path_map<'a>(
         paths: impl IntoIterator<Item = &'a Path>,
-    ) -> HashMap<&'a [u8], &'a Path> {
-        paths
-            .into_iter()
-            .map(|path| (PathKey::new(path).as_bytes(), path))
-            .collect()
+        capacity: usize,
+    ) -> FxHashMap<&'a [u8], &'a Path> {
+        let mut map =
+            FxHashMap::with_capacity_and_hasher(capacity, FxBuildHasher);
+        for path in paths {
+            map.insert(PathKey::new(path).as_bytes(), path);
+        }
+        map
     }
 
     // --- Full-table reads ---------------------------------------------
@@ -442,10 +446,14 @@ impl IndexStore {
         );
         let files: SortedByPath<FileBase> = files_result?;
         let notes = notes_result?;
-        let target_paths =
-            Self::key_path_map(files.as_slice().iter().map(FileBase::path));
-        let source_paths =
-            Self::key_path_map(notes.as_slice().iter().map(Note::path));
+        let target_paths = Self::key_path_map(
+            files.as_slice().iter().map(FileBase::path),
+            files.as_slice().len(),
+        );
+        let source_paths = Self::key_path_map(
+            notes.as_slice().iter().map(Note::path),
+            notes.as_slice().len(),
+        );
         let links =
             self.read_links(&txn, LINKS, &target_paths, &source_paths)?;
         Ok((files, notes, links))
@@ -490,14 +498,17 @@ impl IndexStore {
         files: &SortedByPath<FileBase>,
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
-        let target_paths =
-            Self::key_path_map(files.as_slice().iter().map(FileBase::path));
+        let files_slice = files.as_slice();
+        let target_paths = Self::key_path_map(
+            files_slice.iter().map(FileBase::path),
+            files_slice.len(),
+        );
         let source_paths = Self::key_path_map(
-            files
-                .as_slice()
+            files_slice
                 .iter()
                 .filter(|file| file.format() == FileFormat::Note)
                 .map(FileBase::path),
+            files_slice.len(),
         );
         self.read_links(&txn, LINKS, &target_paths, &source_paths)
     }
@@ -523,8 +534,8 @@ impl IndexStore {
             &'static [u8],
             &'static [u8],
         >,
-        target_paths: &HashMap<&[u8], &Path>,
-        source_paths: &HashMap<&[u8], &Path>,
+        target_paths: &FxHashMap<&[u8], &Path>,
+        source_paths: &FxHashMap<&[u8], &Path>,
     ) -> IndexResult<InlinkMap> {
         let Some(table) = self.open_multimap_for_read(txn, table_def)? else {
             return Ok(InlinkMap::default());
@@ -599,9 +610,11 @@ impl IndexStore {
 
     // --- Persistence entry points -------------------------------------
 
-    /// Persists a full rebuild or one incremental refresh pass.
+    /// Persists a rebuild or a non-empty incremental refresh.
     ///
-    /// Incremental passes with no changed rows skip the transaction entirely.
+    /// Incremental requests must contain at least one file, note, or edge
+    /// change. `IndexerService::plan_pass` filters empty passes before they
+    /// reach this method.
     ///
     /// # Errors
     ///
@@ -621,6 +634,9 @@ impl IndexStore {
                 notes,
                 edges,
             } => {
+                if delta.is_empty() && notes.is_empty() && edges.is_empty() {
+                    return Ok(());
+                }
                 debug_assert!(
                     !delta.is_empty() || !notes.is_empty() || !edges.is_empty(),
                     "plan_pass gates empty passes"
@@ -995,8 +1011,8 @@ impl IndexStore {
     fn collect_multimap_links(
         &self,
         table: &redb::ReadOnlyMultimapTable<&[u8], &[u8]>,
-        target_paths: &HashMap<&[u8], &Path>,
-        source_paths: &HashMap<&[u8], &Path>,
+        target_paths: &FxHashMap<&[u8], &Path>,
+        source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<InlinkMap> {
         self.collect_resolved_links(
             table.iter().map_err(|source| self.wrap_redb_error(source))?,
@@ -1009,8 +1025,8 @@ impl IndexStore {
     fn collect_resolved_links<'a>(
         &self,
         iter: impl Iterator<Item = LinkEntry<'a>>,
-        target_paths: &HashMap<&[u8], &Path>,
-        source_paths: &HashMap<&[u8], &Path>,
+        target_paths: &FxHashMap<&[u8], &Path>,
+        source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<InlinkMap> {
         let mut links = HashMap::new();
         for entry in iter {
@@ -1030,8 +1046,8 @@ impl IndexStore {
     fn resolve_link_entry(
         &self,
         entry: LinkEntry<'_>,
-        target_paths: &HashMap<&[u8], &Path>,
-        source_paths: &HashMap<&[u8], &Path>,
+        target_paths: &FxHashMap<&[u8], &Path>,
+        source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<ResolvedLink> {
         let (target, sources) =
             entry.map_err(|source| self.wrap_redb_error(source))?;
@@ -1053,7 +1069,7 @@ impl IndexStore {
     fn collect_source_paths(
         &self,
         sources: redb::MultimapValue<'_, &[u8]>,
-        source_paths: &HashMap<&[u8], &Path>,
+        source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<Box<[PathBuf]>> {
         let mut values = Vec::new();
         for src in sources {

@@ -121,7 +121,7 @@ impl IndexerService {
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.plan_pass()? {
             RefreshPass::Unchanged(store) => Self::assemble_unchanged(&store),
-            RefreshPass::Reconciled(pending) => self.apply_reconciled(pending),
+            RefreshPass::Reconciled(pending) => self.apply_reconciled(*pending),
         }
     }
 
@@ -164,7 +164,7 @@ impl IndexerService {
         }
         let modified_notes = self.parse_notes(plan.upserted_files())?;
         let pending = plan.reconcile(modified_notes)?;
-        Ok(RefreshPass::Reconciled(pending))
+        Ok(RefreshPass::Reconciled(Box::new(pending)))
     }
 
     /// Rebuilds and persists the index from scratch, returning it.
@@ -191,8 +191,11 @@ impl IndexerService {
     /// [`WorkspaceIndex`].
     ///
     /// Cold empty deltas return the opened store without decoding notes or
-    /// writing rows. Persist failures are propagated because callers read
-    /// directly from the returned store.
+    /// writing rows. Unlike [`Self::refresh`] (which absorbs persist failures
+    /// by logging a warning and falling back to an in-memory index), persist
+    /// failures are propagated directly as [`IndexError::Store`] because
+    /// callers read from the returned persisted store and have no in-memory
+    /// fallback.
     ///
     /// # Errors
     ///
@@ -211,7 +214,7 @@ impl IndexerService {
             RefreshPass::Reconciled(pending) => {
                 let report = pending.report();
                 let axes = IndexAxes::for_class_field(&self.class_field);
-                match pending.apply(axes) {
+                match (*pending).apply(axes) {
                     Ok(persisted) => {
                         Self::log_report(&report);
                         Ok(persisted.into_store())

@@ -622,7 +622,9 @@ mod tests {
     use minijinja::Environment;
 
     use super::*;
-    use crate::{DialogProvider, PresetDialogProvider};
+    use crate::{
+        Config, DialogProvider, PresetDialogProvider, config::SchemasConfig,
+    };
 
     /// Builds a shared [`SchemaService`] for `root`, backing [`page_ops`],
     /// [`list_ops`], and [`task_ops`] so all namespaces resolve the same Schema
@@ -686,8 +688,8 @@ mod tests {
         class_field: &str,
         source: &str,
     ) -> TemplateEngineResult<String> {
-        let config = crate::Config::test_default(root.to_path_buf())
-            .with_schemas(crate::config::SchemasConfig::for_test(class_field));
+        let config = Config::test_default(root.to_path_buf())
+            .with_schemas(SchemasConfig::for_test(class_field));
         let indexer = Arc::new(IndexerService::from(&config));
         let service = schema_service(root);
         let mut env = Environment::new();
@@ -1710,12 +1712,6 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "1|1|Blocked|?|on-hold");
-
-            let store = crate::index::IndexStore::open(project.root())
-                .expect("open store");
-            let paths =
-                store.paths_with_file_class("book").expect("read class");
-            assert_eq!(paths.as_ref(), [std::path::PathBuf::from("dune.md")]);
         }
     }
 

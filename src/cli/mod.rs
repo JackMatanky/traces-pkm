@@ -1502,8 +1502,13 @@ mod tests {
     }
 
     mod current_dir_and_config {
+        use std::fs;
+
         use super::*;
-        use crate::{cli::CwdGuard, config::ConfigLoadError};
+        use crate::{
+            PresetDialogProvider, TestProject, cli::CwdGuard,
+            config::ConfigLoadError,
+        };
 
         #[test]
         fn current_dir_reads_process_cwd() {
@@ -1532,6 +1537,62 @@ mod tests {
                 source: ConfigLoadError::Discovery(_),
                 ..
             }));
+        }
+
+        #[test]
+        fn cli_index_fails_before_indexing_when_task_status_uses_prohibited_delimiter()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let project = TestProject::empty(temp.path().join("project"));
+            let traces_dir = project.root().join(".traces");
+            fs::create_dir_all(&traces_dir).expect("create .traces dir");
+            let config_toml = r#"
+[[tasks.statuses]]
+symbol = "["
+name = "Invalid"
+kind = "todo"
+"#;
+            fs::write(traces_dir.join("config.toml"), config_toml)
+                .expect("write config.toml");
+            project.trust();
+
+            let _guard = CwdGuard::enter(project.root());
+
+            let error = Cli::try_parse_from(["traces", "index"])
+                .expect("parse index command")
+                .run(project.service(), Arc::new(PresetDialogProvider::new()))
+                .expect_err("prohibited delimiter config must fail");
+
+            let is_prohibited = matches!(&error, CliError::ConfigLoad {
+                source: crate::config::ConfigLoadError::Build(
+                    crate::config::ConfigBuilderError::ConfigFile(
+                        crate::config::ConfigFileError::Task(
+                            crate::task::TaskError::ProhibitedStatusSymbol {
+                                symbol: '[',
+                            },
+                        ),
+                    ),
+                ),
+                ..
+            });
+            assert!(
+                is_prohibited,
+                "error must preserve TaskError::ProhibitedStatusSymbol \
+                 source, got: {error:?}"
+            );
+
+            let report = format!("{:?}", miette::Report::new(error));
+            assert!(
+                report.contains('['),
+                "diagnostic report `{report}` must identify the prohibited \
+                 symbol `[`"
+            );
+
+            assert!(
+                !traces_dir.join("index.redb").exists(),
+                "no index file must be created or mutated when config \
+                 validation fails"
+            );
         }
     }
 }

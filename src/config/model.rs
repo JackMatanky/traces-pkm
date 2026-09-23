@@ -629,7 +629,9 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
 
     /// # Errors
     ///
-    /// - `ConfigFileError::InvalidTagFilter` when a `tag_filters` entry does
+    /// - [`ConfigFileError::Task`] if a configured task status uses a
+    ///   prohibited delimiter symbol: `(`, `)`, `[`, `]`, `{`, or `}`.
+    /// - [`ConfigFileError::InvalidTagFilter`] when a `tag_filters` entry does
     ///   not normalize into a valid [`Tag`].
     #[inline]
     fn try_from(raw: RawTaskConfig) -> Result<Self, Self::Error> {
@@ -639,7 +641,7 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
                 TaskStatusSymbol::new(status.symbol),
                 status.name,
                 status.kind.into(),
-            ));
+            ))?;
         }
         let tag_filters = raw
             .tag_filters
@@ -820,6 +822,7 @@ fn normalize_tag_filter(entry: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::TaskError;
 
     mod resolved_schema_directory {
         use pretty_assertions::assert_eq;
@@ -883,7 +886,7 @@ mod tests {
     mod schemas_for_test {
         use pretty_assertions::assert_eq;
 
-        use crate::config::SchemasConfig;
+        use super::*;
 
         #[test]
         fn sets_the_expected_class_field() {
@@ -1019,6 +1022,28 @@ mod tests {
             let error = TaskConfig::try_from(raw).expect_err("blank entry");
 
             assert!(matches!(error, ConfigFileError::InvalidTagFilter { .. }));
+        }
+
+        #[test]
+        fn rejects_a_prohibited_status_symbol() {
+            let raw = RawTaskConfig {
+                statuses: vec![RawTaskStatus {
+                    symbol: '[',
+                    name: "Square".to_owned(),
+                    kind: RawTaskStatusKind::Todo,
+                }],
+                ..RawTaskConfig::default()
+            };
+
+            let error =
+                TaskConfig::try_from(raw).expect_err("prohibited delimiter");
+
+            assert!(matches!(
+                error,
+                ConfigFileError::Task(TaskError::ProhibitedStatusSymbol {
+                    symbol: '['
+                })
+            ));
         }
     }
 }

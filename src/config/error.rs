@@ -15,7 +15,10 @@ use super::{
     file::{LocalConfigFile, Tracked},
     trust::ConfigTrustStatus,
 };
-use crate::{FieldNameError, FilePathTrackerError, TagError, hash::HashError};
+use crate::{
+    FieldNameError, FilePathTrackerError, TagError, hash::HashError,
+    task::TaskError,
+};
 
 /// Errors from the full config-loading pipeline.
 #[derive(Debug, Error)]
@@ -180,6 +183,9 @@ pub(crate) enum ConfigFileError {
         #[source]
         source: TagError,
     },
+    /// A `[tasks]` configuration failed validation.
+    #[error(transparent)]
+    Task(#[from] TaskError),
 }
 
 impl ConfigFileError {
