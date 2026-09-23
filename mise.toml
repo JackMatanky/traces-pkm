@@ -527,8 +527,15 @@ flag "-r --report [name]" value_optional=#true {
 flag "--no-report" {
   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 }
-flag "--compare <name>" help="Compare against a saved baseline via critcmp"
-complete "compare" run="ls -1 target/criterion 2>/dev/null"
+flag "--compare <name>" {
+  help "Compare against a saved baseline via critcmp"
+  long_help """
+  Runs `critcmp <name> new` after the measurement run: `<name>` is a saved baseline (listed by `critcmp --baselines`, offered by completion) and `new` is the run just measured, giving a two-column comparison with change ratios. The baseline name is validated before the run starts — an unknown name fails fast with a message naming it, before any measurement.
+
+    mise run bench --compare main-abc123
+  """
+}
+complete "compare" run="critcmp --baselines 2>/dev/null"
 complete "files" run="ls benches | sed 's/[.]rs$//'"
 flag "--verbose" negate="--no-verbose" default=#true {
   help "Criterion detailed analysis output (on by default); --no-verbose for terse output"
@@ -629,6 +636,19 @@ if [[ "${usage_mode?}" == "test" ]]; then
   exec cargo test --no-fail-fast --features test-utils "${targets[@]}"
 fi
 
+# --- Compare pre-check: fail fast before any measurement ---
+# critcmp positionally selects baselines (no implicit current-run
+# partner), so an unknown name would otherwise exit 1 with an anonymous
+# "no benchmark comparisons to show" only after a successful run, under set -e.
+if [[ -n "${usage_compare:-}" ]]; then
+  known_baselines="$(critcmp --baselines 2>/dev/null || true)"
+  if ! grep -Fxq -- "${usage_compare}" <<< "${known_baselines}"; then
+    printf 'unknown baseline: %s (list with: critcmp --baselines)\n' \
+      "${usage_compare}" >&2
+    exit 2
+  fi
+fi
+
 # --- Criterion args ---
 # extra_args: mise pre-quotes each usage_args token for this reconstruction
 # (docs/refs/mise_tasks/06_arguments.md); the documented variadic pattern.
@@ -684,9 +704,9 @@ if [[ -n "${criterion_args[*]:-}" ]]; then
 fi
 "${run_cmd[@]}"
 
-# --- Compare ---
+# --- Compare: saved baseline (positional 1) vs this run ("new") ---
 if [[ -n "${usage_compare:-}" ]]; then
-  critcmp "${usage_compare}"
+  critcmp "${usage_compare}" new
 fi
 '''
 
