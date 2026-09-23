@@ -14,8 +14,8 @@
 #USAGE }
 #USAGE flag "-m --mod <module>" {
 #USAGE   help "Run benchmarks for a specific module (matches benches/<module>*.rs)"
-#USAGE   choices "hash" "index" "note" "query" "template" "memory_footprint"
 #USAGE }
+#USAGE complete "module" run="ls benches | grep '[.]rs$' | sed 's/[.]rs$//'"
 #USAGE flag "-r --report [name]" value_optional=#true {
 #USAGE   help "Save a named baseline (default: auto-named from git branch+sha)"
 #USAGE   long_help """

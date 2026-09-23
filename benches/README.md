@@ -220,5 +220,4 @@ cargo flamegraph --bench index_refresh -- --bench \
 4. Use `common::project::*` for filesystem fixtures
 5. Use `common::notes::*` for in-memory fixtures
 6. Document expected/unexpected outcomes in doc comments
-7. If the filename introduces a new module prefix, add it to `-m`'s `choices` in the `bench` usage spec (`mise.toml`) — `choices` validates before the prefix match runs
-8. Run `mise run bench -f new_bench` to verify
+7. Run `mise run bench -f new_bench` to verify
