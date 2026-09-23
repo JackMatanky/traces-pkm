@@ -36,13 +36,13 @@ Grounding: `SchemaService` (`src/schema/service.rs`) is a load-once registry ove
 | **Q3** | Go-to-definition: jump directly to originating schema. Schema name → file path: `{config.resolved_schema_directory()}/{schema_name}.toml`. For inherited fields, follow `origin` on `SchemaFieldDef`. Resolution chain shown in hover text via `parent_order`. | SchemaService doesn't store directory — reconstruct from Config (O(1)). `$ref` follows single hop. No source positions in schema TOML in v1 (navigate to file, not line). |
 | **Q4** | File-field completion: enumerate from vault index + DocumentStore overlays, cap 100, `is_incomplete: true`. Sort by relevance (recently opened → same folder → alphabetical). Skip `_`-prefixed and `.`-prefixed files. | `SchemaFileFieldRef` + `file_field_source()` already encode the filter logic. Merge indexed files with unsaved buffers from DocumentStore. |
 | **Q5** | Hover: field list + metadata (kind/required/multi) + description + suggested-but-unset fields (set difference of schema keys vs note keys) + ancestor chain. | Schema resolution: read class field → `SchemaService::get()`. Suggested-but-unset = `Schema::fields()` keys minus `Note::fields()` keys. |
-| **Q9** | Timing: on-open + debounced-change (300ms) + on-save. Only re-validate on frontmatter changes, not body edits. | 300ms debounce is industry standard (rust-analyzer, yaml-language-server, json-language-server). |
+| **Q9** | Timing: on-open + debounced-change (300ms) + on-save. Only re-validate on frontmatter changes, not body edits. | 300ms debounce is industry standard (rust-analyzer, yaml-language-server, json-language-server); provisional — ticket 25 owns the final debounce model (reconciled 2026-09-23). |
 
 ### Model Extensions
 
 | Q | Decision | Rationale |
 |---|----------|-----------|
-| **Q7** | Frontmatter spans: parallel map `Frontmatter { fields, #[serde(skip)] spans }`. `ByteSpan = Range<ByteOffset>`. `from_with_spans(raw, source, base_offset)` constructor. **Phase 1:** stub (empty spans). **Phase 2:** post-parse line-offset re-scan for approximate field-level spans. | Zero callers break. `#[serde(skip)]` preserves postcard roundtrip. Manual `PartialEq` ignoring `spans`. YAML offset tracking unsolved in Phase 1 — biggest implementation risk. |
+| **Q7** | Frontmatter spans: parallel map `Frontmatter { fields, #[serde(skip)] spans }`. `ByteSpan = Range<ByteOffset>`. `from_with_spans(raw, source, base_offset)` constructor. **Phase 1:** stub (empty spans). **Phase 2:** populated from `noyalib` `Spanned<T>` byte ranges (ticket 19's mechanism; reconciled 2026-09-23 — replaces the originally-planned line-offset re-scan). | Zero callers break. `#[serde(skip)]` preserves postcard roundtrip. Manual `PartialEq` ignoring `spans`. Offset tracking provided by `noyalib` once ticket 19 lands; Phase 1 stub until then. |
 | **Q8** | Origin: `origin: Option<SchemaName>` on `SchemaFieldDef`. Stamped in `resolve_own_fields` after `build()`. Manual `PartialEq` excluding `origin`. | Propagation: inherited fields keep ancestor's origin via `Clone`. `$ref` origin = "declared by" not "defined by" (acceptable — target derivable from raw schema). ~32 bytes/field. |
 | **Q10** | Description: `Option<String>` on `SchemaFieldDef` and `RawSchemaFieldDef`. Add to `ALLOWED_OPTION_KEYS` and visitor in `raw.rs`. Handle like `required`/`multi` (field-level attribute). | Must be on both resolved and raw types for TOML deserialization. |
 | **Q13** | Description inherits with field through schema hierarchy. | Same pattern as `required`/`multi` — child overrides if declared, else inherits via `field.clone()`. |
@@ -63,7 +63,7 @@ Grounding: `SchemaService` (`src/schema/service.rs`) is a load-once registry ove
 pub struct Frontmatter {
     fields: IndexMap<FieldKey, NoteFieldValue>,
     #[serde(skip)]
-    spans: IndexMap<FieldKey, ByteSpan>,  // Phase 2: populated by line-offset re-scan
+    spans: IndexMap<FieldKey, ByteSpan>,  // Phase 2: populated from noyalib Spanned byte ranges (ticket 19)
 }
 // New: span_of(), span_of_key(), from_with_spans(), get_values_with_spans()
 // Manual PartialEq ignoring spans
@@ -142,7 +142,7 @@ pub enum SchemaDiagnosticKind {
 
 | # | Severity | Weakness | Mitigation |
 |---|----------|----------|------------|
-| 1 | High | YAML offset tracking unsolved (serde_yaml lacks spans) | Phase 1: stub. Phase 2: line-offset re-scan. |
+| 1 | Resolved | YAML offset tracking (serde_yaml lacks spans) | Reconciled 2026-09-23: `noyalib` `Spanned<T>` provides byte ranges (ticket 19); Phase 1 still ships an empty stub until 19 lands. |
 | 2 | High | Multi-root schema name collisions | Defer to ticket 30. |
 | 3 | Medium | `$ref` origin = "declared by" not "defined by" | Acceptable — target derivable from raw schema. |
 | 4 | Medium | No ordered resolution chain on Schema | Add `parent_order: Vec<SchemaName>`. Low effort. |

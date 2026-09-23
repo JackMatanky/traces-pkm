@@ -107,7 +107,7 @@ Evidence base:
 1. `src/note/parser.rs` extracts tags from YAML frontmatter keys (`tags`, `tag`, `keywords`) alongside body text tags, storing all instances in `Note.tags()`.
 2. Leading `#` symbols in frontmatter values are trimmed during normalization, adhering to the Obsidian Linter `format-tags-in-yaml` standard.
 3. Supports list arrays (`tags: [a, b]`, `tags:\n  - a`), scalar strings (`tag: a`), and comma-separated strings (`tags: a, b`).
-4. Frontmatter tag value spans are tracked via the frontmatter re-scanner (established in Ticket 11), ensuring exact byte ranges are available for rename and reference operations.
+4. Frontmatter tag value spans are extracted from `noyalib`'s `Spanned<T>` output — the effort's single frontmatter-span mechanism (reconciled 2026-09-23; see tickets 11 and 19) — ensuring exact byte ranges are available for rename and reference operations.
 
 ---
 
@@ -115,7 +115,7 @@ Evidence base:
 
 1. **`src/note/parser.rs`**:
    - Frontmatter tag extraction helper to populate `self.tags` from frontmatter entries during `parse_markdown`.
-2. **Frontmatter Re-Scanner (`src/note/metadata.rs` or `src/position.rs`)**:
-   - Add `scan_frontmatter_tag_spans(raw: &str) -> Vec<(Tag, Range<ByteOffset>)>` to map frontmatter tag values to source byte offsets.
+2. **Frontmatter tag spans**:
+   - Map frontmatter tag values to `Range<ByteOffset>` from `noyalib`'s `Spanned<T>` output (ticket 19's frontmatter span mechanism; the hand-rolled re-scanner originally referenced here was dropped in the 2026-09-23 reconciliation).
 3. **LSP Tag Index Facade**:
    - Inverted tag map (`tag -> Vec<(Url, Range<ByteOffset>)>`) stored in memory, updated incrementally via the buffer overlay model (Ticket 14).

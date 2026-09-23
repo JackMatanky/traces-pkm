@@ -32,6 +32,8 @@ Replace `serde_yaml` with `noyalib` (v0.0.44, ~500K downloads; `serde_yml`'s 23M
 
 Per ticket 11: `ByteOffset` narrows to `u32` with `From<u32>`/`TryFrom<usize>`. Introduce `ByteSpan(Range<ByteOffset>)` newtype for field spans. The scanner runs over `RawFrontmatter.as_str()` via noyalib's `Spanned<T>`, producing `FieldKey → ByteSpan` (byte ranges relative to frontmatter start). The LSP handler adds the pulldown-cmark metadata block base offset and converts via `ByteTracker` (ticket 11: moves to `src/position.rs`, gains `byte_to_utf16_cu`) to `Position { line, character }`. No new struct on `Frontmatter` — the scan output is a separate data structure consumed by LSP handlers only. Scanner handles full YAML structure (nesting, block scalars, anchors, aliases), not just flat key-value.
 
+*Reconciled 2026-09-23: this is the effort's **single** frontmatter-span mechanism. It supersedes the hand-rolled Level-2 raw-text scanner originally decided in [Source span/position model for the Note AST](11-source-span-and-position-model.md) and the line-offset re-scan originally planned in ticket 20 — both now defer here.*
+
 ### Three-layer completion architecture
 
 - **Layer 1** (highest): Fields from the note's resolved schema (already includes `$ref`-resolved global fields via eager resolution in `SchemaBuilder`)

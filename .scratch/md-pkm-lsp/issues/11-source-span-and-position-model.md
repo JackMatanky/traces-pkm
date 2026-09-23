@@ -57,11 +57,9 @@ The byte→LSP-position conversion happens at the LSP response serialization bou
 
 A `TextBuffer` trait was rejected: zero polymorphic call sites (each handler knows its text type from context), two implementations with no third on the horizon (violates the "Rule of Three" from `anti-over-abstraction`), and the trait would be shallower than the two concrete functions it wraps. The "single interface" preference doesn't apply here because the text type is determined by handler context, not by runtime dispatch.
 
-### 6. Frontmatter re-scanner — Level 2 depth
+### 6. Frontmatter spans — via `noyalib` `Spanned<T>` (reconciled 2026-09-23)
 
-A dedicated raw-text scanner walks `RawFrontmatter`'s preserved string (`src/note/metadata.rs:18`), mapping YAML keys to byte ranges at indent levels 0 and 2. This covers flat keys, one-level nested objects, and two-level nested objects (the schema/fileClass case) — every frontmatter shape `yaml_serde` currently parses in Traces.
-
-Interface: `fn scan_frontmatter_keys(raw: &str) -> Vec<(FieldKey, Range<ByteOffset>)>`. Level 2 is an implementation detail behind this interface; deeper nesting can be added later without changing the signature. `yaml_serde` has zero span capability (confirmed via `rust-docs-mcp`), so this scanner is the only path to frontmatter-field positions.
+Frontmatter byte ranges come from `noyalib`'s `Spanned<T>` single-pass value + position extraction, following the YAML parser swap decided in [Metadata/frontmatter & inline-field intelligence](19-frontmatter-and-inline-field-intelligence.md) — full YAML structure (nesting, block scalars, anchors, aliases), ranges relative to the frontmatter block. The originally-decided hand-rolled Level-2 raw-text scanner is dropped as redundant: its sole motivation (`yaml_serde` has zero span capability) disappears once that swap lands. Frontmatter spans therefore land with ticket 19, not this ticket — no consumer (19, 20) needs them earlier.
 
 ### 7. Parser — stay on pulldown-cmark, full re-parse per edit
 

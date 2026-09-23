@@ -19,7 +19,7 @@ Informed by zk's daily-note/date conventions research (ticket 04). Decide:
 
 ### Decisions
 
-1. **LSP-aware daily notes.** Traces recognizes date-shaped filenames as a distinct note kind at the LSP level. Index-time extraction of `is_date_shaped: bool` + `parsed_date: Option<NaiveDate>` into `FileEntry` (not `FileRecord`, which doesn't exist yet). Cost: ~0.5ms for 20K files.
+1. **LSP-aware daily notes.** Traces recognizes date-shaped filenames as a distinct note kind at the LSP level. Index-time extraction of `is_date_shaped: bool` + `parsed_date: Option<NaiveDate>` into `FileEntry` (not `FileRecord`, which doesn't exist yet). Cost: ~0.5ms for 20K files. **Redb caveat (reconciled 2026-09-23)**: `FileEntry` is persisted in the `FILES` table — adding these fields changes its encoding and triggers the existing `check_rebuild_needed` wipe-and-rebuild once (one-time user-visible index rebuild, accepted under ticket 13; flag in the eventual implementation spec).
 
 2. **Configurable matching per granularity.** Four modes: `file` (stem matches format pattern, default), `folder` (file lives in configured folder), `both` (stem + folder), `path` (full vault-relative path matches `folder/<date-stem>.md`). Covers flat vaults and split-folder setups.
 

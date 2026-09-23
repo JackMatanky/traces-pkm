@@ -3,7 +3,6 @@
 Type: grilling
 Blocked by: 08, 10
 Status: resolved
-Resolves: 24, 25
 
 ## Question
 

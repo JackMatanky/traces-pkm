@@ -12,7 +12,7 @@ Grounding facts already gathered:
 - `WorkspaceIndex` (`src/index/entry.rs:23`) is an immutable, single-owned (not `Arc`-shared today), `Clone`-able snapshot: `entries: Box<[FileEntry]>` + `delta: IndexDelta`. `IndexerService` (`src/index/service.rs`) exposes `build`/`refresh`/`persist`/`load`, all synchronous, all manually triggered (no filesystem watcher exists anywhere in the codebase today).
 - `QueryService::execute(&self, index: &Arc<WorkspaceIndex>, builder: QueryBuilder) -> QuerySet` (`src/query/service.rs:84`) already expects an `Arc<WorkspaceIndex>` at the call boundary, even though `IndexerService` itself doesn't produce one internally — note this seam.
 - `SchemaService` (`src/schema/service.rs`) is a load-once, in-memory-cached registry (`IndexMap<SchemaName, Arc<Schema>>`), resolved once at startup, not re-resolved per query.
-- Indexing/refresh today is single-threaded with no `rayon`/parallelism.
+- Indexing/refresh today is a manual whole-tree diff: metadata scan and note parsing are already `rayon`-parallel (`src/index/service.rs`); the merge-join delta itself is single-threaded (reconciled 2026-09-23).
 
 Decide:
 - Whether the LSP host wraps a single `Arc<WorkspaceIndex>` behind a swap-on-refresh cell (à la prior "immutable/queryable snapshots" hypothesis) shared read-only across concurrent request handlers, versus some other sharing strategy.
