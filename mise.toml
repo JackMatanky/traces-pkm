@@ -60,9 +60,10 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # false } when either:
 #   1. inputs are incomplete (check/fmt declare no rust sources; a skip would
 #      let stale code pass the gate), or
-#   2. the task means "execute now" (lint/test/sweep/verify/bench are gates that must
-#      run on invocation; clean/setup are destructive or install actions that
-#      must never be skipped as "fresh"; watch is an interactive session).
+#   2. the task means "execute now" (lint/test/sweep/verify/bench are
+#      gates that must run on invocation; clean/setup are destructive or
+#      install actions that must never be skipped as "fresh"; watch is an
+#      interactive session).
 enabled = true
 
 [task_config.input_groups]
@@ -520,7 +521,12 @@ flag "-r --report [name]" value_optional=#true {
 
     mise run bench -r position-refactor
 
-  Skipped automatically when [args] already forwards --baseline, --baseline-lenient, --discard-baseline, or --load-baseline, since criterion rejects combining those with --save-baseline. Use --no-report to opt out entirely and fall back to criterion's own unnamed 'base'.
+  Criterion rejects combining --save-baseline with forwarded
+  --baseline/--baseline-lenient/--discard-baseline. Note the task appends
+  --save-baseline <git-name> by default even without -r: if you forward
+  baseline flags, pass --no-report — otherwise the run fails with
+  criterion's own argument-validation error (--load-baseline additionally
+  requires --baseline).
   """
 }
 flag "--no-report" {
@@ -612,23 +618,14 @@ eval "extra_args=(${usage_args:-})"
 criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 
 # --- Baseline management ---
-# Outputs a baseline name to save, or empty if no baseline should be
-# saved.  Skips when: --no-report is set, or the user forwarded
-# --baseline/--baseline-lenient/--discard-baseline/--load-baseline
-# (criterion rejects combining those with --save-baseline).
+# Outputs a baseline name to save, or empty if none should be saved.
+# Criterion itself rejects --save-baseline combined with forwarded
+# --baseline* flags (criterion-0.8.2 src/lib.rs conflict matrix); we do
+# not pre-validate — let it fail loudly.
 resolve_baseline_name() {
   if [[ "${usage_no_report:-false}" == "true" || "${usage_test:-false}" == "true" ]]; then
     return
   fi
-
-  for a in "${extra_args[@]+"${extra_args[@]}"}"; do
-    case "${a}" in
-      --baseline | --baseline-lenient | \
-      --discard-baseline | --load-baseline)
-        return
-        ;;
-    esac
-  done
 
   # Explicit name via -r <name>
   if [[ -n "${usage_report:-}" \
