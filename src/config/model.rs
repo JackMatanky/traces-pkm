@@ -883,7 +883,7 @@ mod tests {
     mod schemas_for_test {
         use pretty_assertions::assert_eq;
 
-        use crate::config::SchemasConfig;
+        use super::*;
 
         #[test]
         fn sets_the_expected_class_field() {

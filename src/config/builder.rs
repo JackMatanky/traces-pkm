@@ -8,11 +8,10 @@
 use std::path::PathBuf;
 
 use super::{
+    Config, FrontmatterConfig, SchemasConfig, TaskConfig,
     error::ConfigBuilderError,
     file::{GlobalConfigFile, LocalConfigFile, Parsed},
-    model::{
-        Config, FrontmatterConfig, SchemasConfig, TaskConfig, TemplateConfig,
-    },
+    model::TemplateConfig,
     raw::{
         RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
         RawTaskConfig,

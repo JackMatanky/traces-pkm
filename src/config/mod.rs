@@ -45,12 +45,7 @@ pub(crate) use error::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
-#[cfg_attr(
-    not(test),
-    expect(unused_imports, reason = "used in tests and test-utils")
-)]
-pub use model::SchemasConfig;
-pub use model::{Config, FrontmatterConfig, TaskConfig};
+pub use model::{Config, FrontmatterConfig, SchemasConfig, TaskConfig};
 pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
