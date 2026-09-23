@@ -356,7 +356,20 @@ fn default_statuses() -> [TaskStatus; 6] {
 /// Display names ([`TaskStatus::name`]) remain exactly as configured; only the
 /// lookup key is normalized.
 fn normalize_name(name: &str) -> String {
-    name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    let mut out = String::with_capacity(name.len());
+    let mut words = name.split_whitespace();
+    if let Some(first) = words.next() {
+        for ch in first.chars().flat_map(char::to_lowercase) {
+            out.push(ch);
+        }
+        for word in words {
+            out.push(' ');
+            for ch in word.chars().flat_map(char::to_lowercase) {
+                out.push(ch);
+            }
+        }
+    }
+    out
 }
 
 /// Task priority level.
@@ -778,6 +791,7 @@ mod tests {
 
     mod status_map {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -958,53 +972,53 @@ mod tests {
             );
         }
 
-        #[test]
-        fn rejects_prohibited_delimiter_status_symbols_without_mutating_indexes()
-         {
-            let delimiters = ['(', ')', '[', ']', '{', '}'];
-            for prohibited in delimiters {
-                let mut map = TaskStatusMap::default();
-                map.insert(TaskStatus::new(
-                    TaskStatusSymbol::new('!'),
-                    "Original",
-                    TaskStatusType::OnHold,
-                ))
-                .expect("seed status insertion succeeds");
+        #[rstest]
+        #[case('(')]
+        #[case(')')]
+        #[case('[')]
+        #[case(']')]
+        #[case('{')]
+        #[case('}')]
+        fn rejects_prohibited_delimiter_status_symbols_without_mutating_indexes(
+            #[case] prohibited: char,
+        ) {
+            let mut map = TaskStatusMap::default();
+            map.insert(TaskStatus::new(
+                TaskStatusSymbol::new('!'),
+                "Original",
+                TaskStatusType::OnHold,
+            ))
+            .expect("seed status insertion succeeds");
 
-                let invalid = TaskStatus::new(
-                    TaskStatusSymbol::new(prohibited),
-                    "Original",
-                    TaskStatusType::OnHold,
-                );
+            let invalid = TaskStatus::new(
+                TaskStatusSymbol::new(prohibited),
+                "Original",
+                TaskStatusType::OnHold,
+            );
 
-                let result = map.insert(invalid);
-                assert!(matches!(
-                    result,
-                    Err(TaskError::ProhibitedStatusSymbol { symbol: actual })
-                        if actual == prohibited
-                ));
+            let result = map.insert(invalid);
+            assert_eq!(
+                result,
+                Err(TaskError::ProhibitedStatusSymbol {
+                    symbol: prohibited,
+                })
+            );
 
-                let original_by_symbol = map
-                    .by_symbol(TaskStatusSymbol::new('!'))
-                    .expect("symbol lookup");
-                assert_eq!(original_by_symbol.name(), "Original");
-                assert_eq!(original_by_symbol.kind(), TaskStatusType::OnHold);
+            let original_by_symbol = map
+                .by_symbol(TaskStatusSymbol::new('!'))
+                .expect("symbol lookup");
+            assert_eq!(original_by_symbol.name(), "Original");
+            assert_eq!(original_by_symbol.kind(), TaskStatusType::OnHold);
 
-                let original_by_name =
-                    map.by_name("original").expect("name lookup");
-                assert_eq!(
-                    original_by_name.symbol(),
-                    TaskStatusSymbol::new('!')
-                );
+            let original_by_name =
+                map.by_name("original").expect("name lookup");
+            assert_eq!(original_by_name.symbol(), TaskStatusSymbol::new('!'));
 
-                assert!(map.by_type(TaskStatusType::OnHold).iter().any(
-                    |status| status.symbol() == TaskStatusSymbol::new('!')
-                ));
+            assert!(map.by_type(TaskStatusType::OnHold).iter().any(
+                |status| status.symbol() == TaskStatusSymbol::new('!')
+            ));
 
-                assert!(
-                    map.by_symbol(TaskStatusSymbol::new(prohibited)).is_none()
-                );
-            }
+            assert!(map.by_symbol(TaskStatusSymbol::new(prohibited)).is_none());
         }
 
         #[test]

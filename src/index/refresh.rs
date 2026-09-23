@@ -72,16 +72,11 @@ impl RefreshReport {
 }
 
 /// Result of one scanned refresh pass before optional persistence.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "internal pass type moved immediately by value without extra \
-              heap allocation"
-)]
 pub(super) enum RefreshPass {
     /// No file metadata changed; the opened store remains current.
     Unchanged(IndexStore),
     /// File metadata changed and is reconciled but not yet persisted.
-    Reconciled(PendingApply),
+    Reconciled(Box<PendingApply>),
 }
 
 /// Reconciled refresh data waiting for a store write.
