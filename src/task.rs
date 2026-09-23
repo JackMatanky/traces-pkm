@@ -782,6 +782,17 @@ mod tests {
         }
 
         #[test]
+        fn returns_statuses_in_ascending_symbol_order() {
+            let symbols: Vec<char> = TaskStatusMap::default()
+                .statuses_sorted_by_symbol()
+                .iter()
+                .map(|status| status.symbol().as_char())
+                .collect();
+
+            assert_eq!(symbols, [' ', '!', '-', '/', 'X', 'x']);
+        }
+
+        #[test]
         fn resolves_a_known_symbol_to_its_configured_status() {
             let map = TaskStatusMap::default();
 

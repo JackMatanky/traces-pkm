@@ -325,15 +325,17 @@ impl IndexStore {
         let Ok(Some(table)) = self.open_table_for_read(&txn, EPOCHS) else {
             return PersistedEpochs::unknown();
         };
-        let parse = match table.get(PARSE_KEY) {
-            Ok(Some(guard)) => ParseEpoch::decode(guard.value())
-                .unwrap_or_else(|_| ParseEpoch::empty()),
-            _ => ParseEpoch::empty(),
+        let Ok(Some(parse)) = table.get(PARSE_KEY) else {
+            return PersistedEpochs::unknown();
         };
-        let class = match table.get(CLASS_KEY) {
-            Ok(Some(guard)) => ClassEpoch::decode(guard.value())
-                .unwrap_or_else(|_| ClassEpoch::empty()),
-            _ => ClassEpoch::empty(),
+        let Ok(parse) = ParseEpoch::decode(parse.value()) else {
+            return PersistedEpochs::unknown();
+        };
+        let Ok(Some(class)) = table.get(CLASS_KEY) else {
+            return PersistedEpochs::unknown();
+        };
+        let Ok(class) = ClassEpoch::decode(class.value()) else {
+            return PersistedEpochs::unknown();
         };
         PersistedEpochs::new(parse, class)
     }
@@ -1827,6 +1829,63 @@ mod tests {
             table.insert(key.as_bytes(), value).expect("insert raw bytes");
         }
         txn.commit().expect("commit raw insert");
+    }
+
+    mod epochs {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        fn write_epochs(store: &IndexStore, epochs: &PersistedEpochs) {
+            let txn = store.db.begin_write().expect("begin write txn");
+            store.write_epochs(&txn, epochs).expect("write epochs");
+            txn.commit().expect("commit epochs");
+        }
+
+        #[test]
+        fn reads_unknown_epochs_when_table_is_missing() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            let epochs = store.read_epochs();
+
+            assert_eq!(epochs, PersistedEpochs::unknown());
+        }
+
+        #[test]
+        fn round_trips_persisted_epochs() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let expected =
+                PersistedEpochs::current(&TaskConfig::default(), "kind");
+            write_epochs(&store, &expected);
+
+            let actual = store.read_epochs();
+
+            assert_eq!(actual, expected);
+        }
+
+        #[rstest]
+        #[case::parse(PARSE_KEY)]
+        #[case::class(CLASS_KEY)]
+        fn reads_unknown_epochs_when_one_row_is_corrupt(#[case] key: &[u8]) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let current =
+                PersistedEpochs::current(&TaskConfig::default(), "kind");
+            write_epochs(&store, &current);
+            write_raw_value(
+                &store,
+                EPOCHS,
+                std::str::from_utf8(key).expect("epoch key is UTF-8"),
+                &[0xFF, 0xFF, 0xFF],
+            );
+
+            let actual = store.read_epochs();
+
+            assert_eq!(actual, PersistedEpochs::unknown());
+        }
     }
 
     /// Builds a sorted inlink-map fixture.

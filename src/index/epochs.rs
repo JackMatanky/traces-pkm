@@ -216,7 +216,7 @@ impl ClassEpoch {
 mod tests {
     use pretty_assertions::{assert_eq, assert_ne};
 
-    use super::{super::error::StoreError, *};
+    use super::*;
 
     #[test]
     fn round_trips_parse_epoch() {
@@ -239,17 +239,6 @@ mod tests {
     }
 
     #[test]
-    fn garbage_bytes_fail_decode() {
-        let parse_err = ParseEpoch::decode(&[0xFF, 0xFF, 0xFF])
-            .expect_err("garbage parse bytes fail decode");
-        assert!(matches!(parse_err, StoreError::Deserialize { .. }));
-
-        let class_err = ClassEpoch::decode(&[0xFF, 0xFF, 0xFF])
-            .expect_err("garbage class bytes fail decode");
-        assert!(matches!(class_err, StoreError::Deserialize { .. }));
-    }
-
-    #[test]
     fn unknown_epoch_never_matches_real_config() {
         let tasks = TaskConfig::default();
         let current = PersistedEpochs::current(&tasks, "class");
@@ -258,14 +247,5 @@ mod tests {
         assert!(!unknown.is_match(&current));
         assert!(!unknown.is_parse_match(&current));
         assert!(!unknown.is_class_match(&current));
-    }
-
-    #[test]
-    fn statuses_sorted_by_symbol_is_order_stable() {
-        let tasks = TaskConfig::default();
-        let epoch1 = ParseEpoch::from_config(&tasks);
-        let epoch2 = ParseEpoch::from_config(&tasks);
-        assert_eq!(epoch1, epoch2);
-        assert_eq!(epoch1.statuses, epoch2.statuses);
     }
 }
