@@ -76,6 +76,24 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # (freshness defined, not gates); build/release/doc are build-if-stale by
 # design; audit is opted out (reason 1: cargo deny reads deny.toml, which
 # is not declared in its sources).
+# Never-skip is TWO load-bearing clauses; dropping either reopens a skip
+# hole. (a) cache = { enabled = false } blocks only the artifact-cache
+# restore path (07_configuration.md, "cache"; "task_config.cache": local
+# cache = { enabled = false } overrides the scoped default). (b) outputs =
+# [] is what keeps the freshness skip from firing: the skip is decided by
+# the oldest output file (07_configuration.md, "sources": a task is skipped
+# "where the modification time of the oldest output file is newer than the
+# modification time of the newest source file"). Caveat: the docs are
+# SILENT on what an EMPTY outputs set means for freshness (no oldest output
+# file exists) — outputs = [] never-skip is empirical, not documented: on
+# 2026-09-23 back-to-back unchanged-source runs of lint, test, and bench
+# (--mode test probe form) all re-executed, none printing "sources
+# up-to-date, skipping" — that marker appeared instead for build (sources +
+# explicit outputs) and verify (auto outputs: cache off but no
+# outputs = []) on unchanged-source re-runs, so cache off alone (a) does
+# not prevent a freshness skip. `mise run --force` ignores source/output
+# checking outright (02_architecture.md, "Incremental Execution") —
+# freshness and the artifact cache are separate mechanisms.
 # Cite refs by task name / doc section — never mise.toml line numbers.
 enabled = true
 
