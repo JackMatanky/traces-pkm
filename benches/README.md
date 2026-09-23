@@ -26,7 +26,7 @@ mise run bench -f note_parsing
 mise run bench --compare main-abc123
 
 # Fit performance models (requires numpy, scikit-learn)
-mise run bench --model
+mise run bench:model
 ```
 
 ## Size Sweep
