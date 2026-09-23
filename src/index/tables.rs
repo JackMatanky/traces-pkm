@@ -67,7 +67,17 @@ pub(super) const FILE_CLASSES_BY_PATH: MultimapTableDefinition<
     &'static [u8],
 > = MultimapTableDefinition::new("classes_by_path");
 
-/// One of the seven schema tables: plain row or multimap.
+/// Persisted configuration epoch markers.
+///
+/// Keys: `b"parse"` and `b"class"`
+/// Value: postcard-serialized epoch snapshot
+pub(super) const EPOCHS: TableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = TableDefinition::new("epochs");
+
+/// One of the eight schema tables: plain row or multimap.
 enum TableDef {
     Row(TableDefinition<'static, &'static [u8], &'static [u8]>),
     Multimap(MultimapTableDefinition<'static, &'static [u8], &'static [u8]>),
@@ -89,7 +99,7 @@ pub(super) struct TableSpec {
 }
 
 /// Every table in the schema, in declaration order.
-pub(super) const TABLES: [TableSpec; 7] = [
+pub(super) const TABLES: [TableSpec; 8] = [
     TableSpec {
         definition: TableDef::Row(FILES),
         policy: DeletePolicy::Required,
@@ -116,6 +126,10 @@ pub(super) const TABLES: [TableSpec; 7] = [
     },
     TableSpec {
         definition: TableDef::Multimap(FILE_CLASSES_BY_PATH),
+        policy: DeletePolicy::BestEffort,
+    },
+    TableSpec {
+        definition: TableDef::Row(EPOCHS),
         policy: DeletePolicy::BestEffort,
     },
 ];

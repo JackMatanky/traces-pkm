@@ -191,6 +191,16 @@ impl TaskStatusMap {
         self.symbols.insert(status.symbol, status.clone());
         self.names.insert(normalize_name(&status.name), status);
     }
+
+    /// Returns every status sorted deterministically by symbol character.
+    #[inline]
+    #[must_use]
+    pub(crate) fn statuses_sorted_by_symbol(&self) -> Vec<TaskStatus> {
+        let mut statuses: Vec<TaskStatus> =
+            self.symbols.values().cloned().collect();
+        statuses.sort_unstable_by_key(|s| s.symbol.as_char());
+        statuses
+    }
 }
 
 impl Default for TaskStatusMap {

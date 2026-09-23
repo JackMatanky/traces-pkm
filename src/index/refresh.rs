@@ -13,6 +13,7 @@ use std::{cmp::Ordering, collections::HashSet, path::Path};
 use super::{
     IndexError, IndexResult, WorkspaceIndex,
     delta::{FileDelta, InlinkDelta},
+    epochs::PersistedEpochs,
     inlinks::{self, InlinkMap},
     service::IndexerService,
     sort::SortedByPath,
@@ -71,6 +72,38 @@ impl RefreshReport {
     }
 }
 
+/// The scope of repair required when configuration epochs change.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum RepairScope {
+    /// No configuration epochs changed; normal sync applies.
+    None,
+    /// Only the File Class frontmatter field changed; existing note parses
+    /// remain valid, only the class axis projection needs rebuilding.
+    ClassAxisOnly,
+    /// Task statuses or tag filters changed; Markdown notes must be reparsed
+    /// to reclassify tasks and checkboxes under the new rules.
+    Reparse,
+}
+
+impl RepairScope {
+    /// Computes the minimal repair scope required between `persisted` and
+    /// `current` epochs.
+    #[inline]
+    #[must_use]
+    pub(super) fn compute(
+        persisted: &PersistedEpochs,
+        current: &PersistedEpochs,
+    ) -> Self {
+        if persisted.is_match(current) {
+            Self::None
+        } else if !persisted.is_parse_match(current) {
+            Self::Reparse
+        } else {
+            Self::ClassAxisOnly
+        }
+    }
+}
+
 /// Result of one scanned refresh pass before optional persistence.
 #[expect(
     clippy::large_enum_variant,
@@ -88,6 +121,8 @@ pub(super) enum RefreshPass {
 pub(super) struct PendingApply {
     store: IndexStore,
     update: IndexUpdate,
+    epochs: PersistedEpochs,
+    class_axis_rebuild: bool,
 }
 
 impl PendingApply {
@@ -113,6 +148,8 @@ impl PendingApply {
                 self.update.delta(),
                 &notes,
                 self.update.inlink_delta(),
+                &self.epochs,
+                self.class_axis_rebuild,
             ))
         };
         match result {
@@ -136,6 +173,7 @@ impl PendingApply {
         let Self {
             store,
             update,
+            ..
         } = self;
         update.into_index(&store)
     }
@@ -254,11 +292,11 @@ impl NoteScope {
     }
 }
 
-/// Scanned-and-diffed state of one index root, before note parsing.
 pub(super) struct RefreshPlan {
     store: IndexStore,
     current_files: SortedByPath<FileBase>,
     persisted_files: SortedByPath<FileBase>,
+    persisted_epochs: PersistedEpochs,
     delta: FileDelta,
 }
 
@@ -282,19 +320,43 @@ impl RefreshPlan {
             || -> IndexResult<_> {
                 let store = IndexStore::open(root)?;
                 let persisted_files = store.read_all_files()?;
-                Ok((store, persisted_files))
+                let persisted_epochs = store.read_epochs();
+                Ok((store, persisted_files, persisted_epochs))
             },
             || IndexerService::scan(root),
         );
-        let (store, persisted_files) = opened?;
+        let (store, persisted_files, persisted_epochs) = opened?;
         let current_files = SortedByPath::assumed_sorted(scanned?);
         let delta = FileDelta::compute(&current_files, &persisted_files);
         Ok(Self {
             store,
             current_files,
             persisted_files,
+            persisted_epochs,
             delta,
         })
+    }
+
+    /// Returns all current files walked in this pass.
+    #[inline]
+    pub(super) fn all_files(&self) -> &[FileBase] {
+        self.current_files.as_slice()
+    }
+
+    /// Returns the persisted configuration epochs read from the store.
+    #[inline]
+    pub(super) const fn persisted_epochs(&self) -> &PersistedEpochs {
+        &self.persisted_epochs
+    }
+
+    /// Rebuilds the class axis directly in the store.
+    #[inline]
+    pub(super) fn rebuild_class_axis(
+        &self,
+        axes: &IndexAxes,
+        epochs: &PersistedEpochs,
+    ) -> IndexResult<()> {
+        self.store.rebuild_class_axis(axes, epochs)
     }
 
     /// Reports whether the scan produced no changes.
@@ -324,6 +386,8 @@ impl RefreshPlan {
     pub(super) fn reconcile(
         self,
         modified_notes: Vec<Note>,
+        epochs: PersistedEpochs,
+        class_axis_rebuild: bool,
     ) -> IndexResult<PendingApply> {
         let prev_links = self.store.read_all_links(&self.persisted_files)?;
         let (inlinks, inlink_delta) =
@@ -369,6 +433,8 @@ impl RefreshPlan {
         Ok(PendingApply {
             store: self.store,
             update,
+            epochs,
+            class_axis_rebuild,
         })
     }
 
@@ -594,6 +660,74 @@ mod tests {
             let upserted = [FileBase::note_for_test("b.md")];
 
             assert_eq!(scope.to_upsert(&upserted), Vec::<&Note>::new());
+        }
+    }
+
+    mod repair_scope {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::{Tag, TaskConfig};
+
+        #[test]
+        fn computes_none_when_epochs_match() {
+            let tasks = TaskConfig::default();
+            let current = PersistedEpochs::current(&tasks, "class");
+            let persisted = PersistedEpochs::current(&tasks, "class");
+            assert_eq!(
+                RepairScope::compute(&persisted, &current),
+                RepairScope::None
+            );
+        }
+
+        #[test]
+        fn computes_class_axis_only_when_only_class_field_differs() {
+            let tasks = TaskConfig::default();
+            let current = PersistedEpochs::current(&tasks, "kind");
+            let persisted = PersistedEpochs::current(&tasks, "class");
+            assert_eq!(
+                RepairScope::compute(&persisted, &current),
+                RepairScope::ClassAxisOnly
+            );
+        }
+
+        #[test]
+        fn computes_reparse_when_tasks_config_differs() {
+            let current_tasks = TaskConfig::default();
+            let persisted_tasks = TaskConfig::for_test(vec![
+                Tag::parse("#task").expect("valid tag"),
+            ]);
+            let current = PersistedEpochs::current(&current_tasks, "class");
+            let persisted = PersistedEpochs::current(&persisted_tasks, "class");
+            assert_eq!(
+                RepairScope::compute(&persisted, &current),
+                RepairScope::Reparse
+            );
+        }
+
+        #[test]
+        fn computes_reparse_when_both_tasks_and_class_differ() {
+            let current_tasks = TaskConfig::default();
+            let persisted_tasks = TaskConfig::for_test(vec![
+                Tag::parse("#task").expect("valid tag"),
+            ]);
+            let current = PersistedEpochs::current(&current_tasks, "kind");
+            let persisted = PersistedEpochs::current(&persisted_tasks, "class");
+            assert_eq!(
+                RepairScope::compute(&persisted, &current),
+                RepairScope::Reparse
+            );
+        }
+
+        #[test]
+        fn computes_reparse_when_persisted_epochs_are_unknown() {
+            let tasks = TaskConfig::default();
+            let current = PersistedEpochs::current(&tasks, "class");
+            let unknown = PersistedEpochs::unknown();
+            assert_eq!(
+                RepairScope::compute(&unknown, &current),
+                RepairScope::Reparse
+            );
         }
     }
 }

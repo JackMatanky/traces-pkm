@@ -11,8 +11,10 @@ use std::sync::Arc;
 use chrono::NaiveDate;
 use pretty_assertions::assert_eq;
 use traces_pkm::{
-    FileEntry, QueryBuilder, QueryService, QuerySet, SourceLine,
-    SourceSelector, TaskListItem, TaskPriority, TaskStatusType, TestProject,
+    FileEntry, IndexerService, PresetDialogProvider, QueryBuilder,
+    QueryService, QuerySet, RefreshReport, SourceLine, SourceSelector,
+    TaskListItem, TaskPriority, TaskStatusType, TemplatePathInput,
+    TemplateService, TestProject, WriteMode, WriteOutcome,
 };
 /// Builds an index, persists it, and reloads it into a fresh `WorkspaceIndex`,
 /// checking records survive intact.
@@ -322,4 +324,124 @@ fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_del
 
     assert_eq!(report.upserted_count(), 2);
     assert_eq!(report.deleted_count(), 0);
+}
+
+/// Proves that changing task configuration (tag filters) triggers a reparse of
+/// notes and updates task classifications without requiring filesystem edits.
+#[test]
+fn reparses_notes_when_task_config_changes_without_file_edits() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::empty(temp.path().join("project"));
+    let config_toml_1 = "[templates]\ndirectory = \
+                         \"templates\"\n\n[tasks]\ntag_filters = [\"task\"]\n";
+    project.write_file(".traces/config.toml", config_toml_1);
+    project.trust();
+
+    project.write_note(
+        "tasks.md",
+        "# Tasks\n\n- [ ] untagged\n- [ ] tagged #task\n",
+    );
+
+    let config_1 = project.load_config();
+    let indexer_1 = IndexerService::from(&config_1);
+    let (index_1, report_1) =
+        indexer_1.refresh_with_report().expect("initial refresh");
+    assert_eq!(report_1.upserted_count(), 1);
+
+    // Initial config has tag_filters = ["task"], so only 1 task item is
+    // recognized.
+    let query_service = QueryService::new("class");
+    let tasks_1 = query_service
+        .run(&Arc::new(index_1), QueryBuilder::tasks(SourceSelector::All));
+    assert_eq!(tasks_1.len(), 1);
+
+    // Step 2: Rewrite config to remove tag_filters (so every checkbox becomes a
+    // task). Note file mtime is NOT touched.
+    let config_toml_2 = "[templates]\ndirectory = \"templates\"\n\n[tasks]\n";
+    project.write_file(".traces/config.toml", config_toml_2);
+    project.trust();
+
+    let config_2 = project.load_config();
+    let indexer_2 = IndexerService::from(&config_2);
+
+    let (index_2, _report_2) = indexer_2
+        .refresh_with_report()
+        .expect("second refresh with new config");
+    let tasks_2 = query_service
+        .run(&Arc::new(index_2), QueryBuilder::tasks(SourceSelector::All));
+    assert_eq!(tasks_2.len(), 2);
+
+    // Regression guard: a third sync with no changes performs no repair.
+    let (_, report_3) = indexer_2.refresh_with_report().expect("third refresh");
+    assert_eq!(report_3, RefreshReport::default());
+}
+
+/// Proves that changing `[schemas] class_field` triggers a class-axis rebuild
+/// in the store without requiring filesystem edits.
+#[test]
+fn rebuilds_class_axis_when_class_field_changes_without_file_edits() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::empty(temp.path().join("project"));
+    let config_toml_1 = "[templates]\ndirectory = \
+                         \"templates\"\n\n[schemas]\nclass_field = \"kind\"\n";
+    project.write_file(".traces/config.toml", config_toml_1);
+    project.trust();
+
+    project.write_schema("book", "");
+    project.write_schema("novel", "");
+    project.write_note(
+        "dune.md",
+        "---\nkind: book\ncategory: novel\n---\n# Dune\n",
+    );
+    project
+        .write_template("book_query.md", "{{ query.from('@book') | length }}");
+    project.write_template(
+        "novel_query.md",
+        "{{ query.from('@novel') | length }}",
+    );
+
+    let config_1 = project.load_config();
+    let template_service_1 =
+        TemplateService::new(&config_1, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input_book =
+        TemplatePathInput::parse(std::path::Path::new("book_query"))
+            .expect("valid input");
+    let outcome_1 = template_service_1
+        .render_to_file(&input_book, None, WriteMode::DryRun)
+        .expect("render preview");
+    assert_eq!(outcome_1, WriteOutcome::Previewed("1".to_owned()));
+
+    // Step 2: Rewrite config to set class_field = "category".
+    // File mtime on dune.md is NOT touched!
+    let config_toml_2 = "[templates]\ndirectory = \
+                         \"templates\"\n\n[schemas]\nclass_field = \
+                         \"category\"\n";
+    project.write_file(".traces/config.toml", config_toml_2);
+    project.trust();
+
+    let config_2 = project.load_config();
+    let template_service_2 =
+        TemplateService::new(&config_2, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service 2");
+
+    let input_novel =
+        TemplatePathInput::parse(std::path::Path::new("novel_query"))
+            .expect("valid input novel");
+    let outcome_novel = template_service_2
+        .render_to_file(&input_novel, None, WriteMode::DryRun)
+        .expect("render novel");
+    assert_eq!(outcome_novel, WriteOutcome::Previewed("1".to_owned()));
+
+    let outcome_book_stale = template_service_2
+        .render_to_file(&input_book, None, WriteMode::DryRun)
+        .expect("render stale book");
+    assert_eq!(outcome_book_stale, WriteOutcome::Previewed("0".to_owned()));
+
+    // Also verify a subsequent refresh produces an empty report (no repair
+    // needed).
+    let indexer_2 = IndexerService::from(&config_2);
+    let (_, report_subsequent) =
+        indexer_2.refresh_with_report().expect("subsequent refresh");
+    assert_eq!(report_subsequent, RefreshReport::default());
 }

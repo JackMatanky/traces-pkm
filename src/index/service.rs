@@ -13,8 +13,11 @@ use rayon::prelude::*;
 
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
+    epochs::PersistedEpochs,
     inlinks::InlinkMap,
-    refresh::{PendingApply, RefreshPass, RefreshPlan, RefreshReport},
+    refresh::{
+        PendingApply, RefreshPass, RefreshPlan, RefreshReport, RepairScope,
+    },
     sort::SortedByPath,
     store::{IndexAxes, IndexStore, PersistRequest},
 };
@@ -157,13 +160,32 @@ impl IndexerService {
         Ok((index, report))
     }
 
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "plan_pass holds scan plan and reconciles refresh data"
+    )]
     fn plan_pass(&self) -> IndexResult<RefreshPass> {
         let plan = RefreshPlan::collect(&self.root)?;
-        if plan.is_empty() {
+        let current = PersistedEpochs::current(&self.tasks, &self.class_field);
+        let scope = RepairScope::compute(plan.persisted_epochs(), &current);
+        if plan.is_empty() && scope != RepairScope::Reparse {
+            if scope == RepairScope::ClassAxisOnly {
+                let axes = IndexAxes::for_class_field(&self.class_field);
+                let epochs =
+                    PersistedEpochs::current(&self.tasks, &self.class_field);
+                plan.rebuild_class_axis(&axes, &epochs)?;
+            }
             return Ok(plan.into_unchanged());
         }
-        let modified_notes = self.parse_notes(plan.upserted_files())?;
-        let pending = plan.reconcile(modified_notes)?;
+        let files = match scope {
+            RepairScope::Reparse => plan.all_files(),
+            _ => plan.upserted_files(),
+        };
+        let modified_notes = self.parse_notes(files)?;
+        let epochs = PersistedEpochs::current(&self.tasks, &self.class_field);
+        let class_axis_rebuild = scope == RepairScope::ClassAxisOnly;
+        let pending =
+            plan.reconcile(modified_notes, epochs, class_axis_rebuild)?;
         Ok(RefreshPass::Reconciled(pending))
     }
 
@@ -269,9 +291,11 @@ impl IndexerService {
     ///   created, the transaction fails, or a row cannot be encoded.
     #[inline]
     pub fn persist(&self, index: &WorkspaceIndex) -> IndexResult<()> {
+        let epochs = PersistedEpochs::current(&self.tasks, &self.class_field);
         IndexStore::open(&self.root)?.persist(&PersistRequest::rebuild(
             IndexAxes::for_class_field(&self.class_field),
             index.entries(),
+            &epochs,
         ))
     }
 
@@ -1182,6 +1206,8 @@ mod tests {
             links.insert(weird.clone(), vec![normal.clone()].into());
             links.insert(normal.clone(), vec![weird.clone()].into());
             let links = InlinkMap::from_raw(links);
+            let epochs =
+                PersistedEpochs::current(&TaskConfig::default(), "class");
             store
                 .persist(&PersistRequest::rebuild(
                     IndexAxes::for_class_field("class"),
@@ -1191,9 +1217,9 @@ mod tests {
                         links,
                     )
                     .entries(),
+                    &epochs,
                 ))
                 .expect("persist index");
-            drop(store);
 
             let service = IndexerService::for_tests(temp.path());
             let (refreshed, report) =

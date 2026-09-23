@@ -23,11 +23,12 @@ use super::{
     codec::{PathKey, decode_row, encode_row, path_from_bytes},
     delta::{FileDelta, InlinkDelta},
     entry::FileEntry,
+    epochs::{CLASS_KEY, ClassEpoch, PARSE_KEY, ParseEpoch, PersistedEpochs},
     error::{IndexError, IndexResult, StoreError, StoreResult},
     inlinks::InlinkMap,
     sort::SortedByPath,
     tables::{
-        FILE_CLASSES_BY_PATH, FILES, LINKS, NOTES, PATHS_BY_FILE_CLASS,
+        EPOCHS, FILE_CLASSES_BY_PATH, FILES, LINKS, NOTES, PATHS_BY_FILE_CLASS,
         PATHS_BY_TAG, TABLES, TAGS_BY_PATH,
     },
 };
@@ -49,22 +50,31 @@ impl<'a> PersistRequest<'a> {
     pub(super) const fn rebuild(
         axes: IndexAxes,
         entries: &'a [FileEntry],
+        epochs: &'a PersistedEpochs,
     ) -> Self {
         Self {
             axes,
             rows: PersistRows::Rebuild {
                 entries,
+                epochs,
             },
         }
     }
 
     /// Applies row-level changes from one refresh pass.
     #[inline]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "all 6 parameters specify incremental refresh row and epoch \
+                  updates"
+    )]
     pub(super) const fn incremental(
         axes: IndexAxes,
         delta: &'a FileDelta,
         notes: &'a [&'a Note],
         edges: &'a InlinkDelta,
+        epochs: &'a PersistedEpochs,
+        class_axis_rebuild: bool,
     ) -> Self {
         Self {
             axes,
@@ -72,6 +82,8 @@ impl<'a> PersistRequest<'a> {
                 delta,
                 notes,
                 edges,
+                epochs,
+                class_axis_rebuild,
             },
         }
     }
@@ -83,6 +95,8 @@ struct IncrementalRows<'a> {
     delta: &'a FileDelta,
     notes: &'a [&'a Note],
     edges: &'a InlinkDelta,
+    epochs: &'a PersistedEpochs,
+    class_axis_rebuild: bool,
 }
 
 /// Rows affected by a persistence request.
@@ -90,12 +104,15 @@ pub(super) enum PersistRows<'a> {
     /// Full cache rebuild from assembled entries.
     Rebuild {
         entries: &'a [FileEntry],
+        epochs: &'a PersistedEpochs,
     },
     /// Incremental file, note, axis, and inlink changes.
     Incremental {
         delta: &'a FileDelta,
         notes: &'a [&'a Note],
         edges: &'a InlinkDelta,
+        epochs: &'a PersistedEpochs,
+        class_axis_rebuild: bool,
     },
 }
 
@@ -294,6 +311,145 @@ impl IndexStore {
             return Ok(Box::default());
         };
         Ok(self.collect_folder_paths(&table, folder)?)
+    }
+
+    // --- Epochs ------------------------------------------------------
+
+    /// Reads persisted configuration epochs, falling back to
+    /// [`PersistedEpochs::unknown`] if the table is absent or bytes fail to
+    /// decode.
+    pub(super) fn read_epochs(&self) -> PersistedEpochs {
+        let Ok(txn) = self.begin_read() else {
+            return PersistedEpochs::unknown();
+        };
+        let Ok(Some(table)) = self.open_table_for_read(&txn, EPOCHS) else {
+            return PersistedEpochs::unknown();
+        };
+        let parse = match table.get(PARSE_KEY) {
+            Ok(Some(guard)) => ParseEpoch::decode(guard.value())
+                .unwrap_or_else(|_| ParseEpoch::empty()),
+            _ => ParseEpoch::empty(),
+        };
+        let class = match table.get(CLASS_KEY) {
+            Ok(Some(guard)) => ClassEpoch::decode(guard.value())
+                .unwrap_or_else(|_| ClassEpoch::empty()),
+            _ => ClassEpoch::empty(),
+        };
+        PersistedEpochs::new(parse, class)
+    }
+
+    /// Writes persisted configuration epochs into `EPOCHS` in `txn`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Store`] if `EPOCHS` cannot be opened or written, or an epoch cannot
+    ///   be encoded.
+    ///
+    /// [`Store`]: IndexError::Store
+    pub(super) fn write_epochs(
+        &self,
+        txn: &WriteTransaction,
+        epochs: &PersistedEpochs,
+    ) -> IndexResult<()> {
+        let mut table = txn
+            .open_table(EPOCHS)
+            .map_err(|source| self.wrap_redb_error(source))?;
+        let mut buf = Vec::new();
+        let parse_bytes = epochs.parse().encode(&mut buf)?;
+        table
+            .insert(PARSE_KEY, parse_bytes)
+            .map_err(|source| self.wrap_redb_error(source))?;
+        buf.clear();
+        let class_bytes = epochs.class().encode(&mut buf)?;
+        table
+            .insert(CLASS_KEY, class_bytes)
+            .map_err(|source| self.wrap_redb_error(source))?;
+        Ok(())
+    }
+
+    /// Rebuilds the File Class forward and reverse tables from stored notes and
+    /// updates the epoch markers.
+    ///
+    /// Used when configuration changes `[schemas] class_field` without file
+    /// edits.
+    ///
+    /// # Errors
+    ///
+    /// - [`Store`] if opening the transaction or reading/writing tables fails.
+    ///
+    /// [`Store`]: IndexError::Store
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "rebuilds class axis over redb tables"
+    )]
+    pub(super) fn rebuild_class_axis(
+        &self,
+        axes: &IndexAxes,
+        epochs: &PersistedEpochs,
+    ) -> IndexResult<()> {
+        let txn = self.begin_cache_txn()?;
+        self.rebuild_class_axis_in(&txn, axes)?;
+        self.write_epochs(&txn, epochs)?;
+        self.commit(txn)?;
+        Ok(())
+    }
+
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "rebuilds class axis over redb tables"
+    )]
+    fn rebuild_class_axis_in(
+        &self,
+        txn: &WriteTransaction,
+        axes: &IndexAxes,
+    ) -> IndexResult<()> {
+        let class_dim = axes.class_dimension();
+        match txn.delete_multimap_table(class_dim.forward()) {
+            Ok(_) | Err(redb::TableError::TableDoesNotExist(_)) => {}
+            Err(source) => return Err(self.wrap_redb_error(source).into()),
+        }
+        match txn.delete_multimap_table(class_dim.reverse()) {
+            Ok(_) | Err(redb::TableError::TableDoesNotExist(_)) => {}
+            Err(source) => return Err(self.wrap_redb_error(source).into()),
+        }
+
+        let mut forward =
+            self.open_multimap_for_write(txn, class_dim.forward())?;
+        let mut reverse =
+            self.open_multimap_for_write(txn, class_dim.reverse())?;
+
+        let notes_table = match txn.open_table(NOTES) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
+            Err(source) => return Err(self.wrap_redb_error(source).into()),
+        };
+
+        let mut raw_rows = Vec::new();
+        let iter = notes_table
+            .iter()
+            .map_err(|source| self.wrap_redb_error(source))?;
+        for entry in iter {
+            let (key, value) =
+                entry.map_err(|source| self.wrap_redb_error(source))?;
+            raw_rows
+                .push((path_from_bytes(key.value()), value.value().to_vec()));
+        }
+        drop(notes_table);
+
+        let notes = Self::decode_note_bytes(raw_rows)?;
+        for note in notes.as_slice() {
+            let path_bytes = PathKey::new(note.path()).as_bytes();
+            class_dim.visit_values(note, |value| {
+                forward
+                    .insert(value.as_bytes(), path_bytes)
+                    .map_err(|source| self.wrap_redb_error(source))?;
+                reverse
+                    .insert(path_bytes, value.as_bytes())
+                    .map_err(|source| self.wrap_redb_error(source))?;
+                Ok(())
+            })?;
+        }
+        Ok(())
     }
 
     // --- Transaction lifecycle ----------------------------------------
@@ -615,20 +771,28 @@ impl IndexStore {
         match &request.rows {
             PersistRows::Rebuild {
                 entries,
-            } => self.apply_rebuild(entries, &request.axes),
+                epochs,
+            } => self.apply_rebuild(entries, &request.axes, epochs),
             PersistRows::Incremental {
                 delta,
                 notes,
                 edges,
+                epochs,
+                class_axis_rebuild,
             } => {
                 debug_assert!(
-                    !delta.is_empty() || !notes.is_empty() || !edges.is_empty(),
+                    !delta.is_empty()
+                        || !notes.is_empty()
+                        || !edges.is_empty()
+                        || *class_axis_rebuild,
                     "plan_pass gates empty passes"
                 );
                 self.apply_incremental(&request.axes, &IncrementalRows {
                     delta,
                     notes,
                     edges,
+                    epochs,
+                    class_axis_rebuild: *class_axis_rebuild,
                 })
             }
         }
@@ -639,8 +803,9 @@ impl IndexStore {
         &self,
         entries: &[FileEntry],
         axes: &IndexAxes,
+        epochs: &PersistedEpochs,
     ) -> IndexResult<()> {
-        self.apply_rebuild_in(self.begin_cache_txn()?, entries, axes)
+        self.apply_rebuild_in(self.begin_cache_txn()?, entries, axes, epochs)
     }
 
     #[inline(never)]
@@ -649,10 +814,12 @@ impl IndexStore {
         txn: WriteTransaction,
         entries: &[FileEntry],
         axes: &IndexAxes,
+        epochs: &PersistedEpochs,
     ) -> IndexResult<()> {
         self.delete_tables(&txn)?;
         self.write_all_parallel(&txn, entries)?;
         self.write_axes_parallel(&txn, entries, axes)?;
+        self.write_epochs(&txn, epochs)?;
         self.commit(txn)?;
         Ok(())
     }
@@ -677,6 +844,10 @@ impl IndexStore {
         self.apply_diff_upserts(&txn, rows.delta.upserted())?;
         self.apply_modified_notes(&txn, rows.notes, axes)?;
         self.apply_inlink_delta(&txn, rows.edges)?;
+        if rows.class_axis_rebuild {
+            self.rebuild_class_axis_in(&txn, axes)?;
+        }
+        self.write_epochs(&txn, rows.epochs)?;
         self.commit(txn)?;
         Ok(())
     }
@@ -1492,6 +1663,10 @@ impl IndexAxes {
     fn iter(&self) -> impl Iterator<Item = &IndexDimension> {
         self.dimensions.iter()
     }
+
+    fn class_dimension(&self) -> &IndexDimension {
+        &self.dimensions[1]
+    }
 }
 
 /// Path-derived index dimension, pairing forward and reverse tables so
@@ -1585,7 +1760,9 @@ mod tests {
     use super::{super::IndexError, *};
     #[cfg(unix)]
     use crate::index::tests::fixtures::PermissionsGuard;
-    use crate::{IndexerService, WorkspaceIndex, parse_note as parse};
+    use crate::{
+        IndexerService, TaskConfig, WorkspaceIndex, parse_note as parse,
+    };
     mod multimap_paths {
 
         use super::*;
@@ -1683,9 +1860,11 @@ mod tests {
             SortedByPath::sorted(notes.to_vec()),
             links.clone(),
         );
+        let epochs = PersistedEpochs::current(&TaskConfig::default(), "class");
         store.persist(&PersistRequest::rebuild(
             IndexAxes::for_class_field("class"),
             index.entries(),
+            &epochs,
         ))
     }
 

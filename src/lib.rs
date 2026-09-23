@@ -335,6 +335,18 @@ mod test_support {
                 .expect("trust project config");
         }
 
+        /// Loads resolved [`Config`] for this project from disk through its
+        /// backing [`ConfigService`].
+        ///
+        /// # Panics
+        ///
+        /// - Panics if config loading fails. Fixture-only code.
+        #[inline]
+        #[must_use]
+        pub fn load_config(&self) -> Config {
+            self.service.load(&self.root).expect("load project config")
+        }
+
         /// Removes trust for this project, returning the count of removed
         /// entries.
         ///
