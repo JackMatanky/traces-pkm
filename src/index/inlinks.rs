@@ -90,9 +90,7 @@ impl InlinkMap {
         let mut current_sources: Vec<PathBuf> = Vec::new();
 
         for (target, source) in flat_edges {
-            if Some(target) == current_target {
-                current_sources.push(source.to_path_buf());
-            } else {
+            if Some(target) != current_target {
                 if let Some(prev_target) = current_target {
                     edges.insert(
                         prev_target.to_path_buf(),
@@ -101,8 +99,8 @@ impl InlinkMap {
                     current_sources = Vec::new();
                 }
                 current_target = Some(target);
-                current_sources.push(source.to_path_buf());
             }
+            current_sources.push(source.to_path_buf());
         }
         if let Some(prev_target) = current_target {
             edges.insert(

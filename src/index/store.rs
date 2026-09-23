@@ -1914,7 +1914,7 @@ mod tests {
         {
             let mut table = txn.open_table(TEST_TABLE).expect("open table");
             table
-                .insert("corrupt.md".as_bytes(), [0xFF, 0xFF].as_slice())
+                .insert(b"corrupt.md".as_slice(), [0xFF, 0xFF].as_slice())
                 .expect("insert corrupt");
         }
         txn.commit().expect("commit");
@@ -2607,7 +2607,7 @@ mod tests {
             let read_txn = store.db.begin_read().expect("begin read txn");
             let table = read_txn.open_table(FILES).expect("open table");
             let raw = table
-                .get("note.md".as_bytes())
+                .get(b"note.md".as_slice())
                 .expect("read raw value")
                 .expect("value present");
             let raw_bytes = raw.value().to_vec();
