@@ -17,8 +17,8 @@
 //!   filters.
 //! - [`ui`] registers dialog-backed `ui.*` helpers.
 //! - [`uuid`] registers the standalone UUID generator.
-//! - [`yaml`] registers YAML serialization (`to_yaml`), parsing (`from_yaml`),
-//!   and frontmatter extraction (`frontmatter`).
+//! - [`yaml`] registers YAML serialization (`to_yaml`) and parsing
+//!   (`from_yaml`).
 //!
 //! [`TemplateService`]: super::service::TemplateService
 //! [`Environment`]: minijinja::Environment
@@ -613,41 +613,6 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "4.0 6.48074069840786 3.14");
-        }
-
-        #[test]
-        fn evaluates_frontmatter_filter() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(
-                &loader_from_dir(temp.path()),
-                preset_provider(),
-                &config_for(temp.path()),
-            )
-            .expect("valid test schema directory");
-
-            let template = "{% set text = \"---\\ntitle: Hello\\n---\\nBody\" \
-                            %}{{ text | frontmatter | to_yaml | trim }}";
-            let rendered =
-                engine.render(template, "test.md").expect("render succeeds");
-            assert_eq!(rendered.content, "title: Hello");
-        }
-
-        #[test]
-        fn evaluates_frontmatter_accessor() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(
-                &loader_from_dir(temp.path()),
-                preset_provider(),
-                &config_for(temp.path()),
-            )
-            .expect("valid test schema directory");
-
-            let template = "{% set text = \"---\\ntitle: Hello\\n---\\nBody\" \
-                            %}Title: {{ (text | frontmatter).title }}";
-            let rendered =
-                engine.render(template, "test.md").expect("render succeeds");
-
-            assert_eq!(rendered.content, "Title: Hello");
         }
 
         #[test]

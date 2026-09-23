@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `src/template/engine/yaml.rs` (module docs lines 1-15, `register` lines 30-34, filter fns lines 68-127, tests `mod frontmatter` lines 318-498)
 
-- [ ] **Step 1: Rewrite the module doc comment**
+- [x] **Step 1: Rewrite the module doc comment**
 
 Replace the entire doc comment at the top of `src/template/engine/yaml.rs` with:
 
@@ -35,7 +35,7 @@ Replace the entire doc comment at the top of `src/template/engine/yaml.rs` with:
 //! [`Environment::add_filter`]: minijinja::Environment::add_filter
 ```
 
-- [ ] **Step 2: Remove the registration line**
+- [x] **Step 2: Remove the registration line**
 
 In `YamlOps::register`, change:
 
@@ -56,20 +56,20 @@ to:
     }
 ```
 
-- [ ] **Step 3: Delete the filter implementation**
+- [x] **Step 3: Delete the filter implementation**
 
 Remove the `extract_frontmatter_str` function (doc comment + body) and the `frontmatter` function (doc comment + body) — everything between the end of `from_yaml` and the `#[cfg(test)]` line. `from_yaml` is the last remaining item before the test module.
 
-- [ ] **Step 4: Delete the `mod frontmatter` test module**
+- [x] **Step 4: Delete the `mod frontmatter` test module**
 
 Remove the entire `mod frontmatter { ... }` block (the last submodule inside `mod tests`), from `mod frontmatter {` through its closing brace just before `mod tests`'s closing brace. Keep `mod to_yaml` and `mod from_yaml` intact.
 
-- [ ] **Step 5: Run the template unit tests**
+- [x] **Step 5: Run the template unit tests**
 
 Run: `mise run test -m template`
-Expected: PASS (yaml `to_yaml`/`from_yaml` tests pass; no `frontmatter` references remain)
+Expected: PASS except `evaluates_frontmatter_filter` and `evaluates_frontmatter_accessor` (both in `engine.rs`, Task 2's scope — they fail with `UnknownFilter: frontmatter` until Task 2 removes them). The yaml module's own tests must pass: `mise run test -m template -- template::engine::yaml` → 21/21 PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/template/engine/yaml.rs
@@ -81,7 +81,7 @@ git commit -m "refactor(template): drop frontmatter filter from yaml ops"
 **Files:**
 - Modify: `src/template/engine.rs` (module doc lines 20-21, tests lines 618-651)
 
-- [ ] **Step 1: Update the module doc bullet**
+- [x] **Step 1: Update the module doc bullet**
 
 In the helper-modules list, replace:
 
@@ -97,16 +97,16 @@ with:
 //!   (`from_yaml`).
 ```
 
-- [ ] **Step 2: Delete the two frontmatter tests**
+- [x] **Step 2: Delete the two frontmatter tests**
 
 Remove the entire `evaluates_frontmatter_filter` test function (including its `#[test]` attribute) and the entire `evaluates_frontmatter_accessor` test function. `evaluates_from_yaml_filter` immediately after them stays.
 
-- [ ] **Step 3: Run the engine tests**
+- [x] **Step 3: Run the engine tests**
 
 Run: `mise run test -m template`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/template/engine.rs
@@ -117,12 +117,12 @@ git commit -m "refactor(template): remove frontmatter filter engine tests and do
 
 **Files:** none modified
 
-- [ ] **Step 1: Run the full gate**
+- [x] **Step 1: Run the full gate**
 
 Run: `mise run verify`
 Expected: PASS (fmt, check, lint, test — 0 failures)
 
-- [ ] **Step 2: Confirm no stray references**
+- [x] **Step 2: Confirm no stray references**
 
 Run: `rg 'frontmatter' src/template/`
-Expected: no matches (only `src/note/`, `src/index/`, etc. keep their unrelated frontmatter code)
+Expected: no matches for the removed filter — i.e. no `| frontmatter` usages, no `add_filter("frontmatter"`, no references to `extract_frontmatter_str` or the filter function. Matches about *note* frontmatter metadata (e.g. in `engine/query.rs`) are legitimate and expected to remain.
