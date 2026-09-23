@@ -320,6 +320,6 @@ fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_del
         .refresh_with_report()
         .expect("refresh recovers from corruption");
 
-    assert_eq!(report.upserted(), 2);
-    assert_eq!(report.deleted(), 0);
+    assert_eq!(report.upserted_count(), 2);
+    assert_eq!(report.deleted_count(), 0);
 }

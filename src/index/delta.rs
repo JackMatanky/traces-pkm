@@ -28,34 +28,34 @@ impl FileDelta {
     ) -> Self {
         let mut upserted = Vec::new();
         let mut deleted = Vec::new();
-        let mut cur = current.as_slice().iter().peekable();
-        let mut prev = persisted.as_slice().iter().peekable();
+        let mut current_iter = current.as_slice().iter().peekable();
+        let mut persisted_iter = persisted.as_slice().iter().peekable();
         loop {
-            match (cur.peek(), prev.peek()) {
+            match (current_iter.peek(), persisted_iter.peek()) {
                 (Some(c), Some(p)) => match c.path().cmp(p.path()) {
                     std::cmp::Ordering::Less => {
                         upserted.push((*c).clone());
-                        cur.next();
+                        current_iter.next();
                     }
                     std::cmp::Ordering::Greater => {
                         deleted.push((*p).clone());
-                        prev.next();
+                        persisted_iter.next();
                     }
                     std::cmp::Ordering::Equal => {
                         if *c != *p {
                             upserted.push((*c).clone());
                         }
-                        cur.next();
-                        prev.next();
+                        current_iter.next();
+                        persisted_iter.next();
                     }
                 },
                 (Some(c), None) => {
                     upserted.push((*c).clone());
-                    cur.next();
+                    current_iter.next();
                 }
                 (None, Some(p)) => {
                     deleted.push((*p).clone());
-                    prev.next();
+                    persisted_iter.next();
                 }
                 (None, None) => break,
             }
@@ -105,22 +105,22 @@ impl InlinkDelta {
         let mut upserted = Vec::new();
         let mut deleted = Vec::new();
 
-        for (target, cur_sources) in current_links.iter() {
-            let prev_sources = persisted_links.inlinks_of(target);
+        for (target, current_sources) in current_links.iter() {
+            let persisted_sources = persisted_links.inlinks_of(target);
             diff_sorted_sources(
                 target,
-                cur_sources,
-                prev_sources,
+                current_sources,
+                persisted_sources,
                 &mut upserted,
             );
         }
 
-        for (target, prev_sources) in persisted_links.iter() {
-            let cur_sources = current_links.inlinks_of(target);
+        for (target, persisted_sources) in persisted_links.iter() {
+            let current_sources = current_links.inlinks_of(target);
             diff_sorted_sources(
                 target,
-                prev_sources,
-                cur_sources,
+                persisted_sources,
+                current_sources,
                 &mut deleted,
             );
         }

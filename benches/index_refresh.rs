@@ -73,9 +73,9 @@ fn observe_refresh(
     black_box((
         entries.len(),
         inlink_count,
-        report.upserted(),
-        report.deleted(),
-        report.links_modified(),
+        report.upserted_count(),
+        report.deleted_count(),
+        report.links_modified_count(),
     ));
     (index, report)
 }

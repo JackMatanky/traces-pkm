@@ -12,10 +12,11 @@ pub type IndexResult<T> = std::result::Result<T, IndexError>;
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
-    reason = "DirTreeError and PathError are pub(crate), IndexError is pub"
+    reason = "StoreError, DirTreeError, and PathError are pub(crate), \
+              IndexError is pub"
 )]
 pub enum IndexError {
-    /// Database access or record serialization/deserialization failed.
+    /// Database access or row serialization/deserialization failed.
     #[error(transparent)]
     Store(#[from] StoreError),
     /// Directory traversal failed during scan.
@@ -40,11 +41,11 @@ pub enum IndexError {
     },
 }
 
-pub type StoreResult<T> = std::result::Result<T, StoreError>;
+pub(crate) type StoreResult<T> = std::result::Result<T, StoreError>;
 
 /// Low-level index persistence failure.
 #[derive(Debug, Error)]
-pub enum StoreError {
+pub(crate) enum StoreError {
     /// Filesystem access failed.
     #[error("failed to access {path}")]
     Io {
@@ -59,15 +60,15 @@ pub enum StoreError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// Record serialization failed.
-    #[error("failed to serialize the record for {path}")]
+    /// Row serialization failed.
+    #[error("failed to serialize the row for {path}")]
     Serialize {
         path: PathBuf,
         #[source]
         source: postcard::Error,
     },
-    /// Stored record deserialization failed.
-    #[error("failed to deserialize the record for {path}")]
+    /// Stored row deserialization failed.
+    #[error("failed to deserialize the row for {path}")]
     Deserialize {
         path: PathBuf,
         #[source]

@@ -22,10 +22,15 @@ use crate::{FileBase, Note};
 
 /// Changed-row counts from an incremental refresh.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "upserted_count/deleted_count/links_modified_count disambiguate \
+              these counts from FileDelta/InlinkDelta collection accessors"
+)]
 pub struct RefreshReport {
-    upserted: usize,
-    deleted: usize,
-    links_modified: usize,
+    upserted_count: usize,
+    deleted_count: usize,
+    links_modified_count: usize,
 }
 
 impl RefreshReport {
@@ -33,36 +38,36 @@ impl RefreshReport {
     #[inline]
     #[must_use]
     pub const fn new(
-        upserted: usize,
-        deleted: usize,
-        links_modified: usize,
+        upserted_count: usize,
+        deleted_count: usize,
+        links_modified_count: usize,
     ) -> Self {
         Self {
-            upserted,
-            deleted,
-            links_modified,
+            upserted_count,
+            deleted_count,
+            links_modified_count,
         }
     }
 
     /// Files inserted or updated.
     #[inline]
     #[must_use]
-    pub const fn upserted(self) -> usize {
-        self.upserted
+    pub const fn upserted_count(self) -> usize {
+        self.upserted_count
     }
 
     /// Files deleted from the index.
     #[inline]
     #[must_use]
-    pub const fn deleted(self) -> usize {
-        self.deleted
+    pub const fn deleted_count(self) -> usize {
+        self.deleted_count
     }
 
     /// Inbound link edges updated.
     #[inline]
     #[must_use]
-    pub const fn links_modified(self) -> usize {
-        self.links_modified
+    pub const fn links_modified_count(self) -> usize {
+        self.links_modified_count
     }
 }
 
