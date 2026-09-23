@@ -15,7 +15,7 @@ inbound links across a project root.
 
 #### Index Store
 
-The durable on-disk cache of indexed file records, parsed notes, and derived
+The durable on-disk cache of file entries, parsed notes, and derived
 relationships for one project root, distinct from the in-memory Workspace Index.
 *Avoid*: database, persistence layer, cache handle
 
@@ -54,7 +54,7 @@ type: relative path, size, timestamps, and format classification.
 
 One indexed file's File Base together with its optional parsed Note and derived
 inbound links in a Workspace Index.
-*Avoid*: index row, file record, indexed note
+*Avoid*: file record, indexed note
 
 #### Note
 
