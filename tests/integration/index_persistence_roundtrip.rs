@@ -326,52 +326,63 @@ fn refresh_after_corruption_recovery_reports_every_file_upserted_and_nothing_del
     assert_eq!(report.deleted_count(), 0);
 }
 
-/// Proves that changing task configuration (tag filters) triggers a reparse of
-/// notes and updates task classifications without requiring filesystem edits.
+/// Proves that changing configured task statuses reparses notes without
+/// requiring source-file edits.
 #[test]
 fn reparses_notes_when_task_config_changes_without_file_edits() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::empty(temp.path().join("project"));
     let config_toml_1 = "[templates]\ndirectory = \
-                         \"templates\"\n\n[tasks]\ntag_filters = [\"task\"]\n";
+                         \"templates\"\n\n[[tasks.statuses]]\nsymbol = \
+                         \"?\"\nname = \"Blocked\"\nkind = \"on-hold\"\n";
     project.write_file(".traces/config.toml", config_toml_1);
     project.trust();
 
-    project.write_note(
-        "tasks.md",
-        "# Tasks\n\n- [ ] untagged\n- [ ] tagged #task\n",
-    );
+    let note_path =
+        project.write_note("tasks.md", "# Tasks\n\n- [?] waiting\n");
+    let original_note =
+        std::fs::read(&note_path).expect("read original note content");
 
     let config_1 = project.load_config();
     let indexer_1 = IndexerService::from(&config_1);
     let (index_1, report_1) =
         indexer_1.refresh_with_report().expect("initial refresh");
     assert_eq!(report_1.upserted_count(), 1);
+    let status_1 = index_1
+        .entries()
+        .iter()
+        .find_map(FileEntry::note)
+        .and_then(|note| {
+            note.list_items().find_map(|item| item.kind().as_task())
+        })
+        .map(|task| task.status().kind());
+    assert_eq!(status_1, Some(TaskStatusType::OnHold));
 
-    // Initial config has tag_filters = ["task"], so only 1 task item is
-    // recognized.
-    let query_service = QueryService::new("class");
-    let tasks_1 = query_service
-        .run(&Arc::new(index_1), QueryBuilder::tasks(SourceSelector::All));
-    assert_eq!(tasks_1.len(), 1);
-
-    // Step 2: Rewrite config to remove tag_filters (so every checkbox becomes a
-    // task). Note file mtime is NOT touched.
-    let config_toml_2 = "[templates]\ndirectory = \"templates\"\n\n[tasks]\n";
+    let config_toml_2 = "[templates]\ndirectory = \
+                         \"templates\"\n\n[[tasks.statuses]]\nsymbol = \
+                         \"?\"\nname = \"Complete\"\nkind = \"done\"\n";
     project.write_file(".traces/config.toml", config_toml_2);
     project.trust();
 
     let config_2 = project.load_config();
     let indexer_2 = IndexerService::from(&config_2);
-
     let (index_2, _report_2) = indexer_2
         .refresh_with_report()
         .expect("second refresh with new config");
-    let tasks_2 = query_service
-        .run(&Arc::new(index_2), QueryBuilder::tasks(SourceSelector::All));
-    assert_eq!(tasks_2.len(), 2);
+    let status_2 = index_2
+        .entries()
+        .iter()
+        .find_map(FileEntry::note)
+        .and_then(|note| {
+            note.list_items().find_map(|item| item.kind().as_task())
+        })
+        .map(|task| task.status().kind());
+    assert_eq!(status_2, Some(TaskStatusType::Done));
+    assert_eq!(
+        std::fs::read(&note_path).expect("read unchanged note content"),
+        original_note
+    );
 
-    // Regression guard: a third sync with no changes performs no repair.
     let (_, report_3) = indexer_2.refresh_with_report().expect("third refresh");
     assert_eq!(report_3, RefreshReport::default());
 }

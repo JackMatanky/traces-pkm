@@ -1653,14 +1653,16 @@ mod tests {
         }
 
         #[test]
-        fn refreshes_using_configured_indexer_for_class_field_and_task_filters()
+        fn uses_configured_class_field_and_task_statuses_for_template_queries()
         {
             let temp = tempfile::tempdir().expect("create temp dir");
             let project =
                 crate::TestProject::empty(temp.path().join("project"));
             let config_toml = "[templates]\ndirectory = \
                                \"templates\"\n\n[tasks]\ntag_filters = \
-                               [\"task\"]\n\n[schemas]\nclass_field = \
+                               [\"task\"]\n\n[[tasks.statuses]]\nsymbol = \
+                               \"?\"\nname = \"Blocked\"\nkind = \
+                               \"on-hold\"\n\n[schemas]\nclass_field = \
                                \"kind\"\n";
             let config_path =
                 project.write_file(".traces/config.toml", config_toml);
@@ -1681,8 +1683,8 @@ mod tests {
             project.write_schema("book", "");
             project.write_note(
                 "dune.md",
-                "---\nkind: book\n---\n# Dune\n\n- [ ] plain checkbox\n- [ ] \
-                 tagged task #task\n",
+                "---\nkind: book\n---\n# Dune\n\n- [?] waiting on review \
+                 #task\n",
             );
 
             let loader = crate::template::loader::TemplateLoader::new(
@@ -1698,13 +1700,15 @@ mod tests {
 
             let rendered = engine
                 .render(
-                    "{{ query.from('@book') | length }}|{{ tasks.from() | \
-                     length }}",
+                    "{% set task = tasks.from()[0] %}{{ query.from('@book') | \
+                     length }}|{{ tasks.from() | length }}|{{ \
+                     task.list.status }}|{{ task.list.status_symbol }}|{{ \
+                     task.list.status_type }}",
                     "test.md",
                 )
                 .expect("render succeeds");
 
-            assert_eq!(rendered.content, "1|1");
+            assert_eq!(rendered.content, "1|1|Blocked|?|on-hold");
 
             let store = crate::index::IndexStore::open(project.root())
                 .expect("open store");
