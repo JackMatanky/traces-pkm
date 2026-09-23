@@ -64,11 +64,12 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 #      gates that must run on invocation; clean/setup are destructive or
 #      install actions that must never be skipped as "fresh"; watch is an
 #      interactive session).
-# mutants is opted out because it is nondeterministic (wall-clock --timeout,
-# --baseline run, run ordering): log replay would mask flakiness, so the cache
-# key cannot assert equivalent logs (07_configuration.md, "Cache correctness
-# and deterministic tasks": enabling cache is a correctness assertion).
-# Verdict: drift — stale config/comment, not a deliberate cache exception.
+# Independently of gate policy, mutants is also nondeterministic (wall-clock
+# --timeout, --baseline run, run ordering): log replay would mask flakiness,
+# so the cache key cannot assert equivalent logs (07_configuration.md, "Cache
+# correctness and deterministic tasks": enabling cache is a correctness
+# assertion).
+# Verdict (mutants): drift — pre-fix config/comment were stale, not a deliberate cache exception.
 # Classification of other tasks: coverage/crap carry explicit outputs
 # (freshness defined, not gates); build/release/doc are build-if-stale by
 # design; audit is opted out (reason 1: cargo deny reads deny.toml, which
@@ -192,8 +193,7 @@ fi
 # bash-only by design (no run_windows): macOS dev + Linux CI only.
 [tasks.sweep]
 description = "Reclaim Cargo target space: prune stale incremental sessions (default, gated by --max-gib) or run cargo-sweep by age/size (--days/--max-size)"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 flag "--max-gib <gib>" help="Incremental-prune mode: only prune when target exceeds this size in GiB (non-negative integer)" default="10"
 flag "--days <days>" help="cargo-sweep mode: remove target artifacts older than DAYS"
@@ -292,8 +292,7 @@ main
 [tasks.check]
 description = "Fast compile check, then hk project checks"
 alias = "c"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 arg "[args]" var=#true help="Extra arguments forwarded to cargo check (hk check never receives them)"
 '''
@@ -340,8 +339,7 @@ run = "cargo watch -x check -x test"
 [tasks.fmt]
 description = "Format all Rust code (nightly)"
 alias = "f"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = 'flag "--check" help="Check formatting without modifying files"'
 run = '''
 #!/bin/bash
@@ -357,8 +355,7 @@ description = "Strict clippy: workspace, all targets, all features. Auto-fixes 1
 alias = "l"
 depends = ["fmt"]
 sources = ["@group:rust"]
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
 flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
@@ -420,8 +417,7 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 
 [tasks.audit]
 description = "Run cargo deny audit"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo deny check"'
 run = '''
 #!/bin/bash
@@ -441,8 +437,7 @@ cargo deny check "${extra[@]+"${extra[@]}"}"
 description = "Run tests with nextest (+ doc-tests by default)"
 alias = "t"
 sources = ["@group:rust"]
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 flag "--feature <feature>" help="Enable a specific feature" default="all"
 flag "--docs" negate="--no-docs" default=#true {
@@ -535,8 +530,7 @@ run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
 sources = ["@group:rust"]
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 depends = ["test"]
 timeout = "1h"
 usage = '''
@@ -658,6 +652,16 @@ run = [
 # metadata stays in the file task so --help remains byte-identical.
 [task_templates.bench]
 timeout = "20m"
+
+# Never-skip payload: the complete local opt-out for tasks in the
+# task_config.cache rationale above whose entire payload is exactly this pair.
+# Members inherit via extends instead of repeating both lines locally.
+# Exempt: bench (its file task spends its only extends on [task_templates.bench]);
+# verify (resolves outputs {auto:true}, not []); clean/setup/watch (different
+# policy reasons, not the gate payload).
+[task_templates."gate:never-skip"]
+outputs = []
+cache = { enabled = false }
 
 # ------------------------------------------------------------- #
 #                        Lifecycle Hooks                        #
