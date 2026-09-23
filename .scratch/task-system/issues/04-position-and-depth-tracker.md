@@ -173,7 +173,7 @@ cargo clippy --workspace --all-targets --all-features  # clean (pre-existing
 cargo fmt --all -- --check  # clean
 cargo test --workspace --all-features  # 2010 + 4 + 20 + 12 passed, 14 doctests
 cargo test --bench note_parsing --features test-utils # 24 benchmark sub-cases passed in 0.66s
-mise run bench -f note_parsing -q -b position-refactor  # saved baseline report
+mise run bench -f note_parsing -r position-refactor  # saved baseline report
 ```
 
 ## Out of scope
