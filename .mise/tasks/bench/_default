@@ -23,6 +23,8 @@
 #USAGE
 #USAGE     mise run bench -r position-refactor
 #USAGE
+#USAGE   Under --mode quick every saved baseline — explicit names included — gets a -quick suffix (e.g. -r foo saves foo-quick), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
+#USAGE
 #USAGE   Criterion rejects combining --save-baseline with forwarded --baseline/--baseline-lenient/--discard-baseline. Note the task appends --save-baseline <git-name> by default even without -r: if you forward baseline flags, pass --no-report — otherwise the run fails with criterion's own argument-validation error (--load-baseline additionally requires --baseline).
 #USAGE   """
 #USAGE }
@@ -262,13 +264,18 @@ main() {
   local baseline
   baseline="$(resolve_baseline_name)"
   if [[ -n "${baseline}" ]]; then
+    # Quick and normal runs use different statistical models and stored
+    # results carry no mode metadata: one shared name would let a quick run
+    # silently overwrite a normal baseline
+    # (02_user_guide/quick_mode.md:9-17; 03_command_line_options.md:29;
+    # 09_csv_output.md:26-27).
     [[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
     criterion_args+=(--save-baseline "${baseline}")
   fi
 
   # Single cargo invocation; --no-fail-fast continues past failing targets.
-  printf '==> Running %d benchmark target(s) (mode: %s)\n' \
-    "${count}" "${usage_mode?}"
+  printf '==> Running %d benchmark target(s) (mode: %s, baseline: %s)\n' \
+    "${count}" "${usage_mode?}" "${baseline:-none}"
   local -a run_cmd=(
     cargo bench --no-fail-fast --features test-utils "${targets[@]}"
   )
