@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::DateValue;
+use crate::{DateValue, delimiter::DelimiterType};
 
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -157,10 +157,28 @@ impl TaskStatusMap {
     /// Overriding removes the replaced status's stale by-name and by-type
     /// entries before indexing the new one, so all three lookups stay
     /// consistent.
+    ///
+    /// # Errors
+    ///
+    /// - [`TaskError::ProhibitedStatusSymbol`] if the status symbol is one of
+    ///   `(`, `)`, `[`, `]`, `{`, or `}`.
     #[inline]
-    pub(crate) fn insert(&mut self, status: TaskStatus) {
+    pub(crate) fn insert(
+        &mut self,
+        status: TaskStatus,
+    ) -> Result<(), TaskError> {
+        let symbol = status.symbol.as_char();
+
+        if DelimiterType::classify(symbol).is_some() {
+            return Err(TaskError::ProhibitedStatusSymbol {
+                symbol,
+            });
+        }
+
         self.purge_stale_entries(&status);
         self.index_status(status);
+
+        Ok(())
     }
 
     /// Removes stale entries left by a previous status sharing the same symbol
@@ -204,7 +222,7 @@ impl Default for TaskStatusMap {
             kinds: HashMap::with_capacity(statuses.len()),
         };
         for status in statuses {
-            map.insert(status);
+            map.index_status(status);
         }
         map
     }
@@ -719,6 +737,12 @@ impl TaskDates {
 /// Error type for task domain parsing failures.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum TaskError {
+    /// Task status symbol is reserved as a delimiter.
+    #[error("task status symbol `{symbol}` is reserved as a delimiter")]
+    ProhibitedStatusSymbol {
+        /// The reserved delimiter symbol.
+        symbol: char,
+    },
     /// No task priority name or emoji matched `input`.
     #[error("unrecognized task priority: {input:?}")]
     InvalidPriority {
@@ -845,7 +869,8 @@ mod tests {
                 TaskStatusSymbol::new('?'),
                 "Question",
                 TaskStatusType::Todo,
-            ));
+            ))
+            .expect("valid status symbol");
 
             assert_eq!(
                 map.by_symbol(TaskStatusSymbol::new('?')).map(TaskStatus::name),
@@ -870,7 +895,8 @@ mod tests {
                 TaskStatusSymbol::new('/'),
                 "Doing",
                 TaskStatusType::InProgress,
-            ));
+            ))
+            .expect("valid status symbol");
 
             assert_eq!(
                 map.by_symbol(TaskStatusSymbol::new('/')).map(TaskStatus::name),
@@ -894,12 +920,14 @@ mod tests {
                 TaskStatusSymbol::new('?'),
                 "Question",
                 TaskStatusType::Todo,
-            ));
+            ))
+            .expect("valid status symbol");
             map.insert(TaskStatus::new(
                 TaskStatusSymbol::new('?'),
                 "Blocked",
                 TaskStatusType::OnHold,
-            ));
+            ))
+            .expect("valid status symbol");
 
             assert_eq!(
                 map.by_symbol(TaskStatusSymbol::new('?')).map(TaskStatus::name),
@@ -928,6 +956,67 @@ mod tests {
                     .iter()
                     .any(|s| s.symbol() == TaskStatusSymbol::new('?'))
             );
+        }
+
+        #[test]
+        fn rejects_prohibited_delimiter_status_symbols_without_mutating_indexes()
+         {
+            let delimiters = ['(', ')', '[', ']', '{', '}'];
+            for prohibited in delimiters {
+                let mut map = TaskStatusMap::default();
+                map.insert(TaskStatus::new(
+                    TaskStatusSymbol::new('!'),
+                    "Original",
+                    TaskStatusType::OnHold,
+                ))
+                .expect("seed status insertion succeeds");
+
+                let invalid = TaskStatus::new(
+                    TaskStatusSymbol::new(prohibited),
+                    "Original",
+                    TaskStatusType::OnHold,
+                );
+
+                let result = map.insert(invalid);
+                assert!(matches!(
+                    result,
+                    Err(TaskError::ProhibitedStatusSymbol { symbol: actual })
+                        if actual == prohibited
+                ));
+
+                let original_by_symbol = map
+                    .by_symbol(TaskStatusSymbol::new('!'))
+                    .expect("symbol lookup");
+                assert_eq!(original_by_symbol.name(), "Original");
+                assert_eq!(original_by_symbol.kind(), TaskStatusType::OnHold);
+
+                let original_by_name =
+                    map.by_name("original").expect("name lookup");
+                assert_eq!(
+                    original_by_name.symbol(),
+                    TaskStatusSymbol::new('!')
+                );
+
+                assert!(map.by_type(TaskStatusType::OnHold).iter().any(
+                    |status| status.symbol() == TaskStatusSymbol::new('!')
+                ));
+
+                assert!(
+                    map.by_symbol(TaskStatusSymbol::new(prohibited)).is_none()
+                );
+            }
+        }
+
+        #[test]
+        fn default_statuses_do_not_use_prohibited_delimiters() {
+            for status in default_statuses() {
+                let symbol = status.symbol().as_char();
+                assert!(
+                    DelimiterType::classify(symbol).is_none(),
+                    "default status symbol `{symbol}` must not be a \
+                     prohibited delimiter"
+                );
+            }
         }
     }
 

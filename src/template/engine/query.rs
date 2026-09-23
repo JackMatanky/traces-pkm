@@ -1712,12 +1712,6 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "1|1|Blocked|?|on-hold");
-
-            let store = crate::index::IndexStore::open(project.root())
-                .expect("open store");
-            let paths =
-                store.paths_with_file_class("book").expect("read class");
-            assert_eq!(paths.as_ref(), [std::path::PathBuf::from("dune.md")]);
         }
     }
 

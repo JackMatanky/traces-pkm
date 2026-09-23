@@ -134,6 +134,18 @@ pub(crate) enum DelimiterType {
 }
 
 impl DelimiterType {
+    /// Returns the paired delimiter kind containing `character`, if recognized.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn classify(character: char) -> Option<Self> {
+        match character {
+            '(' | ')' => Some(Self::Parenthesis),
+            '[' | ']' => Some(Self::Bracket),
+            '{' | '}' => Some(Self::Brace),
+            _ => None,
+        }
+    }
+
     /// Returns the expected closing string representation.
     #[inline]
     #[must_use]
@@ -453,6 +465,35 @@ mod tests {
             assert_eq!(DelimiterType::Bracket.close_str(), "]");
             assert_eq!(DelimiterType::Brace.close_str(), "}");
             assert_eq!(DelimiterType::DoubleBracket.close_str(), "]]");
+        }
+
+        #[test]
+        fn classifies_standard_paired_delimiters() {
+            assert_eq!(
+                DelimiterType::classify('('),
+                Some(DelimiterType::Parenthesis)
+            );
+            assert_eq!(
+                DelimiterType::classify(')'),
+                Some(DelimiterType::Parenthesis)
+            );
+            assert_eq!(
+                DelimiterType::classify('['),
+                Some(DelimiterType::Bracket)
+            );
+            assert_eq!(
+                DelimiterType::classify(']'),
+                Some(DelimiterType::Bracket)
+            );
+            assert_eq!(
+                DelimiterType::classify('{'),
+                Some(DelimiterType::Brace)
+            );
+            assert_eq!(
+                DelimiterType::classify('}'),
+                Some(DelimiterType::Brace)
+            );
+            assert_eq!(DelimiterType::classify('x'), None);
         }
     }
 }

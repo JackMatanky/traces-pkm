@@ -599,9 +599,11 @@ impl IndexStore {
 
     // --- Persistence entry points -------------------------------------
 
-    /// Persists a full rebuild or one incremental refresh pass.
+    /// Persists a rebuild or a non-empty incremental refresh.
     ///
-    /// Incremental passes with no changed rows skip the transaction entirely.
+    /// Incremental requests must contain at least one file, note, or edge
+    /// change. `IndexerService::plan_pass` filters empty passes before they
+    /// reach this method.
     ///
     /// # Errors
     ///
