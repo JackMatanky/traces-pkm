@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
     inlinks::InlinkMap,
-    refresh::{RefreshPass, RefreshPlan, RefreshReport},
+    refresh::{PendingApply, RefreshPass, RefreshPlan, RefreshReport},
     sort::SortedByPath,
     store::{IndexAxes, IndexStore, PersistRequest},
 };
@@ -120,36 +120,41 @@ impl IndexerService {
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.plan_pass()? {
-            RefreshPass::Unchanged {
-                store,
-                files,
-                links,
-            } => {
-                let notes = store.read_all_notes()?;
-                Ok((
-                    WorkspaceIndex::assemble(files, notes, links),
-                    RefreshReport::default(),
-                ))
-            }
-            RefreshPass::Reconciled(pending) => {
-                let report = pending.report();
-                let axes = IndexAxes::for_class_field(&self.class_field);
-                let index = match pending.apply(axes) {
-                    Ok(persisted) => {
-                        Self::log_report(&report);
-                        persisted.into_index()?
-                    }
-                    Err(failed) => {
-                        tracing::warn!(
-                            source = %failed.source(),
-                            "failed to persist refreshed index"
-                        );
-                        failed.into_index()?
-                    }
-                };
-                Ok((index, report))
-            }
+            RefreshPass::Unchanged(store) => Self::assemble_unchanged(&store),
+            RefreshPass::Reconciled(pending) => self.apply_reconciled(pending),
         }
+    }
+
+    fn assemble_unchanged(
+        store: &IndexStore,
+    ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
+        let (files, notes, links) = store.read_all()?;
+        Ok((
+            WorkspaceIndex::assemble(files, notes, links),
+            RefreshReport::default(),
+        ))
+    }
+
+    fn apply_reconciled(
+        &self,
+        pending: PendingApply,
+    ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
+        let report = pending.report();
+        let axes = IndexAxes::for_class_field(&self.class_field);
+        let index = match pending.apply(axes) {
+            Ok(persisted) => {
+                Self::log_report(&report);
+                persisted.into_index()?
+            }
+            Err(failed) => {
+                tracing::warn!(
+                    source = %failed.source(),
+                    "failed to persist refreshed index"
+                );
+                failed.into_index()?
+            }
+        };
+        Ok((index, report))
     }
 
     fn plan_pass(&self) -> IndexResult<RefreshPass> {
@@ -202,10 +207,7 @@ impl IndexerService {
     #[inline]
     pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
         match self.plan_pass()? {
-            RefreshPass::Unchanged {
-                store,
-                ..
-            } => Ok(store),
+            RefreshPass::Unchanged(store) => Ok(store),
             RefreshPass::Reconciled(pending) => {
                 let report = pending.report();
                 let axes = IndexAxes::for_class_field(&self.class_field);

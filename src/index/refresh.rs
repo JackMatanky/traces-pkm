@@ -72,13 +72,14 @@ impl RefreshReport {
 }
 
 /// Result of one scanned refresh pass before optional persistence.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "internal pass type moved immediately by value without extra \
+              heap allocation"
+)]
 pub(super) enum RefreshPass {
     /// No file metadata changed; the opened store remains current.
-    Unchanged {
-        store: IndexStore,
-        files: SortedByPath<FileBase>,
-        links: InlinkMap,
-    },
+    Unchanged(IndexStore),
     /// File metadata changed and is reconciled but not yet persisted.
     Reconciled(PendingApply),
 }
@@ -258,7 +259,6 @@ pub(super) struct RefreshPlan {
     store: IndexStore,
     current_files: SortedByPath<FileBase>,
     persisted_files: SortedByPath<FileBase>,
-    prev_links: InlinkMap,
     delta: FileDelta,
 }
 
@@ -281,20 +281,18 @@ impl RefreshPlan {
         let (opened, scanned) = rayon::join(
             || -> IndexResult<_> {
                 let store = IndexStore::open(root)?;
-                let (persisted_files, prev_links) =
-                    store.read_files_and_links()?;
-                Ok((store, persisted_files, prev_links))
+                let persisted_files = store.read_all_files()?;
+                Ok((store, persisted_files))
             },
             || IndexerService::scan(root),
         );
-        let (store, persisted_files, prev_links) = opened?;
+        let (store, persisted_files) = opened?;
         let current_files = SortedByPath::assumed_sorted(scanned?);
         let delta = FileDelta::compute(&current_files, &persisted_files);
         Ok(Self {
             store,
             current_files,
             persisted_files,
-            prev_links,
             delta,
         })
     }
@@ -314,11 +312,7 @@ impl RefreshPlan {
     /// Consumes the unchanged plan into a refresh pass.
     #[inline]
     pub(super) fn into_unchanged(self) -> RefreshPass {
-        RefreshPass::Unchanged {
-            store: self.store,
-            files: self.current_files,
-            links: self.prev_links,
-        }
+        RefreshPass::Unchanged(self.store)
     }
 
     /// Reconciles reparsed notes with persisted state.
@@ -331,15 +325,15 @@ impl RefreshPlan {
         self,
         modified_notes: Vec<Note>,
     ) -> IndexResult<PendingApply> {
+        let prev_links = self.store.read_all_links(&self.persisted_files)?;
         let (inlinks, inlink_delta) =
             if Self::is_paths_unchanged(&self.delta, &self.persisted_files) {
                 let links = Self::patch_links(
-                    &self.prev_links,
+                    &prev_links,
                     &modified_notes,
                     self.current_files.as_slice(),
                 );
-                let inlink_delta =
-                    InlinkDelta::compute(&links, &self.prev_links);
+                let inlink_delta = InlinkDelta::compute(&links, &prev_links);
                 (
                     InlinkReconciliation {
                         links,
@@ -357,8 +351,7 @@ impl RefreshPlan {
                     notes.as_slice(),
                     self.current_files.as_slice(),
                 );
-                let inlink_delta =
-                    InlinkDelta::compute(&links, &self.prev_links);
+                let inlink_delta = InlinkDelta::compute(&links, &prev_links);
                 (
                     InlinkReconciliation {
                         links,

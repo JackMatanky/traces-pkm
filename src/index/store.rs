@@ -466,37 +466,30 @@ impl IndexStore {
         Ok(self.collect_note_bytes(&txn)?)
     }
 
-    /// Loads every persisted [`FileBase`] (sorted by path) and inlink edge.
+    /// Reads every persisted [`FileBase`], sorted by path.
     ///
     /// # Errors
     ///
-    /// - [`Store`] if reading fails.
+    /// - [`Store`] if opening the transaction or reading `FILES` fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn read_files_and_links(
-        &self,
-    ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
+    pub(super) fn read_all_files(&self) -> IndexResult<SortedByPath<FileBase>> {
         let txn = self.begin_read()?;
-        self.read_files_and_links_with(&txn)
+        self.read_table(&txn, FILES)
     }
 
-    /// Loads persisted [`FileBase`] rows and inlink edges without decoding
-    /// `NOTES`.
-    ///
-    /// Used by incremental refresh and query execution paths that point-read
-    /// only the matched notes' bodies.
+    /// Reads all persisted inlink edges, resolving path bytes against `files`.
     ///
     /// # Errors
     ///
-    /// - [`Store`] if a table cannot be read or stored bytes are not a valid
-    ///   row.
+    /// - [`Store`] if opening the transaction or reading `LINKS` fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn read_files_and_links_with(
+    pub(super) fn read_all_links(
         &self,
-        txn: &ReadTransaction,
-    ) -> IndexResult<(SortedByPath<FileBase>, InlinkMap)> {
-        let files: SortedByPath<FileBase> = self.read_table(txn, FILES)?;
+        files: &SortedByPath<FileBase>,
+    ) -> IndexResult<InlinkMap> {
+        let txn = self.begin_read()?;
         let target_paths =
             Self::key_path_map(files.as_slice().iter().map(FileBase::path));
         let source_paths = Self::key_path_map(
@@ -506,9 +499,7 @@ impl IndexStore {
                 .filter(|file| file.format() == FileFormat::Note)
                 .map(FileBase::path),
         );
-        let links =
-            self.read_links(txn, LINKS, &target_paths, &source_paths)?;
-        Ok((files, links))
+        self.read_links(&txn, LINKS, &target_paths, &source_paths)
     }
 
     /// Deserializes every `target -> sources` edge from the `links` multimap
@@ -2035,14 +2026,15 @@ mod tests {
         }
 
         #[test]
-        fn read_files_and_links_with_drops_orphaned_edges_like_read_all() {
+        fn read_all_links_drops_orphaned_edges_like_read_all() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
             let notes: Vec<_> =
                 ["a.md", "target.md"].iter().map(|p| parse(*p, "")).collect();
+            let files = note_files(&["a.md", "target.md"]);
             write_all_parts(
                 &store,
-                &note_files(&["a.md", "target.md"]),
+                &files,
                 &notes,
                 &make_inlinks(&[(PathBuf::from("target.md"), &[
                     PathBuf::from("a.md"),
@@ -2060,14 +2052,12 @@ mod tests {
                 Path::new("a.md"),
             );
 
-            // Proves `read_files_and_links_with` reconstructs from disk without
+            // Proves `read_all_links` reconstructs from disk without
             // `read_all`'s note decode, under the same drop-orphaned-edges
             // policy.
-            let txn = store.begin_read().expect("read txn");
-            let (_, reconstructed) = store
-                .read_files_and_links_with(&txn)
-                .expect("reconstruct load");
-
+            let stored_files = store.read_all_files().expect("read files");
+            let reconstructed =
+                store.read_all_links(&stored_files).expect("reconstruct load");
             assert_eq!(
                 reconstructed,
                 make_inlinks(&[(PathBuf::from("target.md"), &[
@@ -2256,8 +2246,8 @@ mod tests {
             )]);
             write_all_parts(&store, &files, &notes, &links).expect("persist");
 
-            let (loaded_files, loaded_links) =
-                store.read_files_and_links().expect("load files and links");
+            let (loaded_files, _, loaded_links) =
+                store.read_all().expect("load files and links");
 
             assert_eq!(loaded_links.inlinks_of(&weird), [note_path.as_path()]);
             assert!(
