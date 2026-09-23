@@ -637,9 +637,10 @@ if [[ "${usage_mode?}" == "test" ]]; then
 fi
 
 # --- Compare pre-check: fail fast before any measurement ---
-# critcmp positionally selects baselines (no implicit current-run
-# partner), so an unknown name would otherwise exit 1 with an anonymous
-# "no benchmark comparisons to show" only after a successful run, under set -e.
+# `critcmp <unknown> new` exits 0 and silently drops the unknown column:
+# one-column table, every ratio 1.00 — the task would "succeed" with
+# misleading output after a full measurement run. This check converts
+# that into a named fail-fast.
 if [[ -n "${usage_compare:-}" ]]; then
   known_baselines="$(critcmp --baselines 2>/dev/null || true)"
   if ! grep -Fxq -- "${usage_compare}" <<< "${known_baselines}"; then
