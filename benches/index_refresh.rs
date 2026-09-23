@@ -432,10 +432,10 @@ fn bench_file_index_refresh_profiles(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_file_index_refresh,
-    bench_sync_and_run,
-    bench_file_index_refresh_profiles
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_file_index_refresh, bench_sync_and_run,
+        bench_file_index_refresh_profiles
+}
 criterion_main!(benches);

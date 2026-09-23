@@ -163,9 +163,9 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_file_index_build,
-    bench_file_index_build_profiles
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_file_index_build, bench_file_index_build_profiles
+}
 criterion_main!(benches);

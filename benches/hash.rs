@@ -36,6 +36,12 @@ use criterion::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
+#[expect(
+    dead_code,
+    reason = "shared benchmark common helpers are compiled into each bench \
+              target; this target uses the shared Criterion timing config"
+)]
+mod common;
 
 // ----------------------------------------------------------- //
 //                  Benchmarks: File Hashing                   //
@@ -173,5 +179,9 @@ fn bench_memory_hash(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_file_hash, bench_path_hash, bench_memory_hash);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_file_hash, bench_path_hash, bench_memory_hash
+}
 criterion_main!(benches);

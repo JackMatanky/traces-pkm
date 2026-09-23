@@ -48,6 +48,10 @@
               arithmetic and should panic on broken fixtures"
 )]
 
+use std::time::Duration;
+
+use criterion::Criterion;
+
 /// Raw Markdown fixture text and shared project shapes.
 pub(crate) mod content;
 /// Parsed-note collections for benchmarks that do not need disk state.
@@ -77,3 +81,23 @@ pub(crate) const LIST_ITEM_COUNTS: &[usize] = &[10, 100, 1_000, 5_000];
 
 /// Frontmatter field-count sweep for metadata parser and allocation scaling.
 pub(crate) const FRONTMATTER_FIELD_COUNTS: &[usize] = &[5, 20, 50, 100, 200];
+
+/// Project-wide Criterion timing defaults for `criterion_group!` configs.
+///
+/// Criterion has no config file for timing knobs (book:
+/// `02_user_guide/07_advanced_configuration.md`), so code is the only home
+/// for run defaults. Values mirror what the `bench` task used to inject on
+/// the CLI (`--sample-size 20 --measurement-time 1.0 --warm-up-time 0.5`);
+/// CLI flags forwarded via `[args]` still override them per run. `--quick`
+/// ignores `sample_size`/`warm_up_time` entirely — its loop stops at
+/// `significance_level`, capped by `measurement_time`
+/// (criterion-0.8.2 `src/routine.rs`).
+///
+/// Per-group pins in individual bench files (e.g. expensive groups that set
+/// their own `sample_size`) intentionally override these defaults.
+pub fn criterion_config() -> Criterion {
+    Criterion::default()
+        .sample_size(20)
+        .measurement_time(Duration::from_secs(1))
+        .warm_up_time(Duration::from_millis(500))
+}

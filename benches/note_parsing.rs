@@ -643,16 +643,14 @@ fn bench_parse_markdown_frontmatter_field_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_parse_markdown_prose_floor,
-    bench_parse_markdown,
-    bench_parse_markdown_workloads,
-    bench_parse_markdown_list_item_scaling,
-    bench_parse_markdown_nesting_depth,
-    bench_parse_markdown_line_density,
-    bench_parse_markdown_frontmatter_field_scaling,
-    bench_parse_markdown_task_marker_variants,
-    bench_parse_markdown_task_marker_scaling
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_parse_markdown_prose_floor, bench_parse_markdown,
+        bench_parse_markdown_workloads, bench_parse_markdown_list_item_scaling,
+        bench_parse_markdown_nesting_depth, bench_parse_markdown_line_density,
+        bench_parse_markdown_frontmatter_field_scaling,
+        bench_parse_markdown_task_marker_variants,
+        bench_parse_markdown_task_marker_scaling
+}
 criterion_main!(benches);

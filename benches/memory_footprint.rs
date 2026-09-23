@@ -414,12 +414,11 @@ fn bench_list_items_memory_footprint(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_note_construction_allocation,
-    bench_file_index_footprint,
-    bench_sync_and_run_footprint,
-    bench_query_execution_footprint,
-    bench_list_items_memory_footprint
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_note_construction_allocation, bench_file_index_footprint,
+        bench_sync_and_run_footprint, bench_query_execution_footprint,
+        bench_list_items_memory_footprint
+}
 criterion_main!(benches);

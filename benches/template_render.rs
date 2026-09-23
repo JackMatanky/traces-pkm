@@ -186,5 +186,9 @@ fn bench_render(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_render);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_render
+}
 criterion_main!(benches);
