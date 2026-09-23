@@ -52,7 +52,7 @@ include expected and unexpected outcome doc comments matching repo conventions.
 - [x] Register all new benchmark functions in their respective `criterion_group!`
   macros.
 - [x] Verify all benchmarks compile and pass smoke testing under `cargo bench --no-run`
-  and `mise run bench -t`.
+  and `mise run bench --mode test`.
 - [x] All checks pass under `mise run verify`.
 
 ## Key Benchmark Suites

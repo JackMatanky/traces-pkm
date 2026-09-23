@@ -969,23 +969,15 @@ fn bench_sort_note_field_value_replica(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_sort_by_metadata,
-    bench_topk_vs_full_sort,
-    bench_sort_by_text,
-    bench_sort_by_title,
-    bench_sort_by_date,
-    bench_sort_composite,
-    bench_sort_nullable,
-    bench_sort_by_duration,
-    bench_sort_task_rows,
-    bench_sort_list_rows_by_text,
-    bench_sort_list_rows_by_due,
-    bench_sort_list_rows_by_priority,
-    bench_sort_list_rows_by_status,
-    bench_permute_query_rows,
-    bench_sort_f64_floor,
-    bench_sort_note_field_value_replica
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_sort_by_metadata, bench_topk_vs_full_sort,
+        bench_sort_by_text, bench_sort_by_title, bench_sort_by_date,
+        bench_sort_composite, bench_sort_nullable, bench_sort_by_duration,
+        bench_sort_task_rows, bench_sort_list_rows_by_text,
+        bench_sort_list_rows_by_due, bench_sort_list_rows_by_priority,
+        bench_sort_list_rows_by_status, bench_permute_query_rows,
+        bench_sort_f64_floor, bench_sort_note_field_value_replica
+}
 criterion_main!(benches);

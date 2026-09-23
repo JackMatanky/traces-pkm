@@ -30,6 +30,12 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use traces_pkm::{QueryBuilder, SourceSelector};
+#[expect(
+    dead_code,
+    reason = "shared benchmark common helpers are compiled into each bench \
+              target; this target uses the shared Criterion timing config"
+)]
+mod common;
 
 // ----------------------------------------------------------- //
 //                     Benchmarks: Parsing                     //
@@ -97,5 +103,9 @@ fn bench_query_parsing(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_query_parsing);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_query_parsing
+}
 criterion_main!(benches);

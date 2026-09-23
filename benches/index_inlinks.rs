@@ -323,10 +323,10 @@ fn bench_inlink_map_accessors(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_inlink_map_new,
-    bench_inlink_map_collision_candidates,
-    bench_inlink_map_accessors,
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_inlink_map_new, bench_inlink_map_collision_candidates,
+        bench_inlink_map_accessors
+}
 criterion_main!(benches);

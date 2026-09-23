@@ -477,15 +477,11 @@ fn bench_filter_then_sort(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_run_pages,
-    bench_run_tasks,
-    bench_query_tasks_density,
-    bench_run_pages_by_metadata,
-    bench_filter_by_metadata_field_count,
-    bench_clone_query_set,
-    bench_into_iter_owned,
-    bench_filter_then_sort
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_run_pages, bench_run_tasks, bench_query_tasks_density,
+        bench_run_pages_by_metadata, bench_filter_by_metadata_field_count,
+        bench_clone_query_set, bench_into_iter_owned, bench_filter_then_sort
+}
 criterion_main!(benches);

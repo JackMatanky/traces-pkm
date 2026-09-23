@@ -7,14 +7,14 @@ workspace sizes from 50 to 20,000 notes.
 ## Quick Start
 
 ```bash
-# Smoke-test all benchmark targets in one fast pass (~15s)
-mise run bench -- -t
+# Smoke-test all benchmark targets in one fast pass
+mise run bench --mode test
 
 # Run all benchmarks
 mise run bench
 
-# Quick iteration mode (10 samples, 1s measurement)
-mise run bench -- -q
+# Quick iteration (criterion --quick: fast, indicative only)
+mise run bench --mode quick
 
 # Run one module (e.g. all 5 index targets)
 mise run bench -m index
@@ -26,7 +26,7 @@ mise run bench -f note_parsing
 mise run bench --compare main-abc123
 
 # Fit performance models (requires numpy, scikit-learn)
-mise run bench --model
+mise run bench:model
 ```
 
 ## Size Sweep
@@ -101,9 +101,13 @@ use common::project::setup_persisted_project;
 
 ### Task Freshness
 
-The `bench` task declares `sources = ["@group:bench"]` covering
-`Cargo.toml`, `Cargo.lock`, `src/**/*.rs`, and `benches/**/*.rs`.
-Mise skips execution when sources haven't changed.
+The `bench` task declares `sources = ["@group:bench"]` but sets
+`outputs = []` and `cache = { enabled = false }`: benchmark runs are
+measurement gates, not build steps. Mise never skips them as "fresh" —
+Criterion output is non-deterministic and baseline re-runs on an
+unchanged commit must always execute. Should a skip ever be observed
+anyway, `mise run --force bench` bypasses freshness checks
+(`02_architecture.md:232-238`).
 
 ### Post-Bench Analysis
 
@@ -160,6 +164,17 @@ cargo flamegraph --bench index_refresh -- --bench \
   "WorkspaceIndex::refresh/no-op/1000"
 ```
 
+Prefer adding criterion's `--profile-time` when profiling: it runs each
+matched benchmark in a tight loop for N seconds doing no analysis and
+**storing no results** — cleaner flamegraphs, deterministic duration, and
+no writes to `target/criterion` or auto-baselines
+(book `02_user_guide/14_profiling.md`):
+
+```bash
+cargo flamegraph --bench index_refresh -- --bench \
+  "WorkspaceIndex::refresh/no-op/1000" --profile-time 5
+```
+
 ## Adding New Benchmarks
 
 1. Create `benches/new_bench.rs`
@@ -168,4 +183,5 @@ cargo flamegraph --bench index_refresh -- --bench \
 4. Use `common::project::*` for filesystem fixtures
 5. Use `common::notes::*` for in-memory fixtures
 6. Document expected/unexpected outcomes in doc comments
-7. Run `mise run bench -f new_bench` to verify
+7. If the filename introduces a new module prefix, add it to `-m`'s `choices` in the `bench` usage spec (`mise.toml`) — `choices` validates before the prefix match runs
+8. Run `mise run bench -f new_bench` to verify

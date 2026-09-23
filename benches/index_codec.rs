@@ -437,13 +437,11 @@ fn bench_row_value_encode(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_codec_serialize,
-    bench_codec_serialize_slice,
-    bench_codec_serialize_reused_buffer,
-    bench_codec_deserialize,
-    bench_codec_batch,
-    bench_row_value_encode
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_codec_serialize, bench_codec_serialize_slice,
+        bench_codec_serialize_reused_buffer, bench_codec_deserialize,
+        bench_codec_batch, bench_row_value_encode
+}
 criterion_main!(benches);

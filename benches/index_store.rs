@@ -356,12 +356,10 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_index_persist,
-    bench_index_persist_profiles,
-    bench_index_load,
-    bench_load_list_heavy,
-    bench_concurrent_operations
-);
+criterion_group! {
+    name = benches;
+    config = common::criterion_config();
+    targets = bench_index_persist, bench_index_persist_profiles,
+        bench_index_load, bench_load_list_heavy, bench_concurrent_operations
+}
 criterion_main!(benches);

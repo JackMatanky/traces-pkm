@@ -60,9 +60,10 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # false } when either:
 #   1. inputs are incomplete (check/fmt declare no rust sources; a skip would
 #      let stale code pass the gate), or
-#   2. the task means "execute now" (lint/test/sweep/verify are gates that must
-#      run on invocation; clean/setup are destructive or install actions that
-#      must never be skipped as "fresh"; watch is an interactive session).
+#   2. the task means "execute now" (lint/test/sweep/verify/bench are
+#      gates that must run on invocation; clean/setup are destructive or
+#      install actions that must never be skipped as "fresh"; watch is an
+#      interactive session).
 enabled = true
 
 [task_config.input_groups]
@@ -492,6 +493,14 @@ fi
 [tasks.bench]
 description = "Run Criterion benchmarks"
 sources = ["@group:bench"]
+# Measurement gate: must run on invocation. Criterion output is
+# non-deterministic and baselines must never be skipped as "fresh"
+# (policy: mise.toml task_config.cache rationale; mirrors [tasks.test]).
+outputs = []
+cache = { enabled = false }
+# Raw criterion output: verbose statistical tables are unreadable when
+# every line is prefixed `bench: …` (07_configuration.md:1199-1208).
+output = "interleave"
 depends_post = ["bench:report"]
 timeout = "20m"
 usage = '''
@@ -502,7 +511,7 @@ flag "-f --files <pattern>" {
   """
 }
 flag "-m --mod <module>" {
-  help "Run benchmarks for a specific module"
+  help "Run benchmarks for a specific module (matches benches/<module>*.rs)"
   choices "hash" "index" "note" "query" "template" "memory_footprint"
 }
 flag "-r --report [name]" value_optional=#true {
@@ -512,35 +521,47 @@ flag "-r --report [name]" value_optional=#true {
 
     mise run bench -r position-refactor
 
-  Skipped automatically when [args] already forwards --baseline, --baseline-lenient, --discard-baseline, or --load-baseline, since criterion rejects combining those with --save-baseline. Use --no-report to opt out entirely and fall back to criterion's own unnamed 'base'.
+  Criterion rejects combining --save-baseline with forwarded --baseline/--baseline-lenient/--discard-baseline. Note the task appends --save-baseline <git-name> by default even without -r: if you forward baseline flags, pass --no-report — otherwise the run fails with criterion's own argument-validation error (--load-baseline additionally requires --baseline).
   """
 }
 flag "--no-report" {
   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 }
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
-flag "--model" {
-  help "Fit performance models (linear, n·ln(n), combined) per series after benchmarking"
+complete "compare" run="ls -1 target/criterion 2>/dev/null"
+complete "files" run="ls benches | sed 's/[.]rs$//'"
+flag "--verbose" negate="--no-verbose" default=#true {
+  help "Criterion detailed analysis output (on by default); --no-verbose for terse output"
 }
-flag "-q --quick" {
-  help "Fast iteration: 10 samples, 1s measurement, 1s warm-up, noplot"
-}
-flag "-t --test" {
-  help "Smoke-test benchmarks: run each once without measurement"
+flag "--mode <mode>" {
+  help "Execution mode: normal (default), quick (fast, indicative), test (smoke)"
+  long_help """
+  normal — measure with project defaults from benches/common::criterion_config()
+           (20 samples, 1s measurement, 0.5s warm-up); [args] flags override per run.
+  quick  — criterion's native --quick: stop as soon as the significance level is
+           reached, --noplot; indicative-and-comparative only (book 02_user_guide/quick_mode.md).
+  test   — smoke: run each selected target once without measurement via
+           cargo test (criterion's documented CI path).
+  """
+  choices "quick" "test" "normal"
+  default "normal"
 }
 arg "[args]" var=#true {
-  help "Extra arguments forwarded to cargo bench (to bench:model with --model)"
+  help "Extra arguments forwarded to cargo bench"
   long_help """
   Forwarded to `cargo bench`. Examples:
 
     mise run bench -- --list               # list available benchmarks
     mise run bench -f note_parsing -- fast  # narrow, then criterion's filter
-    mise run bench -m index -- --warm-up 1 # custom warm-up time
-    mise run bench -- --noplot             # skip HTML report generation
+    mise run bench -m index -- --warm-up-time 1 # custom warm-up time
+    mise run bench -- --noplot             # disable plot and HTML generation
+    mise run bench -- --profile-time 5     # hot loop for flamegraphs; no stats, no stored results
+    mise run bench -r main -- --noise-threshold 0.03 # tolerate noisier change verdicts
+    mise run bench -r main -- --significance-level 0.01
 
-  With --model, forwarded to bench:model instead of cargo bench:
-
-    mise run bench --model -- --plot       # fitted curves in the terminal
+  Forwarded --quiet conflicts with the default --verbose: pair it with
+  --no-verbose (mise run bench --no-verbose -- --quiet). Forwarded
+  --sample-size conflicts with forwarded --quick (criterion clap conflict).
   """
 }
 '''
@@ -551,21 +572,16 @@ run = '''
 # shellcheck disable=SC2154
 set -euo pipefail
 
-declare -a bench_args=(bench --features test-utils)
 declare -a criterion_args=()
-has_criterion_args=false
 
 # --- Resolve bench files ---
 declare -a bench_files=()
 if [[ -n "${usage_mod:-}" ]]; then
-  case "${usage_mod}" in
-    hash)     bench_files=(hash) ;;
-    index)    bench_files=(index_codec index_inlinks index_build index_refresh index_store) ;;
-    note)     bench_files=(note_parsing) ;;
-    query)    bench_files=(query_execution query_parsing query_sort) ;;
-    template) bench_files=(template_render) ;;
-    memory_footprint) bench_files=(memory_footprint) ;;
-  esac
+  for f in benches/*.rs; do
+    bf="${f##*/}"
+    bf="${bf%.rs}"
+    [[ "${bf}" == "${usage_mod}"* ]] && bench_files+=("${bf}")
+  done
 elif [[ -n "${usage_files:-}" ]]; then
   for f in benches/*.rs; do
     bf="${f##*/}"
@@ -584,55 +600,54 @@ if [[ -z "${bench_files[*]:-}" ]]; then
   exit 2
 fi
 
-# --- Execution mode defaults ---
-if [[ "${usage_test:-false}" == "true" ]]; then
-  criterion_args+=(--test)
-  has_criterion_args=true
-elif [[ "${usage_quick:-false}" == "true" ]]; then
-  # Quick mode: ultra-fast iteration for local development loops (~60s full, ~25s module)
-  criterion_args+=(
-    --sample-size 10 --measurement-time 0.5 --warm-up-time 0.2 --noplot
-  )
-  has_criterion_args=true
-else
-  # Normal mode: fast, responsive developer defaults (~3-4m full) instead of Criterion's 8s/bench
-  criterion_args+=(
-    --sample-size 20 --measurement-time 1.0 --warm-up-time 0.5
-  )
-  has_criterion_args=true
+# One target list for both smoke and measure paths. Repeated --bench is
+# cargo's documented target selection; total_targets counters avoid the
+# bash array-length expansion, which Tera would lex as a comment opener
+# (see the sweep-task note in mise.toml).
+declare -a targets=()
+total_targets=0
+for bf in "${bench_files[@]}"; do
+  targets+=(--bench "${bf}")
+  total_targets=$((total_targets + 1))
+done
+
+# --- Smoke mode: criterion's documented CI path ---
+# (book 02_user_guide/03_command_line_options.md:18; 06_faq.md:208-215.
+# The book shows cargo test --benches; per-target --bench <name> is
+# standard cargo target selection, and criterion runs test mode whenever
+# --bench is absent.)
+# --features test-utils is load-bearing: all [[bench]] targets declare
+# required-features, and cargo test silently skips targets when unmet.
+if [[ "${usage_mode?}" == "test" ]]; then
+  if [[ -n "${usage_args:-}" ]]; then
+    printf 'note: [args] ignored in --mode test (smoke runs raw cargo test)\n' >&2
+  fi
+  if [[ -n "${usage_compare:-}" ]]; then
+    printf 'note: --compare ignored in --mode test (no measurement to compare)\n' >&2
+  fi
+  printf '==> Smoke-testing %d benchmark target(s)\n' "${total_targets}"
+  exec cargo test --no-fail-fast --features test-utils "${targets[@]}"
 fi
 
-# --- Extra args ---
-# extra_args is populated by eval below; mise pre-quotes each usage_args
-# token specifically for this reconstruction (see docs/refs/mise_tasks/
-# 06_arguments.md), so shellcheck can't trace the assignment, but the
-# input isn't attacker-controlled free text.
+# --- Criterion args ---
+# extra_args: mise pre-quotes each usage_args token for this reconstruction
+# (docs/refs/mise_tasks/06_arguments.md); the documented variadic pattern.
 eval "extra_args=(${usage_args:-})"
-# Model mode: forwarded args belong to bench:model (bench --model -- --plot);
-# criterion rejects unknown flags such as --plot.
-if [[ "${usage_model:-false}" != "true" ]]; then
-  criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
-  [[ -n "${usage_args:-}" ]] && has_criterion_args=true
-fi
+# Quick = criterion native early-stop; timing defaults live in
+# benches/common::criterion_config() and are overridden by [args].
+[[ "${usage_mode?}" == "quick" ]] && criterion_args+=(--quick --noplot)
+[[ "${usage_verbose?}" == "true" ]] && criterion_args+=(--verbose)
+criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 
 # --- Baseline management ---
-# Outputs a baseline name to save, or empty if no baseline should be
-# saved.  Skips when: --no-report is set, or the user forwarded
-# --baseline/--baseline-lenient/--discard-baseline/--load-baseline
-# (criterion rejects combining those with --save-baseline).
+# Outputs a baseline name to save, or empty if none should be saved.
+# Criterion itself rejects --save-baseline combined with forwarded
+# --baseline* flags (criterion-0.8.2 src/lib.rs conflict matrix); we do
+# not pre-validate — let it fail loudly.
 resolve_baseline_name() {
-  if [[ "${usage_no_report:-false}" == "true" || "${usage_test:-false}" == "true" ]]; then
+  if [[ "${usage_no_report:-false}" == "true" ]]; then
     return
   fi
-
-  for a in "${extra_args[@]+"${extra_args[@]}"}"; do
-    case "${a}" in
-      --baseline | --baseline-lenient | \
-      --discard-baseline | --load-baseline)
-        return
-        ;;
-    esac
-  done
 
   # Explicit name via -r <name>
   if [[ -n "${usage_report:-}" \
@@ -641,7 +656,7 @@ resolve_baseline_name() {
     return
   fi
 
-  # Auto-name from git state: branch-sha[-dirty][-quick]
+  # Auto-name from git state: branch-sha[-dirty]
   if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
     branch="${branch//\//-}"
     [[ "${branch}" == "HEAD" ]] && branch="detached"
@@ -656,56 +671,22 @@ resolve_baseline_name() {
 
 baseline="$(resolve_baseline_name)"
 if [[ -n "${baseline}" ]]; then
-  [[ "${usage_quick:-false}" == "true" ]] && baseline+="-quick"
+  [[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
   criterion_args+=(--save-baseline "${baseline}")
-  has_criterion_args=true
 fi
 
-# --- Phase 1: Compile all selected bench targets in a single parallel pass ---
-declare -a compile_targets=()
-total_targets=0
-for bf in "${bench_files[@]}"; do
-  compile_targets+=(--bench "${bf}")
-  total_targets=$((total_targets + 1))
-done
-printf '==> Compiling %d benchmark target(s)...\n' "${total_targets}"
-cargo bench --no-run --features test-utils "${compile_targets[@]}"
-
-# --- Phase 2: Execute each benchmark binary in an isolated loop ---
-declare -a failed_targets=()
-current_idx=0
-
-for bf in "${bench_files[@]}"; do
-  current_idx=$((current_idx + 1))
-  printf '\n[%d/%d] Running benchmark target: %s\n' "${current_idx}" "${total_targets}" "${bf}"
-  declare -a run_cmd=(cargo bench --bench "${bf}" --features test-utils)
-  if [[ "${has_criterion_args}" == "true" ]]; then
-    run_cmd+=(-- "${criterion_args[@]+"${criterion_args[@]}"}")
-  fi
-  if ! "${run_cmd[@]}"; then
-    printf 'Error: Benchmark target %s failed\n' "${bf}" >&2
-    failed_targets+=("${bf}")
-  fi
-done
-
-if [[ -n "${failed_targets[*]:-}" ]]; then
-  printf '\nBenchmark run failed. Failed targets: %s\n' "${failed_targets[*]}" >&2
-  exit 1
+# --- Single invocation: --no-fail-fast continues past failing targets ---
+printf '==> Running %d benchmark target(s) (mode: %s)\n' \
+  "${total_targets}" "${usage_mode?}"
+declare -a run_cmd=(cargo bench --no-fail-fast --features test-utils "${targets[@]}")
+if [[ -n "${criterion_args[*]:-}" ]]; then
+  run_cmd+=(-- "${criterion_args[@]}")
 fi
+"${run_cmd[@]}"
+
 # --- Compare ---
 if [[ -n "${usage_compare:-}" ]]; then
   critcmp "${usage_compare}"
-fi
-
-# --- Model ---
-# --force: the model must run after benchmarking even when its script is
-# unchanged; the outer --force does not propagate to this nested mise run.
-if [[ "${usage_model:-false}" == "true" ]]; then
-  if [[ -n "${usage_args:-}" ]]; then
-    mise run --force bench:model -- "${extra_args[@]}"
-  else
-    mise run --force bench:model -- --summary
-  fi
 fi
 '''
 
