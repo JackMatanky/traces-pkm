@@ -23,7 +23,7 @@
 #USAGE
 #USAGE     mise run bench -r position-refactor
 #USAGE
-#USAGE   Under --mode quick every saved baseline — explicit names included — gets a -quick suffix (e.g. -r foo saves foo-quick), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
+#USAGE   Under --mode quick every saved baseline — explicit names included — is saved as <name>-quick instead (e.g. -r foo saves foo-quick, not foo), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
 #USAGE
 #USAGE   Criterion rejects combining --save-baseline with forwarded --baseline/--baseline-lenient/--discard-baseline. Note the task appends --save-baseline <git-name> by default even without -r: if you forward baseline flags, pass --no-report — otherwise the run fails with criterion's own argument-validation error (--load-baseline additionally requires --baseline).
 #USAGE   """
@@ -37,12 +37,14 @@
 #USAGE   Runs `critcmp <name> new` after the measurement run: `<name>` is a saved baseline (listed by `critcmp --baselines`, offered by completion) and `new` is the run just measured, giving a two-column comparison with change ratios. The baseline name is validated before the run starts — an unknown name fails fast with a message naming it, before any measurement.
 #USAGE
 #USAGE     mise run bench --compare main-abc123
+#USAGE
+#USAGE   If one run passes -r <name> and --compare <name> with the same name, criterion overwrites that baseline during the run and the comparison sees this run against itself (every ratio 1.00).
 #USAGE   """
 #USAGE }
 #USAGE complete "compare" run="critcmp --baselines 2>/dev/null"
 #USAGE complete "files" run="ls benches | sed 's/[.]rs$//'"
 #USAGE flag "--verbose" negate="--no-verbose" default=#true {
-#USAGE   help "Criterion detailed analysis output (on by default); --no-verbose for terse output"
+#USAGE   help "Criterion detailed reporting (task default: on; criterion's default is off); --no-verbose for terse output"
 #USAGE }
 #USAGE flag "--mode <mode>" {
 #USAGE   help "Execution mode: normal (default), quick (fast, indicative), test (smoke)"
@@ -51,7 +53,7 @@
 #USAGE // so block form silently collapses the continuation indent and
 #USAGE // changes --help bytes. Keep one line with \n escapes; verify by
 #USAGE // diffing a known-good render against `mise run bench --help`.
-#USAGE   long_help "normal — measure with project defaults from benches/common::criterion_config()\n         (20 samples, 1s measurement, 0.5s warm-up); [args] flags override per run.\nquick  — criterion's native --quick: stop as soon as the significance level is\n         reached, --noplot; indicative-and-comparative only (book 02_user_guide/quick_mode.md).\ntest   — smoke: run each selected target once without measurement via\n         cargo test (criterion's documented CI path)."
+#USAGE   long_help "normal — measure with project defaults from benches/common::criterion_config()\n         (20 samples, 1s measurement, 0.5s warm-up); precedence: group pin > [args] > criterion_config().\nquick  — criterion's native --quick: stop at the significance level or when\n         measurement-time runs out (project cap 1 s), --noplot; indicative-and-comparative only (book 02_user_guide/quick_mode.md).\ntest   — smoke: run each selected target once without measurement via\n         cargo test (criterion's documented CI path); measurement/report flags\n         (-r/--no-report/--compare/--verbose) and [args] are unused."
 #USAGE   choices "quick" "test" "normal"
 #USAGE   default "normal"
 #USAGE }
@@ -63,14 +65,19 @@
 #USAGE     mise run bench -- --list               # list available benchmarks
 #USAGE     mise run bench -f note_parsing -- fast  # narrow, then criterion's filter
 #USAGE     mise run bench -m index -- --warm-up-time 1 # custom warm-up time
-#USAGE     mise run bench -- --noplot             # disable plot and HTML generation
+#USAGE     mise run bench -- --noplot             # disable plot and HTML generation (criterion clap help)
 #USAGE     mise run bench -- --profile-time 5     # hot loop for flamegraphs; no stats, no stored results
-#USAGE     mise run bench -r main -- --noise-threshold 0.03 # tolerate noisier change verdicts
-#USAGE     mise run bench -r main -- --significance-level 0.01
+#USAGE     mise run bench -r main -- --noise-threshold 0.03 # ignore changes within ±3% as noise
+#USAGE     mise run bench -r main -- --significance-level 0.01 # stricter verdicts; harder quick-mode stop ⇒ longer quick runs
 #USAGE
 #USAGE   Forwarded --quiet conflicts with the default --verbose: pair it with
 #USAGE   --no-verbose (mise run bench --no-verbose -- --quiet). Forwarded
-#USAGE   --sample-size conflicts with forwarded --quick (criterion clap conflict).
+#USAGE   --sample-size conflicts with --quick however it is passed —
+#USAGE   including the --quick that --mode quick injects (criterion clap
+#USAGE   conflict). Prefer --mode quick over forwarding --quick: only
+#USAGE   --mode quick also sets --noplot and the -quick baseline suffix.
+#USAGE   The forwarded positional filter is a regular expression (book
+#USAGE   02_user_guide/03_command_line_options.md, Command-Line Options).
 #USAGE   """
 #USAGE }
 
