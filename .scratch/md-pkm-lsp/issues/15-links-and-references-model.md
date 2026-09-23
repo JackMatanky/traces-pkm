@@ -45,26 +45,21 @@ Three parallel research subagents investigated:
 
 ### Resolution model
 
-#### Decision 1: Wikilink resolution — configurable, default stem-first
+#### Decision 1: Wikilink resolution — purely structural over the link target (amended 2026-09-23)
 
-**Options considered**:
-- (a) Stem-first, no configuration — match filename stem first, title as display fallback
-- (b) Configurable (title-slug vs file-stem), matching Marksman — user chooses whether wikilinks bind to titles or filenames
-- (c) Title-first with stem fallback — always prefer title match, no configuration
+**Original decision** (superseded): (b) Configurable title-slug vs file-stem matching, default stem-first, with an opt-in title-match step and an always-active frontmatter-alias match step.
 
-**Decision**: **(b) Configurable, default stem-first**.
+**Amended decision**: Wikilink resolution is **purely structural over the link target**: full path, relative path, filename, or basename (stem). The `|` side of `[[target|alias]]` is display-only; frontmatter `aliases`/`title` are **never resolution keys**. No title-vs-stem configuration knob exists — with title and alias matching removed there is nothing to configure. Anchor-only targets (`[[#Heading]]`) carry no path and stay unresolved by this algorithm (heading-reference handling is Decision 2). This describes Traces' resolver scope, not Obsidian-the-app (which does resolve via frontmatter aliases).
 
-**Rationale**: Stem-first is the Obsidian-compatible default that most PKM users expect. `[[my-note]]` resolves to `my-note.md` by default, requiring no configuration. But Traces already has the data for title-based resolution — `FrontmatterConfig` provides `title` and `aliases` fields extracted at parse time (from the query-index-redesign work), so title-based resolution is trivially available as an opt-in. Making it configurable follows Marksman's proven pattern (`core.title_from_heading` + `completion.wiki.style`) and lets users who organize by titles rather than filenames opt in.
+**Rationale** (amended): a link always carries a path-shaped target — CommonMark links have a destination slot (mandatory for the link to exist; reference-link destinations live in their `[label]: url` definition), wikilinks require the pre-`|` target (pulldown-cmark emits the destination on `Tag::Link { dest_url }` and flags only the pipe via `LinkType::WikiLink { has_pothole }`), and Traces' own parser rejects empty wikilink targets (`src/note/links.rs:83-85`); the display/alias side never participates in resolution (`target_parts()` splits only the target; `Link::text()` has no resolver caller). The original title-slug/alias steps were misguided: they resolved display text or frontmatter metadata against a target slot that always exists structurally. Frontmatter `aliases:`/`title:` are data fields (`FrontmatterConfig::aliases_name()`/`title_name()`), not link syntax, and remain outside the resolver.
 
-**Resolution algorithm** (extending the existing `LinkResolver` in `src/index/inlinks.rs:311-335`):
+**Resolution algorithm** (the existing `LinkResolver` in `src/index/inlinks.rs`, unchanged in kind):
 
 1. **Exact path match** — `[[projects/foo]]` matches `projects/foo.md` exactly
 2. **Add `.md` extension** — `[[foo]]` matches `foo.md` if no extension present
-3. **Stem match** (default) — `[[foo]]` matches any `foo.md` in the vault; equal-distance ties stay unresolved
-4. **Title match** (opt-in via config) — `[[My Note Title]]` matches the file whose frontmatter `title` equals "My Note Title"; case-insensitive
-5. **Alias match** (always active) — `[[alias]]` matches any file whose frontmatter `aliases` contains "alias"
+3. **Stem match** — `[[foo]]` matches any `foo.md` in the vault; equal-distance ties stay unresolved
 
-**Alias resolution** — frontmatter-declared aliases are already extracted by the query-index-redesign work (`src/index/store.rs`, `FrontmatterConfig::aliases_name()`). They are always active for wikilink resolution regardless of the title-vs-stem configuration. A note with `aliases: ["My Alias", "MA"]` will resolve `[[My Alias]]` and `[[MA]]` to that file. Aliases are display text, not lowercased.
+The four target shapes (full path, relative path, filename, basename) are the resolution *domain*; whether relative-to-the-source-note matching needs work beyond the current project-relative path handling is an implementation-time check, not a new promised behavior.
 
 **New crates needed**: `camino` (UTF-8 paths, zero runtime deps) for path operations; `fuzzy-matcher` (zero deps, provides highlight indices for completion) for wikilink completion scoring. `petgraph` deferred — `HashMap`-based forward/backlink maps suffice until graph algorithms (cycle detection, toposort) are needed.
 
@@ -221,7 +216,7 @@ disableRules = ["MD057", "MD051"]  # only if Traces provides these instead
 
 | Decision | Resolution | Key reasoning |
 |----------|------------|---------------|
-| Wikilink resolution | Configurable, default stem-first | Stem is Obsidian-compatible default; title available via existing FrontmatterConfig |
+| Wikilink resolution | Purely structural over the link target: full path, relative path, filename, basename (amended 2026-09-23) | Target always exists structurally; `|` side display-only; frontmatter aliases/title never resolve keys (original title-slug/alias steps revoked) |
 | Heading references | GitHub-style slugger + reactive ambiguity | Matches rumdl's default; Traces must validate wikilink headings (rumdl can't) |
 | Block references | Out of scope for ticket 15 | Net-new functionality; ticket separately when link model is stable |
 | Embeds | Definition navigates, hover shows preview | `embedded: bool` on Link drives distinction; editor-dependent preview |
