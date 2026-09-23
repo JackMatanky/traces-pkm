@@ -530,6 +530,9 @@ flag "--no-report" {
 flag "--compare <name>" help="Compare against a saved baseline via critcmp"
 complete "compare" run="ls -1 target/criterion 2>/dev/null"
 complete "files" run="ls benches | sed 's/[.]rs$//'"
+flag "--verbose" negate="--no-verbose" default=#true {
+  help "Criterion detailed analysis output (on by default); --no-verbose for terse output"
+}
 flag "--mode <mode>" {
   help "Execution mode: normal (default), quick (fast, indicative), test (smoke)"
   long_help """
@@ -619,6 +622,9 @@ if [[ "${usage_mode?}" == "test" ]]; then
   if [[ -n "${usage_args:-}" ]]; then
     printf 'note: [args] ignored in --mode test (smoke runs raw cargo test)\n' >&2
   fi
+  if [[ -n "${usage_compare:-}" ]]; then
+    printf 'note: --compare ignored in --mode test (no measurement to compare)\n' >&2
+  fi
   printf '==> Smoke-testing %d benchmark target(s)\n' "${total_targets}"
   exec cargo test --no-fail-fast --features test-utils "${targets[@]}"
 fi
@@ -630,6 +636,7 @@ eval "extra_args=(${usage_args:-})"
 # Quick = criterion native early-stop; timing defaults live in
 # benches/common::criterion_config() and are overridden by [args].
 [[ "${usage_mode?}" == "quick" ]] && criterion_args+=(--quick --noplot)
+[[ "${usage_verbose?}" == "true" ]] && criterion_args+=(--verbose)
 criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
 
 # --- Baseline management ---
