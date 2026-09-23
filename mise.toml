@@ -91,7 +91,8 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # up-to-date, skipping" — that marker appeared instead for build (sources +
 # explicit outputs) and verify (auto outputs: cache off but no
 # outputs = []) on unchanged-source re-runs, so cache off alone (a) does
-# not prevent a freshness skip. `mise run --force` ignores source/output
+# not prevent a freshness skip. Re-probe after a mise version bump or
+# before changing outputs on a gate. `mise run --force` ignores source/output
 # checking outright (02_architecture.md, "Incremental Execution") —
 # freshness and the artifact cache are separate mechanisms.
 # Cite refs by task name / doc section — never mise.toml line numbers.
@@ -676,7 +677,9 @@ timeout = "20m"
 # Never-skip payload: the complete local opt-out for tasks in the
 # task_config.cache rationale above whose entire payload is exactly this pair
 # (pair kept byte-identical to the pre-template local payloads; cache off
-# alone forbids skip, outputs [] pins the no-artifacts contract).
+# blocks artifact-cache replay; outputs [] empirically prevents the
+# freshness skip and pins the no-artifacts contract — see the
+# task_config.cache rationale).
 # Members inherit via extends instead of repeating both lines locally.
 # File tasks take a single extends target (array form silently drops in
 # 2026.9.12) — bench-shaped gates cannot join without the local-payload dance.

@@ -88,8 +88,10 @@
 # optionally save/compare named baselines via critcmp.
 #
 # Task-level rationale carried over from the former mise.toml [tasks.bench]:
-#   cache = false — measurement gate: must run on invocation. Criterion output
-#   is non-deterministic and baselines must never be skipped as "fresh"
+#   cache = false — measurement gate: must run on invocation; blocks the
+#   artifact-cache replay path (Criterion output is non-deterministic,
+#   so replayed logs would mask results). outputs = [] is what prevents
+#   the freshness skip — baselines must never be skipped as "fresh"
 #   (policy: mise.toml task_config.cache rationale; mirrors [tasks.test]).
 #   output = "interleave" — raw criterion output: verbose statistical tables
 #   are unreadable when every line is prefixed `bench: …`
