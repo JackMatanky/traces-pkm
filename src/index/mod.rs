@@ -18,7 +18,6 @@
 mod codec;
 mod delta;
 mod entry;
-mod epochs;
 mod error;
 mod inlinks;
 mod refresh;

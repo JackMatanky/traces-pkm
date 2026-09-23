@@ -74,19 +74,3 @@ it via Markdown links or wikilinks.
 The differential change set computed during refresh that compares timestamps and
 patches only modified files, notes, and affected link targets.
 *Avoid*: index patch, sync delta
-
-### Repair
-
-#### Epoch Marker
-
-The persisted snapshot of configuration settings that shape indexing (task
-statuses, tag filters, File Class field), compared per sync so configuration
-changes trigger repair without file edits. A missing or invalid row makes the
-entire marker unknown and forces a safe Note reparse.
-*Avoid*: config fingerprint, config hash, schema marker
-
-#### Repair Scope
-
-The minimal repair action computed from Epoch Marker drift: no repair, Class
-Axis rebuild only, or full Note reparse.
-*Avoid*: repair level, repair depth, rebuild scope
