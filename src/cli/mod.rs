@@ -308,13 +308,13 @@ fn refresh_query<'a>(
     mode: QueryMode,
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
-    let store = IndexerService::new(root)
-        .with_config(config)
-        .current_store()
-        .map_err(|source| CliError::Index {
-        root: root.to_path_buf(),
-        source,
-    })?;
+    let store =
+        IndexerService::from(config).current_store().map_err(|source| {
+            CliError::Index {
+                root: root.to_path_buf(),
+                source,
+            }
+        })?;
     let source = parse_source(config, from)?;
     let has_classes = source.has_classes();
     let mut builder = match mode {
@@ -1183,7 +1183,9 @@ mod tests {
             .expect("list succeeds");
             assert_eq!(list_outcome, CommandOutcome::Completed);
             let list_index = Arc::new(
-                IndexerService::new(&project).refresh().expect("refresh index"),
+                IndexerService::for_tests(&project)
+                    .refresh()
+                    .expect("refresh index"),
             );
             let _list = QueryService::new("class")
                 .run(
@@ -1210,7 +1212,9 @@ mod tests {
             .expect("table succeeds");
             assert_eq!(table_outcome, CommandOutcome::Completed);
             let table_index = Arc::new(
-                IndexerService::new(&project).refresh().expect("refresh index"),
+                IndexerService::for_tests(&project)
+                    .refresh()
+                    .expect("refresh index"),
             );
             let _table = QueryService::new("class")
                 .run(&table_index, QueryBuilder::pages(SourceSelector::All))
@@ -1223,7 +1227,9 @@ mod tests {
                 .expect("task succeeds");
             assert_eq!(task_outcome, CommandOutcome::Completed);
             let task_index = Arc::new(
-                IndexerService::new(&project).refresh().expect("refresh index"),
+                IndexerService::for_tests(&project)
+                    .refresh()
+                    .expect("refresh index"),
             );
             let _tasks = QueryService::new("class")
                 .run(&task_index, QueryBuilder::tasks(SourceSelector::All))
@@ -1279,7 +1285,7 @@ mod tests {
             // so confirm the edit reached the persisted store - which is
             // exactly what the CLI command just queried - via the same
             // `run_from_store` seam `table`'s render path uses internally.
-            let store = IndexerService::new(&project)
+            let store = IndexerService::for_tests(&project)
                 .current_store()
                 .expect("store already current after the second cli call");
             let rendered = QueryService::new("class")
@@ -1306,7 +1312,7 @@ mod tests {
          {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (_service, project) = seed_book_project(temp.path());
-            let indexer = IndexerService::new(&project);
+            let indexer = IndexerService::for_tests(&project);
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
@@ -1319,7 +1325,9 @@ mod tests {
             );
 
             let index = Arc::new(
-                IndexerService::new(&project).refresh().expect("refresh index"),
+                IndexerService::for_tests(&project)
+                    .refresh()
+                    .expect("refresh index"),
             );
             let expected = QueryService::new("class")
                 .run(
@@ -1340,13 +1348,15 @@ mod tests {
         fn derived_inlinks_are_queryable_from_page_queries_and_templates() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (_service, project) = seed_book_project(temp.path());
-            let indexer = IndexerService::new(&project);
+            let indexer = IndexerService::for_tests(&project);
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             let index = Arc::new(
-                IndexerService::new(&project).refresh().expect("refresh index"),
+                IndexerService::for_tests(&project)
+                    .refresh()
+                    .expect("refresh index"),
             );
             let inlinks = QueryService::new("class")
                 .run(

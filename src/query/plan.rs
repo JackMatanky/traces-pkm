@@ -413,7 +413,9 @@ mod tests {
             }
 
             let index = std::sync::Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let rows1 = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All))
@@ -458,7 +460,9 @@ mod tests {
                 .expect("write note");
             }
             let index = std::sync::Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let rows = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All))
@@ -487,7 +491,9 @@ mod tests {
                 .expect("write note");
             }
             let index = std::sync::Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let limited = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All))
@@ -528,7 +534,9 @@ mod tests {
                 .expect("write note");
             }
             let index = std::sync::Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let limited = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All))

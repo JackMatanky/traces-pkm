@@ -60,7 +60,7 @@
 //! let temp = tempfile::tempdir()?;
 //! std::fs::write(temp.path().join("a.md"), "---\nrating: 5\n---\n")?;
 //!
-//! let index = Arc::new(IndexerService::new(temp.path()).build()?);
+//! let index = Arc::new(IndexerService::for_tests(temp.path()).build()?);
 //! let service = QueryService::new("class");
 //! let builder =
 //!     QueryBuilder::pages(SourceSelector::All).filter("rating >= 5")?;

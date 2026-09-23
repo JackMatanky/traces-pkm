@@ -65,7 +65,7 @@
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
 //! template name, line, and column context like every other namespace.
 
-use std::{cmp::Ordering, collections::BTreeSet, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeSet, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
@@ -106,7 +106,7 @@ const INDEX_CACHE_KEY: &str = "query.index_cache";
 pub(super) struct QueryOps {
     /// The minijinja global this instance registers as.
     name: &'static str,
-    root: Arc<Path>,
+    indexer: Arc<IndexerService>,
     /// Pre-configured once at construction instead of being rebuilt on every
     /// `.from()` call.
     service: QueryService,
@@ -122,13 +122,13 @@ impl QueryOps {
     fn new(
         name: &'static str,
         mode: QueryMode,
-        root: Arc<Path>,
+        indexer: Arc<IndexerService>,
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
         Self {
             name,
-            root,
+            indexer,
             service: QueryService::new(class_field).with_class_expander(schema),
             mode,
         }
@@ -138,11 +138,11 @@ impl QueryOps {
     #[inline]
     #[must_use]
     pub(super) fn page(
-        root: Arc<Path>,
+        indexer: Arc<IndexerService>,
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self::new("query", QueryMode::Pages, root, class_field, schema)
+        Self::new("query", QueryMode::Pages, indexer, class_field, schema)
     }
 
     /// Wraps `root` for list-level dispatch under the `lists` global. Each row
@@ -151,11 +151,11 @@ impl QueryOps {
     #[inline]
     #[must_use]
     pub(super) fn list(
-        root: Arc<Path>,
+        indexer: Arc<IndexerService>,
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self::new("lists", QueryMode::Lists, root, class_field, schema)
+        Self::new("lists", QueryMode::Lists, indexer, class_field, schema)
     }
 
     /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
@@ -163,11 +163,11 @@ impl QueryOps {
     #[inline]
     #[must_use]
     pub(super) fn task(
-        root: Arc<Path>,
+        indexer: Arc<IndexerService>,
         class_field: &str,
         schema: Arc<SchemaService>,
     ) -> Self {
-        Self::new("tasks", QueryMode::Tasks, root, class_field, schema)
+        Self::new("tasks", QueryMode::Tasks, indexer, class_field, schema)
     }
 
     /// Registers this object as its `name` global (`query`, `lists`, or
@@ -211,10 +211,9 @@ impl QueryOps {
         Ok(Value::from_object(self.service.run(&index, builder)))
     }
 
-    /// Returns this render's cached [`WorkspaceIndex`] for `self.root`,
-    /// refreshing and caching it first if not already cached this render. See
+    /// Returns this render's cached [`WorkspaceIndex`], refreshing and
+    /// caching it first if not already cached this render. See
     /// [`INDEX_CACHE_KEY`] and [`super::cache::cached`].
-    ///
     /// # Errors
     ///
     /// - [`ErrorKind::InvalidOperation`] if refreshing the index fails,
@@ -229,15 +228,12 @@ impl QueryOps {
         state: &State,
     ) -> TemplateEngineResult<Arc<WorkspaceIndex>> {
         super::cache::cached(state, INDEX_CACHE_KEY, || {
-            IndexerService::new(self.root.as_ref())
-                .refresh()
-                .map(Arc::new)
-                .map_err(|source| {
-                    super::error::invalid_operation(
-                        "failed to refresh the file index",
-                        source,
-                    )
-                })
+            self.indexer.refresh().map(Arc::new).map_err(|source| {
+                super::error::invalid_operation(
+                    "failed to refresh the file index",
+                    source,
+                )
+            })
         })
     }
 }
@@ -620,7 +616,7 @@ fn field_value(value: NoteFieldValue) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use minijinja::Environment;
 
@@ -641,17 +637,29 @@ mod tests {
     /// Builds a `query` [`QueryOps`] for `root` with the default class field
     /// (`class`) and Schema registry directory (`root/.traces/schemas`).
     fn page_ops(root: &Path) -> QueryOps {
-        QueryOps::page(Arc::from(root), "class", schema_service(root))
+        QueryOps::page(
+            Arc::new(IndexerService::for_tests(root)),
+            "class",
+            schema_service(root),
+        )
     }
 
     /// Builds a `lists` [`QueryOps`], the [`page_ops`] counterpart.
     fn list_ops(root: &Path) -> QueryOps {
-        QueryOps::list(Arc::from(root), "class", schema_service(root))
+        QueryOps::list(
+            Arc::new(IndexerService::for_tests(root)),
+            "class",
+            schema_service(root),
+        )
     }
 
     /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
     fn task_ops(root: &Path) -> QueryOps {
-        QueryOps::task(Arc::from(root), "class", schema_service(root))
+        QueryOps::task(
+            Arc::new(IndexerService::for_tests(root)),
+            "class",
+            schema_service(root),
+        )
     }
 
     /// A minimal [`Environment`] with `query`, `lists`, and `tasks` registered
@@ -677,14 +685,16 @@ mod tests {
         class_field: &str,
         source: &str,
     ) -> TemplateEngineResult<String> {
+        let config = crate::Config::test_default(root.to_path_buf())
+            .with_schemas(crate::config::SchemasConfig::for_test(class_field));
+        let indexer = Arc::new(IndexerService::from(&config));
         let service = schema_service(root);
         let mut env = Environment::new();
-        QueryOps::page(Arc::from(root), class_field, Arc::clone(&service))
+        QueryOps::page(Arc::clone(&indexer), class_field, Arc::clone(&service))
             .register(&mut env);
-        QueryOps::list(Arc::from(root), class_field, Arc::clone(&service))
+        QueryOps::list(Arc::clone(&indexer), class_field, Arc::clone(&service))
             .register(&mut env);
-        QueryOps::task(Arc::from(root), class_field, service)
-            .register(&mut env);
+        QueryOps::task(indexer, class_field, service).register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env.render_str(source, minijinja::context!())
     }
@@ -1377,10 +1387,7 @@ mod tests {
             let config = crate::Config::test_default(temp.path().to_path_buf())
                 .with_tasks(crate::TaskConfig::from_tags(&["#task"]));
             let index = Arc::new(
-                IndexerService::new(temp.path())
-                    .with_config(&config)
-                    .build()
-                    .expect("build index"),
+                IndexerService::from(&config).build().expect("build index"),
             );
             let row = QueryService::new("class")
                 .run(&index, QueryBuilder::lists(SourceSelector::All))
@@ -1643,6 +1650,67 @@ mod tests {
                 )
                 .expect("render succeeds");
             assert_eq!(second, "2");
+        }
+
+        #[test]
+        fn refreshes_using_configured_indexer_for_class_field_and_task_filters()
+        {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let project =
+                crate::TestProject::empty(temp.path().join("project"));
+            let config_toml = "[templates]\ndirectory = \
+                               \"templates\"\n\n[tasks]\ntag_filters = \
+                               [\"task\"]\n\n[schemas]\nclass_field = \
+                               \"kind\"\n";
+            let config_path =
+                project.write_file(".traces/config.toml", config_toml);
+            let discovered = crate::config::LocalConfigFile::<
+                crate::config::Discovered,
+            >::try_new(config_path)
+            .expect("valid local config");
+            project
+                .service()
+                .trust(&crate::config::TrustRequest::from(&discovered))
+                .expect("trust project config");
+
+            let config = project
+                .service()
+                .load(project.root())
+                .expect("load config via service pipeline");
+
+            project.write_schema("book", "");
+            project.write_note(
+                "dune.md",
+                "---\nkind: book\n---\n# Dune\n\n- [ ] plain checkbox\n- [ ] \
+                 tagged task #task\n",
+            );
+
+            let loader = crate::template::loader::TemplateLoader::new(
+                Some(project.root().join("templates")),
+                None,
+            );
+            let engine = crate::template::engine::TemplateEngine::new(
+                &loader,
+                Arc::new(crate::PresetDialogProvider::new()),
+                &config,
+            )
+            .expect("build template engine");
+
+            let rendered = engine
+                .render(
+                    "{{ query.from('@book') | length }}|{{ tasks.from() | \
+                     length }}",
+                    "test.md",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "1|1");
+
+            let store = crate::index::IndexStore::open(project.root())
+                .expect("open store");
+            let paths =
+                store.paths_with_file_class("book").expect("read class");
+            assert_eq!(paths.as_ref(), [std::path::PathBuf::from("dune.md")]);
         }
     }
 

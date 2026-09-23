@@ -56,7 +56,7 @@ use super::{
     error::TemplateError, loader::TemplateLoader, path::DeclaredOutputPath,
 };
 use crate::{
-    Config, DialogProvider,
+    Config, DialogProvider, IndexerService,
     schema::{SchemaService, warn_schema_construction_diagnostics},
 };
 
@@ -133,14 +133,27 @@ impl TemplateEngine {
         let construction = SchemaService::load_verbose(&schema_directory)?;
         warn_schema_construction_diagnostics(&construction);
         let service = Arc::new(construction.service);
+        let indexer = Arc::new(IndexerService::from(config));
 
         FileOps::new(Arc::clone(&root)).register(&mut env);
-        QueryOps::page(Arc::clone(&root), &class_field, Arc::clone(&service))
-            .register(&mut env);
-        QueryOps::list(Arc::clone(&root), &class_field, Arc::clone(&service))
-            .register(&mut env);
-        QueryOps::task(Arc::clone(&root), &class_field, Arc::clone(&service))
-            .register(&mut env);
+        QueryOps::page(
+            Arc::clone(&indexer),
+            &class_field,
+            Arc::clone(&service),
+        )
+        .register(&mut env);
+        QueryOps::list(
+            Arc::clone(&indexer),
+            &class_field,
+            Arc::clone(&service),
+        )
+        .register(&mut env);
+        QueryOps::task(
+            Arc::clone(&indexer),
+            &class_field,
+            Arc::clone(&service),
+        )
+        .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         PathOps::new(Arc::clone(&root)).register(&mut env);
         UiOps::new(provider).register(&mut env);

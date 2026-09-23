@@ -6,8 +6,8 @@ use std::{path::Path, sync::Arc};
 
 use pretty_assertions::{assert_eq, assert_ne};
 use traces_pkm::{
-    QueryBuilder, QueryBuilderError, QueryService, SourceLine, SourceSelector,
-    TaskConfig, TestProject,
+    IndexerService, QueryBuilder, QueryBuilderError, QueryService, SourceLine,
+    SourceSelector, TaskConfig, TestProject,
 };
 
 /// Checks a page request returns every indexed note without consuming the
@@ -185,9 +185,8 @@ fn evaluates_query_modes_distinguishing_lists_and_tasks_with_structural_metadata
     project.write_note("planning.md", markdown);
 
     let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
-    let index = Arc::new(
-        project.indexer().with_config(&config).build().expect("build index"),
-    );
+    let index =
+        Arc::new(IndexerService::from(&config).build().expect("build index"));
     let service = QueryService::new("class");
 
     // 1. Lists mode: returns all 5 items with structural fields.
@@ -260,9 +259,8 @@ fn accepts_canonical_list_paths_and_rejects_obsolete_task_paths_with_diagnostic(
     project.write_note("work.md", markdown);
 
     let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
-    let index = Arc::new(
-        project.indexer().with_config(&config).build().expect("build index"),
-    );
+    let index =
+        Arc::new(IndexerService::from(&config).build().expect("build index"));
     let service = QueryService::new("class");
 
     // 1. Canonical list.<field> succeeds:
@@ -318,9 +316,8 @@ priority: normal
     project.write_note("planning.md", markdown);
 
     let config = project.config().with_tasks(TaskConfig::from_tags(&["#task"]));
-    let index = Arc::new(
-        project.indexer().with_config(&config).build().expect("build index"),
-    );
+    let index =
+        Arc::new(IndexerService::from(&config).build().expect("build index"));
     let service = QueryService::new("class");
     // 1. All rows inherit frontmatter field `category == "project"`
     let category_query = QueryBuilder::lists(SourceSelector::All)

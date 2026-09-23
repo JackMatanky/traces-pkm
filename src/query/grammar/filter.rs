@@ -791,7 +791,9 @@ mod tests {
             drop(f2);
 
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All));
@@ -832,7 +834,9 @@ mod tests {
             drop(f2);
 
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All));

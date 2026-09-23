@@ -948,8 +948,9 @@ mod tests {
                 fs::create_dir_all(parent).expect("create parent");
             }
             fs::write(full_path, content).expect("write Note");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
             (temp, index)
         }
 
@@ -1021,8 +1022,9 @@ mod tests {
                 .expect("write direct file");
             fs::write(temp.path().join("covers/sub/hidden.md"), "# Hidden")
                 .expect("write nested file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
             let expression =
                 SourceExpr::parse("covers/*.md").expect("valid source");
             let direct =
@@ -1043,8 +1045,9 @@ mod tests {
                 .expect("write direct file");
             fs::write(temp.path().join("covers/sub/hidden.md"), "# Hidden")
                 .expect("write nested file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
+            let index = IndexerService::for_tests(temp.path())
+                .build()
+                .expect("build index");
             // `covers/**/*.md` requires an intermediate segment, so a direct
             // child proves `**` crosses `/` boundaries instead of acting like
             // folder shorthand.

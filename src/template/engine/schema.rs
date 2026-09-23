@@ -401,7 +401,7 @@ mod tests {
         );
         let mut env = Environment::new();
         crate::template::engine::QueryOps::page(
-            Arc::clone(&root),
+            Arc::new(crate::IndexerService::for_tests(root.as_ref())),
             "class",
             Arc::clone(&service),
         )

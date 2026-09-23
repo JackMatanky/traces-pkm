@@ -815,7 +815,9 @@ mod tests {
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let file = find_base(index.entries(), Path::new("a.md"));
             let outcome = QueryService::new("class")
@@ -830,7 +832,9 @@ mod tests {
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let note = find_entry(index.entries(), Path::new("a.md"))
                 .note()
@@ -847,7 +851,9 @@ mod tests {
             fs::write(temp.path().join("a.md"), "- [x] Buy milk")
                 .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::tasks(SourceSelector::All));
@@ -861,7 +867,9 @@ mod tests {
             fs::write(temp.path().join("a.md"), "- [ ] Buy milk")
                 .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::tasks(SourceSelector::All));
@@ -1059,7 +1067,7 @@ mod tests {
         ) -> QueryRow {
             fs::write(temp.join("a.md"), source).expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp).build().expect("build index"),
+                IndexerService::for_tests(temp).build().expect("build index"),
             );
             QueryRow::from_row(&index, RowIndex::new(0))
                 .with_list_item(item_idx)
@@ -1075,10 +1083,7 @@ mod tests {
             let config = crate::Config::test_default(temp.to_path_buf())
                 .with_tasks(tasks.clone());
             let index = Arc::new(
-                IndexerService::new(temp)
-                    .with_config(&config)
-                    .build()
-                    .expect("build index"),
+                IndexerService::from(&config).build().expect("build index"),
             );
             QueryRow::from_row(&index, RowIndex::new(0))
                 .with_list_item(item_idx)
@@ -1208,7 +1213,9 @@ rating: note
             fs::write(temp.path().join("a.md"), "- [x] Buy milk")
                 .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::tasks(SourceSelector::All));
@@ -1734,7 +1741,9 @@ rating: note
             )
             .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::tasks(SourceSelector::All));
@@ -1751,7 +1760,9 @@ rating: note
             fs::write(temp.path().join("a.md"), "- [-] Abandoned task\n")
                 .expect("write file");
             let index = Arc::new(
-                IndexerService::new(temp.path()).build().expect("build index"),
+                IndexerService::for_tests(temp.path())
+                    .build()
+                    .expect("build index"),
             );
             let outcome = QueryService::new("class")
                 .run(&index, QueryBuilder::tasks(SourceSelector::All));

@@ -101,7 +101,7 @@ fn bench_file_index_build(c: &mut Criterion) {
         let temp = create_project(n, ProjectShape::Plain);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter(|| {
-                let index = IndexerService::new(temp.path())
+                let index = IndexerService::for_tests(temp.path())
                     .build()
                     .expect("build index");
                 observe_index(&index);
@@ -149,7 +149,7 @@ fn bench_file_index_build_profiles(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        let index = IndexerService::new(temp.path())
+                        let index = IndexerService::for_tests(temp.path())
                             .build()
                             .expect("build index");
                         observe_index(&index);

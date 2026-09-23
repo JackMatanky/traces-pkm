@@ -138,7 +138,7 @@ fn bench_render(c: &mut Criterion) {
         let service = TemplateService::new(&config, dialog)
             .expect("valid schema directory");
 
-        let indexer = IndexerService::new(config.root());
+        let indexer = IndexerService::from(&config);
         group.bench_with_input(
             BenchmarkId::new("refresh_floor", n),
             &n,

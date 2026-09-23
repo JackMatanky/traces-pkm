@@ -19,16 +19,19 @@ pub(super) struct Index;
 impl Index {
     /// Runs `traces index` for the trusted project root.
     ///
-    /// Scans the root, persists the fresh
-    /// [`WorkspaceIndex`](crate::index::WorkspaceIndex), and reports the
-    /// indexed file count to stderr. # Errors
+    /// Scans the root, persists the fresh [`WorkspaceIndex`], and reports the
+    /// indexed file count to stderr.
+    ///
+    /// # Errors
     ///
     /// - [`CliError::CurrentDirectory`] if the current directory cannot be
     ///   read.
     /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
     ///   untrusted project root.
     /// - [`CliError::Index`] if scanning the project root or persisting the
-    ///   [`WorkspaceIndex`](crate::index::WorkspaceIndex) fails.
+    ///   [`WorkspaceIndex`] fails.
+    ///
+    /// [`WorkspaceIndex`]: crate::index::WorkspaceIndex
     #[expect(
         clippy::unused_self,
         reason = "keeps the dispatch signature consistent with every other \
@@ -38,13 +41,13 @@ impl Index {
     pub(super) fn run(&self, service: &ConfigService) -> CliResult {
         let config = super::load_config(service)?;
         let root = config.root().to_path_buf();
-        let index = IndexerService::new(&root)
-            .with_config(&config)
-            .rebuild()
-            .map_err(|source| CliError::Index {
-            root: root.clone(),
-            source,
-        })?;
+        let index =
+            IndexerService::from(&config).rebuild().map_err(|source| {
+                CliError::Index {
+                    root: root.clone(),
+                    source,
+                }
+            })?;
         eprintln!(
             "indexed {} file(s) under {}",
             index.entries().len(),

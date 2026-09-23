@@ -630,9 +630,10 @@ impl IndexStore {
                 notes,
                 edges,
             } => {
-                if delta.is_empty() && notes.is_empty() && edges.is_empty() {
-                    return Ok(());
-                }
+                debug_assert!(
+                    !delta.is_empty() || !notes.is_empty() || !edges.is_empty(),
+                    "plan_pass gates empty passes"
+                );
                 self.apply_incremental(&request.axes, &IncrementalRows {
                     delta,
                     notes,
@@ -1871,7 +1872,7 @@ mod tests {
         #[test]
         fn incremental_persistence_updates_and_deletes_notes_with_lists() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let service = IndexerService::new(temp.path());
+            let service = IndexerService::for_tests(temp.path());
 
             fs::write(
                 temp.path().join("a.md"),
@@ -2185,8 +2186,9 @@ mod tests {
             write_all_parts(&store, &files, &notes, &links).expect("persist");
             drop(store);
 
-            let loaded =
-                IndexerService::new(temp.path()).load().expect("load index");
+            let loaded = IndexerService::for_tests(temp.path())
+                .load()
+                .expect("load index");
             let inlinks_of = |target: &Path| {
                 loaded
                     .entries()
@@ -2459,7 +2461,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
                 .expect("write note");
-            let indexer = crate::IndexerService::new(temp.path());
+            let indexer = crate::IndexerService::for_tests(temp.path());
             indexer
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
