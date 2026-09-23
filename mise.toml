@@ -68,9 +68,12 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # --baseline run, run ordering): log replay would mask flakiness, so the cache
 # key cannot assert equivalent logs (07_configuration.md, "Cache correctness
 # and deterministic tasks": enabling cache is a correctness assertion).
-# Other cache-eligible tasks stay on: coverage/crap carry explicit outputs
+# Verdict: drift — stale config/comment, not a deliberate cache exception.
+# Classification of other tasks: coverage/crap carry explicit outputs
 # (freshness defined, not gates); build/release/doc are build-if-stale by
-# design. Cite refs by task name / doc section — never mise.toml line numbers.
+# design; audit is opted out (reason 1: cargo deny reads deny.toml, which
+# is not declared in its sources).
+# Cite refs by task name / doc section — never mise.toml line numbers.
 enabled = true
 
 [task_config.input_groups]
@@ -418,6 +421,7 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 [tasks.audit]
 description = "Run cargo deny audit"
 outputs = []
+cache = { enabled = false }
 usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo deny check"'
 run = '''
 #!/bin/bash
