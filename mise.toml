@@ -511,7 +511,7 @@ flag "-f --files <pattern>" {
   """
 }
 flag "-m --mod <module>" {
-  help "Run benchmarks for a specific module"
+  help "Run benchmarks for a specific module (matches benches/<module>*.rs)"
   choices "hash" "index" "note" "query" "template" "memory_footprint"
 }
 flag "-r --report [name]" value_optional=#true {
@@ -565,14 +565,11 @@ has_criterion_args=false
 # --- Resolve bench files ---
 declare -a bench_files=()
 if [[ -n "${usage_mod:-}" ]]; then
-  case "${usage_mod}" in
-    hash)     bench_files=(hash) ;;
-    index)    bench_files=(index_codec index_inlinks index_build index_refresh index_store) ;;
-    note)     bench_files=(note_parsing) ;;
-    query)    bench_files=(query_execution query_parsing query_sort) ;;
-    template) bench_files=(template_render) ;;
-    memory_footprint) bench_files=(memory_footprint) ;;
-  esac
+  for f in benches/*.rs; do
+    bf="${f##*/}"
+    bf="${bf%.rs}"
+    [[ "${bf}" == "${usage_mod}"* ]] && bench_files+=("${bf}")
+  done
 elif [[ -n "${usage_files:-}" ]]; then
   for f in benches/*.rs; do
     bf="${f##*/}"
