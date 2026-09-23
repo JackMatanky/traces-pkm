@@ -3,8 +3,12 @@
 #MISE hide=true
 #USAGE arg "[criterion_dir]" default="target/criterion" env="CRITERION_DIR" help="Criterion output directory"
 
-# Prints a summary of which benchmark groups were measured after every bench
-# execution. Runs automatically via depends_post.
+# Prints a summary of which benchmark groups have results on disk after every
+# bench execution. Runs automatically via depends_post (unconditionally —
+# including after --mode test/quick and failed runs), so wording derives
+# honesty from the tree itself, never from the run that just finished.
+
+set -euo pipefail
 
 CRITERION_DIR="${usage_criterion_dir:-${CRITERION_DIR:-target/criterion}}"
 
@@ -97,7 +101,10 @@ print_groups() {
     group_name="$(basename "${group_dir}")"
 
     if [[ "${has_groups}" == "false" ]]; then
-      echo "### Groups measured:"
+      # "on disk", not "measured": depends_post also runs after --mode test
+      # (cargo test, no measurement) and --mode quick (measurement, but the
+      # tree shown is whatever the disk already held).
+      echo "### Groups with results on disk:"
       has_groups=true
     fi
 
@@ -112,15 +119,58 @@ print_groups() {
 }
 
 #######################################
+# Format the HTML report's modification time.
+#
+# The report is rewritten only by a full plotted run: --mode test never
+# measures (cargo test path) and --mode quick passes --noplot (criterion
+# clap help), so this mtime ages across those runs — that age is the
+# staleness signal the footer prints.
+#
+# Arguments:
+#   None
+# Outputs:
+#   Writes "YYYY-MM-DD HH:MM" to stdout
+# Returns:
+#   0 when the report exists and its mtime could be read, 1 otherwise
+#   (set -e safe: callers use this in an `if` condition)
+#######################################
+report_generated_at() {
+  local report_html="${CRITERION_DIR}/report/index.html"
+
+  [[ -f "${report_html}" ]] || return 1
+  # date -r FILE: portable across the BSD date this macOS ships and GNU
+  # date (-r/--reference=FILE); no stat(1) flag is common to both.
+  date -r "${report_html}" '+%Y-%m-%d %H:%M' 2>/dev/null || return 1
+}
+
+#######################################
 # Print the summary footer with usage hints.
+#
+# The charts line offers `report/index.html` only when that file exists:
+# criterion 0.8.2 writes exactly this path (criterion source:
+# criterion-0.8.2 src/html/mod.rs joins "report/index.html"; its
+# summary report template links bench.path/report/index.html the same way).
+# The book still documents the plural `target/criterion/reports/index.html`
+# (docs/refs/criterion_rs_book/02_user_guide/04_html_report.md, HTML Report
+# section) — stale for criterion 0.8.x; do not "correct" this footer to
+# match the book.
 #
 # Outputs:
 #   Writes footer to stdout
 #######################################
 print_footer() {
+  local report_html="${CRITERION_DIR}/report/index.html"
+  local generated_at=""
+
   echo ""
-  echo "Open \`target/criterion/report/index.html\` for detailed charts."
-  echo "Run \`critcmp <baseline> new\` (or \`mise run bench --compare <baseline>\`) for comparison."
+  if generated_at="$(report_generated_at)"; then
+    echo "Open \`${report_html}\` for detailed charts" \
+      "(last full report: ${generated_at})."
+  else
+    echo "No HTML report on disk (no full plotted run yet, or it was cleaned)."
+  fi
+  echo "Run \`critcmp <baseline> new\`" \
+    "(or \`mise run bench --compare <baseline>\`) for comparison."
   echo "Run \`mise run bench:model\` for performance summary."
   echo "Run \`mise run bench:model -- --plot\` for fitted curves in the terminal."
 }
