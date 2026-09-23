@@ -7,8 +7,8 @@
 
 **Acceptance criteria:**
 - [ ] `ByteOffset` is `u32`-backed with `From<u32>`, `TryFrom<usize>`, `ByteOffsetError`, and `ByteOffset::MAX`
-- [ ] `ByteOffset::from(0u32)` and `ByteOffset::try_from(0usize)` succeed; `ByteOffset::try_from(u64::from(u32::MAX) + 1)` returns `ByteOffsetError`
-- [ ] `ByteOffset::try_from(u32::MAX as usize)` succeeds and equals `ByteOffset::MAX`
+- [ ] `ByteOffset::from(0u32)` and `ByteOffset::try_from(0usize)` succeed; `ByteOffset::try_from` of a `usize` value greater than `u32::MAX` returns `ByteOffsetError`
+- [ ] `ByteOffset::try_from` of `u32::MAX` widened to `usize` succeeds and equals `ByteOffset::MAX`
 - [ ] No `From<usize> for ByteOffset` impl remains; all existing call sites updated to the explicit fallible/infallible paths
 - [ ] Parser pulldown-cmark event boundary saturates via `unwrap_or(ByteOffset::MAX)` (no panic on oversized input)
 - [ ] No persisted encode path depends on `ByteOffset`'s old width (spans stay transient, never persisted)
