@@ -171,9 +171,7 @@ impl IndexerService {
         if plan.is_empty() && scope != RepairScope::Reparse {
             if scope == RepairScope::ClassAxisOnly {
                 let axes = IndexAxes::for_class_field(&self.class_field);
-                let epochs =
-                    PersistedEpochs::current(&self.tasks, &self.class_field);
-                plan.rebuild_class_axis(&axes, &epochs)?;
+                plan.rebuild_class_axis(&axes, &current)?;
             }
             return Ok(plan.into_unchanged());
         }
@@ -182,10 +180,9 @@ impl IndexerService {
             _ => plan.upserted_files(),
         };
         let modified_notes = self.parse_notes(files)?;
-        let epochs = PersistedEpochs::current(&self.tasks, &self.class_field);
         let class_axis_rebuild = scope == RepairScope::ClassAxisOnly;
         let pending =
-            plan.reconcile(modified_notes, epochs, class_axis_rebuild)?;
+            plan.reconcile(modified_notes, current, class_axis_rebuild)?;
         Ok(RefreshPass::Reconciled(pending))
     }
 
@@ -1561,6 +1558,22 @@ mod tests {
                     .count(),
                 1
             );
+        }
+
+        #[test]
+        fn refreshes_an_empty_project_and_persists_epochs() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let indexer = IndexerService::for_tests(temp.path());
+
+            let (first, first_report) =
+                indexer.refresh_with_report().expect("initial refresh");
+            let (second, second_report) =
+                indexer.refresh_with_report().expect("unchanged refresh");
+
+            assert!(first.entries().is_empty());
+            assert_eq!(first_report, RefreshReport::default());
+            assert!(second.entries().is_empty());
+            assert_eq!(second_report, RefreshReport::default());
         }
 
         #[test]

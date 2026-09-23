@@ -757,7 +757,7 @@ impl IndexStore {
 
     /// Persists a full rebuild or one incremental refresh pass.
     ///
-    /// Incremental passes with no changed rows skip the transaction entirely.
+    /// Incremental passes may contain only configuration epoch updates.
     ///
     /// # Errors
     ///
@@ -779,22 +779,13 @@ impl IndexStore {
                 edges,
                 epochs,
                 class_axis_rebuild,
-            } => {
-                debug_assert!(
-                    !delta.is_empty()
-                        || !notes.is_empty()
-                        || !edges.is_empty()
-                        || *class_axis_rebuild,
-                    "plan_pass gates empty passes"
-                );
-                self.apply_incremental(&request.axes, &IncrementalRows {
-                    delta,
-                    notes,
-                    edges,
-                    epochs,
-                    class_axis_rebuild: *class_axis_rebuild,
-                })
-            }
+            } => self.apply_incremental(&request.axes, &IncrementalRows {
+                delta,
+                notes,
+                edges,
+                epochs,
+                class_axis_rebuild: *class_axis_rebuild,
+            }),
         }
     }
 
