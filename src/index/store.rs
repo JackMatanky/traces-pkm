@@ -613,7 +613,7 @@ impl IndexStore {
     /// Persists a rebuild or a non-empty incremental refresh.
     ///
     /// Incremental requests must contain at least one file, note, or edge
-    /// change. `IndexerService::plan_pass` filters empty passes before they
+    /// change. `IndexerService::prepare_pass` filters empty passes before they
     /// reach this method.
     ///
     /// # Errors
@@ -639,7 +639,7 @@ impl IndexStore {
                 }
                 debug_assert!(
                     !delta.is_empty() || !notes.is_empty() || !edges.is_empty(),
-                    "plan_pass gates empty passes"
+                    "prepare_pass gates empty passes"
                 );
                 self.apply_incremental(&request.axes, &IncrementalRows {
                     delta,

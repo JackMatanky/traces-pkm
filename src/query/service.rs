@@ -177,7 +177,7 @@ impl QueryService {
         indexer: &IndexerService,
         builder: QueryBuilder,
     ) -> IndexResult<QuerySet> {
-        let store = indexer.current_store()?;
+        let store = indexer.refresh_store()?;
         self.run_from_store(&store, builder)
     }
 

@@ -3,7 +3,7 @@
 //! [`IndexerService`] scans, parses, persists, loads, refreshes, and opens one
 //! project root's [`super::WorkspaceIndex`] through `IndexStore`.
 //!
-//! `refresh` and `current_store` share one incremental core: content-only
+//! `refresh` and `refresh_store` share one incremental core: content-only
 //! deltas patch inbound links from touched notes, while path-set changes force
 //! a full recompute because wikilink resolution depends on every indexed path.
 
@@ -29,7 +29,7 @@ use crate::{
 /// Drives the file-index lifecycle for one project root.
 ///
 /// `refresh` returns a full [`WorkspaceIndex`] and logs persist failures;
-/// `current_store` keeps only the persisted store current and propagates
+/// `refresh_store` keeps only the persisted store current and propagates
 /// persist failures because it has no in-memory fallback.
 #[derive(Clone, Debug)]
 pub struct IndexerService {
@@ -119,7 +119,7 @@ impl IndexerService {
     pub fn refresh_with_report(
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
-        match self.plan_pass()? {
+        match self.prepare_pass()? {
             RefreshState::Fresh(store) => Self::assemble_unchanged(&store),
             RefreshState::Stale(pending) => self.apply_reconciled(*pending),
         }
@@ -157,7 +157,7 @@ impl IndexerService {
         Ok((index, report))
     }
 
-    fn plan_pass(&self) -> IndexResult<RefreshState> {
+    fn prepare_pass(&self) -> IndexResult<RefreshState> {
         let plan = RefreshPlan::collect(&self.root)?;
         if plan.is_empty() {
             return Ok(plan.into_fresh());
@@ -208,8 +208,8 @@ impl IndexerService {
     /// - [`IndexError::Store`] if the database cannot be opened or read,
     ///   required note bodies cannot be read, or incremental persistence fails.
     #[inline]
-    pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
-        match self.plan_pass()? {
+    pub(crate) fn refresh_store(&self) -> IndexResult<IndexStore> {
+        match self.prepare_pass()? {
             RefreshState::Fresh(store) => Ok(store),
             RefreshState::Stale(pending) => {
                 let report = pending.report();
@@ -461,7 +461,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn current_store_skips_note_decode_on_empty_delta() {
+        fn refresh_store_skips_note_decode_on_empty_delta() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::write(root.join("a.md"), "# A").expect("write note");
@@ -473,7 +473,7 @@ mod tests {
                 .poison_note_row(Path::new("a.md"))
                 .expect("poison note row");
 
-            service.current_store().expect("empty delta sync");
+            service.refresh_store().expect("empty delta sync");
         }
 
         #[test]

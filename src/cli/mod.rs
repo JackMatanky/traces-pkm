@@ -309,7 +309,7 @@ fn refresh_query<'a>(
 ) -> Result<QuerySet, CliError> {
     let root = config.root();
     let store =
-        IndexerService::from(config).current_store().map_err(|source| {
+        IndexerService::from(config).refresh_store().map_err(|source| {
             CliError::Index {
                 root: root.to_path_buf(),
                 source,
@@ -1286,7 +1286,7 @@ mod tests {
             // exactly what the CLI command just queried - via the same
             // `run_from_store` seam `table`'s render path uses internally.
             let store = IndexerService::for_tests(&project)
-                .current_store()
+                .refresh_store()
                 .expect("store already current after the second cli call");
             let rendered = QueryService::new("class")
                 .run_from_store(
