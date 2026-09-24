@@ -90,7 +90,7 @@ url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/carg
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
 
 [[tools."cargo:adrs"]]
-version = "0.11.0"
+version = "0.12.1"
 backend = "cargo:adrs"
 specifiers = ["latest"]
 
@@ -100,7 +100,7 @@ backend = "cargo:cargo-audit"
 specifiers = ["latest"]
 
 [[tools."cargo:cargo-crap"]]
-version = "0.4.3"
+version = "0.5.0"
 backend = "cargo:cargo-crap"
 specifiers = ["latest"]
 
@@ -115,7 +115,7 @@ backend = "cargo:cargo-sweep"
 specifiers = ["latest"]
 
 [[tools."cargo:cargo-tarpaulin"]]
-version = "0.37.2"
+version = "0.37.4"
 backend = "cargo:cargo-tarpaulin"
 specifiers = ["latest"]
 
@@ -143,50 +143,50 @@ backend = "cargo:ryl"
 specifiers = ["latest"]
 
 [[tools."github:nextest-rs/nextest"]]
-version = "cargo-nextest-0.9.145"
+version = "cargo-nextest-0.9.146"
 backend = "github:nextest-rs/nextest"
 specifiers = ["latest"]
 
 [tools."github:nextest-rs/nextest"."platforms.linux-arm64"]
-checksum = "sha256:0ad2815fd91a7ecec3a7e25c749b584f66729ac688fd26b2fd494f7ff94b7fd0"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568837128"
+checksum = "sha256:b2e33d7c72de7ade0ff7b3a948ac37516b24f8a836b7a8870c1f634a94be9de9"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579608024"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-arm64-musl"]
-checksum = "sha256:103a8f68b20fb01ee5daf2eb4c037b54ace550a04a288ee35761c5e7b0351311"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568839937"
+checksum = "sha256:62ae8b4ad034704f67417f8ed8b897566d82359ab44952729b925fb37eeb7622"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579610797"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-x64"]
-checksum = "sha256:32aa82416099eb12fffae9cf1a279ad201fecbd3f74826c613e32e9006b29867"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568838794"
+checksum = "sha256:682c21b777c333e96fd532e114d3a5a894e0729ab88d94c0a9f20f8419695428"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579609342"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-x64-musl"]
-checksum = "sha256:cd3c85194e8b28ad26676d287f41f0d6b4d456cef5bd94700def5dea8e328883"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568841304"
+checksum = "sha256:b64617e8640624e8f9ba99819e37d7971154e97836d7ae4774fed4715501a6aa"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579610024"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.macos-arm64"]
-checksum = "sha256:52ecaedb4f5af9267ef7ed02bc937d2a15a94ff96cb663080e81311f798c9905"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-universal-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848732"
+checksum = "sha256:39785160b3c2f6ed9a765049cf4fa79f3b39aa02eb7598a5a0e2a1a0b9ffb9a8"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579630774"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.macos-x64"]
-checksum = "sha256:52ecaedb4f5af9267ef7ed02bc937d2a15a94ff96cb663080e81311f798c9905"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-universal-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848732"
+checksum = "sha256:39785160b3c2f6ed9a765049cf4fa79f3b39aa02eb7598a5a0e2a1a0b9ffb9a8"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579630774"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.windows-x64"]
-checksum = "sha256:5bc4b6789103e9834f596eff2b290cfb5b2b69e5413c78bbaa5acc835ac5baa0"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848390"
+checksum = "sha256:0fa689815c8157e4633225b6b173184b3d546eb6ffb754c3d0e6ea5973284a20"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579617054"
 provenance = "github-attestations"
 
 [[tools.gitleaks]]
@@ -307,48 +307,48 @@ url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-windows-x
 url_api = "https://api.github.com/repos/tamasfe/taplo/releases/assets/257323062"
 
 [[tools.tombi]]
-version = "1.5.3"
+version = "1.5.5"
 backend = "aqua:tombi-toml/tombi"
 specifiers = ["latest"]
 
 [tools.tombi."platforms.linux-arm64"]
-checksum = "sha256:9892554b1fc0d9c57d7ee131a302af1bd90b66cd014505a40d20c2a94c3be4d6"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886059"
+checksum = "sha256:a545a471cec6baf982bcb8e274d097303cece1a72136ada79d240adb6d1354f6"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313379"
 provenance = "github-attestations"
 
 [tools.tombi."platforms.linux-arm64-musl"]
-checksum = "sha256:9892554b1fc0d9c57d7ee131a302af1bd90b66cd014505a40d20c2a94c3be4d6"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886059"
+checksum = "sha256:a545a471cec6baf982bcb8e274d097303cece1a72136ada79d240adb6d1354f6"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313379"
 provenance = "github-attestations"
 
 [tools.tombi."platforms.linux-x64"]
-checksum = "sha256:9e34fc7c089526e3608542b25227bbb67289ddaf66039a46b7c49b64b6931f37"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886096"
+checksum = "sha256:6c50d2589989e8182e9f6e774b4b25c9f5729b67a2a7e7dcaadddbedbe1da5ec"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313407"
 provenance = "github-attestations"
 
 [tools.tombi."platforms.linux-x64-musl"]
-checksum = "sha256:9e34fc7c089526e3608542b25227bbb67289ddaf66039a46b7c49b64b6931f37"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886096"
+checksum = "sha256:6c50d2589989e8182e9f6e774b4b25c9f5729b67a2a7e7dcaadddbedbe1da5ec"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313407"
 provenance = "github-attestations"
 
 [tools.tombi."platforms.macos-arm64"]
-checksum = "sha256:9043a3bf322ee0254ffd51aee5c6adafd651434589b8d42cd14f02f2ddc01e8c"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886064"
+checksum = "sha256:460b3269414d2ca26e05863908764f118bea3b4a52068081af6a3dae03c1320e"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313381"
 provenance = "github-attestations"
 
 [tools.tombi."platforms.macos-x64"]
-checksum = "sha256:a746a38dc6c08fd67b61d3527ea922997243b0d78660690cdb809b7405a0b6e8"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886065"
+checksum = "sha256:9276c456e4a0217e95fb84ac3cde29d281d7b53e5eb168d83cb038ec07e2083d"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313375"
 provenance = "github-attestations"
 
 [tools.tombi."platforms.windows-x64"]
-checksum = "sha256:9a45ec3df1dd2693e7ece01f552b0d1ef1885b8d701f396ebc0236165c554c0e"
-url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.3/tombi-cli-1.5.3-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/550886088"
+checksum = "sha256:49e8aa14e82038a13c5f9f50cc6524b56b9bce167734bead31439939e0830a3b"
+url = "https://github.com/tombi-toml/tombi/releases/download/v1.5.5/tombi-cli-1.5.5-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/559313401"
 provenance = "github-attestations"
