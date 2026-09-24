@@ -443,13 +443,19 @@ impl IndexStore {
         );
         let files: SortedByPath<FileMeta> = files_result?;
         let notes = notes_result?;
-        let target_paths = Self::path_by_key(
-            files.as_slice().iter().map(FileMeta::path),
-            files.as_slice().len(),
-        );
-        let source_paths = Self::path_by_key(
-            notes.as_slice().iter().map(Note::path),
-            notes.as_slice().len(),
+        let (target_paths, source_paths) = rayon::join(
+            || {
+                Self::path_by_key(
+                    files.as_slice().iter().map(FileMeta::path),
+                    files.as_slice().len(),
+                )
+            },
+            || {
+                Self::path_by_key(
+                    notes.as_slice().iter().map(Note::path),
+                    notes.as_slice().len(),
+                )
+            },
         );
         let links =
             self.read_links(&txn, LINKS, &target_paths, &source_paths)?;
@@ -496,16 +502,22 @@ impl IndexStore {
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let files_slice = files.as_slice();
-        let target_paths = Self::path_by_key(
-            files_slice.iter().map(FileMeta::path),
-            files_slice.len(),
-        );
-        let source_paths = Self::path_by_key(
-            files_slice
-                .iter()
-                .filter(|file| file.format() == FileFormat::Note)
-                .map(FileMeta::path),
-            files_slice.len(),
+        let (target_paths, source_paths) = rayon::join(
+            || {
+                Self::path_by_key(
+                    files_slice.iter().map(FileMeta::path),
+                    files_slice.len(),
+                )
+            },
+            || {
+                Self::path_by_key(
+                    files_slice
+                        .iter()
+                        .filter(|file| file.format() == FileFormat::Note)
+                        .map(FileMeta::path),
+                    files_slice.len(),
+                )
+            },
         );
         self.read_links(&txn, LINKS, &target_paths, &source_paths)
     }
@@ -1020,7 +1032,7 @@ impl IndexStore {
         target_paths: &FxHashMap<&[u8], &Path>,
         source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<InlinkMap> {
-        let mut links = HashMap::new();
+        let mut links = HashMap::with_capacity(target_paths.len());
         for entry in iter {
             if let Some((target, sources)) =
                 self.resolve_link_entry(entry, target_paths, source_paths)?
@@ -1063,7 +1075,7 @@ impl IndexStore {
         sources: redb::MultimapValue<'_, &[u8]>,
         source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<Box<[PathBuf]>> {
-        let mut values = Vec::new();
+        let mut values = Vec::with_capacity(4);
         for src in sources {
             let guard = src.map_err(|source| self.wrap_redb_error(source))?;
             if let Some(path) =
