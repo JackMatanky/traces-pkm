@@ -94,7 +94,7 @@ impl WorkspaceIndex {
             entries.push(FileEntry::new(file, note));
         }
         let mut entries = SortedByPath::assumed_sorted(entries);
-        redistribute_inlinks(&mut entries, inlinks);
+        attach_inlinks(&mut entries, inlinks);
         Self::new(entries.into_vec().into_boxed_slice())
     }
 
@@ -199,10 +199,7 @@ impl RowIndex {
 /// `entries` is a typed path-sorted view, so each lookup is a binary search
 /// against the same order the index stores rows in; a miss means a genuinely
 /// unknown target, not an unsorted slice.
-fn redistribute_inlinks(
-    entries: &mut SortedByPath<FileEntry>,
-    inlinks: InlinkMap,
-) {
+fn attach_inlinks(entries: &mut SortedByPath<FileEntry>, inlinks: InlinkMap) {
     for (target, sources) in inlinks.into_entries() {
         if let Some(entry) = entries.get_mut_by_path(&target) {
             entry.set_inlinks(sources);
@@ -301,7 +298,7 @@ mod tests {
         }
 
         #[test]
-        fn redistributes_inlinks_and_keeps_rows_findable_by_path() {
+        fn attaches_inlinks_and_keeps_rows_findable_by_path() {
             let mut entries =
                 SortedByPath::sorted(entry_rows(&["a.md", "b.md"]));
             let links = InlinkMap::from_raw(HashMap::from([
@@ -315,7 +312,7 @@ mod tests {
                 ),
             ]));
 
-            redistribute_inlinks(&mut entries, links);
+            attach_inlinks(&mut entries, links);
 
             let a = entries
                 .get_mut_by_path(Path::new("a.md"))
