@@ -69,7 +69,7 @@ terminal methods (`table`, `list`, `task_list`, `count`) render output.
 #### Task Path Style
 
 Whether task list output appends each row's file path in parentheses (`Suffix`),
-appends clickable `({path}:{line})` suffixes with 1-indexed source lines for
-`traces task -l`, or `({path})` when no source line is available
-(`Coordinates`), or omits it (`None`).
+or `Coordinates` appends clickable `({path}:{line})` suffixes with 1-indexed
+source lines for `traces task -l` and otherwise appends `({path})` when no
+source line is available, or omits it (`None`).
 *Avoid*: path display, path suffix toggle
