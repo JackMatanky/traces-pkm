@@ -126,6 +126,7 @@ print_groups() {
 # Returns:
 #   `0` if mtime printed, `1` otherwise; safe under `set -e` because
 #   callers check in an if condition.
+#######################################
 report_generated_at() {
   local report_html="${CRITERION_DIR}/report/index.html"
 
