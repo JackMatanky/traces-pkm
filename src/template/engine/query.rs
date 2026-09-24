@@ -1471,7 +1471,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn a_query_rows_can_be_passed_to_ui_select_with_attribute() {
+        fn query_rows_can_be_passed_to_ui_select_with_attribute() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "a.md", "# A");
             write_note(temp.path(), "b.md", "# B");
@@ -1493,7 +1493,7 @@ mod tests {
         }
 
         #[test]
-        fn a_query_rows_can_be_passed_to_ui_multi_select_with_attribute() {
+        fn query_rows_can_be_passed_to_ui_multi_select_with_attribute() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "a.md", "# A");
             write_note(temp.path(), "b.md", "# B");
