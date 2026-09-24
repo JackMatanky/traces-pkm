@@ -187,7 +187,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn creates_default_config_when_layers_are_empty() {
+        fn creates_default_config_when_local_and_global_are_empty() {
             let root = PathBuf::from("/project");
             let local_path = root.join(".traces/config.toml");
             let local = LocalConfigFile::<Parsed>::from_content_for_test(

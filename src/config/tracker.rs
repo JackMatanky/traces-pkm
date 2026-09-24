@@ -487,8 +487,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_missing_baseline_when_workspace_trusted_but_companion_missing()
-         {
+        fn returns_missing_baseline_when_companion_absent() {
             // Arrange
             let fixture = Fixture::new();
             fs::create_dir_all(fixture.project_root()).expect("create root");
