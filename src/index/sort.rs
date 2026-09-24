@@ -68,6 +68,7 @@ impl<T: HasPath> SortedByPath<T> {
     /// The returned row's path must stay unchanged: replacing it would break
     /// the sorted invariant [`SortedByPath`] witnesses.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn get_mut_by_path(&mut self, path: &Path) -> Option<&mut T> {
         let index = self.binary_search_by_path(path).ok()?;
         self.0.get_mut(index)

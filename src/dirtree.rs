@@ -215,10 +215,10 @@ impl DirTree {
     #[must_use]
     pub(crate) fn filter<F>(mut self, mut predicate: F) -> Self
     where
-        F: FnMut(&DirNode) -> bool + 'static,
+        F: FnMut(&DirNodeRef<'_>) -> bool + 'static,
     {
         self.prune = Some(Box::new(move |entry: &DirEntry| {
-            !entry.file_type().is_dir() || !predicate(&DirNode(entry.clone()))
+            !entry.file_type().is_dir() || !predicate(&DirNodeRef(entry))
         }));
         self
     }

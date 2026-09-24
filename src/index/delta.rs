@@ -129,18 +129,6 @@ impl InlinkDelta {
 
     #[inline]
     #[must_use]
-    pub(super) fn from_raw(
-        upserted: Box<[(PathBuf, PathBuf)]>,
-        deleted: Box<[(PathBuf, PathBuf)]>,
-    ) -> Self {
-        Self {
-            upserted,
-            deleted,
-        }
-    }
-
-    #[inline]
-    #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         self.upserted.is_empty() && self.deleted.is_empty()
     }

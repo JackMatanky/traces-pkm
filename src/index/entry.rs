@@ -201,6 +201,7 @@ impl RowIndex {
 /// `entries` is a typed path-sorted view, so each lookup is a binary search
 /// against the same order the index stores rows in; a miss means a genuinely
 /// unknown target, not an unsorted slice.
+#[cfg(test)]
 fn attach_inlinks(entries: &mut SortedByPath<FileEntry>, inlinks: InlinkMap) {
     for (target, sources) in inlinks.into_entries() {
         if let Some(entry) = entries.get_mut_by_path(&target) {

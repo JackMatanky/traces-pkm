@@ -302,22 +302,6 @@ impl FileFormat {
             _ => Self::Other,
         }
     }
-
-    /// Classifies `.md` and `.markdown` file names as [`Self::Note`].
-    ///
-    /// Extension matching is ASCII case-insensitive. Every other extension, or
-    /// a missing extension, is [`Self::Other`].
-    fn from_name(name: &FileName) -> Self {
-        match name.extension() {
-            Some(ext)
-                if ext.eq_ignore_ascii_case("md")
-                    || ext.eq_ignore_ascii_case("markdown") =>
-            {
-                Self::Note
-            }
-            _ => Self::Other,
-        }
-    }
 }
 
 /// Reports why a [`FileName`] could not be constructed.
@@ -544,10 +528,7 @@ mod tests {
             #[case] file_name: &str,
             #[case] expected: FileFormat,
         ) {
-            let name = FileName::try_from(Path::new(file_name))
-                .expect("valid file name");
-
-            assert_eq!(FileFormat::from_name(&name), expected);
+            assert_eq!(FileFormat::from_path(Path::new(file_name)), expected);
         }
     }
 }
