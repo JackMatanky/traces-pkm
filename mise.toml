@@ -30,11 +30,7 @@ cargo-deny = "latest"
 "cargo:cargo-mutants" = "latest"
 
 # -- Benchmarking --
-# `critcmp` stays in top-level `[tools]`, not a task-local `tools` entry: task-local
-# tools are only on `PATH` while the declaring task runs, but the `bench --compare`
-# tab-completion runs its lookup at completion time, outside any task, and that
-# lookup searches `PATH` only with no filesystem fallback. Revisit if completions
-# gain a filesystem fallback.
+# Top-level `[tools]` keeps `critcmp` on `PATH` for `bench --compare` tab-completion.
 "cargo:critcmp" = "latest"
 
 # -- Dev Experience --
@@ -60,39 +56,8 @@ ADR_DIRECTORY = "docs/adr/"
 global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 
 [task_config.cache]
-# Global default: tasks whose declared `sources` cover every input that can change
-# the result may be treated as fresh. Opt out per task with `cache = { enabled =
-# false }`; gate tasks take the same pair via `extends = "gate:never-skip"`. Opt
-# out when either:
-#   1. inputs are incomplete (`check`/`fmt` declare no Rust sources, so a
-#      skip would let stale code pass the gate), or
-#   2. the task must run on every invocation (`lint`/`test`/`sweep`/`verify`/
-#      `bench`/`mutants` are gates; `clean`/`setup` are destructive or install
-#      actions; `watch` is interactive).
-# Never-skip needs both clauses; dropping either reopens a skip hole:
-#   (a) `cache = { enabled = false }` blocks only artifact-cache replay;
-#       a local `cache = { enabled = false }` overrides this scoped default.
-#   (b) `outputs = []` blocks the freshness skip, which compares the oldest
-#       output mtime against the newest source mtime; an empty outputs set
-#       is undocumented, so this is empirical. Probe 2026-09-23: with
-#       sources unchanged, `lint`/`test`/`bench` re-executed while `build`/`verify`
-#       printed `sources up-to-date, skipping`, so cache off alone (a) does not
-#       prevent the skip. Re-probe after a `mise` version bump and before changing
-#       `outputs` on a gate.
-# Verify joined gate:never-skip on 2026-09-24: rust-only edits never reached its
-# `sources` (`global_inputs` only), so the gate reported success with exit `0` without
-# running anything.
-# `mise run --force` ignores source/output checking outright; freshness
-# and the artifact cache are separate mechanisms.
-# `mutants` is nondeterministic (wall-clock `--timeout`, a `--baseline run`, run
-# ordering), so replaying cached logs would hide flakiness; caching asserts
-# a rerun's logs match the original's, which cannot hold.
-# `coverage`/`crap` declare explicit outputs (freshness well defined, not
-# gates); `build`/`release`/`doc` are build-if-stale by design; `audit` opts out
-# because `cargo deny` reads `deny.toml`, which its sources do not list.
-# Remote cache: unmade decision, not a won't-do; task.cache.remote_url and
-# remote_namespace are unconfigured, so CI has no remote cache to publish
-# to. Revisit when a remote cache service exists.
+# Freshness cache default. Gates inherit `gate:never-skip`
+# (`cache = false`, `outputs = []`).
 enabled = true
 
 [task_config.input_groups]
