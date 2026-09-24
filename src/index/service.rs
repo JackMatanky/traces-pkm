@@ -21,7 +21,7 @@ use super::{
 use crate::{
     Config, DirTree, Note, TaskConfig,
     config::FrontmatterConfig,
-    file::{FileBase, FileFormat},
+    file::{FileFormat, FileMeta},
     note::{MarkdownParserInput, parse_markdown},
     path::RelativePath,
 };
@@ -237,7 +237,7 @@ impl IndexerService {
 
     /// Parses every Markdown-classified file in `files` in parallel, stopping
     /// at the first parse failure.
-    fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<Note>> {
+    fn parse_notes(&self, files: &[FileMeta]) -> IndexResult<Vec<Note>> {
         files
             .par_iter()
             .filter(|file| file.format() == FileFormat::Note)
@@ -247,7 +247,7 @@ impl IndexerService {
 
     /// Reads and parses the Markdown file at `file`'s path, resolved relative
     /// to this service's root.
-    fn parse_note(&self, file: &FileBase) -> IndexResult<Note> {
+    fn parse_note(&self, file: &FileMeta) -> IndexResult<Note> {
         let full_path = self.root.join(file.path());
         let content =
             std::fs::read_to_string(&full_path).map_err(|source| {
@@ -311,7 +311,7 @@ impl IndexerService {
     /// - [`IndexError::Inspect`] if a file's metadata cannot be inspected.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
-    pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileBase>> {
+    pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileMeta>> {
         let index_db = root.join(INDEX_FILE);
         let paths = DirTree::descendants(root)
             .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
@@ -328,21 +328,21 @@ impl IndexerService {
         let mut files = paths
             .into_par_iter()
             .map(|path| scan_file_metadata(&path, root))
-            .collect::<IndexResult<Vec<FileBase>>>()?;
+            .collect::<IndexResult<Vec<FileMeta>>>()?;
         files.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
 
-/// Builds `path`'s [`FileBase`] from metadata relative to `root`.
-fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileBase> {
+/// Builds `path`'s [`FileMeta`] from metadata relative to `root`.
+fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileMeta> {
     let relative = RelativePath::derive(root, path)?;
     let metadata =
         std::fs::metadata(path).map_err(|source| IndexError::Inspect {
             path: path.to_path_buf(),
             source,
         })?;
-    FileBase::from_metadata(relative, &metadata).map_err(|source| {
+    FileMeta::from_metadata(relative, &metadata).map_err(|source| {
         IndexError::Inspect {
             path: path.to_path_buf(),
             source,
@@ -361,7 +361,7 @@ mod tests {
     use super::{super::IndexError, *};
     use crate::{
         Note,
-        file::FileBase,
+        file::FileMeta,
         index::FileEntry,
         query::{QueryBuilder, QueryService, QuerySet, SourceSelector},
     };
@@ -623,8 +623,8 @@ mod tests {
         #[cfg(unix)]
         use crate::index::tests::fixtures::PermissionsGuard;
 
-        fn paths(files: &[FileBase]) -> Vec<&Path> {
-            files.iter().map(FileBase::path).collect()
+        fn paths(files: &[FileMeta]) -> Vec<&Path> {
+            files.iter().map(FileMeta::path).collect()
         }
 
         #[test]
@@ -1037,7 +1037,7 @@ mod tests {
                     .entries()
                     .first()
                     .map(FileEntry::file)
-                    .map(FileBase::path),
+                    .map(FileMeta::path),
                 Some(Path::new("second.md"))
             );
             assert_eq!(
@@ -1082,7 +1082,7 @@ mod tests {
                     .entries()
                     .first()
                     .map(FileEntry::file)
-                    .map(FileBase::path),
+                    .map(FileMeta::path),
                 Some(Path::new("keep.md"))
             );
         }

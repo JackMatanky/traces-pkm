@@ -18,7 +18,7 @@ use super::{
     sort::SortedByPath,
     store::{IndexDimensions, IndexStore, PersistRequest},
 };
-use crate::{FileBase, Note};
+use crate::{FileMeta, Note};
 
 /// Changed-row counts from an incremental refresh.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -216,7 +216,7 @@ impl NoteScope {
     /// changed files. `Complete` searches the rebuilt, path-sorted set and
     /// returns only the files identified by the file delta.
     #[must_use]
-    pub(super) fn to_upsert(&self, upserted: &[FileBase]) -> Vec<&Note> {
+    pub(super) fn to_upsert(&self, upserted: &[FileMeta]) -> Vec<&Note> {
         match self {
             Self::Modified(notes) => notes.iter().collect(),
             Self::Complete(notes) => upserted
@@ -252,8 +252,8 @@ impl NoteScope {
 /// Scanned-and-diffed state of one index root, before note parsing.
 pub(super) struct RefreshPlan {
     store: IndexStore,
-    current_files: SortedByPath<FileBase>,
-    persisted_files: SortedByPath<FileBase>,
+    current_files: SortedByPath<FileMeta>,
+    persisted_files: SortedByPath<FileMeta>,
     delta: FileDelta,
 }
 
@@ -299,7 +299,7 @@ impl RefreshPlan {
 
     /// Returns the files this state would upsert.
     #[inline]
-    pub(super) fn upserted_files(&self) -> &[FileBase] {
+    pub(super) fn upserted_files(&self) -> &[FileMeta] {
         self.delta.upserted()
     }
 
@@ -372,7 +372,7 @@ impl RefreshPlan {
     /// Only this case leaves link resolution for unedited notes invariant.
     fn is_paths_unchanged(
         delta: &FileDelta,
-        persisted_files: &SortedByPath<FileBase>,
+        persisted_files: &SortedByPath<FileMeta>,
     ) -> bool {
         delta.deleted().is_empty()
             && delta.upserted().iter().all(|file| {
@@ -387,7 +387,7 @@ impl RefreshPlan {
     fn patch_links(
         persisted: &InlinkMap,
         modified_notes: &[Note],
-        current_files: &[FileBase],
+        current_files: &[FileMeta],
     ) -> InlinkMap {
         let edited: HashSet<&Path> =
             modified_notes.iter().map(Note::path).collect();
@@ -400,7 +400,7 @@ impl RefreshPlan {
 /// Computed facts from one reconciliation, not yet applied. Pure data: no
 /// store handle, constructible and assertable without a database.
 pub(super) struct IndexUpdate {
-    current_files: SortedByPath<FileBase>,
+    current_files: SortedByPath<FileMeta>,
     delta: FileDelta,
     inlinks: InlinkReconciliation,
     inlink_delta: InlinkDelta,
@@ -475,7 +475,7 @@ fn merge_refreshed_notes(
 
     if !delta.deleted().is_empty() {
         let deleted: HashSet<&Path> =
-            delta.deleted().iter().map(FileBase::path).collect();
+            delta.deleted().iter().map(FileMeta::path).collect();
         all_notes.retain(|n| !deleted.contains(n.path()));
     }
 
@@ -517,8 +517,8 @@ mod tests {
         #[test]
         fn counts_upserts_deletes_and_link_edges() {
             let delta = FileDelta::compute(
-                &SortedByPath::sorted(vec![FileBase::note_for_test("a.md")]),
-                &SortedByPath::sorted(vec![FileBase::note_for_test("b.md")]),
+                &SortedByPath::sorted(vec![FileMeta::note_for_test("a.md")]),
+                &SortedByPath::sorted(vec![FileMeta::note_for_test("b.md")]),
             );
             let inlink_delta = InlinkDelta::compute(
                 &InlinkMap::default(),
@@ -551,7 +551,7 @@ mod tests {
             let notes =
                 vec![parse_note("a.md", "# A"), parse_note("b.md", "# B")];
             let scope = NoteScope::Modified(notes);
-            let upserted = [FileBase::note_for_test("a.md")];
+            let upserted = [FileMeta::note_for_test("a.md")];
 
             let paths: Vec<_> = scope
                 .to_upsert(&upserted)
@@ -568,8 +568,8 @@ mod tests {
                 vec![parse_note("a.md", "# A"), parse_note("c.md", "# C")];
             let scope = NoteScope::Complete(notes);
             let upserted = [
-                FileBase::note_for_test("a.md"),
-                FileBase::note_for_test("b.md"),
+                FileMeta::note_for_test("a.md"),
+                FileMeta::note_for_test("b.md"),
             ];
 
             let paths: Vec<_> = scope
@@ -585,7 +585,7 @@ mod tests {
         fn returns_no_complete_notes_when_upserted_paths_miss() {
             let notes = vec![parse_note("a.md", "# A")];
             let scope = NoteScope::Complete(notes);
-            let upserted = [FileBase::note_for_test("b.md")];
+            let upserted = [FileMeta::note_for_test("b.md")];
 
             assert_eq!(scope.to_upsert(&upserted), Vec::<&Note>::new());
         }

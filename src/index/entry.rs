@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{inlinks::InlinkMap, sort::SortedByPath};
-use crate::{FileBase, Note};
+use crate::{FileMeta, Note};
 
 /// Persisted file entries with parsed note metadata and derived inbound links.
 ///
@@ -35,7 +35,7 @@ impl WorkspaceIndex {
     #[inline]
     #[must_use]
     pub(crate) fn assemble(
-        files: SortedByPath<FileBase>,
+        files: SortedByPath<FileMeta>,
         notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
@@ -63,7 +63,7 @@ impl WorkspaceIndex {
         let mut parsed = Vec::with_capacity(prepared.len());
         let mut files = Vec::with_capacity(prepared.len());
         for (note, size) in prepared {
-            files.push(FileBase::note_with_size_for_test(note.path(), size));
+            files.push(FileMeta::note_with_size_for_test(note.path(), size));
             parsed.push(note);
         }
 
@@ -76,7 +76,7 @@ impl WorkspaceIndex {
     }
 
     fn assemble_internal(
-        files: SortedByPath<FileBase>,
+        files: SortedByPath<FileMeta>,
         notes: SortedByPath<Note>,
         inlinks: InlinkMap,
     ) -> Self {
@@ -130,13 +130,13 @@ impl WorkspaceIndex {
 /// Inlinks also apply to non-Markdown attachments such as images and PDFs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileEntry {
-    file: FileBase,
+    file: FileMeta,
     note: Option<Box<Note>>,
     inlinks: Box<[PathBuf]>,
 }
 
 impl FileEntry {
-    pub(super) fn new(file: FileBase, note: Option<Note>) -> Self {
+    pub(super) fn new(file: FileMeta, note: Option<Note>) -> Self {
         Self {
             file,
             note: note.map(Box::new),
@@ -144,10 +144,10 @@ impl FileEntry {
         }
     }
 
-    /// Returns the entry's [`FileBase`] metadata.
+    /// Returns the entry's [`FileMeta`] metadata.
     #[inline]
     #[must_use]
-    pub fn file(&self) -> &FileBase {
+    pub fn file(&self) -> &FileMeta {
         &self.file
     }
 
@@ -293,7 +293,7 @@ mod tests {
         fn entry_rows(paths: &[&str]) -> Vec<FileEntry> {
             paths
                 .iter()
-                .map(|&p| FileEntry::new(FileBase::note_for_test(p), None))
+                .map(|&p| FileEntry::new(FileMeta::note_for_test(p), None))
                 .collect()
         }
 

@@ -23,7 +23,7 @@ use super::{
 use crate::{
     DateTimeValue, DateValue, SourceLine, TaskListItem, TaskPriority,
     TaskStatusSymbol,
-    file::FileBase,
+    file::FileMeta,
     index::{FileEntry, RowIndex, WorkspaceIndex},
     note::{ListItem, ListItemType, Note, NoteFieldValue, NoteFieldValueRef},
 };
@@ -154,7 +154,7 @@ impl QueryRow {
     /// Returns the underlying file metadata.
     #[inline]
     #[must_use]
-    pub fn file(&self) -> &FileBase {
+    pub fn file(&self) -> &FileMeta {
         self.entry().file()
     }
 

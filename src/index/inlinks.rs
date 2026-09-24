@@ -42,7 +42,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use super::trie::BaseNameIndex;
 use crate::{
-    BaseNameRef, FileBase,
+    BaseNameRef, FileMeta,
     note::{LinkTarget, Note},
 };
 
@@ -65,7 +65,7 @@ impl InlinkMap {
     /// edge.
     #[inline]
     #[must_use]
-    pub fn new(notes: &[Note], files: &[FileBase]) -> Self {
+    pub fn new(notes: &[Note], files: &[FileMeta]) -> Self {
         let resolver = LinkResolver::new(files);
         let mut flat_edges: Vec<(Target<'_>, Source<'_>)> = notes
             .par_iter()
@@ -244,7 +244,7 @@ impl From<HashMap<PathBuf, Box<[PathBuf]>>> for InlinkMap {
 /// construction once.
 pub(super) fn resolve_edges_for(
     notes: &[Note],
-    files: &[FileBase],
+    files: &[FileMeta],
 ) -> Vec<(PathBuf, PathBuf)> {
     let resolver = LinkResolver::new(files);
     let edge_capacity = notes.iter().map(|note| note.outlinks().len()).sum();
@@ -259,13 +259,13 @@ pub(super) fn resolve_edges_for(
 
 /// Path and basename index used during link resolution.
 struct LinkResolver<'a> {
-    files: &'a [FileBase],
+    files: &'a [FileMeta],
     basename_index: FxHashMap<BaseNameRef<'a>, BaseNameIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
     /// Indexes file basenames in one `O(n)` pass.
-    fn new(files: &'a [FileBase]) -> Self {
+    fn new(files: &'a [FileMeta]) -> Self {
         let mut by_basename: FxHashMap<BaseNameRef<'a>, Vec<&'a Path>> =
             FxHashMap::with_capacity_and_hasher(files.len(), FxBuildHasher);
         for file in files {
@@ -356,7 +356,7 @@ impl<'a> LinkResolver<'a> {
             .binary_search_by(|file| file.path().cmp(path))
             .ok()
             .and_then(|i| self.files.get(i))
-            .map(FileBase::path)
+            .map(FileMeta::path)
     }
 }
 
@@ -385,12 +385,12 @@ mod tests {
     use super::*;
     use crate::{file::FileFormat, note::LinkType, parse_note as parse};
 
-    fn file_for_note(path: &str) -> FileBase {
-        FileBase::note_for_test(path)
+    fn file_for_note(path: &str) -> FileMeta {
+        FileMeta::note_for_test(path)
     }
 
-    fn file_for_attachment(path: &str, format: FileFormat) -> FileBase {
-        FileBase::for_test(path, format)
+    fn file_for_attachment(path: &str, format: FileFormat) -> FileMeta {
+        FileMeta::for_test(path, format)
     }
 
     fn note_with_outlink(path: &str, target: &str, kind: LinkType) -> Note {
@@ -406,7 +406,7 @@ mod tests {
         use super::*;
 
         fn resolve<'a>(
-            files: &'a [FileBase],
+            files: &'a [FileMeta],
             from: &str,
             target: LinkTarget<'_>,
         ) -> Option<Target<'a>> {
@@ -414,8 +414,8 @@ mod tests {
             resolver.resolve(Path::new(from), target)
         }
 
-        fn files_from_notes(paths: &[&str]) -> Vec<FileBase> {
-            let mut files: Vec<FileBase> =
+        fn files_from_notes(paths: &[&str]) -> Vec<FileMeta> {
+            let mut files: Vec<FileMeta> =
                 paths.iter().map(|p| file_for_note(p)).collect();
             files.sort_by(|a, b| a.path().cmp(b.path()));
             files
@@ -760,9 +760,9 @@ mod tests {
 
             fn build_graph(
                 notes: &[Note],
-                extra_files: &[FileBase],
+                extra_files: &[FileMeta],
             ) -> InlinkMap {
-                let mut files: Vec<FileBase> = notes
+                let mut files: Vec<FileMeta> = notes
                     .iter()
                     .map(|n| file_for_note(n.path().to_str().unwrap()))
                     .collect();
@@ -918,7 +918,7 @@ mod tests {
                     parse("target.md", "# Target"),
                 ];
 
-                let mut files: Vec<FileBase> = notes
+                let mut files: Vec<FileMeta> = notes
                     .iter()
                     .map(|n| file_for_note(n.path().to_str().unwrap()))
                     .collect();
@@ -942,7 +942,7 @@ mod tests {
                     parse("standalone.md", "# Standalone"),
                 ];
 
-                let mut files: Vec<FileBase> = notes
+                let mut files: Vec<FileMeta> = notes
                     .iter()
                     .map(|n| file_for_note(n.path().to_str().unwrap()))
                     .collect();
@@ -1232,10 +1232,10 @@ mod tests {
 
             use super::*;
 
-            fn same_basename_files(count: usize) -> Vec<FileBase> {
+            fn same_basename_files(count: usize) -> Vec<FileMeta> {
                 let paths: Vec<String> =
                     (0..count).map(|i| format!("d{i}/note.md")).collect();
-                let mut files: Vec<FileBase> =
+                let mut files: Vec<FileMeta> =
                     paths.iter().map(|p| file_for_note(p)).collect();
                 files.sort_by(|a, b| a.path().cmp(b.path()));
                 files
@@ -1273,7 +1273,7 @@ mod tests {
                 note_with_outlink("w.md", "b", LinkType::Wikilink),
                 note_with_outlink("v.md", "missing", LinkType::Wikilink),
             ];
-            let mut files: Vec<FileBase> =
+            let mut files: Vec<FileMeta> =
                 ["z.md", "y.md", "w.md", "v.md", "a.md", "b.md"]
                     .iter()
                     .map(|p| file_for_note(p))

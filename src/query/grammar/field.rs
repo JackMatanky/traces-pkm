@@ -7,7 +7,7 @@
 //!
 //! # Supported Accessor Namespaces
 //!
-//! - `file.<field>`: Maps to [`FileField`] variants backed by [`FileBase`]
+//! - `file.<field>`: Maps to [`FileField`] variants backed by [`FileMeta`]
 //!   metadata (such as `file.name`, `file.folder`, `file.mtime`, `file.tags`).
 //! - `list.<field>`: Maps to [`ListField`] variants valid on list rows,
 //!   including universal properties (`list.text`, `list.line`, `list.depth`)
@@ -18,31 +18,31 @@
 //! - Bare keys: User-defined frontmatter or inline metadata field names.
 //!
 //! [`NoteFieldValue`]: crate::NoteFieldValue
-//! [`FileBase`]: crate::FileBase
+//! [`FileMeta`]: crate::FileMeta
 use crate::{FieldKey, query::error::FieldPathError, strsim::closest_match};
 
-/// A `file.<field>` accessor backed by [`FileBase`] metadata.
+/// A `file.<field>` accessor backed by [`FileMeta`] metadata.
 ///
 /// Accepted accessor names, including aliases such as `ctime` for `created_at`,
 /// are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
-/// [`FileBase`]: crate::FileBase
+/// [`FileMeta`]: crate::FileMeta
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
     Path,
     Name,
     Folder,
     Size,
-    /// Accesses [`crate::FileBase::created_at`] (falling back to
-    /// [`crate::FileBase::modified_at`]) as a datetime without a UTC offset.
+    /// Accesses [`crate::FileMeta::created_at`] (falling back to
+    /// [`crate::FileMeta::modified_at`]) as a datetime without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`crate::FileBase::created_at`] (falling back to
-    /// [`crate::FileBase::modified_at`]) as a bare date.
+    /// Accesses [`crate::FileMeta::created_at`] (falling back to
+    /// [`crate::FileMeta::modified_at`]) as a bare date.
     CreatedDate,
-    /// Accesses [`crate::FileBase::modified_at`] as a datetime without a UTC
+    /// Accesses [`crate::FileMeta::modified_at`] as a datetime without a UTC
     /// offset.
     ModifiedDateTime,
-    /// Accesses [`crate::FileBase::modified_at`] as a bare date.
+    /// Accesses [`crate::FileMeta::modified_at`] as a bare date.
     ModifiedDate,
     /// Accesses note-level tags from the row's file.
     Tags,

@@ -15,7 +15,7 @@ use super::{error::StoreResult, store::IndexStore};
 /// File metadata table.
 ///
 /// Key: project-relative path as UTF-8 bytes
-/// Value: serialized [`crate::FileBase`]
+/// Value: serialized [`crate::FileMeta`]
 pub(super) const FILES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("files");
 

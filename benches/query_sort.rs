@@ -367,7 +367,7 @@ fn bench_sort_by_title(c: &mut Criterion) {
 ///
 /// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// Fixture indexes are built in memory outside timing; synthetic [`FileBase`]
+/// Fixture indexes are built in memory outside timing; synthetic [`FileMeta`]
 /// timestamps are created during fixture setup rather than by writing files.
 ///
 /// This is a DateTime-key resolution and tie-heavy comparison path, not a

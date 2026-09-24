@@ -1,4 +1,4 @@
-//! Redb persistence for [`FileBase`], [`Note`], and derived inlinks.
+//! Redb persistence for [`FileMeta`], [`Note`], and derived inlinks.
 //!
 //! [`IndexStore`] owns the database connection and drives the schema in
 //! `super::tables`; callers use [`super::IndexerService`] rather than direct
@@ -32,11 +32,11 @@ use super::{
         PATHS_BY_TAG, TABLES, TAGS_BY_PATH,
     },
 };
-use crate::{FileBase, Note, Tag, file::FileFormat};
+use crate::{FileMeta, Note, Tag, file::FileFormat};
 
 /// Stored files, path-sorted notes, and target-keyed inlinks loaded together.
 pub(super) type StoreSnapshot =
-    (SortedByPath<FileBase>, SortedByPath<Note>, InlinkMap);
+    (SortedByPath<FileMeta>, SortedByPath<Note>, InlinkMap);
 
 /// Store-owned persistence request for full rebuilds and incremental refreshes.
 pub(super) struct PersistRequest<'a> {
@@ -205,7 +205,7 @@ impl IndexStore {
     pub(crate) fn read_files_batch<'a>(
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
-    ) -> IndexResult<Vec<FileBase>> {
+    ) -> IndexResult<Vec<FileMeta>> {
         self.read_batch(ReadSource::Files, paths)
     }
 
@@ -423,10 +423,10 @@ impl IndexStore {
         Ok(SortedByPath::sorted(items))
     }
 
-    /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
+    /// Loads every stored [`FileMeta`] and [`Note`] (sorted by path) and every
     /// derived inlink edge. Stale or orphaned edges are dropped.
     ///
-    /// Targets resolve through every stored [`FileBase`] because attachments
+    /// Targets resolve through every stored [`FileMeta`] because attachments
     /// can carry inlinks; sources resolve through stored [`Note`] rows only.
     ///
     /// # Errors
@@ -441,10 +441,10 @@ impl IndexStore {
             || self.read_table(&txn, FILES),
             || self.collect_notes(&txn),
         );
-        let files: SortedByPath<FileBase> = files_result?;
+        let files: SortedByPath<FileMeta> = files_result?;
         let notes = notes_result?;
         let target_paths = Self::path_by_key(
-            files.as_slice().iter().map(FileBase::path),
+            files.as_slice().iter().map(FileMeta::path),
             files.as_slice().len(),
         );
         let source_paths = Self::path_by_key(
@@ -471,14 +471,14 @@ impl IndexStore {
         Ok(self.collect_notes(&txn)?)
     }
 
-    /// Reads every persisted [`FileBase`], sorted by path.
+    /// Reads every persisted [`FileMeta`], sorted by path.
     ///
     /// # Errors
     ///
     /// - [`Store`] if opening the transaction or reading `FILES` fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn read_all_files(&self) -> IndexResult<SortedByPath<FileBase>> {
+    pub(super) fn read_all_files(&self) -> IndexResult<SortedByPath<FileMeta>> {
         let txn = self.begin_read()?;
         self.read_table(&txn, FILES)
     }
@@ -492,19 +492,19 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_all_links(
         &self,
-        files: &SortedByPath<FileBase>,
+        files: &SortedByPath<FileMeta>,
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let files_slice = files.as_slice();
         let target_paths = Self::path_by_key(
-            files_slice.iter().map(FileBase::path),
+            files_slice.iter().map(FileMeta::path),
             files_slice.len(),
         );
         let source_paths = Self::path_by_key(
             files_slice
                 .iter()
                 .filter(|file| file.format() == FileFormat::Note)
-                .map(FileBase::path),
+                .map(FileMeta::path),
             files_slice.len(),
         );
         self.read_links(&txn, LINKS, &target_paths, &source_paths)
@@ -1215,7 +1215,7 @@ impl IndexStore {
     fn apply_diff_deletions(
         &self,
         txn: &WriteTransaction,
-        deleted: &[FileBase],
+        deleted: &[FileMeta],
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         if deleted.is_empty() {
@@ -1229,7 +1229,7 @@ impl IndexStore {
     fn delete_files_and_notes(
         &self,
         txn: &WriteTransaction,
-        deleted: &[FileBase],
+        deleted: &[FileMeta],
     ) -> IndexResult<()> {
         let mut files_table = txn
             .open_table(FILES)
@@ -1252,7 +1252,7 @@ impl IndexStore {
     fn delete_index_entries_for_paths(
         &self,
         txn: &WriteTransaction,
-        deleted: &[FileBase],
+        deleted: &[FileMeta],
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         for dimension in dimensions.iter() {
@@ -1294,7 +1294,7 @@ impl IndexStore {
     fn apply_diff_upserts(
         &self,
         txn: &WriteTransaction,
-        upserted: &[FileBase],
+        upserted: &[FileMeta],
     ) -> IndexResult<()> {
         let mut files_table = txn
             .open_table(FILES)
@@ -1473,7 +1473,7 @@ impl WriteTarget {
                 txn,
                 FILES,
                 entries.iter().map(FileEntry::file),
-                FileBase::path,
+                FileMeta::path,
             ),
             Self::Notes => store.write_table(
                 txn,
@@ -1634,7 +1634,7 @@ mod tests {
 
         fn store_with_a_tagged_note(root: &Path) -> IndexStore {
             let store = IndexStore::open(root).expect("open store");
-            let files = vec![FileBase::note_for_test(Path::new("tagged.md"))];
+            let files = vec![FileMeta::note_for_test(Path::new("tagged.md"))];
             let notes = vec![parse("tagged.md", "# T\n\nTagged #x body.")];
             write_all_parts(&store, &files, &notes, &InlinkMap::default())
                 .expect("persist tagged note");
@@ -1687,7 +1687,7 @@ mod tests {
 
     fn write_all_parts(
         store: &IndexStore,
-        files: &[FileBase],
+        files: &[FileMeta],
         notes: &[Note],
         links: &InlinkMap,
     ) -> IndexResult<()> {
@@ -1719,9 +1719,9 @@ mod tests {
         txn.commit().expect("commit raw link");
     }
 
-    /// Builds note `FileBase` fixtures in caller-provided order.
-    fn note_files(paths: &[&str]) -> Vec<FileBase> {
-        paths.iter().map(|&p| FileBase::note_for_test(p)).collect()
+    /// Builds note `FileMeta` fixtures in caller-provided order.
+    fn note_files(paths: &[&str]) -> Vec<FileMeta> {
+        paths.iter().map(|&p| FileMeta::note_for_test(p)).collect()
     }
 
     #[test]
@@ -1729,13 +1729,13 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let db = IndexStore::open(temp.path()).expect("open db");
         let txn = db.begin_write().expect("begin write");
-        let rows = [FileBase::note_for_test("hello.md")];
-        db.write_table(&txn, TEST_TABLE, &rows, FileBase::path)
+        let rows = [FileMeta::note_for_test("hello.md")];
+        db.write_table(&txn, TEST_TABLE, &rows, FileMeta::path)
             .expect("write table");
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let loaded: SortedByPath<FileBase> =
+        let loaded: SortedByPath<FileMeta> =
             db.read_table(&read_txn, TEST_TABLE).expect("read table");
         assert_eq!(loaded.as_slice(), rows);
     }
@@ -1754,7 +1754,7 @@ mod tests {
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let result: IndexResult<SortedByPath<FileBase>> =
+        let result: IndexResult<SortedByPath<FileMeta>> =
             db.read_table(&read_txn, TEST_TABLE);
 
         assert!(matches!(
@@ -1965,7 +1965,7 @@ mod tests {
                 .collect();
             let files: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
                 .iter()
-                .map(|&p| FileBase::note_for_test(p))
+                .map(|&p| FileMeta::note_for_test(p))
                 .collect();
             write_all_parts(&store, &files, &notes, &links)
                 .expect("persist links");
@@ -2151,7 +2151,7 @@ mod tests {
 
             let weird_path = non_unicode_path();
 
-            let file = FileBase::note_for_test(weird_path.clone());
+            let file = FileMeta::note_for_test(weird_path.clone());
 
             let note = parse(&weird_path, "content");
             let files = vec![file];
@@ -2173,8 +2173,8 @@ mod tests {
             let weird = non_unicode_path();
             let normal = PathBuf::from("normal.md");
             let mut files = vec![
-                FileBase::note_for_test(weird.clone()),
-                FileBase::note_for_test(normal.clone()),
+                FileMeta::note_for_test(weird.clone()),
+                FileMeta::note_for_test(normal.clone()),
             ];
             files.sort_by(|a, b| a.path().cmp(b.path()));
             let mut notes = vec![
@@ -2225,8 +2225,8 @@ mod tests {
             let attachment = PathBuf::from("attachment.png");
             let note_path = PathBuf::from("note.md");
             let files = vec![
-                FileBase::for_test(attachment.clone(), FileFormat::Other),
-                FileBase::note_for_test(note_path.clone()),
+                FileMeta::for_test(attachment.clone(), FileFormat::Other),
+                FileMeta::note_for_test(note_path.clone()),
             ];
             let notes = vec![parse(&note_path, "# Note")];
             let links = make_inlinks(&[(
@@ -2249,8 +2249,8 @@ mod tests {
             let weird = non_unicode_path();
             let note_path = PathBuf::from("note.md");
             let files = vec![
-                FileBase::for_test(weird.clone(), FileFormat::Other),
-                FileBase::note_for_test(note_path.clone()),
+                FileMeta::for_test(weird.clone(), FileFormat::Other),
+                FileMeta::note_for_test(note_path.clone()),
             ];
             let notes = vec![parse(&note_path, "# Note")];
             let links = make_inlinks(&[(
@@ -2446,10 +2446,10 @@ mod tests {
                 .expect("value present");
             let raw_bytes = raw.value().to_vec();
 
-            assert!(postcard::from_bytes::<FileBase>(&raw_bytes).is_ok());
+            assert!(postcard::from_bytes::<FileMeta>(&raw_bytes).is_ok());
             let decodes_as_toml = str::from_utf8(&raw_bytes)
                 .ok()
-                .and_then(|text| toml::from_str::<FileBase>(text).ok());
+                .and_then(|text| toml::from_str::<FileMeta>(text).ok());
             assert!(decodes_as_toml.is_none());
         }
     }

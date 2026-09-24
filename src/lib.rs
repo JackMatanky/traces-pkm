@@ -41,7 +41,7 @@
 //! - [`SourceLine`]: Strongly-typed 1-indexed source line numbers.
 //! - [`TaskStatus`], [`TaskStatusMap`], [`TaskStatusType`]: Task status symbols
 //!   and lookup tables.
-//! - [`FileBase`]: Filesystem metadata for indexed files.
+//! - [`FileMeta`]: Filesystem metadata for indexed files.
 //! - [`DialogProvider`], [`PresetDialogProvider`], [`TerminalDialogProvider`]:
 //!   Interactive and preset dialog prompts.
 //! - [`parse_markdown`], [`MarkdownParserInput`]: Note parsing entry points.
@@ -102,9 +102,9 @@ pub(crate) use duration::{DurationSeconds, DurationUnit, DurationValue};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };
-pub use file::FileBase;
 #[cfg(any(test, feature = "test-utils"))]
 pub use file::FileFormat;
+pub use file::FileMeta;
 pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_tracker::{
     CleanMode, FilePathTracker, FilePathTrackerError,

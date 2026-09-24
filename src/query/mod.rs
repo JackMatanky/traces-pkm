@@ -72,7 +72,7 @@
 //! # }
 //! ```
 //!
-//! [`FileBase`]: crate::file::FileBase
+//! [`FileMeta`]: crate::file::FileMeta
 //! [`WorkspaceIndex`]: crate::index::WorkspaceIndex
 //! [`FileClassExpander`]: crate::query::grammar::FileClassExpander
 //! [`Note`]: crate::note::Note
@@ -135,7 +135,7 @@ pub(super) mod test_support {
     pub(super) fn find_base<'a>(
         entries: &'a [crate::index::FileEntry],
         path: &Path,
-    ) -> &'a crate::file::FileBase {
+    ) -> &'a crate::file::FileMeta {
         find_entry(entries, path).file()
     }
 }

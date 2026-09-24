@@ -1,11 +1,11 @@
 //! Captures filesystem metadata and decomposes file names for the project
 //! index.
 //!
-//! [`FileBase`] stores the metadata the indexer persists for every regular file
+//! [`FileMeta`] stores the metadata the indexer persists for every regular file
 //! under a project root: project-root-relative path, parent folder, timestamps,
 //! byte size, and [`FileFormat`] classification. [`FileFormat::Note`] files
 //! also get parsed into [`crate::Note`] metadata; [`FileFormat::Other`] files
-//! keep only their [`FileBase`].
+//! keep only their [`FileMeta`].
 //!
 //! File-name newtypes decompose a path's final component for index lookup:
 //!
@@ -37,7 +37,7 @@ use crate::path::{FolderRef, RelativePath};
 /// Stored paths are project-root-relative so the index can move with the
 /// project directory.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct FileBase {
+pub struct FileMeta {
     #[serde(with = "crate::path::codec")]
     path: PathBuf,
     name: BaseName,
@@ -49,8 +49,8 @@ pub struct FileBase {
     size: u64,
 }
 
-impl FileBase {
-    /// Builds a [`FileBase`] from filesystem metadata.
+impl FileMeta {
+    /// Builds a [`FileMeta`] from filesystem metadata.
     ///
     /// `relative` is a project-root-relative path already validated by the
     /// scanner. The modification time is read from `metadata`; creation time is
@@ -84,7 +84,7 @@ impl FileBase {
         })
     }
 
-    /// Builds a [`FileBase`] with custom fields for test fixtures.
+    /// Builds a [`FileMeta`] with custom fields for test fixtures.
     ///
     /// Sets `created_at` to [`None`], `modified_at` to [`SystemTime::now()`],
     /// and `size` to 10.
@@ -108,7 +108,7 @@ impl FileBase {
         }
     }
 
-    /// Builds a [`FileBase`] for a Markdown note with custom paths for test
+    /// Builds a [`FileMeta`] for a Markdown note with custom paths for test
     /// fixtures.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
@@ -117,7 +117,7 @@ impl FileBase {
         Self::for_test(path, FileFormat::Note)
     }
 
-    /// Builds a [`FileBase`] for a Markdown note with custom paths and byte
+    /// Builds a [`FileMeta`] for a Markdown note with custom paths and byte
     /// size for test fixtures.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
@@ -187,7 +187,7 @@ impl FileBase {
     }
 }
 
-impl crate::path::HasPath for FileBase {
+impl crate::path::HasPath for FileMeta {
     fn path(&self) -> &Path {
         Self::path(self)
     }
@@ -290,7 +290,7 @@ impl std::borrow::Borrow<str> for BaseNameRef<'_> {
 /// Coarse file classification used by the two-tier index.
 ///
 /// Markdown notes get parsed [`crate::Note`] metadata in addition to their
-/// [`FileBase`]. Other files only keep general file metadata.
+/// [`FileMeta`]. Other files only keep general file metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum FileFormat {
     /// Markdown file parsed into a [`crate::Note`].
@@ -331,13 +331,13 @@ mod tests {
 
     use super::*;
 
-    /// Builds a `FileBase` with `created_at`/`modified_at` set directly, for
+    /// Builds a `FileMeta` with `created_at`/`modified_at` set directly, for
     /// exercising timestamp accessor behavior without touching the filesystem.
     fn record_with(
         created_at: Option<SystemTime>,
         modified_at: SystemTime,
-    ) -> FileBase {
-        FileBase {
+    ) -> FileMeta {
+        FileMeta {
             path: PathBuf::from("note.md"),
             name: BaseName::from(
                 &FileName::try_from(Path::new("note.md"))
@@ -374,7 +374,7 @@ mod tests {
                 let relative = RelativePath::derive(temp.path(), &file)
                     .expect("derive relative path");
                 let record =
-                    FileBase::from_metadata(relative, &metadata_for(&file))
+                    FileMeta::from_metadata(relative, &metadata_for(&file))
                         .expect("build record");
 
                 assert_eq!(record.name().as_str(), "todo");
@@ -394,7 +394,7 @@ mod tests {
                 let relative = RelativePath::derive(temp.path(), &file)
                     .expect("derive relative path");
                 let record =
-                    FileBase::from_metadata(relative, &metadata_for(&file))
+                    FileMeta::from_metadata(relative, &metadata_for(&file))
                         .expect("build record");
 
                 assert_eq!(record.name().as_str(), "readme");
@@ -431,9 +431,9 @@ mod tests {
 
         #[test]
         fn file_base_postcard_roundtrip() {
-            let file = FileBase::note_for_test("test.md");
+            let file = FileMeta::note_for_test("test.md");
             let bytes = postcard::to_allocvec(&file).expect("serialize");
-            let decoded: FileBase =
+            let decoded: FileMeta =
                 postcard::from_bytes(&bytes).expect("deserialize");
             assert_eq!(file, decoded);
         }

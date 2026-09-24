@@ -1,7 +1,7 @@
 //! Parsed-note fixtures for in-memory benchmarks.
 //!
 //! Use this module when the benchmark needs [`Note`] values or matching
-//! [`FileBase`] records but not a real directory tree. Every generator returns
+//! [`FileMeta`] records but not a real directory tree. Every generator returns
 //! notes sorted by path so [`InlinkMap`](traces_pkm::InlinkMap) callers get
 //! deterministic input order.
 //!
@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use traces_pkm::{FileBase, Note};
+use traces_pkm::{FileMeta, Note};
 
 use super::content::{
     attachment_note_source, duplicate_link_note_source, linked_note_source,
@@ -24,10 +24,10 @@ pub(crate) fn parse_note(path: &Path, content: &str) -> Note {
     traces_pkm::parse_note(path, content)
 }
 
-/// Returns sorted [`FileBase`] note records matching `notes`.
-pub(crate) fn file_records_for_notes(notes: &[Note]) -> Vec<FileBase> {
-    let mut files: Vec<FileBase> =
-        notes.iter().map(|note| FileBase::note_for_test(note.path())).collect();
+/// Returns sorted [`FileMeta`] note records matching `notes`.
+pub(crate) fn file_records_for_notes(notes: &[Note]) -> Vec<FileMeta> {
+    let mut files: Vec<FileMeta> =
+        notes.iter().map(|note| FileMeta::note_for_test(note.path())).collect();
     files.sort_by(|a, b| a.path().cmp(b.path()));
     files
 }
@@ -128,7 +128,7 @@ pub(crate) fn generate_ambiguous_target_link_notes(
 }
 
 /// Generates parsed notes that link to attachment-looking paths plus matching
-/// [`FileBase`] records.
+/// [`FileMeta`] records.
 ///
 /// Use this for in-memory [`InlinkMap`](traces_pkm::InlinkMap) benchmarks. It
 /// does not create files on disk; use [`super::project::create_project`] with
@@ -136,21 +136,21 @@ pub(crate) fn generate_ambiguous_target_link_notes(
 /// when a benchmark needs real temporary attachment files.
 pub(crate) fn generate_attachment_link_notes(
     note_count: usize,
-) -> (Vec<Note>, Vec<FileBase>) {
+) -> (Vec<Note>, Vec<FileMeta>) {
     let mut notes = Vec::with_capacity(note_count);
     let mut files = Vec::with_capacity(note_count.saturating_add(40));
     for i in 0..note_count {
         let path = PathBuf::from(format!("note-{i}.md"));
         let content = attachment_note_source(i);
         notes.push(parse_note(&path, &content));
-        files.push(FileBase::note_for_test(path));
+        files.push(FileMeta::note_for_test(path));
     }
     for i in 0..20 {
-        files.push(FileBase::for_test(
+        files.push(FileMeta::for_test(
             format!("assets/image-{i}.png"),
             traces_pkm::FileFormat::Other,
         ));
-        files.push(FileBase::for_test(
+        files.push(FileMeta::for_test(
             format!("docs/spec-{i}.pdf"),
             traces_pkm::FileFormat::Other,
         ));

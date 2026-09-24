@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use super::{inlinks::InlinkMap, sort::SortedByPath};
-use crate::FileBase;
+use crate::FileMeta;
 
 /// Computed difference between disk files and persisted index metadata.
 ///
@@ -12,15 +12,15 @@ use crate::FileBase;
 /// inherit that order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct FileDelta {
-    upserted: Box<[FileBase]>,
-    deleted: Box<[FileBase]>,
+    upserted: Box<[FileMeta]>,
+    deleted: Box<[FileMeta]>,
 }
 
 impl FileDelta {
     /// Computes added, modified, and deleted files.
     pub(super) fn compute(
-        current: &SortedByPath<FileBase>,
-        persisted: &SortedByPath<FileBase>,
+        current: &SortedByPath<FileMeta>,
+        persisted: &SortedByPath<FileMeta>,
     ) -> Self {
         let mut upserted = Vec::new();
         let mut deleted = Vec::new();
@@ -71,14 +71,14 @@ impl FileDelta {
     /// Returns added or changed files, ascending by path.
     #[inline]
     #[must_use]
-    pub(super) fn upserted(&self) -> &[FileBase] {
+    pub(super) fn upserted(&self) -> &[FileMeta] {
         &self.upserted
     }
 
     /// Returns removed files, ascending by path.
     #[inline]
     #[must_use]
-    pub(super) fn deleted(&self) -> &[FileBase] {
+    pub(super) fn deleted(&self) -> &[FileMeta] {
         &self.deleted
     }
 }
@@ -213,7 +213,7 @@ mod tests {
             let delta = FileDelta::compute(&current, &previous);
 
             let deleted_paths: Vec<_> =
-                delta.deleted().iter().map(FileBase::path).collect();
+                delta.deleted().iter().map(FileMeta::path).collect();
             assert_eq!(deleted_paths, [Path::new("a.md")]);
         }
 
@@ -234,7 +234,7 @@ mod tests {
             let delta = FileDelta::compute(&current, &previous);
 
             let deleted_paths: Vec<_> =
-                delta.deleted().iter().map(FileBase::path).collect();
+                delta.deleted().iter().map(FileMeta::path).collect();
             assert_eq!(deleted_paths, [Path::new("image.png")]);
         }
 
@@ -254,7 +254,7 @@ mod tests {
             let delta = FileDelta::compute(&current, &previous);
 
             let upserted_paths: Vec<_> =
-                delta.upserted().iter().map(FileBase::path).collect();
+                delta.upserted().iter().map(FileMeta::path).collect();
             assert_eq!(upserted_paths, [Path::new("a.md")]);
             assert_eq!(delta.deleted(), []);
         }
