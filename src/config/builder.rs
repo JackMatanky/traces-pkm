@@ -1,9 +1,10 @@
-//! Merges local and global config layers into one resolved [`Config`].
+//! Merges local and global layers into one resolved [`Config`].
 //!
 //! [`ConfigBuilder`] applies local-over-global precedence field by field,
-//! resolving relative paths (such as template directories) against each layer's
-//! own config file root before the layers are merged, so a global config's
-//! relative paths never resolve against the local project root by mistake.
+//! resolving relative paths (such as template directories) against each
+//! layer's own config file root before the local and global layers are
+//! merged, so a global config's relative paths never resolve against the
+//! local project root by mistake.
 
 use std::path::PathBuf;
 
@@ -30,8 +31,8 @@ pub(crate) struct ConfigBuilder {
 }
 
 impl ConfigBuilder {
-    /// Creates a new builder for `root` with `local` and optional `global`
-    /// config layers.
+    /// Creates a new builder for `root` with the local and global layers
+    /// (`local`, optional `global`).
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -46,7 +47,7 @@ impl ConfigBuilder {
         }
     }
 
-    /// Merges layers and builds the resolved [`Config`].
+    /// Merges local and global layers and builds the resolved [`Config`].
     ///
     /// # Errors
     ///
