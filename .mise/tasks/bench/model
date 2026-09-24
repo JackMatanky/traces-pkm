@@ -10,7 +10,7 @@
 
 """Fit performance models to Criterion benchmark output.
 
-Pipeline (load -> fit -> analyze -> render):
+Pipeline (`load -> fit -> analyze -> render`):
 
 1. :class:`CriterionRepository` walks the Criterion JSON tree and groups
    measurements into series (a group's flat sweep, or ``<group>/<function>``
@@ -23,7 +23,7 @@ Pipeline (load -> fit -> analyze -> render):
    by default, or a single :class:`SummaryReporter` box with
    ``--summary [count]``.
 
-Exit code 1 if the criterion directory is missing, no usable series are found,
+Exit code ``1`` if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
 """
 
@@ -1062,9 +1062,9 @@ class SummaryReporter:
 
 
 class SeriesPlotRenderer:
-    """Renders a scatter plot with the fitted curve via plotext.
+    """Renders a scatter plot with the fitted curve via `plotext`.
 
-    One plot block per series; imports plotext lazily so the default report path
+    One plot block per series; imports `plotext` lazily so the default report path
     never pays for it.
     """
 
@@ -1132,7 +1132,7 @@ class CliOptions:
 
         ``--summary`` is a value-optional flag: the variable is unset when
         the flag is absent, ``""`` when given bare (default worst count),
-        and the count itself when given a value. Direct (non-mise)
+        and the count itself when given a value. Direct (non-``mise``)
         invocation falls back to ``argv`` for the directory.
 
         Args:
@@ -1175,13 +1175,13 @@ class CliOptions:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the load -> fit -> render pipeline.
+    """Run the `load -> fit -> render` pipeline.
 
     Args:
         argv: Positional arguments (defaults to ``sys.argv[1:]``).
 
     Returns:
-        0 when every series fit; 1 on missing/empty criterion output or any
+        ``0`` when every series fit; ``1`` on missing/empty criterion output or any
         per-series fit failure (failures never abort the loop; successful series
         still report).
     """

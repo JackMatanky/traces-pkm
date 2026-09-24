@@ -8,7 +8,7 @@
 #USAGE }
 
 # Prints which benchmark groups have results on disk. Wording describes what is
-# on disk, never what the run just did: runs after every bench mode, including
+# on disk, never what the run just did: runs after every `bench` mode, including
 # failures.
 
 # shellcheck disable=SC2154  # usage_* are injected by mise
@@ -23,14 +23,15 @@ has_criterion_output() {
 #######################################
 # Count sizes with results in one group.
 #
-# Handles flat (<group>/<size>/new/) and nested (<group>/<function>/<size>/new/)
-# layouts, summed together so multi-function groups are not omitted from the
+# Handles flat (`<group>/<size>/new/`) and nested
+# (`<group>/<function>/<size>/new/`) layouts, summed together so multi-function
+# groups are not omitted from the
 # summary.
 #
 # Arguments:
-#   group_dir: path to the group directory
+#   `group_dir`: path to the group directory
 # Outputs:
-#   Writes count to stdout
+#   Writes count to `stdout`
 #######################################
 count_sizes_with_results() {
   local group_dir="${1}"
@@ -39,9 +40,9 @@ count_sizes_with_results() {
 
   for child_dir in "${group_dir}"*/; do
     [[ -d "${child_dir}" ]] || continue
-    # estimates.json is criterion's private, version-coupled layout: `grep` this
-    # file on criterion bumps. Sanctioned interfaces are csv_output (raw.csv)
-    # and --message-format=json.
+    # `estimates.json` is criterion's private, version-coupled layout: `grep` this
+    # file on criterion bumps. Sanctioned interfaces are `csv_output` (`raw.csv`)
+    # and `--message-format=json`.
     if [[ -f "${child_dir}/new/estimates.json" ]]; then
       (( count += 1 ))
       continue
@@ -61,9 +62,9 @@ count_sizes_with_results() {
 # Print a single benchmark group entry.
 #
 # Arguments:
-#   group_dir: path to the group directory
+#   `group_dir`: path to the group directory
 # Outputs:
-#   Writes "  - <name>: <count> sizes" to stdout
+#   Writes `  - <name>: <count> sizes` to `stdout`
 #######################################
 print_group_entry() {
   local group_dir="${1}"
@@ -83,7 +84,7 @@ print_group_entry() {
 # Iterate groups and print those with results.
 #
 # Outputs:
-#   Writes group entries to stdout
+#   Writes group entries to `stdout`
 # Returns:
 #   0 if any groups were printed, 1 otherwise
 #######################################
@@ -96,7 +97,7 @@ print_groups() {
     group_name="$(basename "${group_dir}")"
 
     if [[ "${has_groups}" == "false" ]]; then
-      # "on disk", not "measured": depends_post also runs after --mode test,
+      # "on disk", not "measured": `depends_post` also runs after `--mode test`,
       # which measures nothing.
       echo "### Groups with results on disk:"
       has_groups=true
@@ -122,9 +123,9 @@ print_groups() {
 # Arguments:
 #   None
 # Outputs:
-#   Writes "YYYY-MM-DD HH:MM" to stdout
+#   Writes `YYYY-MM-DD HH:MM` to `stdout`
 # Returns:
-#   0 if mtime printed, 1 otherwise; safe under set -e because callers use it in
+#   `0` if mtime printed, `1` otherwise; safe under `set -e` because callers use it in
 #   an if condition
 #######################################
 report_generated_at() {
@@ -132,20 +133,20 @@ report_generated_at() {
 
   [[ -f "${report_html}" ]] || return 1
   # `date -r FILE`: portable across BSD `date` (macOS) and GNU `date`
-  # (-r/--reference=FILE); no `stat(1)` flag is common to both.
+# (`-r`/`--reference=FILE`); no `stat(1)` flag is common to both.
   date -r "${report_html}" '+%Y-%m-%d %H:%M' 2>/dev/null || return 1
 }
 
 #######################################
 # Print the summary footer with usage hints.
 #
-# Cite report/index.html only when it exists: criterion 0.8.2 joins exactly this
+# Cite `report/index.html` only when it exists: criterion `0.8.2` joins exactly this
 # path under each benchmark. Some writeups still show the plural
-# target/criterion/reports/index.html, which is stale for 0.8.x; do not
+# `target/criterion/reports/index.html`, which is stale for `0.8.x`; do not
 # "correct" this footer to match them.
 #
 # Outputs:
-#   Writes footer to stdout
+#   Writes footer to `stdout`
 #######################################
 print_footer() {
   local report_html="${CRITERION_DIR}/report/index.html"
@@ -170,7 +171,7 @@ print_footer() {
 # Arguments:
 #   None
 # Outputs:
-#   Writes benchmark summary to stdout
+#   Writes benchmark summary to `stdout`
 #######################################
 main() {
   if ! has_criterion_output; then
