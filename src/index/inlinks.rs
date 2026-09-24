@@ -78,7 +78,7 @@ impl InlinkMap {
             })
             .collect();
 
-        flat_edges.sort_unstable();
+        flat_edges.par_sort_unstable();
         flat_edges.dedup();
         Self::from_flat_edges(flat_edges)
     }

@@ -341,7 +341,7 @@ impl IndexerService {
             .into_par_iter()
             .map(|path| scan_file_metadata(&path, root))
             .collect::<IndexResult<Vec<FileMeta>>>()?;
-        files.sort_by(|a, b| a.path().cmp(b.path()));
+        files.par_sort_unstable_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
