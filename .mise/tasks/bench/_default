@@ -55,6 +55,7 @@
 #USAGE }
 #USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"
 #USAGE flag "--model" help="Fit performance models to criterion output after benchmarking"
+#USAGE flag "--plot" help="Render fitted model plots in the terminal (requires --model)"
 #USAGE flag "--verbose" negate="--no-verbose" default=#true help="Criterion detailed reporting (default on; `--no-verbose` terse)"
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to `cargo bench`"
@@ -324,6 +325,12 @@ main() {
     fi
   fi
 
+  if [[ "${usage_plot:-false}" == "true" \
+    && "${usage_model:-false}" != "true" ]]; then
+    printf 'bench: --plot requires --model\n' >&2
+    return 2
+  fi
+
   build_criterion_args
 
   local baseline
@@ -365,6 +372,7 @@ main() {
     else
       model_cmd=(mise run bench:model)
     fi
+    [[ "${usage_plot:-false}" == "true" ]] && model_cmd+=(--plot)
     "${model_cmd[@]}"
   fi
 }
