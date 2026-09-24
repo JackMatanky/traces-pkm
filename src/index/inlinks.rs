@@ -9,13 +9,13 @@
 //!
 //! [`LinkResolver`] resolves each [`Note`] outlink by trying an exact path, the
 //! same path with an implied `.md` extension, then the nearest indexed file
-//! sharing a basename-only Wikilink stem. Equal-distance stem matches remain
-//! unresolved.
+//! sharing a basename-only Wikilink target. Equal-distance basename matches
+//! remain unresolved.
 //!
-//! # Stem index design
+//! # Basename index design
 //!
-//! Most file stems are unique, so a flat linear scan is fastest for the common
-//! case. When a stem has many candidates (≥
+//! Most file basenames are unique, so a flat linear scan is fastest for the
+//! common case. When a basename has many candidates (≥
 //! [`crate::index::trie::TRIE_THRESHOLD`]), a `CandidateTrie` precomputes
 //! per-folder subtree aggregates so nearest-
 //! candidate queries run in `O(depth)` instead of `O(candidates)`. The trie
@@ -240,8 +240,8 @@ impl From<HashMap<PathBuf, Box<[PathBuf]>>> for InlinkMap {
 
 /// Resolves notes into edge pairs for [`InlinkMap::with_edges`].
 ///
-/// Shares one [`LinkResolver`] so batch refresh pays stem-index construction
-/// once.
+/// Shares one [`LinkResolver`] so batch refresh pays basename-index
+/// construction once.
 pub(super) fn resolve_edges_for(
     notes: &[Note],
     files: &[FileBase],
@@ -257,37 +257,39 @@ pub(super) fn resolve_edges_for(
     edges
 }
 
-/// Path and stem index used during link resolution.
+/// Path and basename index used during link resolution.
 struct LinkResolver<'a> {
     files: &'a [FileBase],
-    stem_index: FxHashMap<BaseNameRef<'a>, BaseNameIndex<'a>>,
+    basename_index: FxHashMap<BaseNameRef<'a>, BaseNameIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
-    /// Indexes file stems in one `O(n)` pass.
+    /// Indexes file basenames in one `O(n)` pass.
     fn new(files: &'a [FileBase]) -> Self {
-        let mut by_stem: FxHashMap<BaseNameRef<'a>, Vec<&'a Path>> =
+        let mut by_basename: FxHashMap<BaseNameRef<'a>, Vec<&'a Path>> =
             FxHashMap::with_capacity_and_hasher(files.len(), FxBuildHasher);
         for file in files {
             let path = file.path();
-            if let Some(stem) = BaseNameRef::from_path(path) {
-                by_stem.entry(stem).or_default().push(path);
+            if let Some(basename) = BaseNameRef::from_path(path) {
+                by_basename.entry(basename).or_default().push(path);
             }
         }
-        let stem_index = by_stem
+        let basename_index = by_basename
             .into_iter()
-            .map(|(stem, candidates)| (stem, BaseNameIndex::build(candidates)))
+            .map(|(basename, candidates)| {
+                (basename, BaseNameIndex::build(candidates))
+            })
             .collect();
         Self {
             files,
-            stem_index,
+            basename_index,
         }
     }
 
     /// Resolves one note's outlinks to deduplicated target paths.
     ///
     /// Pure and I/O-free; callers can share one resolver across many notes
-    /// instead of rebuilding the stem index per note.
+    /// instead of rebuilding the basename index per note.
     fn resolve_note(&self, note: &Note) -> Vec<Target<'a>> {
         let mut targets: Vec<Target<'a>> = note
             .outlinks()
@@ -303,7 +305,7 @@ impl<'a> LinkResolver<'a> {
 
     /// Resolves a split [`LinkTarget`] to an indexed file path.
     ///
-    /// Tries exact path, missing-`.md` path, then nearest basename-stem match
+    /// Tries exact path, missing-`.md` path, then nearest basename match
     /// for Obsidian-style Wikilinks. Equal-distance basename ties stay
     /// unresolved.
     fn resolve(
@@ -328,24 +330,25 @@ impl<'a> LinkResolver<'a> {
         if !target.is_basename() {
             return None;
         }
-        let stem =
+        let basename =
             candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
         let target_ext = candidate.extension().and_then(|s| s.to_str());
         if let Some(ext) = target_ext
-            && let Some(path) = self.nearest_by_stem(stem, from, Some(ext))
+            && let Some(path) =
+                self.nearest_by_basename(basename, from, Some(ext))
         {
             return Some(Target(path));
         }
-        self.nearest_by_stem(stem, from, None).map(Target)
+        self.nearest_by_basename(basename, from, None).map(Target)
     }
 
-    fn nearest_by_stem(
+    fn nearest_by_basename(
         &self,
-        stem: &str,
+        basename: &str,
         from: &Path,
         target_ext: Option<&str>,
     ) -> Option<&'a Path> {
-        self.stem_index.get(stem)?.nearest(from, target_ext)
+        self.basename_index.get(basename)?.nearest(from, target_ext)
     }
 
     fn get_by_path(&self, path: &Path) -> Option<&'a Path> {
@@ -462,7 +465,7 @@ mod tests {
             }
         }
 
-        mod stem_fallback {
+        mod basename_fallback {
             use super::*;
 
             mod nearest_wins {
@@ -488,7 +491,7 @@ mod tests {
                 }
 
                 #[test]
-                fn resolves_ambiguous_stem_match_to_nearest_candidate() {
+                fn resolves_ambiguous_basename_match_to_nearest_candidate() {
                     let files = files_from_notes(&[
                         "notes/a/note.md",
                         "notes/b/note.md",
@@ -550,7 +553,8 @@ mod tests {
                 use super::*;
 
                 #[test]
-                fn returns_none_for_ambiguous_stem_match_at_equal_distance() {
+                fn returns_none_for_ambiguous_basename_match_at_equal_distance()
+                {
                     let files = files_from_notes(&["a/note.md", "b/note.md"]);
 
                     assert_eq!(
@@ -589,7 +593,7 @@ mod tests {
                 use super::*;
 
                 #[test]
-                fn resolves_ambiguous_self_referential_stem_to_itself() {
+                fn resolves_ambiguous_self_referential_basename_to_itself() {
                     let files = files_from_notes(&["a.md", "b/a.md"]);
 
                     assert_eq!(
@@ -605,7 +609,7 @@ mod tests {
                 use super::*;
 
                 #[test]
-                fn resolves_basename_with_extension_by_stem() {
+                fn resolves_basename_with_extension() {
                     let files = files_from_notes(&["notes/report.md"]);
 
                     assert_eq!(
@@ -619,7 +623,7 @@ mod tests {
                 }
 
                 #[test]
-                fn resolves_basename_with_matching_extension_by_stem() {
+                fn resolves_basename_with_matching_extension() {
                     let mut files = files_from_notes(&[
                         "near/linking.md",
                         "near/report.md",
@@ -688,7 +692,7 @@ mod tests {
             use super::*;
 
             #[test]
-            fn skips_stem_fallback_for_qualified_paths() {
+            fn skips_basename_fallback_for_qualified_paths() {
                 let files =
                     files_from_notes(&["archive/foo.md", "notes/bar.md"]);
 
@@ -1219,7 +1223,7 @@ mod tests {
         }
     }
 
-    mod stem_index {
+    mod basename_index {
         use super::*;
         use crate::index::trie::TRIE_THRESHOLD;
 
@@ -1228,7 +1232,7 @@ mod tests {
 
             use super::*;
 
-            fn same_stem_files(count: usize) -> Vec<FileBase> {
+            fn same_basename_files(count: usize) -> Vec<FileBase> {
                 let paths: Vec<String> =
                     (0..count).map(|i| format!("d{i}/note.md")).collect();
                 let mut files: Vec<FileBase> =
@@ -1240,7 +1244,7 @@ mod tests {
             #[test]
             fn resolves_identically_at_the_trie_threshold_boundary() {
                 for count in [TRIE_THRESHOLD - 1, TRIE_THRESHOLD] {
-                    let files = same_stem_files(count);
+                    let files = same_basename_files(count);
                     let resolver = LinkResolver::new(&files);
 
                     assert_eq!(
