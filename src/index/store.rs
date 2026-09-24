@@ -362,9 +362,9 @@ impl IndexStore {
     fn open_table_for_read(
         &self,
         txn: &ReadTransaction,
-        definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
+        def: TableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> StoreResult<Option<BytesReadTable>> {
-        match txn.open_table(definition) {
+        match txn.open_table(def) {
             Ok(table) => Ok(Some(table)),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(source) => Err(self.wrap_redb_error(source)),
@@ -375,13 +375,9 @@ impl IndexStore {
     fn open_multimap_for_read(
         &self,
         txn: &ReadTransaction,
-        definition: MultimapTableDefinition<
-            'static,
-            &'static [u8],
-            &'static [u8],
-        >,
+        def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> StoreResult<Option<BytesReadMultimapTable>> {
-        match txn.open_multimap_table(definition) {
+        match txn.open_multimap_table(def) {
             Ok(table) => Ok(Some(table)),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(source) => Err(self.wrap_redb_error(source)),
@@ -414,12 +410,12 @@ impl IndexStore {
     fn read_table<T>(
         &self,
         txn: &ReadTransaction,
-        definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
+        def: TableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> IndexResult<SortedByPath<T>>
     where
         T: DeserializeOwned + crate::path::HasPath,
     {
-        let Some(table) = self.open_table_for_read(txn, definition)? else {
+        let Some(table) = self.open_table_for_read(txn, def)? else {
             return Ok(SortedByPath::assumed_sorted(Vec::new()));
         };
         let items = self.decode_table_rows(&table)?;
@@ -529,15 +525,11 @@ impl IndexStore {
     fn read_links(
         &self,
         txn: &ReadTransaction,
-        table_def: MultimapTableDefinition<
-            'static,
-            &'static [u8],
-            &'static [u8],
-        >,
+        def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
         target_paths: &FxHashMap<&[u8], &Path>,
         source_paths: &FxHashMap<&[u8], &Path>,
     ) -> IndexResult<InlinkMap> {
-        let Some(table) = self.open_multimap_for_read(txn, table_def)? else {
+        let Some(table) = self.open_multimap_for_read(txn, def)? else {
             return Ok(InlinkMap::default());
         };
         Ok(self.collect_multimap_links(&table, target_paths, source_paths)?)
@@ -556,12 +548,12 @@ impl IndexStore {
     fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
-        table_def: TableDefinition<&[u8], &[u8]>,
+        def: TableDefinition<&[u8], &[u8]>,
         items: impl IntoIterator<Item = &'a T>,
         path_of: impl Fn(&T) -> &Path,
     ) -> IndexResult<()> {
         let mut table = txn
-            .open_table(table_def)
+            .open_table(def)
             .map_err(|source| self.wrap_redb_error(source))?;
         let mut buf = Vec::new();
         for item in items {
@@ -586,11 +578,11 @@ impl IndexStore {
     fn write_links(
         &self,
         txn: &WriteTransaction,
-        table_def: MultimapTableDefinition<&[u8], &[u8]>,
+        def: MultimapTableDefinition<&[u8], &[u8]>,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
         let mut table = txn
-            .open_multimap_table(table_def)
+            .open_multimap_table(def)
             .map_err(|source| self.wrap_redb_error(source))?;
         for entry in entries {
             let inlinks = entry.inlinks();
@@ -834,18 +826,14 @@ impl IndexStore {
     // --- Path query helpers -------------------------------------------
 
     /// Reads, sorts, and deduplicates every path stored under `key` in
-    /// `table_def`.
+    /// `def`.
     fn paths_from_multimap(
         &self,
-        table_def: MultimapTableDefinition<
-            'static,
-            &'static [u8],
-            &'static [u8],
-        >,
+        def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
         key: &[u8],
     ) -> IndexResult<Box<[PathBuf]>> {
         let txn = self.begin_read()?;
-        let Some(table) = self.open_multimap_for_read(&txn, table_def)? else {
+        let Some(table) = self.open_multimap_for_read(&txn, def)? else {
             return Ok(Box::default());
         };
         let mut paths = self.collect_stored_paths(&table, key)?;
@@ -1427,7 +1415,7 @@ impl IndexStore {
     }
 }
 
-/// Batch point-read read source: maps a variant to its redb table
+/// Batch point-read source: maps a variant to its redb table
 /// definition and structured label for [`read_batch`](IndexStore::read_batch).
 #[derive(Copy, Clone, Debug)]
 enum ReadSource {
@@ -1659,16 +1647,16 @@ mod tests {
     const TEST_TABLE: TableDefinition<&[u8], &[u8]> =
         TableDefinition::new("test_table");
 
-    /// Writes raw bytes into `table_def` to simulate corrupted rows.
+    /// Writes raw bytes into `def` to simulate corrupted rows.
     fn write_raw_value(
         store: &IndexStore,
-        table_def: TableDefinition<&[u8], &[u8]>,
+        def: TableDefinition<&[u8], &[u8]>,
         key: &str,
         value: &[u8],
     ) {
         let txn = store.db.begin_write().expect("begin write txn");
         {
-            let mut table = txn.open_table(table_def).expect("open table");
+            let mut table = txn.open_table(def).expect("open table");
             table.insert(key.as_bytes(), value).expect("insert raw bytes");
         }
         txn.commit().expect("commit raw insert");
@@ -2412,11 +2400,11 @@ mod tests {
         #[case::files(FILES)]
         #[case::notes(NOTES)]
         fn returns_deserialize_error_when_stored_bytes_are_invalid(
-            #[case] table_def: TableDefinition<&[u8], &[u8]>,
+            #[case] def: TableDefinition<&[u8], &[u8]>,
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, table_def, "bad.md", &[0xFF, 0xFE]);
+            write_raw_value(&store, def, "bad.md", &[0xFF, 0xFE]);
 
             let error =
                 store.read_all().expect_err("invalid bytes fail to load");
