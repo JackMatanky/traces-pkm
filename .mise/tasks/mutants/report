@@ -1,8 +1,8 @@
 #!/bin/bash
-#MISE description="Generate a structured Markdown report from missed mutants"
+#MISE description="Generate a Markdown report of surviving mutants from missed.txt"
 #MISE hide=true
-#USAGE flag "-i --input <input>" default="mutants.out/missed.txt" help="Path to missed.txt input file"
-#USAGE flag "-o --output <output>" default="mutants-report.md" help="Path to mutants-report.md output file"
+#USAGE flag "-i --input <input>" default="mutants.out/missed.txt" help="File listing surviving mutants"
+#USAGE flag "-o --output <output>" default="mutants-report.md" help="Markdown report to write"
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
@@ -12,8 +12,8 @@ report_file="${usage_output:-mutants-report.md}"
 if [[ ! -s "${missed_file}" ]]; then
   cat <<EOF > "${report_file}"
 # Mutation Testing Report
-**Status:** Completed successfully. All mutants were caught!
-**Next Action:** No action needed. Test suite coverage is robust.
+**Status:** No surviving mutants listed.
+**Next Action:** None.
 EOF
   exit 0
 fi

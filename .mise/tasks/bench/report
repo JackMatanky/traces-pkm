@@ -4,9 +4,9 @@
 #USAGE arg "[criterion_dir]" default="target/criterion" env="CRITERION_DIR" help="Criterion output directory"
 
 # Prints a summary of which benchmark groups have results on disk after every
-# bench execution. Runs automatically via depends_post (unconditionally —
-# including after --mode test/quick and failed runs), so wording derives
-# honesty from the tree itself, never from the run that just finished.
+# bench execution. Runs automatically via depends_post (unconditionally,
+# including after --mode test/quick and failed runs), so the wording always
+# describes what is on disk, never what the run just did.
 
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
@@ -35,7 +35,7 @@ has_criterion_output() {
 # silently omitted from the printed summary.
 #
 # Arguments:
-#   group_dir — path to the group directory
+#   group_dir: path to the group directory
 # Outputs:
 #   Writes count to stdout
 #######################################
@@ -46,7 +46,7 @@ count_sizes_with_results() {
 
   for child_dir in "${group_dir}"*/; do
     [[ -d "${child_dir}" ]] || continue
-    # Parses criterion's private per-benchmark estimates.json layout —
+    # Parses criterion's private per-benchmark estimates.json layout: it is
     # version-coupled and unspecified (criterion's sanctioned machine
     # interfaces are raw.csv via the csv_output feature, or a
     # --message-format=json stream). Grep this file on criterion bumps.
@@ -69,7 +69,7 @@ count_sizes_with_results() {
 # Print a single benchmark group entry.
 #
 # Arguments:
-#   group_dir — path to the group directory
+#   group_dir: path to the group directory
 # Outputs:
 #   Writes "  - <name>: <count> sizes" to stdout
 #######################################
@@ -126,7 +126,7 @@ print_groups() {
 #
 # The report is rewritten only by a full plotted run: --mode test never
 # measures (cargo test path) and --mode quick passes --noplot (criterion
-# clap help), so this mtime ages across those runs — that age is the
+# clap help), so this mtime ages across those runs; that age is the
 # staleness signal the footer prints.
 #
 # Arguments:
@@ -150,13 +150,11 @@ report_generated_at() {
 # Print the summary footer with usage hints.
 #
 # The charts line offers `report/index.html` only when that file exists:
-# criterion 0.8.2 writes exactly this path (criterion source:
-# criterion-0.8.2 src/html/mod.rs joins "report/index.html"; its
-# summary report template links bench.path/report/index.html the same way).
-# The book still documents the plural `target/criterion/reports/index.html`
-# (docs/refs/criterion_rs_book/02_user_guide/04_html_report.md, HTML Report
-# section) — stale for criterion 0.8.x; do not "correct" this footer to
-# match the book.
+# criterion 0.8.2 joins exactly this path under each benchmark, and its
+# summary report template links bench.path/report/index.html the same way.
+# The book still documents the plural `target/criterion/reports/index.html`,
+# but that path is stale for criterion 0.8.x; do not "correct" this footer
+# to match the book.
 #
 # Outputs:
 #   Writes footer to stdout

@@ -169,7 +169,7 @@ class BenchmarkDataPoint:
     Attributes:
         group: Benchmark group name (e.g. ``FileIndex::build``); the
             subdirectory under ``target/criterion/``.
-        file_count: Parameter value — the workspace size that was benchmarked.
+        file_count: Parameter value (the workspace size that was benchmarked).
         mean_seconds: Mean wall-clock time in seconds, converted from
             Criterion's nanosecond ``point_estimate``.
         function: Sub-benchmark name within the group (e.g. ``sort_only``);
@@ -324,8 +324,8 @@ class SeriesAnalysis:
     eligibility) live here so reporters only format.
 
     Attributes:
-        name: Series key — the group, or ``<group>/<function>`` for nested
-            sweeps.
+        name: Series key (the group, or ``<group>/<function>`` for nested
+            sweeps).
         data_points: Measurements sorted ascending by file count.
         models: Fitted models sorted best-first (R² descending).
     """
@@ -450,7 +450,7 @@ class CriterionRepository:
 
         Returns:
             Data points per series, each sorted ascending by file count.
-            Series with fewer than 2 points are still returned — the
+            Series with fewer than 2 points are still returned; the
             caller checks the minimum.
 
         Raises:
@@ -798,7 +798,7 @@ def truncate_middle(text: str, max_len: int) -> str:
 class Box:
     """Renders box-drawing frames with consistent alignment.
 
-    Every line — borders included — has the same display width: the requested
+    Every line (borders included) has the same display width: the requested
     minimum widened to fit the longest row or the title, so content can never
     overflow the frame.
 
@@ -918,7 +918,7 @@ class SeriesReporter:
             rows += [
                 "",
                 f"  ⚠ {analysis.residual_dof} residual DOF"
-                f" — {R_SQUARED} may be optimistic",
+                f": {R_SQUARED} may be optimistic",
             ]
         return rows
 
@@ -928,7 +928,7 @@ class SeriesReporter:
         if not best.is_reliable:
             return [
                 "",
-                f"  ⚠ Low {R_SQUARED} — extrapolation unreliable",
+                f"  ⚠ Low {R_SQUARED}: extrapolation unreliable",
                 "  Measure directly at target sizes instead.",
             ]
         extrapolations = analysis.extrapolations
@@ -937,7 +937,7 @@ class SeriesReporter:
         if analysis.has_negative_extrapolation:
             return [
                 "",
-                "  ⚠ Predictions negative — extrapolation suppressed",
+                "  ⚠ Predictions negative: extrapolation suppressed",
             ]
         rows: list[BoxRow] = ["", "Extrapolation:"]
         rows += [
@@ -950,7 +950,8 @@ class SeriesReporter:
         if dominant is not None:
             rows += [
                 "",
-                f"Scaling: {dominant} dominates at extrapolation point",
+                f"Scaling: {dominant} dominates at 2.5× the largest"
+                " measured size",
             ]
         return rows
 
@@ -1187,7 +1188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         0 when every series fit; 1 on missing/empty criterion output or any
-        per-series fit failure (failures never abort the loop — successful
+        per-series fit failure (failures never abort the loop; successful
         series still report).
     """
     options = CliOptions.from_env(argv)
