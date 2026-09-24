@@ -29,7 +29,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, PartialEq)]
-enum RowKind {
+enum RowType {
     Page,
     List {
         item_idx: u32,
@@ -38,7 +38,7 @@ enum RowKind {
 
 /// Query-visible view of one indexed [`FileEntry`].
 ///
-/// Carries row kind and flattened field overrides used to resolve `file.*`,
+/// Carries row type and flattened field overrides used to resolve `file.*`,
 /// `list.*`, frontmatter, inline fields, `tags`, and inlinks.
 #[derive(Clone)]
 pub struct QueryRow {
@@ -46,7 +46,7 @@ pub struct QueryRow {
     position: RowIndex,
     /// Field overrides for exploded rows from [`QuerySet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
-    kind: RowKind,
+    kind: RowType,
 }
 
 impl QueryRow {
@@ -60,7 +60,7 @@ impl QueryRow {
             index: Arc::clone(index),
             position,
             flattened: Vec::new(),
-            kind: RowKind::Page,
+            kind: RowType::Page,
         }
     }
 
@@ -71,14 +71,14 @@ impl QueryRow {
     /// Promotes a list item to a list-level row by storing its note-local
     /// index.
     pub(super) fn with_list_item(mut self, item_idx: u32) -> Self {
-        self.kind = RowKind::List {
+        self.kind = RowType::List {
             item_idx,
         };
         self
     }
 
     fn list_item(&self) -> Option<&ListItem> {
-        let RowKind::List {
+        let RowType::List {
             item_idx,
         } = self.kind
         else {
