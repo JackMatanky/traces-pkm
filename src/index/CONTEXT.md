@@ -15,7 +15,7 @@ inbound links across a project root.
 
 #### Index Store
 
-The durable on-disk cache of file entries, parsed notes, and derived
+The durable store of file entries, parsed notes, and derived
 relationships for one project root, distinct from the in-memory Workspace Index.
 *Avoid*: database, persistence layer, cache handle
 
@@ -71,6 +71,6 @@ it via Markdown links or wikilinks.
 
 #### Incremental Delta
 
-The differential change set computed during refresh that compares timestamps and
+The differential change set inside an Index Update that compares timestamps and
 patches only modified files, notes, and affected link targets.
 *Avoid*: index patch, sync delta
