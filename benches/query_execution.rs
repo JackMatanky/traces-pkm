@@ -347,16 +347,16 @@ fn bench_clone_query_set(c: &mut Criterion) {
     let service = QueryService::new("class");
     for &n in WORKSPACE_FILE_COUNTS {
         let index = build_index_arc(n, ProjectShape::Plain);
-        let outcome =
+        let rows =
             service.run(&index, QueryBuilder::pages(SourceSelector::All));
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
             BenchmarkId::from_parameter(n),
-            &outcome,
-            |b, outcome| {
-                b.iter(|| black_box(outcome.clone()));
+            &rows,
+            |b, rows| {
+                b.iter(|| black_box(rows.clone()));
             },
         );
     }
@@ -368,7 +368,7 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///
 /// Parameters: varies [`WORKSPACE_FILE_COUNTS`] and shape (`pages`, `tasks`);
 /// reports output rows (`n` or `3 * n`). Query construction happens in
-/// Criterion setup; timed work is only `outcome.into_iter().count()`.
+/// Criterion setup; timed work is only `rows.into_iter().count()`.
 ///
 /// The fresh, never-cloned setup lets `Arc::try_unwrap` reclaim cached rows
 /// rather than cloning them.
@@ -402,7 +402,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
                             QueryBuilder::pages(SourceSelector::All),
                         )
                     },
-                    |outcome| black_box(outcome.into_iter().count()),
+                    |rows| black_box(rows.into_iter().count()),
                     BatchSize::SmallInput,
                 );
             },
@@ -425,7 +425,7 @@ fn bench_into_iter_owned(c: &mut Criterion) {
                             QueryBuilder::tasks(SourceSelector::All),
                         )
                     },
-                    |outcome| black_box(outcome.into_iter().count()),
+                    |rows| black_box(rows.into_iter().count()),
                     BatchSize::SmallInput,
                 );
             },

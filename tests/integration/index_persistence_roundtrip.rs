@@ -132,9 +132,9 @@ fn reloads_flat_list_items_with_metadata_and_hierarchy() {
 /// restart.
 ///
 /// Asserts identical `QueryBuilder::lists` and `QueryBuilder::tasks` query
-/// outcomes and complete list metadata without reparsing Markdown.
+/// rows and complete list metadata without reparsing Markdown.
 #[test]
-fn preserves_query_outcomes_and_list_metadata_across_cold_reload() {
+fn preserves_query_rows_and_list_metadata_across_cold_reload() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
 
@@ -208,8 +208,8 @@ owner: alice
     let loaded_tasks =
         query_service.run(&loaded, QueryBuilder::tasks(SourceSelector::All));
 
-    // 5. Assert complete query outcome invariance between in-memory and
-    //    reloaded indices.
+    // 5. Assert complete query rows invariance between in-memory and reloaded
+    //    indices.
     assert_rows_match(&loaded_lists, &in_memory_lists, "list");
     assert_rows_match(&loaded_tasks, &in_memory_tasks, "task");
 
