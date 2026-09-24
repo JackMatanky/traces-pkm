@@ -30,6 +30,11 @@ cargo-deny = "latest"
 "cargo:cargo-mutants" = "latest"
 
 # -- Benchmarking --
+# Decision: critcmp stays in global [tools], not a task-local tools entry:
+# task-local tools activate only for that task's run, so critcmp would be
+# off PATH when the bench --compare completion's run= executes at tab time
+# (07_configuration.md, "tools"; 06_arguments.md, "Completion (complete)").
+# Revisit only if completion gets a find-based fallback.
 "cargo:critcmp" = "latest"
 
 # -- Dev experience --
@@ -57,18 +62,61 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 [task_config.cache]
 # Global default for "build if stale" tasks whose declared sources cover every
 # input that can change the result. Opt out per task with cache = { enabled =
-# false } when either:
+# false } (gate tasks inherit the standard pair via extends =
+# "gate:never-skip") when either:
 #   1. inputs are incomplete (check/fmt declare no rust sources; a skip would
 #      let stale code pass the gate), or
-#   2. the task means "execute now" (lint/test/sweep/verify/bench are
+#   2. the task means "execute now" (lint/test/sweep/verify/bench/mutants are
 #      gates that must run on invocation; clean/setup are destructive or
 #      install actions that must never be skipped as "fresh"; watch is an
 #      interactive session).
+# Independently of gate policy, mutants is also nondeterministic (wall-clock
+# --timeout, --baseline run, run ordering): log replay would mask flakiness,
+# so the cache key cannot assert equivalent logs (07_configuration.md, "Cache
+# correctness and deterministic tasks": enabling cache is a correctness
+# assertion).
+# Verdict (mutants): drift — pre-fix config/comment were stale, not a
+# deliberate cache exception.
+# Classification of other tasks: coverage/crap carry explicit outputs
+# (freshness defined, not gates); build/release/doc are build-if-stale by
+# design; audit is opted out (reason 1: cargo deny reads deny.toml, which
+# is not declared in its sources).
+# Never-skip is TWO load-bearing clauses; dropping either reopens a skip
+# hole. (a) cache = { enabled = false } blocks only the artifact-cache
+# restore path (07_configuration.md, "cache"; "task_config.cache": local
+# cache = { enabled = false } overrides the scoped default). (b) outputs =
+# [] is what keeps the freshness skip from firing: the skip is decided by
+# the oldest output file (07_configuration.md, "sources": a task is skipped
+# "where the modification time of the oldest output file is newer than the
+# modification time of the newest source file"). Caveat: the docs are
+# SILENT on what an EMPTY outputs set means for freshness (no oldest output
+# file exists) — outputs = [] never-skip is empirical, not documented: on
+# 2026-09-23 back-to-back unchanged-source runs of lint, test, and bench
+# (--mode test probe form) all re-executed, none printing "sources
+# up-to-date, skipping" — that marker appeared instead for build (sources +
+# explicit outputs) and verify (auto outputs: cache off but no
+# outputs = []) on unchanged-source re-runs, so cache off alone (a) does
+# not prevent a freshness skip. Verify later joined gate:never-skip
+# (2026-09-24 final review): rust-only edits never reached its sources
+# (global_inputs only), so the gate false-green skipped with exit 0.
+# Re-probe after a mise version bump or before changing outputs on a
+# gate. `mise run --force` ignores source/output checking outright
+# (02_architecture.md, "Incremental Execution") — freshness and the
+# artifact cache are separate mechanisms.
+# Decision (unmade, not a won't-do): remote/CI task cache is local-only for
+# now — task.cache.remote_url + remote_namespace are unconfigured, so CI
+# has no remote cache to publish to; revisit when a remote service exists
+# (07_configuration.md, "Remote cache and sensitive data", "Per-run cache
+# access"; 08_remote_cache_protocol.md).
+# Cite refs by task name / doc section — never mise.toml line numbers.
 enabled = true
 
 [task_config.input_groups]
-rust = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "tests/**/*.rs"]
-bench = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "benches/**/*.rs"]
+# Slimmed to owned entries: Cargo.toml + **/*.rs globs retained; only
+# Cargo.lock/clippy.toml dropped — global_inputs applies them to every
+# task (07_configuration.md, "task_config.global_inputs").
+rust = ["Cargo.toml", "src/**/*.rs", "tests/**/*.rs"]
+bench = ["Cargo.toml", "src/**/*.rs", "benches/**/*.rs"]
 
 # ------------------------------------------------------------- #
 #                      Setup & Maintenance                      #
@@ -182,8 +230,7 @@ fi
 # bash-only by design (no run_windows): macOS dev + Linux CI only.
 [tasks.sweep]
 description = "Reclaim Cargo target space: prune stale incremental sessions (default, gated by --max-gib) or run cargo-sweep by age/size (--days/--max-size)"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 flag "--max-gib <gib>" help="Incremental-prune mode: only prune when target exceeds this size in GiB (non-negative integer)" default="10"
 flag "--days <days>" help="cargo-sweep mode: remove target artifacts older than DAYS"
@@ -282,8 +329,7 @@ main
 [tasks.check]
 description = "Fast compile check, then hk project checks"
 alias = "c"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 arg "[args]" var=#true help="Extra arguments forwarded to cargo check (hk check never receives them)"
 '''
@@ -330,8 +376,7 @@ run = "cargo watch -x check -x test"
 [tasks.fmt]
 description = "Format all Rust code (nightly)"
 alias = "f"
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = 'flag "--check" help="Check formatting without modifying files"'
 run = '''
 #!/bin/bash
@@ -347,8 +392,7 @@ description = "Strict clippy: workspace, all targets, all features. Auto-fixes 1
 alias = "l"
 depends = ["fmt"]
 sources = ["@group:rust"]
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
 flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
@@ -410,7 +454,7 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 
 [tasks.audit]
 description = "Run cargo deny audit"
-outputs = []
+extends = "gate:never-skip"
 usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo deny check"'
 run = '''
 #!/bin/bash
@@ -430,8 +474,7 @@ cargo deny check "${extra[@]+"${extra[@]}"}"
 description = "Run tests with nextest (+ doc-tests by default)"
 alias = "t"
 sources = ["@group:rust"]
-outputs = []
-cache = { enabled = false }
+extends = "gate:never-skip"
 usage = '''
 flag "--feature <feature>" help="Enable a specific feature" default="all"
 flag "--docs" negate="--no-docs" default=#true {
@@ -439,8 +482,10 @@ flag "--docs" negate="--no-docs" default=#true {
 }
 flag "-m --mod <module>" {
   help "Run tests for a specific module only"
-  choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
+// complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+// not the flag name.
+complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 arg "[args]" var=#true {
   help "Filter expression forwarded to cargo nextest run"
   long_help """
@@ -490,206 +535,6 @@ if [[ "${usage_docs?}" == "true" ]]; then
 fi
 '''
 
-[tasks.bench]
-description = "Run Criterion benchmarks"
-sources = ["@group:bench"]
-# Measurement gate: must run on invocation. Criterion output is
-# non-deterministic and baselines must never be skipped as "fresh"
-# (policy: mise.toml task_config.cache rationale; mirrors [tasks.test]).
-outputs = []
-cache = { enabled = false }
-# Raw criterion output: verbose statistical tables are unreadable when
-# every line is prefixed `bench: …` (07_configuration.md:1199-1208).
-output = "interleave"
-depends_post = ["bench:report"]
-timeout = "20m"
-usage = '''
-flag "-f --files <pattern>" {
-  help "Select bench targets (benches/*.rs) by file-name substring"
-  long_help """
-  Matches bench target file names under benches/*.rs by substring; different from criterion's own benchmark-name filter, which runs at test time and is forwarded via [args] after --.
-  """
-}
-flag "-m --mod <module>" {
-  help "Run benchmarks for a specific module (matches benches/<module>*.rs)"
-  choices "hash" "index" "note" "query" "template" "memory_footprint"
-}
-flag "-r --report [name]" value_optional=#true {
-  help "Save a named baseline (default: auto-named from git branch+sha)"
-  long_help """
-  Bare -r auto-names the baseline `<branch>-<short-sha>[-dirty][-quick]`: rerunning on the *same* commit overwrites one bounded baseline dir, while a new commit/branch gets its own comparable checkpoint. Pass a value for an explicit, memorable name instead, e.g. for a long-lived comparison point:
-
-    mise run bench -r position-refactor
-
-  Criterion rejects combining --save-baseline with forwarded --baseline/--baseline-lenient/--discard-baseline. Note the task appends --save-baseline <git-name> by default even without -r: if you forward baseline flags, pass --no-report — otherwise the run fails with criterion's own argument-validation error (--load-baseline additionally requires --baseline).
-  """
-}
-flag "--no-report" {
-  help "Skip the named baseline; fall back to criterion's unnamed 'base'"
-}
-flag "--compare <name>" help="Compare against a saved baseline via critcmp"
-complete "compare" run="ls -1 target/criterion 2>/dev/null"
-complete "files" run="ls benches | sed 's/[.]rs$//'"
-flag "--verbose" negate="--no-verbose" default=#true {
-  help "Criterion detailed analysis output (on by default); --no-verbose for terse output"
-}
-flag "--mode <mode>" {
-  help "Execution mode: normal (default), quick (fast, indicative), test (smoke)"
-  long_help """
-  normal — measure with project defaults from benches/common::criterion_config()
-           (20 samples, 1s measurement, 0.5s warm-up); [args] flags override per run.
-  quick  — criterion's native --quick: stop as soon as the significance level is
-           reached, --noplot; indicative-and-comparative only (book 02_user_guide/quick_mode.md).
-  test   — smoke: run each selected target once without measurement via
-           cargo test (criterion's documented CI path).
-  """
-  choices "quick" "test" "normal"
-  default "normal"
-}
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to cargo bench"
-  long_help """
-  Forwarded to `cargo bench`. Examples:
-
-    mise run bench -- --list               # list available benchmarks
-    mise run bench -f note_parsing -- fast  # narrow, then criterion's filter
-    mise run bench -m index -- --warm-up-time 1 # custom warm-up time
-    mise run bench -- --noplot             # disable plot and HTML generation
-    mise run bench -- --profile-time 5     # hot loop for flamegraphs; no stats, no stored results
-    mise run bench -r main -- --noise-threshold 0.03 # tolerate noisier change verdicts
-    mise run bench -r main -- --significance-level 0.01
-
-  Forwarded --quiet conflicts with the default --verbose: pair it with
-  --no-verbose (mise run bench --no-verbose -- --quiet). Forwarded
-  --sample-size conflicts with forwarded --quick (criterion clap conflict).
-  """
-}
-'''
-run = '''
-#!/bin/bash
-# extra_args (below) is populated via eval from mise's usage_args
-# (var=#true arg); see docs/refs/mise_tasks/06_arguments.md.
-# shellcheck disable=SC2154
-set -euo pipefail
-
-declare -a criterion_args=()
-
-# --- Resolve bench files ---
-declare -a bench_files=()
-if [[ -n "${usage_mod:-}" ]]; then
-  for f in benches/*.rs; do
-    bf="${f##*/}"
-    bf="${bf%.rs}"
-    [[ "${bf}" == "${usage_mod}"* ]] && bench_files+=("${bf}")
-  done
-elif [[ -n "${usage_files:-}" ]]; then
-  for f in benches/*.rs; do
-    bf="${f##*/}"
-    bf="${bf%.rs}"
-    [[ "${bf}" == *"${usage_files}"* ]] && bench_files+=("${bf}")
-  done
-else
-  for f in benches/*.rs; do
-    bf="${f##*/}"
-    bench_files+=("${bf%.rs}")
-  done
-fi
-
-if [[ -z "${bench_files[*]:-}" ]]; then
-  printf 'no benchmark files match\n' >&2
-  exit 2
-fi
-
-# One target list for both smoke and measure paths. Repeated --bench is
-# cargo's documented target selection; total_targets counters avoid the
-# bash array-length expansion, which Tera would lex as a comment opener
-# (see the sweep-task note in mise.toml).
-declare -a targets=()
-total_targets=0
-for bf in "${bench_files[@]}"; do
-  targets+=(--bench "${bf}")
-  total_targets=$((total_targets + 1))
-done
-
-# --- Smoke mode: criterion's documented CI path ---
-# (book 02_user_guide/03_command_line_options.md:18; 06_faq.md:208-215.
-# The book shows cargo test --benches; per-target --bench <name> is
-# standard cargo target selection, and criterion runs test mode whenever
-# --bench is absent.)
-# --features test-utils is load-bearing: all [[bench]] targets declare
-# required-features, and cargo test silently skips targets when unmet.
-if [[ "${usage_mode?}" == "test" ]]; then
-  if [[ -n "${usage_args:-}" ]]; then
-    printf 'note: [args] ignored in --mode test (smoke runs raw cargo test)\n' >&2
-  fi
-  if [[ -n "${usage_compare:-}" ]]; then
-    printf 'note: --compare ignored in --mode test (no measurement to compare)\n' >&2
-  fi
-  printf '==> Smoke-testing %d benchmark target(s)\n' "${total_targets}"
-  exec cargo test --no-fail-fast --features test-utils "${targets[@]}"
-fi
-
-# --- Criterion args ---
-# extra_args: mise pre-quotes each usage_args token for this reconstruction
-# (docs/refs/mise_tasks/06_arguments.md); the documented variadic pattern.
-eval "extra_args=(${usage_args:-})"
-# Quick = criterion native early-stop; timing defaults live in
-# benches/common::criterion_config() and are overridden by [args].
-[[ "${usage_mode?}" == "quick" ]] && criterion_args+=(--quick --noplot)
-[[ "${usage_verbose?}" == "true" ]] && criterion_args+=(--verbose)
-criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
-
-# --- Baseline management ---
-# Outputs a baseline name to save, or empty if none should be saved.
-# Criterion itself rejects --save-baseline combined with forwarded
-# --baseline* flags (criterion-0.8.2 src/lib.rs conflict matrix); we do
-# not pre-validate — let it fail loudly.
-resolve_baseline_name() {
-  if [[ "${usage_no_report:-false}" == "true" ]]; then
-    return
-  fi
-
-  # Explicit name via -r <name>
-  if [[ -n "${usage_report:-}" \
-    && "${usage_report}" != "true" ]]; then
-    printf '%s' "${usage_report}"
-    return
-  fi
-
-  # Auto-name from git state: branch-sha[-dirty]
-  if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
-    branch="${branch//\//-}"
-    [[ "${branch}" == "HEAD" ]] && branch="detached"
-    sha="$(git rev-parse --short HEAD)"
-    dirty=""
-    git diff --quiet HEAD || dirty="-dirty"
-    printf '%s' "${branch}-${sha}${dirty}"
-  else
-    printf '%s' "$(date +%Y%m%d-%H%M%S)"
-  fi
-}
-
-baseline="$(resolve_baseline_name)"
-if [[ -n "${baseline}" ]]; then
-  [[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
-  criterion_args+=(--save-baseline "${baseline}")
-fi
-
-# --- Single invocation: --no-fail-fast continues past failing targets ---
-printf '==> Running %d benchmark target(s) (mode: %s)\n' \
-  "${total_targets}" "${usage_mode?}"
-declare -a run_cmd=(cargo bench --no-fail-fast --features test-utils "${targets[@]}")
-if [[ -n "${criterion_args[*]:-}" ]]; then
-  run_cmd+=(-- "${criterion_args[@]}")
-fi
-"${run_cmd[@]}"
-
-# --- Compare ---
-if [[ -n "${usage_compare:-}" ]]; then
-  critcmp "${usage_compare}"
-fi
-'''
-
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #
 # ------------------------------------------------------------- #
@@ -701,8 +546,10 @@ outputs = ["tarpaulin-report.html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
-  choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
+// complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+// not the flag name.
+complete "module" run="ls -F src | sed -n 's:/$::p'"
 '''
 run = '''
 #!/bin/bash
@@ -710,7 +557,8 @@ set -euo pipefail
 
 declare -a args=(--workspace --out html)
 if [[ -n "${usage_mod:-}" ]]; then
-  args=(--include "src/${usage_mod}/**" --out html)
+  [[ -d "src/${usage_mod}" ]] || { echo "coverage: unknown module: ${usage_mod}" >&2; exit 2; }
+  args=(--include-files "src/${usage_mod}/**" --out html)
 fi
 cargo tarpaulin "${args[@]}"
 '''
@@ -724,15 +572,17 @@ run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
 sources = ["@group:rust"]
-outputs = []
+extends = "gate:never-skip"
 depends = ["test"]
 timeout = "1h"
 usage = '''
 flag "-f --file <file>" help="Run mutants in a specific file only"
 flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
-  choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
+// complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+// not the flag name.
+complete "module" run="ls -F src | sed -n 's:/$::p'"
 flag "--check" {
   help "Build-only: check mutants compile without running tests"
 }
@@ -832,13 +682,36 @@ cargo doc --no-deps "${extra[@]+"${extra[@]}"}"
 [tasks.verify]
 description = "Full verification gate: fmt first, then check/lint/tests in parallel"
 alias = "v"
-cache = { enabled = false }
+extends = "gate:never-skip"
 run = [
   # fmt mutates .rs files: it must finish before the readers start
   # (depends gives completion, not order — it cannot express this).
   { task = "fmt" },
   { tasks = ["check", "lint", "test"] },
 ]
+
+# File-task headers reject `timeout` (mise warns "unknown field(s)" and
+# drops it), so the bench safety cap lives on a template the file task
+# inherits via `#MISE extends="bench"`. Carries only timeout -- other
+# metadata stays in the file task so --help remains byte-identical.
+[task_templates.bench]
+timeout = "20m"
+
+# Never-skip payload: the complete local opt-out for tasks in the
+# task_config.cache rationale above whose entire payload is exactly this pair
+# (pair kept byte-identical to the pre-template local payloads; cache off
+# blocks artifact-cache replay; outputs [] empirically prevents the
+# freshness skip and pins the no-artifacts contract — see the
+# task_config.cache rationale).
+# Members inherit via extends instead of repeating both lines locally.
+# File tasks take a single extends target (array form silently drops in
+# 2026.9.12) — bench-shaped gates cannot join without the local-payload dance.
+# Exempt: bench (its file task spends its only extends on [task_templates.bench]);
+# clean/setup/watch (same payload, different policy class:
+# destructive/install/interactive).
+[task_templates."gate:never-skip"]
+outputs = []
+cache = { enabled = false }
 
 # ------------------------------------------------------------- #
 #                        Lifecycle Hooks                        #

@@ -3,7 +3,7 @@
 #MISE hide=true
 #USAGE flag "-i --input <input>" default="mutants.out/missed.txt" help="Path to missed.txt input file"
 #USAGE flag "-o --output <output>" default="mutants-report.md" help="Path to mutants-report.md output file"
-# shellcheck disable=SC2154
+# shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
 missed_file="${usage_input:-mutants.out/missed.txt}"
