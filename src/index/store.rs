@@ -442,7 +442,7 @@ impl IndexStore {
         let txn = self.begin_read()?;
         let (files_result, notes_result) = rayon::join(
             || self.read_table(&txn, FILES),
-            || self.collect_note_bytes(&txn),
+            || self.collect_notes(&txn),
         );
         let files: SortedByPath<FileBase> = files_result?;
         let notes = notes_result?;
@@ -471,7 +471,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_all_notes(&self) -> IndexResult<SortedByPath<Note>> {
         let txn = self.begin_read()?;
-        Ok(self.collect_note_bytes(&txn)?)
+        Ok(self.collect_notes(&txn)?)
     }
 
     /// Reads every persisted [`FileBase`], sorted by path.
@@ -969,7 +969,7 @@ impl IndexStore {
     }
 
     /// Reads raw `NOTES` rows before parallel decoding.
-    fn collect_note_bytes(
+    fn collect_notes(
         &self,
         txn: &ReadTransaction,
     ) -> StoreResult<SortedByPath<Note>> {

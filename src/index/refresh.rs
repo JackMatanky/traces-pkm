@@ -319,15 +319,15 @@ impl RefreshPlan {
         self,
         modified_notes: Vec<Note>,
     ) -> IndexResult<PendingApply> {
-        let prev_links = self.store.read_all_links(&self.persisted_files)?;
+        let persisted = self.store.read_all_links(&self.persisted_files)?;
         let (inlinks, inlink_delta) =
             if Self::is_paths_unchanged(&self.delta, &self.persisted_files) {
                 let links = Self::patch_links(
-                    &prev_links,
+                    &persisted,
                     &modified_notes,
                     self.current_files.as_slice(),
                 );
-                let inlink_delta = InlinkDelta::compute(&links, &prev_links);
+                let inlink_delta = InlinkDelta::compute(&links, &persisted);
                 (
                     InlinkReconciliation {
                         links,
@@ -345,7 +345,7 @@ impl RefreshPlan {
                     notes.as_slice(),
                     self.current_files.as_slice(),
                 );
-                let inlink_delta = InlinkDelta::compute(&links, &prev_links);
+                let inlink_delta = InlinkDelta::compute(&links, &persisted);
                 (
                     InlinkReconciliation {
                         links,
@@ -385,7 +385,7 @@ impl RefreshPlan {
     ///
     /// Sound only when [`Self::is_paths_unchanged`] holds.
     fn patch_links(
-        prev_links: &InlinkMap,
+        persisted: &InlinkMap,
         modified_notes: &[Note],
         current_files: &[FileBase],
     ) -> InlinkMap {
@@ -393,7 +393,7 @@ impl RefreshPlan {
             modified_notes.iter().map(Note::path).collect();
         let new_edges =
             inlinks::resolve_edges_for(modified_notes, current_files);
-        prev_links.without_sources(&edited).with_edges(new_edges)
+        persisted.without_sources(&edited).with_edges(new_edges)
     }
 }
 
