@@ -207,9 +207,7 @@ impl DiscoveryOutcome {
 /// - [`DiscoveryError::PathInaccessible`] when a filesystem path cannot be
 ///   inspected.
 #[inline]
-pub(crate) fn process(
-    ctx: DiscoveryContext,
-) -> DiscoveryResult<DiscoveryOutcome> {
+pub(crate) fn run(ctx: DiscoveryContext) -> DiscoveryResult<DiscoveryOutcome> {
     let (kind, anchor) = ctx.into_parts();
     match kind {
         DiscoveryScope::Full => full(anchor),
@@ -288,7 +286,7 @@ fn discovered_requests(
     anchor: DiscoveryAnchor,
 ) -> DiscoveryResult<TrustRequests> {
     let ctx = DiscoveryContext::new(scope, anchor)?;
-    let outcome = process(ctx)?;
+    let outcome = run(ctx)?;
     let requests: Vec<TrustRequest> =
         outcome.local().iter().map(TrustRequest::from).collect();
     Ok(TrustRequests::from(requests))
@@ -549,7 +547,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn process_full_returns_kind_anchor_and_nearest_local() {
+        fn run_full_returns_kind_anchor_and_nearest_local() {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
@@ -563,7 +561,7 @@ mod tests {
             .unwrap();
 
             // Act
-            let result = process(ctx);
+            let result = run(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -575,7 +573,7 @@ mod tests {
         }
 
         #[test]
-        fn process_nearest_local_returns_only_nearest() {
+        fn run_nearest_local_returns_only_nearest() {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
@@ -589,7 +587,7 @@ mod tests {
             .unwrap();
 
             // Act
-            let result = process(ctx);
+            let result = run(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -600,7 +598,7 @@ mod tests {
         }
 
         #[test]
-        fn process_local_subtree_discovers_nearest_and_descendants() {
+        fn run_local_subtree_discovers_nearest_and_descendants() {
             // Arrange
             let fixture = Fixture::new();
             let parent = fixture.create_dir("parent");
@@ -615,7 +613,7 @@ mod tests {
             .unwrap();
 
             // Act
-            let result = process(ctx);
+            let result = run(ctx);
 
             // Assert
             assert!(result.is_ok());

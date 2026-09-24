@@ -150,7 +150,7 @@ impl ConfigService {
             DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
         )?;
-        discovery::process(ctx)
+        discovery::run(ctx)
     }
 
     /// Builds a [`Config`] from discovered candidates.
