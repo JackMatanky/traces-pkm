@@ -467,6 +467,8 @@ flag "--docs" negate="--no-docs" default=#true {
 flag "-m --mod <module>" {
   help "Run tests for a specific module only"
 }
+// complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+// not the flag name.
 complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 arg "[args]" var=#true {
   help "Filter expression forwarded to cargo nextest run"
@@ -529,6 +531,8 @@ usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
 }
+// complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+// not the flag name.
 complete "module" run="ls -F src | sed -n 's:/$::p'"
 '''
 run = '''
@@ -559,6 +563,8 @@ flag "-f --file <file>" help="Run mutants in a specific file only"
 flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
 }
+// complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+// not the flag name.
 complete "module" run="ls -F src | sed -n 's:/$::p'"
 flag "--check" {
   help "Build-only: check mutants compile without running tests"

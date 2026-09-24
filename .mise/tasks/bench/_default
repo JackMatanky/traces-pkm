@@ -12,6 +12,9 @@
 #USAGE   Matches bench target file names under benches/*.rs by substring; different from criterion's own benchmark-name filter, which runs at test time and is forwarded via [args] after --.
 #USAGE   """
 #USAGE }
+#USAGE // complete "<name>" binds the flag's VALUE placeholder (--flag <name>),
+#USAGE // not the flag name. -r is unbound by design: user-chosen save name.
+#USAGE complete "pattern" run="ls benches | grep '[.]rs$' | sed 's/[.]rs$//'"
 #USAGE flag "-m --mod <module>" {
 #USAGE   help "Run benchmarks for a specific module (matches benches/<module>*.rs)"
 #USAGE }
@@ -44,7 +47,6 @@
 #USAGE   """
 #USAGE }
 #USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"
-#USAGE complete "pattern" run="ls benches | grep '[.]rs$' | sed 's/[.]rs$//'"
 #USAGE flag "--verbose" negate="--no-verbose" default=#true {
 #USAGE   help "Criterion detailed reporting (task default: on; criterion's default is off); --no-verbose for terse output"
 #USAGE }
