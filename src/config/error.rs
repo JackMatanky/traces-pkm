@@ -85,8 +85,8 @@ pub(crate) enum ConfigBuilderError {
     #[error(
         "config builder input requires full discovery output, got {actual:?}"
     )]
-    WrongDiscoveryKindForBuild {
-        /// Actual discovery kind received.
+    WrongDiscoveryScope {
+        /// Actual discovery scope received.
         actual: DiscoveryScope,
     },
     /// Full discovery produced no local config candidates.

@@ -486,7 +486,7 @@ fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
 /// Builds diagnostic help text for a [`ConfigBuilderError`].
 fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
     match source {
-        ConfigBuilderError::WrongDiscoveryKindForBuild {
+        ConfigBuilderError::WrongDiscoveryScope {
             ..
         }
         | ConfigBuilderError::FullDiscoveryWithoutLocal
@@ -571,7 +571,7 @@ const fn config_load_code(source: &ConfigLoadError) -> &'static str {
     match source {
         ConfigLoadError::Discovery(_) => "traces::cli::config_discovery_failed",
         ConfigLoadError::Build(
-            ConfigBuilderError::WrongDiscoveryKindForBuild {
+            ConfigBuilderError::WrongDiscoveryScope {
                 ..
             }
             | ConfigBuilderError::FullDiscoveryWithoutLocal
@@ -863,12 +863,12 @@ mod tests {
         }
 
         #[test]
-        fn config_load_build_wrong_discovery_kind() {
+        fn config_load_build_wrong_discovery_scope() {
             let cwd = PathBuf::from("/some/project");
             let error = CliError::ConfigLoad {
                 cwd,
                 source: ConfigLoadError::Build(
-                    crate::config::ConfigBuilderError::WrongDiscoveryKindForBuild {
+                    crate::config::ConfigBuilderError::WrongDiscoveryScope {
                         actual: crate::config::DiscoveryScope::NearestLocal,
                     },
                 ),
