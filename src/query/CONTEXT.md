@@ -43,8 +43,8 @@ lazily on first read.
 #### Sort Order
 
 The ordered sequence of field paths and directions defining a query's sorting
-criteria, defaulting to descending order. Adjacent Sort operations in a Query
-Plan fuse into a single composite Sort Order.
+criteria, defaulting to descending order. Adjacent Sort operations in an
+Execution Plan fuse into a single composite Sort Order.
 *Avoid*: sort spec, sort criteria, sort clause, order by string
 
 #### Query Row
