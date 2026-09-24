@@ -131,7 +131,7 @@ impl ExecutionPlan {
     }
 }
 
-/// Single operation in a [`ExecutionPlan`].
+/// Single operation in an [`ExecutionPlan`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),

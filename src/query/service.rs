@@ -113,7 +113,7 @@ impl QueryService {
     /// [`WorkspaceIndex`].
     ///
     /// Resolves candidate paths, reads only matching notes/files/inlinks,
-    /// assembles a temporary index, and applies the query plan.
+    /// assembles a temporary index, and applies the execution plan.
     ///
     /// # Errors
     ///
