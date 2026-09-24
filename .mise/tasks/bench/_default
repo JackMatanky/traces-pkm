@@ -26,7 +26,7 @@
 #USAGE
 #USAGE     mise run bench -r position-refactor
 #USAGE
-#USAGE   A first run on a commit has no `change:` line — the verdict appears only once the same auto-name runs again; compare across commits with `--compare <name>` (`critcmp <name> new`).
+#USAGE   A first run on a commit has no `change:` line — the verdict appears only once the same auto-name runs again; compare across commits with `--compare <baseline>` (`critcmp <name> new`).
 #USAGE
 #USAGE   Under --mode quick every saved baseline — explicit names included — is saved as <name>-quick instead (e.g. -r foo saves foo-quick, not foo), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
 #USAGE
@@ -39,11 +39,11 @@
 #USAGE flag "--compare <baseline>" {
 #USAGE   help "Compare against a saved baseline via critcmp"
 #USAGE   long_help """
-#USAGE   Runs `critcmp <name> new` after the measurement run: `<name>` is a saved baseline (listed by `critcmp --baselines`, offered by completion) and `new` is the run just measured, giving a two-column comparison with change ratios. The baseline name is validated before the run starts — an unknown name fails fast with a message naming it, before any measurement.
+#USAGE   Runs `critcmp <name> new` after the measurement run: `<baseline>` is a saved baseline (listed by `critcmp --baselines`, offered by completion) and `new` is the run just measured, giving a two-column comparison with change ratios. The baseline name is validated before the run starts — an unknown name fails fast with a message naming it, before any measurement.
 #USAGE
 #USAGE     mise run bench --compare main-abc123
 #USAGE
-#USAGE   If one run passes -r <name> and --compare <name> with the same name, criterion overwrites that baseline during the run and the comparison sees this run against itself (every ratio 1.00).
+#USAGE   If one run passes -r <name> and --compare <baseline> with the same name, criterion overwrites that baseline during the run and the comparison sees this run against itself (every ratio 1.00).
 #USAGE   """
 #USAGE }
 #USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"

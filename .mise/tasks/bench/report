@@ -81,7 +81,9 @@ print_group_entry() {
   size_count="$(count_sizes_with_results "${group_dir}")"
 
   if (( size_count > 0 )); then
-    echo "  - ${group_name}: ${size_count} sizes"
+    local size_word="sizes"
+    (( size_count == 1 )) && size_word="size"
+    echo "  - ${group_name}: ${size_count} ${size_word}"
   fi
 }
 

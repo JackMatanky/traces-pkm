@@ -47,7 +47,7 @@ memorable name instead (e.g. `-r position-refactor`).
   no `change:` line: criterion's regression verdict for a per-sha name
   appears only when the same commit runs a second time. Compare across
   commits instead by saving a baseline on one commit and running
-  `critcmp <name> new` (or `mise run bench --compare <name>`) on another.
+  `critcmp <name> new` (or `mise run bench --compare <baseline>`) on another.
 - **Growth & pruning** — re-running the same name overwrites that name's
   stored results, but each distinct name also keeps a nested copy under
   every benchmark (one directory per case, per name), so total storage
@@ -149,7 +149,7 @@ anyway, `mise run --force bench` bypasses freshness checks
 ### Post-Bench Analysis
 
 - **`bench:report`** (automatic): Runs after every bench via `depends_post`.
-  Prints a summary of which groups were measured.
+  Prints a summary of which groups have results on disk.
 
 - **`bench:model`** (hidden): `mise run bench:model`.
   Fits linear, n·ln(n), and (with >=5 data points) combined
