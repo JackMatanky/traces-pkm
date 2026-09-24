@@ -40,7 +40,8 @@ awaits persistence.
 
 #### Refresh Report
 
-The changed-file and changed-link counts observed for a `Stale` RefreshState.
+The changed-file and changed-link counts: zero for a `Fresh` RefreshState, or
+the reconciled changes for a `Stale` RefreshState.
 *Avoid*: sync report, update result, refresh outcome
 
 ### Indexed Data
