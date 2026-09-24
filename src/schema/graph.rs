@@ -233,7 +233,7 @@ mod tests {
     /// Builds an empty [`RawSchema`] extending `extends`.
     fn schema(extends: &[&str]) -> super::super::RawSchema {
         super::super::RawSchema {
-            extends: extends.iter().map(|&s| SchemaName::new_test(s)).collect(),
+            extends: extends.iter().map(|&s| SchemaName::for_test(s)).collect(),
             ..super::super::RawSchema::default()
         }
     }
@@ -278,8 +278,8 @@ mod tests {
         #[test]
         fn returns_roots_in_declaration_order() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("author"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&["author"]));
+            raw.insert(SchemaName::for_test("author"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&["author"]));
             let (builder, _warnings) = SchemaGraphBuilder::new(
                 &raw,
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -295,9 +295,9 @@ mod tests {
         #[test]
         fn releases_multiple_simultaneous_roots_in_raw_map_insertion_order() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("zebra"), schema(&[]));
-            raw.insert(SchemaName::new_test("apple"), schema(&[]));
-            raw.insert(SchemaName::new_test("mango"), schema(&[]));
+            raw.insert(SchemaName::for_test("zebra"), schema(&[]));
+            raw.insert(SchemaName::for_test("apple"), schema(&[]));
+            raw.insert(SchemaName::for_test("mango"), schema(&[]));
             let (builder, _warnings) = SchemaGraphBuilder::new(
                 &raw,
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -321,10 +321,10 @@ mod tests {
         fn returns_only_direct_extenders() {
             // thing <- book <- {sci_fi, memoir}
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("thing"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&["thing"]));
-            raw.insert(SchemaName::new_test("sci_fi"), schema(&["book"]));
-            raw.insert(SchemaName::new_test("memoir"), schema(&["book"]));
+            raw.insert(SchemaName::for_test("thing"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("sci_fi"), schema(&["book"]));
+            raw.insert(SchemaName::for_test("memoir"), schema(&["book"]));
             let graph = build_graph(&raw);
 
             assert_eq!(hierarchy_for(&graph, "thing").0, vec!["book"]);
@@ -339,11 +339,11 @@ mod tests {
         fn includes_schema_in_every_parents_direct_children() {
             // thing <- {book, film} <- adaptation (both parents)
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("thing"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&["thing"]));
-            raw.insert(SchemaName::new_test("film"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("thing"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("film"), schema(&["thing"]));
             raw.insert(
-                SchemaName::new_test("adaptation"),
+                SchemaName::for_test("adaptation"),
                 schema(&["book", "film"]),
             );
             let graph = build_graph(&raw);
@@ -356,8 +356,8 @@ mod tests {
         #[test]
         fn returns_empty_children_when_no_schema_has_children() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("a"), schema(&[]));
-            raw.insert(SchemaName::new_test("b"), schema(&[]));
+            raw.insert(SchemaName::for_test("a"), schema(&[]));
+            raw.insert(SchemaName::for_test("b"), schema(&[]));
             let graph = build_graph(&raw);
 
             assert_eq!(hierarchy_for(&graph, "a").0, Vec::<&str>::new());
@@ -373,12 +373,12 @@ mod tests {
             // because sci_fi depends on it).  After sort by rank the
             // children become [book, sci_fi].
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("parent"), schema(&[]));
+            raw.insert(SchemaName::for_test("parent"), schema(&[]));
             raw.insert(
-                SchemaName::new_test("sci_fi"),
+                SchemaName::for_test("sci_fi"),
                 schema(&["parent", "book"]),
             );
-            raw.insert(SchemaName::new_test("book"), schema(&["parent"]));
+            raw.insert(SchemaName::for_test("book"), schema(&["parent"]));
             let graph = build_graph(&raw);
 
             assert_eq!(
@@ -396,18 +396,18 @@ mod tests {
         use super::*;
 
         fn set(names: &[&str]) -> IndexSet<SchemaName> {
-            names.iter().map(|&name| SchemaName::new_test(name)).collect()
+            names.iter().map(|&name| SchemaName::for_test(name)).collect()
         }
 
         #[test]
         fn deduplicates_diamond_shared_descendant() {
             // thing <- {book, film} <- adaptation (both parents)
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("thing"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&["thing"]));
-            raw.insert(SchemaName::new_test("film"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("thing"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("film"), schema(&["thing"]));
             raw.insert(
-                SchemaName::new_test("adaptation"),
+                SchemaName::for_test("adaptation"),
                 schema(&["book", "film"]),
             );
             let graph = build_graph(&raw);
@@ -421,11 +421,11 @@ mod tests {
         #[test]
         fn returns_full_transitive_closure() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("thing"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&["thing"]));
-            raw.insert(SchemaName::new_test("sci_fi"), schema(&["book"]));
+            raw.insert(SchemaName::for_test("thing"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("sci_fi"), schema(&["book"]));
             raw.insert(
-                SchemaName::new_test("space_opera"),
+                SchemaName::for_test("space_opera"),
                 schema(&["sci_fi"]),
             );
             let graph = build_graph(&raw);
@@ -448,8 +448,8 @@ mod tests {
         #[test]
         fn excludes_leaf_from_descendants() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
-            raw.insert(SchemaName::new_test("sci_fi"), schema(&["book"]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("sci_fi"), schema(&["book"]));
             let graph = build_graph(&raw);
 
             assert!(hierarchy_for(&graph, "sci_fi").1.is_empty());
@@ -458,10 +458,10 @@ mod tests {
         #[test]
         fn returns_independent_sets_for_multiple_roots() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("a"), schema(&[]));
-            raw.insert(SchemaName::new_test("b"), schema(&["a"]));
-            raw.insert(SchemaName::new_test("c"), schema(&[]));
-            raw.insert(SchemaName::new_test("d"), schema(&["c"]));
+            raw.insert(SchemaName::for_test("a"), schema(&[]));
+            raw.insert(SchemaName::for_test("b"), schema(&["a"]));
+            raw.insert(SchemaName::for_test("c"), schema(&[]));
+            raw.insert(SchemaName::for_test("d"), schema(&["c"]));
             let graph = build_graph(&raw);
 
             assert_eq!(hierarchy_for(&graph, "a").1, set(&["b"]));
@@ -484,12 +484,12 @@ mod tests {
             // order: an `assert_eq!` against another `IndexSet` here
             // would silently pass even if the sort were removed.
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("thing"), schema(&[]));
+            raw.insert(SchemaName::for_test("thing"), schema(&[]));
             raw.insert(
-                SchemaName::new_test("sci_fi"),
+                SchemaName::for_test("sci_fi"),
                 schema(&["thing", "book"]),
             );
-            raw.insert(SchemaName::new_test("book"), schema(&["thing"]));
+            raw.insert(SchemaName::for_test("book"), schema(&["thing"]));
             let graph = build_graph(&raw);
 
             let descendants: Vec<String> = hierarchy_for(&graph, "thing")

@@ -60,7 +60,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
         let (kind, anchor, discovered_locals, discovered_globals) =
             outcome.into_parts();
         if kind != DiscoveryScope::Full {
-            return Err(ConfigBuilderError::WrongDiscoveryKindForBuild {
+            return Err(ConfigBuilderError::WrongDiscoveryScope {
                 actual: kind,
             });
         }
@@ -150,7 +150,7 @@ impl ConfigService {
             DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
         )?;
-        discovery::process(ctx)
+        discovery::run(ctx)
     }
 
     /// Builds a [`Config`] from discovered candidates.
@@ -168,7 +168,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigBuilderError::WrongDiscoveryKindForBuild`],
+    /// - [`ConfigBuilderError::WrongDiscoveryScope`],
     ///   [`ConfigBuilderError::FullDiscoveryWithoutLocal`], or
     ///   [`ConfigBuilderError::FullDiscoveryWithoutAnchorLocal`] when discovery
     ///   output is not valid builder input.
@@ -1193,7 +1193,7 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    ConfigBuilderError::WrongDiscoveryKindForBuild {
+                    ConfigBuilderError::WrongDiscoveryScope {
                         actual: DiscoveryScope::NearestLocal
                     }
                 ));
@@ -1451,7 +1451,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1471,7 +1471,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1655,7 +1655,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1882,7 +1882,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1905,7 +1905,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }

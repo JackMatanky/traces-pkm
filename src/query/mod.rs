@@ -72,7 +72,7 @@
 //! # }
 //! ```
 //!
-//! [`FileBase`]: crate::file::FileBase
+//! [`FileMeta`]: crate::file::FileMeta
 //! [`WorkspaceIndex`]: crate::index::WorkspaceIndex
 //! [`FileClassExpander`]: crate::query::grammar::FileClassExpander
 //! [`Note`]: crate::note::Note
@@ -97,7 +97,7 @@ pub(crate) use grammar::{
     ClassExpansionMode, FieldPath, FileClassExpander, FileField, ListField,
     SourceAtom, SourceExpr,
 };
-use plan::{QueryPlan, QueryTransform};
+use plan::{ExecutionPlan, QueryTransform};
 pub use results::{QueryRow, QuerySet};
 pub use service::QueryService;
 pub(crate) use sort::{SortDirection, SortOrder};
@@ -108,7 +108,7 @@ pub(super) mod test_support {
 
     use super::*;
     /// Writes `files` under `temp` and returns an all-notes page query.
-    pub(super) fn outcome_for_files(
+    pub(super) fn rows_for_files(
         _temp: &Path,
         files: &[(&str, &str)],
     ) -> QuerySet {
@@ -118,8 +118,8 @@ pub(super) mod test_support {
     }
 
     /// Writes one Markdown Note and returns an all-notes page query.
-    pub(super) fn outcome_for(temp: &Path, content: &str) -> QuerySet {
-        outcome_for_files(temp, &[("note.md", content)])
+    pub(super) fn rows_for(temp: &Path, content: &str) -> QuerySet {
+        rows_for_files(temp, &[("note.md", content)])
     }
 
     pub(super) fn find_entry<'a>(
@@ -135,7 +135,7 @@ pub(super) mod test_support {
     pub(super) fn find_base<'a>(
         entries: &'a [crate::index::FileEntry],
         path: &Path,
-    ) -> &'a crate::file::FileBase {
+    ) -> &'a crate::file::FileMeta {
         find_entry(entries, path).file()
     }
 }

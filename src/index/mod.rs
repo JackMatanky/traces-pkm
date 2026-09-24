@@ -11,7 +11,7 @@
 //! evaluation.
 //!
 //! Fresh builds run through [`IndexerService::build`]; cold CLI reads use
-//! [`IndexerService::current_store`](service::IndexerService::current_store) to
+//! [`IndexerService::refresh_store`](service::IndexerService::refresh_store) to
 //! load and refresh an existing store.
 //!
 //! [`store`]: mod@store

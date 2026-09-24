@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Raw configuration data deserialized from TOML.
 ///
-/// Shared by local and global config layers before merge precedence or path
+/// Shared by local and global layers before merge precedence or path
 /// resolution is applied.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -83,14 +83,14 @@ impl List {
     fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
         let root = config.root();
         let order = self.sort.resolve(root)?;
-        let outcome = super::refresh_page_query(
+        let rows = super::refresh_page_query(
             config,
             self.from.as_deref(),
             &self.filter,
             order,
         )?;
-        let count = outcome.len();
-        let rendered = outcome
+        let count = rows.len();
+        let rendered = rows
             .list(LIST_FIELD)
             .map_err(|source| super::query_error(root, source))?;
         Ok((rendered, count))
@@ -398,7 +398,7 @@ mod tests {
                 .expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {
-                source: IndexError::Walk(DirTreeError::NodeInaccessible { .. }),
+                source: IndexError::Scan(DirTreeError::NodeInaccessible { .. }),
                 ..
             }));
         }

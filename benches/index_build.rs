@@ -8,7 +8,7 @@
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [Files on Disk] ──(WalkDir Scan)──► [FileBase / Notes]
+//! [Files on Disk] ──(WalkDir Scan)──► [FileMeta / Notes]
 //!                                             │
 //!                                             └──(Compile)──► [WorkspaceIndex]
 //! ```

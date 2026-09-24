@@ -12,7 +12,7 @@
 //! [`QueryService::run_from_store`](super::QueryService::run_from_store).
 
 use super::{
-    QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
+    ExecutionPlan, QueryBuilderError, QueryTransform, grammar::SourceSelector,
     sort::SortOrder,
 };
 
@@ -54,7 +54,7 @@ pub(crate) enum QueryMode {
 pub struct QueryBuilder {
     mode: QueryMode,
     source: SourceSelector,
-    plan: QueryPlan,
+    plan: ExecutionPlan,
 }
 
 impl QueryBuilder {
@@ -65,7 +65,7 @@ impl QueryBuilder {
         Self {
             mode: QueryMode::Pages,
             source,
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
         }
     }
 
@@ -77,7 +77,7 @@ impl QueryBuilder {
         Self {
             mode: QueryMode::Lists,
             source,
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
         }
     }
 
@@ -88,7 +88,7 @@ impl QueryBuilder {
         Self {
             mode: QueryMode::Tasks,
             source,
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
         }
     }
 
@@ -175,7 +175,9 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
+    pub(super) fn into_parts(
+        self,
+    ) -> (QueryMode, SourceSelector, ExecutionPlan) {
         (self.mode, self.source, self.plan)
     }
 }
@@ -214,11 +216,11 @@ mod tests {
                 .filter("rating >= 5")
                 .expect("valid filter");
 
-            let outcome = QueryService::new("class").run(&index, request);
+            let rows = QueryService::new("class").run(&index, request);
 
-            assert_eq!(outcome.len(), 1);
+            assert_eq!(rows.len(), 1);
             assert_eq!(
-                outcome.get(0).expect("row").file().path(),
+                rows.get(0).expect("row").file().path(),
                 Path::new("b.md")
             );
         }
@@ -250,15 +252,15 @@ mod tests {
                 .limit(2)
                 .expect("valid limit");
 
-            let outcome = QueryService::new("class").run(&index, request);
+            let rows = QueryService::new("class").run(&index, request);
 
-            assert_eq!(outcome.len(), 2);
+            assert_eq!(rows.len(), 2);
             assert_eq!(
-                outcome.get(0).expect("row").file().path(),
+                rows.get(0).expect("row").file().path(),
                 Path::new("b.md")
             );
             assert_eq!(
-                outcome.get(1).expect("row").file().path(),
+                rows.get(1).expect("row").file().path(),
                 Path::new("d.md")
             );
         }
@@ -287,11 +289,11 @@ mod tests {
                     .expect("valid sort")
                     .limit(i64::try_from(n).expect("limit fits i64"))
                     .expect("valid limit");
-                let topk_outcome =
+                let topk_rows =
                     QueryService::new("class").run(&index, topk_request);
-                let topk_paths: Vec<_> = (0..topk_outcome.len())
+                let topk_paths: Vec<_> = (0..topk_rows.len())
                     .map(|i| {
-                        topk_outcome
+                        topk_rows
                             .get(i)
                             .expect("row")
                             .file()
@@ -304,11 +306,11 @@ mod tests {
                     QueryBuilder::pages(SourceSelector::All)
                         .sort("rating", false)
                         .expect("valid sort");
-                let full_outcome =
+                let full_rows =
                     QueryService::new("class").run(&index, full_sort_request);
                 let full_first_n: Vec<_> = (0..n)
                     .map(|i| {
-                        full_outcome
+                        full_rows
                             .get(i)
                             .expect("row")
                             .file()
@@ -355,15 +357,15 @@ mod tests {
                 .limit(2)
                 .expect("valid limit");
 
-            let outcome = QueryService::new("class").run(&index, request);
+            let rows = QueryService::new("class").run(&index, request);
 
-            assert_eq!(outcome.len(), 2);
+            assert_eq!(rows.len(), 2);
             assert_eq!(
-                outcome.get(0).expect("row").file().path(),
+                rows.get(0).expect("row").file().path(),
                 Path::new("b.md")
             );
             assert_eq!(
-                outcome.get(1).expect("row").file().path(),
+                rows.get(1).expect("row").file().path(),
                 Path::new("e.md")
             );
         }
@@ -396,19 +398,19 @@ mod tests {
                 .filter("rating < 8")
                 .expect("valid filter");
 
-            let fused_outcome =
+            let fused_rows =
                 QueryService::new("class").run(&index, fused_request);
 
             let combined_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2 and rating < 8")
                 .expect("valid filter");
-            let combined_outcome =
+            let combined_rows =
                 QueryService::new("class").run(&index, combined_request);
 
-            assert_eq!(fused_outcome, combined_outcome);
-            assert_eq!(fused_outcome.len(), 3);
+            assert_eq!(fused_rows, combined_rows);
+            assert_eq!(fused_rows.len(), 3);
             let paths: Vec<&Path> =
-                fused_outcome.iter().map(|r| r.file().path()).collect();
+                fused_rows.iter().map(|r| r.file().path()).collect();
             assert_eq!(paths, [
                 Path::new("b.md"),
                 Path::new("c.md"),
@@ -442,7 +444,7 @@ mod tests {
             assert_eq!(
                 QueryBuilder::pages(SourceSelector::All).limit(-1).err(),
                 Some(QueryBuilderError::LimitOutOfRange {
-                    value: -1
+                    limit: -1
                 })
             );
         }
@@ -461,9 +463,9 @@ mod tests {
                 SourceSelector::parse("@book").expect("source"),
             );
 
-            let outcome = QueryService::new("class").run(&index, request);
+            let rows = QueryService::new("class").run(&index, request);
 
-            assert!(outcome.is_empty());
+            assert!(rows.is_empty());
         }
 
         #[test]

@@ -55,7 +55,7 @@ graph TD
 - **Dialog Seam**: `DialogProvider` provides an object-safe I/O boundary
   consumed by `TemplateEngine` (`ui.*`) and `CLI` (`init`), satisfied by
   `TerminalDialogProvider` (TTY) or `PresetDialogProvider` (headless / tests).
-- **Index & Note**: `Index` scans files into `FileBase` and delegates markdown
+- **Index & Note**: `Index` scans files into `FileMeta` and delegates markdown
   content parsing to `Note`.
 - **Query & Schema (Decoupled)**: `Query` evaluates source expressions against
   `WorkspaceIndex` and expands `@Class*` hierarchies via the `FileClassExpander`
@@ -63,10 +63,3 @@ graph TD
 - **Template Composition**: `Template` registers `query`, `lists`, `tasks`,
   `schema`, `ui`, `file`, and `date` helpers into the minijinja runtime and
   enforces root confinement during output writing.
-
-## Reading order
-
-When exploring a topic, read the context that owns the concept first, then
-cross-reference related contexts as needed. The root `docs/adr/` holds
-system-wide architecture decisions; individual contexts may also have
-`docs/adr/` for context-specific decisions.

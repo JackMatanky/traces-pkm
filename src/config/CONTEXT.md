@@ -63,7 +63,7 @@ date.
 
 The `[tasks]` table configuring task recognition: the mapping of checkbox
 status symbols to Task Status workflow states, and the tag filter deciding
-which tagged items count as tasks. Configured statuses augment defaults and
+which tagged items are tasks. Configured statuses augment defaults and
 override a default that shares their symbol. For statuses and tag filters
 independently, a non-empty local list replaces the global list; an absent or
 empty local list falls back to the global list.

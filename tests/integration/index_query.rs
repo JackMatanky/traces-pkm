@@ -20,11 +20,11 @@ fn page_query_returns_real_indexed_notes() {
     project.write_note("b.md", "---\nrating: 9\n---\n");
     project.write_note("c.md", "---\nrating: 5\n---\n");
     let index = Arc::new(project.build_index());
-    let outcome = QueryService::new("class")
+    let rows = QueryService::new("class")
         .run(&index, QueryBuilder::pages(SourceSelector::All));
 
-    assert_eq!(outcome.len(), 3);
-    let paths: Vec<_> = (&outcome)
+    assert_eq!(rows.len(), 3);
+    let paths: Vec<_> = (&rows)
         .into_iter()
         .map(|row| row.file().path().to_path_buf())
         .collect();

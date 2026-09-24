@@ -105,7 +105,7 @@ pub struct SourceExpr(BooleanExpr<SourceAtom>);
 
 impl SourceExpr {
     #[must_use]
-    pub(crate) fn expr(&self) -> &BooleanExpr<SourceAtom> {
+    pub(crate) fn inner(&self) -> &BooleanExpr<SourceAtom> {
         &self.0
     }
 
@@ -152,10 +152,7 @@ impl SourceExpr {
 
     /// Builds an OR expression, collapsing to `first` when `rest` is empty.
     #[must_use]
-    pub(crate) fn disjunction(
-        first: SourceAtom,
-        rest: Vec<SourceAtom>,
-    ) -> Self {
+    pub(crate) fn or(first: SourceAtom, rest: Vec<SourceAtom>) -> Self {
         if rest.is_empty() {
             Self::atom(first)
         } else {
@@ -168,7 +165,7 @@ impl SourceExpr {
 
     /// Builds an AND expression, collapsing to `first` when `rest` is empty.
     #[must_use]
-    pub(crate) fn conjunction(first: Self, rest: Vec<Self>) -> Self {
+    pub(crate) fn and(first: Self, rest: Vec<Self>) -> Self {
         if rest.is_empty() {
             first
         } else {
@@ -383,7 +380,7 @@ impl SourceGrammar {
         span: SourceSpan,
     ) -> Result<SourceAtom, QueryBuilderError> {
         let raw = sigil.strip_prefix('@').ok_or_else(|| {
-            QuerySyntaxError::new(
+            QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 span,
@@ -402,7 +399,7 @@ impl SourceGrammar {
             |name| (name, ClassExpansionMode::Children(BTreeSet::new())),
         );
         if name.is_empty() {
-            return Err(QuerySyntaxError::new(
+            return Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 span,
@@ -452,7 +449,7 @@ impl SourceGrammar {
             })
             .map_err(&lex)?;
         if name_spanned.value().is_empty() {
-            return Err(QuerySyntaxError::new(
+            return Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 class_span,
@@ -505,7 +502,7 @@ impl SourceGrammar {
 
         if has_mode_argument.is_some() && modifier.is_some() {
             let next_span = tokens.next_span(input);
-            return Err(QuerySyntaxError::new(
+            return Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 next_span,
@@ -582,7 +579,7 @@ impl AtomParser for SourceGrammar {
                         GlobPattern::compile(&glob)
                             .map(SourceAtom::Path)
                             .map_err(|_| {
-                                QuerySyntaxError::new(
+                                QuerySyntaxError::unexpected_end(
                                     QueryDialect::Source,
                                     input,
                                     span,
@@ -594,7 +591,7 @@ impl AtomParser for SourceGrammar {
                     SourceToken::Class => {
                         Self::parse_class_function(input, tokens, span)
                     }
-                    _ => Err(QuerySyntaxError::new(
+                    _ => Err(QuerySyntaxError::unexpected_end(
                         QueryDialect::Source,
                         input,
                         span,
@@ -603,7 +600,7 @@ impl AtomParser for SourceGrammar {
                     .into()),
                 }
             }
-            None => Err(QuerySyntaxError::new(
+            None => Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 next_span,
@@ -619,7 +616,12 @@ impl AtomParser for SourceGrammar {
         span: SourceSpan,
         expected: &'static str,
     ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
+        QuerySyntaxError::unexpected_end(
+            QueryDialect::Source,
+            input,
+            span,
+            expected,
+        )
     }
 }
 
@@ -666,8 +668,8 @@ enum SourceToken {
     clippy::needless_pass_by_ref_mut,
     reason = "logos Callback trait requires &mut Lexer"
 )]
-fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
-    lexical_unquote(lexer.slice())
+fn quoted_callback(lex: &mut Lexer<'_, SourceToken>) -> String {
+    lexical_unquote(lex.slice())
 }
 
 #[cfg(test)]
@@ -883,20 +885,20 @@ mod tests {
         use super::*;
 
         #[test]
-        fn collapses_disjunction_with_no_rest_to_bare_atom() {
+        fn collapses_or_with_no_rest_to_bare_atom() {
             let atom = SourceAtom::Tag("book".to_owned());
             assert_eq!(
-                SourceExpr::disjunction(atom.clone(), Vec::new()),
+                SourceExpr::or(atom.clone(), Vec::new()),
                 SourceExpr::atom(atom)
             );
         }
 
         #[test]
-        fn wraps_disjunction_with_rest_in_order() {
+        fn wraps_or_with_rest_in_order() {
             let first = SourceAtom::Tag("book".to_owned());
             let second = SourceAtom::Tag("movie".to_owned());
             assert_eq!(
-                SourceExpr::disjunction(first.clone(), vec![second.clone()]),
+                SourceExpr::or(first.clone(), vec![second.clone()]),
                 SourceExpr(BooleanExpr::Or(vec![
                     BooleanExpr::Atom(first),
                     BooleanExpr::Atom(second),
@@ -905,17 +907,17 @@ mod tests {
         }
 
         #[test]
-        fn collapses_conjunction_with_no_rest_to_first_term() {
+        fn collapses_and_with_no_rest_to_first_term() {
             let term = SourceExpr::atom(SourceAtom::Tag("book".to_owned()));
-            assert_eq!(SourceExpr::conjunction(term.clone(), Vec::new()), term);
+            assert_eq!(SourceExpr::and(term.clone(), Vec::new()), term);
         }
 
         #[test]
-        fn wraps_conjunction_with_rest_in_order() {
+        fn wraps_and_with_rest_in_order() {
             let first = SourceExpr::atom(SourceAtom::Tag("book".to_owned()));
             let second = SourceExpr::atom(SourceAtom::Tag("movie".to_owned()));
             assert_eq!(
-                SourceExpr::conjunction(first.clone(), vec![second.clone()]),
+                SourceExpr::and(first.clone(), vec![second.clone()]),
                 SourceExpr(BooleanExpr::And(vec![first.0, second.0]))
             );
         }

@@ -215,13 +215,13 @@ fn bench_sync_and_run_footprint(c: &mut Criterion) {
 
         let query = QueryBuilder::pages(one_match());
         let region = Region::new(GLOBAL);
-        let outcome = black_box(
+        let rows = black_box(
             service
                 .sync_and_run(&indexer, query)
                 .expect("sync_and_run succeeds"),
         );
         let sync_stats = region.change();
-        drop(outcome);
+        drop(rows);
 
         let refresh_region = Region::new(GLOBAL);
         let (index, _report) =
@@ -291,19 +291,19 @@ fn bench_query_execution_footprint(c: &mut Criterion) {
         let index = build_index_arc(n, ProjectShape::Plain);
 
         let region = Region::new(GLOBAL);
-        let outcome = black_box(
+        let rows = black_box(
             service.run(&index, QueryBuilder::pages(SourceSelector::All)),
         );
         let pages_stats = region.change();
-        drop(outcome);
+        drop(rows);
 
         let sort_query = QueryBuilder::pages(SourceSelector::All)
             .sort("rating", false)
             .expect("valid sort");
         let sort_region = Region::new(GLOBAL);
-        let sorted_outcome = black_box(service.run(&index, sort_query));
+        let sorted_rows = black_box(service.run(&index, sort_query));
         let sort_stats = sort_region.change();
-        drop(sorted_outcome);
+        drop(sorted_rows);
 
         eprintln!(
             "[memory] query_pages({n}): gross {} bytes, {} allocs; \

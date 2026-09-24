@@ -6,9 +6,9 @@
 //! ### Data Flow Diagram
 //!
 //! `QuerySet::sort` pushes a `QueryTransform::Sort` step onto the pending
-//! `QueryPlan`. `QueryPlan::run` rewrites a `Sort` immediately followed by a
-//! `Limit` into one `QueryTransform::TopK` step (`O(n)` quickselect instead of
-//! `O(n log n)` full sort):
+//! `ExecutionPlan`. `ExecutionPlan::run` rewrites a `Sort` immediately followed
+//! by a `Limit` into one `QueryTransform::TopK` step (`O(n)` quickselect
+//! instead of `O(n log n)` full sort):
 //!
 //! ```text
 //! [QuerySet] ──(.sort)──► [QueryTransform::Sort]
@@ -205,8 +205,8 @@ fn bench_sort_by_metadata(c: &mut Criterion) {
 // ----------------------------------------------------------- //
 //             Benchmarks: Sort Plan Optimization              //
 // ----------------------------------------------------------- //
-/// Measures `QueryPlan`'s `Sort`+`Limit(k)` -> `TopK` fusion cost across limit
-/// sizes and workspace sizes.
+/// Measures `ExecutionPlan`'s `Sort`+`Limit(k)` -> `TopK` fusion cost across
+/// limit sizes and workspace sizes.
 ///
 /// Parameters: varies [`TOPK_LIMITS`] and note count in
 /// [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
@@ -367,7 +367,7 @@ fn bench_sort_by_title(c: &mut Criterion) {
 ///
 /// Parameters: varies [`SORT_STRESS_FILE_COUNTS`]; reports input rows.
 ///
-/// Fixture indexes are built in memory outside timing; synthetic [`FileBase`]
+/// Fixture indexes are built in memory outside timing; synthetic [`FileMeta`]
 /// timestamps are created during fixture setup rather than by writing files.
 ///
 /// This is a DateTime-key resolution and tie-heavy comparison path, not a

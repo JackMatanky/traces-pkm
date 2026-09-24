@@ -15,7 +15,7 @@ inbound links across a project root.
 
 #### Index Store
 
-The durable on-disk cache of file entries, parsed notes, and derived
+The durable store of file entries, parsed notes, and derived
 relationships for one project root, distinct from the in-memory Workspace Index.
 *Avoid*: database, persistence layer, cache handle
 
@@ -31,28 +31,30 @@ The computed change set and recomputed state from one incremental
 synchronization, not yet applied.
 *Avoid*: sync outcome, reconciliation result, sync delta
 
-#### Refresh Pass
+#### RefreshState
 
-One comparison-and-reconciliation cycle between current project files and the
-persisted index, producing either an unchanged result or an Index Update.
+The state from comparing current project files with the persisted index:
+`Fresh` when the opened store remains current, or `Stale` when an Index Update
+awaits persistence.
 *Avoid*: sync pass, scan pass, refresh transaction
 
 #### Refresh Report
 
-The changed-file and changed-link counts observed during a Refresh Pass.
+The changed-file and changed-link counts: zero for a `Fresh` RefreshState, or
+the reconciled changes for a `Stale` RefreshState.
 *Avoid*: sync report, update result, refresh outcome
 
 ### Indexed Data
 
-#### File Base
+#### File Metadata
 
 The filesystem metadata captured for every regular file regardless of document
 type: relative path, size, timestamps, and format classification.
-*Avoid*: file metadata, fs entry, raw record
+*Avoid*: fs entry, raw record
 
 #### File Entry
 
-One indexed file's File Base together with its optional parsed Note and derived
+One indexed file's File Metadata together with its optional parsed Note and derived
 inbound links in a Workspace Index.
 *Avoid*: file record, indexed note
 
@@ -60,7 +62,7 @@ inbound links in a Workspace Index.
 
 The indexed form of a Markdown note: the parsed frontmatter, inline fields,
 tags, lists, tasks, and outgoing links persisted for querying, distinct from
-the File Base carrying its file metadata.
+the File Metadata carrying its file metadata.
 *Avoid*: note metadata, page data, document info, note payload
 
 #### Inlink
@@ -71,6 +73,6 @@ it via Markdown links or wikilinks.
 
 #### Incremental Delta
 
-The differential change set computed during refresh that compares timestamps and
+The differential change set inside an Index Update that compares timestamps and
 patches only modified files, notes, and affected link targets.
 *Avoid*: index patch, sync delta

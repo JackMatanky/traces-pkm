@@ -85,11 +85,11 @@ fn observe_sync_and_run(
     indexer: &IndexerService,
     source: SourceSelector,
 ) -> QuerySet {
-    let outcome = service
+    let rows = service
         .sync_and_run(indexer, QueryBuilder::pages(source))
         .expect("sync_and_run succeeds");
-    black_box(outcome.len());
-    outcome
+    black_box(rows.len());
+    rows
 }
 
 fn setup_single_tag_upsert(n: usize) -> (TempDir, IndexerService) {

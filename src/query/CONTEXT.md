@@ -30,41 +30,46 @@ The row evaluation granularity of a query: `Pages` (one row per Note), `Lists`
 #### Query Builder
 
 The declarative specification of a query: Query Mode, Source Expression, and
-the pending Query Plan, built before execution.
+the pending Execution Plan, built before execution.
 *Avoid*: query request, request
 
-#### Query Plan
+#### Execution Plan
 
 The ordered transform sequence a query applies to rows, fused where possible
 (adjacent filters, adjacent sorts, and Sort followed by Limit) and executed
 lazily on first read.
-*Avoid*: plan steps, ops list
+*Avoid*: plan steps
 
 #### Sort Order
 
 The ordered sequence of field paths and directions defining a query's sorting
-criteria, defaulting to descending order. Adjacent Sort operations in a Query
-Plan fuse into a single composite Sort Order.
+criteria, defaulting to descending order. Adjacent Sort operations in an
+Execution Plan fuse into a single composite Sort Order.
 *Avoid*: sort spec, sort criteria, sort clause, order by string
 
 #### Query Row
 
-A single query result row pairing a Note with its File Base, task state, and
+A single query result row pairing a Note with its File Metadata, task state, and
 resolved field paths.
-*Avoid*: Query Record, record, IndexRecord, QueryOutcome, page
+*Avoid*: Query Record, IndexRecord, QueryOutcome, page
+
+#### Basename
+
+The final component of a file path with its extension removed.
 
 #### Query Set
 
 A query result set of evaluated Query Rows, usable directly or like a CTE as
 an intermediate result set: cloning shares the memoized rows, chained
 transforms append in `O(1)`, and reads flush the pending plan once. Transform
-methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`,
-`with_children`, `with_descendants`) chain; terminal methods (`table`, `list`,
-`task_list`, `count`) render output.
+methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`) chain;
+terminal methods (`table`, `list`, `task_list`, `count`) render output.
 *Avoid*: Query Record Set, QueryOutcome, pipeline query, DQL, dataview query
 
 #### Task Path Style
 
-Whether task list output appends each row's file path in parentheses (`Suffix`)
-or omits it (`None`).
+Whether task list output appends each row's file path in parentheses (`Suffix`),
+or `Coordinates` appends clickable `({path}:{line})` suffixes with 1-indexed
+source lines for `traces task -l` and otherwise appends `({path})` when no
+source line is available, or omits it (`None`).
 *Avoid*: path display, path suffix toggle

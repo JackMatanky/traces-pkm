@@ -1,13 +1,13 @@
 //! Query transformation plan optimization and execution pipeline.
 //!
-//! This module provides [`QueryPlan`], an ordered sequence of transformation
-//! steps applied to query rows. Operations such as filtering, sorting,
-//! limiting, grouping, and flattening are scheduled as declarative
+//! This module provides [`ExecutionPlan`], an ordered sequence of
+//! transformation steps applied to query rows. Operations such as filtering,
+//! sorting, limiting, grouping, and flattening are scheduled as declarative
 //! [`QueryTransform`] steps.
 //!
 //! # Algebraic Optimizations
 //!
-//! Before row execution, [`QueryPlan::run`] applies idempotent optimization
+//! Before row execution, [`ExecutionPlan::run`] applies idempotent optimization
 //! passes:
 //! - **Filter Fusion**: Combines adjacent filter predicates into a single
 //!   boolean `And` tree, eliminating intermediate row buffers.
@@ -30,11 +30,11 @@ use crate::note::NoteFieldValue;
 /// Optimizations are algebraic and idempotent: running them again on an
 /// optimized plan leaves the plan unchanged.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct QueryPlan {
+pub(super) struct ExecutionPlan {
     ops: Vec<QueryTransform>,
 }
 
-impl QueryPlan {
+impl ExecutionPlan {
     /// Optimizes the plan, then applies each transform to `rows`.
     pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         self.fuse_filters().fuse_sorts().fuse_sort_limit().apply(rows)
@@ -131,7 +131,7 @@ impl QueryPlan {
     }
 }
 
-/// Single operation in a [`QueryPlan`].
+/// Single operation in an [`ExecutionPlan`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
@@ -167,11 +167,11 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `path` is not a valid field path.
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(super) fn sort(
-        field: &str,
+        path: &str,
         descending: bool,
     ) -> Result<Self, QueryBuilderError> {
         let direction = if descending {
@@ -180,7 +180,7 @@ impl QueryTransform {
             SortDirection::Ascending
         };
         Ok(Self::Sort {
-            order: SortOrder::single(FieldPath::parse(field)?, direction),
+            order: SortOrder::single(FieldPath::parse(path)?, direction),
         })
     }
 
@@ -200,32 +200,32 @@ impl QueryTransform {
     pub(super) fn limit(n: i64) -> Result<Self, QueryBuilderError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryBuilderError::LimitOutOfRange {
-                value: n,
+                limit: n,
             }
         })?;
         Ok(Self::Limit(n))
     }
 
-    /// Builds a group-by transform from `field`.
+    /// Builds a group-by transform from `path`.
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `path` is not a valid field path.
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
-    pub(super) fn group_by(field: &str) -> Result<Self, QueryBuilderError> {
-        Ok(Self::GroupBy(FieldPath::parse(field)?))
+    pub(super) fn group_by(path: &str) -> Result<Self, QueryBuilderError> {
+        Ok(Self::GroupBy(FieldPath::parse(path)?))
     }
 
-    /// Builds a flatten transform from `field`.
+    /// Builds a flatten transform from `path`.
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `path` is not a valid field path.
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
-    pub(super) fn flatten(field: &str) -> Result<Self, QueryBuilderError> {
-        Ok(Self::Flatten(FieldPath::parse(field)?))
+    pub(super) fn flatten(path: &str) -> Result<Self, QueryBuilderError> {
+        Ok(Self::Flatten(FieldPath::parse(path)?))
     }
 
     pub(super) fn apply(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
@@ -237,16 +237,16 @@ impl QueryTransform {
             }
             Self::Sort {
                 order,
-            } => order.sort_rows(rows),
+            } => order.sort(rows),
             Self::Limit(n) => {
                 let mut rows = rows;
                 rows.truncate(*n);
                 rows
             }
-            Self::GroupBy(field) => {
+            Self::GroupBy(path) => {
                 let order =
-                    SortOrder::single(field.clone(), SortDirection::Ascending);
-                order.sort_rows(rows)
+                    SortOrder::single(path.clone(), SortDirection::Ascending);
+                order.sort(rows)
             }
             Self::Flatten(field_path) => {
                 let mut out = Vec::with_capacity(rows.len());
@@ -277,7 +277,7 @@ impl QueryTransform {
                     return Vec::new();
                 }
                 if n >= rows.len() {
-                    return order.sort_rows(rows);
+                    return order.sort(rows);
                 }
                 let keys = order.keys_for(&rows);
                 let mut indexed: Vec<(usize, usize)> =
@@ -321,14 +321,14 @@ mod tests {
 
         #[test]
         fn empty_plan_is_empty() {
-            let plan = QueryPlan::default();
+            let plan = ExecutionPlan::default();
             assert!(plan.is_empty());
         }
 
         #[test]
         fn fuse_sorts_merges_consecutive_sort_operations_into_composite_order()
         {
-            let mut plan = QueryPlan::default();
+            let mut plan = ExecutionPlan::default();
             plan.push(QueryTransform::sort("file.folder", false).unwrap());
             plan.push(QueryTransform::sort("file.mtime", true).unwrap());
 
@@ -354,7 +354,7 @@ mod tests {
         #[test]
         fn fuse_sort_limit_rewrites_fused_sorts_and_limit_into_composite_topk()
         {
-            let mut plan = QueryPlan::default();
+            let mut plan = ExecutionPlan::default();
             plan.push(QueryTransform::sort("author", false).unwrap());
             plan.push(QueryTransform::sort("rating", true).unwrap());
             plan.push(QueryTransform::limit(5).unwrap());
@@ -387,7 +387,7 @@ mod tests {
         use super::*;
         #[test]
         fn empty_plan_run_returns_input_rows_unchanged() {
-            let plan = QueryPlan::default();
+            let plan = ExecutionPlan::default();
             let rows = vec![];
             assert_eq!(plan.run(rows), vec![]);
         }

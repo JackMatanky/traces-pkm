@@ -7,7 +7,7 @@
 //!
 //! # Supported Accessor Namespaces
 //!
-//! - `file.<field>`: Maps to [`FileField`] variants backed by [`FileBase`]
+//! - `file.<field>`: Maps to [`FileField`] variants backed by [`FileMeta`]
 //!   metadata (such as `file.name`, `file.folder`, `file.mtime`, `file.tags`).
 //! - `list.<field>`: Maps to [`ListField`] variants valid on list rows,
 //!   including universal properties (`list.text`, `list.line`, `list.depth`)
@@ -18,31 +18,31 @@
 //! - Bare keys: User-defined frontmatter or inline metadata field names.
 //!
 //! [`NoteFieldValue`]: crate::NoteFieldValue
-//! [`FileBase`]: crate::FileBase
+//! [`FileMeta`]: crate::FileMeta
 use crate::{FieldKey, query::error::FieldPathError, strsim::closest_match};
 
-/// A `file.<field>` accessor backed by [`FileBase`] metadata.
+/// A `file.<field>` accessor backed by [`FileMeta`] metadata.
 ///
 /// Accepted accessor names, including aliases such as `ctime` for `created_at`,
 /// are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
-/// [`FileBase`]: crate::FileBase
+/// [`FileMeta`]: crate::FileMeta
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
     Path,
     Name,
     Folder,
     Size,
-    /// Accesses [`crate::FileBase::created_at`] (falling back to
-    /// [`crate::FileBase::modified_at`]) as a datetime without a UTC offset.
+    /// Accesses [`crate::FileMeta::created_at`] (falling back to
+    /// [`crate::FileMeta::modified_at`]) as a datetime without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`crate::FileBase::created_at`] (falling back to
-    /// [`crate::FileBase::modified_at`]) as a bare date.
+    /// Accesses [`crate::FileMeta::created_at`] (falling back to
+    /// [`crate::FileMeta::modified_at`]) as a bare date.
     CreatedDate,
-    /// Accesses [`crate::FileBase::modified_at`] as a datetime without a UTC
+    /// Accesses [`crate::FileMeta::modified_at`] as a datetime without a UTC
     /// offset.
     ModifiedDateTime,
-    /// Accesses [`crate::FileBase::modified_at`] as a bare date.
+    /// Accesses [`crate::FileMeta::modified_at`] as a bare date.
     ModifiedDate,
     /// Accesses note-level tags from the row's file.
     Tags,
@@ -95,12 +95,12 @@ pub(crate) enum TaskField {
     StatusSymbol,
     Completed,
     Priority,
-    Due,
-    Done,
-    Created,
-    Start,
-    Scheduled,
-    Cancelled,
+    DueDate,
+    DoneDate,
+    CreatedDate,
+    StartDate,
+    ScheduledDate,
+    CancelledDate,
     FullyComplete,
 }
 
@@ -130,12 +130,12 @@ impl TaskField {
             "status_symbol" => Some(Self::StatusSymbol),
             "completed" => Some(Self::Completed),
             "priority" => Some(Self::Priority),
-            "due" => Some(Self::Due),
-            "done" => Some(Self::Done),
-            "created" => Some(Self::Created),
-            "start" => Some(Self::Start),
-            "scheduled" => Some(Self::Scheduled),
-            "cancelled" => Some(Self::Cancelled),
+            "due" => Some(Self::DueDate),
+            "done" => Some(Self::DoneDate),
+            "created" => Some(Self::CreatedDate),
+            "start" => Some(Self::StartDate),
+            "scheduled" => Some(Self::ScheduledDate),
+            "cancelled" => Some(Self::CancelledDate),
             "fully_complete" => Some(Self::FullyComplete),
             _ => None,
         }
@@ -359,12 +359,12 @@ mod tests {
         #[case::status_symbol("status_symbol", TaskField::StatusSymbol)]
         #[case::completed("completed", TaskField::Completed)]
         #[case::priority("priority", TaskField::Priority)]
-        #[case::due("due", TaskField::Due)]
-        #[case::done("done", TaskField::Done)]
-        #[case::created("created", TaskField::Created)]
-        #[case::start("start", TaskField::Start)]
-        #[case::scheduled("scheduled", TaskField::Scheduled)]
-        #[case::cancelled("cancelled", TaskField::Cancelled)]
+        #[case::due("due", TaskField::DueDate)]
+        #[case::done("done", TaskField::DoneDate)]
+        #[case::created("created", TaskField::CreatedDate)]
+        #[case::start("start", TaskField::StartDate)]
+        #[case::scheduled("scheduled", TaskField::ScheduledDate)]
+        #[case::cancelled("cancelled", TaskField::CancelledDate)]
         #[case::fully_complete("fully_complete", TaskField::FullyComplete)]
         fn parses_all_task_field_variants(
             #[case] name: &str,
@@ -405,7 +405,7 @@ mod tests {
         #[case::is_task("is_task", ListField::IsTask)]
         #[case::kind("kind", ListField::Kind)]
         #[case::is_ordered("is_ordered", ListField::IsOrdered)]
-        #[case::embedded_due("due", ListField::Task(TaskField::Due))]
+        #[case::embedded_due("due", ListField::Task(TaskField::DueDate))]
         #[case::embedded_completed(
             "completed",
             ListField::Task(TaskField::Completed)

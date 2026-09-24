@@ -1,6 +1,6 @@
-//! Nearest-candidate resolution for one wikilink stem's file candidates.
+//! Nearest-candidate resolution for one wikilink basename's file candidates.
 //!
-//! [`BaseNameIndex`] selects a [`ResolutionStrategy`] once in
+//! [`BaseNameIndex`] selects a [`ResolutionType`] once in
 //! [`BaseNameIndex::build`] — a linear scan below [`TRIE_THRESHOLD`]
 //! candidates, a folder trie at or above it — and answers nearest-by-folder-
 //! distance queries through [`BaseNameIndex::nearest`]. Equidistant nearest
@@ -13,14 +13,14 @@ use rustc_hash::FxHashMap;
 
 use crate::path::FolderRef;
 
-/// Per-stem candidate index dispatching to flat scan or a folder trie.
+/// Per-basename candidate index dispatching to flat scan or a folder trie.
 ///
-/// Opaque over its [`ResolutionStrategy`]: callers see one query surface and
+/// Opaque over its [`ResolutionType`]: callers see one query surface and
 /// never the representation.
-pub(super) struct BaseNameIndex<'a>(ResolutionStrategy<'a>);
+pub(super) struct BaseNameIndex<'a>(ResolutionType<'a>);
 
 /// Candidate-count strategy selected once at [`BaseNameIndex::build`].
-enum ResolutionStrategy<'a> {
+enum ResolutionType<'a> {
     Flat(Vec<&'a Path>),
     Trie(Box<CandidateTrie<'a>>),
 }
@@ -30,15 +30,13 @@ enum ResolutionStrategy<'a> {
 pub(super) const TRIE_THRESHOLD: usize = 64;
 
 impl<'a> BaseNameIndex<'a> {
-    /// Builds the index for one stem's `candidates`, selecting the strategy by
-    /// [`TRIE_THRESHOLD`].
+    /// Builds the index for one basename's `candidates`, selecting the strategy
+    /// by [`TRIE_THRESHOLD`].
     pub(super) fn build(candidates: Vec<&'a Path>) -> Self {
         Self(if candidates.len() >= TRIE_THRESHOLD {
-            ResolutionStrategy::Trie(Box::new(CandidateTrie::build(
-                &candidates,
-            )))
+            ResolutionType::Trie(Box::new(CandidateTrie::build(&candidates)))
         } else {
-            ResolutionStrategy::Flat(candidates)
+            ResolutionType::Flat(candidates)
         })
     }
 
@@ -51,10 +49,10 @@ impl<'a> BaseNameIndex<'a> {
         target_ext: Option<&str>,
     ) -> Option<&'a Path> {
         match &self.0 {
-            ResolutionStrategy::Flat(candidates) => {
+            ResolutionType::Flat(candidates) => {
                 Self::nearest_flat(candidates, from, target_ext)
             }
-            ResolutionStrategy::Trie(trie) => trie.nearest(from, target_ext),
+            ResolutionType::Trie(trie) => trie.nearest(from, target_ext),
         }
     }
 
@@ -94,12 +92,12 @@ impl<'a> BaseNameIndex<'a> {
     }
 }
 
-/// Folder-component trie for one Wikilink stem's candidates.
+/// Folder-component trie for one Wikilink basename's candidates.
 ///
 /// Answers nearest-candidate queries in `O(depth(from))` by precomputing each
-/// folder's nearest same-stem candidate inside its subtree. The trie's lifetime
-/// and mutability shape keeps [`super::inlinks::InlinkMap::new`]'s parallel
-/// path `Sync`.
+/// folder's nearest same-basename candidate inside its subtree. The trie's
+/// lifetime and mutability shape keeps [`super::inlinks::InlinkMap::new`]'s
+/// parallel path `Sync`.
 struct CandidateTrie<'a> {
     arena: Arena<TrieNode<'a>>,
     by_folder: FxHashMap<&'a Path, NodeId>,
@@ -345,7 +343,7 @@ struct TrieNode<'a> {
     depth: usize,
     /// Candidates whose containing folder is this node.
     ///
-    /// Multiple entries imply the same folder and stem with distinct
+    /// Multiple entries imply the same folder and basename with distinct
     /// extensions.
     locals: Vec<(Option<&'a str>, &'a Path)>,
     /// Aggregate for this node's locals and every descendant.
@@ -354,13 +352,13 @@ struct TrieNode<'a> {
     ///
     /// Queries walking up through child `c` use this instead of `full` to
     /// avoid counting shallower candidates twice. Stored in a small `Vec`
-    /// because same-stem subfolders are usually few.
+    /// because same-basename subfolders are usually few.
     excluding: Vec<(NodeId, SubtreeAggregate<'a>)>,
 }
 
 /// Subtree aggregate with optional per-extension buckets.
 ///
-/// `by_ext` is a `Vec`, not a `HashMap`: same-stem candidates rarely span
+/// `by_ext` is a `Vec`, not a `HashMap`: same-basename candidates rarely span
 /// enough extensions for hashing and per-node allocation to win.
 #[derive(Clone, Debug, Default)]
 struct SubtreeAggregate<'a> {

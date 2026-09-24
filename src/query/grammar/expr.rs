@@ -182,7 +182,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         parse_term: ParseTerm<'input, G>,
     ) -> Result<BooleanExpr<G::Atom>, QueryBuilderError> {
         let first = parse_term(self)?;
-        if !self.is_control_taken(LogicalControl::Operator(operator)) {
+        if self.accept_control(LogicalControl::Operator(operator)).is_none() {
             return Ok(first);
         }
 
@@ -190,7 +190,8 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         expressions.push(first);
         loop {
             expressions.push(parse_term(self)?);
-            if !self.is_control_taken(LogicalControl::Operator(operator)) {
+            if self.accept_control(LogicalControl::Operator(operator)).is_none()
+            {
                 break;
             }
         }
@@ -202,7 +203,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
 
     fn parse_not(&mut self) -> Result<BooleanExpr<G::Atom>, QueryBuilderError> {
         let mut count = 0usize;
-        while self.is_control_taken(LogicalControl::Not) {
+        while self.accept_control(LogicalControl::Not).is_some() {
             count = count.saturating_add(1);
         }
         let mut expression = self.parse_primary()?;
@@ -215,9 +216,9 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn parse_primary(
         &mut self,
     ) -> Result<BooleanExpr<G::Atom>, QueryBuilderError> {
-        if self.is_control_taken(LogicalControl::LeftParen) {
+        if self.accept_control(LogicalControl::LeftParen).is_some() {
             let expression = self.parse_or()?;
-            if !self.is_control_taken(LogicalControl::RightParen) {
+            if self.accept_control(LogicalControl::RightParen).is_none() {
                 let span = self.next_span();
                 return Err(self.syntax_error(span, "`)` to close `(`").into());
             }
@@ -229,7 +230,12 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         }
     }
 
-    fn is_control_taken(&mut self, expected: LogicalControl) -> bool {
+    /// Consumes the token at the cursor when it matches `expected`, returning
+    /// the accepted control, or `None` when the cursor holds a different token.
+    fn accept_control(
+        &mut self,
+        expected: LogicalControl,
+    ) -> Option<LogicalControl> {
         if self
             .tokens
             .peek()
@@ -237,9 +243,9 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
             == Some(expected)
         {
             self.tokens.next();
-            true
+            Some(expected)
         } else {
-            false
+            None
         }
     }
 
@@ -341,7 +347,12 @@ mod tests {
             span: SourceSpan,
             expected: &'static str,
         ) -> QuerySyntaxError {
-            QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
+            QuerySyntaxError::unexpected_end(
+                QueryDialect::Source,
+                input,
+                span,
+                expected,
+            )
         }
     }
 

@@ -10,7 +10,7 @@
 //! - [`content`] owns raw Markdown strings and [`content::ProjectShape`]. It
 //!   does not parse notes or touch the filesystem.
 //! - [`notes`] owns parsed [`Note`](traces_pkm::Note) and
-//!   [`FileBase`](traces_pkm::FileBase) collections for in-memory benches. It
+//!   [`FileMeta`](traces_pkm::FileMeta) collections for in-memory benches. It
 //!   does not create files on disk.
 //! - [`project`] owns [`TempDir`](tempfile::TempDir)-backed project trees and
 //!   [`WorkspaceIndex`](traces_pkm::WorkspaceIndex) builders for scanner,

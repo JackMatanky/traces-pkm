@@ -3,7 +3,7 @@
 //! [`IndexerService`] scans, parses, persists, loads, refreshes, and opens one
 //! project root's [`super::WorkspaceIndex`] through `IndexStore`.
 //!
-//! `refresh` and `current_store` share one incremental core: content-only
+//! `refresh` and `refresh_store` share one incremental core: content-only
 //! deltas patch inbound links from touched notes, while path-set changes force
 //! a full recompute because wikilink resolution depends on every indexed path.
 
@@ -14,14 +14,14 @@ use rayon::prelude::*;
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
     inlinks::InlinkMap,
-    refresh::{PendingApply, RefreshPass, RefreshPlan, RefreshReport},
+    refresh::{PendingApply, RefreshPlan, RefreshReport, RefreshState},
     sort::SortedByPath,
-    store::{IndexAxes, IndexStore, PersistRequest},
+    store::{IndexDimensions, IndexStore, PersistRequest},
 };
 use crate::{
     Config, DirTree, Note, TaskConfig,
     config::FrontmatterConfig,
-    file::{FileBase, FileFormat},
+    file::{FileFormat, FileMeta},
     note::{MarkdownParserInput, parse_markdown},
     path::RelativePath,
 };
@@ -29,7 +29,7 @@ use crate::{
 /// Drives the file-index lifecycle for one project root.
 ///
 /// `refresh` returns a full [`WorkspaceIndex`] and logs persist failures;
-/// `current_store` keeps only the persisted store current and propagates
+/// `refresh_store` keeps only the persisted store current and propagates
 /// persist failures because it has no in-memory fallback.
 #[derive(Clone, Debug)]
 pub struct IndexerService {
@@ -64,7 +64,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::Scan` if a directory cannot be read.
     /// - `IndexError::Inspect` if a file's metadata cannot be inspected.
     /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
@@ -91,7 +91,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::Scan` if a directory cannot be read.
     /// - `IndexError::Inspect` if file metadata cannot be inspected.
     /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
@@ -108,7 +108,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::Scan` if a directory cannot be read.
     /// - `IndexError::Inspect` if file metadata cannot be inspected.
     /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
@@ -119,9 +119,9 @@ impl IndexerService {
     pub fn refresh_with_report(
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
-        match self.plan_pass()? {
-            RefreshPass::Unchanged(store) => Self::assemble_unchanged(&store),
-            RefreshPass::Reconciled(pending) => self.apply_reconciled(*pending),
+        match self.prepare_pass()? {
+            RefreshState::Fresh(store) => Self::assemble_unchanged(&store),
+            RefreshState::Stale(pending) => self.apply_reconciled(*pending),
         }
     }
 
@@ -140,8 +140,8 @@ impl IndexerService {
         pending: PendingApply,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         let report = pending.report();
-        let axes = IndexAxes::for_class_field(&self.class_field);
-        let index = match pending.apply(axes) {
+        let dimensions = IndexDimensions::for_class_field(&self.class_field);
+        let index = match pending.apply(dimensions) {
             Ok(persisted) => {
                 Self::log_report(&report);
                 persisted.into_index()?
@@ -157,14 +157,14 @@ impl IndexerService {
         Ok((index, report))
     }
 
-    fn plan_pass(&self) -> IndexResult<RefreshPass> {
+    fn prepare_pass(&self) -> IndexResult<RefreshState> {
         let plan = RefreshPlan::collect(&self.root)?;
-        if plan.is_empty() {
-            return Ok(plan.into_unchanged());
+        if plan.is_fresh() {
+            return Ok(plan.into_fresh());
         }
         let modified_notes = self.parse_notes(plan.upserted_files())?;
         let pending = plan.reconcile(modified_notes)?;
-        Ok(RefreshPass::Reconciled(Box::new(pending)))
+        Ok(RefreshState::Stale(Box::new(pending)))
     }
 
     /// Rebuilds and persists the index from scratch, returning it.
@@ -175,7 +175,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
     /// - [`IndexError::NoteParse`] if a note cannot be read or parsed.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
@@ -199,7 +199,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
     /// - [`IndexError::NoteParse`] if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
@@ -208,13 +208,14 @@ impl IndexerService {
     /// - [`IndexError::Store`] if the database cannot be opened or read,
     ///   required note bodies cannot be read, or incremental persistence fails.
     #[inline]
-    pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
-        match self.plan_pass()? {
-            RefreshPass::Unchanged(store) => Ok(store),
-            RefreshPass::Reconciled(pending) => {
+    pub(crate) fn refresh_store(&self) -> IndexResult<IndexStore> {
+        match self.prepare_pass()? {
+            RefreshState::Fresh(store) => Ok(store),
+            RefreshState::Stale(pending) => {
                 let report = pending.report();
-                let axes = IndexAxes::for_class_field(&self.class_field);
-                match (*pending).apply(axes) {
+                let dimensions =
+                    IndexDimensions::for_class_field(&self.class_field);
+                match (*pending).apply(dimensions) {
                     Ok(persisted) => {
                         Self::log_report(&report);
                         Ok(persisted.into_store())
@@ -236,7 +237,7 @@ impl IndexerService {
 
     /// Parses every Markdown-classified file in `files` in parallel, stopping
     /// at the first parse failure.
-    fn parse_notes(&self, files: &[FileBase]) -> IndexResult<Vec<Note>> {
+    fn parse_notes(&self, files: &[FileMeta]) -> IndexResult<Vec<Note>> {
         files
             .par_iter()
             .filter(|file| file.format() == FileFormat::Note)
@@ -246,7 +247,7 @@ impl IndexerService {
 
     /// Reads and parses the Markdown file at `file`'s path, resolved relative
     /// to this service's root.
-    fn parse_note(&self, file: &FileBase) -> IndexResult<Note> {
+    fn parse_note(&self, file: &FileMeta) -> IndexResult<Note> {
         let full_path = self.root.join(file.path());
         let content =
             std::fs::read_to_string(&full_path).map_err(|source| {
@@ -273,7 +274,7 @@ impl IndexerService {
     #[inline]
     pub fn persist(&self, index: &WorkspaceIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist(&PersistRequest::rebuild(
-            IndexAxes::for_class_field(&self.class_field),
+            IndexDimensions::for_class_field(&self.class_field),
             index.entries(),
         ))
     }
@@ -306,18 +307,18 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if a file's metadata cannot be inspected.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
-    pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileBase>> {
+    pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileMeta>> {
         let index_db = root.join(INDEX_FILE);
         let paths = DirTree::descendants(root)
             .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
             .filter_map(|node| {
                 let node = match node {
                     Ok(node) => node,
-                    Err(error) => return Some(Err(IndexError::Walk(error))),
+                    Err(error) => return Some(Err(IndexError::Scan(error))),
                 };
                 let path = node.path();
                 (node.file_type().is_file() && path != index_db)
@@ -327,21 +328,21 @@ impl IndexerService {
         let mut files = paths
             .into_par_iter()
             .map(|path| scan_file_metadata(&path, root))
-            .collect::<IndexResult<Vec<FileBase>>>()?;
+            .collect::<IndexResult<Vec<FileMeta>>>()?;
         files.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
 
-/// Builds `path`'s [`FileBase`] from metadata relative to `root`.
-fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileBase> {
+/// Builds `path`'s [`FileMeta`] from metadata relative to `root`.
+fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileMeta> {
     let relative = RelativePath::derive(root, path)?;
     let metadata =
         std::fs::metadata(path).map_err(|source| IndexError::Inspect {
             path: path.to_path_buf(),
             source,
         })?;
-    FileBase::from_metadata(relative, &metadata).map_err(|source| {
+    FileMeta::from_metadata(relative, &metadata).map_err(|source| {
         IndexError::Inspect {
             path: path.to_path_buf(),
             source,
@@ -360,7 +361,7 @@ mod tests {
     use super::{super::IndexError, *};
     use crate::{
         Note,
-        file::FileBase,
+        file::FileMeta,
         index::FileEntry,
         query::{QueryBuilder, QueryService, QuerySet, SourceSelector},
     };
@@ -461,7 +462,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn current_store_skips_note_decode_on_empty_delta() {
+        fn refresh_store_skips_note_decode_on_empty_delta() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::write(root.join("a.md"), "# A").expect("write note");
@@ -473,7 +474,7 @@ mod tests {
                 .poison_note_row(Path::new("a.md"))
                 .expect("poison note row");
 
-            service.current_store().expect("empty delta sync");
+            service.refresh_store().expect("empty delta sync");
         }
 
         #[test]
@@ -622,8 +623,8 @@ mod tests {
         #[cfg(unix)]
         use crate::index::tests::fixtures::PermissionsGuard;
 
-        fn paths(files: &[FileBase]) -> Vec<&Path> {
-            files.iter().map(FileBase::path).collect()
+        fn paths(files: &[FileMeta]) -> Vec<&Path> {
+            files.iter().map(FileMeta::path).collect()
         }
 
         #[test]
@@ -731,7 +732,7 @@ mod tests {
             let error =
                 IndexerService::scan(root).expect_err("unreadable dir fails");
 
-            assert!(matches!(error, IndexError::Walk(_)));
+            assert!(matches!(error, IndexError::Scan(_)));
         }
     }
 
@@ -1036,7 +1037,7 @@ mod tests {
                     .entries()
                     .first()
                     .map(FileEntry::file)
-                    .map(FileBase::path),
+                    .map(FileMeta::path),
                 Some(Path::new("second.md"))
             );
             assert_eq!(
@@ -1081,7 +1082,7 @@ mod tests {
                     .entries()
                     .first()
                     .map(FileEntry::file)
-                    .map(FileBase::path),
+                    .map(FileMeta::path),
                 Some(Path::new("keep.md"))
             );
         }
@@ -1187,7 +1188,7 @@ mod tests {
             let links = InlinkMap::from_raw(links);
             store
                 .persist(&PersistRequest::rebuild(
-                    IndexAxes::for_class_field("class"),
+                    IndexDimensions::for_class_field("class"),
                     WorkspaceIndex::assemble(
                         SortedByPath::sorted(files),
                         SortedByPath::sorted(notes),

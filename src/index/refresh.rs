@@ -1,9 +1,9 @@
 //! Incremental index refresh planning and typed update application.
 //!
-//! [`RefreshPass`] models the refresh lifecycle: unchanged scans can
-//! materialize directly from the store, while reconciled scans must pass
+//! [`RefreshState`] models the refresh lifecycle: fresh scans can
+//! materialize directly from the store, while stale scans must pass
 //! through [`PendingApply`] before callers can receive a persisted store. A
-//! [`PersistFailed`] keeps the pending pass so [`IndexerService::refresh`] can
+//! [`PersistFailed`] keeps the pending state so [`IndexerService::refresh`] can
 //! still materialize a fail-open in-memory index from the same reconciliation.
 //!
 //! [`IndexerService::refresh`]: super::service::IndexerService::refresh
@@ -16,9 +16,9 @@ use super::{
     inlinks::{self, InlinkMap},
     service::IndexerService,
     sort::SortedByPath,
-    store::{IndexAxes, IndexStore, PersistRequest},
+    store::{IndexDimensions, IndexStore, PersistRequest},
 };
-use crate::{FileBase, Note};
+use crate::{FileMeta, Note};
 
 /// Changed-row counts from an incremental refresh.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -71,12 +71,12 @@ impl RefreshReport {
     }
 }
 
-/// Result of one scanned refresh pass before optional persistence.
-pub(super) enum RefreshPass {
+/// Refresh state produced by one scan, before optional persistence.
+pub(super) enum RefreshState {
     /// No file metadata changed; the opened store remains current.
-    Unchanged(IndexStore),
+    Fresh(IndexStore),
     /// File metadata changed and is reconciled but not yet persisted.
-    Reconciled(Box<PendingApply>),
+    Stale(Box<PendingApply>),
 }
 
 /// Reconciled refresh data waiting for a store write.
@@ -92,19 +92,19 @@ impl PendingApply {
         self.update.report()
     }
 
-    /// Persists this pass through [`IndexStore::persist`].
+    /// Persists this pending update through [`IndexStore::persist`].
     ///
     /// The update remains owned by the returned state in both success and error
     /// cases, so a failed apply can still materialize an in-memory index from
     /// exactly the rows that failed to persist.
     pub(super) fn apply(
         self,
-        axes: IndexAxes,
+        dimensions: IndexDimensions,
     ) -> Result<Persisted, PersistFailed> {
         let result = {
             let notes = self.update.notes_to_upsert();
             self.store.persist(&PersistRequest::incremental(
-                axes,
+                dimensions,
                 self.update.delta(),
                 &notes,
                 self.update.inlink_delta(),
@@ -121,7 +121,7 @@ impl PendingApply {
         }
     }
 
-    /// Materializes this pass into an in-memory [`WorkspaceIndex`].
+    /// Materializes this pending update into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
@@ -136,7 +136,7 @@ impl PendingApply {
     }
 }
 
-/// Successfully persisted refresh pass.
+/// Successfully persisted refresh state.
 pub(super) struct Persisted {
     pass: PendingApply,
 }
@@ -200,7 +200,7 @@ pub(super) struct InlinkReconciliation {
     notes: NoteScope,
 }
 
-/// Notes needed to persist and materialize a refresh pass.
+/// Notes needed to persist and materialize the refresh state.
 pub(super) enum NoteScope {
     /// Only modified notes were parsed; unchanged notes still live in the
     /// store.
@@ -216,7 +216,7 @@ impl NoteScope {
     /// changed files. `Complete` searches the rebuilt, path-sorted set and
     /// returns only the files identified by the file delta.
     #[must_use]
-    pub(super) fn to_upsert(&self, upserted: &[FileBase]) -> Vec<&Note> {
+    pub(super) fn to_upsert(&self, upserted: &[FileMeta]) -> Vec<&Note> {
         match self {
             Self::Modified(notes) => notes.iter().collect(),
             Self::Complete(notes) => upserted
@@ -252,8 +252,8 @@ impl NoteScope {
 /// Scanned-and-diffed state of one index root, before note parsing.
 pub(super) struct RefreshPlan {
     store: IndexStore,
-    current_files: SortedByPath<FileBase>,
-    persisted_files: SortedByPath<FileBase>,
+    current_files: SortedByPath<FileMeta>,
+    persisted_files: SortedByPath<FileMeta>,
     delta: FileDelta,
 }
 
@@ -261,12 +261,12 @@ impl RefreshPlan {
     /// Opens [`IndexStore`], scans the filesystem, and reads persisted files.
     ///
     /// The filesystem walk runs concurrently with [`IndexStore::open`] and the
-    /// store read. This pass does not decode link rows; reconciliation or final
-    /// index materialization loads them only when needed.
+    /// store read. This state does not decode link rows; reconciliation or
+    /// final index materialization loads them only when needed.
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
@@ -293,20 +293,20 @@ impl RefreshPlan {
 
     /// Reports whether the scan produced no changes.
     #[inline]
-    pub(super) fn is_empty(&self) -> bool {
+    pub(super) fn is_fresh(&self) -> bool {
         self.delta.is_empty()
     }
 
-    /// Returns the files this pass would upsert.
+    /// Returns the files this state would upsert.
     #[inline]
-    pub(super) fn upserted_files(&self) -> &[FileBase] {
+    pub(super) fn upserted_files(&self) -> &[FileMeta] {
         self.delta.upserted()
     }
 
-    /// Consumes the unchanged plan into a refresh pass.
+    /// Consumes the unchanged plan into [`RefreshState::Fresh`].
     #[inline]
-    pub(super) fn into_unchanged(self) -> RefreshPass {
-        RefreshPass::Unchanged(self.store)
+    pub(super) fn into_fresh(self) -> RefreshState {
+        RefreshState::Fresh(self.store)
     }
 
     /// Reconciles reparsed notes with persisted state.
@@ -319,15 +319,15 @@ impl RefreshPlan {
         self,
         modified_notes: Vec<Note>,
     ) -> IndexResult<PendingApply> {
-        let prev_links = self.store.read_all_links(&self.persisted_files)?;
+        let persisted = self.store.read_all_links(&self.persisted_files)?;
         let (inlinks, inlink_delta) =
             if Self::is_paths_unchanged(&self.delta, &self.persisted_files) {
                 let links = Self::patch_links(
-                    &prev_links,
+                    &persisted,
                     &modified_notes,
                     self.current_files.as_slice(),
                 );
-                let inlink_delta = InlinkDelta::compute(&links, &prev_links);
+                let inlink_delta = InlinkDelta::compute(&links, &persisted);
                 (
                     InlinkReconciliation {
                         links,
@@ -345,7 +345,7 @@ impl RefreshPlan {
                     notes.as_slice(),
                     self.current_files.as_slice(),
                 );
-                let inlink_delta = InlinkDelta::compute(&links, &prev_links);
+                let inlink_delta = InlinkDelta::compute(&links, &persisted);
                 (
                     InlinkReconciliation {
                         links,
@@ -372,7 +372,7 @@ impl RefreshPlan {
     /// Only this case leaves link resolution for unedited notes invariant.
     fn is_paths_unchanged(
         delta: &FileDelta,
-        persisted_files: &SortedByPath<FileBase>,
+        persisted_files: &SortedByPath<FileMeta>,
     ) -> bool {
         delta.deleted().is_empty()
             && delta.upserted().iter().all(|file| {
@@ -385,22 +385,22 @@ impl RefreshPlan {
     ///
     /// Sound only when [`Self::is_paths_unchanged`] holds.
     fn patch_links(
-        prev_links: &InlinkMap,
+        persisted: &InlinkMap,
         modified_notes: &[Note],
-        current_files: &[FileBase],
+        current_files: &[FileMeta],
     ) -> InlinkMap {
         let edited: HashSet<&Path> =
             modified_notes.iter().map(Note::path).collect();
         let new_edges =
             inlinks::resolve_edges_for(modified_notes, current_files);
-        prev_links.without_sources(&edited).with_edges(new_edges)
+        persisted.without_sources(&edited).with_edges(new_edges)
     }
 }
 
-/// Computed facts from one reconciliation pass, not yet applied. Pure data: no
+/// Computed facts from one reconciliation, not yet applied. Pure data: no
 /// store handle, constructible and assertable without a database.
 pub(super) struct IndexUpdate {
-    current_files: SortedByPath<FileBase>,
+    current_files: SortedByPath<FileMeta>,
     delta: FileDelta,
     inlinks: InlinkReconciliation,
     inlink_delta: InlinkDelta,
@@ -475,7 +475,7 @@ fn merge_refreshed_notes(
 
     if !delta.deleted().is_empty() {
         let deleted: HashSet<&Path> =
-            delta.deleted().iter().map(FileBase::path).collect();
+            delta.deleted().iter().map(FileMeta::path).collect();
         all_notes.retain(|n| !deleted.contains(n.path()));
     }
 
@@ -517,8 +517,8 @@ mod tests {
         #[test]
         fn counts_upserts_deletes_and_link_edges() {
             let delta = FileDelta::compute(
-                &SortedByPath::sorted(vec![FileBase::note_for_test("a.md")]),
-                &SortedByPath::sorted(vec![FileBase::note_for_test("b.md")]),
+                &SortedByPath::sorted(vec![FileMeta::note_for_test("a.md")]),
+                &SortedByPath::sorted(vec![FileMeta::note_for_test("b.md")]),
             );
             let inlink_delta = InlinkDelta::compute(
                 &InlinkMap::default(),
@@ -551,7 +551,7 @@ mod tests {
             let notes =
                 vec![parse_note("a.md", "# A"), parse_note("b.md", "# B")];
             let scope = NoteScope::Modified(notes);
-            let upserted = [FileBase::note_for_test("a.md")];
+            let upserted = [FileMeta::note_for_test("a.md")];
 
             let paths: Vec<_> = scope
                 .to_upsert(&upserted)
@@ -568,8 +568,8 @@ mod tests {
                 vec![parse_note("a.md", "# A"), parse_note("c.md", "# C")];
             let scope = NoteScope::Complete(notes);
             let upserted = [
-                FileBase::note_for_test("a.md"),
-                FileBase::note_for_test("b.md"),
+                FileMeta::note_for_test("a.md"),
+                FileMeta::note_for_test("b.md"),
             ];
 
             let paths: Vec<_> = scope
@@ -585,7 +585,7 @@ mod tests {
         fn returns_no_complete_notes_when_upserted_paths_miss() {
             let notes = vec![parse_note("a.md", "# A")];
             let scope = NoteScope::Complete(notes);
-            let upserted = [FileBase::note_for_test("b.md")];
+            let upserted = [FileMeta::note_for_test("b.md")];
 
             assert_eq!(scope.to_upsert(&upserted), Vec::<&Note>::new());
         }

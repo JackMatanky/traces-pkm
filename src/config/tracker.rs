@@ -134,7 +134,7 @@ impl ConfigPathTracker {
         let Some(config_file) = subject.config_file() else {
             return Ok(());
         };
-        let digest = Blake3FileHash::try_from(config_file)?;
+        let digest = Blake3FileHash::from_path(config_file)?;
         self.trusted.write_companion(
             subject.root_path(),
             COMPANION_SUFFIX,
@@ -487,8 +487,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_missing_baseline_when_workspace_trusted_but_companion_missing()
-         {
+        fn returns_missing_baseline_when_companion_absent() {
             // Arrange
             let fixture = Fixture::new();
             fs::create_dir_all(fixture.project_root()).expect("create root");

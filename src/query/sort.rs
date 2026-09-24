@@ -54,10 +54,10 @@ impl SortOrder {
     /// # Panics
     ///
     /// - Panics if `self.terms` is empty; callers must guard non-empty terms
-    ///   before calling (`sort_rows` does this).
+    ///   before calling (`sort` does this).
     #[expect(
         clippy::expect_used,
-        reason = "caller guarantees non-empty terms via sort_rows guard"
+        reason = "caller guarantees non-empty terms via sort guard"
     )]
     pub(super) fn keys_for<'a>(&self, rows: &'a [QueryRow]) -> SortKeys<'a> {
         let stride = NonZeroUsize::new(self.terms.len())
@@ -133,7 +133,7 @@ impl SortOrder {
 
     /// Sorts `rows`, preserving original relative order for ties.
     #[must_use]
-    pub(super) fn sort_rows(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
+    pub(super) fn sort(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         if rows.len() <= 1 || self.terms.is_empty() {
             return rows;
         }
@@ -485,21 +485,18 @@ mod tests {
 
     use super::super::*;
 
-    fn outcome_for_files(_temp: &Path, files: &[(&str, &str)]) -> QuerySet {
+    fn rows_for_files(_temp: &Path, files: &[(&str, &str)]) -> QuerySet {
         let index = crate::build_test_index(files);
         QueryService::new("class")
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
-    fn outcome_for(temp: &Path, content: &str) -> QuerySet {
-        outcome_for_files(temp, &[("note.md", content)])
+    fn rows_for(temp: &Path, content: &str) -> QuerySet {
+        rows_for_files(temp, &[("note.md", content)])
     }
 
-    fn names(outcome: &QuerySet) -> Vec<String> {
-        outcome
-            .iter()
-            .map(|row| row.file().name().as_str().to_owned())
-            .collect()
+    fn names(rows: &QuerySet) -> Vec<String> {
+        rows.iter().map(|row| row.file().name().as_str().to_owned()).collect()
     }
 
     mod sort {
@@ -510,12 +507,12 @@ mod tests {
         #[test]
         fn orders_ascending_by_default() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("b.md", "---\nrating: 7\n---"),
                 ("a.md", "---\nrating: 3\n---"),
             ]);
 
-            let sorted = outcome.sort("rating", false).expect("valid sort");
+            let sorted = rows.sort("rating", false).expect("valid sort");
 
             assert_eq!(names(&sorted), ["a", "b"]);
         }
@@ -523,12 +520,12 @@ mod tests {
         #[test]
         fn orders_descending_when_requested() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("b.md", "---\nrating: 7\n---"),
                 ("a.md", "---\nrating: 3\n---"),
             ]);
 
-            let sorted = outcome.sort("rating", true).expect("valid sort");
+            let sorted = rows.sort("rating", true).expect("valid sort");
 
             assert_eq!(names(&sorted), ["b", "a"]);
         }
@@ -536,14 +533,14 @@ mod tests {
         #[test]
         fn missing_field_sorts_as_the_minimum_value() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("rated.md", "---\nrating: 3\n---"),
                 ("unrated.md", "no frontmatter"),
             ]);
 
             let ascending =
-                outcome.clone().sort("rating", false).expect("valid sort");
-            let descending = outcome.sort("rating", true).expect("valid sort");
+                rows.clone().sort("rating", false).expect("valid sort");
+            let descending = rows.sort("rating", true).expect("valid sort");
 
             // Dataview treats null as the minimum value: first ascending, last
             // descending.
@@ -554,12 +551,12 @@ mod tests {
         #[test]
         fn ties_keep_original_relative_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("a.md", "---\nrating: 5\n---"),
                 ("b.md", "---\nrating: 5\n---"),
             ]);
 
-            let sorted = outcome.sort("rating", false).expect("valid sort");
+            let sorted = rows.sort("rating", false).expect("valid sort");
 
             assert_eq!(names(&sorted), ["a", "b"]);
         }
@@ -567,10 +564,10 @@ mod tests {
         #[test]
         fn rejects_malformed_field_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for(temp.path(), "body");
+            let rows = rows_for(temp.path(), "body");
 
             assert_eq!(
-                outcome.sort("file.zzzz", false),
+                rows.sort("file.zzzz", false),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.zzzz", None)
                 )))
@@ -580,12 +577,12 @@ mod tests {
         #[test]
         fn sorts_boolean_field_false_before_true() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("true.md", "---\nactive: true\n---"),
                 ("false.md", "---\nactive: false\n---"),
             ]);
 
-            let sorted = outcome.sort("active", false).expect("valid sort");
+            let sorted = rows.sort("active", false).expect("valid sort");
 
             assert_eq!(names(&sorted), ["false", "true"]);
         }
@@ -593,12 +590,12 @@ mod tests {
         #[test]
         fn sorts_null_field_alongside_boolean_field() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("true.md", "---\nactive: true\n---"),
                 ("none.md", "no frontmatter"),
             ]);
 
-            let sorted = outcome.sort("active", false).expect("valid sort");
+            let sorted = rows.sort("active", false).expect("valid sort");
 
             assert_eq!(names(&sorted), ["none", "true"]);
         }

@@ -92,10 +92,10 @@ pub enum QueryBuilderError {
     #[error(transparent)]
     FieldPath(#[from] FieldPathError),
     /// Query limit is negative or exceeds platform [`usize`] bounds.
-    #[error("invalid limit {value}; expected a non-negative row count")]
+    #[error("invalid limit {limit}; expected a non-negative row count")]
     LimitOutOfRange {
         /// The rejected limit count.
-        value: i64,
+        limit: i64,
     },
 }
 
@@ -120,8 +120,10 @@ pub struct QuerySyntaxError {
 }
 
 impl QuerySyntaxError {
-    /// Builds an unexpected-end diagnostic for `span`.
-    pub(crate) fn new(
+    /// Builds an `unexpected_end` diagnostic for `span`.
+    ///
+    /// Always constructs `LexError::UnexpectedEndOfInput` with `expected`.
+    pub(crate) fn unexpected_end(
         dialect: QueryDialect,
         input: &str,
         span: SourceSpan,
@@ -222,7 +224,7 @@ mod tests {
 
         #[test]
         fn syntax_error_preserves_dialect_input_span_and_label() {
-            let error = QuerySyntaxError::new(
+            let error = QuerySyntaxError::unexpected_end(
                 QueryDialect::Filter,
                 "rating >",
                 SourceSpan::from((7, 0)),
@@ -260,7 +262,7 @@ mod tests {
 
         #[test]
         fn query_error_exposes_nested_syntax_diagnostic() {
-            let error = QueryError::from(QuerySyntaxError::new(
+            let error = QueryError::from(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 "#book and",
                 SourceSpan::from((9, 0)),
@@ -313,7 +315,7 @@ mod tests {
         fn limit_out_of_range_formats_display_message() {
             assert_display(
                 &QueryError::from(QueryBuilderError::LimitOutOfRange {
-                    value: -5,
+                    limit: -5,
                 }),
                 "invalid limit -5; expected a non-negative row count",
             );

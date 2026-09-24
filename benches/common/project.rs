@@ -10,7 +10,7 @@
 //!   for the full measured operation.
 //! - **In-memory fixtures** (`build_index`, `build_index_arc`,
 //!   `build_index_arc_from_note_source`): a [`WorkspaceIndex`] assembled
-//!   entirely on the heap via `WorkspaceIndex::new_test`, with zero disk I/O.
+//!   entirely on the heap via `WorkspaceIndex::for_test`, with zero disk I/O.
 //!   Use these for query, sort, and filter benchmarks.
 //!
 //! Do not add ad-hoc path-writing helpers. All writes must flow through
@@ -73,7 +73,7 @@ pub(crate) fn create_project(
 /// Builds an in-memory [`WorkspaceIndex`] for a `ProjectShape` without touching
 /// the filesystem.
 ///
-/// - Notes are parsed on the heap via `WorkspaceIndex::new_test`.
+/// - Notes are parsed on the heap via `WorkspaceIndex::for_test`.
 /// - File records carry each source's exact byte length.
 /// - Inbound links are compiled in-process.
 ///
@@ -94,7 +94,7 @@ pub(crate) fn build_index(
         .collect();
     let refs: Vec<(&str, &str)> =
         pairs.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
-    WorkspaceIndex::new_test(&refs)
+    WorkspaceIndex::for_test(&refs)
 }
 /// Builds a shareable, in-memory [`WorkspaceIndex`] for a `ProjectShape`.
 ///

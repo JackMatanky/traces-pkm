@@ -21,7 +21,7 @@ pub enum IndexError {
     Store(#[from] StoreError),
     /// Directory traversal failed during scan.
     #[error(transparent)]
-    Walk(#[from] DirTreeError),
+    Scan(#[from] DirTreeError),
     /// A path rejected by lexical confinement validation.
     #[error(transparent)]
     Path(#[from] PathError),
@@ -187,7 +187,7 @@ mod tests {
         }
 
         #[test]
-        fn walk_display_matches_the_wrapped_dir_tree_error_with_no_added_text()
+        fn scan_display_matches_the_wrapped_dir_tree_error_with_no_added_text()
         {
             let walk_error = DirTreeError::NodeInaccessible {
                 path: PathBuf::from("orphan.md"),
@@ -195,7 +195,7 @@ mod tests {
             };
             let walk_message = walk_error.to_string();
 
-            let wrapped = IndexError::Walk(walk_error);
+            let wrapped = IndexError::Scan(walk_error);
 
             assert_eq!(wrapped.to_string(), walk_message);
         }
@@ -219,8 +219,8 @@ mod tests {
         }
 
         #[test]
-        fn walk_source_skips_straight_to_the_dir_tree_errors_own_source() {
-            let err = IndexError::Walk(DirTreeError::NodeInaccessible {
+        fn scan_source_skips_straight_to_the_dir_tree_errors_own_source() {
+            let err = IndexError::Scan(DirTreeError::NodeInaccessible {
                 path: PathBuf::from("x"),
                 source: io::Error::new(io::ErrorKind::InvalidData, "bad"),
             });
@@ -263,7 +263,7 @@ mod tests {
         }
 
         #[test]
-        fn dir_tree_error_converts_to_the_walk_variant() {
+        fn dir_tree_error_converts_to_the_scan_variant() {
             let walk_error = DirTreeError::NodeInaccessible {
                 path: PathBuf::from("x"),
                 source: io::Error::other("boom"),
@@ -273,7 +273,7 @@ mod tests {
 
             assert!(matches!(
                 converted,
-                IndexError::Walk(DirTreeError::NodeInaccessible { .. })
+                IndexError::Scan(DirTreeError::NodeInaccessible { .. })
             ));
         }
     }

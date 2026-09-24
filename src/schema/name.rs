@@ -50,7 +50,7 @@ impl SchemaName {
     /// literal, so forcing `Result` handling through hundreds of call sites
     /// buys production code nothing.
     #[cfg(test)]
-    pub(crate) fn new_test(name: &str) -> Self {
+    pub(crate) fn for_test(name: &str) -> Self {
         Self::try_from(name).expect("test schema name must not be empty")
     }
 }
@@ -248,7 +248,7 @@ mod tests {
 
         #[test]
         fn schema_name_from_str_owns_a_copy_of_the_given_name() {
-            let name = SchemaName::new_test("book");
+            let name = SchemaName::for_test("book");
 
             assert_eq!(name.as_str(), "book");
         }
@@ -289,8 +289,8 @@ mod tests {
 
         #[test]
         fn is_global_matches_only_the_reserved_name() {
-            assert!(SchemaName::new_test("global").is_global());
-            assert!(!SchemaName::new_test("book").is_global());
+            assert!(SchemaName::for_test("global").is_global());
+            assert!(!SchemaName::for_test("book").is_global());
             assert!(SchemaNameRef::from("global").is_global());
             assert!(!SchemaNameRef::from("book").is_global());
         }

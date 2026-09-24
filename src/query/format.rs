@@ -274,7 +274,7 @@ mod tests {
             query::{QueryBuilder, QueryService, SourceSelector},
         };
 
-        fn outcome_for_tasks(
+        fn rows_for_tasks(
             temp: &std::path::Path,
             source: &str,
         ) -> crate::query::QuerySet {
@@ -292,10 +292,9 @@ mod tests {
             let source = "- [ ] buy milk\n- [x] pay rent\n- [/] in \
                           progress\n- [-] cancelled\n- [!] urgent\n- [?] \
                           question\n";
-            let outcome = outcome_for_tasks(temp.path(), source);
-            let rendered = outcome
-                .task_list(TaskPathStyle::None)
-                .expect("render task list");
+            let rows = rows_for_tasks(temp.path(), source);
+            let rendered =
+                rows.task_list(TaskPathStyle::None).expect("render task list");
             assert_eq!(
                 rendered,
                 "- [ ] buy milk\n- [x] pay rent\n- [/] in progress\n- [-] \
@@ -307,10 +306,9 @@ mod tests {
         fn indents_nested_tasks_by_two_spaces_per_depth() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let source = "- [ ] parent\n  - [/] child\n    - [x] grandchild\n";
-            let outcome = outcome_for_tasks(temp.path(), source);
-            let rendered = outcome
-                .task_list(TaskPathStyle::None)
-                .expect("render task list");
+            let rows = rows_for_tasks(temp.path(), source);
+            let rendered =
+                rows.task_list(TaskPathStyle::None).expect("render task list");
             assert_eq!(
                 rendered,
                 "- [ ] parent\n  - [/] child\n    - [x] grandchild\n"
@@ -321,8 +319,8 @@ mod tests {
         fn formats_suffix_path_style() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let source = "- [ ] buy milk\n";
-            let outcome = outcome_for_tasks(temp.path(), source);
-            let rendered = outcome
+            let rows = rows_for_tasks(temp.path(), source);
+            let rendered = rows
                 .task_list(TaskPathStyle::Suffix)
                 .expect("render task list");
             assert_eq!(rendered, "- [ ] buy milk (todo.md)\n");
@@ -332,8 +330,8 @@ mod tests {
         fn formats_coordinate_path_style_with_line_numbers() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let source = "# Header\n\n- [ ] first\n  - [x] second\n";
-            let outcome = outcome_for_tasks(temp.path(), source);
-            let rendered = outcome
+            let rows = rows_for_tasks(temp.path(), source);
+            let rendered = rows
                 .task_list(TaskPathStyle::Coordinates)
                 .expect("render task list");
             assert_eq!(
@@ -352,9 +350,9 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = QueryService::new("class")
+            let rows = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All));
-            let error = outcome
+            let error = rows
                 .task_list(TaskPathStyle::None)
                 .expect_err("non-task rows must fail");
             assert!(matches!(error, QueryError::TaskListRequiresTaskRows));

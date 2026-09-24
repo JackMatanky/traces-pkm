@@ -1,4 +1,4 @@
-//! Redb persistence for [`FileBase`], [`Note`], and derived inlinks.
+//! Redb persistence for [`FileMeta`], [`Note`], and derived inlinks.
 //!
 //! [`IndexStore`] owns the database connection and drives the schema in
 //! `super::tables`; callers use [`super::IndexerService`] rather than direct
@@ -32,15 +32,15 @@ use super::{
         PATHS_BY_TAG, TABLES, TAGS_BY_PATH,
     },
 };
-use crate::{FileBase, Note, Tag, file::FileFormat};
+use crate::{FileMeta, Note, Tag, file::FileFormat};
 
 /// Stored files, path-sorted notes, and target-keyed inlinks loaded together.
 pub(super) type StoreSnapshot =
-    (SortedByPath<FileBase>, SortedByPath<Note>, InlinkMap);
+    (SortedByPath<FileMeta>, SortedByPath<Note>, InlinkMap);
 
 /// Store-owned persistence request for full rebuilds and incremental refreshes.
 pub(super) struct PersistRequest<'a> {
-    axes: IndexAxes,
+    dimensions: IndexDimensions,
     rows: PersistRows<'a>,
 }
 
@@ -48,27 +48,28 @@ impl<'a> PersistRequest<'a> {
     /// Replaces every persisted row from an assembled index.
     #[inline]
     pub(super) const fn rebuild(
-        axes: IndexAxes,
+        dimensions: IndexDimensions,
         entries: &'a [FileEntry],
     ) -> Self {
         Self {
-            axes,
+            dimensions,
             rows: PersistRows::Rebuild {
                 entries,
             },
         }
     }
 
-    /// Applies row-level changes from one refresh pass.
+    /// Creates a request for row-level changes from a stale refresh state
+    /// awaiting persistence.
     #[inline]
     pub(super) const fn incremental(
-        axes: IndexAxes,
+        dimensions: IndexDimensions,
         delta: &'a FileDelta,
         notes: &'a [&'a Note],
         edges: &'a InlinkDelta,
     ) -> Self {
         Self {
-            axes,
+            dimensions,
             rows: PersistRows::Incremental {
                 delta,
                 notes,
@@ -92,7 +93,7 @@ pub(super) enum PersistRows<'a> {
     Rebuild {
         entries: &'a [FileEntry],
     },
-    /// Incremental file, note, axis, and inlink changes.
+    /// Incremental file, note, dimension, and inlink changes.
     Incremental {
         delta: &'a FileDelta,
         notes: &'a [&'a Note],
@@ -190,7 +191,7 @@ impl IndexStore {
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<Note>> {
-        self.read_batch(RowKind::Notes, paths)
+        self.read_batch(ReadSource::Notes, paths)
     }
 
     /// Point-reads file metadata in one transaction, warning and skipping
@@ -204,8 +205,8 @@ impl IndexStore {
     pub(crate) fn read_files_batch<'a>(
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
-    ) -> IndexResult<Vec<FileBase>> {
-        self.read_batch(RowKind::Files, paths)
+    ) -> IndexResult<Vec<FileMeta>> {
+        self.read_batch(ReadSource::Files, paths)
     }
 
     /// Point-reads inbound-link edges for `targets`.
@@ -362,9 +363,9 @@ impl IndexStore {
     fn open_table_for_read(
         &self,
         txn: &ReadTransaction,
-        definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
+        def: TableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> StoreResult<Option<BytesReadTable>> {
-        match txn.open_table(definition) {
+        match txn.open_table(def) {
             Ok(table) => Ok(Some(table)),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(source) => Err(self.wrap_redb_error(source)),
@@ -375,13 +376,9 @@ impl IndexStore {
     fn open_multimap_for_read(
         &self,
         txn: &ReadTransaction,
-        definition: MultimapTableDefinition<
-            'static,
-            &'static [u8],
-            &'static [u8],
-        >,
+        def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> StoreResult<Option<BytesReadMultimapTable>> {
-        match txn.open_multimap_table(definition) {
+        match txn.open_multimap_table(def) {
             Ok(table) => Ok(Some(table)),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(source) => Err(self.wrap_redb_error(source)),
@@ -389,7 +386,7 @@ impl IndexStore {
     }
 
     /// Maps each path to its encoded key bytes for link-row resolution.
-    fn key_path_map<'a>(
+    fn path_by_key<'a>(
         paths: impl IntoIterator<Item = &'a Path>,
         capacity: usize,
     ) -> FxHashMap<&'a [u8], &'a Path> {
@@ -414,22 +411,22 @@ impl IndexStore {
     fn read_table<T>(
         &self,
         txn: &ReadTransaction,
-        definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
+        def: TableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> IndexResult<SortedByPath<T>>
     where
         T: DeserializeOwned + crate::path::HasPath,
     {
-        let Some(table) = self.open_table_for_read(txn, definition)? else {
+        let Some(table) = self.open_table_for_read(txn, def)? else {
             return Ok(SortedByPath::assumed_sorted(Vec::new()));
         };
         let items = self.decode_table_rows(&table)?;
         Ok(SortedByPath::sorted(items))
     }
 
-    /// Loads every stored [`FileBase`] and [`Note`] (sorted by path) and every
+    /// Loads every stored [`FileMeta`] and [`Note`] (sorted by path) and every
     /// derived inlink edge. Stale or orphaned edges are dropped.
     ///
-    /// Targets resolve through every stored [`FileBase`] because attachments
+    /// Targets resolve through every stored [`FileMeta`] because attachments
     /// can carry inlinks; sources resolve through stored [`Note`] rows only.
     ///
     /// # Errors
@@ -442,15 +439,15 @@ impl IndexStore {
         let txn = self.begin_read()?;
         let (files_result, notes_result) = rayon::join(
             || self.read_table(&txn, FILES),
-            || self.collect_note_bytes(&txn),
+            || self.collect_notes(&txn),
         );
-        let files: SortedByPath<FileBase> = files_result?;
+        let files: SortedByPath<FileMeta> = files_result?;
         let notes = notes_result?;
-        let target_paths = Self::key_path_map(
-            files.as_slice().iter().map(FileBase::path),
+        let target_paths = Self::path_by_key(
+            files.as_slice().iter().map(FileMeta::path),
             files.as_slice().len(),
         );
-        let source_paths = Self::key_path_map(
+        let source_paths = Self::path_by_key(
             notes.as_slice().iter().map(Note::path),
             notes.as_slice().len(),
         );
@@ -471,17 +468,17 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_all_notes(&self) -> IndexResult<SortedByPath<Note>> {
         let txn = self.begin_read()?;
-        Ok(self.collect_note_bytes(&txn)?)
+        Ok(self.collect_notes(&txn)?)
     }
 
-    /// Reads every persisted [`FileBase`], sorted by path.
+    /// Reads every persisted [`FileMeta`], sorted by path.
     ///
     /// # Errors
     ///
     /// - [`Store`] if opening the transaction or reading `FILES` fails.
     ///
     /// [`Store`]: IndexError::Store
-    pub(super) fn read_all_files(&self) -> IndexResult<SortedByPath<FileBase>> {
+    pub(super) fn read_all_files(&self) -> IndexResult<SortedByPath<FileMeta>> {
         let txn = self.begin_read()?;
         self.read_table(&txn, FILES)
     }
@@ -495,19 +492,19 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_all_links(
         &self,
-        files: &SortedByPath<FileBase>,
+        files: &SortedByPath<FileMeta>,
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let files_slice = files.as_slice();
-        let target_paths = Self::key_path_map(
-            files_slice.iter().map(FileBase::path),
+        let target_paths = Self::path_by_key(
+            files_slice.iter().map(FileMeta::path),
             files_slice.len(),
         );
-        let source_paths = Self::key_path_map(
+        let source_paths = Self::path_by_key(
             files_slice
                 .iter()
                 .filter(|file| file.format() == FileFormat::Note)
-                .map(FileBase::path),
+                .map(FileMeta::path),
             files_slice.len(),
         );
         self.read_links(&txn, LINKS, &target_paths, &source_paths)
@@ -529,15 +526,11 @@ impl IndexStore {
     fn read_links(
         &self,
         txn: &ReadTransaction,
-        table_def: MultimapTableDefinition<
-            'static,
-            &'static [u8],
-            &'static [u8],
-        >,
+        def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
         target_paths: &FxHashMap<&[u8], &Path>,
         source_paths: &FxHashMap<&[u8], &Path>,
     ) -> IndexResult<InlinkMap> {
-        let Some(table) = self.open_multimap_for_read(txn, table_def)? else {
+        let Some(table) = self.open_multimap_for_read(txn, def)? else {
             return Ok(InlinkMap::default());
         };
         Ok(self.collect_multimap_links(&table, target_paths, source_paths)?)
@@ -556,12 +549,12 @@ impl IndexStore {
     fn write_table<'a, T: Serialize + 'a>(
         &self,
         txn: &WriteTransaction,
-        table_def: TableDefinition<&[u8], &[u8]>,
+        def: TableDefinition<&[u8], &[u8]>,
         items: impl IntoIterator<Item = &'a T>,
         path_of: impl Fn(&T) -> &Path,
     ) -> IndexResult<()> {
         let mut table = txn
-            .open_table(table_def)
+            .open_table(def)
             .map_err(|source| self.wrap_redb_error(source))?;
         let mut buf = Vec::new();
         for item in items {
@@ -586,11 +579,11 @@ impl IndexStore {
     fn write_links(
         &self,
         txn: &WriteTransaction,
-        table_def: MultimapTableDefinition<&[u8], &[u8]>,
+        def: MultimapTableDefinition<&[u8], &[u8]>,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
         let mut table = txn
-            .open_multimap_table(table_def)
+            .open_multimap_table(def)
             .map_err(|source| self.wrap_redb_error(source))?;
         for entry in entries {
             let inlinks = entry.inlinks();
@@ -613,7 +606,7 @@ impl IndexStore {
     /// Persists a rebuild or a non-empty incremental refresh.
     ///
     /// Incremental requests must contain at least one file, note, or edge
-    /// change. `IndexerService::plan_pass` filters empty passes before they
+    /// change. `IndexerService::prepare_pass` filters empty passes before they
     /// reach this method.
     ///
     /// # Errors
@@ -628,7 +621,7 @@ impl IndexStore {
         match &request.rows {
             PersistRows::Rebuild {
                 entries,
-            } => self.apply_rebuild(entries, &request.axes),
+            } => self.apply_rebuild(entries, &request.dimensions),
             PersistRows::Incremental {
                 delta,
                 notes,
@@ -639,9 +632,9 @@ impl IndexStore {
                 }
                 debug_assert!(
                     !delta.is_empty() || !notes.is_empty() || !edges.is_empty(),
-                    "plan_pass gates empty passes"
+                    "prepare_pass gates empty passes"
                 );
-                self.apply_incremental(&request.axes, &IncrementalRows {
+                self.apply_incremental(&request.dimensions, &IncrementalRows {
                     delta,
                     notes,
                     edges,
@@ -654,9 +647,9 @@ impl IndexStore {
     fn apply_rebuild(
         &self,
         entries: &[FileEntry],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        self.apply_rebuild_in(self.begin_cache_txn()?, entries, axes)
+        self.apply_rebuild_in(self.begin_cache_txn()?, entries, dimensions)
     }
 
     #[inline(never)]
@@ -664,11 +657,11 @@ impl IndexStore {
         &self,
         txn: WriteTransaction,
         entries: &[FileEntry],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         self.delete_tables(&txn)?;
         self.write_all_parallel(&txn, entries)?;
-        self.write_axes_parallel(&txn, entries, axes)?;
+        self.write_axes_parallel(&txn, entries, dimensions)?;
         self.commit(txn)?;
         Ok(())
     }
@@ -676,22 +669,22 @@ impl IndexStore {
     /// Incremental arm of [`Self::persist`]: applies row-level changes.
     fn apply_incremental(
         &self,
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        self.apply_incremental_in(self.begin_cache_txn()?, axes, rows)
+        self.apply_incremental_in(self.begin_cache_txn()?, dimensions, rows)
     }
 
     #[inline(never)]
     fn apply_incremental_in(
         &self,
         txn: WriteTransaction,
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        self.apply_diff_deletions(&txn, rows.delta.deleted(), axes)?;
+        self.apply_diff_deletions(&txn, rows.delta.deleted(), dimensions)?;
         self.apply_diff_upserts(&txn, rows.delta.upserted())?;
-        self.apply_modified_notes(&txn, rows.notes, axes)?;
+        self.apply_modified_notes(&txn, rows.notes, dimensions)?;
         self.apply_inlink_delta(&txn, rows.edges)?;
         self.commit(txn)?;
         Ok(())
@@ -786,12 +779,11 @@ impl IndexStore {
     /// skipping corrupted rows.
     fn read_batch<'a, T: DeserializeOwned>(
         &self,
-        kind: RowKind,
+        kind: ReadSource,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<T>> {
         let txn = self.begin_read()?;
-        let Some(table) = self.open_table_for_read(&txn, kind.definition())?
-        else {
+        let Some(table) = self.open_table_for_read(&txn, kind.table())? else {
             return Ok(Vec::new());
         };
         let mut items = Vec::new();
@@ -835,18 +827,14 @@ impl IndexStore {
     // --- Path query helpers -------------------------------------------
 
     /// Reads, sorts, and deduplicates every path stored under `key` in
-    /// `table_def`.
+    /// `def`.
     fn paths_from_multimap(
         &self,
-        table_def: MultimapTableDefinition<
-            'static,
-            &'static [u8],
-            &'static [u8],
-        >,
+        def: MultimapTableDefinition<'static, &'static [u8], &'static [u8]>,
         key: &[u8],
     ) -> IndexResult<Box<[PathBuf]>> {
         let txn = self.begin_read()?;
-        let Some(table) = self.open_multimap_for_read(&txn, table_def)? else {
+        let Some(table) = self.open_multimap_for_read(&txn, def)? else {
             return Ok(Box::default());
         };
         let mut paths = self.collect_stored_paths(&table, key)?;
@@ -969,7 +957,7 @@ impl IndexStore {
     }
 
     /// Reads raw `NOTES` rows before parallel decoding.
-    fn collect_note_bytes(
+    fn collect_notes(
         &self,
         txn: &ReadTransaction,
     ) -> StoreResult<SortedByPath<Note>> {
@@ -1126,37 +1114,39 @@ impl IndexStore {
             .try_for_each(|target| target.run(self, txn, entries))
     }
 
-    /// Writes every configured secondary index axis for a full rebuild.
+    /// Writes every configured secondary index dimension for a full rebuild.
     fn write_axes_parallel(
         &self,
         txn: &WriteTransaction,
         entries: &[FileEntry],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        axes.iter().try_for_each(|axis| {
+        dimensions.iter().try_for_each(|dimension| {
             let (forward, reverse) = rayon::join(
-                || self.write_index_axis_forward(txn, axis, entries),
-                || self.write_index_axis_reverse(txn, axis, entries),
+                || self.write_index_by_value(txn, dimension, entries),
+                || self.write_index_by_path(txn, dimension, entries),
             );
             forward?;
             reverse
         })
     }
 
-    /// Writes `index`'s forward (`value -> [paths]`) table for a full rebuild.
+    /// Writes `dimension`'s forward (`value -> [paths]`) table for a full
+    /// rebuild.
     ///
-    /// Split from [`Self::write_index_axis_reverse`] so [`WriteTarget::ALL`]
+    /// Split from [`Self::write_index_by_path`] so [`WriteTarget::ALL`]
     /// can write distinct redb tables concurrently.
-    fn write_index_axis_forward(
+    fn write_index_by_value(
         &self,
         txn: &WriteTransaction,
-        index: &IndexDimension,
+        dimension: &IndexDimension,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
-        let mut forward = self.open_multimap_for_write(txn, index.forward())?;
+        let mut forward =
+            self.open_multimap_for_write(txn, dimension.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = PathKey::new(note.path()).as_bytes();
-            index.visit_values(note, |value| {
+            dimension.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.wrap_redb_error(source))?;
@@ -1166,17 +1156,19 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Writes `index`'s reverse (`path -> [values]`) table for a full rebuild.
-    fn write_index_axis_reverse(
+    /// Writes `dimension`'s reverse (`path -> [values]`) table for a full
+    /// rebuild.
+    fn write_index_by_path(
         &self,
         txn: &WriteTransaction,
-        index: &IndexDimension,
+        dimension: &IndexDimension,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
-        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
+        let mut reverse =
+            self.open_multimap_for_write(txn, dimension.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = PathKey::new(note.path()).as_bytes();
-            index.visit_values(note, |value| {
+            dimension.visit_values(note, |value| {
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.wrap_redb_error(source))?;
@@ -1223,21 +1215,21 @@ impl IndexStore {
     fn apply_diff_deletions(
         &self,
         txn: &WriteTransaction,
-        deleted: &[FileBase],
-        axes: &IndexAxes,
+        deleted: &[FileMeta],
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         if deleted.is_empty() {
             return Ok(());
         }
         self.delete_files_and_notes(txn, deleted)?;
-        self.delete_index_entries_for_paths(txn, deleted, axes)?;
+        self.delete_index_entries_for_paths(txn, deleted, dimensions)?;
         Ok(())
     }
 
     fn delete_files_and_notes(
         &self,
         txn: &WriteTransaction,
-        deleted: &[FileBase],
+        deleted: &[FileMeta],
     ) -> IndexResult<()> {
         let mut files_table = txn
             .open_table(FILES)
@@ -1260,14 +1252,14 @@ impl IndexStore {
     fn delete_index_entries_for_paths(
         &self,
         txn: &WriteTransaction,
-        deleted: &[FileBase],
-        axes: &IndexAxes,
+        deleted: &[FileMeta],
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        for index in axes.iter() {
+        for dimension in dimensions.iter() {
             let mut forward =
-                self.open_multimap_for_write(txn, index.forward())?;
+                self.open_multimap_for_write(txn, dimension.forward())?;
             let mut reverse =
-                self.open_multimap_for_write(txn, index.reverse())?;
+                self.open_multimap_for_write(txn, dimension.reverse())?;
             for file in deleted {
                 let path_bytes = PathKey::new(file.path()).as_bytes();
                 self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
@@ -1302,7 +1294,7 @@ impl IndexStore {
     fn apply_diff_upserts(
         &self,
         txn: &WriteTransaction,
-        upserted: &[FileBase],
+        upserted: &[FileMeta],
     ) -> IndexResult<()> {
         let mut files_table = txn
             .open_table(FILES)
@@ -1319,13 +1311,13 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         modified_notes: &[&Note],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         if modified_notes.is_empty() {
             return Ok(());
         }
         self.upsert_notes(txn, modified_notes.iter().copied())?;
-        self.upsert_tags_and_classes(txn, modified_notes, axes)?;
+        self.upsert_tags_and_classes(txn, modified_notes, dimensions)?;
         Ok(())
     }
 
@@ -1348,30 +1340,37 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         modified_notes: &[&Note],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        for index in axes.iter() {
-            self.upsert_index_axis(txn, index, modified_notes.iter().copied())?;
+        for dimension in dimensions.iter() {
+            self.upsert_index_axis(
+                txn,
+                dimension,
+                modified_notes.iter().copied(),
+            )?;
         }
         Ok(())
     }
 
-    /// Upserts each of `modified_notes`' current values into `index`'s forward
-    /// table, first removing exactly this note's previous values via the
-    /// reverse (path-keyed) table in O(k) time where k is this note's previous
-    /// value count, rather than performing a full-table scan.
+    /// Upserts each of `modified_notes`' current values into `dimension`'s
+    /// forward table, first removing exactly this note's previous values
+    /// via the reverse (path-keyed) table in O(k) time where k is this
+    /// note's previous value count, rather than performing a full-table
+    /// scan.
     fn upsert_index_axis<'a>(
         &self,
         txn: &WriteTransaction,
-        index: &IndexDimension,
+        dimension: &IndexDimension,
         modified_notes: impl Iterator<Item = &'a Note>,
     ) -> IndexResult<()> {
-        let mut forward = self.open_multimap_for_write(txn, index.forward())?;
-        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
+        let mut forward =
+            self.open_multimap_for_write(txn, dimension.forward())?;
+        let mut reverse =
+            self.open_multimap_for_write(txn, dimension.reverse())?;
         for note in modified_notes {
             let path_bytes = PathKey::new(note.path()).as_bytes();
             self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
-            index.visit_values(note, |value| {
+            dimension.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.wrap_redb_error(source))?;
@@ -1428,28 +1427,26 @@ impl IndexStore {
     }
 }
 
-/// Batch point-read row kind: maps a variant to its redb table
+/// Batch point-read source: maps a variant to its redb table
 /// definition and structured label for [`read_batch`](IndexStore::read_batch).
 #[derive(Copy, Clone, Debug)]
-enum RowKind {
-    Notes,
+enum ReadSource {
     Files,
+    Notes,
 }
 
-impl RowKind {
-    fn definition(
-        self,
-    ) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+impl ReadSource {
+    fn table(self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
-            Self::Notes => NOTES,
             Self::Files => FILES,
+            Self::Notes => NOTES,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Notes => "note",
             Self::Files => "file",
+            Self::Notes => "note",
         }
     }
 }
@@ -1476,7 +1473,7 @@ impl WriteTarget {
                 txn,
                 FILES,
                 entries.iter().map(FileEntry::file),
-                FileBase::path,
+                FileMeta::path,
             ),
             Self::Notes => store.write_table(
                 txn,
@@ -1490,12 +1487,12 @@ impl WriteTarget {
 }
 
 /// Store-owned dimensions written for tag and file-class indexes.
-pub(super) struct IndexAxes {
+pub(super) struct IndexDimensions {
     dimensions: [IndexDimension; 2],
 }
 
-impl IndexAxes {
-    /// Builds the canonical index axes for one configured File Class key.
+impl IndexDimensions {
+    /// Builds the canonical index dimensions for one configured File Class key.
     #[must_use]
     pub(super) fn for_class_field(class_field: &str) -> Self {
         Self {
@@ -1637,7 +1634,7 @@ mod tests {
 
         fn store_with_a_tagged_note(root: &Path) -> IndexStore {
             let store = IndexStore::open(root).expect("open store");
-            let files = vec![FileBase::note_for_test(Path::new("tagged.md"))];
+            let files = vec![FileMeta::note_for_test(Path::new("tagged.md"))];
             let notes = vec![parse("tagged.md", "# T\n\nTagged #x body.")];
             write_all_parts(&store, &files, &notes, &InlinkMap::default())
                 .expect("persist tagged note");
@@ -1662,16 +1659,16 @@ mod tests {
     const TEST_TABLE: TableDefinition<&[u8], &[u8]> =
         TableDefinition::new("test_table");
 
-    /// Writes raw bytes into `table_def` to simulate corrupted rows.
+    /// Writes raw bytes into `def` to simulate corrupted rows.
     fn write_raw_value(
         store: &IndexStore,
-        table_def: TableDefinition<&[u8], &[u8]>,
+        def: TableDefinition<&[u8], &[u8]>,
         key: &str,
         value: &[u8],
     ) {
         let txn = store.db.begin_write().expect("begin write txn");
         {
-            let mut table = txn.open_table(table_def).expect("open table");
+            let mut table = txn.open_table(def).expect("open table");
             table.insert(key.as_bytes(), value).expect("insert raw bytes");
         }
         txn.commit().expect("commit raw insert");
@@ -1690,7 +1687,7 @@ mod tests {
 
     fn write_all_parts(
         store: &IndexStore,
-        files: &[FileBase],
+        files: &[FileMeta],
         notes: &[Note],
         links: &InlinkMap,
     ) -> IndexResult<()> {
@@ -1700,7 +1697,7 @@ mod tests {
             links.clone(),
         );
         store.persist(&PersistRequest::rebuild(
-            IndexAxes::for_class_field("class"),
+            IndexDimensions::for_class_field("class"),
             index.entries(),
         ))
     }
@@ -1722,9 +1719,9 @@ mod tests {
         txn.commit().expect("commit raw link");
     }
 
-    /// Builds note `FileBase` fixtures in caller-provided order.
-    fn note_files(paths: &[&str]) -> Vec<FileBase> {
-        paths.iter().map(|&p| FileBase::note_for_test(p)).collect()
+    /// Builds note `FileMeta` fixtures in caller-provided order.
+    fn note_files(paths: &[&str]) -> Vec<FileMeta> {
+        paths.iter().map(|&p| FileMeta::note_for_test(p)).collect()
     }
 
     #[test]
@@ -1732,13 +1729,13 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let db = IndexStore::open(temp.path()).expect("open db");
         let txn = db.begin_write().expect("begin write");
-        let rows = [FileBase::note_for_test("hello.md")];
-        db.write_table(&txn, TEST_TABLE, &rows, FileBase::path)
+        let rows = [FileMeta::note_for_test("hello.md")];
+        db.write_table(&txn, TEST_TABLE, &rows, FileMeta::path)
             .expect("write table");
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let loaded: SortedByPath<FileBase> =
+        let loaded: SortedByPath<FileMeta> =
             db.read_table(&read_txn, TEST_TABLE).expect("read table");
         assert_eq!(loaded.as_slice(), rows);
     }
@@ -1757,7 +1754,7 @@ mod tests {
         txn.commit().expect("commit");
 
         let read_txn = db.begin_read().expect("begin read");
-        let result: IndexResult<SortedByPath<FileBase>> =
+        let result: IndexResult<SortedByPath<FileMeta>> =
             db.read_table(&read_txn, TEST_TABLE);
 
         assert!(matches!(
@@ -1968,7 +1965,7 @@ mod tests {
                 .collect();
             let files: Vec<_> = ["a.md", "b.md", "other.md", "target.md"]
                 .iter()
-                .map(|&p| FileBase::note_for_test(p))
+                .map(|&p| FileMeta::note_for_test(p))
                 .collect();
             write_all_parts(&store, &files, &notes, &links)
                 .expect("persist links");
@@ -2154,7 +2151,7 @@ mod tests {
 
             let weird_path = non_unicode_path();
 
-            let file = FileBase::note_for_test(weird_path.clone());
+            let file = FileMeta::note_for_test(weird_path.clone());
 
             let note = parse(&weird_path, "content");
             let files = vec![file];
@@ -2176,8 +2173,8 @@ mod tests {
             let weird = non_unicode_path();
             let normal = PathBuf::from("normal.md");
             let mut files = vec![
-                FileBase::note_for_test(weird.clone()),
-                FileBase::note_for_test(normal.clone()),
+                FileMeta::note_for_test(weird.clone()),
+                FileMeta::note_for_test(normal.clone()),
             ];
             files.sort_by(|a, b| a.path().cmp(b.path()));
             let mut notes = vec![
@@ -2228,8 +2225,8 @@ mod tests {
             let attachment = PathBuf::from("attachment.png");
             let note_path = PathBuf::from("note.md");
             let files = vec![
-                FileBase::for_test(attachment.clone(), FileFormat::Other),
-                FileBase::note_for_test(note_path.clone()),
+                FileMeta::for_test(attachment.clone(), FileFormat::Other),
+                FileMeta::note_for_test(note_path.clone()),
             ];
             let notes = vec![parse(&note_path, "# Note")];
             let links = make_inlinks(&[(
@@ -2252,8 +2249,8 @@ mod tests {
             let weird = non_unicode_path();
             let note_path = PathBuf::from("note.md");
             let files = vec![
-                FileBase::for_test(weird.clone(), FileFormat::Other),
-                FileBase::note_for_test(note_path.clone()),
+                FileMeta::for_test(weird.clone(), FileFormat::Other),
+                FileMeta::note_for_test(note_path.clone()),
             ];
             let notes = vec![parse(&note_path, "# Note")];
             let links = make_inlinks(&[(
@@ -2415,11 +2412,11 @@ mod tests {
         #[case::files(FILES)]
         #[case::notes(NOTES)]
         fn returns_deserialize_error_when_stored_bytes_are_invalid(
-            #[case] table_def: TableDefinition<&[u8], &[u8]>,
+            #[case] def: TableDefinition<&[u8], &[u8]>,
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, table_def, "bad.md", &[0xFF, 0xFE]);
+            write_raw_value(&store, def, "bad.md", &[0xFF, 0xFE]);
 
             let error =
                 store.read_all().expect_err("invalid bytes fail to load");
@@ -2449,10 +2446,10 @@ mod tests {
                 .expect("value present");
             let raw_bytes = raw.value().to_vec();
 
-            assert!(postcard::from_bytes::<FileBase>(&raw_bytes).is_ok());
+            assert!(postcard::from_bytes::<FileMeta>(&raw_bytes).is_ok());
             let decodes_as_toml = str::from_utf8(&raw_bytes)
                 .ok()
-                .and_then(|text| toml::from_str::<FileBase>(text).ok());
+                .and_then(|text| toml::from_str::<FileMeta>(text).ok());
             assert!(decodes_as_toml.is_none());
         }
     }

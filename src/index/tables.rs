@@ -15,7 +15,7 @@ use super::{error::StoreResult, store::IndexStore};
 /// File metadata table.
 ///
 /// Key: project-relative path as UTF-8 bytes
-/// Value: serialized [`crate::FileBase`]
+/// Value: serialized [`crate::FileMeta`]
 pub(super) const FILES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("files");
 
@@ -67,10 +67,10 @@ pub(super) const FILE_CLASSES_BY_PATH: MultimapTableDefinition<
     &'static [u8],
 > = MultimapTableDefinition::new("classes_by_path");
 
-/// One of the seven schema tables: plain row or multimap.
+/// One of the seven schema tables: to-one row or to-many multimap.
 enum TableDef {
-    Row(TableDefinition<'static, &'static [u8], &'static [u8]>),
-    Multimap(MultimapTableDefinition<'static, &'static [u8], &'static [u8]>),
+    ToOne(TableDefinition<'static, &'static [u8], &'static [u8]>),
+    ToMany(MultimapTableDefinition<'static, &'static [u8], &'static [u8]>),
 }
 
 /// How a table's rows are treated during a rebuild wipe.
@@ -84,38 +84,38 @@ enum DeletePolicy {
 
 /// One schema fact: a table definition plus its rebuild delete policy.
 pub(super) struct TableSpec {
-    definition: TableDef,
+    def: TableDef,
     policy: DeletePolicy,
 }
 
 /// Every table in the schema, in declaration order.
 pub(super) const TABLES: [TableSpec; 7] = [
     TableSpec {
-        definition: TableDef::Row(FILES),
+        def: TableDef::ToOne(FILES),
         policy: DeletePolicy::Required,
     },
     TableSpec {
-        definition: TableDef::Row(NOTES),
+        def: TableDef::ToOne(NOTES),
         policy: DeletePolicy::Required,
     },
     TableSpec {
-        definition: TableDef::Multimap(LINKS),
+        def: TableDef::ToMany(LINKS),
         policy: DeletePolicy::Required,
     },
     TableSpec {
-        definition: TableDef::Multimap(PATHS_BY_TAG),
+        def: TableDef::ToMany(PATHS_BY_TAG),
         policy: DeletePolicy::BestEffort,
     },
     TableSpec {
-        definition: TableDef::Multimap(PATHS_BY_FILE_CLASS),
+        def: TableDef::ToMany(PATHS_BY_FILE_CLASS),
         policy: DeletePolicy::BestEffort,
     },
     TableSpec {
-        definition: TableDef::Multimap(TAGS_BY_PATH),
+        def: TableDef::ToMany(TAGS_BY_PATH),
         policy: DeletePolicy::BestEffort,
     },
     TableSpec {
-        definition: TableDef::Multimap(FILE_CLASSES_BY_PATH),
+        def: TableDef::ToMany(FILE_CLASSES_BY_PATH),
         policy: DeletePolicy::BestEffort,
     },
 ];
@@ -124,8 +124,8 @@ impl TableDef {
     /// Probes the definition against `txn` without reading rows.
     fn probe(&self, txn: &ReadTransaction) -> Result<(), redb::TableError> {
         match self {
-            Self::Row(def) => txn.open_table(*def).map(|_| ()),
-            Self::Multimap(def) => txn.open_multimap_table(*def).map(|_| ()),
+            Self::ToOne(def) => txn.open_table(*def).map(|_| ()),
+            Self::ToMany(def) => txn.open_multimap_table(*def).map(|_| ()),
         }
     }
 }
@@ -136,7 +136,7 @@ impl TableSpec {
         &self,
         txn: &ReadTransaction,
     ) -> Result<(), redb::TableError> {
-        self.definition.probe(txn)
+        self.def.probe(txn)
     }
 
     /// Deletes this table's contents per its [`DeletePolicy`].
@@ -148,9 +148,9 @@ impl TableSpec {
         store: &IndexStore,
         txn: &WriteTransaction,
     ) -> StoreResult<()> {
-        let run = || match &self.definition {
-            TableDef::Row(def) => txn.delete_table(*def).map(|_| ()),
-            TableDef::Multimap(def) => {
+        let run = || match &self.def {
+            TableDef::ToOne(def) => txn.delete_table(*def).map(|_| ()),
+            TableDef::ToMany(def) => {
                 txn.delete_multimap_table(*def).map(|_| ())
             }
         };
