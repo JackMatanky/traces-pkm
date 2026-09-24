@@ -40,7 +40,7 @@ pub(super) type StoreSnapshot =
 
 /// Store-owned persistence request for full rebuilds and incremental refreshes.
 pub(super) struct PersistRequest<'a> {
-    axes: IndexAxes,
+    dimensions: IndexDimensions,
     rows: PersistRows<'a>,
 }
 
@@ -48,11 +48,11 @@ impl<'a> PersistRequest<'a> {
     /// Replaces every persisted row from an assembled index.
     #[inline]
     pub(super) const fn rebuild(
-        axes: IndexAxes,
+        dimensions: IndexDimensions,
         entries: &'a [FileEntry],
     ) -> Self {
         Self {
-            axes,
+            dimensions,
             rows: PersistRows::Rebuild {
                 entries,
             },
@@ -62,13 +62,13 @@ impl<'a> PersistRequest<'a> {
     /// Applies row-level changes from one refresh pass.
     #[inline]
     pub(super) const fn incremental(
-        axes: IndexAxes,
+        dimensions: IndexDimensions,
         delta: &'a FileDelta,
         notes: &'a [&'a Note],
         edges: &'a InlinkDelta,
     ) -> Self {
         Self {
-            axes,
+            dimensions,
             rows: PersistRows::Incremental {
                 delta,
                 notes,
@@ -92,7 +92,7 @@ pub(super) enum PersistRows<'a> {
     Rebuild {
         entries: &'a [FileEntry],
     },
-    /// Incremental file, note, axis, and inlink changes.
+    /// Incremental file, note, dimension, and inlink changes.
     Incremental {
         delta: &'a FileDelta,
         notes: &'a [&'a Note],
@@ -620,7 +620,7 @@ impl IndexStore {
         match &request.rows {
             PersistRows::Rebuild {
                 entries,
-            } => self.apply_rebuild(entries, &request.axes),
+            } => self.apply_rebuild(entries, &request.dimensions),
             PersistRows::Incremental {
                 delta,
                 notes,
@@ -633,7 +633,7 @@ impl IndexStore {
                     !delta.is_empty() || !notes.is_empty() || !edges.is_empty(),
                     "prepare_pass gates empty passes"
                 );
-                self.apply_incremental(&request.axes, &IncrementalRows {
+                self.apply_incremental(&request.dimensions, &IncrementalRows {
                     delta,
                     notes,
                     edges,
@@ -646,9 +646,9 @@ impl IndexStore {
     fn apply_rebuild(
         &self,
         entries: &[FileEntry],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        self.apply_rebuild_in(self.begin_cache_txn()?, entries, axes)
+        self.apply_rebuild_in(self.begin_cache_txn()?, entries, dimensions)
     }
 
     #[inline(never)]
@@ -656,11 +656,11 @@ impl IndexStore {
         &self,
         txn: WriteTransaction,
         entries: &[FileEntry],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         self.delete_tables(&txn)?;
         self.write_all_parallel(&txn, entries)?;
-        self.write_axes_parallel(&txn, entries, axes)?;
+        self.write_axes_parallel(&txn, entries, dimensions)?;
         self.commit(txn)?;
         Ok(())
     }
@@ -668,22 +668,22 @@ impl IndexStore {
     /// Incremental arm of [`Self::persist`]: applies row-level changes.
     fn apply_incremental(
         &self,
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        self.apply_incremental_in(self.begin_cache_txn()?, axes, rows)
+        self.apply_incremental_in(self.begin_cache_txn()?, dimensions, rows)
     }
 
     #[inline(never)]
     fn apply_incremental_in(
         &self,
         txn: WriteTransaction,
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        self.apply_diff_deletions(&txn, rows.delta.deleted(), axes)?;
+        self.apply_diff_deletions(&txn, rows.delta.deleted(), dimensions)?;
         self.apply_diff_upserts(&txn, rows.delta.upserted())?;
-        self.apply_modified_notes(&txn, rows.notes, axes)?;
+        self.apply_modified_notes(&txn, rows.notes, dimensions)?;
         self.apply_inlink_delta(&txn, rows.edges)?;
         self.commit(txn)?;
         Ok(())
@@ -1113,37 +1113,39 @@ impl IndexStore {
             .try_for_each(|target| target.run(self, txn, entries))
     }
 
-    /// Writes every configured secondary index axis for a full rebuild.
+    /// Writes every configured secondary index dimension for a full rebuild.
     fn write_axes_parallel(
         &self,
         txn: &WriteTransaction,
         entries: &[FileEntry],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        axes.iter().try_for_each(|axis| {
+        dimensions.iter().try_for_each(|dimension| {
             let (forward, reverse) = rayon::join(
-                || self.write_index_axis_forward(txn, axis, entries),
-                || self.write_index_axis_reverse(txn, axis, entries),
+                || self.write_index_by_value(txn, dimension, entries),
+                || self.write_index_by_path(txn, dimension, entries),
             );
             forward?;
             reverse
         })
     }
 
-    /// Writes `index`'s forward (`value -> [paths]`) table for a full rebuild.
+    /// Writes `dimension`'s forward (`value -> [paths]`) table for a full
+    /// rebuild.
     ///
-    /// Split from [`Self::write_index_axis_reverse`] so [`WriteTarget::ALL`]
+    /// Split from [`Self::write_index_by_path`] so [`WriteTarget::ALL`]
     /// can write distinct redb tables concurrently.
-    fn write_index_axis_forward(
+    fn write_index_by_value(
         &self,
         txn: &WriteTransaction,
-        index: &IndexDimension,
+        dimension: &IndexDimension,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
-        let mut forward = self.open_multimap_for_write(txn, index.forward())?;
+        let mut forward =
+            self.open_multimap_for_write(txn, dimension.forward())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = PathKey::new(note.path()).as_bytes();
-            index.visit_values(note, |value| {
+            dimension.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.wrap_redb_error(source))?;
@@ -1153,17 +1155,19 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Writes `index`'s reverse (`path -> [values]`) table for a full rebuild.
-    fn write_index_axis_reverse(
+    /// Writes `dimension`'s reverse (`path -> [values]`) table for a full
+    /// rebuild.
+    fn write_index_by_path(
         &self,
         txn: &WriteTransaction,
-        index: &IndexDimension,
+        dimension: &IndexDimension,
         entries: &[FileEntry],
     ) -> IndexResult<()> {
-        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
+        let mut reverse =
+            self.open_multimap_for_write(txn, dimension.reverse())?;
         for note in entries.iter().filter_map(FileEntry::note) {
             let path_bytes = PathKey::new(note.path()).as_bytes();
-            index.visit_values(note, |value| {
+            dimension.visit_values(note, |value| {
                 reverse
                     .insert(path_bytes, value.as_bytes())
                     .map_err(|source| self.wrap_redb_error(source))?;
@@ -1211,13 +1215,13 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         deleted: &[FileBase],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         if deleted.is_empty() {
             return Ok(());
         }
         self.delete_files_and_notes(txn, deleted)?;
-        self.delete_index_entries_for_paths(txn, deleted, axes)?;
+        self.delete_index_entries_for_paths(txn, deleted, dimensions)?;
         Ok(())
     }
 
@@ -1248,13 +1252,13 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         deleted: &[FileBase],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        for index in axes.iter() {
+        for dimension in dimensions.iter() {
             let mut forward =
-                self.open_multimap_for_write(txn, index.forward())?;
+                self.open_multimap_for_write(txn, dimension.forward())?;
             let mut reverse =
-                self.open_multimap_for_write(txn, index.reverse())?;
+                self.open_multimap_for_write(txn, dimension.reverse())?;
             for file in deleted {
                 let path_bytes = PathKey::new(file.path()).as_bytes();
                 self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
@@ -1306,13 +1310,13 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         modified_notes: &[&Note],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         if modified_notes.is_empty() {
             return Ok(());
         }
         self.upsert_notes(txn, modified_notes.iter().copied())?;
-        self.upsert_tags_and_classes(txn, modified_notes, axes)?;
+        self.upsert_tags_and_classes(txn, modified_notes, dimensions)?;
         Ok(())
     }
 
@@ -1335,30 +1339,37 @@ impl IndexStore {
         &self,
         txn: &WriteTransaction,
         modified_notes: &[&Note],
-        axes: &IndexAxes,
+        dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        for index in axes.iter() {
-            self.upsert_index_axis(txn, index, modified_notes.iter().copied())?;
+        for dimension in dimensions.iter() {
+            self.upsert_index_axis(
+                txn,
+                dimension,
+                modified_notes.iter().copied(),
+            )?;
         }
         Ok(())
     }
 
-    /// Upserts each of `modified_notes`' current values into `index`'s forward
-    /// table, first removing exactly this note's previous values via the
-    /// reverse (path-keyed) table in O(k) time where k is this note's previous
-    /// value count, rather than performing a full-table scan.
+    /// Upserts each of `modified_notes`' current values into `dimension`'s
+    /// forward table, first removing exactly this note's previous values
+    /// via the reverse (path-keyed) table in O(k) time where k is this
+    /// note's previous value count, rather than performing a full-table
+    /// scan.
     fn upsert_index_axis<'a>(
         &self,
         txn: &WriteTransaction,
-        index: &IndexDimension,
+        dimension: &IndexDimension,
         modified_notes: impl Iterator<Item = &'a Note>,
     ) -> IndexResult<()> {
-        let mut forward = self.open_multimap_for_write(txn, index.forward())?;
-        let mut reverse = self.open_multimap_for_write(txn, index.reverse())?;
+        let mut forward =
+            self.open_multimap_for_write(txn, dimension.forward())?;
+        let mut reverse =
+            self.open_multimap_for_write(txn, dimension.reverse())?;
         for note in modified_notes {
             let path_bytes = PathKey::new(note.path()).as_bytes();
             self.remove_axis_entry(&mut forward, &mut reverse, path_bytes)?;
-            index.visit_values(note, |value| {
+            dimension.visit_values(note, |value| {
                 forward
                     .insert(value.as_bytes(), path_bytes)
                     .map_err(|source| self.wrap_redb_error(source))?;
@@ -1475,12 +1486,12 @@ impl WriteTarget {
 }
 
 /// Store-owned dimensions written for tag and file-class indexes.
-pub(super) struct IndexAxes {
+pub(super) struct IndexDimensions {
     dimensions: [IndexDimension; 2],
 }
 
-impl IndexAxes {
-    /// Builds the canonical index axes for one configured File Class key.
+impl IndexDimensions {
+    /// Builds the canonical index dimensions for one configured File Class key.
     #[must_use]
     pub(super) fn for_class_field(class_field: &str) -> Self {
         Self {
@@ -1685,7 +1696,7 @@ mod tests {
             links.clone(),
         );
         store.persist(&PersistRequest::rebuild(
-            IndexAxes::for_class_field("class"),
+            IndexDimensions::for_class_field("class"),
             index.entries(),
         ))
     }

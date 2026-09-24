@@ -16,7 +16,7 @@ use super::{
     inlinks::{self, InlinkMap},
     service::IndexerService,
     sort::SortedByPath,
-    store::{IndexAxes, IndexStore, PersistRequest},
+    store::{IndexDimensions, IndexStore, PersistRequest},
 };
 use crate::{FileBase, Note};
 
@@ -99,12 +99,12 @@ impl PendingApply {
     /// exactly the rows that failed to persist.
     pub(super) fn apply(
         self,
-        axes: IndexAxes,
+        dimensions: IndexDimensions,
     ) -> Result<Persisted, PersistFailed> {
         let result = {
             let notes = self.update.notes_to_upsert();
             self.store.persist(&PersistRequest::incremental(
-                axes,
+                dimensions,
                 self.update.delta(),
                 &notes,
                 self.update.inlink_delta(),

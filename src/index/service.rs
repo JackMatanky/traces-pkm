@@ -16,7 +16,7 @@ use super::{
     inlinks::InlinkMap,
     refresh::{PendingApply, RefreshPlan, RefreshReport, RefreshState},
     sort::SortedByPath,
-    store::{IndexAxes, IndexStore, PersistRequest},
+    store::{IndexDimensions, IndexStore, PersistRequest},
 };
 use crate::{
     Config, DirTree, Note, TaskConfig,
@@ -140,8 +140,8 @@ impl IndexerService {
         pending: PendingApply,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         let report = pending.report();
-        let axes = IndexAxes::for_class_field(&self.class_field);
-        let index = match pending.apply(axes) {
+        let dimensions = IndexDimensions::for_class_field(&self.class_field);
+        let index = match pending.apply(dimensions) {
             Ok(persisted) => {
                 Self::log_report(&report);
                 persisted.into_index()?
@@ -213,8 +213,9 @@ impl IndexerService {
             RefreshState::Fresh(store) => Ok(store),
             RefreshState::Stale(pending) => {
                 let report = pending.report();
-                let axes = IndexAxes::for_class_field(&self.class_field);
-                match (*pending).apply(axes) {
+                let dimensions =
+                    IndexDimensions::for_class_field(&self.class_field);
+                match (*pending).apply(dimensions) {
                     Ok(persisted) => {
                         Self::log_report(&report);
                         Ok(persisted.into_store())
@@ -273,7 +274,7 @@ impl IndexerService {
     #[inline]
     pub fn persist(&self, index: &WorkspaceIndex) -> IndexResult<()> {
         IndexStore::open(&self.root)?.persist(&PersistRequest::rebuild(
-            IndexAxes::for_class_field(&self.class_field),
+            IndexDimensions::for_class_field(&self.class_field),
             index.entries(),
         ))
     }
@@ -1187,7 +1188,7 @@ mod tests {
             let links = InlinkMap::from_raw(links);
             store
                 .persist(&PersistRequest::rebuild(
-                    IndexAxes::for_class_field("class"),
+                    IndexDimensions::for_class_field("class"),
                     WorkspaceIndex::assemble(
                         SortedByPath::sorted(files),
                         SortedByPath::sorted(notes),
