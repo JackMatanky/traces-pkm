@@ -380,7 +380,7 @@ impl SourceGrammar {
         span: SourceSpan,
     ) -> Result<SourceAtom, QueryBuilderError> {
         let raw = sigil.strip_prefix('@').ok_or_else(|| {
-            QuerySyntaxError::new(
+            QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 span,
@@ -399,7 +399,7 @@ impl SourceGrammar {
             |name| (name, ClassExpansionMode::Children(BTreeSet::new())),
         );
         if name.is_empty() {
-            return Err(QuerySyntaxError::new(
+            return Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 span,
@@ -449,7 +449,7 @@ impl SourceGrammar {
             })
             .map_err(&lex)?;
         if name_spanned.value().is_empty() {
-            return Err(QuerySyntaxError::new(
+            return Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 class_span,
@@ -502,7 +502,7 @@ impl SourceGrammar {
 
         if has_mode_argument.is_some() && modifier.is_some() {
             let next_span = tokens.next_span(input);
-            return Err(QuerySyntaxError::new(
+            return Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 next_span,
@@ -579,7 +579,7 @@ impl AtomParser for SourceGrammar {
                         GlobPattern::compile(&glob)
                             .map(SourceAtom::Path)
                             .map_err(|_| {
-                                QuerySyntaxError::new(
+                                QuerySyntaxError::unexpected_end(
                                     QueryDialect::Source,
                                     input,
                                     span,
@@ -591,7 +591,7 @@ impl AtomParser for SourceGrammar {
                     SourceToken::Class => {
                         Self::parse_class_function(input, tokens, span)
                     }
-                    _ => Err(QuerySyntaxError::new(
+                    _ => Err(QuerySyntaxError::unexpected_end(
                         QueryDialect::Source,
                         input,
                         span,
@@ -600,7 +600,7 @@ impl AtomParser for SourceGrammar {
                     .into()),
                 }
             }
-            None => Err(QuerySyntaxError::new(
+            None => Err(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
                 next_span,
@@ -616,7 +616,12 @@ impl AtomParser for SourceGrammar {
         span: SourceSpan,
         expected: &'static str,
     ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
+        QuerySyntaxError::unexpected_end(
+            QueryDialect::Source,
+            input,
+            span,
+            expected,
+        )
     }
 }
 

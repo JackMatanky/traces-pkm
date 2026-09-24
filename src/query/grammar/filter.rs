@@ -349,7 +349,7 @@ impl FilterGrammar {
             })?;
 
         FilterFunction::build(name, field, target).ok_or_else(|| {
-            QuerySyntaxError::new(
+            QuerySyntaxError::unexpected_end(
                 QueryDialect::Filter,
                 input,
                 SourceSpan::from((0, name.len())),
@@ -435,7 +435,12 @@ impl AtomParser for FilterGrammar {
         span: SourceSpan,
         expected: &'static str,
     ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
+        QuerySyntaxError::unexpected_end(
+            QueryDialect::Filter,
+            input,
+            span,
+            expected,
+        )
     }
 }
 

@@ -347,7 +347,12 @@ mod tests {
             span: SourceSpan,
             expected: &'static str,
         ) -> QuerySyntaxError {
-            QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
+            QuerySyntaxError::unexpected_end(
+                QueryDialect::Source,
+                input,
+                span,
+                expected,
+            )
         }
     }
 

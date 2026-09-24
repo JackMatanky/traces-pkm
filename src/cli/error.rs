@@ -1548,7 +1548,7 @@ mod tests {
         fn query_error_help_selects_the_typed_repair() {
             let error = CliError::Query {
                 root: PathBuf::from("/some/project"),
-                source: QueryError::Syntax(QuerySyntaxError::new(
+                source: QueryError::Syntax(QuerySyntaxError::unexpected_end(
                     QueryDialect::Source,
                     "#book and",
                     (9, 0).into(),
