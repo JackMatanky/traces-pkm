@@ -385,7 +385,7 @@ impl IndexStore {
     }
 
     /// Maps each path to its encoded key bytes for link-row resolution.
-    fn key_path_map<'a>(
+    fn path_by_key<'a>(
         paths: impl IntoIterator<Item = &'a Path>,
         capacity: usize,
     ) -> FxHashMap<&'a [u8], &'a Path> {
@@ -442,11 +442,11 @@ impl IndexStore {
         );
         let files: SortedByPath<FileBase> = files_result?;
         let notes = notes_result?;
-        let target_paths = Self::key_path_map(
+        let target_paths = Self::path_by_key(
             files.as_slice().iter().map(FileBase::path),
             files.as_slice().len(),
         );
-        let source_paths = Self::key_path_map(
+        let source_paths = Self::path_by_key(
             notes.as_slice().iter().map(Note::path),
             notes.as_slice().len(),
         );
@@ -495,11 +495,11 @@ impl IndexStore {
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let files_slice = files.as_slice();
-        let target_paths = Self::key_path_map(
+        let target_paths = Self::path_by_key(
             files_slice.iter().map(FileBase::path),
             files_slice.len(),
         );
-        let source_paths = Self::key_path_map(
+        let source_paths = Self::path_by_key(
             files_slice
                 .iter()
                 .filter(|file| file.format() == FileFormat::Note)
