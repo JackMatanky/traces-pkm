@@ -316,12 +316,12 @@ impl<'a> LinkResolver<'a> {
         }
         let path_part = target.path()?;
         let candidate = Path::new(path_part);
-        if let Some(path) = self.find_by_path(candidate) {
+        if let Some(path) = self.get_by_path(candidate) {
             return Some(Target(path));
         }
         if candidate.extension().is_none() {
             let with_extension = candidate.with_extension("md");
-            if let Some(path) = self.find_by_path(&with_extension) {
+            if let Some(path) = self.get_by_path(&with_extension) {
                 return Some(Target(path));
             }
         }
@@ -348,7 +348,7 @@ impl<'a> LinkResolver<'a> {
         self.stem_index.get(stem)?.nearest(from, target_ext)
     }
 
-    fn find_by_path(&self, path: &Path) -> Option<&'a Path> {
+    fn get_by_path(&self, path: &Path) -> Option<&'a Path> {
         self.files
             .binary_search_by(|file| file.path().cmp(path))
             .ok()
