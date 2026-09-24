@@ -35,13 +35,13 @@
 #USAGE   """
 #USAGE }
 #USAGE flag "-r --report [name]" value_optional=#true {
-#USAGE   help "Save a named baseline (default: auto-named from `git` branch+sha)"
+#USAGE   help "Archive a named baseline snapshot (default: auto-named from `git` branch+sha)"
 #USAGE   long_help """
-#USAGE   - Auto-naming: Bare `-r` names the baseline `<branch>-<short-sha>[-dirty][-quick]`. Rerunning on the same commit overwrites that name's stored results; a new commit or branch gets its own name, so distinct auto-names accumulate, one nested copy under every benchmark, and baseline storage grows with every commit checkpointed.
-#USAGE   - Explicit naming: Pass a value for an explicit, memorable name instead, e.g. for a long-lived comparison point: `mise run bench -r position-refactor`
-#USAGE   - First-run behavior: A first run on a commit has no `change:` line; the verdict appears only once the same auto-name runs again. Compare across commits with `--compare <baseline>` (`critcmp <name> new`).
-#USAGE   - Quick mode: Under `--mode quick`, every saved baseline (explicit names included) is saved as `<name>-quick` instead (e.g. `-r foo` saves `foo-quick`, not `foo`), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
-#USAGE   - Conflicts: Criterion rejects combining `--save-baseline` with forwarded `--baseline`/`--baseline-lenient`/`--discard-baseline`. Note the task appends `--save-baseline` `<git-name>` by default even without `-r`: if you forward baseline flags, pass `--no-report`; otherwise the run fails with criterion's own argument-validation error (`--load-baseline` additionally requires `--baseline`).
+#USAGE   - Native comparison: Every benchmark run natively compares against the rolling `base` baseline on disk, printing `change:` deltas and statistical confidence intervals automatically.
+#USAGE   - Baseline snapshots: In addition to the rolling `base`, each run snapshots results to `<branch>-<short-sha>[-dirty][-quick]` (or an explicit name passed to `-r <name>`).
+#USAGE   - Multi-baseline comparison: Use `--compare <baseline>` to produce a side-by-side comparison table against any archived historical snapshot via `critcmp`.
+#USAGE   - Quick mode: Under `--mode quick`, snapshot names automatically append the `-quick` suffix so quick runs never clobber normal-mode baselines.
+#USAGE   - Skipping snapshots: Pass `--no-report` to disable archiving named baseline snapshots.
 #USAGE   """
 #USAGE }
 #USAGE flag "--no-report" help="Skip saving a named baseline (criterion uses its default `base`)"
@@ -256,6 +256,35 @@ resolve_baseline_name() {
 }
 
 #######################################
+# Snapshot latest benchmark results (`new/`) to a named baseline directory.
+#
+# Copies each `new/` dataset in `target/criterion/` to `<baseline>/`, preserving
+# unique git/named baselines for `critcmp` while keeping `base/` comparisons
+# working natively on every live run.
+#
+# Globals:
+#   `usage_no_report`
+# Arguments:
+#   `baseline_name`: resolved name of the baseline to snapshot
+# Outputs:
+#   None
+# Returns:
+#   `0` on success
+#######################################
+snapshot_baseline() {
+  local baseline_name="${1:-}"
+  [[ -z "${baseline_name}" ]] && return 0
+  [[ "${usage_no_report:-false}" == "true" ]] && return 0
+  [[ -d "target/criterion" ]] || return 0
+
+  local new_dir parent_dir
+  while IFS= read -r -d '' new_dir; do
+    parent_dir="${new_dir%/new}"
+    cp -R "${new_dir}" "${parent_dir}/${baseline_name}"
+  done < <(find target/criterion -type d -name "new" -print0)
+}
+
+#######################################
 # Orchestrate a run: select targets, fail fast on unknown `--compare` baseline,
 # build criterion args, run (or smoke in `--mode test`), then compare.
 #
@@ -304,7 +333,6 @@ main() {
     # carry no mode metadata: one shared name would let a quick run silently
     # overwrite a normal baseline.
     [[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
-    criterion_args+=(--save-baseline "${baseline}")
   fi
 
   printf '==> Running %d benchmark target(s) (mode: %s, baseline: %s)\n' \
@@ -316,6 +344,11 @@ main() {
     run_cmd+=(-- "${criterion_args[@]}")
   fi
   "${run_cmd[@]}"
+
+  # Snapshot latest results to the unique/named baseline for critcmp.
+  if [[ -n "${baseline}" ]]; then
+    snapshot_baseline "${baseline}"
+  fi
 
   # Compare: saved baseline (positional `1`) vs this run (`new`).
   if [[ -n "${usage_compare:-}" ]]; then
