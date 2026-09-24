@@ -190,13 +190,13 @@ impl QueryService {
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
         match mode {
-            QueryMode::Pages => self.page_rows(index, source),
-            QueryMode::Lists => self.list_rows(index, source),
-            QueryMode::Tasks => self.task_rows(index, source),
+            QueryMode::Pages => self.pages(index, source),
+            QueryMode::Lists => self.lists(index, source),
+            QueryMode::Tasks => self.tasks(index, source),
         }
     }
 
-    fn page_rows(
+    fn pages(
         &self,
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
@@ -206,7 +206,7 @@ impl QueryService {
 
     /// Expands matching notes into one [`QueryRow`] per list item, including
     /// plain bullets, checkboxes, and tasks, in document order.
-    fn list_rows(
+    fn lists(
         &self,
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
@@ -215,7 +215,7 @@ impl QueryService {
     }
 
     /// Expands matching notes into one [`QueryRow`] per task list item.
-    fn task_rows(
+    fn tasks(
         &self,
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
@@ -902,7 +902,7 @@ mod tests {
 
         use super::*;
 
-        fn task_rows(outcome: &QuerySet) -> Vec<(Option<bool>, &str)> {
+        fn task_states(outcome: &QuerySet) -> Vec<(Option<bool>, &str)> {
             outcome
                 .iter()
                 .map(|row| {
@@ -1061,7 +1061,7 @@ mod tests {
                 &SourceSelector::parse("#projects").expect("valid source"),
             );
 
-            assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
+            assert_eq!(task_states(&outcome), [(Some(false), "project task")]);
         }
 
         #[test]
@@ -1085,7 +1085,7 @@ mod tests {
                 &SourceSelector::parse("projects/").expect("valid source"),
             );
 
-            assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
+            assert_eq!(task_states(&outcome), [(Some(false), "project task")]);
         }
 
         #[test]
@@ -1107,7 +1107,7 @@ mod tests {
 
             // Filtering must keep only matching task rows, not every row from a
             // note with one match.
-            assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
+            assert_eq!(task_states(&outcome), [(Some(true), "pay rent")]);
         }
     }
 
@@ -1118,7 +1118,7 @@ mod tests {
         use crate::NoteFieldValue;
 
         #[test]
-        fn emits_plain_checkbox_and_task_rows_in_document_order() {
+        fn emits_plain_checkbox_and_tasks_in_document_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("items.md"),
@@ -1185,7 +1185,7 @@ mod tests {
         }
 
         #[test]
-        fn runs_from_store_matching_in_memory_list_rows() {
+        fn runs_from_store_matching_in_memory_lists() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("items.md"),
