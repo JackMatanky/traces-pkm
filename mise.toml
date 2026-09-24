@@ -96,10 +96,13 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # up-to-date, skipping" — that marker appeared instead for build (sources +
 # explicit outputs) and verify (auto outputs: cache off but no
 # outputs = []) on unchanged-source re-runs, so cache off alone (a) does
-# not prevent a freshness skip. Re-probe after a mise version bump or
-# before changing outputs on a gate. `mise run --force` ignores source/output
-# checking outright (02_architecture.md, "Incremental Execution") —
-# freshness and the artifact cache are separate mechanisms.
+# not prevent a freshness skip. Verify later joined gate:never-skip
+# (2026-09-24 final review): rust-only edits never reached its sources
+# (global_inputs only), so the gate false-green skipped with exit 0.
+# Re-probe after a mise version bump or before changing outputs on a
+# gate. `mise run --force` ignores source/output checking outright
+# (02_architecture.md, "Incremental Execution") — freshness and the
+# artifact cache are separate mechanisms.
 # Decision (unmade, not a won't-do): remote/CI task cache is local-only for
 # now — task.cache.remote_url + remote_namespace are unconfigured, so CI
 # has no remote cache to publish to; revisit when a remote service exists
@@ -678,7 +681,7 @@ cargo doc --no-deps "${extra[@]+"${extra[@]}"}"
 [tasks.verify]
 description = "Full verification gate: fmt first, then check/lint/tests in parallel"
 alias = "v"
-cache = { enabled = false }
+extends = "gate:never-skip"
 run = [
   # fmt mutates .rs files: it must finish before the readers start
   # (depends gives completion, not order — it cannot express this).
@@ -703,8 +706,8 @@ timeout = "20m"
 # File tasks take a single extends target (array form silently drops in
 # 2026.9.12) — bench-shaped gates cannot join without the local-payload dance.
 # Exempt: bench (its file task spends its only extends on [task_templates.bench]);
-# verify (resolves outputs {auto:true}, not []); clean/setup/watch (same
-# payload, different policy class: destructive/install/interactive).
+# clean/setup/watch (same payload, different policy class:
+# destructive/install/interactive).
 [task_templates."gate:never-skip"]
 outputs = []
 cache = { enabled = false }
