@@ -444,7 +444,7 @@ mod tests {
             assert_eq!(
                 QueryBuilder::pages(SourceSelector::All).limit(-1).err(),
                 Some(QueryBuilderError::LimitOutOfRange {
-                    value: -1
+                    limit: -1
                 })
             );
         }

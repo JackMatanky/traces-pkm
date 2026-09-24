@@ -260,7 +260,7 @@ impl QueryService {
             .filter(move |&position| {
                 source.is_match(index.entry_at(position), &self.class_field)
             })
-            .map(move |position| QueryRow::from_row(index, position))
+            .map(move |position| QueryRow::new(index, position))
     }
 }
 
@@ -292,7 +292,7 @@ impl<'a> SourceResolver<'a> {
     ) -> IndexResult<Box<[PathBuf]>> {
         match selector {
             SourceSelector::All => self.store.paths_in_folder(Path::new("")),
-            SourceSelector::Expr(expr) => self.resolve_expr(expr.expr()),
+            SourceSelector::Expr(expr) => self.resolve_expr(expr.inner()),
         }
     }
 

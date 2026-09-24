@@ -105,7 +105,7 @@ pub struct SourceExpr(BooleanExpr<SourceAtom>);
 
 impl SourceExpr {
     #[must_use]
-    pub(crate) fn expr(&self) -> &BooleanExpr<SourceAtom> {
+    pub(crate) fn inner(&self) -> &BooleanExpr<SourceAtom> {
         &self.0
     }
 
@@ -663,8 +663,8 @@ enum SourceToken {
     clippy::needless_pass_by_ref_mut,
     reason = "logos Callback trait requires &mut Lexer"
 )]
-fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
-    lexical_unquote(lexer.slice())
+fn quoted_callback(lex: &mut Lexer<'_, SourceToken>) -> String {
+    lexical_unquote(lex.slice())
 }
 
 #[cfg(test)]

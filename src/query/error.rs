@@ -92,10 +92,10 @@ pub enum QueryBuilderError {
     #[error(transparent)]
     FieldPath(#[from] FieldPathError),
     /// Query limit is negative or exceeds platform [`usize`] bounds.
-    #[error("invalid limit {value}; expected a non-negative row count")]
+    #[error("invalid limit {limit}; expected a non-negative row count")]
     LimitOutOfRange {
         /// The rejected limit count.
-        value: i64,
+        limit: i64,
     },
 }
 
@@ -313,7 +313,7 @@ mod tests {
         fn limit_out_of_range_formats_display_message() {
             assert_display(
                 &QueryError::from(QueryBuilderError::LimitOutOfRange {
-                    value: -5,
+                    limit: -5,
                 }),
                 "invalid limit -5; expected a non-negative row count",
             );

@@ -167,11 +167,11 @@ impl QueryTransform {
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `path` is not a valid field path.
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(super) fn sort(
-        field: &str,
+        path: &str,
         descending: bool,
     ) -> Result<Self, QueryBuilderError> {
         let direction = if descending {
@@ -180,7 +180,7 @@ impl QueryTransform {
             SortDirection::Ascending
         };
         Ok(Self::Sort {
-            order: SortOrder::single(FieldPath::parse(field)?, direction),
+            order: SortOrder::single(FieldPath::parse(path)?, direction),
         })
     }
 
@@ -200,32 +200,32 @@ impl QueryTransform {
     pub(super) fn limit(n: i64) -> Result<Self, QueryBuilderError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryBuilderError::LimitOutOfRange {
-                value: n,
+                limit: n,
             }
         })?;
         Ok(Self::Limit(n))
     }
 
-    /// Builds a group-by transform from `field`.
+    /// Builds a group-by transform from `path`.
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `path` is not a valid field path.
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
-    pub(super) fn group_by(field: &str) -> Result<Self, QueryBuilderError> {
-        Ok(Self::GroupBy(FieldPath::parse(field)?))
+    pub(super) fn group_by(path: &str) -> Result<Self, QueryBuilderError> {
+        Ok(Self::GroupBy(FieldPath::parse(path)?))
     }
 
-    /// Builds a flatten transform from `field`.
+    /// Builds a flatten transform from `path`.
     ///
     /// # Errors
     ///
-    /// - [`FieldPath`] if `field` is not a valid field path.
+    /// - [`FieldPath`] if `path` is not a valid field path.
     ///
     /// [`FieldPath`]: QueryBuilderError::FieldPath
-    pub(super) fn flatten(field: &str) -> Result<Self, QueryBuilderError> {
-        Ok(Self::Flatten(FieldPath::parse(field)?))
+    pub(super) fn flatten(path: &str) -> Result<Self, QueryBuilderError> {
+        Ok(Self::Flatten(FieldPath::parse(path)?))
     }
 
     pub(super) fn apply(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
@@ -237,16 +237,16 @@ impl QueryTransform {
             }
             Self::Sort {
                 order,
-            } => order.sort_rows(rows),
+            } => order.sort(rows),
             Self::Limit(n) => {
                 let mut rows = rows;
                 rows.truncate(*n);
                 rows
             }
-            Self::GroupBy(field) => {
+            Self::GroupBy(path) => {
                 let order =
-                    SortOrder::single(field.clone(), SortDirection::Ascending);
-                order.sort_rows(rows)
+                    SortOrder::single(path.clone(), SortDirection::Ascending);
+                order.sort(rows)
             }
             Self::Flatten(field_path) => {
                 let mut out = Vec::with_capacity(rows.len());
@@ -277,7 +277,7 @@ impl QueryTransform {
                     return Vec::new();
                 }
                 if n >= rows.len() {
-                    return order.sort_rows(rows);
+                    return order.sort(rows);
                 }
                 let keys = order.keys_for(&rows);
                 let mut indexed: Vec<(usize, usize)> =

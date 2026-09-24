@@ -54,10 +54,10 @@ impl SortOrder {
     /// # Panics
     ///
     /// - Panics if `self.terms` is empty; callers must guard non-empty terms
-    ///   before calling (`sort_rows` does this).
+    ///   before calling (`sort` does this).
     #[expect(
         clippy::expect_used,
-        reason = "caller guarantees non-empty terms via sort_rows guard"
+        reason = "caller guarantees non-empty terms via sort guard"
     )]
     pub(super) fn keys_for<'a>(&self, rows: &'a [QueryRow]) -> SortKeys<'a> {
         let stride = NonZeroUsize::new(self.terms.len())
@@ -133,7 +133,7 @@ impl SortOrder {
 
     /// Sorts `rows`, preserving original relative order for ties.
     #[must_use]
-    pub(super) fn sort_rows(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
+    pub(super) fn sort(&self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         if rows.len() <= 1 || self.terms.is_empty() {
             return rows;
         }

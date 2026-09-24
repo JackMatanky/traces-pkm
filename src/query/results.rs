@@ -52,10 +52,7 @@ pub struct QueryRow {
 impl QueryRow {
     /// Constructs a row for `position`, sharing `index` instead of cloning the
     /// matched [`FileEntry`].
-    pub(super) fn from_row(
-        index: &Arc<WorkspaceIndex>,
-        position: RowIndex,
-    ) -> Self {
+    pub(super) fn new(index: &Arc<WorkspaceIndex>, position: RowIndex) -> Self {
         Self {
             index: Arc::clone(index),
             position,
@@ -1071,8 +1068,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::for_tests(temp).build().expect("build index"),
             );
-            QueryRow::from_row(&index, RowIndex::new(0))
-                .with_list_item(item_idx)
+            QueryRow::new(&index, RowIndex::new(0)).with_list_item(item_idx)
         }
 
         fn list_row_with_tasks_config(
@@ -1087,8 +1083,7 @@ mod tests {
             let index = Arc::new(
                 IndexerService::from(&config).build().expect("build index"),
             );
-            QueryRow::from_row(&index, RowIndex::new(0))
-                .with_list_item(item_idx)
+            QueryRow::new(&index, RowIndex::new(0)).with_list_item(item_idx)
         }
 
         #[rstest]
@@ -1288,7 +1283,7 @@ rating: note
             assert_eq!(
                 outcome.limit(-1),
                 Err(QueryError::Builder(QueryBuilderError::LimitOutOfRange {
-                    value: -1
+                    limit: -1
                 }))
             );
         }
