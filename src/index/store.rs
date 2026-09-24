@@ -1608,7 +1608,18 @@ impl IndexDimension {
 /// allocation when `text` is already lowercase ASCII.
 #[inline]
 fn with_lowercased<R>(text: &str, visit: impl FnOnce(&str) -> R) -> R {
-    if text.is_ascii() && !text.bytes().any(|b| b.is_ascii_uppercase()) {
+    let mut has_upper = false;
+    let mut is_ascii = true;
+    for &b in text.as_bytes() {
+        if b >= 0x80 {
+            is_ascii = false;
+            break;
+        }
+        if b.is_ascii_uppercase() {
+            has_upper = true;
+        }
+    }
+    if is_ascii && !has_upper {
         visit(text)
     } else {
         visit(&text.to_lowercase())
