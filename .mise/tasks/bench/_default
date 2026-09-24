@@ -33,7 +33,7 @@
 #USAGE flag "--no-report" {
 #USAGE   help "Skip the named baseline; fall back to criterion's unnamed 'base'"
 #USAGE }
-#USAGE flag "--compare <name>" {
+#USAGE flag "--compare <baseline>" {
 #USAGE   help "Compare against a saved baseline via critcmp"
 #USAGE   long_help """
 #USAGE   Runs `critcmp <name> new` after the measurement run: `<name>` is a saved baseline (listed by `critcmp --baselines`, offered by completion) and `new` is the run just measured, giving a two-column comparison with change ratios. The baseline name is validated before the run starts — an unknown name fails fast with a message naming it, before any measurement.
@@ -43,8 +43,8 @@
 #USAGE   If one run passes -r <name> and --compare <name> with the same name, criterion overwrites that baseline during the run and the comparison sees this run against itself (every ratio 1.00).
 #USAGE   """
 #USAGE }
-#USAGE complete "compare" run="critcmp --baselines 2>/dev/null"
-#USAGE complete "files" run="ls benches | sed 's/[.]rs$//'"
+#USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"
+#USAGE complete "pattern" run="ls benches | grep '[.]rs$' | sed 's/[.]rs$//'"
 #USAGE flag "--verbose" negate="--no-verbose" default=#true {
 #USAGE   help "Criterion detailed reporting (task default: on; criterion's default is off); --no-verbose for terse output"
 #USAGE }
