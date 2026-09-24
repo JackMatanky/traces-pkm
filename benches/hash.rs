@@ -1,16 +1,16 @@
 //! Performance benchmark suite for BLAKE3 hashing.
 //!
 //! Exposes and monitors the CPU cost of two hashing paths used throughout the
-//! crate: [`Blake3FileHash`] (file content hashing via [`TryFrom<&Path>`]) and
-//! [`Blake3PathHash`] (path-bytes hashing via [`From<&Path>`]). Every trust
-//! check and tracked-config lookup hashes a config file or canonical path
-//! through one of these, so regressions here directly degrade query-time trust
-//! verification.
+//! crate: [`Blake3FileHash`] (file content hashing via
+//! [`Blake3FileHash::from_path`]) and [`Blake3PathHash`] (path-bytes hashing
+//! via [`From<&Path>`]). Every trust check and tracked-config lookup hashes a
+//! config file or canonical path through one of these, so regressions here
+//! directly degrade query-time trust verification.
 //!
 //! ### Data Flow Diagram
 //!
 //! ```text
-//! [Path] ──(Blake3FileHash::try_from)──► [BLAKE3-256 file digest]
+//! [Path] ──(Blake3FileHash::from_path)──► [BLAKE3-256 file digest]
 //! [Path] ──(Blake3PathHash::from)───────► [64-byte hex path digest]
 //! ```
 //!
@@ -18,7 +18,7 @@
 //!
 //! To profile hashing CPU bottlenecks:
 //! ```bash
-//! cargo flamegraph --bench hash -- --bench "Blake3FileHash::try_from/1mb"
+//! cargo flamegraph --bench hash -- --bench "Blake3FileHash::from_path/1mb"
 //! ```
 //!
 //! Run via `mise run bench -f hash` (or `mise run bench -m hash`): this crate's
@@ -51,7 +51,7 @@ mod common;
 ///
 /// Parameters: varies `BenchmarkId` `1kb` vs. `1mb`; reports byte throughput.
 /// Fixture files are zero-filled and written outside timing. Timed work is
-/// [`Blake3FileHash::try_from`]: open, read into a fresh buffer, hash, and
+/// [`Blake3FileHash::from_path`]: open, read into a fresh buffer, hash, and
 /// return a digest. OS page-cache state is not controlled.
 ///
 /// Expected outcomes:
@@ -62,7 +62,7 @@ mod common;
 /// - `1 MiB` throughput fails to improve over `1 KiB`, indicating filesystem
 ///   read, allocation/copy, or hashing work needs investigation.
 fn bench_file_hash(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Blake3FileHash::try_from");
+    let mut group = c.benchmark_group("Blake3FileHash::from_path");
     group.sample_size(10);
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
         group.throughput(Throughput::Bytes(
@@ -77,7 +77,7 @@ fn bench_file_hash(c: &mut Criterion) {
             |b, path| {
                 b.iter(|| {
                     let hash =
-                        Blake3FileHash::try_from(black_box(path.as_path()))
+                        Blake3FileHash::from_path(black_box(path.as_path()))
                             .expect("hash file");
                     black_box(hash);
                 });

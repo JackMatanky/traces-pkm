@@ -64,7 +64,7 @@ impl FilePathTracker {
         &self,
         target: &Path,
     ) -> Result<(), FilePathTrackerError> {
-        let entry = StoreEntry::try_from(target)?;
+        let entry = StoreEntry::from_target(target)?;
         let entry_path = entry.path_in(&self.root);
         if entry_path.exists() {
             return Ok(());
@@ -108,7 +108,7 @@ impl FilePathTracker {
         &self,
         target: &Path,
     ) -> Result<bool, FilePathTrackerError> {
-        let entry = StoreEntry::try_from(target)?;
+        let entry = StoreEntry::from_target(target)?;
         let entry_path = entry.path_in(&self.root);
         entry_path.try_exists().map_err(|source| {
             FilePathTrackerError::StoreIo {
@@ -209,7 +209,7 @@ impl FilePathTracker {
         suffix: &str,
         contents: impl AsRef<[u8]>,
     ) -> Result<(), FilePathTrackerError> {
-        let entry = StoreEntry::try_from(target)?;
+        let entry = StoreEntry::from_target(target)?;
         let entry_path = entry.path_in(&self.root);
         let companion = companion_path(&entry_path, suffix);
         fs::write(&companion, contents).map_err(|source| {
@@ -239,7 +239,7 @@ impl FilePathTracker {
         target: &Path,
         suffix: &str,
     ) -> Result<Option<String>, FilePathTrackerError> {
-        let entry = StoreEntry::try_from(target)?;
+        let entry = StoreEntry::from_target(target)?;
         let entry_path = entry.path_in(&self.root);
         let companion = companion_path(&entry_path, suffix);
         match fs::read_to_string(&companion) {
@@ -273,7 +273,7 @@ impl FilePathTracker {
         target: &Path,
         suffixes: &[&str],
     ) -> Result<usize, FilePathTrackerError> {
-        let entry = StoreEntry::try_from(target)?;
+        let entry = StoreEntry::from_target(target)?;
         let entry_path = entry.path_in(&self.root);
         let removed = match fs::remove_file(&entry_path) {
             Ok(()) => 1,
@@ -366,10 +366,6 @@ impl StoreEntry {
     fn path_in(&self, root: &Path) -> PathBuf {
         root.join(self.hash.as_str())
     }
-}
-
-impl TryFrom<&Path> for StoreEntry {
-    type Error = FilePathTrackerError;
 
     #[inline]
     #[expect(
@@ -377,7 +373,9 @@ impl TryFrom<&Path> for StoreEntry {
         reason = "file-path-tracker entries must canonicalize targets before \
                   hashing"
     )]
-    fn try_from(target: &Path) -> Result<Self, Self::Error> {
+    pub(crate) fn from_target(
+        target: &Path,
+    ) -> Result<Self, FilePathTrackerError> {
         let canonical_target = fs::canonicalize(target).map_err(|source| {
             FilePathTrackerError::Canonicalize {
                 path: target.to_path_buf(),
@@ -500,7 +498,7 @@ mod tests {
         }
 
         fn entry_path_for(&self, target: &Path) -> PathBuf {
-            StoreEntry::try_from(target)
+            StoreEntry::from_target(target)
                 .expect("resolve entry")
                 .path_in(&self.store.root)
         }
@@ -530,7 +528,7 @@ mod tests {
             let missing = fixture.temp.path().join("missing");
 
             // Act
-            let result = StoreEntry::try_from(missing.as_path());
+            let result = StoreEntry::from_target(missing.as_path());
 
             // Assert
             assert!(matches!(

@@ -134,7 +134,7 @@ impl ConfigPathTracker {
         let Some(config_file) = subject.config_file() else {
             return Ok(());
         };
-        let digest = Blake3FileHash::try_from(config_file)?;
+        let digest = Blake3FileHash::from_path(config_file)?;
         self.trusted.write_companion(
             subject.root_path(),
             COMPANION_SUFFIX,

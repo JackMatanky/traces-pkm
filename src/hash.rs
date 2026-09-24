@@ -21,9 +21,13 @@ use thiserror::Error;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Blake3FileHash(blake3::Hash);
 
-impl TryFrom<&Path> for Blake3FileHash {
-    type Error = HashError;
-
+impl From<&str> for Blake3FileHash {
+    #[inline]
+    fn from(content: &str) -> Self {
+        Self(blake3::hash(content.as_bytes()))
+    }
+}
+impl Blake3FileHash {
     /// Computes the BLAKE3 hash of `path`'s current contents.
     ///
     /// Reads `path` fully into memory before hashing. Use this only when the
@@ -34,22 +38,14 @@ impl TryFrom<&Path> for Blake3FileHash {
     ///
     /// - `HashError` if `path` cannot be read
     #[inline]
-    fn try_from(path: &Path) -> Result<Self, HashError> {
+    pub fn from_path(path: &Path) -> Result<Self, HashError> {
         let contents = fs::read(path).map_err(|source| HashError {
             path: path.to_path_buf(),
             source,
         })?;
         Ok(Self(blake3::hash(&contents)))
     }
-}
 
-impl From<&str> for Blake3FileHash {
-    #[inline]
-    fn from(content: &str) -> Self {
-        Self(blake3::hash(content.as_bytes()))
-    }
-}
-impl Blake3FileHash {
     /// Returns the BLAKE3 hex representation without heap allocation.
     #[inline]
     #[must_use]
@@ -138,8 +134,8 @@ mod tests {
             fs::write(&path, "hello").expect("write file");
 
             // Act
-            let first = Blake3FileHash::try_from(path.as_path());
-            let second = Blake3FileHash::try_from(path.as_path());
+            let first = Blake3FileHash::from_path(path.as_path());
+            let second = Blake3FileHash::from_path(path.as_path());
 
             // Assert
             assert!(first.is_ok());
@@ -157,8 +153,8 @@ mod tests {
             fs::write(&path2, "goodbye").expect("write file 2");
 
             // Act
-            let first = Blake3FileHash::try_from(path1.as_path());
-            let second = Blake3FileHash::try_from(path2.as_path());
+            let first = Blake3FileHash::from_path(path1.as_path());
+            let second = Blake3FileHash::from_path(path2.as_path());
 
             // Assert
             assert!(first.is_ok());
@@ -173,7 +169,7 @@ mod tests {
             let path = temp.path().join("missing.txt");
 
             // Act
-            let result = Blake3FileHash::try_from(path.as_path());
+            let result = Blake3FileHash::from_path(path.as_path());
 
             // Assert
             assert!(matches!(result, Err(HashError { .. })));
@@ -186,7 +182,7 @@ mod tests {
             let path = temp.path().join("file.txt");
             fs::write(&path, "hello").expect("write file");
             let hash =
-                Blake3FileHash::try_from(path.as_path()).expect("hash file");
+                Blake3FileHash::from_path(path.as_path()).expect("hash file");
 
             // Act
             let display_string = format!("{hash}");
