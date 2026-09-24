@@ -290,7 +290,7 @@ fn file_field_source(
             .iter()
             .map(|folder| glob_for(folder, ext))
             .collect::<Result<Vec<_>, _>>()?;
-        terms.push(SourceExpr::disjunction(first_glob, rest_globs));
+        terms.push(SourceExpr::or(first_glob, rest_globs));
     } else if ext.is_some() {
         terms.push(SourceExpr::atom(glob_for("", ext)?));
     } else {
@@ -305,12 +305,7 @@ fn file_field_source(
     let mut terms = terms.into_iter();
     Ok(terms.next().map_or_else(
         || SourceSelector::All,
-        |first| {
-            SourceSelector::Expr(SourceExpr::conjunction(
-                first,
-                terms.collect(),
-            ))
-        },
+        |first| SourceSelector::Expr(SourceExpr::and(first, terms.collect())),
     ))
 }
 
