@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Run parallel mutation testing with `cargo-mutants`"
 #MISE sources=["@group:rust"]
 #MISE extends="mutants"
@@ -36,26 +36,26 @@
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
+declare -a mutants_args=()
+
 #######################################
-# Returns base cargo-mutants compilation and profile arguments.
+# Appends base cargo-mutants compilation and profile arguments.
 # Globals:
-#   None
+#   mutants_args
 # Arguments:
-#   flags_out: Nameref to array where static flags are appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 build_static_flags() {
-  local -n static_flags_out="${1}"
-  static_flags_out+=(
+  mutants_args+=(
     --baseline run
     --cap-lints true
     --build-timeout-multiplier 3
     --profile mutants
   )
-  return 0
 }
 
 #######################################
@@ -64,21 +64,20 @@ build_static_flags() {
 #   usage_file
 #   usage_mod
 #   usage_exclude
+#   mutants_args
 # Arguments:
-#   flags_out: Nameref to array where filter flags are appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 build_filter_flags() {
-  local -n filter_flags_out="${1}"
-  [[ -n "${usage_file:-}" ]] && filter_flags_out+=(--file "${usage_file}")
+  [[ -n "${usage_file:-}" ]] && mutants_args+=(--file "${usage_file}")
   [[ -n "${usage_mod:-}" ]] && \
-    filter_flags_out+=(--file "src/${usage_mod}/**/*.rs")
+    mutants_args+=(--file "src/${usage_mod}/**/*.rs")
   [[ -n "${usage_exclude:-}" ]] && \
-    filter_flags_out+=(--exclude "${usage_exclude}")
-  return 0
+    mutants_args+=(--exclude "${usage_exclude}")
 }
 
 #######################################
@@ -88,21 +87,20 @@ build_filter_flags() {
 #   usage_check
 #   usage_timeout
 #   usage_level
+#   mutants_args
 # Arguments:
-#   flags_out: Nameref to array where execution flags are appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 build_execution_flags() {
-  local -n exec_flags_out="${1}"
-  [[ "${usage_iterate:-true}" == "true" ]] && exec_flags_out+=(--iterate)
-  [[ "${usage_check:-false}" == "true" ]] && exec_flags_out+=(--check)
+  [[ "${usage_iterate:-true}" == "true" ]] && mutants_args+=(--iterate)
+  [[ "${usage_check:-false}" == "true" ]] && mutants_args+=(--check)
   [[ -n "${usage_timeout:-}" ]] && \
-    exec_flags_out+=(--timeout "${usage_timeout}")
-  [[ -n "${usage_level:-}" ]] && exec_flags_out+=(--level "${usage_level}")
-  return 0
+    mutants_args+=(--timeout "${usage_timeout}")
+  [[ -n "${usage_level:-}" ]] && mutants_args+=(--level "${usage_level}")
 }
 
 #######################################
@@ -113,47 +111,44 @@ build_execution_flags() {
 #   usage_all_logs
 #   usage_json
 #   usage_no_config
+#   mutants_args
 # Arguments:
-#   flags_out: Nameref to array where reporting flags are appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 build_reporting_flags() {
-  local -n report_flags_out="${1}"
-  [[ "${usage_caught:-false}" == "true" ]] && report_flags_out+=(--caught)
-  [[ "${usage_unviable:-false}" == "true" ]] && report_flags_out+=(--unviable)
-  [[ "${usage_all_logs:-false}" == "true" ]] && report_flags_out+=(--all-logs)
-  [[ "${usage_json:-false}" == "true" ]] && report_flags_out+=(--json)
+  [[ "${usage_caught:-false}" == "true" ]] && mutants_args+=(--caught)
+  [[ "${usage_unviable:-false}" == "true" ]] && mutants_args+=(--unviable)
+  [[ "${usage_all_logs:-false}" == "true" ]] && mutants_args+=(--all-logs)
+  [[ "${usage_json:-false}" == "true" ]] && mutants_args+=(--json)
   [[ "${usage_no_config:-false}" == "true" ]] && \
-    report_flags_out+=(--no-config)
-  return 0
+    mutants_args+=(--no-config)
 }
 
 #######################################
-# Evaluates and parses variadic usage_args tokens into array.
+# Evaluates and parses variadic usage_args tokens into mutants_args.
 # Globals:
 #   usage_args
+#   mutants_args
 # Arguments:
-#   extra_out: Nameref to array where parsed passthrough tokens are appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 parse_passthrough_tokens() {
-  # shellcheck disable=SC2034  # modified inside eval
   # usage_args arrives shell-quoted; eval expands it into array elements.
-  local -n extra_tokens_out="${1}"
-  eval "extra_tokens_out+=(${usage_args:-})"
-  return 0
+  eval "mutants_args+=(${usage_args:-})"
 }
 
 #######################################
 # Assembles full argument list and executes cargo mutants.
 # Globals:
-#   None
+#   mutants_args
 # Arguments:
 #   CLI arguments vector.
 # Outputs:
@@ -162,15 +157,13 @@ parse_passthrough_tokens() {
 #   Status of cargo mutants.
 #######################################
 main() {
-  # shellcheck disable=SC2034  # populated via namerefs in builder functions
-  local -a args=()
-  build_static_flags args
-  build_filter_flags args
-  build_execution_flags args
-  build_reporting_flags args
-  parse_passthrough_tokens args
+  build_static_flags
+  build_filter_flags
+  build_execution_flags
+  build_reporting_flags
+  parse_passthrough_tokens
 
-  cargo mutants "${args[@]}"
+  cargo mutants "${mutants_args[@]}"
 }
 
 main "$@"

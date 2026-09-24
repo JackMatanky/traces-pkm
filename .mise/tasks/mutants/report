@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Generate a Markdown report of surviving mutants"
 #MISE hide=true
 #USAGE flag "-i --input <input>" default="mutants.out/missed.txt" help="File listing surviving mutants"

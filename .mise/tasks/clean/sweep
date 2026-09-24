@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Reclaim Cargo target space: prune stale incremental sessions (default) or `cargo-sweep` by age/size"
 #MISE alias="sweep"
 #MISE extends="gate:never-skip"
@@ -79,44 +79,39 @@ run_cargo_sweep() {
 # Scans directory for Cargo incremental sessions, partitions into newest vs
 # stale sessions by mtime.
 # Globals:
-#   None
+#   stale_dirs
 # Arguments:
 #   incremental_dir: Directory path containing incremental session directories.
-#   stale_out: Nameref to array where stale directory paths will be stored.
 # Outputs:
 #   None
 # Returns:
-#   Count of stale sessions found.
+#   0 on success.
 #######################################
 inspect_incremental_sessions() {
   local incremental_dir="${1}"
-  local -n stale_out="${2}"
   local dir newest=""
 
-  stale_out=()
+  stale_dirs=()
   for dir in "${incremental_dir}"/*/; do
     [[ -d "${dir}" ]] || continue
     # `-nt` sees directory mtimes, which update on direct-child create/delete;
     # equal mtimes keep the lexicographically first.
     if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
       if [[ -n "${newest}" ]]; then
-        stale_out+=("${newest}")
+        stale_dirs+=("${newest}")
       fi
       newest="${dir}"
     else
-      stale_out+=("${dir}")
+      stale_dirs+=("${dir}")
     fi
   done
-
-  return "${#stale_out[@]}"
 }
 
 #######################################
 # Prunes stale session directories or previews them.
 # Globals:
-#   None
+#   stale_dirs
 # Arguments:
-#   stale_dirs_ref: Nameref to array of directory paths to evict.
 #   dry_run: String "true" or "false".
 # Outputs:
 #   Log of deleted directories or preview count to STDOUT.
@@ -124,21 +119,20 @@ inspect_incremental_sessions() {
 #   0 on success.
 #######################################
 evict_incremental_sessions() {
-  local -n stale_dirs_ref="${1}"
-  local dry_run="${2}"
+  local dry_run="${1}"
 
-  if [[ "${#stale_dirs_ref[@]}" -eq 0 ]]; then
+  if [[ "${#stale_dirs[@]}" -eq 0 ]]; then
     printf 'sweep: no stale incremental sessions found\n'
     return 0
   fi
 
   if [[ "${dry_run}" == "true" ]]; then
     printf 'sweep: would remove %d stale incremental session(s):\n' \
-      "${#stale_dirs_ref[@]}"
+      "${#stale_dirs[@]}"
     return 0
   fi
 
-  rm -rf "${stale_dirs_ref[@]}"
+  rm -rf "${stale_dirs[@]}"
   printf 'sweep: removed stale incremental sessions\n'
 }
 
@@ -161,10 +155,9 @@ prune_incremental_target() {
     return 0
   fi
 
-  # shellcheck disable=SC2034  # populated in inspect_incremental_sessions
-  local -a stale=()
-  inspect_incremental_sessions "${INCREMENTAL_DIR}" stale || true
-  evict_incremental_sessions stale "${usage_dry_run:-false}"
+  declare -a stale_dirs=()
+  inspect_incremental_sessions "${INCREMENTAL_DIR}"
+  evict_incremental_sessions "${usage_dry_run:-false}"
 }
 
 #######################################

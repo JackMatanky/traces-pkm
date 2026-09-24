@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Run tests with `nextest` (+ `doc-tests` by default)"
 #MISE alias="t"
 #MISE sources=["@group:rust"]

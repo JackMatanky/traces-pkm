@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Run unit and integration tests with `nextest`"
 #MISE sources=["@group:rust"]
 #MISE extends="gate:never-skip"
@@ -30,71 +30,68 @@
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
+declare -a unit_args=()
+
 #######################################
 # Maps feature selection flag to cargo nextest package and feature arguments.
 # Globals:
 #   usage_feature
+#   unit_args
 # Arguments:
-#   args_out: Nameref to array where feature arguments will be stored.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
-# shellcheck disable=SC2034
 resolve_package_feature_args() {
-  local -n pkg_args_out="${1}"
   if [[ "${usage_feature:-all}" == "all" ]]; then
-    pkg_args_out=(-p traces-pkm --all-features)
+    unit_args+=(-p traces-pkm --all-features)
   else
-    pkg_args_out=(-p traces-pkm --features "${usage_feature}")
+    unit_args+=(-p traces-pkm --features "${usage_feature}")
   fi
-  return 0
 }
 
 #######################################
 # Formats module filter flag into nextest expression DSL filter.
 # Globals:
 #   usage_mod
+#   unit_args
 # Arguments:
-#   args_out: Nameref to array where filter expression will be appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 resolve_module_filter() {
-  local -n mod_args_out="${1}"
   if [[ -n "${usage_mod:-}" ]]; then
-    mod_args_out+=(-E "test(/^${usage_mod}::/)")
+    unit_args+=(-E "test(/^${usage_mod}::/)")
   fi
-  return 0
 }
 
 #######################################
-# Expands variadic passthrough arguments into array.
+# Expands variadic passthrough arguments into unit_args.
 # Globals:
 #   usage_args
+#   unit_args
 # Arguments:
-#   extra_out: Nameref to array where passthrough tokens will be appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 parse_passthrough_tokens() {
-  # shellcheck disable=SC2034  # modified inside eval
   # usage_args arrives shell-quoted (var=#true arg); eval expands it
   # into array elements.
-  local -n extra_tokens_out="${1}"
-  eval "extra_tokens_out+=(${usage_args:-})"
-  return 0
+  eval "unit_args+=(${usage_args:-})"
 }
 
 #######################################
 # Assembles argument vector and executes cargo nextest run.
 # Globals:
-#   None
+#   unit_args
 # Arguments:
 #   CLI arguments vector.
 # Outputs:
@@ -103,13 +100,11 @@ parse_passthrough_tokens() {
 #   Status of cargo nextest.
 #######################################
 main() {
-  # shellcheck disable=SC2034  # populated via namerefs
-  local -a args=()
-  resolve_package_feature_args args
-  resolve_module_filter args
-  parse_passthrough_tokens args
+  resolve_package_feature_args
+  resolve_module_filter
+  parse_passthrough_tokens
 
-  cargo nextest run "${args[@]}"
+  cargo nextest run "${unit_args[@]}"
 }
 
 main "$@"

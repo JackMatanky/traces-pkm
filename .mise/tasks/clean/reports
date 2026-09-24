@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Remove generated coverage and mutation test reports"
 #MISE extends="gate:never-skip"
 #USAGE flag "--dry-run" {
@@ -14,59 +14,52 @@ set -euo pipefail
 #######################################
 # Returns list of canonical test and coverage report file paths.
 # Globals:
-#   None
+#   known_reports
 # Arguments:
-#   registry_out: Nameref to array where canonical report paths will be stored.
+#   None
 # Outputs:
 #   None
 # Returns:
-#   Count of registered paths.
+#   0 on success.
 #######################################
 get_known_report_registry() {
-  local -n registry_out="${1}"
-  registry_out=(
+  known_reports=(
     lcov.info
     tarpaulin-report.html
     mutants.out
     mutants.out.old
     mutants-report.md
   )
-  return "${#registry_out[@]}"
 }
 
 #######################################
 # Filters registered report paths to those currently present on the filesystem.
 # Globals:
-#   None
+#   known_reports
+#   active_reports
 # Arguments:
-#   registry_ref: Nameref to array of candidate report paths.
-#   active_out: Nameref to array where existing report paths will be stored.
+#   None
 # Outputs:
 #   None
 # Returns:
-#   Count of existing report files.
+#   0 on success.
 #######################################
 discover_active_reports() {
-  local -n registry_ref="${1}"
-  local -n active_out="${2}"
   local path
 
-  active_out=()
-  for path in "${registry_ref[@]}"; do
+  active_reports=()
+  for path in "${known_reports[@]}"; do
     if [[ -e "${path}" ]]; then
-      active_out+=("${path}")
+      active_reports+=("${path}")
     fi
   done
-
-  return "${#active_out[@]}"
 }
 
 #######################################
 # Removes discovered report files or logs preview under dry-run.
 # Globals:
-#   None
+#   active_reports
 # Arguments:
-#   active_ref: Nameref to array of report paths to remove.
 #   dry_run: String "true" or "false".
 # Outputs:
 #   Removal confirmation or preview list to STDOUT.
@@ -74,23 +67,23 @@ discover_active_reports() {
 #   0 on success.
 #######################################
 purge_report_files() {
-  local -n active_ref="${1}"
-  local dry_run="${2}"
+  local dry_run="${1}"
 
-  if [[ "${#active_ref[@]}" -eq 0 ]]; then
+  if [[ "${#active_reports[@]}" -eq 0 ]]; then
     printf 'clean:reports: no generated reports found\n'
     return 0
   fi
 
   if [[ "${dry_run}" == "true" ]]; then
     printf 'clean:reports: would remove %d generated report(s):\n' \
-      "${#active_ref[@]}"
-    printf '  %s\n' "${active_ref[@]}"
+      "${#active_reports[@]}"
+    printf '  %s\n' "${active_reports[@]}"
     return 0
   fi
 
-  rm -rf "${active_ref[@]}"
-  printf 'clean:reports: removed %d generated report(s)\n' "${#active_ref[@]}"
+  rm -rf "${active_reports[@]}"
+  printf 'clean:reports: removed %d generated report(s)\n' \
+    "${#active_reports[@]}"
 }
 
 #######################################
@@ -105,14 +98,12 @@ purge_report_files() {
 #   0 on success.
 #######################################
 main() {
-  # shellcheck disable=SC2034  # populated in get_known_report_registry
-  local -a registry=()
-  # shellcheck disable=SC2034  # populated in discover_active_reports
-  local -a active=()
+  declare -a known_reports=()
+  declare -a active_reports=()
 
-  get_known_report_registry registry || true
-  discover_active_reports registry active || true
-  purge_report_files active "${usage_dry_run:-false}"
+  get_known_report_registry
+  discover_active_reports
+  purge_report_files "${usage_dry_run:-false}"
 }
 
 main "$@"

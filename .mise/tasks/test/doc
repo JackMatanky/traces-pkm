@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #MISE description="Run Rust doctests via cargo test --doc"
 #MISE sources=["@group:rust"]
 #MISE extends="gate:never-skip"
@@ -20,50 +20,50 @@
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
+declare -a doc_args=()
+declare -a extra_args=()
+
 #######################################
 # Maps feature selection flag to cargo test workspace and feature arguments.
 # Globals:
 #   usage_feature
+#   doc_args
 # Arguments:
-#   args_out: Nameref to array where feature arguments will be stored.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
-# shellcheck disable=SC2034
 resolve_doc_features() {
-  local -n doc_args_out="${1}"
   if [[ "${usage_feature:-all}" == "all" ]]; then
-    doc_args_out=(--workspace --all-features)
+    doc_args=(--workspace --all-features)
   else
-    doc_args_out=(--workspace --features "${usage_feature}")
+    doc_args=(--workspace --features "${usage_feature}")
   fi
-  return 0
 }
 
 #######################################
-# Expands variadic passthrough arguments into array.
+# Expands variadic passthrough arguments into extra_args.
 # Globals:
 #   usage_args
+#   extra_args
 # Arguments:
-#   extra_out: Nameref to array where passthrough tokens will be appended.
+#   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
 #######################################
 parse_passthrough_tokens() {
-  # shellcheck disable=SC2034  # modified inside eval
-  local -n extra_tokens_out="${1}"
-  eval "extra_tokens_out+=(${usage_args:-})"
-  return 0
+  eval "extra_args+=(${usage_args:-})"
 }
 
 #######################################
 # Executes cargo test --doc with quiet flag and forwarded arguments.
 # Globals:
-#   None
+#   doc_args
+#   extra_args
 # Arguments:
 #   CLI arguments vector.
 # Outputs:
@@ -72,13 +72,11 @@ parse_passthrough_tokens() {
 #   Status of cargo test --doc.
 #######################################
 main() {
-  # shellcheck disable=SC2034  # populated via namerefs
-  local -a args=()
-  local -a extra=()
-  resolve_doc_features args
-  parse_passthrough_tokens extra
+  resolve_doc_features
+  parse_passthrough_tokens
 
-  cargo test "${args[@]}" --doc "${extra[@]+"${extra[@]}"}" -- --quiet
+  cargo test "${doc_args[@]}" --doc "${extra_args[@]+"${extra_args[@]}"}" \
+    -- --quiet
 }
 
 main "$@"
