@@ -159,7 +159,7 @@ impl IndexerService {
 
     fn prepare_pass(&self) -> IndexResult<RefreshState> {
         let plan = RefreshPlan::collect(&self.root)?;
-        if plan.is_empty() {
+        if plan.is_fresh() {
             return Ok(plan.into_fresh());
         }
         let modified_notes = self.parse_notes(plan.upserted_files())?;

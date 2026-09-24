@@ -293,7 +293,7 @@ impl RefreshPlan {
 
     /// Reports whether the scan produced no changes.
     #[inline]
-    pub(super) fn is_empty(&self) -> bool {
+    pub(super) fn is_fresh(&self) -> bool {
         self.delta.is_empty()
     }
 
