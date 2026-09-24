@@ -97,7 +97,7 @@ pub(crate) use grammar::{
     ClassExpansionMode, FieldPath, FileClassExpander, FileField, ListField,
     SourceAtom, SourceExpr,
 };
-use plan::{QueryPlan, QueryTransform};
+use plan::{ExecutionPlan, QueryTransform};
 pub use results::{QueryRow, QuerySet};
 pub use service::QueryService;
 pub(crate) use sort::{SortDirection, SortOrder};

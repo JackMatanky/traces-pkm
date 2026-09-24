@@ -8,13 +8,13 @@
 //!   borrows directly from in-memory note storage without string or status
 //!   allocations.
 //! - [`QuerySet`]: A lazy, memoized wrapper over a collection of [`QueryRow`]
-//!   items. Transformation methods append to an unexecuted [`QueryPlan`],
+//!   items. Transformation methods append to an unexecuted [`ExecutionPlan`],
 //!   deferring execution until terminal renderers or read methods materialize
 //!   and cache the final rows.
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    QueryPlan, QueryResult, QueryTransform,
+    ExecutionPlan, QueryResult, QueryTransform,
     format::{QueryDisplayFormat, TaskPathStyle},
     grammar::{FieldPath, FileField, ListField, TaskField},
     sort::{SortDirection, SortOrder},
@@ -470,7 +470,7 @@ impl std::fmt::Debug for QueryRow {
 #[derive(Clone, Default)]
 pub struct QuerySet {
     base: Arc<Vec<QueryRow>>,
-    plan: QueryPlan,
+    plan: ExecutionPlan,
     cache: std::sync::OnceLock<Arc<Vec<QueryRow>>>,
 }
 
@@ -478,15 +478,15 @@ impl QuerySet {
     pub(super) fn new(rows: Vec<QueryRow>) -> Self {
         Self {
             base: rows.into(),
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
             cache: std::sync::OnceLock::new(),
         }
     }
 
     /// Materializes pending transforms once and returns cached rows.
     ///
-    /// All reads route through this method, so [`QueryPlan::run`] runs at most
-    /// once per set.
+    /// All reads route through this method, so [`ExecutionPlan::run`] runs at
+    /// most once per set.
     fn rows(&self) -> &Arc<Vec<QueryRow>> {
         self.cache.get_or_init(|| {
             if self.plan.is_empty() {

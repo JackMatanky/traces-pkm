@@ -1,13 +1,13 @@
 //! Query transformation plan optimization and execution pipeline.
 //!
-//! This module provides [`QueryPlan`], an ordered sequence of transformation
-//! steps applied to query rows. Operations such as filtering, sorting,
-//! limiting, grouping, and flattening are scheduled as declarative
+//! This module provides [`ExecutionPlan`], an ordered sequence of
+//! transformation steps applied to query rows. Operations such as filtering,
+//! sorting, limiting, grouping, and flattening are scheduled as declarative
 //! [`QueryTransform`] steps.
 //!
 //! # Algebraic Optimizations
 //!
-//! Before row execution, [`QueryPlan::run`] applies idempotent optimization
+//! Before row execution, [`ExecutionPlan::run`] applies idempotent optimization
 //! passes:
 //! - **Filter Fusion**: Combines adjacent filter predicates into a single
 //!   boolean `And` tree, eliminating intermediate row buffers.
@@ -30,11 +30,11 @@ use crate::note::NoteFieldValue;
 /// Optimizations are algebraic and idempotent: running them again on an
 /// optimized plan leaves the plan unchanged.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct QueryPlan {
+pub(super) struct ExecutionPlan {
     ops: Vec<QueryTransform>,
 }
 
-impl QueryPlan {
+impl ExecutionPlan {
     /// Optimizes the plan, then applies each transform to `rows`.
     pub(super) fn run(self, rows: Vec<QueryRow>) -> Vec<QueryRow> {
         self.fuse_filters().fuse_sorts().fuse_sort_limit().apply(rows)
@@ -131,7 +131,7 @@ impl QueryPlan {
     }
 }
 
-/// Single operation in a [`QueryPlan`].
+/// Single operation in a [`ExecutionPlan`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum QueryTransform {
     Filter(FilterExpr),
@@ -321,14 +321,14 @@ mod tests {
 
         #[test]
         fn empty_plan_is_empty() {
-            let plan = QueryPlan::default();
+            let plan = ExecutionPlan::default();
             assert!(plan.is_empty());
         }
 
         #[test]
         fn fuse_sorts_merges_consecutive_sort_operations_into_composite_order()
         {
-            let mut plan = QueryPlan::default();
+            let mut plan = ExecutionPlan::default();
             plan.push(QueryTransform::sort("file.folder", false).unwrap());
             plan.push(QueryTransform::sort("file.mtime", true).unwrap());
 
@@ -354,7 +354,7 @@ mod tests {
         #[test]
         fn fuse_sort_limit_rewrites_fused_sorts_and_limit_into_composite_topk()
         {
-            let mut plan = QueryPlan::default();
+            let mut plan = ExecutionPlan::default();
             plan.push(QueryTransform::sort("author", false).unwrap());
             plan.push(QueryTransform::sort("rating", true).unwrap());
             plan.push(QueryTransform::limit(5).unwrap());
@@ -387,7 +387,7 @@ mod tests {
         use super::*;
         #[test]
         fn empty_plan_run_returns_input_rows_unchanged() {
-            let plan = QueryPlan::default();
+            let plan = ExecutionPlan::default();
             let rows = vec![];
             assert_eq!(plan.run(rows), vec![]);
         }

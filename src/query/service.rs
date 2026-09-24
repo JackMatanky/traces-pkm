@@ -7,7 +7,8 @@
 //! memory.
 //! It resolves candidate paths from [`SourceSelector`] expressions, expands
 //! File Class inheritance trees via [`FileClassExpander`], instantiates
-//! [`QueryRow`] items, and applies the optimized [`super::plan::QueryPlan`].
+//! [`QueryRow`] items, and applies the optimized
+//! [`super::plan::ExecutionPlan`].
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

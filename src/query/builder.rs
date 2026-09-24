@@ -12,7 +12,7 @@
 //! [`QueryService::run_from_store`](super::QueryService::run_from_store).
 
 use super::{
-    QueryBuilderError, QueryPlan, QueryTransform, grammar::SourceSelector,
+    ExecutionPlan, QueryBuilderError, QueryTransform, grammar::SourceSelector,
     sort::SortOrder,
 };
 
@@ -54,7 +54,7 @@ pub(crate) enum QueryMode {
 pub struct QueryBuilder {
     mode: QueryMode,
     source: SourceSelector,
-    plan: QueryPlan,
+    plan: ExecutionPlan,
 }
 
 impl QueryBuilder {
@@ -65,7 +65,7 @@ impl QueryBuilder {
         Self {
             mode: QueryMode::Pages,
             source,
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
         }
     }
 
@@ -77,7 +77,7 @@ impl QueryBuilder {
         Self {
             mode: QueryMode::Lists,
             source,
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
         }
     }
 
@@ -88,7 +88,7 @@ impl QueryBuilder {
         Self {
             mode: QueryMode::Tasks,
             source,
-            plan: QueryPlan::default(),
+            plan: ExecutionPlan::default(),
         }
     }
 
@@ -175,7 +175,9 @@ impl QueryBuilder {
         Ok(self)
     }
 
-    pub(super) fn into_parts(self) -> (QueryMode, SourceSelector, QueryPlan) {
+    pub(super) fn into_parts(
+        self,
+    ) -> (QueryMode, SourceSelector, ExecutionPlan) {
         (self.mode, self.source, self.plan)
     }
 }
