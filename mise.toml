@@ -84,11 +84,7 @@ run = "hk install --mise --quiet"
 description = "Fast compile check, then `hk` project checks"
 alias = "c"
 extends = "gate:never-skip"
-usage = '''
-arg "[args]" var=#true {
-    help "Extra arguments forwarded to `cargo check` (`hk check` never receives them)"
-}
-'''
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo check` (`hk check` never receives them)"'
 run = '''
 #!/bin/bash
 # usage_args is shell-quoted (var=#true arg); eval parses it into the extra
@@ -112,11 +108,7 @@ description = "Debug build"
 alias = "b"
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
-usage = '''
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to `cargo build`"
-}
-'''
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo build`"'
 run = '''
 #!/bin/bash
 # extra is populated via eval from mise's usage_args (var=#true arg).
@@ -154,11 +146,7 @@ cargo fmt "${args[@]}"
 [tasks."audit:deny"]
 description = "Run cargo-deny checks (licenses, bans, sources)"
 extends = "gate:never-skip"
-usage = '''
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to cargo deny check"
-}
-'''
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo deny check"'
 run = '''
 #!/bin/bash
 set -euo pipefail
@@ -242,11 +230,7 @@ description = "Release build"
 alias = "r"
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
-usage = '''
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to `cargo build --release`"
-}
-'''
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo build --release`"'
 run = '''
 #!/bin/bash
 # extra is populated via eval from mise's usage_args (var=#true arg).
@@ -262,11 +246,7 @@ description = "Build documentation (warnings as errors)"
 env = { RUSTDOCFLAGS = "-D warnings" }
 sources = ["@group:rust"]
 outputs = ["target/doc"]
-usage = '''
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to `cargo doc --no-deps`"
-}
-'''
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo doc --no-deps`"'
 run = '''
 #!/bin/bash
 # extra is populated via eval from mise's usage_args (var=#true arg).

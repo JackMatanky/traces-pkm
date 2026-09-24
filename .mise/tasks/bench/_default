@@ -24,6 +24,16 @@
 #USAGE   Runs benchmarks matching `benches/<module>*.rs` (e.g. `-m index` runs `benches/index_bench.rs`).
 #USAGE   """
 #USAGE }
+#USAGE flag "--mode <mode>" {
+#USAGE   choices "quick" "test" "normal"
+#USAGE   default "normal"
+#USAGE   help "Execution mode: `normal` (default), `quick` (fast), `test` (smoke)"
+#USAGE   long_help """
+#USAGE   - `normal`: measure with project defaults from `benches/common::criterion_config()` (`20` samples, `1s` measurement, `0.5s` warm-up); precedence: group pin > `[args]` > `criterion_config()`.
+#USAGE   - `quick`: criterion's native `--quick`: stop at the significance level or when measurement time runs out (project cap `1s`), `--noplot`; for indicative and comparative use only.
+#USAGE   - `test`: smoke-run each selected target once without measurement via `cargo test` (criterion's documented CI path); measurement/report flags (`-r`/`--no-report`/`--compare`/`--verbose`) and `[args]` are ignored.
+#USAGE   """
+#USAGE }
 #USAGE flag "-r --report [name]" value_optional=#true {
 #USAGE   help "Save a named baseline (default: auto-named from `git` branch+sha)"
 #USAGE   long_help """
@@ -34,9 +44,7 @@
 #USAGE   - Conflicts: Criterion rejects combining `--save-baseline` with forwarded `--baseline`/`--baseline-lenient`/`--discard-baseline`. Note the task appends `--save-baseline` `<git-name>` by default even without `-r`: if you forward baseline flags, pass `--no-report`; otherwise the run fails with criterion's own argument-validation error (`--load-baseline` additionally requires `--baseline`).
 #USAGE   """
 #USAGE }
-#USAGE flag "--no-report" {
-#USAGE   help "Skip saving a named baseline (criterion uses its default `base`)"
-#USAGE }
+#USAGE flag "--no-report" help="Skip saving a named baseline (criterion uses its default `base`)"
 #USAGE flag "--compare <baseline>" {
 #USAGE   help "Compare against a saved baseline via `critcmp`"
 #USAGE   long_help """
@@ -46,19 +54,7 @@
 #USAGE   """
 #USAGE }
 #USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"
-#USAGE flag "--verbose" negate="--no-verbose" default=#true {
-#USAGE   help "Criterion detailed reporting (default on; `--no-verbose` terse)"
-#USAGE }
-#USAGE flag "--mode <mode>" {
-#USAGE   help "Execution mode: `normal` (default), `quick` (fast), `test` (smoke)"
-#USAGE   long_help """
-#USAGE   - `normal`: measure with project defaults from `benches/common::criterion_config()` (`20` samples, `1s` measurement, `0.5s` warm-up); precedence: group pin > `[args]` > `criterion_config()`.
-#USAGE   - `quick`: criterion's native `--quick`: stop at the significance level or when measurement time runs out (project cap `1s`), `--noplot`; for indicative and comparative use only.
-#USAGE   - `test`: smoke-run each selected target once without measurement via `cargo test` (criterion's documented CI path); measurement/report flags (`-r`/`--no-report`/`--compare`/`--verbose`) and `[args]` are ignored.
-#USAGE   """
-#USAGE   choices "quick" "test" "normal"
-#USAGE   default "normal"
-#USAGE }
+#USAGE flag "--verbose" negate="--no-verbose" default=#true help="Criterion detailed reporting (default on; `--no-verbose` terse)"
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to `cargo bench`"
 #USAGE   long_help """

@@ -2,12 +2,6 @@
 #MISE description="Run unit and integration tests with `nextest`"
 #MISE sources=["@group:rust"]
 #MISE extends="gate:never-skip"
-#USAGE flag "--feature <feature>" default="all" {
-#USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
-#USAGE   long_help """
-#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
-#USAGE   """
-#USAGE }
 #USAGE flag "-m --mod <module>" {
 #USAGE   help "Run tests for a specific module only"
 #USAGE   long_help """
@@ -16,6 +10,12 @@
 #USAGE }
 #USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
 #USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+#USAGE flag "--feature <feature>" default="all" {
+#USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
+#USAGE   long_help """
+#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
+#USAGE   """
+#USAGE }
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to `cargo nextest run`"
 #USAGE   long_help """

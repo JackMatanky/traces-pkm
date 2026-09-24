@@ -2,9 +2,9 @@
 #MISE description="Summarize which bench groups have results on disk"
 #MISE hide=true
 #USAGE arg "[criterion_dir]" {
-#USAGE   help "Criterion output directory"
 #USAGE   default "target/criterion"
 #USAGE   env "CRITERION_DIR"
+#USAGE   help "Criterion output directory"
 #USAGE }
 
 # Prints benchmark groups having results on disk. Wording describes what is

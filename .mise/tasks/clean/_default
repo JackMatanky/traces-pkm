@@ -2,11 +2,10 @@
 #MISE description="Clean Cargo artifacts, stale incremental sessions, or generated reports"
 #MISE extends="gate:never-skip"
 #MISE confirm="Clean Cargo artifacts and reports?"
-#USAGE flag "--dry-run" help="Show what would be deleted without removing files"
+#USAGE flag "--target-dir <dir>" default="target" help="Cargo target directory"
 #USAGE flag "--release" help="Clean release artifacts only"
 #USAGE flag "--doc" help="Clean generated docs only"
 #USAGE flag "--profile <profile>" help="Clean one Cargo profile"
-#USAGE flag "--target-dir <dir>" help="Cargo target directory" default="target"
 #USAGE flag "--reports" {
 #USAGE   help "Remove generated coverage and mutation report files"
 #USAGE   long_help """

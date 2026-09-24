@@ -5,25 +5,22 @@
 #MISE depends=["test"]
 #MISE depends_post=["mutants:report"]
 #USAGE flag "-f --file <file>" help="Run mutants in a specific file only (e.g. -f src/config.rs)"
-#USAGE flag "-m --mod <module>" {
-#USAGE   help "Run mutants in a specific module only (matches src/<module>/**/*.rs)"
-#USAGE }
+#USAGE flag "-m --mod <module>" help="Run mutants in a specific module only (matches src/<module>/**/*.rs)"
 #USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
 #USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
-#USAGE flag "--check" help="Build-only check: verify generated mutants compile without running tests"
-#USAGE flag "-L --level <level>" help="Log verbosity" {
-#USAGE   choices "trace" "debug" "info" "warn" "error"
-#USAGE }
 #USAGE flag "--exclude <glob>" help="Exclude files matching glob"
+#USAGE flag "--check" help="Build-only check: verify generated mutants compile without running tests"
+#USAGE flag "--iterate" negate="--no-iterate" default=#true help="Incremental mode: skip mutants caught in previous runs"
 #USAGE flag "--timeout <secs>" help="Override test timeout in seconds"
+#USAGE flag "--no-config" help="Ignore .cargo/mutants.toml"
+#USAGE flag "-L --level <level>" {
+#USAGE   choices "trace" "debug" "info" "warn" "error"
+#USAGE   help "Log verbosity level"
+#USAGE }
 #USAGE flag "-v --caught" help="Also print mutants caught by tests"
 #USAGE flag "-V --unviable" help="Also print mutants that failed to build"
 #USAGE flag "--all-logs" help="Print all Cargo output to stdout"
 #USAGE flag "--json" help="Emit machine-readable output"
-#USAGE flag "--no-config" help="Ignore .cargo/mutants.toml"
-#USAGE flag "--iterate" negate="--no-iterate" default=#true {
-#USAGE   help "Incremental mode: skip mutants caught in previous runs"
-#USAGE }
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to cargo-mutants"
 #USAGE   long_help """

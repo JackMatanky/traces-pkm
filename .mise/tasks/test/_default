@@ -3,6 +3,14 @@
 #MISE alias="t"
 #MISE sources=["@group:rust"]
 #MISE extends="gate:never-skip"
+#USAGE flag "-m --mod <module>" {
+#USAGE   help "Run tests for a specific module only"
+#USAGE   long_help """
+#USAGE   Scopes nextest to the named module using a filter expression (e.g. `-m index` filters to tests under module `index`).
+#USAGE   """
+#USAGE }
+#USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+#USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 #USAGE flag "--feature <feature>" default="all" {
 #USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
 #USAGE   long_help """
@@ -15,14 +23,6 @@
 #USAGE   Enabled by default: runs unit/integration tests via `nextest`, then documentation tests via `cargo test --doc`. Pass `--no-docs` to run only nextest.
 #USAGE   """
 #USAGE }
-#USAGE flag "-m --mod <module>" {
-#USAGE   help "Run tests for a specific module only"
-#USAGE   long_help """
-#USAGE   Scopes nextest to the named module using a filter expression (e.g. `-m index` filters to tests under module `index`).
-#USAGE   """
-#USAGE }
-#USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
-#USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to nextest run"
 #USAGE   long_help """
