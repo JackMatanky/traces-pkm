@@ -1,6 +1,6 @@
 //! Nearest-candidate resolution for one wikilink stem's file candidates.
 //!
-//! [`BaseNameIndex`] selects a [`ResolutionStrategy`] once in
+//! [`BaseNameIndex`] selects a [`ResolutionType`] once in
 //! [`BaseNameIndex::build`] — a linear scan below [`TRIE_THRESHOLD`]
 //! candidates, a folder trie at or above it — and answers nearest-by-folder-
 //! distance queries through [`BaseNameIndex::nearest`]. Equidistant nearest
@@ -15,12 +15,12 @@ use crate::path::FolderRef;
 
 /// Per-stem candidate index dispatching to flat scan or a folder trie.
 ///
-/// Opaque over its [`ResolutionStrategy`]: callers see one query surface and
+/// Opaque over its [`ResolutionType`]: callers see one query surface and
 /// never the representation.
-pub(super) struct BaseNameIndex<'a>(ResolutionStrategy<'a>);
+pub(super) struct BaseNameIndex<'a>(ResolutionType<'a>);
 
 /// Candidate-count strategy selected once at [`BaseNameIndex::build`].
-enum ResolutionStrategy<'a> {
+enum ResolutionType<'a> {
     Flat(Vec<&'a Path>),
     Trie(Box<CandidateTrie<'a>>),
 }
@@ -34,11 +34,9 @@ impl<'a> BaseNameIndex<'a> {
     /// [`TRIE_THRESHOLD`].
     pub(super) fn build(candidates: Vec<&'a Path>) -> Self {
         Self(if candidates.len() >= TRIE_THRESHOLD {
-            ResolutionStrategy::Trie(Box::new(CandidateTrie::build(
-                &candidates,
-            )))
+            ResolutionType::Trie(Box::new(CandidateTrie::build(&candidates)))
         } else {
-            ResolutionStrategy::Flat(candidates)
+            ResolutionType::Flat(candidates)
         })
     }
 
@@ -51,10 +49,10 @@ impl<'a> BaseNameIndex<'a> {
         target_ext: Option<&str>,
     ) -> Option<&'a Path> {
         match &self.0 {
-            ResolutionStrategy::Flat(candidates) => {
+            ResolutionType::Flat(candidates) => {
                 Self::nearest_flat(candidates, from, target_ext)
             }
-            ResolutionStrategy::Trie(trie) => trie.nearest(from, target_ext),
+            ResolutionType::Trie(trie) => trie.nearest(from, target_ext),
         }
     }
 
