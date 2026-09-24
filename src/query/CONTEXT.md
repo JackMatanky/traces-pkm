@@ -51,20 +51,25 @@ Execution Plan fuse into a single composite Sort Order.
 
 A single query result row pairing a Note with its File Metadata, task state, and
 resolved field paths.
-*Avoid*: Query Record, record, IndexRecord, QueryOutcome, page
+*Avoid*: Query Record, IndexRecord, QueryOutcome, page
+
+#### Basename
+
+The final component of a file path with its extension removed.
 
 #### Query Set
 
 A query result set of evaluated Query Rows, usable directly or like a CTE as
 an intermediate result set: cloning shares the memoized rows, chained
 transforms append in `O(1)`, and reads flush the pending plan once. Transform
-methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`,
-`with_children`, `with_descendants`) chain; terminal methods (`table`, `list`,
-`task_list`, `count`) render output.
+methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`) chain;
+terminal methods (`table`, `list`, `task_list`, `count`) render output.
 *Avoid*: Query Record Set, QueryOutcome, pipeline query, DQL, dataview query
 
 #### Task Path Style
 
-Whether task list output appends each row's file path in parentheses (`Suffix`)
-or omits it (`None`).
+Whether task list output appends each row's file path in parentheses (`Suffix`),
+appends clickable `({path}:{line})` suffixes with 1-indexed source lines for
+`traces task -l`, or `({path})` when no source line is available
+(`Coordinates`), or omits it (`None`).
 *Avoid*: path display, path suffix toggle
