@@ -698,10 +698,23 @@ impl IndexStore {
         dimensions: &IndexDimensions,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        self.apply_diff_deletions(&txn, rows.delta.deleted(), dimensions)?;
-        self.apply_diff_upserts(&txn, rows.delta.upserted())?;
-        self.apply_modified_notes(&txn, rows.notes, dimensions)?;
-        self.apply_inlink_delta(&txn, rows.edges)?;
+        // Core tables (FILES, NOTES, tag/class axes) and the LINKS multimap
+        // are fully disjoint, so their write batches overlap via rayon::join.
+        let (core_res, links_res) = rayon::join(
+            || -> IndexResult<()> {
+                self.apply_diff_deletions(
+                    &txn,
+                    rows.delta.deleted(),
+                    dimensions,
+                )?;
+                self.apply_diff_upserts(&txn, rows.delta.upserted())?;
+                self.apply_modified_notes(&txn, rows.notes, dimensions)?;
+                Ok(())
+            },
+            || self.apply_inlink_delta(&txn, rows.edges),
+        );
+        core_res?;
+        links_res?;
         self.commit(txn)?;
         Ok(())
     }
