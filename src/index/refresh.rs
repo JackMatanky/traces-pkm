@@ -92,7 +92,7 @@ impl PendingApply {
         self.update.report()
     }
 
-    /// Persists this state through [`IndexStore::persist`].
+    /// Persists this pending update through [`IndexStore::persist`].
     ///
     /// The update remains owned by the returned state in both success and error
     /// cases, so a failed apply can still materialize an in-memory index from
@@ -121,7 +121,7 @@ impl PendingApply {
         }
     }
 
-    /// Materializes this state into an in-memory [`WorkspaceIndex`].
+    /// Materializes this pending update into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
@@ -136,7 +136,7 @@ impl PendingApply {
     }
 }
 
-/// Successfully persisted refresh pass.
+/// Successfully persisted refresh state.
 pub(super) struct Persisted {
     pass: PendingApply,
 }
@@ -200,7 +200,7 @@ pub(super) struct InlinkReconciliation {
     notes: NoteScope,
 }
 
-/// Notes needed to persist and materialize a refresh pass.
+/// Notes needed to persist and materialize the refresh state.
 pub(super) enum NoteScope {
     /// Only modified notes were parsed; unchanged notes still live in the
     /// store.
@@ -397,7 +397,7 @@ impl RefreshPlan {
     }
 }
 
-/// Computed facts from one reconciliation pass, not yet applied. Pure data: no
+/// Computed facts from one reconciliation, not yet applied. Pure data: no
 /// store handle, constructible and assertable without a database.
 pub(super) struct IndexUpdate {
     current_files: SortedByPath<FileBase>,

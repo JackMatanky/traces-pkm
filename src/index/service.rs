@@ -81,7 +81,7 @@ impl IndexerService {
     /// Refreshes the persisted index and returns a full in-memory
     /// [`WorkspaceIndex`].
     ///
-    /// Fresh Markdown notes reuse persisted parses; changed notes are
+    /// Unchanged Markdown notes reuse persisted parses; changed notes are
     /// parsed from disk; deleted files vanish with the fresh scan. Persist
     /// failures are logged and the refreshed in-memory index is still returned.
     ///
