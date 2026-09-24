@@ -48,7 +48,7 @@ The changed-file and changed-link counts observed during a Refresh Pass.
 
 The filesystem metadata captured for every regular file regardless of document
 type: relative path, size, timestamps, and format classification.
-*Avoid*: file metadata, fs entry, raw record
+*Avoid*: fs entry, raw record
 
 #### File Entry
 
