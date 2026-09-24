@@ -397,24 +397,26 @@ impl QueryRow {
                     priority.as_str(),
                 ))
             }),
-            TaskField::Due => task.dates().due().map_or(null, |date| {
+            TaskField::DueDate => task.dates().due().map_or(null, |date| {
                 QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
             }),
-            TaskField::Done => task.dates().done().map_or(null, |date| {
+            TaskField::DoneDate => task.dates().done().map_or(null, |date| {
                 QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
             }),
-            TaskField::Created => task.dates().created().map_or(null, |date| {
+            TaskField::CreatedDate => {
+                task.dates().created().map_or(null, |date| {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
+                })
+            }
+            TaskField::StartDate => task.dates().start().map_or(null, |date| {
                 QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
             }),
-            TaskField::Start => task.dates().start().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::Scheduled => {
+            TaskField::ScheduledDate => {
                 task.dates().scheduled().map_or(null, |date| {
                     QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
                 })
             }
-            TaskField::Cancelled => {
+            TaskField::CancelledDate => {
                 task.dates().cancelled().map_or(null, |date| {
                     QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
                 })
