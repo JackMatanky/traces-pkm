@@ -430,7 +430,7 @@ mod tests {
         }
 
         #[test]
-        fn file_base_postcard_roundtrip() {
+        fn file_meta_postcard_roundtrip() {
             let file = FileMeta::note_for_test("test.md");
             let bytes = postcard::to_allocvec(&file).expect("serialize");
             let decoded: FileMeta =
