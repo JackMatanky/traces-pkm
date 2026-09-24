@@ -85,29 +85,32 @@ impl InlinkMap {
 
     /// Groups sorted, deduplicated edge pairs into canonical source lists.
     fn from_flat_edges(flat_edges: Vec<(Target<'_>, Source<'_>)>) -> Self {
-        let mut edges: HashMap<PathBuf, Box<[PathBuf]>> = HashMap::new();
-        let mut current_target: Option<Target<'_>> = None;
-        let mut current_sources: Vec<PathBuf> = Vec::new();
+        if flat_edges.is_empty() {
+            return Self(HashMap::new());
+        }
 
-        for (target, source) in flat_edges {
-            if Some(target) != current_target {
-                if let Some(prev_target) = current_target {
-                    edges.insert(
-                        prev_target.to_path_buf(),
-                        current_sources.into_boxed_slice(),
-                    );
-                    current_sources = Vec::new();
-                }
-                current_target = Some(target);
+        let target_count =
+            flat_edges.windows(2).filter(|w| w[0].0 != w[1].0).count() + 1;
+
+        let mut edges = HashMap::with_capacity(target_count);
+        let mut start = 0;
+        for i in 1..flat_edges.len() {
+            if flat_edges[i].0 != flat_edges[start].0 {
+                let target = flat_edges[start].0;
+                let sources: Box<[PathBuf]> = Box::from_iter(
+                    flat_edges[start..i]
+                        .iter()
+                        .map(|(_, src)| src.to_path_buf()),
+                );
+                edges.insert(target.to_path_buf(), sources);
+                start = i;
             }
-            current_sources.push(source.to_path_buf());
         }
-        if let Some(prev_target) = current_target {
-            edges.insert(
-                prev_target.to_path_buf(),
-                current_sources.into_boxed_slice(),
-            );
-        }
+        let target = flat_edges[start].0;
+        let sources: Box<[PathBuf]> = Box::from_iter(
+            flat_edges[start..].iter().map(|(_, src)| src.to_path_buf()),
+        );
+        edges.insert(target.to_path_buf(), sources);
 
         Self(edges)
     }
