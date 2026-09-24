@@ -516,7 +516,7 @@ mod test_support {
     #[inline]
     #[must_use]
     pub fn build_test_index(notes: &[(&str, &str)]) -> Arc<WorkspaceIndex> {
-        Arc::new(WorkspaceIndex::new_test(notes))
+        Arc::new(WorkspaceIndex::for_test(notes))
     }
 
     /// Parses a [`Tag`] string slice for tests.

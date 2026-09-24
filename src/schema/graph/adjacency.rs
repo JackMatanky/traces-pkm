@@ -362,7 +362,7 @@ mod tests {
 
     fn schema(extends: &[&str]) -> crate::schema::RawSchema {
         crate::schema::RawSchema {
-            extends: extends.iter().map(|&s| SchemaName::new_test(s)).collect(),
+            extends: extends.iter().map(|&s| SchemaName::for_test(s)).collect(),
             ..crate::schema::RawSchema::default()
         }
     }
@@ -424,9 +424,9 @@ mod tests {
         #[test]
         fn returns_the_insertion_order_index() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("alpha"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
-            raw.insert(SchemaName::new_test("sci_fi"), schema(&[]));
+            raw.insert(SchemaName::for_test("alpha"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("sci_fi"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(
@@ -453,8 +453,8 @@ mod tests {
         #[test]
         fn returns_the_name_at_the_given_index() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("alpha"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("alpha"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(
@@ -477,9 +477,9 @@ mod tests {
         #[test]
         fn matches_the_number_of_names() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("a"), schema(&[]));
-            raw.insert(SchemaName::new_test("b"), schema(&[]));
-            raw.insert(SchemaName::new_test("c"), schema(&[]));
+            raw.insert(SchemaName::for_test("a"), schema(&[]));
+            raw.insert(SchemaName::for_test("b"), schema(&[]));
+            raw.insert(SchemaName::for_test("c"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(adj.node_count(), 3);
@@ -494,37 +494,37 @@ mod tests {
         #[test]
         fn returns_raw_extends_for_book_extending_global() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test(GLOBAL_SCHEMA_NAME), schema(&[]));
+            raw.insert(SchemaName::for_test(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(
-                SchemaName::new_test("book"),
+                SchemaName::for_test("book"),
                 schema(&[GLOBAL_SCHEMA_NAME]),
             );
             let adj = build_adj(&raw);
 
             assert_eq!(adj.parents_of(SchemaNameRef::from("book")), &[
-                SchemaName::new_test(GLOBAL_SCHEMA_NAME)
+                SchemaName::for_test(GLOBAL_SCHEMA_NAME)
             ]);
         }
 
         #[test]
         fn deduplicates_repeated_extends_targets_by_first_occurrence() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             raw.insert(
-                SchemaName::new_test("child"),
+                SchemaName::for_test("child"),
                 schema(&["book", "book"]),
             );
             let adj = build_adj(&raw);
 
             assert_eq!(adj.parents_of(SchemaNameRef::from("child")), &[
-                SchemaName::new_test("book"),
+                SchemaName::for_test("book"),
             ]);
         }
 
         #[test]
         fn returns_empty_slice_for_unknown_schema() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(adj.parents_of(SchemaNameRef::from("missing")), &[]);
@@ -535,10 +535,10 @@ mod tests {
          {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::new_test(GLOBAL_SCHEMA_NAME),
+                SchemaName::for_test(GLOBAL_SCHEMA_NAME),
                 schema(&["book"]),
             );
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(
@@ -556,7 +556,7 @@ mod tests {
         #[test]
         fn returns_empty_slice_for_leaf_node() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(adj.children_slice(DenseIndex(0)), []);
@@ -566,9 +566,9 @@ mod tests {
         fn returns_direct_children_for_a_parent() {
             // book <- {sci_fi, memoir}
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
-            raw.insert(SchemaName::new_test("sci_fi"), schema(&["book"]));
-            raw.insert(SchemaName::new_test("memoir"), schema(&["book"]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("sci_fi"), schema(&["book"]));
+            raw.insert(SchemaName::for_test("memoir"), schema(&["book"]));
             let adj = build_adj(&raw);
 
             let book_idx = adj.index_of(SchemaNameRef::from("book")).unwrap();
@@ -586,7 +586,7 @@ mod tests {
         #[test]
         fn returns_empty_slice_for_out_of_range_index() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             let adj = build_adj(&raw);
 
             assert_eq!(adj.children_slice(DenseIndex(99)), []);
@@ -601,8 +601,8 @@ mod tests {
         #[test]
         fn assigns_sequential_ranks_from_topological_order() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("author"), schema(&[]));
-            raw.insert(SchemaName::new_test("book"), schema(&["author"]));
+            raw.insert(SchemaName::for_test("author"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&["author"]));
             let adj = build_adj(&raw);
 
             let mut topo_order = IndexSet::new();
@@ -625,8 +625,8 @@ mod tests {
         #[test]
         fn assigns_max_rank_for_nodes_not_in_topological_order() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("a"), schema(&[]));
-            raw.insert(SchemaName::new_test("b"), schema(&[]));
+            raw.insert(SchemaName::for_test("a"), schema(&[]));
+            raw.insert(SchemaName::for_test("b"), schema(&[]));
             let adj = build_adj(&raw);
 
             let mut topo_order = IndexSet::new();
@@ -647,9 +647,9 @@ mod tests {
         #[test]
         fn warns_on_duplicate_extends_target() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("book"), schema(&[]));
+            raw.insert(SchemaName::for_test("book"), schema(&[]));
             raw.insert(
-                SchemaName::new_test("child"),
+                SchemaName::for_test("child"),
                 schema(&["book", "book"]),
             );
             let (_adj, warnings) = SchemaAdjacency::build(
@@ -658,23 +658,23 @@ mod tests {
             );
 
             assert_eq!(warnings, vec![SchemaWarning::DuplicateExtendsTarget {
-                schema: SchemaName::new_test("child"),
-                target: SchemaName::new_test("book"),
+                schema: SchemaName::for_test("child"),
+                target: SchemaName::for_test("book"),
             }]);
         }
 
         #[test]
         fn warns_on_missing_extends_target() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::new_test("child"), schema(&["nonexistent"]));
+            raw.insert(SchemaName::for_test("child"), schema(&["nonexistent"]));
             let (_adj, warnings) = SchemaAdjacency::build(
                 &raw,
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
             );
 
             assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
-                schema: SchemaName::new_test("child"),
-                target: SchemaName::new_test("nonexistent"),
+                schema: SchemaName::for_test("child"),
+                target: SchemaName::for_test("nonexistent"),
             }]);
         }
 
@@ -682,7 +682,7 @@ mod tests {
         fn warns_missing_then_duplicate_for_repeated_unresolvable_target() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::new_test("child"),
+                SchemaName::for_test("child"),
                 schema(&["missing", "missing"]),
             );
             let (_adj, warnings) = SchemaAdjacency::build(
@@ -692,12 +692,12 @@ mod tests {
 
             assert_eq!(warnings, vec![
                 SchemaWarning::MissingExtendsTarget {
-                    schema: SchemaName::new_test("child"),
-                    target: SchemaName::new_test("missing"),
+                    schema: SchemaName::for_test("child"),
+                    target: SchemaName::for_test("missing"),
                 },
                 SchemaWarning::DuplicateExtendsTarget {
-                    schema: SchemaName::new_test("child"),
-                    target: SchemaName::new_test("missing"),
+                    schema: SchemaName::for_test("child"),
+                    target: SchemaName::for_test("missing"),
                 },
             ]);
         }
@@ -717,7 +717,7 @@ mod tests {
         fn ignores_extends_targeting_excluded_schema() {
             let mut raw = IndexMap::new();
             raw.insert(
-                SchemaName::new_test("book"),
+                SchemaName::for_test("book"),
                 schema(&[GLOBAL_SCHEMA_NAME]),
             );
             let (_adj, warnings) = SchemaAdjacency::build(

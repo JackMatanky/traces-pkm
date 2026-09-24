@@ -74,7 +74,7 @@ const TASK_DENSITY_FILE_COUNTS: &[usize] = &[100, 1_000, 10_000];
 /// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports page-row throughput.
 ///
 /// Fixture: [`ProjectShape::Plain`] indexes are built outside timing through
-/// `WorkspaceIndex::new_test`. Timed work runs `QueryService::run(All pages)`.
+/// `WorkspaceIndex::for_test`. Timed work runs `QueryService::run(All pages)`.
 ///
 /// Expected outcomes:
 /// - Cost scales linearly with indexed entries.
@@ -109,7 +109,7 @@ fn bench_run_pages(c: &mut Criterion) {
 ///
 /// Parameters: varies [`WORKSPACE_FILE_COUNTS`]; reports task-row throughput
 /// (`3 * n` rows). Fixture parsing happens outside timing through
-/// `task_triplet_note_source` and `WorkspaceIndex::new_test`.
+/// `task_triplet_note_source` and `WorkspaceIndex::for_test`.
 ///
 /// Expected outcomes:
 /// - Task queries scale proportionally to output task rows and stay comparable
@@ -275,7 +275,7 @@ fn bench_filter_by_metadata_field_count(c: &mut Criterion) {
 /// Parameters: sweeps [`TASK_DENSITY_COUNTS`] (`1, 10, 100` tasks per note)
 /// across [`TASK_DENSITY_FILE_COUNTS`] (`100, 1_000, 10_000` files); reports
 /// total expanded task-row throughput. Fixture indexes are built outside
-/// timing through `task_note_source` and `WorkspaceIndex::new_test`.
+/// timing through `task_note_source` and `WorkspaceIndex::for_test`.
 ///
 /// Expected outcomes:
 /// - Execution time scales linearly with total expanded task rows (`file_count`

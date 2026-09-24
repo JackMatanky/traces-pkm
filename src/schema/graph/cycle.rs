@@ -287,7 +287,7 @@ mod tests {
 
     fn schema(extends: &[&str]) -> super::super::super::RawSchema {
         super::super::super::RawSchema {
-            extends: extends.iter().map(|&s| SchemaName::new_test(s)).collect(),
+            extends: extends.iter().map(|&s| SchemaName::for_test(s)).collect(),
             ..super::super::super::RawSchema::default()
         }
     }
@@ -295,8 +295,8 @@ mod tests {
     #[test]
     fn rejects_a_direct_two_node_cycle() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::new_test("a"), schema(&["b"]));
-        raw.insert(SchemaName::new_test("b"), schema(&["a"]));
+        raw.insert(SchemaName::for_test("a"), schema(&["b"]));
+        raw.insert(SchemaName::for_test("b"), schema(&["a"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -304,17 +304,17 @@ mod tests {
 
         let err = builder.build().expect_err("cycle rejected");
         assert_eq!(err, vec![
-            SchemaName::new_test("a"),
-            SchemaName::new_test("b")
+            SchemaName::for_test("a"),
+            SchemaName::for_test("b")
         ]);
     }
 
     #[test]
     fn excludes_a_schema_that_only_extends_into_the_cycle() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::new_test("a"), schema(&["b"]));
-        raw.insert(SchemaName::new_test("b"), schema(&["a"]));
-        raw.insert(SchemaName::new_test("c"), schema(&["a"]));
+        raw.insert(SchemaName::for_test("a"), schema(&["b"]));
+        raw.insert(SchemaName::for_test("b"), schema(&["a"]));
+        raw.insert(SchemaName::for_test("c"), schema(&["a"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -322,17 +322,17 @@ mod tests {
 
         let err = builder.build().expect_err("cycle rejected");
         assert_eq!(err, vec![
-            SchemaName::new_test("a"),
-            SchemaName::new_test("b")
+            SchemaName::for_test("a"),
+            SchemaName::for_test("b")
         ]);
     }
 
     #[test]
     fn rejects_a_three_node_cycle_in_declaration_order() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::new_test("a"), schema(&["b"]));
-        raw.insert(SchemaName::new_test("b"), schema(&["c"]));
-        raw.insert(SchemaName::new_test("c"), schema(&["a"]));
+        raw.insert(SchemaName::for_test("a"), schema(&["b"]));
+        raw.insert(SchemaName::for_test("b"), schema(&["c"]));
+        raw.insert(SchemaName::for_test("c"), schema(&["a"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -340,30 +340,30 @@ mod tests {
 
         let err = builder.build().expect_err("cycle rejected");
         assert_eq!(err, vec![
-            SchemaName::new_test("a"),
-            SchemaName::new_test("b"),
-            SchemaName::new_test("c")
+            SchemaName::for_test("a"),
+            SchemaName::for_test("b"),
+            SchemaName::for_test("c")
         ]);
     }
 
     #[test]
     fn rejects_a_self_loop() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::new_test("a"), schema(&["a"]));
+        raw.insert(SchemaName::for_test("a"), schema(&["a"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
         );
 
         let err = builder.build().expect_err("self-loop rejected");
-        assert_eq!(err, vec![SchemaName::new_test("a")]);
+        assert_eq!(err, vec![SchemaName::for_test("a")]);
     }
 
     #[test]
     fn returns_empty_when_no_cycle_exists() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::new_test("root"), schema(&[]));
-        raw.insert(SchemaName::new_test("child"), schema(&["root"]));
+        raw.insert(SchemaName::for_test("root"), schema(&[]));
+        raw.insert(SchemaName::for_test("child"), schema(&["root"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -376,10 +376,10 @@ mod tests {
     #[test]
     fn rejects_multiple_independent_cycles() {
         let mut raw = IndexMap::new();
-        raw.insert(SchemaName::new_test("a"), schema(&["b"]));
-        raw.insert(SchemaName::new_test("b"), schema(&["a"]));
-        raw.insert(SchemaName::new_test("x"), schema(&["y"]));
-        raw.insert(SchemaName::new_test("y"), schema(&["x"]));
+        raw.insert(SchemaName::for_test("a"), schema(&["b"]));
+        raw.insert(SchemaName::for_test("b"), schema(&["a"]));
+        raw.insert(SchemaName::for_test("x"), schema(&["y"]));
+        raw.insert(SchemaName::for_test("y"), schema(&["x"]));
         let (builder, _warnings) = SchemaGraphBuilder::new(
             &raw,
             SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
@@ -387,9 +387,9 @@ mod tests {
 
         let err = builder.build().expect_err("cycles rejected");
         assert_eq!(err.len(), 4, "both cycles must be reported");
-        assert!(err.contains(&SchemaName::new_test("a")));
-        assert!(err.contains(&SchemaName::new_test("b")));
-        assert!(err.contains(&SchemaName::new_test("x")));
-        assert!(err.contains(&SchemaName::new_test("y")));
+        assert!(err.contains(&SchemaName::for_test("a")));
+        assert!(err.contains(&SchemaName::for_test("b")));
+        assert!(err.contains(&SchemaName::for_test("x")));
+        assert!(err.contains(&SchemaName::for_test("y")));
     }
 }

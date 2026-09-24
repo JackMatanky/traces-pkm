@@ -261,8 +261,8 @@ mod tests {
         fn cycle_formats_display_message_joining_every_schema() {
             let error = SchemaError::Cycle {
                 schemas: vec![
-                    SchemaName::new_test("a"),
-                    SchemaName::new_test("b"),
+                    SchemaName::for_test("a"),
+                    SchemaName::for_test("b"),
                 ],
             };
 
@@ -272,7 +272,7 @@ mod tests {
         #[test]
         fn ambiguous_field_name_formats_display_message() {
             let error = SchemaError::AmbiguousFieldName {
-                schema: SchemaName::new_test("book"),
+                schema: SchemaName::for_test("book"),
                 first: FieldName::try_from("status").expect("valid name"),
                 second: Box::new(
                     FieldName::try_from("Status").expect("valid name"),
@@ -413,8 +413,8 @@ mod tests {
         #[test]
         fn missing_extends_target_message_names_schema_and_target() {
             let warning = SchemaWarning::MissingExtendsTarget {
-                schema: SchemaName::new_test("sci_fi"),
-                target: SchemaName::new_test("ghost"),
+                schema: SchemaName::for_test("sci_fi"),
+                target: SchemaName::for_test("ghost"),
             };
 
             assert_eq!(
@@ -427,8 +427,8 @@ mod tests {
         #[test]
         fn duplicate_extends_target_message_names_schema_and_target() {
             let warning = SchemaWarning::DuplicateExtendsTarget {
-                schema: SchemaName::new_test("sci_fi"),
-                target: SchemaName::new_test("book"),
+                schema: SchemaName::for_test("sci_fi"),
+                target: SchemaName::for_test("book"),
             };
 
             assert_eq!(
@@ -441,8 +441,8 @@ mod tests {
         #[test]
         fn parent_failed_to_resolve_message_names_schema_and_parent() {
             let warning = SchemaWarning::ParentFailedToResolve {
-                schema: SchemaName::new_test("sci_fi"),
-                parent: SchemaName::new_test("book"),
+                schema: SchemaName::for_test("sci_fi"),
+                parent: SchemaName::for_test("book"),
             };
 
             assert_eq!(

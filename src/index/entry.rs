@@ -50,7 +50,7 @@ impl WorkspaceIndex {
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn new_test(notes: &[(&str, &str)]) -> Self {
+    pub fn for_test(notes: &[(&str, &str)]) -> Self {
         let mut prepared = Vec::with_capacity(notes.len());
         prepared.extend(notes.iter().map(|(path_str, src)| {
             let p = std::path::Path::new(path_str);
@@ -330,14 +330,14 @@ mod tests {
             );
         }
     }
-    mod new_test {
+    mod for_test {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
         fn assembles_index_from_note_tuples() {
-            let index = WorkspaceIndex::new_test(&[
+            let index = WorkspaceIndex::for_test(&[
                 ("a.md", "# A\nLink to [[b]]"),
                 ("b.md", "# B"),
             ]);
@@ -359,7 +359,7 @@ mod tests {
             let count_entries =
                 || std::fs::read_dir(".").map_or(0, std::iter::Iterator::count);
             let before = count_entries();
-            let _index = WorkspaceIndex::new_test(&[(
+            let _index = WorkspaceIndex::for_test(&[(
                 "ephemeral_test_note.md",
                 "# Ephemeral\ncontent with [[link]]",
             )]);

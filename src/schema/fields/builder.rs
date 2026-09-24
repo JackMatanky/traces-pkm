@@ -335,8 +335,8 @@ mod tests {
             SchemaFieldDef::new(kind, false, false),
         );
         (
-            SchemaName::new_test(name),
-            Schema::new(SchemaName::new_test(name), fields, IndexSet::new()),
+            SchemaName::for_test(name),
+            Schema::new(SchemaName::for_test(name), fields, IndexSet::new()),
         )
     }
 
@@ -354,7 +354,7 @@ mod tests {
             })
             .collect();
         let ancestors: IndexSet<SchemaName> =
-            ancestors.iter().map(|name| SchemaName::new_test(name)).collect();
+            ancestors.iter().map(|name| SchemaName::for_test(name)).collect();
         (ancestors, resolved)
     }
 
@@ -370,7 +370,7 @@ mod tests {
             .map(|(name, kind)| schema_with_field(name, "field", kind.clone()))
             .collect();
         let ancestors: IndexSet<SchemaName> =
-            ancestors.iter().map(|name| SchemaName::new_test(name)).collect();
+            ancestors.iter().map(|name| SchemaName::for_test(name)).collect();
         (ancestors, resolved)
     }
 
@@ -850,16 +850,16 @@ mod tests {
                 SchemaFieldDef::new(SchemaFieldType::Input, true, true),
             );
             let resolved: IndexMap<SchemaName, Schema> = std::iter::once((
-                SchemaName::new_test("book"),
+                SchemaName::for_test("book"),
                 Schema::new(
-                    SchemaName::new_test("book"),
+                    SchemaName::for_test("book"),
                     fields,
                     IndexSet::new(),
                 ),
             ))
             .collect();
             let ancestors: IndexSet<SchemaName> =
-                std::iter::once(SchemaName::new_test("book")).collect();
+                std::iter::once(SchemaName::for_test("book")).collect();
             let context = SchemaFieldBuildContext::for_test();
             let b = SchemaFieldBuilder::new(&ancestors, &resolved, &context);
             let address = FieldAddressRef::new(
