@@ -186,7 +186,7 @@ mod tests {
                 .expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {
-                source: IndexError::Walk(DirTreeError::NodeInaccessible { .. }),
+                source: IndexError::Scan(DirTreeError::NodeInaccessible { .. }),
                 ..
             }));
         }

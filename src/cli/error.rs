@@ -987,7 +987,7 @@ mod tests {
             let root = PathBuf::from("/some/project");
             let error = CliError::Index {
                 root: root.clone(),
-                source: IndexError::Walk(DirTreeError::NodeInaccessible {
+                source: IndexError::Scan(DirTreeError::NodeInaccessible {
                     path: root.join("notes"),
                     source: io::Error::other("boom"),
                 }),
@@ -1718,7 +1718,7 @@ mod tests {
                         minijinja::ErrorKind::InvalidOperation,
                         "failed to refresh the file index",
                     )
-                    .with_source(IndexError::Walk(
+                    .with_source(IndexError::Scan(
                         DirTreeError::NodeInaccessible {
                             path: PathBuf::from("/project"),
                             source: io::Error::other("boom"),

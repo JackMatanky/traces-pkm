@@ -266,7 +266,7 @@ impl RefreshPlan {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.

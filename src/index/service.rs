@@ -64,7 +64,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::Scan` if a directory cannot be read.
     /// - `IndexError::Inspect` if a file's metadata cannot be inspected.
     /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed.
     /// - `IndexError::Path` if a walked file cannot be derived as a safe
@@ -91,7 +91,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::Scan` if a directory cannot be read.
     /// - `IndexError::Inspect` if file metadata cannot be inspected.
     /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
@@ -108,7 +108,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - `IndexError::Walk` if a directory cannot be read.
+    /// - `IndexError::Scan` if a directory cannot be read.
     /// - `IndexError::Inspect` if file metadata cannot be inspected.
     /// - `IndexError::NoteParse` if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
@@ -175,7 +175,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
     /// - [`IndexError::NoteParse`] if a note cannot be read or parsed.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
@@ -199,7 +199,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if file metadata cannot be inspected.
     /// - [`IndexError::NoteParse`] if a Markdown file cannot be read or parsed,
     ///   or an unchanged note cannot be recalled.
@@ -307,7 +307,7 @@ impl IndexerService {
     ///
     /// # Errors
     ///
-    /// - [`IndexError::Walk`] if a directory cannot be read.
+    /// - [`IndexError::Scan`] if a directory cannot be read.
     /// - [`IndexError::Inspect`] if a file's metadata cannot be inspected.
     /// - [`IndexError::Path`] if a walked file cannot be derived as a safe
     ///   project-relative path.
@@ -318,7 +318,7 @@ impl IndexerService {
             .filter_map(|node| {
                 let node = match node {
                     Ok(node) => node,
-                    Err(error) => return Some(Err(IndexError::Walk(error))),
+                    Err(error) => return Some(Err(IndexError::Scan(error))),
                 };
                 let path = node.path();
                 (node.file_type().is_file() && path != index_db)
@@ -732,7 +732,7 @@ mod tests {
             let error =
                 IndexerService::scan(root).expect_err("unreadable dir fails");
 
-            assert!(matches!(error, IndexError::Walk(_)));
+            assert!(matches!(error, IndexError::Scan(_)));
         }
     }
 
