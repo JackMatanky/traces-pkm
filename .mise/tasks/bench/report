@@ -159,7 +159,8 @@ print_footer() {
   fi
   echo "Run \`critcmp <baseline> new\`" \
     "(or \`mise run bench --compare <baseline>\`) for comparison."
-  echo "Run \`mise run bench:model\` for performance summary."
+  echo "Run \`mise run bench:model\` (or \`mise run bench --model\`)" \
+    "for performance summary."
   echo "Run \`mise run bench:model -- --plot\` for fitted curves in the" \
     "terminal."
 }

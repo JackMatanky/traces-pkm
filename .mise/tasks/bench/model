@@ -67,10 +67,12 @@ R2_QUALITY_LEVELS: Final = (
 )
 R_SQUARED: Final = "R²"
 
-# Report box dimensions
+# Report box and plot dimensions
 SERIES_BOX_WIDTH: Final = 60
 SUMMARY_BOX_WIDTH: Final = 64
 SUMMARY_NAME_WIDTH: Final = 32
+PLOT_WIDTH: Final = 60
+PLOT_HEIGHT: Final = 10
 
 
 # ------------------------------------------------------------- #
@@ -1080,7 +1082,8 @@ class SeriesPlotRenderer:
         x = [point.file_count for point in analysis.data_points]
         y = [point.mean_seconds for point in analysis.data_points]
 
-        plt.clear_terminal()
+        plt.clear_figure()
+        plt.plotsize(PLOT_WIDTH, PLOT_HEIGHT)
         plt.title(analysis.name)
         plt.xlabel("n (files)")
         plt.ylabel("time (s)")
@@ -1088,18 +1091,13 @@ class SeriesPlotRenderer:
 
         x_min, x_max = min(x), max(x)
         pad = max((x_max - x_min) * 0.1, 1)
-        curve_x = np.linspace(max(x_min - pad, 1), x_max + pad, 200)
+        curve_x = np.linspace(max(x_min - pad, 1), x_max + pad, 100)
         curve_y = np.array([best.predict(float(value)) for value in curve_x])
         plt.plot(
             curve_x.tolist(),
             curve_y.tolist(),
             label=best.kind.value,
             color="yellow",
-        )
-        plt.text(
-            f"{R_SQUARED}={best.r_squared:.4f}  {best.formula}",
-            x_min,
-            curve_y.max(),
         )
         plt.show()
         print()
@@ -1168,7 +1166,9 @@ class CliOptions:
         )
         return cls(
             criterion_dir=Path(criterion_dir),
-            plot=os.environ.get("usage_plot") == "true",
+            plot=os.environ.get("usage_plot") == "true"
+            or "-p" in argv
+            or "--plot" in argv,
             summary=summary,
             worst_count=worst_count,
         )

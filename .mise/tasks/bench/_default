@@ -54,6 +54,7 @@
 #USAGE   """
 #USAGE }
 #USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"
+#USAGE flag "--model" help="Fit performance models to criterion output after benchmarking"
 #USAGE flag "--verbose" negate="--no-verbose" default=#true help="Criterion detailed reporting (default on; `--no-verbose` terse)"
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to `cargo bench`"
@@ -319,6 +320,19 @@ main() {
   # Compare: saved baseline (positional `1`) vs this run (`new`).
   if [[ -n "${usage_compare:-}" ]]; then
     critcmp "${usage_compare}" new
+  fi
+
+  # Model: fit performance models to criterion output.
+  if [[ "${usage_model:-false}" == "true" ]]; then
+    local -a model_cmd=()
+    if [[ -n "${MISE_TASK_DIR:-}" && -x "${MISE_TASK_DIR}/model" ]]; then
+      model_cmd=("${MISE_TASK_DIR}/model")
+    elif [[ -x "${MISE_PROJECT_ROOT:?}/.mise/tasks/bench/model" ]]; then
+      model_cmd=("${MISE_PROJECT_ROOT}/.mise/tasks/bench/model")
+    else
+      model_cmd=(mise run bench:model)
+    fi
+    "${model_cmd[@]}"
   fi
 }
 
