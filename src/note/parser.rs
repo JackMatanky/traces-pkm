@@ -64,6 +64,10 @@ use lexer::InlineTokenLexer;
 use line::ByteTracker;
 use list::ListTracker;
 
+/// Block parser options: YAML metadata blocks and Obsidian wikilinks.
+const MARKDOWN_OPTIONS: Options =
+    Options::ENABLE_YAML_STYLE_METADATA_BLOCKS.union(Options::ENABLE_WIKILINKS);
+
 /// Parses Markdown source into a [`Note`].
 ///
 /// Recognizes custom task markers, YAML frontmatter blocks, and Obsidian
@@ -76,16 +80,13 @@ use list::ListTracker;
 #[inline]
 #[must_use]
 pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
-    opts.insert(Options::ENABLE_WIKILINKS);
-
     let mut ctx = ParserContext::new(
         input.src(),
         input.tasks().statuses(),
         input.tasks().tag_filters(),
     );
-    for (event, range) in Parser::new_ext(input.src(), opts).into_offset_iter()
+    for (event, range) in
+        Parser::new_ext(input.src(), MARKDOWN_OPTIONS).into_offset_iter()
     {
         ctx.handle_event(event, ByteOffset::from(range.start));
     }
@@ -144,16 +145,21 @@ impl<'a> ParserContext<'a> {
         task_statuses: &'a TaskStatusMap,
         tag_filters: &'a [Tag],
     ) -> Self {
+        // Sizing heuristic: body text occupies most of a typical note, while
+        // metadata, outlinks, inline fields, and tags are far sparser. Matching
+        // that distribution up front avoids the first several growth
+        // reallocations during event collection.
+        let body_capacity = source.len().saturating_mul(3) / 4;
         Self {
             frontmatter: None,
             block: BlockContext::default(),
-            metadata_buffer: String::new(),
-            outlinks: Vec::new(),
+            metadata_buffer: String::with_capacity(256),
+            outlinks: Vec::with_capacity(4),
             active_link: None,
             list_nesting: ListTracker::default(),
-            body_buffer: String::new(),
-            inline_fields: IndexMap::new(),
-            tags: Vec::new(),
+            body_buffer: String::with_capacity(body_capacity),
+            inline_fields: IndexMap::with_capacity(4),
+            tags: Vec::with_capacity(4),
             line_tracker: ByteTracker::new(source),
             task_statuses,
             tag_filters,
