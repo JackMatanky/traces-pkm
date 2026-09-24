@@ -557,7 +557,8 @@ set -euo pipefail
 
 declare -a args=(--workspace --out html)
 if [[ -n "${usage_mod:-}" ]]; then
-  args=(--include "src/${usage_mod}/**" --out html)
+  [[ -d "src/${usage_mod}" ]] || { echo "coverage: unknown module: ${usage_mod}" >&2; exit 2; }
+  args=(--include-files "src/${usage_mod}/**" --out html)
 fi
 cargo tarpaulin "${args[@]}"
 '''
