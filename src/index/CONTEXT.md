@@ -31,15 +31,16 @@ The computed change set and recomputed state from one incremental
 synchronization, not yet applied.
 *Avoid*: sync outcome, reconciliation result, sync delta
 
-#### Refresh Pass
+#### RefreshState
 
-One comparison-and-reconciliation cycle between current project files and the
-persisted index, producing either an unchanged result or an Index Update.
+The state from comparing current project files with the persisted index:
+`Fresh` when the opened store remains current, or `Stale` when an Index Update
+awaits persistence.
 *Avoid*: sync pass, scan pass, refresh transaction
 
 #### Refresh Report
 
-The changed-file and changed-link counts observed during a Refresh Pass.
+The changed-file and changed-link counts observed for a `Stale` RefreshState.
 *Avoid*: sync report, update result, refresh outcome
 
 ### Indexed Data

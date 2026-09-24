@@ -59,7 +59,8 @@ impl<'a> PersistRequest<'a> {
         }
     }
 
-    /// Applies row-level changes from one refresh pass.
+    /// Applies row-level changes from a stale refresh state awaiting
+    /// persistence.
     #[inline]
     pub(super) const fn incremental(
         dimensions: IndexDimensions,
