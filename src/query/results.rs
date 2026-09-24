@@ -1266,7 +1266,7 @@ rating: note
         }
 
         #[test]
-        fn zero_yields_an_empty_outcome() {
+        fn zero_yields_empty_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let rows = rows_of_three(temp.path());
 
@@ -1531,7 +1531,7 @@ rating: note
         }
 
         #[test]
-        fn renders_no_data_rows_for_an_empty_outcome() {
+        fn renders_no_data_rows_for_empty_rows() {
             let table = QuerySet::default()
                 .table(&["Name"], &["file.name"])
                 .expect("valid table");
@@ -1627,7 +1627,7 @@ rating: note
         }
 
         #[test]
-        fn renders_an_empty_string_for_an_empty_outcome() {
+        fn renders_an_empty_string_for_empty_rows() {
             let list = QuerySet::default().list("rating").expect("valid list");
 
             assert_eq!(list, "");
@@ -1764,7 +1764,7 @@ rating: note
         }
 
         #[test]
-        fn renders_an_empty_string_for_an_empty_outcome() {
+        fn renders_an_empty_string_for_empty_rows() {
             let rendered = QuerySet::default()
                 .task_list(TaskPathStyle::default())
                 .expect("valid task_list");
@@ -1784,25 +1784,25 @@ rating: note
         }
     }
 
-    mod query_outcome {
+    mod query_rows {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn len_returns_zero_for_an_empty_outcome() {
+        fn len_returns_zero_for_empty_rows() {
             let empty = QuerySet::default();
             assert_eq!(empty.len(), 0);
         }
 
         #[test]
-        fn is_empty_returns_true_for_an_empty_outcome() {
+        fn is_empty_returns_true_for_empty_rows() {
             let empty = QuerySet::default();
             assert!(empty.is_empty());
         }
 
         #[test]
-        fn len_returns_record_count_for_a_non_empty_outcome() {
+        fn len_returns_record_count_for_non_empty_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let rows = rows_for(temp.path(), "# A");
 
@@ -1810,7 +1810,7 @@ rating: note
         }
 
         #[test]
-        fn is_empty_returns_false_for_a_non_empty_outcome() {
+        fn is_empty_returns_false_for_non_empty_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let rows = rows_for(temp.path(), "# A");
 

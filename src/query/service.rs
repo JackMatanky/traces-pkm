@@ -929,7 +929,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_empty_outcome_when_no_notes_match_source() {
+        fn returns_empty_rows_when_no_notes_match_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");

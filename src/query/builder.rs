@@ -289,11 +289,11 @@ mod tests {
                     .expect("valid sort")
                     .limit(i64::try_from(n).expect("limit fits i64"))
                     .expect("valid limit");
-                let topk_outcome =
+                let topk_rows =
                     QueryService::new("class").run(&index, topk_request);
-                let topk_paths: Vec<_> = (0..topk_outcome.len())
+                let topk_paths: Vec<_> = (0..topk_rows.len())
                     .map(|i| {
-                        topk_outcome
+                        topk_rows
                             .get(i)
                             .expect("row")
                             .file()
@@ -306,11 +306,11 @@ mod tests {
                     QueryBuilder::pages(SourceSelector::All)
                         .sort("rating", false)
                         .expect("valid sort");
-                let full_outcome =
+                let full_rows =
                     QueryService::new("class").run(&index, full_sort_request);
                 let full_first_n: Vec<_> = (0..n)
                     .map(|i| {
-                        full_outcome
+                        full_rows
                             .get(i)
                             .expect("row")
                             .file()
@@ -398,19 +398,19 @@ mod tests {
                 .filter("rating < 8")
                 .expect("valid filter");
 
-            let fused_outcome =
+            let fused_rows =
                 QueryService::new("class").run(&index, fused_request);
 
             let combined_request = QueryBuilder::pages(SourceSelector::All)
                 .filter("rating > 2 and rating < 8")
                 .expect("valid filter");
-            let combined_outcome =
+            let combined_rows =
                 QueryService::new("class").run(&index, combined_request);
 
-            assert_eq!(fused_outcome, combined_outcome);
-            assert_eq!(fused_outcome.len(), 3);
+            assert_eq!(fused_rows, combined_rows);
+            assert_eq!(fused_rows.len(), 3);
             let paths: Vec<&Path> =
-                fused_outcome.iter().map(|r| r.file().path()).collect();
+                fused_rows.iter().map(|r| r.file().path()).collect();
             assert_eq!(paths, [
                 Path::new("b.md"),
                 Path::new("c.md"),
