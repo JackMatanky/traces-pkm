@@ -65,12 +65,12 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::Read`] when `path` cannot be read or its content
+    /// - [`ConfigFileError::Parse`] when `path` cannot be read or its content
     ///   cannot be parsed as TOML.
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let content = std::fs::read_to_string(path).map_err(|source| {
             use serde::de::Error as _;
-            ConfigFileError::Read {
+            ConfigFileError::Parse {
                 path: path.to_path_buf(),
                 source: Box::new(toml::de::Error::custom(source)),
             }
@@ -86,13 +86,13 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::Read`] when `content` cannot be parsed as TOML.
+    /// - [`ConfigFileError::Parse`] when `content` cannot be parsed as TOML.
     fn from_content(
         path: &Path,
         content: &str,
     ) -> Result<Self, ConfigFileError> {
         let raw = toml::from_str::<RawConfig>(content).map_err(|source| {
-            ConfigFileError::Read {
+            ConfigFileError::Parse {
                 path: path.to_path_buf(),
                 source: Box::new(source),
             }
@@ -600,24 +600,28 @@ mod tests {
         }
 
         #[test]
-        fn returns_read_error_on_invalid_toml() {
+        fn returns_parse_error_on_invalid_toml() {
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().join("config.toml");
             std::fs::write(&path, "[templates\nbad = ").unwrap();
 
             let result = Parsed::read(&path);
 
-            assert!(matches!(result, Err(ConfigFileError::Read { .. })));
+            let err = result.unwrap_err();
+            assert!(matches!(err, ConfigFileError::Parse { .. }));
+            assert!(
+                err.to_string().contains("failed to read or parse config file")
+            );
         }
 
         #[test]
-        fn returns_read_error_on_missing_file() {
+        fn returns_parse_error_on_missing_file() {
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().join("missing.toml");
 
             let result = Parsed::read(&path);
 
-            assert!(matches!(result, Err(ConfigFileError::Read { .. })));
+            assert!(matches!(result, Err(ConfigFileError::Parse { .. })));
         }
     }
 

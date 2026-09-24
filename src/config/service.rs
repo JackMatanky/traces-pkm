@@ -1451,7 +1451,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1471,7 +1471,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1655,7 +1655,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1882,7 +1882,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }
@@ -1905,7 +1905,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
+                        ConfigFileError::Parse { .. }
                     ))
                 ));
             }

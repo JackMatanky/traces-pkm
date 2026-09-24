@@ -138,9 +138,9 @@ pub(crate) enum ConfigFileError {
         path: PathBuf,
     },
     /// The config file could not be read or parsed as TOML.
-    #[error("failed to load config file {path}")]
-    Read {
-        /// File that failed to load.
+    #[error("failed to read or parse config file {path}")]
+    Parse {
+        /// File that failed to read or parse.
         path: PathBuf,
         /// TOML deserialization error.
         #[source]
