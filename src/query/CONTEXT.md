@@ -30,15 +30,15 @@ The row evaluation granularity of a query: `Pages` (one row per Note), `Lists`
 #### Query Builder
 
 The declarative specification of a query: Query Mode, Source Expression, and
-the pending Query Plan, built before execution.
+the pending Execution Plan, built before execution.
 *Avoid*: query request, request
 
-#### Query Plan
+#### Execution Plan
 
 The ordered transform sequence a query applies to rows, fused where possible
 (adjacent filters, adjacent sorts, and Sort followed by Limit) and executed
 lazily on first read.
-*Avoid*: plan steps, ops list
+*Avoid*: plan steps
 
 #### Sort Order
 
