@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+#MISE description="Run parallel mutation testing with `cargo-mutants`"
+#MISE sources=["@group:rust"]
+#MISE extends="mutants"
+#MISE depends=["test"]
+#MISE depends_post=["mutants:report"]
+#USAGE flag "-f --file <file>" help="Run mutants in a specific file only (e.g. -f src/config.rs)"
+#USAGE flag "-m --mod <module>" {
+#USAGE   help "Run mutants in a specific module only (matches src/<module>/**/*.rs)"
+#USAGE }
+#USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+#USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+#USAGE flag "--check" help="Build-only check: verify generated mutants compile without running tests"
+#USAGE flag "-L --level <level>" help="Log verbosity" {
+#USAGE   choices "trace" "debug" "info" "warn" "error"
+#USAGE }
+#USAGE flag "--exclude <glob>" help="Exclude files matching glob"
+#USAGE flag "--timeout <secs>" help="Override test timeout in seconds"
+#USAGE flag "-v --caught" help="Also print mutants caught by tests"
+#USAGE flag "-V --unviable" help="Also print mutants that failed to build"
+#USAGE flag "--all-logs" help="Print all Cargo output to stdout"
+#USAGE flag "--json" help="Emit machine-readable output"
+#USAGE flag "--no-config" help="Ignore .cargo/mutants.toml"
+#USAGE flag "--iterate" negate="--no-iterate" default=#true {
+#USAGE   help "Incremental mode: skip mutants caught in previous runs"
+#USAGE }
+#USAGE arg "[args]" var=#true {
+#USAGE   help "Extra arguments forwarded to cargo-mutants"
+#USAGE   long_help """
+#USAGE   Examples:
+#USAGE   - `mise run mutants -- --list` - list mutants without running tests
+#USAGE   - `mise run mutants -m index -- --list` - list mutants for module `index`
+#USAGE   - `mise run mutants -m index` - test mutants for module `index`
+#USAGE   - `mise run mutants -f src/config.rs` - test mutants in a single file
+#USAGE   - `mise run mutants --check` - build check only (fast syntax/type validation)
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+set -euo pipefail
+
+#######################################
+# Returns base cargo-mutants compilation and profile arguments.
+# Globals:
+#   None
+# Arguments:
+#   flags_out: Nameref to array where static flags are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+build_static_flags() {
+  local -n static_flags_out="${1}"
+  static_flags_out+=(
+    --baseline run
+    --cap-lints true
+    --build-timeout-multiplier 3
+    --profile mutants
+  )
+  return 0
+}
+
+#######################################
+# Appends file, module, and exclusion filter arguments.
+# Globals:
+#   usage_file
+#   usage_mod
+#   usage_exclude
+# Arguments:
+#   flags_out: Nameref to array where filter flags are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+build_filter_flags() {
+  local -n filter_flags_out="${1}"
+  [[ -n "${usage_file:-}" ]] && filter_flags_out+=(--file "${usage_file}")
+  [[ -n "${usage_mod:-}" ]] && \
+    filter_flags_out+=(--file "src/${usage_mod}/**/*.rs")
+  [[ -n "${usage_exclude:-}" ]] && \
+    filter_flags_out+=(--exclude "${usage_exclude}")
+  return 0
+}
+
+#######################################
+# Appends iteration, check, timeout, and verbosity level arguments.
+# Globals:
+#   usage_iterate
+#   usage_check
+#   usage_timeout
+#   usage_level
+# Arguments:
+#   flags_out: Nameref to array where execution flags are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+build_execution_flags() {
+  local -n exec_flags_out="${1}"
+  [[ "${usage_iterate:-true}" == "true" ]] && exec_flags_out+=(--iterate)
+  [[ "${usage_check:-false}" == "true" ]] && exec_flags_out+=(--check)
+  [[ -n "${usage_timeout:-}" ]] && \
+    exec_flags_out+=(--timeout "${usage_timeout}")
+  [[ -n "${usage_level:-}" ]] && exec_flags_out+=(--level "${usage_level}")
+  return 0
+}
+
+#######################################
+# Appends output logging and reporting flags.
+# Globals:
+#   usage_caught
+#   usage_unviable
+#   usage_all_logs
+#   usage_json
+#   usage_no_config
+# Arguments:
+#   flags_out: Nameref to array where reporting flags are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+build_reporting_flags() {
+  local -n report_flags_out="${1}"
+  [[ "${usage_caught:-false}" == "true" ]] && report_flags_out+=(--caught)
+  [[ "${usage_unviable:-false}" == "true" ]] && report_flags_out+=(--unviable)
+  [[ "${usage_all_logs:-false}" == "true" ]] && report_flags_out+=(--all-logs)
+  [[ "${usage_json:-false}" == "true" ]] && report_flags_out+=(--json)
+  [[ "${usage_no_config:-false}" == "true" ]] && \
+    report_flags_out+=(--no-config)
+  return 0
+}
+
+#######################################
+# Evaluates and parses variadic usage_args tokens into array.
+# Globals:
+#   usage_args
+# Arguments:
+#   extra_out: Nameref to array where parsed passthrough tokens are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+parse_passthrough_tokens() {
+  # shellcheck disable=SC2034  # modified inside eval
+  # usage_args arrives shell-quoted; eval expands it into array elements.
+  local -n extra_tokens_out="${1}"
+  eval "extra_tokens_out+=(${usage_args:-})"
+  return 0
+}
+
+#######################################
+# Assembles full argument list and executes cargo mutants.
+# Globals:
+#   None
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   cargo mutants test output to STDOUT/STDERR.
+# Returns:
+#   Status of cargo mutants.
+#######################################
+main() {
+  # shellcheck disable=SC2034  # populated via namerefs in builder functions
+  local -a args=()
+  build_static_flags args
+  build_filter_flags args
+  build_execution_flags args
+  build_reporting_flags args
+  parse_passthrough_tokens args
+
+  cargo mutants "${args[@]}"
+}
+
+main "$@"

@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+#MISE description="Strict `clippy`: workspace, all targets, all features; auto-fix known lints unless `--no-fix`"
+#MISE alias="l"
+#MISE depends=["fmt"]
+#MISE sources=["@group:rust"]
+#MISE extends="gate:never-skip"
+#USAGE flag "--fix" negate="--no-fix" default=#true {
+#USAGE   help "Auto-fix known lints using cargo clippy --fix"
+#USAGE   long_help """
+#USAGE   Enabled by default: auto-fixes 18 known safe Clippy lints across workspace targets and dirty/staged files. Pass `--no-fix` for read-only lint checks (used in verification gates and CI to prevent file mutation races).
+#USAGE   """
+#USAGE }
+#USAGE flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
+#USAGE   help "Treat Clippy warnings as errors"
+#USAGE   long_help """
+#USAGE   Enabled by default: passes `-D warnings` to Clippy so any warning causes task failure. Pass `--no-deny-warnings` to inspect warnings without failing.
+#USAGE   """
+#USAGE }
+#USAGE flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" {
+#USAGE   help "Comma-separated lints to auto-fix instead of the default list"
+#USAGE   long_help """
+#USAGE   Overrides the default 18-lint fix list. Supply a comma-separated list of Clippy lint names to fix (or set via `CLIPPY_FIX_LINTS`).
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+set -euo pipefail
+# Run `clippy` across workspace, all targets, and all features; by default also
+# auto-fix a known lint list and deny warnings.
+
+#######################################
+# Populates array with canonical list of 18 auto-fixable Clippy lints.
+# Globals:
+#   None
+# Arguments:
+#   registry_out: Nameref to array where default fix lints are stored.
+# Outputs:
+#   None
+# Returns:
+#   Count of default lints.
+#######################################
+# shellcheck disable=SC2034
+load_fix_registry() {
+  local -n reg_out="${1}"
+  reg_out=(
+    as_pointer_underscore
+    as_underscore
+    bool_assert_comparison
+    dbg_macro
+    manual_let_else
+    needless_borrow
+    needless_collect
+    or_fun_call
+    redundant_clone
+    redundant_closure_for_method_calls
+    redundant_field_names
+    search_is_some
+    significant_drop_in_scrutinee
+    str_to_string
+    trait_duplication_in_bounds
+    uninlined_format_args
+    use_self
+    useless_conversion
+  )
+  return "${#reg_out[@]}"
+}
+
+#######################################
+# Resolves list of lints to auto-fix from CLI or defaults.
+# Globals:
+#   usage_fix_lints
+# Arguments:
+#   lints_out: Nameref to array where active fix lints will be stored.
+# Outputs:
+#   None
+# Returns:
+#   Count of active fix lints.
+#######################################
+# shellcheck disable=SC2034
+resolve_active_fix_lints() {
+  local -n active_lints_out="${1}"
+  if [[ -n "${usage_fix_lints:-}" ]]; then
+    local old_ifs="${IFS}"
+    IFS=',' read -ra active_lints_out <<< "${usage_fix_lints}"
+    IFS="${old_ifs}"
+  else
+    load_fix_registry active_lints_out || true
+  fi
+  return "${#active_lints_out[@]}"
+}
+
+#######################################
+# Returns standard workspace, target, and feature arguments for Clippy.
+# Globals:
+#   None
+# Arguments:
+#   args_out: Nameref to array where base cargo arguments are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+build_clippy_base_args() {
+  local -n base_args_out="${1}"
+  base_args_out+=(--workspace --all-targets --all-features)
+  return 0
+}
+
+#######################################
+# Assembles deny-warnings, fix, and lint warning flags.
+# Globals:
+#   usage_deny_warnings
+#   usage_fix
+# Arguments:
+#   clippy_args_out: Nameref to array where clippy flags are appended.
+#   cargo_args_out: Nameref to array where cargo flags are appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+build_clippy_flag_args() {
+  local -n c_args_out="${1}"
+  local -n cg_args_out="${2}"
+
+  if [[ "${usage_deny_warnings:-true}" == "true" ]]; then
+    c_args_out+=(-D warnings)
+  fi
+
+  if [[ "${usage_fix:-true}" == "true" ]]; then
+    cg_args_out+=(--fix --allow-dirty --allow-staged)
+
+    # shellcheck disable=SC2034  # populated in resolve_active_fix_lints
+    local -a fix_lints=()
+    resolve_active_fix_lints fix_lints || true
+
+    local lint
+    for lint in "${fix_lints[@]}"; do
+      [[ -n "${lint}" ]] && c_args_out+=(-W "clippy::${lint}")
+    done
+  fi
+
+  return 0
+}
+
+#######################################
+# Assembles options and executes cargo clippy.
+# Globals:
+#   None
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   Clippy diagnostic output to STDOUT/STDERR.
+# Returns:
+#   Status of cargo clippy.
+#######################################
+main() {
+  # shellcheck disable=SC2034  # populated via namerefs
+  local -a cargo_args=()
+  # shellcheck disable=SC2034  # populated via namerefs
+  local -a clippy_args=()
+
+  build_clippy_base_args cargo_args
+  build_clippy_flag_args clippy_args cargo_args
+
+  cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
+}
+
+main "$@"

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#MISE description="Run Rust doctests via cargo test --doc"
+#MISE sources=["@group:rust"]
+#MISE extends="gate:never-skip"
+#USAGE flag "--feature <feature>" default="all" {
+#USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
+#USAGE   long_help """
+#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
+#USAGE   """
+#USAGE }
+#USAGE arg "[args]" var=#true {
+#USAGE   help "Extra arguments forwarded to `cargo test --doc`"
+#USAGE   long_help """
+#USAGE   Examples:
+#USAGE   - `mise run test:doc -- --quiet` - run doctests with quiet summary
+#USAGE   - `mise run test:doc -- my_doctest` - filter doctests by name pattern
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+set -euo pipefail
+
+#######################################
+# Maps feature selection flag to cargo test workspace and feature arguments.
+# Globals:
+#   usage_feature
+# Arguments:
+#   args_out: Nameref to array where feature arguments will be stored.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+# shellcheck disable=SC2034
+resolve_doc_features() {
+  local -n doc_args_out="${1}"
+  if [[ "${usage_feature:-all}" == "all" ]]; then
+    doc_args_out=(--workspace --all-features)
+  else
+    doc_args_out=(--workspace --features "${usage_feature}")
+  fi
+  return 0
+}
+
+#######################################
+# Expands variadic passthrough arguments into array.
+# Globals:
+#   usage_args
+# Arguments:
+#   extra_out: Nameref to array where passthrough tokens will be appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+parse_passthrough_tokens() {
+  # shellcheck disable=SC2034  # modified inside eval
+  local -n extra_tokens_out="${1}"
+  eval "extra_tokens_out+=(${usage_args:-})"
+  return 0
+}
+
+#######################################
+# Executes cargo test --doc with quiet flag and forwarded arguments.
+# Globals:
+#   None
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   Doctest summary to STDOUT/STDERR.
+# Returns:
+#   Status of cargo test --doc.
+#######################################
+main() {
+  # shellcheck disable=SC2034  # populated via namerefs
+  local -a args=()
+  local -a extra=()
+  resolve_doc_features args
+  parse_passthrough_tokens extra
+
+  cargo test "${args[@]}" --doc "${extra[@]+"${extra[@]}"}" -- --quiet
+}
+
+main "$@"

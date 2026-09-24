@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+#MISE description="Clean Cargo artifacts, stale incremental sessions, or generated reports"
+#MISE extends="gate:never-skip"
+#MISE confirm="Clean Cargo artifacts and reports?"
+#USAGE flag "--dry-run" help="Show what would be deleted without removing files"
+#USAGE flag "--release" help="Clean release artifacts only"
+#USAGE flag "--doc" help="Clean generated docs only"
+#USAGE flag "--profile <profile>" help="Clean one Cargo profile"
+#USAGE flag "--target-dir <dir>" help="Cargo target directory" default="target"
+#USAGE flag "--reports" {
+#USAGE   help "Remove generated coverage and mutation report files"
+#USAGE   long_help """
+#USAGE   Removes coverage and mutation test reports (`lcov.info`, `tarpaulin-report.html`, `mutants.out/`, `mutants-report.md`) without cleaning Cargo target build artifacts.
+#USAGE   """
+#USAGE }
+#USAGE flag "--all" {
+#USAGE   help "Clean entire Cargo target directory and report files"
+#USAGE   long_help """
+#USAGE   Wipes the entire Cargo target directory and all quality report files. Explicitly preserves historical benchmark results in `target/criterion/`.
+#USAGE   """
+#USAGE }
+#USAGE flag "--if-over-gib <gib>" {
+#USAGE   help "Only clean Cargo target if it exceeds this size in GiB"
+#USAGE   long_help """
+#USAGE   Evaluates current `target/` size against the threshold. If target is at or below `<gib>`, target cleaning is skipped.
+#USAGE   """
+#USAGE }
+#USAGE flag "--sweep-days <days>" {
+#USAGE   help "Use cargo-sweep to remove target artifacts older than DAYS"
+#USAGE   long_help """
+#USAGE   Delegates to `clean:sweep --days <days>`. Removes compilation artifacts with modification times older than the specified day count.
+#USAGE   """
+#USAGE }
+#USAGE flag "--sweep-max-size <size>" {
+#USAGE   help "Use cargo-sweep to shrink target below SIZE (e.g. 10GB)"
+#USAGE   long_help """
+#USAGE   Delegates to `clean:sweep --max-size <size>`. Prunes artifacts until target size is below `<size>`.
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+# shellcheck source=/dev/null
+set -euo pipefail
+
+source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
+
+readonly TARGET_DIR="${usage_target_dir:-target}"
+# Clean the Cargo target directly or via the sweep task, and/or remove
+# generated report files, per the usage flags.
+
+#######################################
+# Analyzes usage flags to determine whether to clean target, reports, or
+# delegate to sweep.
+#
+# Globals:
+#   TARGET_DIR
+#   usage_reports
+#   usage_all
+#   usage_sweep_days
+#   usage_sweep_max_size
+# Arguments:
+#   plan_out: Nameref to associative array with keys clean_target,
+#             clean_reports, delegate_sweep.
+# Outputs:
+#   Error to STDERR if mutually invalid flags combined.
+# Returns:
+#   0 on valid plan, exits 2 on conflict.
+#######################################
+resolve_clean_plan() {
+  local -n _plan_ref="${1}"
+
+  _plan_ref[clean_target]=true
+  _plan_ref[clean_reports]=false
+  _plan_ref[delegate_sweep]=false
+
+  if [[ "${usage_reports:-false}" == "true" ]]; then
+    _plan_ref[clean_target]=false
+    _plan_ref[clean_reports]=true
+  fi
+
+  if [[ "${usage_all:-false}" == "true" ]]; then
+    _plan_ref[clean_target]=true
+    _plan_ref[clean_reports]=true
+  fi
+
+  if [[ -n "${usage_sweep_days:-}" || -n "${usage_sweep_max_size:-}" ]]; then
+    if [[ "${TARGET_DIR}" != "target" ]]; then
+      printf '%s: --target-dir is not supported with cargo-sweep mode\n' \
+        "clean" >&2
+      exit 2
+    fi
+    _plan_ref[delegate_sweep]=true
+    _plan_ref[clean_target]=false
+  fi
+
+  return 0
+}
+
+#######################################
+# Forwards sweep flags to clean:sweep file task.
+#
+# Globals:
+#   TARGET_DIR
+#   usage_dry_run
+#   usage_sweep_days
+#   usage_sweep_max_size
+#   MISE_TASK_DIR
+#   MISE_PROJECT_ROOT
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostics to STDERR/STDOUT.
+# Returns:
+#   Exit status of clean:sweep.
+#######################################
+exec_sweep_delegation() {
+  # `cargo-sweep` flags live in one place: the `sweep` task.
+  # The `--if-over-gib` gate (when given) has already run, so delegating here
+  # does not change when the gate fires.
+  declare -a sweep_cmd=()
+  if [[ -n "${MISE_TASK_DIR:-}" && -x "${MISE_TASK_DIR}/sweep" ]]; then
+    sweep_cmd=("${MISE_TASK_DIR}/sweep")
+  elif [[ -x "${MISE_PROJECT_ROOT:?}/.mise/tasks/clean/sweep" ]]; then
+    sweep_cmd=("${MISE_PROJECT_ROOT}/.mise/tasks/clean/sweep")
+  else
+    sweep_cmd=(mise run clean:sweep)
+  fi
+
+  [[ "${usage_dry_run:-false}" == "true" ]] && sweep_cmd+=(--dry-run)
+  [[ -n "${usage_sweep_days:-}" ]] && sweep_cmd+=(--days "${usage_sweep_days}")
+  [[ -n "${usage_sweep_max_size:-}" ]] && \
+    sweep_cmd+=(--max-size "${usage_sweep_max_size}")
+  "${sweep_cmd[@]}"
+}
+
+#######################################
+# Executes cargo clean with size gating and target/criterion benchmark results
+# preservation.
+#
+# Globals:
+#   TARGET_DIR
+#   usage_if_over_gib
+#   usage_dry_run
+#   usage_release
+#   usage_doc
+#   usage_profile
+# Arguments:
+#   None
+# Outputs:
+#   Size diagnostics and preservation messages to STDOUT.
+# Returns:
+#   Status of cargo clean.
+#######################################
+exec_target_clean() {
+  if [[ -n "${usage_if_over_gib:-}" ]]; then
+    require_nonneg_int "clean" "--if-over-gib" "${usage_if_over_gib}"
+    if ! eval_dir_size_gate \
+      "clean" "${TARGET_DIR}" "${usage_if_over_gib}"; then
+      return 0
+    fi
+  fi
+  local is_full_clean=true
+  if [[ "${usage_release:-false}" == "true" \
+    || "${usage_doc:-false}" == "true" \
+    || -n "${usage_profile:-}" ]]; then
+    is_full_clean=false
+  fi
+
+  local criterion_dir="${TARGET_DIR}/criterion"
+  local tag_file="${TARGET_DIR}/CACHEDIR.TAG"
+  local has_criterion=false
+  if [[ -d "${criterion_dir}" ]]; then
+    has_criterion=true
+  fi
+
+  if [[ -d "${TARGET_DIR}" && ! -f "${tag_file}" ]]; then
+    printf '%s\n%s\n' \
+      'Signature: 8a477f597d28d172789f06886806bc55' \
+      '# This file is a cache directory tag created by cargo.' \
+      > "${tag_file}" 2>/dev/null || true
+  fi
+
+  if [[ "${has_criterion}" == "true" \
+    && "${usage_dry_run:-false}" == "true" ]]; then
+    printf 'clean: preserving %s benchmark results\n' "${criterion_dir}"
+  fi
+
+  local backup_tmp=""
+  if [[ "${has_criterion}" == "true" \
+    && "${is_full_clean}" == "true" \
+    && "${usage_dry_run:-false}" != "true" ]]; then
+    backup_tmp="$(mktemp -d -t traces_pkm_criterion_clean.XXXXXX)"
+    mv "${criterion_dir}" "${backup_tmp}/criterion"
+    [[ -f "${tag_file}" ]] && cp "${tag_file}" "${backup_tmp}/CACHEDIR.TAG"
+
+    # Trap to restore criterion if clean aborts
+    trap '
+      if [[ -d "'"${backup_tmp}"'/criterion" ]]; then
+        mkdir -p "'"${TARGET_DIR}"'"
+        mv "'"${backup_tmp}"'/criterion" \
+          "'"${criterion_dir}"'" 2>/dev/null || true
+        if [[ -f "'"${backup_tmp}"'/CACHEDIR.TAG" ]]; then
+          cp "'"${backup_tmp}"'/CACHEDIR.TAG" \
+            "'"${TARGET_DIR}"'/CACHEDIR.TAG" 2>/dev/null || true
+        fi
+      fi
+      rm -rf "'"${backup_tmp}"'"
+    ' EXIT INT TERM
+  fi
+
+  declare -a cargo_args=(clean --target-dir "${TARGET_DIR}")
+  [[ "${usage_dry_run:-false}" == "true" ]] && cargo_args+=(--dry-run)
+  [[ "${usage_release:-false}" == "true" ]] && cargo_args+=(--release)
+  [[ "${usage_doc:-false}" == "true" ]] && cargo_args+=(--doc)
+  [[ -n "${usage_profile:-}" ]] && cargo_args+=(--profile "${usage_profile}")
+
+  cargo "${cargo_args[@]}"
+
+  if [[ -n "${backup_tmp}" && -d "${backup_tmp}/criterion" ]]; then
+    mkdir -p "${TARGET_DIR}"
+    mv "${backup_tmp}/criterion" "${criterion_dir}"
+    if [[ -f "${backup_tmp}/CACHEDIR.TAG" ]]; then
+      cp "${backup_tmp}/CACHEDIR.TAG" "${tag_file}"
+    fi
+    trap - EXIT INT TERM
+    rm -rf "${backup_tmp}"
+    printf 'clean: preserved %s benchmark results\n' "${criterion_dir}"
+  fi
+}
+
+#######################################
+# Calls clean:reports to remove quality and test report files.
+#
+# Globals:
+#   MISE_TASK_DIR
+#   MISE_PROJECT_ROOT
+#   usage_dry_run
+# Arguments:
+#   None
+# Outputs:
+#   Clean reports logs to STDOUT.
+# Returns:
+#   Status of clean:reports.
+#######################################
+exec_reports_clean() {
+  declare -a reports_cmd=()
+  if [[ -n "${MISE_TASK_DIR:-}" && -x "${MISE_TASK_DIR}/reports" ]]; then
+    reports_cmd=("${MISE_TASK_DIR}/reports")
+  elif [[ -x "${MISE_PROJECT_ROOT:?}/.mise/tasks/clean/reports" ]]; then
+    reports_cmd=("${MISE_PROJECT_ROOT}/.mise/tasks/clean/reports")
+  else
+    reports_cmd=(mise run clean:reports)
+  fi
+
+  [[ "${usage_dry_run:-false}" == "true" ]] && reports_cmd+=(--dry-run)
+  "${reports_cmd[@]}"
+}
+
+#######################################
+# Coordinates clean execution pipeline in deterministic order:
+# sweep -> target -> reports.
+#
+# Globals:
+#   None
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   Execution diagnostics.
+# Returns:
+#   Non-zero on any step failure.
+#######################################
+main() {
+  # shellcheck disable=SC2034  # populated via nameref in resolve_clean_plan
+  declare -A plan
+  resolve_clean_plan plan
+
+  if [[ "${plan[delegate_sweep]}" == "true" ]]; then
+    exec_sweep_delegation
+  fi
+
+  if [[ "${plan[clean_target]}" == "true" ]]; then
+    exec_target_clean
+  fi
+
+  if [[ "${plan[clean_reports]}" == "true" ]]; then
+    exec_reports_clean
+  fi
+}
+
+main "$@"

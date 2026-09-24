@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Filename:    `traces-pkm/mise.toml`
+# Filename:    traces-pkm/mise.toml
 # Docs:        https://mise.jdx.dev/
 # Description: Project-wide tool versioning and task orchestration
 # -----------------------------------------------------------------------------
@@ -76,204 +76,6 @@ outputs = []
 cache = { enabled = false }
 run = "hk install --mise --quiet"
 
-[tasks.clean]
-description = "Clean Cargo artifacts and optional generated reports"
-outputs = []
-cache = { enabled = false }
-confirm = "Clean Cargo artifacts and reports?"
-usage = '''
-flag "--dry-run" help="Show what would be deleted"
-flag "--release" help="Clean release artifacts only"
-flag "--doc" help="Clean generated docs only"
-flag "--profile <profile>" help="Clean one Cargo profile"
-flag "--target-dir <dir>" help="Cargo target directory" default="target"
-flag "--reports" help="Remove generated coverage/mutation report files"
-flag "--all" help="Clean entire Cargo target directory"
-flag "--if-over-gib <gib>" {
-  help "Only clean Cargo target if it exceeds this size in GiB"
-}
-flag "--sweep-days <days>" {
-  help "Use `cargo-sweep` to remove target artifacts older than `DAYS`"
-}
-flag "--sweep-max-size <size>" {
-  help "Use `cargo-sweep` to shrink target below `SIZE`, e.g. `10GiB`"
-}
-'''
-run = '''
-#!/bin/bash
-# Clean the Cargo target directly or via the sweep task, and/or remove generated
-# report files, per the usage flags.
-set -euo pipefail
-
-source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
-
-readonly TARGET_DIR="${usage_target_dir?}"
-clean_target=true
-clean_reports=false
-
-if [[ "${usage_reports:-false}" == "true" ]]; then
-  clean_target=false
-  clean_reports=true
-fi
-
-if [[ "${usage_all:-false}" == "true" ]]; then
-  clean_target=true
-fi
-
-if [[ -n "${usage_if_over_gib:-}" && -d "${TARGET_DIR}" ]]; then
-  require_nonneg_int clean --if-over-gib "${usage_if_over_gib}"
-  TARGET_KIB="$(dir_size_kib "${TARGET_DIR}")"
-  readonly TARGET_KIB
-  readonly LIMIT_KIB="$(gib_to_kib "${usage_if_over_gib}")"
-
-  if (( TARGET_KIB <= LIMIT_KIB )); then
-    TARGET_GIB="$(awk "BEGIN { print ${TARGET_KIB} / 1024 / 1024 }")"
-    readonly TARGET_GIB
-    printf 'target is %.1f GiB; below %s GiB, skipping target clean\n' \
-      "${TARGET_GIB}" "${usage_if_over_gib}"
-    clean_target=false
-  fi
-fi
-
-if [[ "${clean_target}" == "true" ]]; then
-  if [[ -n "${usage_sweep_days:-}" || -n "${usage_sweep_max_size:-}" ]]; then
-    if [[ "${TARGET_DIR}" != "target" ]]; then
-      printf '%s\n' "--target-dir is not supported with cargo-sweep mode" >&2
-      exit 2
-    fi
-
-    # `cargo-sweep` flags live in one place: the `sweep` task. The `--if-over-gib`
-    # gate above (when given) has already run, so delegating here does not
-    # change when the gate fires.
-    declare -a sweep_task=(mise run sweep)
-    [[ "${usage_dry_run:-false}" == "true" ]] && sweep_task+=(--dry-run)
-    [[ -n "${usage_sweep_days:-}" ]] \
-      && sweep_task+=(--days "${usage_sweep_days}")
-    [[ -n "${usage_sweep_max_size:-}" ]] \
-      && sweep_task+=(--max-size "${usage_sweep_max_size}")
-    "${sweep_task[@]}"
-  else
-    declare -a cargo_args=(clean --target-dir "${TARGET_DIR}")
-    [[ "${usage_dry_run:-false}" == "true" ]] && cargo_args+=(--dry-run)
-    [[ "${usage_release:-false}" == "true" ]] && cargo_args+=(--release)
-    [[ "${usage_doc:-false}" == "true" ]] && cargo_args+=(--doc)
-    [[ -n "${usage_profile:-}" ]] && cargo_args+=(--profile "${usage_profile}")
-    cargo "${cargo_args[@]}"
-  fi
-fi
-
-if [[ "${clean_reports}" == "true" ]]; then
-  readonly -a reports=(
-    lcov.info
-    tarpaulin-report.html
-    mutants.out
-    mutants.out.old
-    mutants-report.md
-  )
-  if [[ "${usage_dry_run:-false}" == "true" ]]; then
-    printf 'would remove generated reports: %s\n' "${reports[*]}"
-  else
-    rm -rf "${reports[@]}"
-  fi
-fi
-'''
-
-# `bash`-only by design (no `run_windows`): macOS dev + Linux `CI` only.
-[tasks.sweep]
-description = "Reclaim Cargo target space: prune stale incremental sessions (default) or `cargo-sweep` by age/size"
-extends = "gate:never-skip"
-usage = '''
-flag "--max-gib <gib>" help="Incremental-prune mode: only prune when target exceeds this size in GiB (non-negative integer)" default="10"
-flag "--days <days>" help="`cargo-sweep` mode: remove target artifacts older than `DAYS`"
-flag "--max-size <size>" help="`cargo-sweep` mode: shrink target below `SIZE` (e.g. `10GB`)"
-flag "--dry-run" help="Show what would be removed without removing it"
-'''
-run = '''
-#!/bin/bash
-# Prune stale Cargo incremental sessions when the target exceeds `--max-gib`, or
-# run `cargo-sweep` directly for `--days`/`--max-size`.
-# shellcheck disable=SC2154  # usage_* are injected by mise
-set -euo pipefail
-
-source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
-
-# Fail fast with a clear message when run outside `mise`'s usage injection.
-: "${usage_max_gib?}"
-require_nonneg_int sweep --max-gib "${usage_max_gib}"
-
-# Size gate and prune both derive from TARGET_DIR (always the same tree).
-readonly TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-readonly INCREMENTAL_DIR="${TARGET_DIR}/debug/incremental"
-readonly LIMIT_KIB="$(gib_to_kib "${usage_max_gib}")"
-
-# An explicit `--days`/`--max-size` request runs `cargo-sweep` directly and
-# bypasses the `--max-gib` gate.
-run_cargo_sweep() {
-  declare -a args=()
-  [[ "${usage_dry_run:-false}" == "true" ]] && args+=(--dry-run)
-  [[ -n "${usage_days:-}" ]] && args+=(--time "${usage_days}")
-  [[ -n "${usage_max_size:-}" ]] && args+=(--maxsize "${usage_max_size}")
-  cargo sweep "${args[@]}"
-}
-
-main() {
-  if [[ -n "${usage_days:-}" || -n "${usage_max_size:-}" ]]; then
-    run_cargo_sweep
-    return 0
-  fi
-
-  # Counter instead of array-length expansion: `mise` renders `run` bodies through
-  # `Tera`, where a leading `{#` opens a `Tera` comment and breaks the
-  # script.
-  local size_kib newest="" count=0
-  local -a stale=()
-
-  if [[ ! -d "${TARGET_DIR}" ]]; then
-    echo "sweep: no target directory, skipping"
-    return 0
-  fi
-
-  size_kib="$(dir_size_kib "${TARGET_DIR}")"
-  if (( size_kib <= LIMIT_KIB )); then
-    echo "sweep: target under threshold, skipping"
-    return 0
-  fi
-
-  local dir
-  for dir in "${INCREMENTAL_DIR}"/*/; do
-    [[ -d "${dir}" ]] || continue
-    # `-nt` sees directory mtimes, which update on direct-child create/delete;
-    # equal mtimes keep the lexicographically first.
-    if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
-      if [[ -n "${newest}" ]]; then
-        stale+=("${newest}")
-        count=$(( count + 1 ))
-      fi
-      newest="${dir}"
-    else
-      stale+=("${dir}")
-      count=$(( count + 1 ))
-    fi
-  done
-
-  if (( count == 0 )); then
-    echo "sweep: no stale incremental sessions found"
-    return 0
-  fi
-
-  if [[ "${usage_dry_run:-false}" == "true" ]]; then
-    printf 'sweep: would remove %d stale incremental session(s):\n' "${count}"
-    printf '  %s\n' "${stale[@]}"
-    return 0
-  fi
-
-  rm -rf "${stale[@]}"
-  echo "sweep: removed stale incremental sessions"
-}
-
-main
-'''
-
 # ------------------------------------------------------------- #
 #                   Development & Compilation                   #
 # ------------------------------------------------------------- #
@@ -298,7 +100,11 @@ declare -a extra
 eval "extra=(${usage_args:-})"
 
 cargo check --workspace "${extra[@]+"${extra[@]}"}"
-hk check
+hk check \
+  --skip-step cargo-clippy \
+  --skip-step cargo-test \
+  --skip-step cargo-doc \
+  --skip-step cargo-deny
 '''
 
 [tasks.build]
@@ -306,7 +112,11 @@ description = "Debug build"
 alias = "b"
 sources = ["@group:rust"]
 outputs = ["target/debug/traces-pkm"]
-usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo build`"'
+usage = '''
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to `cargo build`"
+}
+'''
 run = '''
 #!/bin/bash
 # extra is populated via eval from mise's usage_args (var=#true arg).
@@ -341,261 +151,87 @@ declare -a args=(--all)
 cargo fmt "${args[@]}"
 '''
 
-[tasks.lint]
-description = "Strict `clippy`: workspace, all targets, all features; auto-fix known lints unless `--no-fix`"
-alias = "l"
-depends = ["fmt"]
-sources = ["@group:rust"]
+[tasks."audit:deny"]
+description = "Run cargo-deny checks (licenses, bans, sources)"
 extends = "gate:never-skip"
 usage = '''
-flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
-flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
-  help "Treat Clippy warnings as errors"
-}
-flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" {
-  help "Comma-separated lints to auto-fix instead of the default list"
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to cargo deny check"
 }
 '''
 run = '''
 #!/bin/bash
-# Run `clippy` across workspace, all targets, and all features; by default also
-# auto-fix a known lint list and deny warnings.
-set -euo pipefail
-
-declare -a cargo_args=(--workspace --all-targets --all-features)
-declare -a clippy_args=()
-
-readonly -a default_fix_lints=(
-  as_pointer_underscore
-  as_underscore
-  bool_assert_comparison
-  dbg_macro
-  manual_let_else
-  needless_borrow
-  needless_collect
-  or_fun_call
-  redundant_clone
-  redundant_closure_for_method_calls
-  redundant_field_names
-  search_is_some
-  significant_drop_in_scrutinee
-  str_to_string
-  trait_duplication_in_bounds
-  uninlined_format_args
-  use_self
-  useless_conversion
-)
-
-if [[ "${usage_deny_warnings?}" == "true" ]]; then
-  clippy_args+=(-D warnings)
-fi
-
-if [[ "${usage_fix?}" == "true" ]]; then
-  cargo_args+=(--fix --allow-dirty --allow-staged)
-
-  declare -a fix_lints=("${default_fix_lints[@]}")
-  if [[ -n "${usage_fix_lints:-}" ]]; then
-    _old_ifs="${IFS}"
-    IFS=',' read -ra fix_lints <<< "${usage_fix_lints}"
-    IFS="${_old_ifs}"
-  fi
-
-  for lint in "${fix_lints[@]}"; do
-    [[ -n "${lint}" ]] && clippy_args+=(-W "clippy::${lint}")
-  done
-fi
-
-cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
-'''
-
-[tasks.audit]
-description = "Run `cargo-deny` checks"
-extends = "gate:never-skip"
-usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo deny check`"'
-run = '''
-#!/bin/bash
-# extra is populated via eval from mise's usage_args (var=#true arg).
-# shellcheck disable=SC2154
 set -euo pipefail
 declare -a extra
 eval "extra=(${usage_args:-})"
 cargo deny check "${extra[@]+"${extra[@]}"}"
 '''
 
-# ------------------------------------------------------------- #
-#                    Testing & Benchmarking                     #
-# ------------------------------------------------------------- #
-
-[tasks.test]
-description = "Run tests with `nextest` (+ `doc-tests` by default)"
-alias = "t"
-sources = ["@group:rust"]
+[tasks."audit:sec"]
+description = "Run cargo-audit checks (RustSec advisory database)"
 extends = "gate:never-skip"
-usage = '''
-flag "--feature <feature>" help="Enable a specific feature" default="all"
-flag "--docs" negate="--no-docs" default=#true {
-  help "Also run `doc-tests` via `cargo test` after `nextest`"
-}
-flag "-m --mod <module>" {
-  help "Run tests for a specific module only"
-}
-// `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
-complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to `cargo nextest run`"
-  long_help """
-  Examples:
-
-    `mise run test index::query`          # substring match
-    `mise run test --test init_cli`       # by binary
-    `mise run test --lib`                 # by target
-    `mise run test -E 'test(/^index::/)'` # nextest expression
-"""
-}
-'''
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo audit"'
 run = '''
 #!/bin/bash
-# Run `nextest` with feature/module scoping, then `doc-tests` unless `--no-docs`.
-# `usage_args` is shell-quoted (`var=#true` arg); `eval` parses it into `nextest_extra`.
-# shellcheck disable=SC2154
 set -euo pipefail
-
-declare -a nextest_args
-declare -a cargo_test_args
-
-if [[ "${usage_feature?}" == "all" ]]; then
-  nextest_args=(-p traces-pkm --all-features)
-  cargo_test_args=(--workspace --all-features)
-else
-  nextest_args=(-p traces-pkm --features "${usage_feature?}")
-  cargo_test_args=(--workspace --features "${usage_feature?}")
-fi
-
-if [[ -n "${usage_mod:-}" ]]; then
-  nextest_args+=(-E "test(/^${usage_mod}::/)")
-  if [[ "${usage_feature?}" == "all" ]]; then
-    cargo_test_args=(-p traces-pkm --all-features)
-  else
-    cargo_test_args=(-p traces-pkm --features "${usage_feature?}")
-  fi
-fi
-
-eval "nextest_extra=(${usage_args:-})"
-nextest_args+=("${nextest_extra[@]+"${nextest_extra[@]}"}")
-
-cargo nextest run "${nextest_args[@]}"
-
-if [[ "${usage_docs?}" == "true" ]]; then
-  cargo test "${cargo_test_args[@]}" --doc -- --quiet
-fi
+declare -a extra
+eval "extra=(${usage_args:-})"
+cargo audit "${extra[@]+"${extra[@]}"}"
 '''
+
+[tasks.audit]
+description = "Run all security audit checks (cargo-deny and cargo-audit)"
+extends = "gate:never-skip"
+run = [{ tasks = ["audit:deny", "audit:sec"] }]
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #
 # ------------------------------------------------------------- #
 
-[tasks.coverage]
-description = "Run code coverage with `tarpaulin`"
+[tasks."coverage:lcov"]
+description = "Generate LCOV coverage report for CRAP analysis"
+sources = ["@group:rust", "tarpaulin.toml"]
+outputs = ["lcov.info"]
+run = "cargo tarpaulin --workspace --out lcov"
+
+[tasks."coverage:html"]
+description = "Generate HTML coverage report"
 sources = ["@group:rust", "tarpaulin.toml"]
 outputs = ["tarpaulin-report.html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
+  long_help """
+  Scopes Tarpaulin coverage to files under `src/<module>/**` (e.g. `-m index`).
+  """
 }
 // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
-complete "module" run="ls -F src | sed -n 's:/$::p'"
+complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 '''
 run = '''
 #!/bin/bash
 set -euo pipefail
-
 declare -a args=(--workspace --out html)
 if [[ -n "${usage_mod:-}" ]]; then
-  [[ -d "src/${usage_mod}" ]] || { echo "coverage: unknown module: ${usage_mod}" >&2; exit 2; }
+  if [[ ! -d "src/${usage_mod}" ]]; then
+    echo "coverage: unknown module: ${usage_mod}" >&2
+    exit 2
+  fi
   args=(--include-files "src/${usage_mod}/**" --out html)
 fi
 cargo tarpaulin "${args[@]}"
 '''
 
+[tasks.coverage]
+description = "Run code coverage (HTML report)"
+depends = ["coverage:html"]
+
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
+depends = ["coverage:lcov"]
 sources = ["@group:rust", "tarpaulin.toml"]
 outputs = ["lcov.info"]
-run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
-
-[tasks.mutants]
-description = "Run parallel mutation testing with `cargo-mutants`"
-sources = ["@group:rust"]
-extends = "gate:never-skip"
-depends = ["test"]
-timeout = "1h"
-usage = '''
-flag "-f --file <file>" help="Run mutants in a specific file only"
-flag "-m --mod <module>" {
-  help "Run mutants in a specific module only"
-}
-// `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
-complete "module" run="ls -F src | sed -n 's:/$::p'"
-flag "--check" {
-  help "Build-only: check mutants compile without running tests"
-}
-flag "-L --level <level>" {
-  help "Log verbosity"
-  choices "trace" "debug" "info" "warn" "error"
-}
-flag "--exclude <glob>" help="Exclude files matching glob"
-flag "--timeout <secs>" help="Override test timeout in seconds"
-flag "-v --caught" { help "Also print mutants caught by tests" }
-flag "-V --unviable" { help "Also print mutants that failed to build" }
-flag "--all-logs" { help "Print all Cargo output to stdout" }
-flag "--json" { help "Emit machine-readable output" }
-flag "--no-config" { help "Ignore .cargo/mutants.toml" }
-flag "--iterate" negate="--no-iterate" default=#true {
-  help "Skip mutants caught in previous runs"
-}
-arg "[args]" var=#true {
-  help "Extra arguments forwarded to `cargo mutants`"
-  long_help """
-  Examples:
-
-    `mise run mutants -- --list`
-    `mise run mutants -m index -- --list`
-"""
-}
-'''
-run = '''
-#!/bin/bash
-# Build the `cargo-mutants` flag list from the usage flags and passthrough args,
-# then run `cargo mutants`.
-# shellcheck disable=SC2154  # usage_* are injected by mise
-set -euo pipefail
-
-declare -a args=(
-  --baseline run
-  --cap-lints true
-  --build-timeout-multiplier 3
-  --profile mutants
-)
-
-[[ "${usage_iterate:-true}" == "true" ]]    && args+=(--iterate)
-[[ -n "${usage_file:-}" ]]                  && args+=(--file "${usage_file}")
-[[ -n "${usage_mod:-}" ]]                   && args+=(--file "src/${usage_mod}/**/*.rs")
-[[ "${usage_check:-false}" == "true" ]]     && args+=(--check)
-[[ -n "${usage_level:-}" ]]                 && args+=(--level "${usage_level}")
-[[ -n "${usage_exclude:-}" ]]               && args+=(--exclude "${usage_exclude}")
-[[ -n "${usage_timeout:-}" ]]               && args+=(--timeout "${usage_timeout}")
-[[ "${usage_caught:-false}" == "true" ]]    && args+=(--caught)
-[[ "${usage_unviable:-false}" == "true" ]]  && args+=(--unviable)
-[[ "${usage_all_logs:-false}" == "true" ]]  && args+=(--all-logs)
-[[ "${usage_json:-false}" == "true" ]]      && args+=(--json)
-[[ "${usage_no_config:-false}" == "true" ]] && args+=(--no-config)
-
-# usage_args arrives shell-quoted; eval expands it into array elements.
-eval "args+=(${usage_args:-})"
-
-cargo mutants "${args[@]}"
-'''
-depends_post = ["mutants:report"]
+run = "cargo crap --lcov lcov.info"
 
 # ------------------------------------------------------------- #
 #                    Release & Verification                     #
@@ -606,7 +242,11 @@ description = "Release build"
 alias = "r"
 sources = ["@group:rust"]
 outputs = ["target/release/traces-pkm"]
-usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo build --release`"'
+usage = '''
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to `cargo build --release`"
+}
+'''
 run = '''
 #!/bin/bash
 # extra is populated via eval from mise's usage_args (var=#true arg).
@@ -622,7 +262,11 @@ description = "Build documentation (warnings as errors)"
 env = { RUSTDOCFLAGS = "-D warnings" }
 sources = ["@group:rust"]
 outputs = ["target/doc"]
-usage = 'arg "[args]" var=#true help="Extra arguments forwarded to `cargo doc --no-deps`"'
+usage = '''
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to `cargo doc --no-deps`"
+}
+'''
 run = '''
 #!/bin/bash
 # extra is populated via eval from mise's usage_args (var=#true arg).
@@ -637,11 +281,12 @@ cargo doc --no-deps "${extra[@]+"${extra[@]}"}"
 description = "Full verification gate: `fmt` first, then `check`/`lint`/`test` in parallel"
 alias = "v"
 extends = "gate:never-skip"
+# `fmt` rewrites `.rs` files, so it must finish before `check`/`lint`/`test`
+# read them; depends guarantees completion, not order, so it cannot express
+# this.
 run = [
-  # `fmt` rewrites `.rs` files, so it must finish before `check`/`lint`/`test` read them;
-  # depends guarantees completion, not order, so it cannot express this.
   { task = "fmt" },
-  { tasks = ["check", "lint", "test"] },
+  { tasks = ["check", "lint --no-fix", "test"] },
 ]
 
 # A file task's #MISE header rejects timeout (mise warns about unknown fields
@@ -650,6 +295,11 @@ run = [
 # metadata stays in the file task.
 [task_templates.bench]
 timeout = "20m"
+
+[task_templates.mutants]
+timeout = "1h"
+outputs = []
+cache = { enabled = false }
 
 # Never-skip payload for gate tasks whose whole payload is this pair: cache off
 # blocks artifact-cache replay; outputs = [] blocks the freshness skip and

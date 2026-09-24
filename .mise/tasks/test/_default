@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+#MISE description="Run tests with `nextest` (+ `doc-tests` by default)"
+#MISE alias="t"
+#MISE sources=["@group:rust"]
+#MISE extends="gate:never-skip"
+#USAGE flag "--feature <feature>" default="all" {
+#USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
+#USAGE   long_help """
+#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
+#USAGE   """
+#USAGE }
+#USAGE flag "--docs" negate="--no-docs" default=#true {
+#USAGE   help "Also run doc-tests via cargo test --doc after nextest"
+#USAGE   long_help """
+#USAGE   Enabled by default: runs unit/integration tests via `nextest`, then documentation tests via `cargo test --doc`. Pass `--no-docs` to run only nextest.
+#USAGE   """
+#USAGE }
+#USAGE flag "-m --mod <module>" {
+#USAGE   help "Run tests for a specific module only"
+#USAGE   long_help """
+#USAGE   Scopes nextest to the named module using a filter expression (e.g. `-m index` filters to tests under module `index`).
+#USAGE   """
+#USAGE }
+#USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+#USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+#USAGE arg "[args]" var=#true {
+#USAGE   help "Extra arguments forwarded to nextest run"
+#USAGE   long_help """
+#USAGE   Examples:
+#USAGE   - `mise run test index::query` - run tests matching name substring
+#USAGE   - `mise run test --test init_cli` - run integration test binary
+#USAGE   - `mise run test --lib` - run unit tests in library target only
+#USAGE   - `mise run test -E 'test(/^index::/)'` - filter with nextest filter expression DSL
+#USAGE   - `mise run test -m index` - filter to module via `-m`
+#USAGE   - `mise run test --no-docs` - skip doctests and run unit tests only
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+set -euo pipefail
+
+#######################################
+# Forwards feature, module, and passthrough arguments to test:unit.
+# Globals:
+#   MISE_TASK_DIR
+#   usage_feature
+#   usage_mod
+#   usage_args
+# Arguments:
+#   None
+# Outputs:
+#   Unit test output to STDOUT/STDERR.
+# Returns:
+#   Status of test:unit execution.
+#######################################
+run_unit_phase() {
+  declare -a unit_cmd=(mise run test:unit)
+  [[ -n "${usage_feature:-}" ]] && unit_cmd+=(--feature "${usage_feature}")
+  [[ -n "${usage_mod:-}" ]] && unit_cmd+=(-m "${usage_mod}")
+
+  # usage_args is shell-quoted (var=#true arg); eval parses it into the
+  # extra array.
+  declare -a extra=()
+  eval "extra=(${usage_args:-})"
+  if [[ "${#extra[@]}" -gt 0 ]]; then
+    unit_cmd+=(-- "${extra[@]}")
+  fi
+
+  "${unit_cmd[@]}"
+}
+
+#######################################
+# Evaluates whether doc tests are enabled and applicable for this run.
+# Globals:
+#   usage_docs
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 if doc phase should run, 1 if skipped.
+#######################################
+should_run_doc_phase() {
+  if [[ "${usage_docs:-true}" != "true" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+#######################################
+# Forwards feature arguments to test:doc.
+# Globals:
+#   MISE_TASK_DIR
+#   usage_feature
+# Arguments:
+#   None
+# Outputs:
+#   Doc test output to STDOUT/STDERR.
+# Returns:
+#   Status of test:doc execution.
+#######################################
+run_doc_phase() {
+  declare -a doc_cmd=(mise run test:doc)
+  [[ -n "${usage_feature:-}" ]] && doc_cmd+=(--feature "${usage_feature}")
+
+  "${doc_cmd[@]}"
+}
+
+#######################################
+# Coordinates sequential execution of unit tests followed by doc tests.
+# Globals:
+#   None
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   Test progress information.
+# Returns:
+#   Exit status of failed phase, or 0 on success.
+#######################################
+main() {
+  run_unit_phase
+  if should_run_doc_phase; then
+    run_doc_phase
+  fi
+}
+
+main "$@"

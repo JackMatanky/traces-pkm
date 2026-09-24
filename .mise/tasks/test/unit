@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#MISE description="Run unit and integration tests with `nextest`"
+#MISE sources=["@group:rust"]
+#MISE extends="gate:never-skip"
+#USAGE flag "--feature <feature>" default="all" {
+#USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
+#USAGE   long_help """
+#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
+#USAGE   """
+#USAGE }
+#USAGE flag "-m --mod <module>" {
+#USAGE   help "Run tests for a specific module only"
+#USAGE   long_help """
+#USAGE   Scopes nextest to the named module using a filter expression (e.g. `-m index` filters to tests under module `index`).
+#USAGE   """
+#USAGE }
+#USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+#USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+#USAGE arg "[args]" var=#true {
+#USAGE   help "Extra arguments forwarded to `cargo nextest run`"
+#USAGE   long_help """
+#USAGE   Examples:
+#USAGE   - `mise run test:unit index::query` - run tests matching name substring
+#USAGE   - `mise run test:unit --test init_cli` - run integration test binary
+#USAGE   - `mise run test:unit --lib` - run unit tests in library target only
+#USAGE   - `mise run test:unit -E 'test(/^index::/)'` - filter with nextest filter expression DSL
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+set -euo pipefail
+
+#######################################
+# Maps feature selection flag to cargo nextest package and feature arguments.
+# Globals:
+#   usage_feature
+# Arguments:
+#   args_out: Nameref to array where feature arguments will be stored.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+# shellcheck disable=SC2034
+resolve_package_feature_args() {
+  local -n pkg_args_out="${1}"
+  if [[ "${usage_feature:-all}" == "all" ]]; then
+    pkg_args_out=(-p traces-pkm --all-features)
+  else
+    pkg_args_out=(-p traces-pkm --features "${usage_feature}")
+  fi
+  return 0
+}
+
+#######################################
+# Formats module filter flag into nextest expression DSL filter.
+# Globals:
+#   usage_mod
+# Arguments:
+#   args_out: Nameref to array where filter expression will be appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+resolve_module_filter() {
+  local -n mod_args_out="${1}"
+  if [[ -n "${usage_mod:-}" ]]; then
+    mod_args_out+=(-E "test(/^${usage_mod}::/)")
+  fi
+  return 0
+}
+
+#######################################
+# Expands variadic passthrough arguments into array.
+# Globals:
+#   usage_args
+# Arguments:
+#   extra_out: Nameref to array where passthrough tokens will be appended.
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+#######################################
+parse_passthrough_tokens() {
+  # shellcheck disable=SC2034  # modified inside eval
+  # usage_args arrives shell-quoted (var=#true arg); eval expands it
+  # into array elements.
+  local -n extra_tokens_out="${1}"
+  eval "extra_tokens_out+=(${usage_args:-})"
+  return 0
+}
+
+#######################################
+# Assembles argument vector and executes cargo nextest run.
+# Globals:
+#   None
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   Nextest run results to STDOUT/STDERR.
+# Returns:
+#   Status of cargo nextest.
+#######################################
+main() {
+  # shellcheck disable=SC2034  # populated via namerefs
+  local -a args=()
+  resolve_package_feature_args args
+  resolve_module_filter args
+  parse_passthrough_tokens args
+
+  cargo nextest run "${args[@]}"
+}
+
+main "$@"

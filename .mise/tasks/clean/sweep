@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+#MISE description="Reclaim Cargo target space: prune stale incremental sessions (default) or `cargo-sweep` by age/size"
+#MISE alias="sweep"
+#MISE extends="gate:never-skip"
+#USAGE flag "--max-gib <gib>" default="10" {
+#USAGE   help "Incremental-prune threshold: only prune when target exceeds this size in GiB"
+#USAGE   long_help """
+#USAGE   Incremental prune threshold: only prunes stale `target/debug/incremental/` sessions when `target/` exceeds this size in GiB (default: 10).
+#USAGE   """
+#USAGE }
+#USAGE flag "--days <days>" {
+#USAGE   help "cargo-sweep mode: remove target artifacts older than DAYS"
+#USAGE   long_help """
+#USAGE   cargo-sweep mode: invokes `cargo-sweep` to remove compilation artifacts older than the specified day count.
+#USAGE   """
+#USAGE }
+#USAGE flag "--max-size <size>" {
+#USAGE   help "cargo-sweep mode: shrink target below SIZE (e.g. 10GB)"
+#USAGE   long_help """
+#USAGE   cargo-sweep mode: invokes `cargo-sweep` to shrink `target/` until it fits below `SIZE` (e.g. `10GB` or `500MB`).
+#USAGE   """
+#USAGE }
+#USAGE flag "--dry-run" {
+#USAGE   help "Show what would be removed without removing it"
+#USAGE   long_help """
+#USAGE   Preview mode: prints what incremental sessions or artifacts would be deleted without modifying the filesystem.
+#USAGE   """
+#USAGE }
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+# shellcheck source=/dev/null
+set -euo pipefail
+
+source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
+# Size gate and prune both derive from TARGET_DIR (always the same tree).
+readonly TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+readonly INCREMENTAL_DIR="${TARGET_DIR}/debug/incremental"
+
+#######################################
+# Validates --max-gib threshold format.
+# Globals:
+#   usage_max_gib
+# Arguments:
+#   None
+# Outputs:
+#   Error to STDERR on invalid input.
+# Returns:
+#   0 on success; exits 2 on error.
+#######################################
+validate_sweep_inputs() {
+  : "${usage_max_gib?}"
+  require_nonneg_int sweep --max-gib "${usage_max_gib}"
+}
+
+#######################################
+# Runs cargo-sweep utility for time or size pruning.
+# Globals:
+#   usage_dry_run
+#   usage_days
+#   usage_max_size
+# Arguments:
+#   None
+# Outputs:
+#   cargo sweep output to STDOUT/STDERR.
+# Returns:
+#   Status of cargo sweep command.
+#######################################
+# An explicit `--days`/`--max-size` request runs `cargo-sweep` directly and
+# bypasses the `--max-gib` gate.
+run_cargo_sweep() {
+  declare -a args=()
+  [[ "${usage_dry_run:-false}" == "true" ]] && args+=(--dry-run)
+  [[ -n "${usage_days:-}" ]] && args+=(--time "${usage_days}")
+  [[ -n "${usage_max_size:-}" ]] && args+=(--maxsize "${usage_max_size}")
+  cargo sweep "${args[@]}"
+}
+
+#######################################
+# Scans directory for Cargo incremental sessions, partitions into newest vs
+# stale sessions by mtime.
+# Globals:
+#   None
+# Arguments:
+#   incremental_dir: Directory path containing incremental session directories.
+#   stale_out: Nameref to array where stale directory paths will be stored.
+# Outputs:
+#   None
+# Returns:
+#   Count of stale sessions found.
+#######################################
+inspect_incremental_sessions() {
+  local incremental_dir="${1}"
+  local -n stale_out="${2}"
+  local dir newest=""
+
+  stale_out=()
+  for dir in "${incremental_dir}"/*/; do
+    [[ -d "${dir}" ]] || continue
+    # `-nt` sees directory mtimes, which update on direct-child create/delete;
+    # equal mtimes keep the lexicographically first.
+    if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
+      if [[ -n "${newest}" ]]; then
+        stale_out+=("${newest}")
+      fi
+      newest="${dir}"
+    else
+      stale_out+=("${dir}")
+    fi
+  done
+
+  return "${#stale_out[@]}"
+}
+
+#######################################
+# Prunes stale session directories or previews them.
+# Globals:
+#   None
+# Arguments:
+#   stale_dirs_ref: Nameref to array of directory paths to evict.
+#   dry_run: String "true" or "false".
+# Outputs:
+#   Log of deleted directories or preview count to STDOUT.
+# Returns:
+#   0 on success.
+#######################################
+evict_incremental_sessions() {
+  local -n stale_dirs_ref="${1}"
+  local dry_run="${2}"
+
+  if [[ "${#stale_dirs_ref[@]}" -eq 0 ]]; then
+    printf 'sweep: no stale incremental sessions found\n'
+    return 0
+  fi
+
+  if [[ "${dry_run}" == "true" ]]; then
+    printf 'sweep: would remove %d stale incremental session(s):\n' \
+      "${#stale_dirs_ref[@]}"
+    return 0
+  fi
+
+  rm -rf "${stale_dirs_ref[@]}"
+  printf 'sweep: removed stale incremental sessions\n'
+}
+
+#######################################
+# Evaluates target size gate and prunes stale incremental compilation sessions.
+# Globals:
+#   TARGET_DIR
+#   INCREMENTAL_DIR
+#   usage_max_gib
+#   usage_dry_run
+# Arguments:
+#   None
+# Outputs:
+#   Size diagnostics and prune logs to STDOUT.
+# Returns:
+#   0 on success.
+#######################################
+prune_incremental_target() {
+  if ! eval_dir_size_gate "sweep" "${TARGET_DIR}" "${usage_max_gib}"; then
+    return 0
+  fi
+
+  # shellcheck disable=SC2034  # populated in inspect_incremental_sessions
+  local -a stale=()
+  inspect_incremental_sessions "${INCREMENTAL_DIR}" stale || true
+  evict_incremental_sessions stale "${usage_dry_run:-false}"
+}
+
+#######################################
+# Main entry point orchestrating cargo sweep vs incremental session prune.
+# Globals:
+#   usage_days
+#   usage_max_size
+# Arguments:
+#   CLI arguments vector.
+# Outputs:
+#   Status lines.
+# Returns:
+#   Exit status of executed action.
+#######################################
+main() {
+  validate_sweep_inputs
+  if [[ -n "${usage_days:-}" || -n "${usage_max_size:-}" ]]; then
+    run_cargo_sweep
+    return 0
+  fi
+
+  prune_incremental_target
+}
+
+main "$@"

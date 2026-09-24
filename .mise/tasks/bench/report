@@ -7,8 +7,8 @@
 #USAGE   env "CRITERION_DIR"
 #USAGE }
 
-# Prints which benchmark groups have results on disk. Wording describes what is
-# on disk, never what the run just did: runs after every `bench` mode, including
+# Prints benchmark groups having results on disk. Wording describes what is
+# on disk, never what the run did: runs after every `bench` mode, including
 # failures.
 
 # shellcheck disable=SC2154  # usage_* are injected by mise
@@ -25,8 +25,7 @@ has_criterion_output() {
 #
 # Handles flat (`<group>/<size>/new/`) and nested
 # (`<group>/<function>/<size>/new/`) layouts, summed together so multi-function
-# groups are not omitted from the
-# summary.
+# groups are not omitted from the summary.
 #
 # Arguments:
 #   `group_dir`: path to the group directory
@@ -40,9 +39,9 @@ count_sizes_with_results() {
 
   for child_dir in "${group_dir}"*/; do
     [[ -d "${child_dir}" ]] || continue
-    # `estimates.json` is criterion's private, version-coupled layout: `grep` this
-    # file on criterion bumps. Sanctioned interfaces are `csv_output` (`raw.csv`)
-    # and `--message-format=json`.
+    # `estimates.json` is criterion's private, version-coupled layout: `grep`
+    # this file on criterion bumps. Sanctioned interfaces are `csv_output`
+    # (`raw.csv`) and `--message-format=json`.
     if [[ -f "${child_dir}/new/estimates.json" ]]; then
       (( count += 1 ))
       continue
@@ -97,8 +96,8 @@ print_groups() {
     group_name="$(basename "${group_dir}")"
 
     if [[ "${has_groups}" == "false" ]]; then
-      # "on disk", not "measured": `depends_post` also runs after `--mode test`,
-      # which measures nothing.
+      # "on disk", not "measured": `depends_post` also runs after
+      # `--mode test`, which measures nothing.
       echo "### Groups with results on disk:"
       has_groups=true
     fi
@@ -125,9 +124,8 @@ print_groups() {
 # Outputs:
 #   Writes `YYYY-MM-DD HH:MM` to `stdout`
 # Returns:
-#   `0` if mtime printed, `1` otherwise; safe under `set -e` because callers use it in
-#   an if condition
-#######################################
+#   `0` if mtime printed, `1` otherwise; safe under `set -e` because
+#   callers check in an if condition.
 report_generated_at() {
   local report_html="${CRITERION_DIR}/report/index.html"
 
@@ -140,8 +138,8 @@ report_generated_at() {
 #######################################
 # Print the summary footer with usage hints.
 #
-# Cite `report/index.html` only when it exists: criterion `0.8.2` joins exactly this
-# path under each benchmark. Some writeups still show the plural
+# Cite `report/index.html` only when it exists: criterion `0.8.2` joins exactly
+# this path under each benchmark. Some writeups still show the plural
 # `target/criterion/reports/index.html`, which is stale for `0.8.x`; do not
 # "correct" this footer to match them.
 #
@@ -162,7 +160,8 @@ print_footer() {
   echo "Run \`critcmp <baseline> new\`" \
     "(or \`mise run bench --compare <baseline>\`) for comparison."
   echo "Run \`mise run bench:model\` for performance summary."
-  echo "Run \`mise run bench:model -- --plot\` for fitted curves in the terminal."
+  echo "Run \`mise run bench:model -- --plot\` for fitted curves in the" \
+    "terminal."
 }
 
 #######################################
