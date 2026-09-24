@@ -191,6 +191,12 @@ impl InlinkMap {
         self.0.len()
     }
 
+    /// Removes and returns the inbound links for `target`, if recorded.
+    #[inline]
+    pub(super) fn remove(&mut self, target: &Path) -> Option<Box<[PathBuf]>> {
+        self.0.remove(target)
+    }
+
     /// Reconstructs trusted persisted inlink storage.
     #[inline]
     #[must_use]
