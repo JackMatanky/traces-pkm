@@ -30,7 +30,7 @@ cargo-deny = "latest"
 "cargo:cargo-mutants" = "latest"
 
 # -- Benchmarking --
-# critcmp stays in top-level [tools], not a task-local tools entry: task-local
+# `critcmp` stays in top-level [tools], not a task-local tools entry: task-local
 # tools are only on PATH while the declaring task runs, but the bench --compare
 # tab-completion runs its lookup at completion time, outside any task, and that
 # lookup searches PATH only with no filesystem fallback. Revisit if completions
@@ -89,7 +89,7 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # a rerun's logs match the original's, which cannot hold.
 # coverage/crap declare explicit outputs (freshness well defined, not
 # gates); build/release/doc are build-if-stale by design; audit opts out
-# because cargo deny reads deny.toml, which its sources do not list.
+# because `cargo deny` reads deny.toml, which its sources do not list.
 # Remote cache: unmade decision, not a won't-do; task.cache.remote_url and
 # remote_namespace are unconfigured, so CI has no remote cache to publish
 # to. Revisit when a remote cache service exists.
@@ -177,7 +177,7 @@ if [[ "${clean_target}" == "true" ]]; then
       exit 2
     fi
 
-    # cargo-sweep flags live in one place: the sweep task. The --if-over-gib
+    # `cargo-sweep` flags live in one place: the sweep task. The --if-over-gib
     # gate above (when given) has already run, so delegating here does not
     # change when the gate fires.
     declare -a sweep_task=(mise run sweep)
@@ -226,7 +226,7 @@ flag "--dry-run" help="Show what would be removed without removing it"
 run = '''
 #!/bin/bash
 # Prune stale Cargo incremental sessions when the target exceeds --max-gib, or
-# run cargo-sweep directly for --days/--max-size.
+# run `cargo-sweep` directly for --days/--max-size.
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
@@ -241,7 +241,7 @@ readonly TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 readonly INCREMENTAL_DIR="${TARGET_DIR}/debug/incremental"
 readonly LIMIT_KIB="$(gib_to_kib "${usage_max_gib}")"
 
-# An explicit --days/--max-size request runs cargo-sweep directly and bypasses
+# An explicit --days/--max-size request runs `cargo-sweep` directly and bypasses
 # the --max-gib gate.
 run_cargo_sweep() {
   declare -a args=()
@@ -393,7 +393,7 @@ flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" {
 '''
 run = '''
 #!/bin/bash
-# Run clippy across workspace, all targets, and all features; by default also
+# Run `clippy` across workspace, all targets, and all features; by default also
 # auto-fix a known lint list and deny warnings.
 set -euo pipefail
 
@@ -485,12 +485,12 @@ arg "[args]" var=#true {
     mise run test --test init_cli       # by binary
     mise run test --lib                 # by target
     mise run test -E 'test(/^index::/)' # nextest expression
-  """
+"""
 }
 '''
 run = '''
 #!/bin/bash
-# Run nextest with feature/module scoping, then doc-tests unless --no-docs.
+# Run `nextest` with feature/module scoping, then doc-tests unless --no-docs.
 # usage_args is shell-quoted (var=#true arg); eval parses it into nextest_extra.
 # shellcheck disable=SC2154
 set -euo pipefail
@@ -595,13 +595,13 @@ arg "[args]" var=#true {
 
     mise run mutants -- --list
     mise run mutants -m index -- --list
-  """
+"""
 }
 '''
 run = '''
 #!/bin/bash
-# Build the cargo-mutants flag list from the usage flags and passthrough args,
-# then run cargo mutants.
+# Build the `cargo-mutants` flag list from the usage flags and passthrough args,
+# then run `cargo mutants`.
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 

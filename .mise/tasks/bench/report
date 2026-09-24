@@ -39,7 +39,7 @@ count_sizes_with_results() {
 
   for child_dir in "${group_dir}"*/; do
     [[ -d "${child_dir}" ]] || continue
-    # estimates.json is criterion's private, version-coupled layout: grep this
+    # estimates.json is criterion's private, version-coupled layout: `grep` this
     # file on criterion bumps. Sanctioned interfaces are csv_output (raw.csv)
     # and --message-format=json.
     if [[ -f "${child_dir}/new/estimates.json" ]]; then
@@ -131,8 +131,8 @@ report_generated_at() {
   local report_html="${CRITERION_DIR}/report/index.html"
 
   [[ -f "${report_html}" ]] || return 1
-  # date -r FILE: portable across BSD date (macOS) and GNU date
-  # (-r/--reference=FILE); no stat(1) flag is common to both.
+  # `date -r FILE`: portable across BSD `date` (macOS) and GNU `date`
+  # (-r/--reference=FILE); no `stat(1)` flag is common to both.
   date -r "${report_html}" '+%Y-%m-%d %H:%M' 2>/dev/null || return 1
 }
 

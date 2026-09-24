@@ -3,7 +3,7 @@
 # size flag, measure a directory in KiB, and convert GiB to KiB.
 #
 # Not a task: mise only discovers tasks under .mise/tasks/. Task run bodies
-# source this file via MISE_PROJECT_ROOT so the path does not depend on the
+# `source` this file via MISE_PROJECT_ROOT so the path does not depend on the
 # current directory.
 
 #######################################
@@ -42,7 +42,7 @@ require_nonneg_int() {
 # Outputs:
 #   Writes dir's disk usage in KiB (1024-byte blocks) to stdout.
 # Returns:
-#   Status of the du/cut pipeline: if dir is missing, stdout is empty and the
+#   Status of the `du`/`cut` pipeline: if dir is missing, stdout is empty and the
 #   status is nonzero only when the caller set pipefail.
 #######################################
 dir_size_kib() {
