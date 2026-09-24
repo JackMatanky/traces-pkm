@@ -121,6 +121,15 @@ impl DirNode {
     pub(crate) fn file_type(&self) -> fs::FileType {
         self.0.file_type()
     }
+
+    /// Returns the node's filesystem metadata without following symlinks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if metadata cannot be read.
+    pub(crate) fn metadata(&self) -> io::Result<fs::Metadata> {
+        self.0.metadata().map_err(io::Error::from)
+    }
 }
 
 /// Type-erased pruner: the caller's node predicate wrapped so

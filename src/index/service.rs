@@ -356,18 +356,21 @@ impl IndexerService {
 
 /// Builds `node`'s [`FileMeta`] from metadata relative to `root`.
 fn scan_file_metadata(node: DirNode, root: &Path) -> IndexResult<FileMeta> {
-    let path = node.path().to_path_buf();
-    let relative = RelativePath::derive(root, &path)?;
-    let inspect = |source| IndexError::Inspect {
-        path: path.clone(),
+    // `node.path()` borrows from `node`, so no owned path is allocated on the
+    // success path: the clone inside the error constructors only runs when a
+    // failure actually occurs.
+    let path = node.path();
+    let relative = RelativePath::derive(root, path)?;
+    let metadata = node.metadata().map_err(|source| IndexError::Inspect {
+        path: path.to_path_buf(),
         source,
-    };
-    let metadata = node
-        .into_inner()
-        .metadata()
-        .map_err(std::io::Error::from)
-        .map_err(inspect)?;
-    FileMeta::from_metadata(relative, &metadata).map_err(inspect)
+    })?;
+    FileMeta::from_metadata(relative, &metadata).map_err(|source| {
+        IndexError::Inspect {
+            path: path.to_path_buf(),
+            source,
+        }
+    })
 }
 
 #[cfg(test)]
