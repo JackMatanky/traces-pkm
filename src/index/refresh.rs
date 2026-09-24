@@ -352,15 +352,23 @@ impl RefreshPlan {
                     inlink_delta,
                 )
             } else {
-                let notes = merge_refreshed_notes(
-                    &self.store,
-                    &self.delta,
-                    modified_notes,
-                )?;
-                let links = InlinkMap::new(
-                    notes.as_slice(),
-                    self.current_files.as_slice(),
+                let (notes_res, resolver) = rayon::join(
+                    || {
+                        merge_refreshed_notes(
+                            &self.store,
+                            &self.delta,
+                            modified_notes,
+                        )
+                    },
+                    || {
+                        inlinks::LinkResolver::new(
+                            self.current_files.as_slice(),
+                        )
+                    },
                 );
+                let notes = notes_res?;
+                let links =
+                    InlinkMap::with_resolver(notes.as_slice(), &resolver);
                 let inlink_delta = InlinkDelta::compute(&links, &persisted);
                 (
                     InlinkReconciliation {
