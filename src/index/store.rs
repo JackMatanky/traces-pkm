@@ -660,8 +660,12 @@ impl IndexStore {
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         self.delete_tables(&txn)?;
-        self.write_all_parallel(&txn, entries)?;
-        self.write_axes_parallel(&txn, entries, dimensions)?;
+        let (all_res, axes_res) = rayon::join(
+            || self.write_all_parallel(&txn, entries),
+            || self.write_axes_parallel(&txn, entries, dimensions),
+        );
+        all_res?;
+        axes_res?;
         self.commit(txn)?;
         Ok(())
     }
@@ -1121,7 +1125,7 @@ impl IndexStore {
         entries: &[FileEntry],
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        dimensions.iter().try_for_each(|dimension| {
+        dimensions.par_iter().try_for_each(|dimension| {
             let (forward, reverse) = rayon::join(
                 || self.write_index_by_value(txn, dimension, entries),
                 || self.write_index_by_path(txn, dimension, entries),
@@ -1504,6 +1508,10 @@ impl IndexDimensions {
 
     fn iter(&self) -> impl Iterator<Item = &IndexDimension> {
         self.dimensions.iter()
+    }
+
+    fn par_iter(&self) -> impl ParallelIterator<Item = &IndexDimension> {
+        self.dimensions.par_iter()
     }
 }
 
