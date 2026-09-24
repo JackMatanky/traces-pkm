@@ -74,7 +74,10 @@ impl RefreshReport {
 /// Refresh state produced by one scan, before optional persistence.
 pub(super) enum RefreshState {
     /// No file metadata changed; the opened store remains current.
-    Fresh(IndexStore),
+    Fresh {
+        store: IndexStore,
+        files: SortedByPath<FileMeta>,
+    },
     /// File metadata changed and is reconciled but not yet persisted.
     Stale(Box<PendingApply>),
 }
@@ -306,7 +309,10 @@ impl RefreshPlan {
     /// Consumes the unchanged plan into [`RefreshState::Fresh`].
     #[inline]
     pub(super) fn into_fresh(self) -> RefreshState {
-        RefreshState::Fresh(self.store)
+        RefreshState::Fresh {
+            store: self.store,
+            files: self.persisted_files,
+        }
     }
 
     /// Reconciles reparsed notes with persisted state.

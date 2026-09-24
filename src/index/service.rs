@@ -120,15 +120,24 @@ impl IndexerService {
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.prepare_pass()? {
-            RefreshState::Fresh(store) => Self::assemble_unchanged(&store),
+            RefreshState::Fresh {
+                store,
+                files,
+            } => Self::assemble_unchanged(&store, files),
             RefreshState::Stale(pending) => self.apply_reconciled(*pending),
         }
     }
 
     fn assemble_unchanged(
         store: &IndexStore,
+        files: SortedByPath<FileMeta>,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
-        let (files, notes, links) = store.read_all()?;
+        let (notes_res, links_res) = rayon::join(
+            || store.read_all_notes(),
+            || store.read_all_links(&files),
+        );
+        let notes = notes_res?;
+        let links = links_res?;
         Ok((
             WorkspaceIndex::assemble(files, notes, links),
             RefreshReport::default(),
@@ -210,7 +219,10 @@ impl IndexerService {
     #[inline]
     pub(crate) fn refresh_store(&self) -> IndexResult<IndexStore> {
         match self.prepare_pass()? {
-            RefreshState::Fresh(store) => Ok(store),
+            RefreshState::Fresh {
+                store,
+                ..
+            } => Ok(store),
             RefreshState::Stale(pending) => {
                 let report = pending.report();
                 let dimensions =
