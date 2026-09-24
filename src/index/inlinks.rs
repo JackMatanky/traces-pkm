@@ -67,16 +67,22 @@ impl InlinkMap {
     #[must_use]
     pub fn new(notes: &[Note], files: &[FileMeta]) -> Self {
         let resolver = LinkResolver::new(files);
-        let mut flat_edges: Vec<(Target<'_>, Source<'_>)> = notes
-            .par_iter()
-            .flat_map_iter(|source| {
+        Self::with_resolver(notes, &resolver)
+    }
+
+    #[must_use]
+    pub(super) fn with_resolver(
+        notes: &[Note],
+        resolver: &LinkResolver<'_>,
+    ) -> Self {
+        let mut flat_edges: Vec<(Target<'_>, Source<'_>)> =
+            Vec::from_par_iter(notes.par_iter().flat_map_iter(|source| {
                 let src = Source(source.path());
                 resolver
                     .resolve_note(source)
                     .into_iter()
                     .map(move |target| (target, src))
-            })
-            .collect();
+            }));
 
         flat_edges.par_sort_unstable();
         flat_edges.dedup();
@@ -261,14 +267,14 @@ pub(super) fn resolve_edges_for(
 }
 
 /// Path and basename index used during link resolution.
-struct LinkResolver<'a> {
+pub(super) struct LinkResolver<'a> {
     files: &'a [FileMeta],
     basename_index: FxHashMap<BaseNameRef<'a>, BaseNameIndex<'a>>,
 }
 
 impl<'a> LinkResolver<'a> {
     /// Indexes file basenames in one `O(n)` pass.
-    fn new(files: &'a [FileMeta]) -> Self {
+    pub(super) fn new(files: &'a [FileMeta]) -> Self {
         let mut by_basename: FxHashMap<BaseNameRef<'a>, Vec<&'a Path>> =
             FxHashMap::with_capacity_and_hasher(files.len(), FxBuildHasher);
         for file in files {

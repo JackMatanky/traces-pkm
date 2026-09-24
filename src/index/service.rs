@@ -13,7 +13,7 @@ use rayon::prelude::*;
 
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
-    inlinks::InlinkMap,
+    inlinks::{InlinkMap, LinkResolver},
     refresh::{PendingApply, RefreshPlan, RefreshReport, RefreshState},
     sort::SortedByPath,
     store::{IndexDimensions, IndexStore, PersistRequest},
@@ -72,9 +72,12 @@ impl IndexerService {
     #[inline]
     pub fn build(&self) -> IndexResult<WorkspaceIndex> {
         let files = SortedByPath::assumed_sorted(Self::scan(&self.root)?);
-        let notes =
-            SortedByPath::assumed_sorted(self.parse_notes(files.as_slice())?);
-        let inlinks = InlinkMap::new(notes.as_slice(), files.as_slice());
+        let (notes_res, resolver) = rayon::join(
+            || self.parse_notes(files.as_slice()),
+            || LinkResolver::new(files.as_slice()),
+        );
+        let notes = SortedByPath::assumed_sorted(notes_res?);
+        let inlinks = InlinkMap::with_resolver(notes.as_slice(), &resolver);
         Ok(WorkspaceIndex::assemble(files, notes, inlinks))
     }
 
@@ -171,8 +174,13 @@ impl IndexerService {
         if plan.is_fresh() {
             return Ok(plan.into_fresh());
         }
-        let modified_notes = self.parse_notes(plan.upserted_files())?;
-        let pending = plan.reconcile(modified_notes)?;
+        let (notes_res, links_res) = rayon::join(
+            || self.parse_notes(plan.upserted_files()),
+            || plan.store().read_all_links(plan.persisted_files()),
+        );
+        let modified_notes = notes_res?;
+        let persisted_links = links_res?;
+        let pending = plan.reconcile(modified_notes, persisted_links)?;
         Ok(RefreshState::Stale(Box::new(pending)))
     }
 

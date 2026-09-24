@@ -306,6 +306,16 @@ impl RefreshPlan {
         self.delta.upserted()
     }
 
+    #[inline]
+    pub(super) fn store(&self) -> &IndexStore {
+        &self.store
+    }
+
+    #[inline]
+    pub(super) fn persisted_files(&self) -> &SortedByPath<FileMeta> {
+        &self.persisted_files
+    }
+
     /// Consumes the unchanged plan into [`RefreshState::Fresh`].
     #[inline]
     pub(super) fn into_fresh(self) -> RefreshState {
@@ -324,8 +334,8 @@ impl RefreshPlan {
     pub(super) fn reconcile(
         self,
         modified_notes: Vec<Note>,
+        persisted: InlinkMap,
     ) -> IndexResult<PendingApply> {
-        let persisted = self.store.read_all_links(&self.persisted_files)?;
         let (inlinks, inlink_delta) =
             if Self::is_paths_unchanged(&self.delta, &self.persisted_files) {
                 let links = Self::patch_links(
