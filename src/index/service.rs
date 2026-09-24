@@ -19,7 +19,7 @@ use super::{
     store::{IndexDimensions, IndexStore, PersistRequest},
 };
 use crate::{
-    Config, DirTree, Note, TaskConfig,
+    Config, DirNode, DirTree, Note, TaskConfig,
     config::FrontmatterConfig,
     file::{FileFormat, FileMeta},
     note::{MarkdownParserInput, parse_markdown},
@@ -333,7 +333,7 @@ impl IndexerService {
     ///   project-relative path.
     pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileMeta>> {
         let index_db = root.join(INDEX_FILE);
-        let paths = DirTree::descendants(root)
+        let entries = DirTree::descendants(root)
             .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
             .filter_map(|node| {
                 let node = match node {
@@ -342,32 +342,32 @@ impl IndexerService {
                 };
                 let path = node.path();
                 (node.file_type().is_file() && path != index_db)
-                    .then(|| Ok(path.to_path_buf()))
+                    .then_some(Ok(node))
             })
-            .collect::<IndexResult<Vec<PathBuf>>>()?;
-        let mut files = paths
+            .collect::<IndexResult<Vec<DirNode>>>()?;
+        let mut files = entries
             .into_par_iter()
-            .map(|path| scan_file_metadata(&path, root))
+            .map(|node| scan_file_metadata(node, root))
             .collect::<IndexResult<Vec<FileMeta>>>()?;
         files.par_sort_unstable_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
 
-/// Builds `path`'s [`FileMeta`] from metadata relative to `root`.
-fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileMeta> {
-    let relative = RelativePath::derive(root, path)?;
-    let metadata =
-        std::fs::metadata(path).map_err(|source| IndexError::Inspect {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    FileMeta::from_metadata(relative, &metadata).map_err(|source| {
-        IndexError::Inspect {
-            path: path.to_path_buf(),
-            source,
-        }
-    })
+/// Builds `node`'s [`FileMeta`] from metadata relative to `root`.
+fn scan_file_metadata(node: DirNode, root: &Path) -> IndexResult<FileMeta> {
+    let path = node.path().to_path_buf();
+    let relative = RelativePath::derive(root, &path)?;
+    let inspect = |source| IndexError::Inspect {
+        path: path.clone(),
+        source,
+    };
+    let metadata = node
+        .into_inner()
+        .metadata()
+        .map_err(std::io::Error::from)
+        .map_err(inspect)?;
+    FileMeta::from_metadata(relative, &metadata).map_err(inspect)
 }
 
 #[cfg(test)]

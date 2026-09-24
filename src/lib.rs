@@ -97,7 +97,7 @@ pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,
     TerminalDialogProvider,
 };
-pub(crate) use dirtree::{DirTree, DirTreeError};
+pub(crate) use dirtree::{DirNode, DirTree, DirTreeError};
 pub(crate) use duration::{DurationSeconds, DurationUnit, DurationValue};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
