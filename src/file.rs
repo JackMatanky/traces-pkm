@@ -40,9 +40,6 @@ use crate::path::{FolderRef, RelativePath};
 pub struct FileMeta {
     #[serde(with = "crate::path::codec")]
     path: PathBuf,
-    name: BaseName,
-    #[serde(with = "crate::path::codec")]
-    folder: PathBuf,
     format: FileFormat,
     created_at: Option<SystemTime>,
     modified_at: SystemTime,
@@ -63,20 +60,13 @@ impl FileMeta {
         relative: RelativePath,
         metadata: &fs::Metadata,
     ) -> Result<Self, std::io::Error> {
-        let relative = relative.into_path_buf();
+        let path = relative.into_path_buf();
         let modified_at = metadata.modified()?;
         let created_at = metadata.created().ok();
-        let file_name =
-            FileName::try_from(relative.as_path()).unwrap_or_default();
-        let name = BaseName::from(&file_name);
-        let format = FileFormat::from_name(&file_name);
-        let folder =
-            relative.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        let format = FileFormat::from_path(&path);
 
         Ok(Self {
-            path: relative,
-            name,
-            folder,
+            path,
             format,
             created_at,
             modified_at,
@@ -92,15 +82,8 @@ impl FileMeta {
     #[inline]
     #[must_use]
     pub fn for_test<P: Into<PathBuf>>(path: P, format: FileFormat) -> Self {
-        let path = path.into();
-        let folder =
-            path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
-        let file_name = FileName::try_from(path.as_path()).unwrap_or_default();
-        let name = BaseName::from(&file_name);
         Self {
-            path,
-            name,
-            folder,
+            path: path.into(),
             format,
             created_at: None,
             modified_at: SystemTime::now(),
@@ -141,8 +124,8 @@ impl FileMeta {
     /// Returns the file's name, without its extension.
     #[inline]
     #[must_use]
-    pub(crate) const fn name(&self) -> &BaseName {
-        &self.name
+    pub(crate) fn name(&self) -> BaseNameRef<'_> {
+        BaseNameRef::from_path(&self.path).unwrap_or(BaseNameRef::empty())
     }
 
     /// Returns the file's parent directory, relative to the project root.
@@ -273,10 +256,17 @@ impl<'a> BaseNameRef<'a> {
         path.file_stem().and_then(|stem| stem.to_str()).map(Self)
     }
 
+    /// Returns an empty stem.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn empty() -> Self {
+        Self("")
+    }
+
     /// Returns this stem as a string slice.
     #[inline]
     #[must_use]
-    pub(crate) const fn as_str(&self) -> &str {
+    pub(crate) const fn as_str(self) -> &'a str {
         self.0
     }
 }
@@ -300,6 +290,19 @@ pub enum FileFormat {
 }
 
 impl FileFormat {
+    /// Classifies `.md` and `.markdown` file paths as [`Self::Note`].
+    pub(crate) fn from_path(path: &Path) -> Self {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext)
+                if ext.eq_ignore_ascii_case("md")
+                    || ext.eq_ignore_ascii_case("markdown") =>
+            {
+                Self::Note
+            }
+            _ => Self::Other,
+        }
+    }
+
     /// Classifies `.md` and `.markdown` file names as [`Self::Note`].
     ///
     /// Extension matching is ASCII case-insensitive. Every other extension, or
@@ -339,11 +342,6 @@ mod tests {
     ) -> FileMeta {
         FileMeta {
             path: PathBuf::from("note.md"),
-            name: BaseName::from(
-                &FileName::try_from(Path::new("note.md"))
-                    .expect("valid file name"),
-            ),
-            folder: PathBuf::new(),
             format: FileFormat::Note,
             created_at,
             modified_at,
