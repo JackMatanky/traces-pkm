@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
     inlinks::InlinkMap,
-    refresh::{PendingApply, RefreshPass, RefreshPlan, RefreshReport},
+    refresh::{PendingApply, RefreshPlan, RefreshReport, RefreshState},
     sort::SortedByPath,
     store::{IndexAxes, IndexStore, PersistRequest},
 };
@@ -81,7 +81,7 @@ impl IndexerService {
     /// Refreshes the persisted index and returns a full in-memory
     /// [`WorkspaceIndex`].
     ///
-    /// Unchanged Markdown notes reuse persisted parses; changed notes are
+    /// Fresh Markdown notes reuse persisted parses; changed notes are
     /// parsed from disk; deleted files vanish with the fresh scan. Persist
     /// failures are logged and the refreshed in-memory index is still returned.
     ///
@@ -120,8 +120,8 @@ impl IndexerService {
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.plan_pass()? {
-            RefreshPass::Unchanged(store) => Self::assemble_unchanged(&store),
-            RefreshPass::Reconciled(pending) => self.apply_reconciled(*pending),
+            RefreshState::Fresh(store) => Self::assemble_unchanged(&store),
+            RefreshState::Stale(pending) => self.apply_reconciled(*pending),
         }
     }
 
@@ -157,14 +157,14 @@ impl IndexerService {
         Ok((index, report))
     }
 
-    fn plan_pass(&self) -> IndexResult<RefreshPass> {
+    fn plan_pass(&self) -> IndexResult<RefreshState> {
         let plan = RefreshPlan::collect(&self.root)?;
         if plan.is_empty() {
-            return Ok(plan.into_unchanged());
+            return Ok(plan.into_fresh());
         }
         let modified_notes = self.parse_notes(plan.upserted_files())?;
         let pending = plan.reconcile(modified_notes)?;
-        Ok(RefreshPass::Reconciled(Box::new(pending)))
+        Ok(RefreshState::Stale(Box::new(pending)))
     }
 
     /// Rebuilds and persists the index from scratch, returning it.
@@ -210,8 +210,8 @@ impl IndexerService {
     #[inline]
     pub(crate) fn current_store(&self) -> IndexResult<IndexStore> {
         match self.plan_pass()? {
-            RefreshPass::Unchanged(store) => Ok(store),
-            RefreshPass::Reconciled(pending) => {
+            RefreshState::Fresh(store) => Ok(store),
+            RefreshState::Stale(pending) => {
                 let report = pending.report();
                 let axes = IndexAxes::for_class_field(&self.class_field);
                 match (*pending).apply(axes) {

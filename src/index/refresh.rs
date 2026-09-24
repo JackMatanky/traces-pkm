@@ -1,9 +1,9 @@
 //! Incremental index refresh planning and typed update application.
 //!
-//! [`RefreshPass`] models the refresh lifecycle: unchanged scans can
-//! materialize directly from the store, while reconciled scans must pass
+//! [`RefreshState`] models the refresh lifecycle: fresh scans can
+//! materialize directly from the store, while stale scans must pass
 //! through [`PendingApply`] before callers can receive a persisted store. A
-//! [`PersistFailed`] keeps the pending pass so [`IndexerService::refresh`] can
+//! [`PersistFailed`] keeps the pending state so [`IndexerService::refresh`] can
 //! still materialize a fail-open in-memory index from the same reconciliation.
 //!
 //! [`IndexerService::refresh`]: super::service::IndexerService::refresh
@@ -71,12 +71,12 @@ impl RefreshReport {
     }
 }
 
-/// Result of one scanned refresh pass before optional persistence.
-pub(super) enum RefreshPass {
+/// Refresh state produced by one scan, before optional persistence.
+pub(super) enum RefreshState {
     /// No file metadata changed; the opened store remains current.
-    Unchanged(IndexStore),
+    Fresh(IndexStore),
     /// File metadata changed and is reconciled but not yet persisted.
-    Reconciled(Box<PendingApply>),
+    Stale(Box<PendingApply>),
 }
 
 /// Reconciled refresh data waiting for a store write.
@@ -92,7 +92,7 @@ impl PendingApply {
         self.update.report()
     }
 
-    /// Persists this pass through [`IndexStore::persist`].
+    /// Persists this state through [`IndexStore::persist`].
     ///
     /// The update remains owned by the returned state in both success and error
     /// cases, so a failed apply can still materialize an in-memory index from
@@ -121,7 +121,7 @@ impl PendingApply {
         }
     }
 
-    /// Materializes this pass into an in-memory [`WorkspaceIndex`].
+    /// Materializes this state into an in-memory [`WorkspaceIndex`].
     ///
     /// # Errors
     ///
@@ -261,8 +261,8 @@ impl RefreshPlan {
     /// Opens [`IndexStore`], scans the filesystem, and reads persisted files.
     ///
     /// The filesystem walk runs concurrently with [`IndexStore::open`] and the
-    /// store read. This pass does not decode link rows; reconciliation or final
-    /// index materialization loads them only when needed.
+    /// store read. This state does not decode link rows; reconciliation or
+    /// final index materialization loads them only when needed.
     ///
     /// # Errors
     ///
@@ -297,16 +297,16 @@ impl RefreshPlan {
         self.delta.is_empty()
     }
 
-    /// Returns the files this pass would upsert.
+    /// Returns the files this state would upsert.
     #[inline]
     pub(super) fn upserted_files(&self) -> &[FileBase] {
         self.delta.upserted()
     }
 
-    /// Consumes the unchanged plan into a refresh pass.
+    /// Consumes the unchanged plan into [`RefreshState::Fresh`].
     #[inline]
-    pub(super) fn into_unchanged(self) -> RefreshPass {
-        RefreshPass::Unchanged(self.store)
+    pub(super) fn into_fresh(self) -> RefreshState {
+        RefreshState::Fresh(self.store)
     }
 
     /// Reconciles reparsed notes with persisted state.
