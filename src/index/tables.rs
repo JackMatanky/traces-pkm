@@ -67,7 +67,7 @@ pub(super) const FILE_CLASSES_BY_PATH: MultimapTableDefinition<
     &'static [u8],
 > = MultimapTableDefinition::new("classes_by_path");
 
-/// One of the seven schema tables: plain row or multimap.
+/// One of the seven schema tables: to-one row or to-many multimap.
 enum TableDef {
     ToOne(TableDefinition<'static, &'static [u8], &'static [u8]>),
     ToMany(MultimapTableDefinition<'static, &'static [u8], &'static [u8]>),
