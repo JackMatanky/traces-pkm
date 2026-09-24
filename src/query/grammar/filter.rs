@@ -494,29 +494,26 @@ mod tests {
         query::{QueryError, *},
     };
 
-    fn outcome_for_files(_temp: &Path, files: &[(&str, &str)]) -> QuerySet {
+    fn rows_for_files(_temp: &Path, files: &[(&str, &str)]) -> QuerySet {
         let index = crate::build_test_index(files);
         QueryService::new("class")
             .run(&index, QueryBuilder::pages(SourceSelector::All))
     }
 
-    fn outcome_for(temp: &Path, content: &str) -> QuerySet {
-        outcome_for_files(temp, &[("note.md", content)])
+    fn rows_for(temp: &Path, content: &str) -> QuerySet {
+        rows_for_files(temp, &[("note.md", content)])
     }
 
-    fn rated_outcome(temp: &Path) -> QuerySet {
-        outcome_for_files(temp, &[
+    fn rated_rows(temp: &Path) -> QuerySet {
+        rows_for_files(temp, &[
             ("low.md", "---\nrating: 3\nstatus: draft\n---"),
             ("high.md", "---\nrating: 7\nstatus: done\n---"),
             ("unrated.md", "---\nstatus: done\n---"),
         ])
     }
 
-    fn names(outcome: &QuerySet) -> Vec<String> {
-        outcome
-            .iter()
-            .map(|row| row.file().name().as_str().to_owned())
-            .collect()
+    fn names(rows: &QuerySet) -> Vec<String> {
+        rows.iter().map(|row| row.file().name().as_str().to_owned()).collect()
     }
 
     mod parse {
@@ -536,10 +533,10 @@ mod tests {
         #[case::function_missing_target("contains(tags)")]
         fn rejects_malformed_expressions(#[case] expr: &str) {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
             assert!(matches!(
-                outcome.filter(expr),
+                rows.filter(expr),
                 Err(QueryError::Builder(QueryBuilderError::Syntax(_)))
             ));
         }
@@ -584,10 +581,10 @@ mod tests {
         #[test]
         fn rejects_malformed_field_path_in_expression() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
             assert_eq!(
-                outcome.filter("file.zzzz == 1"),
+                rows.filter("file.zzzz == 1"),
                 Err(QueryError::Builder(QueryBuilderError::FieldPath(
                     FieldPathError::new("file.zzzz", None)
                 )))
@@ -626,9 +623,9 @@ mod tests {
             #[case] expected: &[&str],
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome.filter(expr).expect("valid filter");
+            let filtered = rows.filter(expr).expect("valid filter");
 
             assert_eq!(names(&filtered), expected);
         }
@@ -636,9 +633,9 @@ mod tests {
         #[test]
         fn missing_field_never_matches_equality_or_ordering() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome.filter("rating > 0").expect("valid filter");
+            let filtered = rows.filter("rating > 0").expect("valid filter");
 
             assert_eq!(names(&filtered), ["high", "low"]);
         }
@@ -646,9 +643,9 @@ mod tests {
         #[test]
         fn missing_field_matches_not_equal() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome.filter("rating != 7").expect("valid filter");
+            let filtered = rows.filter("rating != 7").expect("valid filter");
 
             assert_eq!(names(&filtered), ["low", "unrated"]);
         }
@@ -656,22 +653,22 @@ mod tests {
         #[test]
         fn cross_kind_ordering_follows_canonical_rank() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
             // Text (rank 5) is greater than Number 5 (rank 2).
             let filtered =
-                outcome.clone().filter("status > 5").expect("valid filter");
+                rows.clone().filter("status > 5").expect("valid filter");
             assert_eq!(names(&filtered), ["high", "low", "unrated"]);
 
             // Number 5 is not greater than Text, so status < 5 matches nothing.
-            let below = outcome.filter("status < 5").expect("valid filter");
+            let below = rows.filter("status < 5").expect("valid filter");
             assert!(below.is_empty());
         }
 
         #[test]
         fn mixed_kind_column_ordering_matches_sort_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("num_low.md", "---\nrating: 3\n---"),
                 ("num_high.md", "---\nrating: 7\n---"),
                 ("text.md", "---\nrating: gold\n---"),
@@ -681,20 +678,20 @@ mod tests {
             // rating > 5 matches num_high (7 > 5) and text ("gold" > 5 by
             // rank).
             let filtered =
-                outcome.clone().filter("rating > 5").expect("valid filter");
+                rows.clone().filter("rating > 5").expect("valid filter");
             assert_eq!(names(&filtered), ["num_high", "text"]);
 
             // sort rating asc orders: num_low (3), num_high (7), text ("gold").
-            let sorted = outcome.sort("rating", false).expect("valid sort");
+            let sorted = rows.sort("rating", false).expect("valid sort");
             assert_eq!(names(&sorted), ["num_low", "num_high", "text"]);
         }
 
         #[test]
         fn chains_across_multiple_filter_calls() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome
+            let filtered = rows
                 .filter("status == \"done\"")
                 .expect("valid filter")
                 .filter("rating >= 7")
@@ -706,10 +703,10 @@ mod tests {
         #[test]
         fn equal_matches_a_date_field_against_a_string_literal() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for(temp.path(), "---\ndue: 2026-01-01\n---");
+            let rows = rows_for(temp.path(), "---\ndue: 2026-01-01\n---");
 
             let filtered =
-                outcome.filter("due == \"2026-01-01\"").expect("valid filter");
+                rows.filter("due == \"2026-01-01\"").expect("valid filter");
 
             assert_eq!(filtered.len(), 1);
         }
@@ -717,10 +714,9 @@ mod tests {
         #[test]
         fn equal_null_matches_rows_with_a_null_field() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered =
-                outcome.filter("rating == null").expect("valid filter");
+            let filtered = rows.filter("rating == null").expect("valid filter");
 
             assert_eq!(names(&filtered), ["unrated"]);
         }
@@ -728,10 +724,9 @@ mod tests {
         #[test]
         fn not_equal_null_matches_rows_with_a_non_null_field() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered =
-                outcome.filter("rating != null").expect("valid filter");
+            let filtered = rows.filter("rating != null").expect("valid filter");
 
             assert_eq!(names(&filtered), ["high", "low"]);
         }
@@ -739,9 +734,9 @@ mod tests {
         #[test]
         fn r_where_alias_filters_records_identically_to_filter() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome.r#where("rating >= 7").expect("valid where");
+            let filtered = rows.r#where("rating >= 7").expect("valid where");
 
             assert_eq!(names(&filtered), ["high"]);
         }
@@ -749,24 +744,24 @@ mod tests {
         #[test]
         fn evaluates_duration_comparisons_temporally() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("a.md", "---\nspent: 1h\n---"),
                 ("b.md", "---\nspent: 30m\n---"),
             ]);
             let filtered =
-                outcome.filter("spent > \"30m\"").expect("valid filter");
+                rows.filter("spent > \"30m\"").expect("valid filter");
             assert_eq!(names(&filtered), ["a"]);
         }
 
         #[test]
         fn matches_duration_equality_across_differing_spellings() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 ("a.md", "---\nspent: 90m\n---"),
                 ("b.md", "---\nspent: 45m\n---"),
             ]);
             let filtered =
-                outcome.filter("spent == \"1h 30m\"").expect("valid filter");
+                rows.filter("spent == \"1h 30m\"").expect("valid filter");
             assert_eq!(names(&filtered), ["a"]);
         }
 
@@ -800,10 +795,10 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = QueryService::new("class")
+            let rows = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All));
 
-            let filtered = outcome
+            let filtered = rows
                 .filter(
                     "file.mtime >= \"2026-01-01\" and file.mtime < \
                      \"2026-01-02\"",
@@ -843,10 +838,10 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = QueryService::new("class")
+            let rows = QueryService::new("class")
                 .run(&index, QueryBuilder::pages(SourceSelector::All));
 
-            let filtered = outcome
+            let filtered = rows
                 .filter("file.mdate == \"2026-01-01\"")
                 .expect("valid filter");
 
@@ -856,9 +851,9 @@ mod tests {
         #[test]
         fn and_combination_keeps_only_records_matching_both_sides() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome
+            let filtered = rows
                 .filter("rating > 5 AND status == \"done\"")
                 .expect("valid filter");
 
@@ -868,9 +863,9 @@ mod tests {
         #[test]
         fn or_combination_keeps_records_matching_either_side() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome
+            let filtered = rows
                 .filter("rating == 3 OR status == \"done\"")
                 .expect("valid filter");
 
@@ -880,10 +875,10 @@ mod tests {
         #[test]
         fn not_combination_reverses_the_matching_condition() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
             let filtered =
-                outcome.filter("NOT status == \"done\"").expect("valid filter");
+                rows.filter("NOT status == \"done\"").expect("valid filter");
 
             assert_eq!(names(&filtered), ["low"]);
         }
@@ -891,9 +886,9 @@ mod tests {
         #[test]
         fn default_boolean_precedence_evaluates_correctly() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let filtered = outcome
+            let filtered = rows
                 .filter(
                     "status == \"done\" OR rating == 3 AND status == \"draft\"",
                 )
@@ -905,9 +900,9 @@ mod tests {
         #[test]
         fn nested_parentheses_override_precedence() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = rated_outcome(temp.path());
+            let rows = rated_rows(temp.path());
 
-            let nested = outcome
+            let nested = rows
                 .filter(
                     "(rating > 5 OR status == \"draft\") AND NOT rating == 3",
                 )
@@ -919,28 +914,27 @@ mod tests {
         #[test]
         fn logical_op_spellings_do_not_swallow_identifier_prefixes() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome =
-                outcome_for(temp.path(), "---\norder: 5\nandrew: 3\n---");
+            let rows = rows_for(temp.path(), "---\norder: 5\nandrew: 3\n---");
 
-            let lower = outcome
+            let lower = rows
                 .clone()
                 .filter("order == 5 and andrew == 3")
                 .expect("valid filter: lowercase and");
             assert_eq!(lower.len(), 1);
 
-            let symbolic_and = outcome
+            let symbolic_and = rows
                 .clone()
                 .filter("order == 5 && andrew == 3")
                 .expect("valid filter: &&");
             assert_eq!(symbolic_and.len(), 1);
 
-            let symbolic_or = outcome
+            let symbolic_or = rows
                 .clone()
                 .filter("order == 999 || andrew == 3")
                 .expect("valid filter: ||");
             assert_eq!(symbolic_or.len(), 1);
 
-            let lower_or = outcome
+            let lower_or = rows
                 .clone()
                 .filter("order == 999 or andrew == 3")
                 .expect("valid filter: lowercase or");
@@ -949,7 +943,7 @@ mod tests {
             // Regression: fields named `order`/`andrew` must stay whole
             // identifiers, not logical-op prefixes.
             let ident_prefix =
-                outcome.filter("order == 5").expect("valid filter: bare field");
+                rows.filter("order == 5").expect("valid filter: bare field");
             assert_eq!(ident_prefix.len(), 1);
         }
     }
@@ -962,7 +956,7 @@ mod tests {
         #[test]
         fn contains_matches_tags_by_prefix_hierarchy() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 (
                     "book.md",
                     "---\ntitle: Rust Handbook\n---\nFiled under #book/fiction",
@@ -973,9 +967,8 @@ mod tests {
                 ),
             ]);
 
-            let filtered = outcome
-                .filter("contains(tags, \"#book\")")
-                .expect("valid filter");
+            let filtered =
+                rows.filter("contains(tags, \"#book\")").expect("valid filter");
 
             assert_eq!(names(&filtered), ["book"]);
         }
@@ -983,7 +976,7 @@ mod tests {
         #[test]
         fn contains_matches_string_fields_by_substring() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 (
                     "book.md",
                     "---\ntitle: Rust Handbook\n---\nFiled under #book/fiction",
@@ -994,7 +987,7 @@ mod tests {
                 ),
             ]);
 
-            let filtered = outcome
+            let filtered = rows
                 .filter("contains(title, \"Async\")")
                 .expect("valid filter");
 
@@ -1004,7 +997,7 @@ mod tests {
         #[test]
         fn contains_distinguishes_list_values_from_tag_hierarchy() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for_files(temp.path(), &[
+            let rows = rows_for_files(temp.path(), &[
                 (
                     "handbook.md",
                     "---\ncategories: [handbook]\n---\nTagged #bookworm",
@@ -1015,15 +1008,14 @@ mod tests {
                 ),
             ]);
 
-            let category_match = outcome
+            let category_match = rows
                 .clone()
                 .filter("contains(categories, \"book\")")
                 .expect("valid filter");
             assert_eq!(names(&category_match), ["book"]);
 
-            let tag_match = outcome
-                .filter("contains(tags, \"#book\")")
-                .expect("valid filter");
+            let tag_match =
+                rows.filter("contains(tags, \"#book\")").expect("valid filter");
             assert_eq!(names(&tag_match), ["book"]);
         }
     }

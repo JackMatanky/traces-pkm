@@ -108,7 +108,7 @@ pub(super) mod test_support {
 
     use super::*;
     /// Writes `files` under `temp` and returns an all-notes page query.
-    pub(super) fn outcome_for_files(
+    pub(super) fn rows_for_files(
         _temp: &Path,
         files: &[(&str, &str)],
     ) -> QuerySet {
@@ -118,8 +118,8 @@ pub(super) mod test_support {
     }
 
     /// Writes one Markdown Note and returns an all-notes page query.
-    pub(super) fn outcome_for(temp: &Path, content: &str) -> QuerySet {
-        outcome_for_files(temp, &[("note.md", content)])
+    pub(super) fn rows_for(temp: &Path, content: &str) -> QuerySet {
+        rows_for_files(temp, &[("note.md", content)])
     }
 
     pub(super) fn find_entry<'a>(

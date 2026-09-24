@@ -46,8 +46,8 @@ use crate::{
 /// let index = Arc::new(IndexerService::for_tests(temp.path()).build()?);
 ///
 /// let service = QueryService::new("class");
-/// let outcome = service.run(&index, QueryBuilder::pages(SourceSelector::All));
-/// assert_eq!(outcome.len(), 0);
+/// let rows = service.run(&index, QueryBuilder::pages(SourceSelector::All));
+/// assert_eq!(rows.len(), 0);
 /// # Ok(())
 /// # }
 /// # }
@@ -562,11 +562,8 @@ mod tests {
         use super::*;
         use crate::Tag;
 
-        fn note_paths(outcome: &QuerySet) -> Vec<&Path> {
-            outcome
-                .iter()
-                .filter_map(|row| row.note().map(Note::path))
-                .collect()
+        fn note_paths(rows: &QuerySet) -> Vec<&Path> {
+            rows.iter().filter_map(|row| row.note().map(Note::path)).collect()
         }
 
         fn build_book_index() -> Arc<WorkspaceIndex> {
@@ -588,21 +585,21 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(&index, &SourceSelector::All);
+            let rows = query_pages(&index, &SourceSelector::All);
 
             assert_eq!(
-                outcome.get(0).map(|r| r.file().path()),
+                rows.get(0).map(|r| r.file().path()),
                 Some(Path::new("a.md"))
             );
             assert_eq!(
-                outcome.get(1).map(|r| r.file().path()),
+                rows.get(1).map(|r| r.file().path()),
                 Some(Path::new("b.md"))
             );
             assert_eq!(
-                outcome.get(2).map(|r| r.file().path()),
+                rows.get(2).map(|r| r.file().path()),
                 Some(Path::new("readme.txt"))
             );
-            assert!(outcome.get(3).is_none());
+            assert!(rows.get(3).is_none());
         }
 
         #[test]
@@ -616,10 +613,10 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(&index, &SourceSelector::All);
+            let rows = query_pages(&index, &SourceSelector::All);
 
-            assert_eq!(note_paths(&outcome), [Path::new("a.md")]);
-            assert_eq!(outcome.get(1).and_then(|r| r.note()), None);
+            assert_eq!(note_paths(&rows), [Path::new("a.md")]);
+            assert_eq!(rows.get(1).and_then(|r| r.note()), None);
         }
 
         #[test]
@@ -632,12 +629,12 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(
+            let rows = query_pages(
                 &index,
                 &SourceSelector::parse("#missing").expect("valid source"),
             );
 
-            assert_eq!(outcome.len(), 0);
+            assert_eq!(rows.len(), 0);
         }
 
         #[test]
@@ -652,12 +649,12 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(
+            let rows = query_pages(
                 &index,
                 &SourceSelector::parse("#book").expect("valid source"),
             );
 
-            assert_eq!(note_paths(&outcome), [Path::new("book.md")]);
+            assert_eq!(note_paths(&rows), [Path::new("book.md")]);
         }
 
         #[test]
@@ -699,13 +696,13 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(
+            let rows = query_pages(
                 &index,
                 &SourceSelector::parse("#projects/active")
                     .expect("valid source"),
             );
 
-            assert!(outcome.is_empty());
+            assert!(rows.is_empty());
         }
 
         #[test]
@@ -724,12 +721,12 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(
+            let rows = query_pages(
                 &index,
                 &SourceSelector::parse("books/").expect("valid source"),
             );
 
-            assert_eq!(note_paths(&outcome), [
+            assert_eq!(note_paths(&rows), [
                 Path::new("books/dune.md"),
                 Path::new("books/fiction/hobbit.md")
             ]);
@@ -739,8 +736,8 @@ mod tests {
         fn returns_file_path_for_each_record() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &SourceSelector::All);
-            let row = outcome.iter().next().expect("one row");
+            let rows = query_pages(&index, &SourceSelector::All);
+            let row = rows.iter().next().expect("one row");
 
             assert_eq!(row.file().path(), Path::new("book.md"));
         }
@@ -749,9 +746,9 @@ mod tests {
         fn includes_frontmatter_fields_in_note() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &SourceSelector::All);
+            let rows = query_pages(&index, &SourceSelector::All);
             let note =
-                outcome.iter().next().expect("one row").note().expect("note");
+                rows.iter().next().expect("one row").note().expect("note");
 
             assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(1));
         }
@@ -760,9 +757,9 @@ mod tests {
         fn includes_inline_field_keys() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &SourceSelector::All);
+            let rows = query_pages(&index, &SourceSelector::All);
             let note =
-                outcome.iter().next().expect("one row").note().expect("note");
+                rows.iter().next().expect("one row").note().expect("note");
 
             assert_eq!(
                 note.inline_fields()
@@ -777,9 +774,9 @@ mod tests {
         fn includes_note_tags() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &SourceSelector::All);
+            let rows = query_pages(&index, &SourceSelector::All);
             let note =
-                outcome.iter().next().expect("one row").note().expect("note");
+                rows.iter().next().expect("one row").note().expect("note");
 
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
@@ -796,8 +793,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(&index, &SourceSelector::All);
-            let target = outcome
+            let rows = query_pages(&index, &SourceSelector::All);
+            let target = rows
                 .iter()
                 .find(|row| row.file().path() == Path::new("target.md"))
                 .expect("target row");
@@ -820,11 +817,11 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(
+            let rows = query_pages(
                 &index,
                 &SourceSelector::parse("#book").expect("valid source"),
             );
-            let target = outcome.iter().next().expect("target row");
+            let target = rows.iter().next().expect("target row");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
@@ -845,8 +842,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(&index, &SourceSelector::All);
-            let target = outcome
+            let rows = query_pages(&index, &SourceSelector::All);
+            let target = rows
                 .iter()
                 .find(|row| row.file().path() == Path::new("target.md"))
                 .expect("target row");
@@ -863,8 +860,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(&index, &SourceSelector::All);
-            let source = outcome
+            let rows = query_pages(&index, &SourceSelector::All);
+            let source = rows
                 .iter()
                 .find(|row| row.file().path() == Path::new("b.md"))
                 .expect("self-linking row");
@@ -885,8 +882,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_pages(&index, &SourceSelector::All);
-            let target = outcome
+            let rows = query_pages(&index, &SourceSelector::All);
+            let target = rows
                 .iter()
                 .find(|r| r.file().path() == Path::new("target.md"))
                 .expect("target row");
@@ -902,9 +899,8 @@ mod tests {
 
         use super::*;
 
-        fn task_states(outcome: &QuerySet) -> Vec<(Option<bool>, &str)> {
-            outcome
-                .iter()
+        fn task_states(rows: &QuerySet) -> Vec<(Option<bool>, &str)> {
+            rows.iter()
                 .map(|row| {
                     (row.task_completed(), row.task_text().unwrap_or_default())
                 })
@@ -923,11 +919,11 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All);
+            let rows = query_tasks(&index, &SourceSelector::All);
 
-            assert_eq!(outcome.len(), 1);
+            assert_eq!(rows.len(), 1);
             assert_eq!(
-                outcome.iter().next().and_then(QueryRow::task_text),
+                rows.iter().next().and_then(QueryRow::task_text),
                 Some("buy milk")
             );
         }
@@ -942,9 +938,9 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All);
+            let rows = query_tasks(&index, &SourceSelector::All);
 
-            assert!(outcome.is_empty());
+            assert!(rows.is_empty());
         }
 
         #[test]
@@ -961,8 +957,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All);
-            let row = outcome.iter().next().expect("one task row");
+            let rows = query_tasks(&index, &SourceSelector::All);
+            let row = rows.iter().next().expect("one task row");
 
             assert_eq!(row.file().path(), Path::new("project.md"));
         }
@@ -981,8 +977,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All);
-            let row = outcome.iter().next().expect("one task row");
+            let rows = query_tasks(&index, &SourceSelector::All);
+            let row = rows.iter().next().expect("one task row");
 
             assert_eq!(
                 row.field("title"),
@@ -1004,8 +1000,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All);
-            let row = outcome.iter().next().expect("one task row");
+            let rows = query_tasks(&index, &SourceSelector::All);
+            let row = rows.iter().next().expect("one task row");
 
             assert_eq!(
                 row.field("tags"),
@@ -1034,8 +1030,8 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All);
-            let task = outcome.iter().next().expect("one task row");
+            let rows = query_tasks(&index, &SourceSelector::All);
+            let task = rows.iter().next().expect("one task row");
 
             assert_eq!(task.file().path(), Path::new("target.md"));
             assert_eq!(task.inlinks(), [PathBuf::from("linker.md")]);
@@ -1056,12 +1052,12 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(
+            let rows = query_tasks(
                 &index,
                 &SourceSelector::parse("#projects").expect("valid source"),
             );
 
-            assert_eq!(task_states(&outcome), [(Some(false), "project task")]);
+            assert_eq!(task_states(&rows), [(Some(false), "project task")]);
         }
 
         #[test]
@@ -1080,12 +1076,12 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(
+            let rows = query_tasks(
                 &index,
                 &SourceSelector::parse("projects/").expect("valid source"),
             );
 
-            assert_eq!(task_states(&outcome), [(Some(false), "project task")]);
+            assert_eq!(task_states(&rows), [(Some(false), "project task")]);
         }
 
         #[test]
@@ -1101,13 +1097,13 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_tasks(&index, &SourceSelector::All)
+            let rows = query_tasks(&index, &SourceSelector::All)
                 .filter("list.completed == true")
                 .expect("valid filter");
 
             // Filtering must keep only matching task rows, not every row from a
             // note with one match.
-            assert_eq!(task_states(&outcome), [(Some(true), "pay rent")]);
+            assert_eq!(task_states(&rows), [(Some(true), "pay rent")]);
         }
     }
 
@@ -1155,9 +1151,9 @@ mod tests {
                     .build()
                     .expect("build index"),
             );
-            let outcome = query_lists(&index, &SourceSelector::All);
+            let rows = query_lists(&index, &SourceSelector::All);
 
-            assert_eq!(outcome.len(), 0);
+            assert_eq!(rows.len(), 0);
         }
 
         #[test]
