@@ -1,8 +1,12 @@
 #!/bin/bash
-#MISE description="Generate a Markdown report of surviving mutants from missed.txt"
+#MISE description="Generate a Markdown report of surviving mutants"
 #MISE hide=true
-#USAGE flag "-i --input <input>" default="mutants.out/missed.txt" help="File listing surviving mutants"
-#USAGE flag "-o --output <output>" default="mutants-report.md" help="Markdown report to write"
+#USAGE flag "-i --input <input>" default="mutants.out/missed.txt" {
+#USAGE   help "File listing surviving mutants"
+#USAGE }
+#USAGE flag "-o --output <output>" default="mutants-report.md" {
+#USAGE   help "Markdown report to write"
+#USAGE }
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 

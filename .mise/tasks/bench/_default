@@ -9,77 +9,107 @@
 #USAGE flag "-f --files <pattern>" {
 #USAGE   help "Select bench targets (benches/*.rs) by file-name substring"
 #USAGE   long_help """
-#USAGE   Matches bench target file names under benches/*.rs by substring. This differs from criterion's own benchmark-name filter, which runs at test time and is forwarded via [args] after --.
+#USAGE   Matches bench target file names under benches/*.rs by substring.
+#USAGE   This is not criterion's benchmark-name filter, which runs at test
+#USAGE   time and is forwarded via [args] after --.
 #USAGE   """
 #USAGE }
-#USAGE // complete "pattern" registers completion for the flag's value (what
-#USAGE // follows -f/--files), not the flag name itself. -r is unbound by
-#USAGE // design: user-chosen save name.
+#USAGE // complete "pattern" completes the flag's value (what follows
+#USAGE // -f/--files), not the flag name itself. -r has no completion: its
+#USAGE // value is a user-chosen save name.
 #USAGE complete "pattern" run="ls benches | grep '[.]rs$' | sed 's/[.]rs$//'"
 #USAGE flag "-m --mod <module>" {
-#USAGE   help "Run benchmarks for a specific module (matches benches/<module>*.rs)"
+#USAGE   help "Run benchmarks for one module (matches benches/<module>*.rs)"
 #USAGE }
 #USAGE complete "module" run="ls benches | grep '[.]rs$' | sed 's/[.]rs$//'"
 #USAGE flag "-r --report [name]" value_optional=#true {
 #USAGE   help "Save a named baseline (default: auto-named from git branch+sha)"
 #USAGE   long_help """
-#USAGE   Bare -r names the baseline `<branch>-<short-sha>[-dirty][-quick]`. Rerunning on the *same* commit overwrites that name's stored results; a new commit or branch gets its own name, so distinct auto-names accumulate (one nested copy under every benchmark each) and total baseline storage grows with every commit you checkpoint. Pass a value for an explicit, memorable name instead, e.g. for a long-lived comparison point:
+#USAGE   Bare -r names the baseline `<branch>-<short-sha>[-dirty][-quick]`.
+#USAGE   Rerunning on the same commit overwrites that name's stored results;
+#USAGE   a new commit or branch gets its own name, so distinct auto-names
+#USAGE   accumulate, one nested copy under every benchmark, and baseline
+#USAGE   storage grows with every commit you checkpoint. Pass a value for an
+#USAGE   explicit, memorable name instead, e.g. for a long-lived comparison
+#USAGE   point:
 #USAGE
 #USAGE     mise run bench -r position-refactor
 #USAGE
-#USAGE   A first run on a commit has no `change:` line; the verdict appears only once the same auto-name runs again. Compare across commits with `--compare <baseline>` (`critcmp <name> new`).
+#USAGE   A first run on a commit has no `change:` line; the verdict appears
+#USAGE   only once the same auto-name runs again. Compare across commits with
+#USAGE   `--compare <baseline>` (`critcmp <name> new`).
 #USAGE
-#USAGE   Under --mode quick every saved baseline (explicit names included) is saved as <name>-quick instead (e.g. -r foo saves foo-quick, not foo), so quick runs never clobber normal-mode baselines; the run header echoes the final saved name.
+#USAGE   Under --mode quick, every saved baseline (explicit names included)
+#USAGE   is saved as <name>-quick instead (e.g. -r foo saves foo-quick, not
+#USAGE   foo), so quick runs never clobber normal-mode baselines; the run
+#USAGE   header echoes the final saved name.
 #USAGE
-#USAGE   Criterion rejects combining --save-baseline with forwarded --baseline/--baseline-lenient/--discard-baseline. Note the task appends --save-baseline <git-name> by default even without -r: if you forward baseline flags, pass --no-report; otherwise the run fails with criterion's own argument-validation error (--load-baseline additionally requires --baseline).
+#USAGE   Criterion rejects combining --save-baseline with forwarded
+#USAGE   --baseline/--baseline-lenient/--discard-baseline. Note the task
+#USAGE   appends --save-baseline <git-name> by default even without -r: if
+#USAGE   you forward baseline flags, pass --no-report; otherwise the run
+#USAGE   fails with criterion's own argument-validation error
+#USAGE   (--load-baseline additionally requires --baseline).
 #USAGE   """
 #USAGE }
 #USAGE flag "--no-report" {
-#USAGE   help "Skip the named baseline; criterion uses its default 'base' instead"
+#USAGE   help "Skip saving a named baseline (criterion uses its default 'base')"
 #USAGE }
 #USAGE flag "--compare <baseline>" {
 #USAGE   help "Compare against a saved baseline via critcmp"
 #USAGE   long_help """
-#USAGE   Runs `critcmp <name> new` after the measurement run: `<baseline>` is a saved baseline (listed by `critcmp --baselines`, offered by completion) and `new` is the run just measured, giving a two-column comparison with change ratios. The baseline name is validated before the run starts: an unknown name fails fast with a message naming it, before any measurement.
+#USAGE   Runs `critcmp <name> new` after the measurement run: `<baseline>` is
+#USAGE   a saved baseline (listed by `critcmp --baselines`, offered by
+#USAGE   completion) and `new` is the run just measured, giving a two-column
+#USAGE   comparison with change ratios. The baseline name is validated
+#USAGE   before measurement: an unknown name fails fast with a message
+#USAGE   naming it.
 #USAGE
 #USAGE     mise run bench --compare main-abc123
 #USAGE
-#USAGE   If one run passes -r <name> and --compare <baseline> with the same name, criterion overwrites that baseline during the run and the comparison sees this run against itself (every ratio 1.00).
+#USAGE   If one run passes -r <name> and --compare <baseline> with the same
+#USAGE   name, criterion overwrites that baseline during the run and the
+#USAGE   comparison sees this run against itself (every ratio 1.00).
 #USAGE   """
 #USAGE }
 #USAGE complete "baseline" run="critcmp --baselines 2>/dev/null"
 #USAGE flag "--verbose" negate="--no-verbose" default=#true {
-#USAGE   help "Criterion detailed reporting (task default: on; criterion's default is off); --no-verbose for terse output"
+#USAGE   help "Criterion detailed reporting (default on; --no-verbose terse)"
 #USAGE }
 #USAGE flag "--mode <mode>" {
-#USAGE   help "Execution mode: normal (default), quick (fast, indicative), test (smoke)"
-#USAGE // DELIBERATE single-line encoding: do not reflow to """ block:
-#USAGE // mise trim()s every #USAGE line (extract_usage_from_comments),
-#USAGE // so block form silently collapses the continuation indent and
-#USAGE // changes --help bytes. Keep one line with \n escapes; verify by
-#USAGE // diffing a known-good render against `mise run bench --help`.
-#USAGE   long_help "normal: measure with project defaults from benches/common::criterion_config()\n         (20 samples, 1s measurement, 0.5s warm-up); precedence: group pin > [args] > criterion_config().\nquick:  criterion's native --quick: stop at the significance level or when\n         measurement-time runs out (project cap 1 s), --noplot; for indicative and comparative use only.\ntest:   smoke-run each selected target once without measurement via\n         cargo test (criterion's documented CI path); measurement/report flags\n         (-r/--no-report/--compare/--verbose) and [args] are unused."
+#USAGE   help "Execution mode: normal (default), quick (fast), test (smoke)"
+#USAGE   long_help """
+#USAGE   normal: measure with project defaults from benches/common::criterion_config()
+#USAGE   (20 samples, 1s measurement, 0.5s warm-up);
+#USAGE   precedence: group pin > [args] > criterion_config().
+#USAGE   quick: criterion's native --quick: stop at the significance level or when
+#USAGE   measurement time runs out (project cap 1s), --noplot; for indicative and
+#USAGE   comparative use only.
+#USAGE   test: smoke-run each selected target once without measurement via
+#USAGE   cargo test (criterion's documented CI path); measurement/report flags
+#USAGE   (-r/--no-report/--compare/--verbose) and [args] are ignored.
+#USAGE   """
 #USAGE   choices "quick" "test" "normal"
 #USAGE   default "normal"
 #USAGE }
 #USAGE arg "[args]" var=#true {
 #USAGE   help "Extra arguments forwarded to cargo bench"
 #USAGE   long_help """
-#USAGE   Forwarded to `cargo bench`. Examples:
+#USAGE   Examples:
 #USAGE
 #USAGE     mise run bench -- --list               # list available benchmarks
-#USAGE     mise run bench -f note_parsing -- fast  # narrow, then criterion's filter
+#USAGE     mise run bench -f note_parsing -- fast  # then criterion's own filter
 #USAGE     mise run bench -m index -- --warm-up-time 1 # custom warm-up time
-#USAGE     mise run bench -- --noplot             # disable plot and HTML generation (criterion clap help)
-#USAGE     mise run bench -- --profile-time 5     # hot loop for flamegraphs; no stats, no stored results
-#USAGE     mise run bench -r main -- --noise-threshold 0.03 # ignore changes within ±3% as noise
-#USAGE     mise run bench -r main -- --significance-level 0.01 # stricter verdicts; harder quick-mode stop ⇒ longer quick runs
+#USAGE     mise run bench -- --noplot  # disable plot and HTML generation
+#USAGE     mise run bench -- --profile-time 5  # flamegraph hot loop; no stats
+#USAGE     mise run bench -r main -- --noise-threshold 0.03  # ignore ±3% noise
+#USAGE     mise run bench -r main -- --significance-level 0.01  # stricter verdicts; longer quick runs
 #USAGE
 #USAGE   Forwarded --quiet conflicts with the default --verbose: pair it with
 #USAGE   --no-verbose (mise run bench --no-verbose -- --quiet). Forwarded
 #USAGE   --sample-size conflicts with --quick no matter how it is passed,
-#USAGE   including the --quick that --mode quick injects (a criterion clap
-#USAGE   conflict). Prefer --mode quick over forwarding --quick: only
+#USAGE   including the --quick that --mode quick injects (criterion rejects
+#USAGE   the combination). Prefer --mode quick over forwarding --quick: only
 #USAGE   --mode quick also sets --noplot and the -quick baseline suffix.
 #USAGE   The forwarded positional filter is a regular expression.
 #USAGE   """
@@ -94,7 +124,7 @@
 #   must not enter the artifact-cache replay path, because Criterion output is
 #   non-deterministic and replayed logs would mask results. outputs = [] is
 #   what prevents the freshness skip: baselines must never be skipped as
-#   fresh (project policy, mirroring the test task).
+#   fresh (project policy).
 #   output = "interleave": raw criterion output. Verbose statistical tables
 #   are unreadable when every line is prefixed `bench: …`.
 # shellcheck disable=SC2154  # usage_* are injected by mise
@@ -108,15 +138,16 @@ declare -a criterion_args=()
 # Collect bench target names and build cargo's --bench target list.
 #
 # Collapses the -m/--mod and -f/--files filters into one predicate over
-# benches/*.rs (mod wins when both are given); with neither flag
-# every bench file is selected. One target list serves both the smoke and
-# measure paths. Repeated --bench is cargo's documented target selection: each
-# occurrence adds one target.
+# benches/*.rs (mod wins when both are given); with neither flag every bench
+# file is selected. One target list serves both the smoke and measure paths.
+# Repeated --bench adds one target per occurrence.
 #
 # Globals:
 #   usage_mod, usage_files: filters parsed by mise
 #   bench_files: populated with selected target names (no path/extension)
 #   targets: populated with repeated `--bench <name>` args
+# Arguments:
+#   None
 # Outputs:
 #   Diagnostic on STDERR when nothing matches
 # Returns:
@@ -148,16 +179,15 @@ collect_bench_files() {
 }
 
 #######################################
-# Smoke-run the selected bench targets: criterion's documented CI path.
-# Criterion's own docs show `cargo test --benches` as the smoke path;
-# per-target `--bench <name>` is standard cargo target selection, and
-# criterion runs test mode whenever --bench is absent.
-# --features test-utils is load-bearing: all [[bench]] targets declare
+# Smoke-run the selected bench targets via cargo test: criterion's documented CI
+# path. --features test-utils is load-bearing: all [[bench]] targets declare
 # required-features, and cargo test silently skips targets when unmet.
 #
 # Globals:
 #   usage_args, usage_compare: flags parsed by mise (noted-and-ignored)
 #   bench_files, targets: from collect_bench_files
+# Arguments:
+#   None
 # Outputs:
 #   Ignored-flag notes on STDERR; the cargo test run's output
 # Returns:
@@ -183,12 +213,13 @@ run_smoke() {
 #
 # extra_args: mise pre-quotes each usage_args token so this eval reconstructs
 # the argument list exactly as given. The eval is mise's documented variadic
-# pattern and a documented exception to the style guide's eval ban (the guide
-# yields to mise here).
+# pattern and a documented exception to the style guide's eval ban.
 #
 # Globals:
 #   usage_args, usage_mode, usage_verbose: flags parsed by mise
 #   criterion_args: criterion CLI arguments are appended to this array
+# Arguments:
+#   None
 # Outputs:
 #   None
 #######################################
@@ -196,8 +227,8 @@ build_criterion_args() {
   declare -a extra_args
   eval "extra_args=(${usage_args:-})"
 
-  # Quick = criterion native early-stop; timing defaults live in
-  # benches/common::criterion_config() and are overridden by [args].
+  # Timing defaults live in benches/common::criterion_config() and are
+  # overridden by [args]; this task adds only --quick --noplot.
   [[ "${usage_mode?}" == "quick" ]] && criterion_args+=(--quick --noplot)
   [[ "${usage_verbose?}" == "true" ]] && criterion_args+=(--verbose)
   criterion_args+=("${extra_args[@]+"${extra_args[@]}"}")
@@ -210,14 +241,16 @@ build_criterion_args() {
 # flags; we do not pre-validate, so the run fails loudly with criterion's own
 # argument-validation error.
 #
-# Auto-names embed branch+short-sha; `-dirty` means the worktree has ANY
-# tracked-modified or untracked non-ignored file (`git status --porcelain`
-# lists both; gitignored paths such as target/ never appear). A git failure
-# (not a repository, broken index, …) prints an error to stderr and returns
-# non-zero; it never yields a silent `-dirty`.
+# Auto-names embed branch+short-sha; `-dirty` means the worktree has any
+# tracked-modified or untracked non-ignored file (`git status --porcelain` lists
+# both; gitignored paths such as target/ never appear). A git failure (not a
+# repository, broken index, …) prints an error to stderr and returns non-zero;
+# it never yields a silent `-dirty`.
 #
 # Globals:
 #   usage_no_report, usage_report: flags parsed by mise
+# Arguments:
+#   None
 # Outputs:
 #   Baseline name on stdout (no trailing newline); error message on stderr
 #   when auto-naming fails
@@ -232,14 +265,14 @@ resolve_baseline_name() {
     return
   fi
 
-  # Explicit name via -r <name>
+  # Explicit -r <name>; bare -r parses as the literal "true" and falls through
+  # to the auto-name below.
   if [[ -n "${usage_report:-}" && "${usage_report}" != "true" ]]; then
     printf '%s' "${usage_report}"
     return
   fi
 
-  # Auto-name from git state: branch-sha[-dirty]; git failures error out
-  # instead of ever producing -dirty.
+  # Auto-name: branch-sha[-dirty] (dirty/error semantics in the header above).
   if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
     branch="${branch//\//-}"
     [[ "${branch}" == "HEAD" ]] && branch="detached"
@@ -261,6 +294,19 @@ resolve_baseline_name() {
   fi
 }
 
+#######################################
+# Orchestrate a run: select targets, fail fast on an unknown --compare baseline,
+# build criterion args, run (or smoke in --mode test), then compare.
+#
+# Globals:
+#   usage_* flags parsed by mise; bench_files, targets, criterion_args, baseline
+# Arguments:
+#   None
+# Outputs:
+#   Progress lines and run output on STDOUT/STDERR
+# Returns:
+#   2 if no bench file matches; otherwise the run's exit status
+#######################################
 main() {
   if ! collect_bench_files; then
     return 2
@@ -272,10 +318,10 @@ main() {
     run_smoke
   fi
 
-  # Compare pre-check: fail fast before any measurement. `critcmp <unknown>
-  # new` exits 0 and silently drops the unknown column: one-column table,
-  # every ratio 1.00; the task would "succeed" with misleading output after a
-  # full measurement run. This check converts that into a named fail-fast.
+  # Compare pre-check: fail fast before any measurement. `critcmp <unknown> new`
+  # exits 0 and silently drops the unknown column: one-column table, every ratio
+  # 1.00; the task would "succeed" with misleading output after a full
+  # measurement run. This check converts that into a named fail-fast.
   local known_baselines
   if [[ -n "${usage_compare:-}" ]]; then
     known_baselines="$(critcmp --baselines 2>/dev/null || true)"
@@ -291,14 +337,13 @@ main() {
   local baseline
   baseline="$(resolve_baseline_name)"
   if [[ -n "${baseline}" ]]; then
-    # Quick and normal runs use different statistical models and stored
-    # results carry no mode metadata: one shared name would let a quick run
-    # silently overwrite a normal baseline.
+    # Quick and normal runs use different statistical models and stored results
+    # carry no mode metadata: one shared name would let a quick run silently
+    # overwrite a normal baseline.
     [[ "${usage_mode?}" == "quick" ]] && baseline+="-quick"
     criterion_args+=(--save-baseline "${baseline}")
   fi
 
-  # Single cargo invocation; --no-fail-fast continues past failing targets.
   printf '==> Running %d benchmark target(s) (mode: %s, baseline: %s)\n' \
     "${count}" "${usage_mode?}" "${baseline:-none}"
   local -a run_cmd=(

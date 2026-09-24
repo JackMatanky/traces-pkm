@@ -13,7 +13,7 @@ rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
 hk = "2.0.0"
 cargo-binstall = "latest"
 
-# -- Data formats --
+# -- Data Formats --
 taplo = "latest"
 tombi = "latest"
 "cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
@@ -30,15 +30,14 @@ cargo-deny = "latest"
 "cargo:cargo-mutants" = "latest"
 
 # -- Benchmarking --
-# Decision: critcmp stays in the top-level [tools] list rather than in a
-# task-local tools entry. Task-local tools are on PATH only while that task
-# runs, but the bench --compare tab-completion runs its lookup command at
-# completion time, outside any task run, and that lookup searches PATH only,
-# with no filesystem fallback. Revisit if completions gain a fallback that
-# searches for the binary.
+# critcmp stays in top-level [tools], not a task-local tools entry: task-local
+# tools are only on PATH while the declaring task runs, but the bench --compare
+# tab-completion runs its lookup at completion time, outside any task, and that
+# lookup searches PATH only with no filesystem fallback. Revisit if completions
+# gain a filesystem fallback.
 "cargo:critcmp" = "latest"
 
-# -- Dev experience --
+# -- Dev Experience --
 "cargo:cargo-watch" = "latest"
 "cargo:cargo-sweep" = "latest"
 
@@ -47,8 +46,8 @@ cargo-deny = "latest"
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
 
 [settings]
-# Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
-# into mise.lock so installs are reproducible across machines and CI.
+# lockfile pins resolved tool versions into mise.lock so installs are
+# reproducible across machines and CI.
 lockfile = true
 task.disable_spec_from_run_scripts = true
 experimental = true
@@ -61,53 +60,44 @@ ADR_DIRECTORY = "docs/adr/"
 global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 
 [task_config.cache]
-# Global default for tasks that build if stale: their declared sources cover
-# every input that can change the result, so treating them as fresh is safe.
-# Opt out per task with cache = { enabled = false }; gate tasks get the same
-# pair through extends = "gate:never-skip". Opt out when either:
-#   1. inputs are incomplete (check/fmt declare no rust sources, so a skip
-#      would let stale code pass the gate), or
-#   2. the task must execute whenever it is invoked (lint/test/sweep/verify/
+# Global default: tasks whose declared sources cover every input that can change
+# the result may be treated as fresh. Opt out per task with `cache = { enabled =
+# false }`; gate tasks take the same pair via `extends = "gate:never-skip"`. Opt
+# out when either:
+#   1. inputs are incomplete (check/fmt declare no rust sources, so a
+#      skip would let stale code pass the gate), or
+#   2. the task must run on every invocation (lint/test/sweep/verify/
 #      bench/mutants are gates; clean/setup are destructive or install
-#      actions; watch is an interactive session).
-# Independently of gate policy, mutants is nondeterministic (wall-clock
-# --timeout, a --baseline run, run ordering), so replaying cached logs would
-# hide flakiness. Turning the cache on asserts that a rerun's logs match the
-# original run's logs, which cannot hold for mutants.
-# Verdict for mutants: the earlier config and comment were stale, not a
-# deliberate cache exception.
-# Other tasks: coverage/crap declare explicit outputs, so freshness is well
-# defined and they are not gates; build/release/doc are build-if-stale by
-# design; audit opts out because cargo deny reads deny.toml, which its
-# sources do not list.
-# Never-skip needs both clauses below; dropping either reopens a skip hole.
-# (a) cache = { enabled = false } blocks only the artifact-cache restore
-# path; a local cache = { enabled = false } overrides the scoped default.
-# (b) outputs = [] is what prevents the freshness skip. The skip compares
-# the mtime of the oldest output file against the mtime of the newest source
-# file, and the docs say nothing about what an empty outputs set means (no
-# oldest output file exists), so outputs = [] never-skip is empirical rather
-# than documented. Probe on 2026-09-23: back-to-back unchanged-source runs
-# of lint, test, and bench (in its --mode test probe form) all re-executed,
-# none printing "sources up-to-date, skipping", while build (sources plus
-# explicit outputs) and verify (auto outputs; cache off but no outputs = [])
-# did print that marker on unchanged-source re-runs. So cache off alone (a)
-# does not prevent a freshness skip. Verify joined gate:never-skip on
-# 2026-09-24 after review found that rust-only edits never reached its
-# sources (global_inputs only), so the gate reported success with exit 0
-# without running anything. Re-probe after a mise version bump and before
-# changing outputs on a gate. `mise run --force` ignores source/output
-# checking outright; freshness and the artifact cache are separate
-# mechanisms.
-# Decision (unmade, not a won't-do): the remote/CI task cache is local-only
-# for now. task.cache.remote_url and remote_namespace are unconfigured, so
-# CI has no remote cache to publish to. Revisit when a remote cache service
-# exists.
+#      actions; watch is interactive).
+# Never-skip needs both clauses; dropping either reopens a skip hole:
+#   (a) cache = { enabled = false } blocks only artifact-cache replay;
+#       a local cache = { enabled = false } overrides this scoped default.
+#   (b) outputs = [] blocks the freshness skip, which compares the oldest
+#       output mtime against the newest source mtime; an empty outputs set
+#       is undocumented, so this is empirical. Probe 2026-09-23: with
+#       sources unchanged, lint/test/bench re-executed while build/verify
+#       printed "sources up-to-date, skipping", so cache off alone (a) does
+#       not prevent the skip. Re-probe after a mise version bump and before
+#       changing outputs on a gate.
+# Verify joined gate:never-skip on 2026-09-24: rust-only edits never reached its
+# sources (global_inputs only), so the gate reported success with exit 0 without
+# running anything.
+# `mise run --force` ignores source/output checking outright; freshness
+# and the artifact cache are separate mechanisms.
+# mutants is nondeterministic (wall-clock --timeout, a --baseline run, run
+# ordering), so replaying cached logs would hide flakiness; caching asserts
+# a rerun's logs match the original's, which cannot hold.
+# coverage/crap declare explicit outputs (freshness well defined, not
+# gates); build/release/doc are build-if-stale by design; audit opts out
+# because cargo deny reads deny.toml, which its sources do not list.
+# Remote cache: unmade decision, not a won't-do; task.cache.remote_url and
+# remote_namespace are unconfigured, so CI has no remote cache to publish
+# to. Revisit when a remote cache service exists.
 enabled = true
 
 [task_config.input_groups]
-# These groups list only their distinctive inputs. Cargo.lock and clippy.toml
-# are omitted because global_inputs already applies them to every task.
+# Groups list only task-specific inputs; global_inputs above already adds
+# mise.toml, Cargo.lock, and clippy.toml to every task.
 rust = ["Cargo.toml", "src/**/*.rs", "tests/**/*.rs"]
 bench = ["Cargo.toml", "src/**/*.rs", "benches/**/*.rs"]
 
@@ -146,6 +136,8 @@ flag "--sweep-max-size <size>" {
 '''
 run = '''
 #!/bin/bash
+# Clean the Cargo target directly or via the sweep task, and/or remove generated
+# report files, per the usage flags.
 set -euo pipefail
 
 source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
@@ -185,9 +177,9 @@ if [[ "${clean_target}" == "true" ]]; then
       exit 2
     fi
 
-    # cargo-sweep flags live in one place: the sweep task. The size gate above
-    # (when given) has already run, so delegating here does not change when the
-    # gate fires.
+    # cargo-sweep flags live in one place: the sweep task. The --if-over-gib
+    # gate above (when given) has already run, so delegating here does not
+    # change when the gate fires.
     declare -a sweep_task=(mise run sweep)
     [[ "${usage_dry_run:-false}" == "true" ]] && sweep_task+=(--dry-run)
     [[ -n "${usage_sweep_days:-}" ]] \
@@ -223,7 +215,7 @@ fi
 
 # bash-only by design (no run_windows): macOS dev + Linux CI only.
 [tasks.sweep]
-description = "Reclaim Cargo target space: prune stale incremental sessions (default, gated by --max-gib) or run cargo-sweep by age/size (--days/--max-size)"
+description = "Reclaim Cargo target space: prune stale incremental sessions (default) or cargo-sweep by age/size"
 extends = "gate:never-skip"
 usage = '''
 flag "--max-gib <gib>" help="Incremental-prune mode: only prune when target exceeds this size in GiB (non-negative integer)" default="10"
@@ -233,6 +225,8 @@ flag "--dry-run" help="Show what would be removed without removing it"
 '''
 run = '''
 #!/bin/bash
+# Prune stale Cargo incremental sessions when the target exceeds --max-gib, or
+# run cargo-sweep directly for --days/--max-size.
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
@@ -242,14 +236,13 @@ source "${MISE_PROJECT_ROOT:?}/.mise/scripts/size_gate.sh"
 : "${usage_max_gib?}"
 require_nonneg_int sweep --max-gib "${usage_max_gib}"
 
-# TARGET_DIR feeds both the size gate and the incremental-session directory, so
-# the gate and the prune always apply to the same tree.
+# Size gate and prune both derive from TARGET_DIR (always the same tree).
 readonly TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 readonly INCREMENTAL_DIR="${TARGET_DIR}/debug/incremental"
 readonly LIMIT_KIB="$(gib_to_kib "${usage_max_gib}")"
 
-# cargo-sweep mode: an explicit age/size request runs cargo-sweep directly and
-# is not gated by --max-gib (reclamation was asked for by name).
+# An explicit --days/--max-size request runs cargo-sweep directly and bypasses
+# the --max-gib gate.
 run_cargo_sweep() {
   declare -a args=()
   [[ "${usage_dry_run:-false}" == "true" ]] && args+=(--dry-run)
@@ -264,10 +257,9 @@ main() {
     return 0
   fi
 
-  # Use a counter instead of bash's array-length expansion: mise renders TOML
-  # run bodies through the Tera template engine, and Tera would read the
-  # expansion's leading brace-plus-hash as the start of a Tera comment, which
-  # breaks the script.
+  # Counter instead of array-length expansion: mise renders run bodies through
+  # Tera, where a leading brace-plus-hash opens a Tera comment and breaks the
+  # script.
   local size_kib newest="" count=0
   local -a stale=()
 
@@ -285,8 +277,8 @@ main() {
   local dir
   for dir in "${INCREMENTAL_DIR}"/*/; do
     [[ -d "${dir}" ]] || continue
-    # -nt sees directory mtimes, which update on direct-child
-    # create/delete; equal mtimes keep the lexicographically first.
+    # -nt sees directory mtimes, which update on direct-child create/delete;
+    # equal mtimes keep the lexicographically first.
     if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
       if [[ -n "${newest}" ]]; then
         stale+=("${newest}")
@@ -326,13 +318,14 @@ description = "Fast compile check, then hk project checks"
 alias = "c"
 extends = "gate:never-skip"
 usage = '''
-arg "[args]" var=#true help="Extra arguments forwarded to cargo check (hk check never receives them)"
+arg "[args]" var=#true {
+    help "Extra arguments forwarded to cargo check (hk check never receives them)"
+}
 '''
 run = '''
 #!/bin/bash
-# extra (below) is populated via eval from mise's usage_args (var=#true arg):
-# usage_args arrives as a shell-quoted string, so eval is what turns it into
-# an array.
+# usage_args is shell-quoted (var=#true arg); eval parses it into the extra
+# array.
 # shellcheck disable=SC2154
 set -euo pipefail
 
@@ -384,7 +377,7 @@ cargo fmt "${args[@]}"
 '''
 
 [tasks.lint]
-description = "Strict clippy: workspace, all targets, all features. Auto-fixes 18 common lints unless --no-fix."
+description = "Strict clippy: workspace, all targets, all features; auto-fix known lints unless --no-fix"
 alias = "l"
 depends = ["fmt"]
 sources = ["@group:rust"]
@@ -395,11 +388,13 @@ flag "--deny-warnings" negate="--no-deny-warnings" default=#true {
   help "Treat Clippy warnings as errors"
 }
 flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" {
-  help "Override fix lint list (comma-separated)"
+  help "Comma-separated lints to auto-fix instead of the default list"
 }
 '''
 run = '''
 #!/bin/bash
+# Run clippy across workspace, all targets, and all features; by default also
+# auto-fix a known lint list and deny warnings.
 set -euo pipefail
 
 declare -a cargo_args=(--workspace --all-targets --all-features)
@@ -449,7 +444,7 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 '''
 
 [tasks.audit]
-description = "Run cargo-deny checks (cargo deny check)"
+description = "Run cargo-deny checks"
 extends = "gate:never-skip"
 usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo deny check"'
 run = '''
@@ -479,13 +474,12 @@ flag "--docs" negate="--no-docs" default=#true {
 flag "-m --mod <module>" {
   help "Run tests for a specific module only"
 }
-// complete "module" registers completion for the flag's value (what follows
-// -m/--mod), not for the flag name itself.
+// complete "module" completes the value after -m/--mod, not the flag name.
 complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 arg "[args]" var=#true {
-  help "Filter expression forwarded to cargo nextest run"
+  help "Extra arguments forwarded to cargo nextest run"
   long_help """
-  Forwarded to `cargo nextest run`. Examples:
+  Examples:
 
     mise run test index::query          # substring match
     mise run test --test init_cli       # by binary
@@ -496,9 +490,8 @@ arg "[args]" var=#true {
 '''
 run = '''
 #!/bin/bash
-# nextest_extra (below) is populated via eval from mise's usage_args
-# (var=#true arg): usage_args arrives as a shell-quoted string, so eval is
-# what turns it into an array.
+# Run nextest with feature/module scoping, then doc-tests unless --no-docs.
+# usage_args is shell-quoted (var=#true arg); eval parses it into nextest_extra.
 # shellcheck disable=SC2154
 set -euo pipefail
 
@@ -537,15 +530,14 @@ fi
 # ------------------------------------------------------------- #
 
 [tasks.coverage]
-description = "Code coverage with tarpaulin (outputs tarpaulin-report.html)"
+description = "Run code coverage with tarpaulin"
 sources = ["@group:rust", "tarpaulin.toml"]
 outputs = ["tarpaulin-report.html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
 }
-// complete "module" registers completion for the flag's value (what
-// follows -m/--mod), not for the flag name itself.
+// complete "module" completes the value after -m/--mod, not the flag name.
 complete "module" run="ls -F src | sed -n 's:/$::p'"
 '''
 run = '''
@@ -577,8 +569,7 @@ flag "-f --file <file>" help="Run mutants in a specific file only"
 flag "-m --mod <module>" {
   help "Run mutants in a specific module only"
 }
-// complete "module" registers completion for the flag's value (what
-// follows -m/--mod), not for the flag name itself.
+// complete "module" completes the value after -m/--mod, not the flag name.
 complete "module" run="ls -F src | sed -n 's:/$::p'"
 flag "--check" {
   help "Build-only: check mutants compile without running tests"
@@ -600,16 +591,18 @@ flag "--iterate" negate="--no-iterate" default=#true {
 arg "[args]" var=#true {
   help "Extra arguments forwarded to cargo mutants"
   long_help """
-  Forwarded to `cargo mutants`. Examples:
+  Examples:
 
-    mise run mutants -- --list               # list available mutants
-    mise run mutants -m index -- --list      # narrow, then list
+    mise run mutants -- --list
+    mise run mutants -m index -- --list
   """
 }
 '''
 run = '''
 #!/bin/bash
-# shellcheck disable=SC2154
+# Build the cargo-mutants flag list from the usage flags and passthrough args,
+# then run cargo mutants.
+# shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
 declare -a args=(
@@ -619,7 +612,6 @@ declare -a args=(
   --profile mutants
 )
 
-# Scope
 [[ "${usage_iterate:-true}" == "true" ]]    && args+=(--iterate)
 [[ -n "${usage_file:-}" ]]                  && args+=(--file "${usage_file}")
 [[ -n "${usage_mod:-}" ]]                   && args+=(--file "src/${usage_mod}/**/*.rs")
@@ -633,7 +625,7 @@ declare -a args=(
 [[ "${usage_json:-false}" == "true" ]]      && args+=(--json)
 [[ "${usage_no_config:-false}" == "true" ]] && args+=(--no-config)
 
-# Passthrough
+# usage_args arrives shell-quoted; eval expands it into array elements.
 eval "args+=(${usage_args:-})"
 
 cargo mutants "${args[@]}"
@@ -681,31 +673,27 @@ description = "Full verification gate: fmt first, then check/lint/tests in paral
 alias = "v"
 extends = "gate:never-skip"
 run = [
-  # fmt mutates .rs files, so it must finish before the readers start
-  # (depends gives completion, not order, and so cannot express this).
+  # fmt rewrites .rs files, so it must finish before check/lint/test read them;
+  # depends guarantees completion, not order, so it cannot express this.
   { task = "fmt" },
   { tasks = ["check", "lint", "test"] },
 ]
 
-# A file task's #MISE header rejects timeout (mise warns "unknown field(s)"
-# and drops it), so the bench safety cap lives on a template that the file
-# task inherits via #MISE extends="bench". The template carries only
-# timeout; all other metadata stays in the file task so --help remains
-# byte-identical.
+# A file task's #MISE header rejects timeout (mise warns about unknown fields
+# and drops it), so bench's safety cap lives on [task_templates.bench], which
+# the bench file task inherits via its #MISE extends="bench" line. All other
+# metadata stays in the file task.
 [task_templates.bench]
 timeout = "20m"
 
-# Never-skip payload: the full local opt-out for the gate tasks described in
-# the task_config.cache comment above, for tasks whose entire payload is
-# exactly this pair. cache off blocks artifact-cache replay; outputs = []
-# empirically prevents the freshness skip (a 2026-09-23 probe showed cache
-# off alone does not stop it) and pins the no-artifacts contract. Members
-# inherit via extends instead of repeating both lines locally. A file task
-# accepts a single extends target (the array form is silently dropped in
-# 2026.9.12), so bench-shaped gates cannot join without defining both lines
-# locally. Exempt: bench (its file task spends its only extends on
-# [task_templates.bench]); clean/setup/watch (same payload, different policy
-# class: destructive, install, interactive).
+# Never-skip payload for gate tasks whose whole payload is this pair: cache off
+# blocks artifact-cache replay; outputs = [] blocks the freshness skip and
+# asserts that the task produces no artifacts. Members inherit via extends
+# instead of repeating both lines. A file task accepts one extends target only
+# (the array form is silently dropped in 2026.9.12), so bench cannot join: its
+# single slot goes to [task_templates.bench], and bench declares both lines
+# locally instead. clean/setup/watch carry the same pair locally but are not
+# gates (destructive, install, interactive).
 [task_templates."gate:never-skip"]
 outputs = []
 cache = { enabled = false }

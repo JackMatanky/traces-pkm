@@ -74,16 +74,15 @@ SUMMARY_NAME_WIDTH: Final = 32
 
 
 # ------------------------------------------------------------- #
-#                        Model complexity                       #
+#                        Model Complexity                       #
 # ------------------------------------------------------------- #
 
 
 class ModelKind(Enum):
     """Complexity class of a fitted performance model.
 
-    Each member owns its human-readable presentation (label, formula,
-    coefficient meanings) so the rest of the pipeline never string-matches model
-    names.
+    Each member owns its label, formula, and coefficient meanings so nothing
+    string-matches model names.
     """
 
     LINEAR = "linear"
@@ -92,7 +91,7 @@ class ModelKind(Enum):
 
     @property
     def label(self) -> str:
-        """Complexity including the constant term, e.g. ``O(n) + constant``."""
+        """Complexity including the constant term."""
         match self:
             case ModelKind.LINEAR:
                 return "O(n) + constant"
@@ -173,7 +172,7 @@ class BenchmarkDataPoint:
         mean_seconds: Mean wall-clock time in seconds, converted from
             Criterion's nanosecond ``point_estimate``.
         function: Sub-benchmark name within the group (e.g. ``sort_only``);
-            empty for a flat sweep (``BenchmarkId::from_parameter``).
+            empty for a flat sweep.
     """
 
     group: str
@@ -218,12 +217,10 @@ class FittedModel:
 
     @property
     def label(self) -> str:
-        """Human-readable complexity with constant term."""
         return self.kind.label
 
     @property
     def formula(self) -> str:
-        """Mathematical formula string."""
         return self.kind.formula
 
     @property
@@ -336,7 +333,6 @@ class SeriesAnalysis:
 
     @property
     def best_model(self) -> FittedModel:
-        """The model with the highest R²."""
         return self.models[0]
 
     @property
@@ -374,7 +370,7 @@ class SeriesAnalysis:
 
     @property
     def residual_dof(self) -> int | None:
-        """Residual degrees of freedom of the combined model, if that won."""
+        """Residual degrees of freedom when the combined model is best."""
         if self.best_model.kind is not ModelKind.COMBINED:
             return None
         return len(self.data_points) - 3
@@ -414,7 +410,7 @@ class SeriesAnalysis:
 
 
 # ------------------------------------------------------------- #
-#                       Criterion loading                       #
+#                       Criterion Loading                       #
 # ------------------------------------------------------------- #
 
 
@@ -449,9 +445,9 @@ class CriterionRepository:
         descending sort) never blend into one regression.
 
         Returns:
-            Data points per series, each sorted ascending by file count.
-            Series with fewer than 2 points are still returned; the
-            caller checks the minimum.
+            Data points per series, each sorted ascending by file count. Series
+            with fewer than 2 points are still returned; the caller checks the
+            minimum.
 
         Raises:
             FileNotFoundError: If ``root`` does not exist.
@@ -515,7 +511,7 @@ class CriterionRepository:
 
         Returns:
             A parsed point, or ``None`` if files are missing, malformed, or hold
-            unexpected values (expected for un-run benchmarks).
+            unexpected values (normal for un-run benchmarks).
         """
         try:
             bench: dict[str, Any] = json.loads(
@@ -543,7 +539,7 @@ class CriterionRepository:
 
 
 # ------------------------------------------------------------- #
-#                         Model fitting                         #
+#                         Model Fitting                         #
 # ------------------------------------------------------------- #
 
 
@@ -616,7 +612,7 @@ class ModelFitter:
 
 
 # ------------------------------------------------------------- #
-#                        Summary analysis                       #
+#                        Summary Analysis                       #
 # ------------------------------------------------------------- #
 
 
@@ -688,12 +684,10 @@ class SummaryData:
 
     @property
     def unreliable_count(self) -> int:
-        """Series that cannot be extrapolated."""
         return len(self.unreliable)
 
     @property
     def constant_count(self) -> int:
-        """Near-constant series."""
         return len(self.constant)
 
 
@@ -1154,7 +1148,7 @@ class CliOptions:
         raw_summary = os.environ.get("usage_summary")
         summary = raw_summary is not None
         worst_count = DEFAULT_WORST_COUNT
-        if raw_summary:  # valued form; bare gives ""
+        if raw_summary:
             try:
                 worst_count = int(raw_summary)
                 if worst_count < 1:
@@ -1188,8 +1182,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         0 when every series fit; 1 on missing/empty criterion output or any
-        per-series fit failure (failures never abort the loop; successful
-        series still report).
+        per-series fit failure (failures never abort the loop; successful series
+        still report).
     """
     options = CliOptions.from_env(argv)
 
@@ -1222,7 +1216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         models = fitter.fit(data_points)
         if not models:
             print(
-                f"Could not fit models for {name} (zero variance?).",
+                f"Could not fit models for {name} (zero variance).",
                 file=sys.stderr,
             )
             had_failure = True
