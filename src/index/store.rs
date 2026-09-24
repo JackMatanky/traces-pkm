@@ -190,7 +190,7 @@ impl IndexStore {
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<Note>> {
-        self.read_batch(RowKind::Notes, paths)
+        self.read_batch(ReadSource::Notes, paths)
     }
 
     /// Point-reads file metadata in one transaction, warning and skipping
@@ -205,7 +205,7 @@ impl IndexStore {
         &self,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<FileBase>> {
-        self.read_batch(RowKind::Files, paths)
+        self.read_batch(ReadSource::Files, paths)
     }
 
     /// Point-reads inbound-link edges for `targets`.
@@ -786,12 +786,11 @@ impl IndexStore {
     /// skipping corrupted rows.
     fn read_batch<'a, T: DeserializeOwned>(
         &self,
-        kind: RowKind,
+        kind: ReadSource,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<T>> {
         let txn = self.begin_read()?;
-        let Some(table) = self.open_table_for_read(&txn, kind.definition())?
-        else {
+        let Some(table) = self.open_table_for_read(&txn, kind.table())? else {
             return Ok(Vec::new());
         };
         let mut items = Vec::new();
@@ -1428,28 +1427,26 @@ impl IndexStore {
     }
 }
 
-/// Batch point-read row kind: maps a variant to its redb table
+/// Batch point-read read source: maps a variant to its redb table
 /// definition and structured label for [`read_batch`](IndexStore::read_batch).
 #[derive(Copy, Clone, Debug)]
-enum RowKind {
-    Notes,
+enum ReadSource {
     Files,
+    Notes,
 }
 
-impl RowKind {
-    fn definition(
-        self,
-    ) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+impl ReadSource {
+    fn table(self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         match self {
-            Self::Notes => NOTES,
             Self::Files => FILES,
+            Self::Notes => NOTES,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Notes => "note",
             Self::Files => "file",
+            Self::Notes => "note",
         }
     }
 }
