@@ -980,8 +980,15 @@ impl IndexStore {
         let Some(table) = self.open_table_for_read(txn, NOTES)? else {
             return Ok(SortedByPath::assumed_sorted(Vec::new()));
         };
+        let capacity = usize::try_from(
+            table.len().map_err(|source| self.wrap_redb_error(source))?,
+        )
+        .unwrap_or(usize::MAX);
         Self::decode_note_bytes(
-            self.collect_raw_note_bytes(self.open_table_iter(&table)?)?,
+            self.collect_raw_note_bytes(
+                self.open_table_iter(&table)?,
+                capacity,
+            )?,
         )
     }
 
@@ -989,8 +996,9 @@ impl IndexStore {
     fn collect_raw_note_bytes(
         &self,
         iter: TableRange<'_>,
+        capacity: usize,
     ) -> StoreResult<RawNoteRows> {
-        let mut rows = Vec::new();
+        let mut rows = Vec::with_capacity(capacity);
         for entry in iter {
             let (key, value) =
                 entry.map_err(|source| self.wrap_redb_error(source))?;
