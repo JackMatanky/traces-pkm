@@ -77,7 +77,7 @@ pub(super) struct TaskTableArgs {
 }
 
 impl TaskTableArgs {
-    /// Formats query outcome rows as a Markdown table.
+    /// Formats query rows as a Markdown table.
     ///
     /// # Errors
     ///
@@ -85,14 +85,14 @@ impl TaskTableArgs {
     fn format(
         &self,
         root: &std::path::Path,
-        outcome: &crate::query::QuerySet,
+        rows: &crate::query::QuerySet,
     ) -> Result<String, CliError> {
         if self.columns.is_empty() {
-            outcome.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
+            rows.table(DEFAULT_TABLE_HEADERS, DEFAULT_TABLE_COLUMNS)
         } else {
             let columns: Vec<&str> =
                 self.columns.iter().map(String::as_str).collect();
-            outcome.table(&columns, &columns)
+            rows.table(&columns, &columns)
         }
         .map_err(|source| super::query_error(root, source))
     }
@@ -113,29 +113,28 @@ pub(super) struct TaskPresentationArgs {
 }
 
 impl TaskPresentationArgs {
-    /// Formats query outcome rows according to active presentation flags.
+    /// Formats query rows according to active presentation flags.
     ///
     /// # Errors
     ///
     /// - [`CliError::Query`] if table or task list rendering fails.
-    fn format_outcome(
+    fn format_rows(
         &self,
         root: &std::path::Path,
-        outcome: &crate::query::QuerySet,
+        rows: &crate::query::QuerySet,
     ) -> Result<String, CliError> {
         if self.count {
-            return Ok(format!("{}\n", outcome.len()));
+            return Ok(format!("{}\n", rows.len()));
         }
         if self.table.table {
-            return self.table.format(root, outcome);
+            return self.table.format(root, rows);
         }
         let path_style = if self.line_numbers {
             TaskPathStyle::Coordinates
         } else {
             TaskPathStyle::Suffix
         };
-        outcome
-            .task_list(path_style)
+        rows.task_list(path_style)
             .map_err(|source| super::query_error(root, source))
     }
 }
@@ -221,14 +220,14 @@ impl Task {
         let all_filters =
             self.filter.iter().map(String::as_str).chain(extra_filters);
         let order = self.sort.resolve(root)?;
-        let outcome = super::refresh_task_query(
+        let rows = super::refresh_task_query(
             config,
             self.from.as_deref(),
             all_filters,
             order,
         )?;
-        let count = outcome.len();
-        let rendered = self.presentation.format_outcome(root, &outcome)?;
+        let count = rows.len();
+        let rendered = self.presentation.format_rows(root, &rows)?;
         Ok((rendered, count))
     }
 }

@@ -37,9 +37,9 @@
 //! [`QuerySet::table`], [`QuerySet::list`], [`QuerySet::task_list`], and
 //! `count` (an alias for [`QuerySet::len`]) are terminal instead: they render
 //! final markdown/scalar output and end a chain rather than continue it. Each
-//! is reachable both as a `call_method` (`outcome.table(["Name"],
+//! is reachable both as a `call_method` (`rows.table(["Name"],
 //! ["file.name"])`) and as a pipeline filter, registered once by
-//! [`QueryOps::register_terminal_filters`] (`outcome | table(["Name"],
+//! [`QueryOps::register_terminal_filters`] (`rows | table(["Name"],
 //! ["file.name"])`). Both forms call the same [`QuerySet`] method.
 //!
 //! # Object Wiring
@@ -179,8 +179,8 @@ impl QueryOps {
     }
 
     /// Registers `table`, `list`, `task_list`, and `count` as pipeline filters:
-    /// `outcome | table(["Name"], ["file.name"])`, mirroring the call-method
-    /// form `outcome.table(["Name"], ["file.name"])` documented on
+    /// `rows | table(["Name"], ["file.name"])`, mirroring the call-method
+    /// form `rows.table(["Name"], ["file.name"])` documented on
     /// [`Object::call_method`] for [`QuerySet`]. Registered once, not per
     /// instance: these filters carry no state and apply to any [`QuerySet`]
     /// regardless of which namespace produced it.
@@ -338,7 +338,7 @@ impl Object for QuerySet {
     ///
     /// Every other name falls through to the non-terminal chain: `.where`/
     /// `.filter`, `.sort`, `.limit`, `.group_by`, and `.flatten`. Each of those
-    /// calls consumes a clone of the current outcome and wraps the transformed
+    /// calls consumes a clone of the current rows and wraps the transformed
     /// result in a [`Value`] for further chaining:
     ///
     /// - `where` and `filter` both call `QuerySet::filter`. The Rust-side
@@ -396,11 +396,11 @@ impl Object for QuerySet {
             }
             _ => {}
         }
-        let outcome = self.as_ref().clone();
+        let rows = self.as_ref().clone();
         let transformed = match method {
             "filter" | "where" => {
                 let (expr,): (&str,) = from_args(args)?;
-                outcome.filter(expr)
+                rows.filter(expr)
             }
             "sort" => {
                 let (field, descending): (&str, Option<bool>) =
@@ -410,19 +410,19 @@ impl Object for QuerySet {
                 } else {
                     SortDirection::Ascending
                 };
-                outcome.sort_field(field, direction)
+                rows.sort_field(field, direction)
             }
             "limit" => {
                 let (n,): (i64,) = from_args(args)?;
-                outcome.limit(n)
+                rows.limit(n)
             }
             "group_by" => {
                 let (path,): (&str,) = from_args(args)?;
-                outcome.group_by(path)
+                rows.group_by(path)
             }
             "flatten" => {
                 let (path,): (&str,) = from_args(args)?;
-                outcome.flatten(path)
+                rows.flatten(path)
             }
             _ => return Err(Error::from(ErrorKind::UnknownMethod)),
         };
@@ -430,7 +430,7 @@ impl Object for QuerySet {
     }
 }
 
-/// `outcome | table(...)` filter body. See [`QuerySet::table`].
+/// `rows | table(...)` filter body. See [`QuerySet::table`].
 ///
 /// Takes owned `Vec<String>` for `headers`/`columns` rather than borrowed
 /// `Vec<&str>`. Two reasons stack here:
@@ -449,28 +449,28 @@ impl Object for QuerySet {
               signature; the body only needs to borrow each entry"
 )]
 fn table_filter(
-    outcome: &QuerySet,
+    rows: &QuerySet,
     headers: Vec<String>,
     columns: Vec<String>,
 ) -> TemplateEngineResult<String> {
     let headers_slice: Vec<&str> = headers.iter().map(String::as_str).collect();
     let columns_slice: Vec<&str> = columns.iter().map(String::as_str).collect();
-    outcome.table(&headers_slice, &columns_slice).map_err(query_error)
+    rows.table(&headers_slice, &columns_slice).map_err(query_error)
 }
 
-/// `outcome | list(path)` filter body. See [`QuerySet::list`].
-fn list_filter(outcome: &QuerySet, path: &str) -> TemplateEngineResult<String> {
-    outcome.list(path).map_err(query_error)
+/// `rows | list(path)` filter body. See [`QuerySet::list`].
+fn list_filter(rows: &QuerySet, path: &str) -> TemplateEngineResult<String> {
+    rows.list(path).map_err(query_error)
 }
 
-/// `outcome | task_list` filter body. See [`QuerySet::task_list`].
-fn task_list_filter(outcome: &QuerySet) -> TemplateEngineResult<String> {
-    outcome.task_list(TaskPathStyle::default()).map_err(query_error)
+/// `rows | task_list` filter body. See [`QuerySet::task_list`].
+fn task_list_filter(rows: &QuerySet) -> TemplateEngineResult<String> {
+    rows.task_list(TaskPathStyle::default()).map_err(query_error)
 }
 
-/// `outcome | count` filter body: the number of records in `outcome`.
-fn count_filter(outcome: &QuerySet) -> usize {
-    outcome.len()
+/// `rows | count` filter body: the number of records in `rows`.
+fn count_filter(rows: &QuerySet) -> usize {
+    rows.len()
 }
 
 /// `field | with_children` filter body: widens a `file` field's `Class` atom
@@ -1471,7 +1471,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn a_query_outcome_can_be_passed_to_ui_select_with_attribute() {
+        fn a_query_rows_can_be_passed_to_ui_select_with_attribute() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "a.md", "# A");
             write_note(temp.path(), "b.md", "# B");
@@ -1493,7 +1493,7 @@ mod tests {
         }
 
         #[test]
-        fn a_query_outcome_can_be_passed_to_ui_multi_select_with_attribute() {
+        fn a_query_rows_can_be_passed_to_ui_multi_select_with_attribute() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "a.md", "# A");
             write_note(temp.path(), "b.md", "# B");
