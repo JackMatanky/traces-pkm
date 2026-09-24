@@ -8,6 +8,7 @@
 # including after --mode test/quick and failed runs), so wording derives
 # honesty from the tree itself, never from the run that just finished.
 
+# shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
 CRITERION_DIR="${usage_criterion_dir:-${CRITERION_DIR:-target/criterion}}"

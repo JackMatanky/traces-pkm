@@ -30,6 +30,11 @@ cargo-deny = "latest"
 "cargo:cargo-mutants" = "latest"
 
 # -- Benchmarking --
+# Decision: critcmp stays in global [tools], not a task-local tools entry:
+# task-local tools activate only for that task's run, so critcmp would be
+# off PATH when the bench --compare completion's run= executes at tab time
+# (07_configuration.md, "tools"; 06_arguments.md, "Completion (complete)").
+# Revisit only if completion gets a find-based fallback.
 "cargo:critcmp" = "latest"
 
 # -- Dev experience --
@@ -95,12 +100,20 @@ global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
 # before changing outputs on a gate. `mise run --force` ignores source/output
 # checking outright (02_architecture.md, "Incremental Execution") —
 # freshness and the artifact cache are separate mechanisms.
+# Decision (unmade, not a won't-do): remote/CI task cache is local-only for
+# now — task.cache.remote_url + remote_namespace are unconfigured, so CI
+# has no remote cache to publish to; revisit when a remote service exists
+# (07_configuration.md, "Remote cache and sensitive data", "Per-run cache
+# access"; 08_remote_cache_protocol.md).
 # Cite refs by task name / doc section — never mise.toml line numbers.
 enabled = true
 
 [task_config.input_groups]
-rust = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "tests/**/*.rs"]
-bench = ["Cargo.toml", "Cargo.lock", "clippy.toml", "src/**/*.rs", "benches/**/*.rs"]
+# Slimmed to owned entries: Cargo.toml + **/*.rs globs retained; only
+# Cargo.lock/clippy.toml dropped — global_inputs applies them to every
+# task (07_configuration.md, "task_config.global_inputs").
+rust = ["Cargo.toml", "src/**/*.rs", "tests/**/*.rs"]
+bench = ["Cargo.toml", "src/**/*.rs", "benches/**/*.rs"]
 
 # ------------------------------------------------------------- #
 #                      Setup & Maintenance                      #
