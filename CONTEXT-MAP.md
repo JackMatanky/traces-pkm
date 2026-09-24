@@ -55,7 +55,7 @@ graph TD
 - **Dialog Seam**: `DialogProvider` provides an object-safe I/O boundary
   consumed by `TemplateEngine` (`ui.*`) and `CLI` (`init`), satisfied by
   `TerminalDialogProvider` (TTY) or `PresetDialogProvider` (headless / tests).
-- **Index & Note**: `Index` scans files into `FileBase` and delegates markdown
+- **Index & Note**: `Index` scans files into `FileMeta` and delegates markdown
   content parsing to `Note`.
 - **Query & Schema (Decoupled)**: `Query` evaluates source expressions against
   `WorkspaceIndex` and expands `@Class*` hierarchies via the `FileClassExpander`

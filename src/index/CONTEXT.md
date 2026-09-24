@@ -44,7 +44,7 @@ The changed-file and changed-link counts observed during a Refresh Pass.
 
 ### Indexed Data
 
-#### File Base
+#### File Metadata
 
 The filesystem metadata captured for every regular file regardless of document
 type: relative path, size, timestamps, and format classification.
@@ -52,7 +52,7 @@ type: relative path, size, timestamps, and format classification.
 
 #### File Entry
 
-One indexed file's File Base together with its optional parsed Note and derived
+One indexed file's File Metadata together with its optional parsed Note and derived
 inbound links in a Workspace Index.
 *Avoid*: file record, indexed note
 
@@ -60,7 +60,7 @@ inbound links in a Workspace Index.
 
 The indexed form of a Markdown note: the parsed frontmatter, inline fields,
 tags, lists, tasks, and outgoing links persisted for querying, distinct from
-the File Base carrying its file metadata.
+the File Metadata carrying its file metadata.
 *Avoid*: note metadata, page data, document info, note payload
 
 #### Inlink

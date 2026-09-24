@@ -49,7 +49,7 @@ Plan fuse into a single composite Sort Order.
 
 #### Query Row
 
-A single query result row pairing a Note with its File Base, task state, and
+A single query result row pairing a Note with its File Metadata, task state, and
 resolved field paths.
 *Avoid*: Query Record, record, IndexRecord, QueryOutcome, page
 

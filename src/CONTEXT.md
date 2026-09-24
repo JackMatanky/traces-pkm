@@ -32,7 +32,7 @@ preserving author casing for display.
 A `#`-prefixed identifier supporting hierarchical sub-tag prefix matching.
 *Avoid*: label, category, keyword
 
-#### File Base
+#### File Metadata
 
 The universal filesystem metadata captured for every regular file in a project:
 relative path, size, timestamps, and format classification.
