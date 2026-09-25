@@ -20,12 +20,14 @@ pub enum LinkType {
 
 /// An outgoing Markdown link or Obsidian wikilink.
 ///
-/// Holds the raw target string, display text (or alias for wikilinks), link
-/// syntax kind, and an embedded flag for `![[target]]` embeds.
+/// Holds the raw target string, optional display text (or alias for wikilinks;
+/// `None` falls back to the target), link syntax kind, and an embedded flag
+/// for `![[target]]` embeds.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Link {
     target: String,
-    text: String,
+    /// Alias or display text; `None` means the target doubles as the text.
+    text: Option<String>,
     kind: LinkType,
     embedded: bool,
 }
@@ -40,9 +42,10 @@ impl Link {
         text: impl Into<String>,
         kind: LinkType,
     ) -> Self {
+        let text = text.into();
         Self {
             target: target.into(),
-            text: text.into(),
+            text: (!text.is_empty()).then_some(text),
             kind,
             embedded: false,
         }
@@ -83,12 +86,8 @@ impl Link {
         if target.is_empty() {
             return None;
         }
-        let text = unescape_wikilink_part(text.trim());
-        let text = if text.is_empty() {
-            target.clone()
-        } else {
-            text
-        };
+        let alias = unescape_wikilink_part(text.trim());
+        let text = (!alias.is_empty()).then_some(alias);
         Some((
             Self {
                 target,
@@ -126,10 +125,12 @@ impl Link {
     }
 
     /// Returns the display text, or alias text for a wikilink.
+    ///
+    /// Falls back to the link target when no alias is present.
     #[inline]
     #[must_use]
     pub(crate) fn text(&self) -> &str {
-        &self.text
+        self.text.as_deref().unwrap_or(&self.target)
     }
 
     /// Returns the syntax used by the source link.

@@ -74,7 +74,10 @@ impl RefreshReport {
 /// Refresh state produced by one scan, before optional persistence.
 pub(super) enum RefreshState {
     /// No file metadata changed; the opened store remains current.
-    Fresh(IndexStore),
+    Fresh {
+        store: IndexStore,
+        files: SortedByPath<FileMeta>,
+    },
     /// File metadata changed and is reconciled but not yet persisted.
     Stale(Box<PendingApply>),
 }
@@ -303,10 +306,23 @@ impl RefreshPlan {
         self.delta.upserted()
     }
 
+    #[inline]
+    pub(super) fn store(&self) -> &IndexStore {
+        &self.store
+    }
+
+    #[inline]
+    pub(super) fn persisted_files(&self) -> &SortedByPath<FileMeta> {
+        &self.persisted_files
+    }
+
     /// Consumes the unchanged plan into [`RefreshState::Fresh`].
     #[inline]
     pub(super) fn into_fresh(self) -> RefreshState {
-        RefreshState::Fresh(self.store)
+        RefreshState::Fresh {
+            store: self.store,
+            files: self.persisted_files,
+        }
     }
 
     /// Reconciles reparsed notes with persisted state.
@@ -318,16 +334,18 @@ impl RefreshPlan {
     pub(super) fn reconcile(
         self,
         modified_notes: Vec<Note>,
+        persisted: InlinkMap,
     ) -> IndexResult<PendingApply> {
-        let persisted = self.store.read_all_links(&self.persisted_files)?;
         let (inlinks, inlink_delta) =
             if Self::is_paths_unchanged(&self.delta, &self.persisted_files) {
-                let links = Self::patch_links(
-                    &persisted,
+                let edited: HashSet<&Path> =
+                    modified_notes.iter().map(Note::path).collect();
+                let new_edges = inlinks::resolve_edges_for(
                     &modified_notes,
                     self.current_files.as_slice(),
                 );
-                let inlink_delta = InlinkDelta::compute(&links, &persisted);
+                let (links, inlink_delta) =
+                    persisted.patch_and_diff(&edited, &new_edges);
                 (
                     InlinkReconciliation {
                         links,
@@ -336,15 +354,23 @@ impl RefreshPlan {
                     inlink_delta,
                 )
             } else {
-                let notes = merge_refreshed_notes(
-                    &self.store,
-                    &self.delta,
-                    modified_notes,
-                )?;
-                let links = InlinkMap::new(
-                    notes.as_slice(),
-                    self.current_files.as_slice(),
+                let (notes_res, resolver) = rayon::join(
+                    || {
+                        merge_refreshed_notes(
+                            &self.store,
+                            &self.delta,
+                            modified_notes,
+                        )
+                    },
+                    || {
+                        inlinks::LinkResolver::new(
+                            self.current_files.as_slice(),
+                        )
+                    },
                 );
+                let notes = notes_res?;
+                let links =
+                    InlinkMap::with_resolver(notes.as_slice(), &resolver);
                 let inlink_delta = InlinkDelta::compute(&links, &persisted);
                 (
                     InlinkReconciliation {
@@ -378,22 +404,6 @@ impl RefreshPlan {
             && delta.upserted().iter().all(|file| {
                 persisted_files.binary_search_by_path(file.path()).is_ok()
             })
-    }
-
-    /// Replaces inbound edges sourced by modified notes after re-resolving
-    /// their current outlinks.
-    ///
-    /// Sound only when [`Self::is_paths_unchanged`] holds.
-    fn patch_links(
-        persisted: &InlinkMap,
-        modified_notes: &[Note],
-        current_files: &[FileMeta],
-    ) -> InlinkMap {
-        let edited: HashSet<&Path> =
-            modified_notes.iter().map(Note::path).collect();
-        let new_edges =
-            inlinks::resolve_edges_for(modified_notes, current_files);
-        persisted.without_sources(&edited).with_edges(new_edges)
     }
 }
 

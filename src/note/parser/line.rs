@@ -14,19 +14,12 @@ impl ByteTracker {
     /// Precomputes line-start offsets for `source`.
     #[inline]
     #[must_use]
-    #[expect(
-        clippy::naive_bytecount,
-        reason = "avoid extra bytecount dependency for simple newline counting"
-    )]
     pub(super) fn new(source: &str) -> Self {
-        let count = source.as_bytes().iter().filter(|&&b| b == b'\n').count();
-        let mut line_starts = Vec::with_capacity(count.saturating_add(1));
+        let mut line_starts = Vec::with_capacity((source.len() / 32).max(16));
         line_starts.push(0);
-        line_starts.extend(
-            source
-                .match_indices('\n')
-                .map(|(offset, _)| offset.saturating_add(1)),
-        );
+        for (offset, _) in source.match_indices('\n') {
+            line_starts.push(offset.saturating_add(1));
+        }
         Self {
             line_starts: line_starts.into_boxed_slice(),
         }

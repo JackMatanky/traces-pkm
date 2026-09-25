@@ -93,6 +93,12 @@ impl DirNode {
         }
     }
 
+    /// Consumes the node and returns the raw `walkdir` entry.
+    #[must_use]
+    pub(crate) fn into_inner(self) -> DirEntry {
+        self.0
+    }
+
     /// Returns the node's full path, including the walk root prefix.
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
@@ -114,6 +120,15 @@ impl DirNode {
     #[must_use]
     pub(crate) fn file_type(&self) -> fs::FileType {
         self.0.file_type()
+    }
+
+    /// Returns the node's filesystem metadata without following symlinks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if metadata cannot be read.
+    pub(crate) fn metadata(&self) -> io::Result<fs::Metadata> {
+        self.0.metadata().map_err(io::Error::from)
     }
 }
 
@@ -215,10 +230,10 @@ impl DirTree {
     #[must_use]
     pub(crate) fn filter<F>(mut self, mut predicate: F) -> Self
     where
-        F: FnMut(&DirNode) -> bool + 'static,
+        F: FnMut(&DirNodeRef<'_>) -> bool + 'static,
     {
         self.prune = Some(Box::new(move |entry: &DirEntry| {
-            !entry.file_type().is_dir() || !predicate(&DirNode(entry.clone()))
+            !entry.file_type().is_dir() || !predicate(&DirNodeRef(entry))
         }));
         self
     }

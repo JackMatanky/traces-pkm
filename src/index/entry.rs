@@ -78,7 +78,7 @@ impl WorkspaceIndex {
     fn assemble_internal(
         files: SortedByPath<FileMeta>,
         notes: SortedByPath<Note>,
-        inlinks: InlinkMap,
+        mut inlinks: InlinkMap,
     ) -> Self {
         let files = files.into_vec();
         let mut notes_iter = notes.into_vec().into_iter().peekable();
@@ -91,11 +91,13 @@ impl WorkspaceIndex {
                 notes_iter.next();
             }
             let note = notes_iter.next_if(|note| note.path() == file.path());
-            entries.push(FileEntry::new(file, note));
+            let mut entry = FileEntry::new(file, note);
+            if let Some(sources) = inlinks.remove(entry.file().path()) {
+                entry.set_inlinks(sources);
+            }
+            entries.push(entry);
         }
-        let mut entries = SortedByPath::assumed_sorted(entries);
-        attach_inlinks(&mut entries, inlinks);
-        Self::new(entries.into_vec().into_boxed_slice())
+        Self::new(entries.into_boxed_slice())
     }
 
     /// Returns [`FileEntry`]s, sorted by path.
@@ -199,6 +201,7 @@ impl RowIndex {
 /// `entries` is a typed path-sorted view, so each lookup is a binary search
 /// against the same order the index stores rows in; a miss means a genuinely
 /// unknown target, not an unsorted slice.
+#[cfg(test)]
 fn attach_inlinks(entries: &mut SortedByPath<FileEntry>, inlinks: InlinkMap) {
     for (target, sources) in inlinks.into_entries() {
         if let Some(entry) = entries.get_mut_by_path(&target) {

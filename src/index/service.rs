@@ -13,13 +13,13 @@ use rayon::prelude::*;
 
 use super::{
     INDEX_FILE, IndexError, IndexResult, WorkspaceIndex,
-    inlinks::InlinkMap,
+    inlinks::{InlinkMap, LinkResolver},
     refresh::{PendingApply, RefreshPlan, RefreshReport, RefreshState},
     sort::SortedByPath,
     store::{IndexDimensions, IndexStore, PersistRequest},
 };
 use crate::{
-    Config, DirTree, Note, TaskConfig,
+    Config, DirNode, DirTree, Note, TaskConfig,
     config::FrontmatterConfig,
     file::{FileFormat, FileMeta},
     note::{MarkdownParserInput, parse_markdown},
@@ -72,9 +72,12 @@ impl IndexerService {
     #[inline]
     pub fn build(&self) -> IndexResult<WorkspaceIndex> {
         let files = SortedByPath::assumed_sorted(Self::scan(&self.root)?);
-        let notes =
-            SortedByPath::assumed_sorted(self.parse_notes(files.as_slice())?);
-        let inlinks = InlinkMap::new(notes.as_slice(), files.as_slice());
+        let (notes_res, resolver) = rayon::join(
+            || self.parse_notes(files.as_slice()),
+            || LinkResolver::new(files.as_slice()),
+        );
+        let notes = SortedByPath::assumed_sorted(notes_res?);
+        let inlinks = InlinkMap::with_resolver(notes.as_slice(), &resolver);
         Ok(WorkspaceIndex::assemble(files, notes, inlinks))
     }
 
@@ -120,15 +123,24 @@ impl IndexerService {
         &self,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
         match self.prepare_pass()? {
-            RefreshState::Fresh(store) => Self::assemble_unchanged(&store),
+            RefreshState::Fresh {
+                store,
+                files,
+            } => Self::assemble_unchanged(&store, files),
             RefreshState::Stale(pending) => self.apply_reconciled(*pending),
         }
     }
 
     fn assemble_unchanged(
         store: &IndexStore,
+        files: SortedByPath<FileMeta>,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
-        let (files, notes, links) = store.read_all()?;
+        let (notes_res, links_res) = rayon::join(
+            || store.read_all_notes(),
+            || store.read_all_links(&files),
+        );
+        let notes = notes_res?;
+        let links = links_res?;
         Ok((
             WorkspaceIndex::assemble(files, notes, links),
             RefreshReport::default(),
@@ -162,8 +174,13 @@ impl IndexerService {
         if plan.is_fresh() {
             return Ok(plan.into_fresh());
         }
-        let modified_notes = self.parse_notes(plan.upserted_files())?;
-        let pending = plan.reconcile(modified_notes)?;
+        let (notes_res, links_res) = rayon::join(
+            || self.parse_notes(plan.upserted_files()),
+            || plan.store().read_all_links(plan.persisted_files()),
+        );
+        let modified_notes = notes_res?;
+        let persisted_links = links_res?;
+        let pending = plan.reconcile(modified_notes, persisted_links)?;
         Ok(RefreshState::Stale(Box::new(pending)))
     }
 
@@ -210,7 +227,10 @@ impl IndexerService {
     #[inline]
     pub(crate) fn refresh_store(&self) -> IndexResult<IndexStore> {
         match self.prepare_pass()? {
-            RefreshState::Fresh(store) => Ok(store),
+            RefreshState::Fresh {
+                store,
+                ..
+            } => Ok(store),
             RefreshState::Stale(pending) => {
                 let report = pending.report();
                 let dimensions =
@@ -313,7 +333,7 @@ impl IndexerService {
     ///   project-relative path.
     pub(super) fn scan(root: &Path) -> IndexResult<Vec<FileMeta>> {
         let index_db = root.join(INDEX_FILE);
-        let paths = DirTree::descendants(root)
+        let entries = DirTree::descendants(root)
             .filter(|node| crate::env_vars::is_ignored_dir(node.file_name()))
             .filter_map(|node| {
                 let node = match node {
@@ -322,26 +342,29 @@ impl IndexerService {
                 };
                 let path = node.path();
                 (node.file_type().is_file() && path != index_db)
-                    .then(|| Ok(path.to_path_buf()))
+                    .then_some(Ok(node))
             })
-            .collect::<IndexResult<Vec<PathBuf>>>()?;
-        let mut files = paths
+            .collect::<IndexResult<Vec<DirNode>>>()?;
+        let mut files = entries
             .into_par_iter()
-            .map(|path| scan_file_metadata(&path, root))
+            .map(|node| scan_file_metadata(node, root))
             .collect::<IndexResult<Vec<FileMeta>>>()?;
-        files.sort_by(|a, b| a.path().cmp(b.path()));
+        files.par_sort_unstable_by(|a, b| a.path().cmp(b.path()));
         Ok(files)
     }
 }
 
-/// Builds `path`'s [`FileMeta`] from metadata relative to `root`.
-fn scan_file_metadata(path: &Path, root: &Path) -> IndexResult<FileMeta> {
+/// Builds `node`'s [`FileMeta`] from metadata relative to `root`.
+fn scan_file_metadata(node: DirNode, root: &Path) -> IndexResult<FileMeta> {
+    // `node.path()` borrows from `node`, so no owned path is allocated on the
+    // success path: the clone inside the error constructors only runs when a
+    // failure actually occurs.
+    let path = node.path();
     let relative = RelativePath::derive(root, path)?;
-    let metadata =
-        std::fs::metadata(path).map_err(|source| IndexError::Inspect {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let metadata = node.metadata().map_err(|source| IndexError::Inspect {
+        path: path.to_path_buf(),
+        source,
+    })?;
     FileMeta::from_metadata(relative, &metadata).map_err(|source| {
         IndexError::Inspect {
             path: path.to_path_buf(),

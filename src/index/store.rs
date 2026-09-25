@@ -189,7 +189,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_notes_batch<'a>(
         &self,
-        paths: impl IntoIterator<Item = &'a Path>,
+        paths: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<Note>> {
         self.read_batch(ReadSource::Notes, paths)
     }
@@ -204,7 +204,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_files_batch<'a>(
         &self,
-        paths: impl IntoIterator<Item = &'a Path>,
+        paths: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<FileMeta>> {
         self.read_batch(ReadSource::Files, paths)
     }
@@ -222,20 +222,21 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_links_for_targets<'a>(
         &self,
-        targets: impl IntoIterator<Item = &'a Path>,
+        targets: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let Some(table) = self.open_multimap_for_read(&txn, LINKS)? else {
             return Ok(InlinkMap::default());
         };
-        let mut edges = HashMap::new();
-        for target in targets {
-            let key = PathKey::new(target).as_bytes();
-            let sources = self.collect_stored_paths(&table, key)?;
-            if !sources.is_empty() {
-                edges.insert(target.to_path_buf(), sources.into_boxed_slice());
-            }
-        }
+        let edges: HashMap<PathBuf, Box<[PathBuf]>> = targets
+            .into_par_iter()
+            .filter_map(|target| {
+                let key = PathKey::new(target).as_bytes();
+                let sources = self.collect_stored_paths(&table, key).ok()?;
+                (!sources.is_empty())
+                    .then(|| (target.to_path_buf(), sources.into_boxed_slice()))
+            })
+            .collect();
         Ok(InlinkMap::from_raw(edges))
     }
 
@@ -414,7 +415,7 @@ impl IndexStore {
         def: TableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> IndexResult<SortedByPath<T>>
     where
-        T: DeserializeOwned + crate::path::HasPath,
+        T: DeserializeOwned + Send + crate::path::HasPath,
     {
         let Some(table) = self.open_table_for_read(txn, def)? else {
             return Ok(SortedByPath::assumed_sorted(Vec::new()));
@@ -443,13 +444,19 @@ impl IndexStore {
         );
         let files: SortedByPath<FileMeta> = files_result?;
         let notes = notes_result?;
-        let target_paths = Self::path_by_key(
-            files.as_slice().iter().map(FileMeta::path),
-            files.as_slice().len(),
-        );
-        let source_paths = Self::path_by_key(
-            notes.as_slice().iter().map(Note::path),
-            notes.as_slice().len(),
+        let (target_paths, source_paths) = rayon::join(
+            || {
+                Self::path_by_key(
+                    files.as_slice().iter().map(FileMeta::path),
+                    files.as_slice().len(),
+                )
+            },
+            || {
+                Self::path_by_key(
+                    notes.as_slice().iter().map(Note::path),
+                    notes.as_slice().len(),
+                )
+            },
         );
         let links =
             self.read_links(&txn, LINKS, &target_paths, &source_paths)?;
@@ -496,16 +503,22 @@ impl IndexStore {
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let files_slice = files.as_slice();
-        let target_paths = Self::path_by_key(
-            files_slice.iter().map(FileMeta::path),
-            files_slice.len(),
-        );
-        let source_paths = Self::path_by_key(
-            files_slice
-                .iter()
-                .filter(|file| file.format() == FileFormat::Note)
-                .map(FileMeta::path),
-            files_slice.len(),
+        let (target_paths, source_paths) = rayon::join(
+            || {
+                Self::path_by_key(
+                    files_slice.iter().map(FileMeta::path),
+                    files_slice.len(),
+                )
+            },
+            || {
+                Self::path_by_key(
+                    files_slice
+                        .iter()
+                        .filter(|file| file.format() == FileFormat::Note)
+                        .map(FileMeta::path),
+                    files_slice.len(),
+                )
+            },
         );
         self.read_links(&txn, LINKS, &target_paths, &source_paths)
     }
@@ -660,8 +673,12 @@ impl IndexStore {
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         self.delete_tables(&txn)?;
-        self.write_all_parallel(&txn, entries)?;
-        self.write_axes_parallel(&txn, entries, dimensions)?;
+        let (all_res, axes_res) = rayon::join(
+            || self.write_all_parallel(&txn, entries),
+            || self.write_axes_parallel(&txn, entries, dimensions),
+        );
+        all_res?;
+        axes_res?;
         self.commit(txn)?;
         Ok(())
     }
@@ -682,10 +699,23 @@ impl IndexStore {
         dimensions: &IndexDimensions,
         rows: &IncrementalRows<'_>,
     ) -> IndexResult<()> {
-        self.apply_diff_deletions(&txn, rows.delta.deleted(), dimensions)?;
-        self.apply_diff_upserts(&txn, rows.delta.upserted())?;
-        self.apply_modified_notes(&txn, rows.notes, dimensions)?;
-        self.apply_inlink_delta(&txn, rows.edges)?;
+        // Core tables (FILES, NOTES, tag/class axes) and the LINKS multimap
+        // are fully disjoint, so their write batches overlap via rayon::join.
+        let (core_res, links_res) = rayon::join(
+            || -> IndexResult<()> {
+                self.apply_diff_deletions(
+                    &txn,
+                    rows.delta.deleted(),
+                    dimensions,
+                )?;
+                self.apply_diff_upserts(&txn, rows.delta.upserted())?;
+                self.apply_modified_notes(&txn, rows.notes, dimensions)?;
+                Ok(())
+            },
+            || self.apply_inlink_delta(&txn, rows.edges),
+        );
+        core_res?;
+        links_res?;
         self.commit(txn)?;
         Ok(())
     }
@@ -775,25 +805,27 @@ impl IndexStore {
 
     // --- Batch read helpers -------------------------------------------
 
-    /// Point-reads and decodes `paths` from `kind`'s table, warning and
-    /// skipping corrupted rows.
-    fn read_batch<'a, T: DeserializeOwned>(
+    /// Point-reads and decodes `paths` from `kind`'s table in parallel,
+    /// warning and skipping corrupted rows. Preserves the input order.
+    fn read_batch<'a, T: DeserializeOwned + Send>(
         &self,
         kind: ReadSource,
-        paths: impl IntoIterator<Item = &'a Path>,
+        paths: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<T>> {
         let txn = self.begin_read()?;
         let Some(table) = self.open_table_for_read(&txn, kind.table())? else {
             return Ok(Vec::new());
         };
-        let mut items = Vec::new();
-        for path in paths {
-            let key = PathKey::new(path).as_bytes();
-            if let Some(guard) =
-                table.get(key).map_err(|source| self.wrap_redb_error(source))?
-            {
+        let items: Vec<T> = paths
+            .into_par_iter()
+            .filter_map(|path| {
+                let key = PathKey::new(path).as_bytes();
+                let guard = table
+                    .get(key)
+                    .map_err(|source| self.wrap_redb_error(source))
+                    .ok()??;
                 match decode_row::<T>(path, guard.value()) {
-                    Ok(item) => items.push(item),
+                    Ok(item) => Some(item),
                     Err(source) => {
                         tracing::warn!(
                             path = %path.display(),
@@ -801,10 +833,11 @@ impl IndexStore {
                             err = %source,
                             "skipping corrupted row"
                         );
+                        None
                     }
                 }
-            }
-        }
+            })
+            .collect();
         Ok(items)
     }
 
@@ -928,8 +961,8 @@ impl IndexStore {
         table.iter().map_err(|source| self.wrap_redb_error(source))
     }
 
-    /// Deserializes every row in an already-open `table`.
-    fn decode_table_rows<T: DeserializeOwned>(
+    /// Deserializes every row in an already-open `table` in parallel.
+    fn decode_table_rows<T: DeserializeOwned + Send>(
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
     ) -> StoreResult<Vec<T>> {
@@ -937,23 +970,19 @@ impl IndexStore {
             table.len().map_err(|source| self.wrap_redb_error(source))?,
         )
         .unwrap_or(usize::MAX);
-        self.decode_rows(self.open_table_iter(table)?, capacity)
-    }
-
-    #[inline(never)]
-    fn decode_rows<T: DeserializeOwned>(
-        &self,
-        iter: TableRange<'_>,
-        capacity: usize,
-    ) -> StoreResult<Vec<T>> {
-        let mut items = Vec::with_capacity(capacity);
-        for entry in iter {
+        let mut raw_rows = Vec::with_capacity(capacity);
+        for entry in self.open_table_iter(table)? {
             let (key, value) =
                 entry.map_err(|source| self.wrap_redb_error(source))?;
-            let path = path_from_bytes(key.value());
-            items.push(decode_row(&path, value.value())?);
+            raw_rows
+                .push((path_from_bytes(key.value()), value.value().to_vec()));
         }
-        Ok(items)
+        // B-tree iteration is inherently sequential, but `postcard` decoding
+        // is CPU-bound and parallelizes cleanly across rayon.
+        raw_rows
+            .into_par_iter()
+            .map(|(path, bytes)| decode_row(&path, &bytes))
+            .collect()
     }
 
     /// Reads raw `NOTES` rows before parallel decoding.
@@ -964,8 +993,15 @@ impl IndexStore {
         let Some(table) = self.open_table_for_read(txn, NOTES)? else {
             return Ok(SortedByPath::assumed_sorted(Vec::new()));
         };
+        let capacity = usize::try_from(
+            table.len().map_err(|source| self.wrap_redb_error(source))?,
+        )
+        .unwrap_or(usize::MAX);
         Self::decode_note_bytes(
-            self.collect_raw_note_bytes(self.open_table_iter(&table)?)?,
+            self.collect_raw_note_bytes(
+                self.open_table_iter(&table)?,
+                capacity,
+            )?,
         )
     }
 
@@ -973,8 +1009,9 @@ impl IndexStore {
     fn collect_raw_note_bytes(
         &self,
         iter: TableRange<'_>,
+        capacity: usize,
     ) -> StoreResult<RawNoteRows> {
-        let mut rows = Vec::new();
+        let mut rows = Vec::with_capacity(capacity);
         for entry in iter {
             let (key, value) =
                 entry.map_err(|source| self.wrap_redb_error(source))?;
@@ -1016,7 +1053,7 @@ impl IndexStore {
         target_paths: &FxHashMap<&[u8], &Path>,
         source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<InlinkMap> {
-        let mut links = HashMap::new();
+        let mut links = HashMap::with_capacity(target_paths.len());
         for entry in iter {
             if let Some((target, sources)) =
                 self.resolve_link_entry(entry, target_paths, source_paths)?
@@ -1059,7 +1096,7 @@ impl IndexStore {
         sources: redb::MultimapValue<'_, &[u8]>,
         source_paths: &FxHashMap<&[u8], &Path>,
     ) -> StoreResult<Box<[PathBuf]>> {
-        let mut values = Vec::new();
+        let mut values = Vec::with_capacity(4);
         for src in sources {
             let guard = src.map_err(|source| self.wrap_redb_error(source))?;
             if let Some(path) =
@@ -1096,10 +1133,9 @@ impl IndexStore {
     /// Best-effort tables tolerate only a missing table (the fresh-database
     /// case); every other storage error propagates.
     fn delete_tables(&self, txn: &WriteTransaction) -> IndexResult<()> {
-        for spec in &TABLES {
-            spec.delete(self, txn)?;
-        }
-        Ok(())
+        TABLES.par_iter().try_for_each(|spec| {
+            spec.delete(self, txn).map_err(IndexError::from)
+        })
     }
 
     /// Runs every [`WriteTarget`] concurrently against the same write
@@ -1121,7 +1157,7 @@ impl IndexStore {
         entries: &[FileEntry],
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
-        dimensions.iter().try_for_each(|dimension| {
+        dimensions.par_iter().try_for_each(|dimension| {
             let (forward, reverse) = rayon::join(
                 || self.write_index_by_value(txn, dimension, entries),
                 || self.write_index_by_path(txn, dimension, entries),
@@ -1505,6 +1541,10 @@ impl IndexDimensions {
     fn iter(&self) -> impl Iterator<Item = &IndexDimension> {
         self.dimensions.iter()
     }
+
+    fn par_iter(&self) -> impl ParallelIterator<Item = &IndexDimension> {
+        self.dimensions.par_iter()
+    }
 }
 
 /// Path-derived index dimension, pairing forward and reverse tables so
@@ -1580,7 +1620,18 @@ impl IndexDimension {
 /// allocation when `text` is already lowercase ASCII.
 #[inline]
 fn with_lowercased<R>(text: &str, visit: impl FnOnce(&str) -> R) -> R {
-    if text.is_ascii() && !text.bytes().any(|b| b.is_ascii_uppercase()) {
+    let mut has_upper = false;
+    let mut is_ascii = true;
+    for &b in text.as_bytes() {
+        if b >= 0x80 {
+            is_ascii = false;
+            break;
+        }
+        if b.is_ascii_uppercase() {
+            has_upper = true;
+        }
+    }
+    if is_ascii && !has_upper {
         visit(text)
     } else {
         visit(&text.to_lowercase())
