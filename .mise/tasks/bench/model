@@ -18,15 +18,18 @@
 
 Pipeline (load -> fit -> analyze -> render):
 
-1. CriterionRepository walks the Criterion JSON tree and produces BenchmarkSeries
-   with rich statistics (mean, median, MAD, std_dev, slope, change vs base, throughput).
+1. CriterionRepository walks the Criterion JSON tree and parses rich statistics
+   (mean, median, MAD, std_dev, slope, slope R², throughput with CIs, baseline Δ%
+   for time & throughput, p-values, and Tukey outlier counts/percentages).
 2. ModelFitter fits OLS complexity candidates and selects the lowest
    leave-one-out cross-validation error.
-3. SeriesAnalysis evaluates evidence trust, outlook, baseline deltas, and diagnostics.
+3. SeriesAnalysis evaluates evidence trust, capacity forecasts, and diagnostics.
 4. SeriesReporter and SummaryReporter render responsive widescreen cards,
-   statistical diagnostics grids, and aggregate summary tables.
-5. SeriesPlotRenderer renders responsive terminal plots (scatter + fit curves +
-   multi-variant overlays).
+   dual-column diagnostic grids, and aggregate summary tables.
+5. SeriesPlotRenderer renders responsive terminal plots:
+   - On wide terminals (>= 110 cols): Side-by-side Latency Scaling (left)
+     and Throughput Efficiency (right) plots.
+   - On standard terminals (< 110 cols): Single wide Latency graph.
 
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
@@ -65,14 +68,18 @@ R2_RELIABLE_THRESHOLD: Final[float] = 0.95
 R_SQUARED: Final[str] = "R²"
 
 WIDESCREEN_THRESHOLD: Final[int] = 100
+DUAL_PLOT_THRESHOLD: Final[int] = 110
 SUMMARY_NAME_WIDTH: Final[int] = 34
-PLOT_MIN_WIDTH: Final[int] = 60
+PLOT_MIN_WIDTH: Final[int] = 56
 PLOT_MAX_WIDTH: Final[int] = 110
 PLOT_HEIGHT: Final[int] = 10
 
 
 # ------------------------------------------------------------- #
 #                        ANSI Color & Styling                   #
+# ------------------------------------------------------------- #
+
+
 class Style:
     """Terminal styling helpers respecting NO_COLOR and non-TTY stdout."""
 
@@ -117,9 +124,11 @@ class Style:
     def pad_visible(text: str, target_width: int) -> str:
         """Pad text to target_width based on visible characters ignoring ANSI escapes."""
         import re
+
         clean = re.sub(r"\033\[[0-9;]*m", "", text)
         padding = max(0, target_width - len(clean))
         return text + (" " * padding)
+
 
 # ------------------------------------------------------------- #
 #                        Model Complexity                       #
@@ -239,13 +248,36 @@ class TimingInterval:
 
 
 @dataclass(frozen=True, slots=True)
-class BaselineChange:
-    """Criterion relative change estimate vs base baseline."""
+class EstimateInterval:
+    """Point estimate and confidence interval for general statistical metrics."""
 
-    mean_pct: float
-    lower_pct: float
-    upper_pct: float
+    point_estimate: float
+    lower_bound: float
+    upper_bound: float
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any], scale: float = 1.0) -> EstimateInterval | None:
+        try:
+            pt = float(data["point_estimate"]) * scale
+            ci = data["confidence_interval"]
+            low = float(ci["lower_bound"]) * scale
+            high = float(ci["upper_bound"]) * scale
+            return cls(point_estimate=pt, lower_bound=low, upper_bound=high)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineChange:
+    """Criterion relative change estimate for time and throughput vs base."""
+
+    time_pct: float
+    time_lower_pct: float
+    time_upper_pct: float
     p_value: float = 0.05
+    thrpt_pct: float | None = None
+    thrpt_lower_pct: float | None = None
+    thrpt_upper_pct: float | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> BaselineChange | None:
@@ -255,30 +287,89 @@ class BaselineChange:
             point_est = float(mean.get("point_estimate", 0.0)) * 100.0
             lower = float(ci.get("lower_bound", 0.0)) * 100.0
             upper = float(ci.get("upper_bound", 0.0)) * 100.0
-            # Rough standard normal z-test approximation for p-value from standard error
+
             std_err = float(mean.get("standard_error", 0.0))
             z = abs(mean.get("point_estimate", 0.0)) / std_err if std_err > 0 else 0
             p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2))))
-            return cls(mean_pct=point_est, lower_pct=lower, upper_pct=upper, p_value=p_val)
+
+            # Invert time change for throughput delta
+            t_pt = -point_est / (1.0 + point_est / 100.0) if point_est != -100.0 else None
+            t_low = -upper / (1.0 + upper / 100.0) if upper != -100.0 else None
+            t_high = -lower / (1.0 + lower / 100.0) if lower != -100.0 else None
+
+            return cls(
+                time_pct=point_est,
+                time_lower_pct=lower,
+                time_upper_pct=upper,
+                p_value=p_val,
+                thrpt_pct=t_pt,
+                thrpt_lower_pct=t_low,
+                thrpt_upper_pct=t_high,
+            )
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             return None
 
+    @property
+    def is_significant(self) -> bool:
+        return self.p_value < 0.05 and abs(self.time_pct) >= 1.0
+
     def format_badge(self) -> str:
-        """Format a color-coded percentage shift summary."""
-        sign = "+" if self.mean_pct > 0 else ""
-        text = f"{sign}{self.mean_pct:.1f}% [{self.lower_pct:.1f}%, {self.upper_pct:.1f}%] vs base"
-        if self.p_value < 0.05 and abs(self.mean_pct) >= 1.0:
-            if self.mean_pct < 0:
-                return f"{Style.green('🟢 ' + text + f' (improved, p={self.p_value:.3f})')}"
-            return f"{Style.red('🔴 ' + text + f' (regressed, p={self.p_value:.3f})')}"
-        return f"{Style.dim('⚪ ' + text + ' (no change)')}"
+        sign = "+" if self.time_pct > 0 else ""
+        text = f"{sign}{self.time_pct:.1f}% [{self.time_lower_pct:.1f}%, {self.time_upper_pct:.1f}%] vs base"
+        p_str = f"p={self.p_value:.3f} < 0.05" if self.p_value < 0.05 else f"p={self.p_value:.2f} > 0.05"
+        if self.is_significant:
+            if self.time_pct < 0:
+                return f"{Style.green('🟢 ' + text + f' ({p_str})')}"
+            return f"{Style.red('🔴 ' + text + f' ({p_str})')}"
+        return f"{Style.dim('⚪ ' + text + f' ({p_str})')}"
 
     def format_short(self) -> str:
-        sign = "+" if self.mean_pct > 0 else ""
-        text = f"{sign}{self.mean_pct:.1f}%"
-        if self.p_value < 0.05 and abs(self.mean_pct) >= 1.0:
-            return Style.green(text) if self.mean_pct < 0 else Style.red(text)
+        sign = "+" if self.time_pct > 0 else ""
+        text = f"{sign}{self.time_pct:.1f}%"
+        if self.is_significant:
+            return Style.green(text) if self.time_pct < 0 else Style.red(text)
         return Style.dim(text)
+
+    def format_decision_line(self) -> str:
+        if not self.is_significant:
+            return Style.dim("No change in performance detected.")
+        if self.time_pct < 0:
+            return Style.green(f"Improved performance detected: {abs(self.time_pct):.1f}% faster runtime.")
+        return Style.red(f"Regressed performance detected: {self.time_pct:.1f}% slower runtime.")
+
+
+@dataclass(frozen=True, slots=True)
+class OutlierStats:
+    """Breakdown of Tukey mild and severe outliers."""
+
+    total_samples: int = 0
+    low_severe: int = 0
+    low_mild: int = 0
+    high_mild: int = 0
+    high_severe: int = 0
+
+    @property
+    def total_outliers(self) -> int:
+        return self.low_severe + self.low_mild + self.high_mild + self.high_severe
+
+    @property
+    def outlier_pct(self) -> float:
+        return (self.total_outliers / self.total_samples * 100.0) if self.total_samples > 0 else 0.0
+
+    def format_summary(self) -> str:
+        if self.total_outliers == 0:
+            return "none"
+        parts = []
+        if self.high_mild:
+            parts.append(f"{self.high_mild} high mild")
+        if self.high_severe:
+            parts.append(f"{self.high_severe} high severe")
+        if self.low_mild:
+            parts.append(f"{self.low_mild} low mild")
+        if self.low_severe:
+            parts.append(f"{self.low_severe} low severe")
+        desc = " · ".join(parts)
+        return f"{desc} ({self.outlier_pct:.1f}% of {self.total_samples} samples)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,15 +380,15 @@ class BenchmarkDataPoint:
     input_size: float
     input_unit: str
     timing: TimingInterval
-    median_seconds: float | None = None
-    mad_seconds: float | None = None
-    std_dev_seconds: float | None = None
-    slope_seconds_per_iter: float | None = None
+    median: EstimateInterval | None = None
+    mad: EstimateInterval | None = None
+    std_dev: EstimateInterval | None = None
+    slope: EstimateInterval | None = None
+    slope_r_squared: float | None = None
     throughput_bytes: float | None = None
     throughput_elements: float | None = None
     change_vs_base: BaselineChange | None = None
-    mild_outlier_count: int = 0
-    severe_outlier_count: int = 0
+    outliers: OutlierStats = OutlierStats()
     function: str = ""
 
     @property
@@ -313,16 +404,31 @@ class BenchmarkDataPoint:
         return self.timing.upper_seconds
 
     @property
-    def throughput_rate_str(self) -> str | None:
-        """Format throughput as human-readable rate string (e.g. 12.5 MB/s)."""
+    def throughput_rate_value(self) -> float | None:
+        """Raw throughput rate value (bytes/sec or elements/sec)."""
         if self.mean_seconds <= 0:
             return None
         if self.throughput_bytes is not None and self.throughput_bytes > 0:
-            bytes_per_sec = self.throughput_bytes / self.mean_seconds
-            return Presentation.format_bytes_per_sec(bytes_per_sec)
+            return self.throughput_bytes / self.mean_seconds
         if self.throughput_elements is not None and self.throughput_elements > 0:
-            elems_per_sec = self.throughput_elements / self.mean_seconds
-            return Presentation.format_elements_per_sec(elems_per_sec)
+            return self.throughput_elements / self.mean_seconds
+        return None
+
+    @property
+    def throughput_rate_str(self) -> str | None:
+        """Format throughput with confidence intervals if available."""
+        if self.mean_seconds <= 0:
+            return None
+        if self.throughput_bytes is not None and self.throughput_bytes > 0:
+            bps = self.throughput_bytes / self.mean_seconds
+            bps_low = self.throughput_bytes / self.upper_seconds
+            bps_high = self.throughput_bytes / self.lower_seconds
+            return f"{Presentation.format_bytes_per_sec(bps)} [{Presentation.format_bytes_per_sec(bps_low)}, {Presentation.format_bytes_per_sec(bps_high)}]"
+        if self.throughput_elements is not None and self.throughput_elements > 0:
+            eps = self.throughput_elements / self.mean_seconds
+            eps_low = self.throughput_elements / self.upper_seconds
+            eps_high = self.throughput_elements / self.lower_seconds
+            return f"{Presentation.format_elements_per_sec(eps)} [{Presentation.format_elements_per_sec(eps_low)}, {Presentation.format_elements_per_sec(eps_high)}]"
         return None
 
 
@@ -372,6 +478,13 @@ class BenchmarkSeries:
     def is_constant(self) -> bool:
         times = [point.mean_seconds for point in self.data_points]
         return max(times) - min(times) < CONSTANT_SPREAD_EPSILON
+
+    @property
+    def has_throughput(self) -> bool:
+        return any(
+            p.throughput_bytes is not None or p.throughput_elements is not None
+            for p in self.data_points
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +578,10 @@ class SeriesAnalysis:
     @property
     def is_constant(self) -> bool:
         return self.series.is_constant
+
+    @property
+    def has_throughput(self) -> bool:
+        return self.series.has_throughput
 
     @property
     def residual_dof(self) -> int:
@@ -617,21 +734,31 @@ class CriterionRepository:
                 upper_ns=interval["upper_bound"],
             )
 
-            median_sec = None
-            if "median" in estimates:
-                median_sec = float(estimates["median"]["point_estimate"]) / 1e9
-
-            mad_sec = None
-            if "median_abs_dev" in estimates:
-                mad_sec = float(estimates["median_abs_dev"]["point_estimate"]) / 1e9
-
-            std_dev_sec = None
-            if "std_dev" in estimates:
-                std_dev_sec = float(estimates["std_dev"]["point_estimate"]) / 1e9
-
-            slope_sec = None
-            if "slope" in estimates:
-                slope_sec = float(estimates["slope"]["point_estimate"]) / 1e9
+            median = (
+                EstimateInterval.from_dict(estimates["median"], scale=1e-9)
+                if "median" in estimates
+                else None
+            )
+            mad = (
+                EstimateInterval.from_dict(estimates["median_abs_dev"], scale=1e-9)
+                if "median_abs_dev" in estimates
+                else None
+            )
+            std_dev = (
+                EstimateInterval.from_dict(estimates["std_dev"], scale=1e-9)
+                if "std_dev" in estimates
+                else None
+            )
+            slope = (
+                EstimateInterval.from_dict(estimates["slope"], scale=1e-9)
+                if "slope" in estimates
+                else None
+            )
+            slope_r2 = (
+                float(estimates["slope"]["r_squared"])
+                if "slope" in estimates and "r_squared" in estimates["slope"]
+                else None
+            )
 
         except (
             FileNotFoundError,
@@ -652,29 +779,27 @@ class CriterionRepository:
             except Exception:
                 change_vs_base = None
 
-        mild_outliers, severe_outliers = CriterionRepository._outlier_counts(
-            results_dir
-        )
+        outliers = CriterionRepository._parse_outliers(results_dir)
         return BenchmarkDataPoint(
             group=group,
             input_size=input_size,
             input_unit=input_unit,
             timing=timing,
-            median_seconds=median_sec,
-            mad_seconds=mad_sec,
-            std_dev_seconds=std_dev_sec,
-            slope_seconds_per_iter=slope_sec,
+            median=median,
+            mad=mad,
+            std_dev=std_dev,
+            slope=slope,
+            slope_r_squared=slope_r2,
             throughput_bytes=th_bytes,
             throughput_elements=th_elems,
             change_vs_base=change_vs_base,
-            mild_outlier_count=mild_outliers,
-            severe_outlier_count=severe_outliers,
+            outliers=outliers,
             function=function,
         )
 
     @staticmethod
-    def _outlier_counts(results_dir: Path) -> tuple[int, int]:
-        """Count Criterion's mild and severe Tukey outliers, if available."""
+    def _parse_outliers(results_dir: Path) -> OutlierStats:
+        """Count Criterion's mild and severe Tukey outliers with sample totals."""
         try:
             sample: dict[str, list[float]] = json.loads(
                 (results_dir / "sample.json").read_text()
@@ -697,16 +822,21 @@ class CriterionRepository:
             ValueError,
             ZeroDivisionError,
         ):
-            return 0, 0
-        mild = sum(
-            lower_severe <= value < lower_mild
-            or upper_mild < value <= upper_severe
-            for value in values
+            return OutlierStats()
+
+        total = len(values)
+        low_sev = sum(v < lower_severe for v in values)
+        low_mld = sum(lower_severe <= v < lower_mild for v in values)
+        high_mld = sum(upper_mild < v <= upper_severe for v in values)
+        high_sev = sum(v > upper_severe for v in values)
+
+        return OutlierStats(
+            total_samples=total,
+            low_severe=low_sev,
+            low_mild=low_mld,
+            high_mild=high_mld,
+            high_severe=high_sev,
         )
-        severe = sum(
-            value < lower_severe or value > upper_severe for value in values
-        )
-        return mild, severe
 
     @staticmethod
     def _parse_input(
@@ -958,6 +1088,17 @@ class Presentation:
         return f"{scaled:.{prec}f}{unit}"
 
     @staticmethod
+    def format_estimate_interval(est: EstimateInterval | None) -> str:
+        if est is None:
+            return "N/A"
+        unit, scale = Presentation.time_unit(est.point_estimate)
+        pt = est.point_estimate * scale
+        low = est.lower_bound * scale
+        high = est.upper_bound * scale
+        prec = Presentation.precision_for(unit, pt)
+        return f"{pt:.{prec}f}{unit} [{low:.{prec}f}, {high:.{prec}f}]"
+
+    @staticmethod
     def format_bytes_per_sec(bps: float) -> str:
         if bps >= 1e9:
             return f"{bps / 1e9:.2f} GB/s"
@@ -977,16 +1118,25 @@ class Presentation:
 
     @staticmethod
     def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
-        mild = sum(point.mild_outlier_count for point in data_points)
-        severe = sum(point.severe_outlier_count for point in data_points)
-        if mild == severe == 0:
+        tot_samples = sum(p.outliers.total_samples for p in data_points)
+        high_mld = sum(p.outliers.high_mild for p in data_points)
+        high_sev = sum(p.outliers.high_severe for p in data_points)
+        low_mld = sum(p.outliers.low_mild for p in data_points)
+        low_sev = sum(p.outliers.low_severe for p in data_points)
+        tot_out = high_mld + high_sev + low_mld + low_sev
+        if tot_out == 0:
             return "none"
-        parts = [
-            f"{count} {kind}"
-            for count, kind in ((mild, "mild"), (severe, "severe"))
-            if count
-        ]
-        return f"{' · '.join(parts)} across {len(data_points)} sizes"
+        pct = (tot_out / tot_samples * 100.0) if tot_samples > 0 else 0
+        parts = []
+        if high_mld:
+            parts.append(f"{high_mld} high mild")
+        if high_sev:
+            parts.append(f"{high_sev} high severe")
+        if low_mld:
+            parts.append(f"{low_mld} low mild")
+        if low_sev:
+            parts.append(f"{low_sev} low severe")
+        return f"{' · '.join(parts)} ({pct:.1f}% across {len(data_points)} sizes)"
 
     @staticmethod
     def truncate_middle(text: str, max_len: int) -> str:
@@ -1012,6 +1162,7 @@ class Presentation:
         except OSError:
             return 100
 
+
 # ------------------------------------------------------------- #
 #                           Reporting                           #
 # ------------------------------------------------------------- #
@@ -1034,7 +1185,7 @@ class SeriesReporter:
         best = analysis.best_model
 
         # Left Column: Profile
-        rate_str = latest.throughput_rate_str or ""
+        rate_str = latest.throughput_rate_str or "N/A"
         left_lines = [
             f"{Style.bold('CURRENT BENCHMARK PROFILE'):<{col_w}}",
             f"{'─' * (col_w - 2):<{col_w}}",
@@ -1042,7 +1193,7 @@ class SeriesReporter:
             f"Candidate : {best.label}",
             f"Largest   : {latest.input_size:,.0f} {analysis.input_unit}",
             f"Runtime   : {latest.timing.format_with_ci()}",
-            f"Rate      : {rate_str if rate_str else 'N/A'}",
+            f"Throughput: {rate_str}",
             f"Change    : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
         ]
 
@@ -1053,7 +1204,7 @@ class SeriesReporter:
                 f"{Style.bold('OUTLOOK & CAPACITY FORECAST'):<{col_w}}",
                 f"{'─' * (col_w - 2):<{col_w}}",
                 f"{'input size':<14} {'latency':<12} {'throughput':<12} basis",
-                f"{latest.input_size:,.0f} {analysis.input_unit:<6} {Presentation.format_seconds(latest.mean_seconds):<12} {rate_str:<12} meas 95%",
+                f"{latest.input_size:,.0f} {analysis.input_unit:<6} {Presentation.format_seconds(latest.mean_seconds):<12} {rate_str.split(' ')[0]:<12} meas 95%",
             ]
             for ext in analysis.extrapolations:
                 dist = ext.input_size / latest.input_size
@@ -1063,6 +1214,8 @@ class SeriesReporter:
                     f"{Presentation.format_seconds(ext.predicted_seconds):<12} "
                     f"{ext_rate:<12} ext ({dist:.0f}×)"
                 )
+            if latest.change_vs_base:
+                right_lines.append(latest.change_vs_base.format_decision_line())
         else:
             right_lines = [
                 f"{Style.bold('STATUS & REASONING'):<{col_w}}",
@@ -1109,6 +1262,7 @@ class SeriesReporter:
             f"  Evidence: {len(analysis.data_points)} input sizes · {analysis.residual_dof} residual DOF",
             f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
             f"  Measured time: {latest.timing.format_with_ci()}  95% CI",
+            f"  Throughput: {latest.throughput_rate_str or 'N/A'}",
             f"  Baseline Δ: {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
         ]
         if not analysis.is_fit_trusted:
@@ -1149,16 +1303,9 @@ class SeriesReporter:
             else "withheld: insufficient evidence"
         )
 
-        med_text = (
-            f"Mean {Presentation.format_seconds(latest.mean_seconds)}"
-            + (f" │ Median {Presentation.format_seconds(latest.median_seconds)}" if latest.median_seconds else "")
-            + (f" │ MAD {Presentation.format_seconds(latest.mad_seconds)}" if latest.mad_seconds else "")
-        )
-
-        slope_text = (
-            f"{Presentation.format_seconds(latest.slope_seconds_per_iter)} / iter"
-            if latest.slope_seconds_per_iter
-            else "N/A"
+        slope_str = (
+            f"{Presentation.format_estimate_interval(latest.slope)}"
+            + (f" (Criterion R²={latest.slope_r_squared:.3f})" if latest.slope_r_squared else "")
         )
 
         if width >= WIDESCREEN_THRESHOLD:
@@ -1170,16 +1317,18 @@ class SeriesReporter:
                 f"├─ In-Sample {R_SQUARED} Score   : {best.r_squared:.4f}",
                 f"├─ Leave-One-Out RMSE   : {Presentation.format_seconds(best.validation_rmse)}",
                 f"├─ Degrees of Freedom   : {len(analysis.data_points)} sizes · {analysis.residual_dof} residual DOF",
+                f"├─ Iteration Slope      : {slope_str}",
                 f"╰─ Extrapolation Status : {extrap_text}",
             ]
             right_col = [
                 f"{Style.bold('STATISTICAL DIAGNOSTICS & BASELINE'):<{col_w}}",
                 f"{'─' * col_w}",
-                f"├─ Central Tendency    : {med_text}",
-                f"├─ Iteration Slope     : {slope_text}",
-                f"├─ Outlier Count       : {Presentation.format_outlier_summary(analysis.data_points)}",
-                f"├─ Change vs Baseline  : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
-                f"╰─ Robust MAD          : {Presentation.format_seconds(latest.mad_seconds) if latest.mad_seconds else 'N/A'}",
+                f"├─ Mean [95% CI]       : {Presentation.format_seconds(latest.mean_seconds)} [{Presentation.format_seconds(latest.lower_seconds)}, {Presentation.format_seconds(latest.upper_seconds)}]",
+                f"├─ Median [95% CI]     : {Presentation.format_estimate_interval(latest.median)}",
+                f"├─ Med. Abs. Dev (MAD) : {Presentation.format_estimate_interval(latest.mad)}",
+                f"├─ Std. Deviation      : {Presentation.format_estimate_interval(latest.std_dev)}",
+                f"├─ Tukey Outliers      : {latest.outliers.format_summary()}",
+                f"╰─ Baseline Decision   : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
             ]
             max_rows = max(len(left_col), len(right_col))
             while len(left_col) < max_rows:
@@ -1190,6 +1339,7 @@ class SeriesReporter:
             for l_txt, r_txt in zip(left_col, right_col, strict=True):
                 lines.append(f"  {l_txt:<{col_w}}   {r_txt:<{col_w}}")
             return "\n".join(lines)
+
         lines = [
             "DETAILS",
             f"  {'candidate model':<23} {best.label}",
@@ -1198,8 +1348,10 @@ class SeriesReporter:
             f"  {'leave-one-out RMSE':<23} {Presentation.format_seconds(best.validation_rmse)}",
             f"  {'in-sample ' + R_SQUARED:<23} {best.r_squared:.4f}",
             f"  {'residual DOF':<23} {analysis.residual_dof}",
-            f"  {'central tendency':<23} {med_text}",
-            f"  {'sample outliers':<23} {Presentation.format_outlier_summary(analysis.data_points)}",
+            f"  {'median [95% CI]':<23} {Presentation.format_estimate_interval(latest.median)}",
+            f"  {'MAD [95% CI]':<23} {Presentation.format_estimate_interval(latest.mad)}",
+            f"  {'std dev [95% CI]':<23} {Presentation.format_estimate_interval(latest.std_dev)}",
+            f"  {'tukey outliers':<23} {latest.outliers.format_summary()}",
             f"  {'extrapolation':<23} {extrap_text}",
         ]
         return "\n".join(lines)
@@ -1305,54 +1457,105 @@ class SummaryReporter:
 
 
 class SeriesPlotRenderer:
-    """Renders measured scatter dots, connected steps, and regression curves with plotext."""
+    """Renders responsive terminal plots (side-by-side or single wide)."""
 
-    def render(self, analysis: SeriesAnalysis, siblings: Sequence[SeriesAnalysis] = ()) -> None:
+    def render(self, analysis: SeriesAnalysis, width: int | None = None) -> None:
         import plotext as plt
 
-        width = self._width()
+        width = Presentation.terminal_width() if width is None else width
+
+        if width >= DUAL_PLOT_THRESHOLD and analysis.has_throughput:
+            self._render_dual_plots(analysis, width)
+        else:
+            self._render_single_latency_plot(analysis, width)
+
+    def _render_single_latency_plot(self, analysis: SeriesAnalysis, width: int) -> None:
+        import plotext as plt
+
         plt.clear_figure()
-        plt.plotsize(width, PLOT_HEIGHT)
+        plt.plotsize(min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, width - 4)), PLOT_HEIGHT)
         plt.theme("clear")
+        plt.title("LATENCY & SCALING FIT (T vs n)")
         plt.xlabel(f"Input Size: n ({analysis.input_unit})")
 
-        # Determine if we have sibling variants to overlay (e.g. InlinkMap__new variants)
-        variants = [analysis]
-        if siblings:
-            variants.extend([s for s in siblings if s.name != analysis.name])
-
-        # Find global scale
-        max_time = max(max(p.mean_seconds for p in var.data_points) for var in variants)
+        x = [p.input_size for p in analysis.data_points]
+        max_time = max(p.mean_seconds for p in analysis.data_points)
         unit, scale = Presentation.time_unit(max_time)
+        y = [p.mean_seconds * scale for p in analysis.data_points]
         plt.ylabel(f"Time ({unit})")
 
-        colors = ["cyan", "yellow", "green", "magenta", "red"]
-        for idx, var in enumerate(variants):
-            color = colors[idx % len(colors)]
-            x = [p.input_size for p in var.data_points]
-            y = [p.mean_seconds * scale for p in var.data_points]
-            lbl = var.name.split("/")[-1] if len(variants) > 1 else "measured (mean)"
+        plt.scatter(x, y, label="measured (mean)", color="cyan", marker="dot")
 
-            # Scatter points
-            plt.scatter(x, y, label=lbl, color=color, marker="dot")
-
-            # Fitted curve for trusted models
-            if var.is_fit_trusted:
-                curve_x = np.linspace(min(x), max(x), 100)
-                curve_y = [var.best_model.predict(float(val)) * scale for val in curve_x]
-                fit_lbl = f"fit: {var.best_model.kind.short_label}" if len(variants) == 1 else None
-                plt.plot(curve_x.tolist(), curve_y, label=fit_lbl, color=color, marker="dot")
-
+        if analysis.is_fit_trusted:
+            curve_x = np.linspace(min(x), max(x), 100)
+            curve_y = [analysis.best_model.predict(float(val)) * scale for val in curve_x]
+            plt.plot(
+                curve_x.tolist(),
+                curve_y,
+                label=f"fit: {analysis.best_model.kind.short_label}",
+                color="yellow",
+                marker="dot",
+            )
         plt.show()
         print()
 
-    @staticmethod
-    def _width() -> int:
-        try:
-            columns = os.get_terminal_size().columns
-        except OSError:
-            return PLOT_MIN_WIDTH
-        return min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, columns - 4))
+    def _render_dual_plots(self, analysis: SeriesAnalysis, width: int) -> None:
+        import plotext as plt
+
+        sub_w = min(52, (width - 6) // 2)
+
+        # Plot 1: Latency
+        plt.clear_figure()
+        plt.subplots(1, 2)
+        plt.subplot(1, 1)
+        plt.plotsize(sub_w, PLOT_HEIGHT)
+        plt.theme("clear")
+        plt.title("LATENCY SCALING (T vs n)")
+        plt.xlabel(f"n ({analysis.input_unit})")
+
+        x = [p.input_size for p in analysis.data_points]
+        max_time = max(p.mean_seconds for p in analysis.data_points)
+        unit, scale = Presentation.time_unit(max_time)
+        y = [p.mean_seconds * scale for p in analysis.data_points]
+        plt.ylabel(f"Time ({unit})")
+        plt.scatter(x, y, label="measured", color="cyan", marker="dot")
+
+        if analysis.is_fit_trusted:
+            curve_x = np.linspace(min(x), max(x), 100)
+            curve_y = [analysis.best_model.predict(float(val)) * scale for val in curve_x]
+            plt.plot(
+                curve_x.tolist(),
+                curve_y,
+                label=f"fit: {analysis.best_model.kind.short_label}",
+                color="yellow",
+                marker="dot",
+            )
+
+        # Plot 2: Throughput
+        plt.subplot(1, 2)
+        plt.plotsize(sub_w, PLOT_HEIGHT)
+        plt.theme("clear")
+        plt.title("THROUGHPUT EFFICIENCY (Rate vs n)")
+        plt.xlabel(f"n ({analysis.input_unit})")
+
+        th_values = [p.throughput_rate_value for p in analysis.data_points]
+        valid_th = [v for v in th_values if v is not None]
+        if valid_th:
+            max_th = max(valid_th)
+            if analysis.data_points[0].throughput_bytes is not None:
+                th_unit = "GB/s" if max_th >= 1e9 else "MB/s" if max_th >= 1e6 else "KB/s"
+                th_scale = 1e-9 if max_th >= 1e9 else 1e-6 if max_th >= 1e6 else 1e-3
+            else:
+                th_unit = "M elem/s" if max_th >= 1e6 else "K elem/s"
+                th_scale = 1e-6 if max_th >= 1e6 else 1e-3
+
+            th_y = [(v * th_scale if v is not None else 0) for v in th_values]
+            plt.ylabel(f"Rate ({th_unit})")
+            plt.scatter(x, th_y, label="rate", color="green", marker="dot")
+            plt.plot(x, th_y, color="green", marker="dot")
+
+        plt.show()
+        print()
 
 
 # ------------------------------------------------------------- #
