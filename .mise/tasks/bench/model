@@ -12,12 +12,11 @@
 
 Pipeline (load -> fit -> analyze -> render):
 
-1. CriterionRepository walks the Criterion JSON tree and groups measurements
-   into series.
+1. CriterionRepository walks the Criterion JSON tree and produces BenchmarkSeries.
 2. ModelFitter fits OLS complexity candidates and selects the lowest
-   leave-one-out error.
-3. SeriesAnalysis derives trust, outlook, and evidence diagnostics.
-4. SeriesReporter and SummaryReporter emit box-drawn terminal reports.
+   leave-one-out cross-validation error.
+3. SeriesAnalysis evaluates evidence trust, outlook, and diagnostics.
+4. SeriesReporter and SummaryReporter render box-drawn terminal reports.
 
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
@@ -40,13 +39,11 @@ from sklearn.linear_model import LinearRegression
 #                           Constants                           #
 # ------------------------------------------------------------- #
 
-# Defaults & sweep sizes
 DEFAULT_CRITERION_DIR: Final[str] = "target/criterion"
 EXTRAPOLATION_TARGETS: Final[tuple[int, ...]] = (50_000, 100_000)
 SUMMARY_TARGET: Final[int] = 100_000
 DEFAULT_WORST_COUNT: Final[int] = 10
 
-# Fit-trust thresholds
 MIN_POINTS_TO_FIT: Final[int] = 3
 MIN_POINTS_FOR_COMBINED: Final[int] = 5
 MIN_POINTS_FOR_TRUSTED_FIT: Final[int] = 6
@@ -55,7 +52,6 @@ CONSTANT_SPREAD_EPSILON: Final[float] = 1e-4
 R2_RELIABLE_THRESHOLD: Final[float] = 0.95
 R_SQUARED: Final[str] = "R²"
 
-# Report box and plot dimensions
 SERIES_BOX_WIDTH: Final[int] = 60
 SUMMARY_BOX_WIDTH: Final[int] = 64
 SUMMARY_NAME_WIDTH: Final[int] = 32
@@ -93,6 +89,16 @@ class ModelKind(Enum):
         self.breakdown_description = breakdown_description
         self.parameter_count = parameter_count
 
+    def design_matrix(self, x: np.ndarray) -> np.ndarray:
+        """Construct the regression feature matrix for input array ``x``."""
+        match self:
+            case ModelKind.LINEAR:
+                return x.reshape(-1, 1)
+            case ModelKind.LOG:
+                return (x * np.log(x)).reshape(-1, 1)
+            case ModelKind.COMBINED:
+                return np.column_stack([x, x * np.log(x)])
+
 
 class FitTrust(Enum):
     """Ordered evidence outcomes for model reporting and forecasting."""
@@ -118,7 +124,7 @@ class FitTrust(Enum):
 
     @property
     def is_trusted(self) -> bool:
-        """Whether the status permits a curve and extrapolations."""
+        """Whether the status permits drawing a fit curve and extrapolations."""
         return self is FitTrust.EXPLORATORY
 
 
@@ -128,18 +134,110 @@ class FitTrust(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class TimingInterval:
+    """Mean wall-clock timing and its 95% bootstrap confidence interval."""
+
+    mean_seconds: float
+    lower_seconds: float
+    upper_seconds: float
+
+    @classmethod
+    def from_criterion_nanoseconds(
+        cls,
+        point_estimate_ns: float,
+        lower_ns: float,
+        upper_ns: float,
+    ) -> TimingInterval:
+        """Construct from raw Criterion nanosecond estimates."""
+        return cls(
+            mean_seconds=float(point_estimate_ns) / 1e9,
+            lower_seconds=float(lower_ns) / 1e9,
+            upper_seconds=float(upper_ns) / 1e9,
+        )
+
+    def format_with_ci(self) -> str:
+        """Format the estimate and 95% confidence bounds with auto-scaled units."""
+        unit, scale = Presentation.time_unit(self.mean_seconds)
+        precision = 2 if unit == "s" else 1
+        return (
+            f"{self.mean_seconds * scale:.{precision}f}{unit} "
+            f"[{self.lower_seconds * scale:.{precision}f}, "
+            f"{self.upper_seconds * scale:.{precision}f}]"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BenchmarkDataPoint:
     """One Criterion timing estimate at a measured input size."""
 
     group: str
     input_size: float
     input_unit: str
-    mean_seconds: float
-    lower_seconds: float
-    upper_seconds: float
+    timing: TimingInterval
     mild_outlier_count: int = 0
     severe_outlier_count: int = 0
     function: str = ""
+
+    @property
+    def mean_seconds(self) -> float:
+        return self.timing.mean_seconds
+
+    @property
+    def lower_seconds(self) -> float:
+        return self.timing.lower_seconds
+
+    @property
+    def upper_seconds(self) -> float:
+        return self.timing.upper_seconds
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkSeries:
+    """A series of benchmark data points sharing a group/function key."""
+
+    name: str
+    data_points: tuple[BenchmarkDataPoint, ...]
+
+    def __post_init__(self) -> None:
+        # Guarantee points are strictly sorted ascending by input size
+        if any(
+            self.data_points[i].input_size > self.data_points[i + 1].input_size
+            for i in range(len(self.data_points) - 1)
+        ):
+            sorted_points = tuple(
+                sorted(self.data_points, key=lambda p: p.input_size)
+            )
+            object.__setattr__(self, "data_points", sorted_points)
+
+    def __len__(self) -> int:
+        return len(self.data_points)
+
+    @property
+    def input_sizes(self) -> tuple[int, ...]:
+        return tuple(int(point.input_size) for point in self.data_points)
+
+    @property
+    def input_unit(self) -> str:
+        units = {point.input_unit for point in self.data_points}
+        return units.pop() if len(units) == 1 else "input units"
+
+    @property
+    def size_range(self) -> str:
+        sizes = [point.input_size for point in self.data_points]
+        return f"{min(sizes):,.0f} → {max(sizes):,.0f}"
+
+    @property
+    def largest_measurement(self) -> BenchmarkDataPoint:
+        return self.data_points[-1]
+
+    @property
+    def mean_seconds(self) -> float:
+        return float(np.mean([point.mean_seconds for point in self.data_points]))
+
+    @property
+    def is_constant(self) -> bool:
+        times = [point.mean_seconds for point in self.data_points]
+        return max(times) - min(times) < CONSTANT_SPREAD_EPSILON
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,9 +292,16 @@ class Extrapolation:
 class SeriesAnalysis:
     """One benchmark series with fitted models and trust decisions."""
 
-    name: str
-    data_points: tuple[BenchmarkDataPoint, ...]
+    series: BenchmarkSeries
     models: tuple[FittedModel, ...]
+
+    @property
+    def name(self) -> str:
+        return self.series.name
+
+    @property
+    def data_points(self) -> tuple[BenchmarkDataPoint, ...]:
+        return self.series.data_points
 
     @property
     def best_model(self) -> FittedModel:
@@ -204,41 +309,38 @@ class SeriesAnalysis:
 
     @property
     def input_sizes(self) -> tuple[int, ...]:
-        return tuple(int(point.input_size) for point in self.data_points)
+        return self.series.input_sizes
 
     @property
     def input_unit(self) -> str:
-        units = {point.input_unit for point in self.data_points}
-        return units.pop() if len(units) == 1 else "input units"
+        return self.series.input_unit
 
     @property
     def size_range(self) -> str:
-        sizes = [point.input_size for point in self.data_points]
-        return f"{min(sizes):,.0f} → {max(sizes):,.0f}"
+        return self.series.size_range
 
     @property
     def largest_measurement(self) -> BenchmarkDataPoint:
-        return self.data_points[-1]
+        return self.series.largest_measurement
 
     @property
     def mean_seconds(self) -> float:
-        return float(np.mean([point.mean_seconds for point in self.data_points]))
+        return self.series.mean_seconds
 
     @property
     def is_constant(self) -> bool:
-        times = [point.mean_seconds for point in self.data_points]
-        return max(times) - min(times) < CONSTANT_SPREAD_EPSILON
+        return self.series.is_constant
 
     @property
     def residual_dof(self) -> int:
-        return len(self.data_points) - self.best_model.parameter_count
+        return len(self.series) - self.best_model.parameter_count
 
     @property
     def trust(self) -> FitTrust:
         checks = (
             (
                 FitTrust.INSUFFICIENT_INPUT_SIZES,
-                len(self.data_points) < MIN_POINTS_FOR_TRUSTED_FIT,
+                len(self.series) < MIN_POINTS_FOR_TRUSTED_FIT,
             ),
             (
                 FitTrust.INSUFFICIENT_RESIDUAL_DOF,
@@ -295,18 +397,20 @@ class CriterionRepository:
     def __init__(self, root: Path) -> None:
         self._root = root
 
-    def load_series(self) -> dict[str, list[BenchmarkDataPoint]]:
+    def load_series(self) -> dict[str, BenchmarkSeries]:
         """Load measurements grouped and ordered by numeric input size."""
         if not self._root.exists():
             raise FileNotFoundError(f"Criterion output not found: {self._root}")
 
-        series: dict[str, list[BenchmarkDataPoint]] = {}
+        points_by_key: dict[str, list[BenchmarkDataPoint]] = {}
         for group_dir in sorted(self._root.iterdir()):
             if group_dir.is_dir():
-                self._load_group(series, group_dir)
-        for points in series.values():
-            points.sort(key=lambda point: point.input_size)
-        return series
+                self._load_group(points_by_key, group_dir)
+
+        return {
+            key: BenchmarkSeries(name=key, data_points=tuple(points))
+            for key, points in points_by_key.items()
+        }
 
     def _load_group(
         self,
@@ -358,9 +462,11 @@ class CriterionRepository:
             input_size, input_unit = CriterionRepository._parse_input(bench)
             mean = estimates["mean"]
             interval = mean["confidence_interval"]
-            mean_seconds = float(mean["point_estimate"]) / 1e9
-            lower_seconds = float(interval["lower_bound"]) / 1e9
-            upper_seconds = float(interval["upper_bound"]) / 1e9
+            timing = TimingInterval.from_criterion_nanoseconds(
+                point_estimate_ns=mean["point_estimate"],
+                lower_ns=interval["lower_bound"],
+                upper_ns=interval["upper_bound"],
+            )
         except (
             FileNotFoundError,
             json.JSONDecodeError,
@@ -376,9 +482,7 @@ class CriterionRepository:
             group=group,
             input_size=input_size,
             input_unit=input_unit,
-            mean_seconds=mean_seconds,
-            lower_seconds=lower_seconds,
-            upper_seconds=upper_seconds,
+            timing=timing,
             mild_outlier_count=mild_outliers,
             severe_outlier_count=severe_outliers,
             function=function,
@@ -449,9 +553,12 @@ class ModelFitter:
     """Fits OLS candidate models and ranks them by leave-one-out error."""
 
     def fit(
-        self, data_points: Sequence[BenchmarkDataPoint]
+        self, series: BenchmarkSeries | Sequence[BenchmarkDataPoint]
     ) -> tuple[FittedModel, ...]:
         """Fit every candidate kind, ordered by leave-one-out RMSE."""
+        data_points = (
+            series.data_points if isinstance(series, BenchmarkSeries) else series
+        )
         x = np.array([point.input_size for point in data_points])
         y = np.array([point.mean_seconds for point in data_points])
         if np.var(y) == 0:
@@ -468,7 +575,7 @@ class ModelFitter:
     @staticmethod
     def _fit_kind(kind: ModelKind, x: np.ndarray, y: np.ndarray) -> FittedModel:
         """OLS-fit one candidate and calculate its leave-one-out RMSE."""
-        features = ModelFitter._design_matrix(kind, x)
+        features = kind.design_matrix(x)
         regression = LinearRegression().fit(features, y)
         return FittedModel(
             kind=kind,
@@ -494,17 +601,6 @@ class ModelFitter:
             prediction = regression.predict(features[index : index + 1])[0]
             errors[index] = y[index] - prediction
         return float(np.sqrt(np.mean(np.square(errors))))
-
-    @staticmethod
-    def _design_matrix(kind: ModelKind, x: np.ndarray) -> np.ndarray:
-        """Build the feature columns for one model kind."""
-        match kind:
-            case ModelKind.LINEAR:
-                return x.reshape(-1, 1)
-            case ModelKind.LOG:
-                return (x * np.log(x)).reshape(-1, 1)
-            case ModelKind.COMBINED:
-                return np.column_stack([x, x * np.log(x)])
 
 
 # ------------------------------------------------------------- #
@@ -615,60 +711,49 @@ DIVIDER: Final[_Divider] = _Divider()
 BoxRow = str | _Divider
 
 
-def time_unit(seconds: float) -> tuple[str, float]:
-    """Return a readable time unit and seconds-to-unit scale."""
-    magnitude = abs(seconds)
-    if magnitude < 0.001:
-        return "µs", 1_000_000
-    if magnitude < 1.0:
-        return "ms", 1_000
-    return "s", 1
+class Presentation:
+    """Shared formatting utilities for units, intervals, and text clipping."""
 
+    @staticmethod
+    def time_unit(seconds: float) -> tuple[str, float]:
+        """Return a readable time unit and seconds-to-unit scale."""
+        magnitude = abs(seconds)
+        if magnitude < 0.001:
+            return "µs", 1_000_000
+        if magnitude < 1.0:
+            return "ms", 1_000
+        return "s", 1
 
-def format_seconds(seconds: float) -> str:
-    """Format seconds with a unit chosen by magnitude."""
-    unit, scale = time_unit(seconds)
-    precision = 2 if unit == "s" else 1
-    return f"{seconds * scale:.{precision}f}{unit}"
+    @staticmethod
+    def format_seconds(seconds: float) -> str:
+        """Format seconds with a unit chosen by magnitude."""
+        unit, scale = Presentation.time_unit(seconds)
+        precision = 2 if unit == "s" else 1
+        return f"{seconds * scale:.{precision}f}{unit}"
 
+    @staticmethod
+    def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
+        """Summarize Criterion's Tukey outliers without discarding data."""
+        mild = sum(point.mild_outlier_count for point in data_points)
+        severe = sum(point.severe_outlier_count for point in data_points)
+        if mild == severe == 0:
+            return "none"
+        parts = [
+            f"{count} {kind}"
+            for count, kind in ((mild, "mild"), (severe, "severe"))
+            if count
+        ]
+        return f"{' · '.join(parts)} across {len(data_points)} sizes"
 
-def format_interval(
-    estimate_seconds: float,
-    lower_seconds: float,
-    upper_seconds: float,
-) -> str:
-    """Format one timing estimate and its Criterion confidence interval."""
-    unit, scale = time_unit(estimate_seconds)
-    precision = 2 if unit == "s" else 1
-    return (
-        f"{estimate_seconds * scale:.{precision}f}{unit} "
-        f"[{lower_seconds * scale:.{precision}f}, "
-        f"{upper_seconds * scale:.{precision}f}]"
-    )
-
-
-def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
-    """Summarize Criterion's Tukey outliers without removing measurements."""
-    mild = sum(point.mild_outlier_count for point in data_points)
-    severe = sum(point.severe_outlier_count for point in data_points)
-    if mild == severe == 0:
-        return "none"
-    parts = [
-        f"{count} {kind}"
-        for count, kind in ((mild, "mild"), (severe, "severe"))
-        if count
-    ]
-    return f"{' · '.join(parts)} across {len(data_points)} sizes"
-
-
-def truncate_middle(text: str, max_len: int) -> str:
-    """Shorten ``text`` to ``max_len`` keeping both ends."""
-    if len(text) <= max_len:
-        return text
-    keep = max_len - 1
-    head = (keep + 1) // 2
-    tail = keep - head
-    return f"{text[:head]}…{text[-tail:]}" if tail else f"{text[:head]}…"
+    @staticmethod
+    def truncate_middle(text: str, max_len: int) -> str:
+        """Shorten ``text`` to ``max_len`` keeping prefix and suffix."""
+        if len(text) <= max_len:
+            return text
+        keep = max_len - 1
+        head = (keep + 1) // 2
+        tail = keep - head
+        return f"{text[:head]}…{text[-tail:]}" if tail else f"{text[:head]}…"
 
 
 class Box:
@@ -737,11 +822,7 @@ class SeriesReporter:
             f"  Evidence: {len(analysis.data_points)} input sizes · "
             f"{analysis.residual_dof} residual DOF",
             f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
-            (
-                "  Time: "
-                f"{format_interval(latest.mean_seconds, latest.lower_seconds, latest.upper_seconds)}  "
-                "95% CI"
-            ),
+            f"  Time: {latest.timing.format_with_ci()}  95% CI",
             *self._outlook_rows(analysis),
         ]
         return self._box.render(analysis.name, rows)
@@ -760,12 +841,15 @@ class SeriesReporter:
             f"  {'candidate model':<26} {best.label}",
             f"  {'fit status':<26} {analysis.trust.label.lower()}",
             f"  {'selection':<26} lowest leave-one-out RMSE",
-            f"  {'leave-one-out RMSE':<26} {format_seconds(best.validation_rmse)}",
+            (
+                f"  {'leave-one-out RMSE':<26} "
+                f"{Presentation.format_seconds(best.validation_rmse)}"
+            ),
             f"  {'in-sample ' + R_SQUARED:<26} {best.r_squared:.4f}",
             f"  {'residual DOF':<26} {analysis.residual_dof}",
             (
                 f"  {'sample outliers':<26} "
-                f"{format_outlier_summary(analysis.data_points)}"
+                f"{Presentation.format_outlier_summary(analysis.data_points)}"
             ),
             f"  {'extrapolation':<26} {extrapolation}",
             f"  {'coefficients':<26} omitted; terms are not interpreted",
@@ -797,7 +881,7 @@ class SeriesReporter:
             DIVIDER,
             "  "
             f"{latest.input_size:>8,.0f} {analysis.input_unit:<10} "
-            f"{format_interval(latest.mean_seconds, latest.lower_seconds, latest.upper_seconds):<24} "
+            f"{latest.timing.format_with_ci():<24} "
             "measured · 95% CI",
         ]
         for extrapolation in analysis.extrapolations:
@@ -805,7 +889,7 @@ class SeriesReporter:
             rows.append(
                 "  "
                 f"{extrapolation.input_size:>8,} {analysis.input_unit:<10} "
-                f"{format_seconds(extrapolation.predicted_seconds):<24} "
+                f"{Presentation.format_seconds(extrapolation.predicted_seconds):<24} "
                 f"extrapolated · {distance:.1f}× range"
             )
         return rows
@@ -854,10 +938,10 @@ class SummaryReporter:
             DIVIDER,
         ]
         for rank, entry in enumerate(shown, start=1):
-            name = truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
+            name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
             rows.append(
                 f"  {rank:>2}. {name:<{SUMMARY_NAME_WIDTH}}"
-                f" {format_seconds(entry.predicted_seconds):>8}"
+                f" {Presentation.format_seconds(entry.predicted_seconds):>8}"
                 f"  {entry.model.kind.short_label:<14}"
                 f" {R_SQUARED}={entry.model.r_squared:.3f}"
             )
@@ -869,7 +953,7 @@ class SummaryReporter:
             return []
         rows: list[BoxRow] = ["", "UNRELIABLE FITS:", DIVIDER]
         for entry in data.unreliable:
-            name = truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
+            name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
             rows.append(
                 f"  {name:<{SUMMARY_NAME_WIDTH}}"
                 f" {R_SQUARED}={entry.model.r_squared:.3f}  {entry.reason}"
@@ -897,10 +981,10 @@ class SummaryReporter:
             DIVIDER,
         ]
         for entry in data.constant:
-            name = truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
+            name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
             rows.append(
                 f"  {name:<{SUMMARY_NAME_WIDTH}}"
-                f" {format_seconds(entry.mean_seconds):>8}  all sizes"
+                f" {Presentation.format_seconds(entry.mean_seconds):>8}  all sizes"
             )
         return rows
 
@@ -914,7 +998,7 @@ class SeriesPlotRenderer:
 
         x = [point.input_size for point in analysis.data_points]
         max_time = max(point.mean_seconds for point in analysis.data_points)
-        unit, scale = time_unit(max_time)
+        unit, scale = Presentation.time_unit(max_time)
         y = [point.mean_seconds * scale for point in analysis.data_points]
 
         plt.clear_figure()
@@ -1008,11 +1092,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = CliOptions.from_env(argv)
 
     try:
-        series = CriterionRepository(options.criterion_dir).load_series()
+        series_map = CriterionRepository(options.criterion_dir).load_series()
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    if not series:
+    if not series_map:
         print(
             "No usable benchmark series found under "
             f"{options.criterion_dir} (need numeric input-size parameters).",
@@ -1023,17 +1107,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     fitter = ModelFitter()
     analyses: list[SeriesAnalysis] = []
     had_failure = False
-    for name in sorted(series):
-        data_points = tuple(series[name])
-        if len(data_points) < MIN_POINTS_TO_FIT:
+    for name in sorted(series_map):
+        series = series_map[name]
+        if len(series) < MIN_POINTS_TO_FIT:
             print(
                 f"Skipping {name}: need >= {MIN_POINTS_TO_FIT} data points,"
-                f" found {len(data_points)}.",
+                f" found {len(series)}.",
                 file=sys.stderr,
             )
             had_failure = True
             continue
-        models = fitter.fit(data_points)
+        models = fitter.fit(series)
         if not models:
             print(
                 f"Could not fit models for {name} (zero variance).",
@@ -1042,7 +1126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             had_failure = True
             continue
         analyses.append(
-            SeriesAnalysis(name=name, data_points=data_points, models=models)
+            SeriesAnalysis(series=series, models=models)
         )
 
     if options.summary:
