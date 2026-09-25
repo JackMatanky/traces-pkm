@@ -2,11 +2,10 @@
 # /// script
 # dependencies = ["numpy", "scikit-learn", "plotext<6"]
 # ///
-
 # [MISE] description="Fit performance models to criterion output"
 # [MISE] hide=true
-# [USAGE] arg "[criterion_dir]" {
-# [USAGE]   help "Criterion output directory" default="target/criterion"
+# [USAGE] arg "[criterion_dir]" default="target/criterion" {
+# [USAGE]   help "Criterion output directory"
 # [USAGE] }
 # [USAGE] flag "-p --plot" {
 # [USAGE]   help "Render measured input-size plots and supported fit curves in the terminal"
@@ -28,9 +27,9 @@ Pipeline (load -> fit -> analyze -> render):
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
 """
-
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -236,9 +235,7 @@ class BenchmarkSeries:
 
     @property
     def mean_seconds(self) -> float:
-        return float(
-            np.mean([point.mean_seconds for point in self.data_points])
-        )
+        return float(np.mean([point.mean_seconds for point in self.data_points]))
 
     @property
     def is_constant(self) -> bool:
@@ -449,9 +446,7 @@ class CriterionRepository:
                 continue
             point = self._parse(group, function_dir.name, results_dir)
             if point is not None:
-                series.setdefault(f"{group}/{function_dir.name}", []).append(
-                    point
-                )
+                series.setdefault(f"{group}/{function_dir.name}", []).append(point)
 
     @staticmethod
     def _parse(
@@ -505,9 +500,7 @@ class CriterionRepository:
             )
             lower_severe, lower_mild, upper_mild, upper_severe = (
                 float(value)
-                for value in json.loads(
-                    (results_dir / "tukey.json").read_text()
-                )
+                for value in json.loads((results_dir / "tukey.json").read_text())
             )
             values = [
                 float(time) / float(iterations)
@@ -541,9 +534,7 @@ class CriterionRepository:
         if isinstance(throughput, Mapping) and len(throughput) == 1:
             kind, value = next(iter(throughput.items()))
             if isinstance(value, int | float) and value > 0:
-                return float(value), CriterionRepository._throughput_unit(
-                    str(kind)
-                )
+                return float(value), CriterionRepository._throughput_unit(str(kind))
         return float(benchmark["value_str"]), "input units"
 
     @staticmethod
@@ -569,9 +560,7 @@ class ModelFitter:
     ) -> tuple[FittedModel, ...]:
         """Fit every candidate kind, ordered by leave-one-out RMSE."""
         data_points = (
-            series.data_points
-            if isinstance(series, BenchmarkSeries)
-            else series
+            series.data_points if isinstance(series, BenchmarkSeries) else series
         )
         x = np.array([point.input_size for point in data_points])
         y = np.array([point.mean_seconds for point in data_points])
@@ -583,10 +572,7 @@ class ModelFitter:
             kinds.append(ModelKind.COMBINED)
         models = [self._fit_kind(kind, x, y) for kind in kinds]
         return tuple(
-            sorted(
-                models,
-                key=lambda model: (model.validation_rmse, -model.r_squared),
-            )
+            sorted(models, key=lambda model: (model.validation_rmse, -model.r_squared))
         )
 
     @staticmethod
@@ -749,9 +735,7 @@ class Presentation:
         return f"{scaled:.{prec}f}{unit}"
 
     @staticmethod
-    def format_outlier_summary(
-        data_points: Sequence[BenchmarkDataPoint],
-    ) -> str:
+    def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
         """Summarize Criterion's Tukey outliers without discarding data."""
         mild = sum(point.mild_outlier_count for point in data_points)
         severe = sum(point.severe_outlier_count for point in data_points)
@@ -1009,35 +993,56 @@ class CliOptions:
 
     @classmethod
     def from_env(cls, argv: Sequence[str] | None = None) -> CliOptions:
-        """Build options from mise ``usage_*`` environment variables."""
-        argv = sys.argv[1:] if argv is None else argv
-        raw_summary = os.environ.get("usage_summary")
-        summary = raw_summary is not None
+        """Parse CLI options from argv with environment-variable defaults."""
+        raw_argv = sys.argv[1:] if argv is None else list(argv)
+
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument(
+            "criterion_dir",
+            nargs="?",
+            default=os.environ.get("usage_criterion_dir", DEFAULT_CRITERION_DIR),
+        )
+        parser.add_argument("-p", "--plot", action="store_true")
+        parser.add_argument(
+            "-s",
+            "--summary",
+            nargs="?",
+            const=DEFAULT_WORST_COUNT,
+            type=int,
+            default=None,
+        )
+
+        args, _ = parser.parse_known_args(raw_argv)
+
+        env_summary = os.environ.get("usage_summary")
+        summary_active = args.summary is not None or env_summary is not None
         worst_count = DEFAULT_WORST_COUNT
-        if raw_summary:
+
+        if args.summary is not None:
+            worst_count = args.summary
+        elif env_summary:
             try:
-                worst_count = int(raw_summary)
-                if worst_count < 1:
-                    raise ValueError
+                worst_count = int(env_summary)
             except ValueError:
                 raise SystemExit(
-                    f"invalid --summary count: {raw_summary!r}"
+                    f"invalid --summary count: {env_summary!r}"
                     " (need a positive integer)"
                 ) from None
 
-        positional = next(
-            (arg for arg in argv if not arg.startswith("-") and arg != "--"),
-            None,
+        if worst_count < 1:
+            raise SystemExit(
+                f"invalid --summary count: {worst_count}"
+                " (need a positive integer)"
+            )
+
+        plot_active = (
+            args.plot or os.environ.get("usage_plot") == "true"
         )
-        criterion_dir = os.environ.get("usage_criterion_dir") or (
-            positional or DEFAULT_CRITERION_DIR
-        )
+
         return cls(
-            criterion_dir=Path(criterion_dir),
-            plot=os.environ.get("usage_plot") == "true"
-            or "-p" in argv
-            or "--plot" in argv,
-            summary=summary,
+            criterion_dir=Path(args.criterion_dir),
+            plot=plot_active,
+            summary=summary_active,
             worst_count=worst_count,
         )
 
@@ -1065,22 +1070,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     for name in sorted(series_map):
         series = series_map[name]
         if len(series) < MIN_POINTS_TO_FIT:
-            print(
-                f"Skipping {name}: need >= {MIN_POINTS_TO_FIT} data points,"
-                f" found {len(series)}.",
-                file=sys.stderr,
-            )
             had_failure = True
             continue
         models = fitter.fit(series)
         if not models:
-            print(
-                f"Could not fit models for {name} (zero variance).",
-                file=sys.stderr,
-            )
             had_failure = True
             continue
-        analyses.append(SeriesAnalysis(series=series, models=models))
+        analyses.append(
+            SeriesAnalysis(series=series, models=models)
+        )
 
     if options.summary:
         data = build_summary(analyses)
