@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-Skills: `rust-skills`, `rust-unit-testing`, `verification-before-completion`. Rules: `num-overflow-explicit`, `conv-tryfrom-fallible`; doctrine = data + docs, no `Clock`/`TimeZone` traits (review §5.7). Design record: `review.md` §4 (B1 + DST), §2.1 (D9, N4).
+Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `conv-tryfrom-fallible`, `err-source-chain` (N4); doctrine = data + docs, no `Clock`/`TimeZone` traits (review §5.7). Design record: `../review.md` §4 (B1 + DST), §2.1 (D9, N4).
 
 - [ ] Naive datetime input parses in the local zone → stored UTC; date-only input attaches no zone
 - [ ] DST policy implemented and pinned: ambiguous fall-back → earliest occurrence; spring-forward gap → shifted forward by the gap; no valid-looking input fails to parse
 - [ ] Clock reads follow the doctrine: `now`/`today`/file-stat display from local clock, storage always UTC; engine's mixed clock sites unified (D9)
-- [ ] Error source chains preserved across engine parse paths (N4 date side)
+- [ ] Error source chains preserved across engine parse paths, no recognition result discards errors silently (N4)
 - [ ] Tests inject `TZ` per test (fresh fixtures, no shared/global time); ambiguity, gap, and offset assertions all run deterministically
 - [ ] `mise run verify` green

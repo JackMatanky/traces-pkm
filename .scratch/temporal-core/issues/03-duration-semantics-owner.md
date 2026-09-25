@@ -6,13 +6,13 @@
 
 **Status:** ready-for-agent
 
-Skills: `rust-skills`, `rust-unit-testing`, `codebase-design`, `verification-before-completion`. Rules: `api-parse-dont-validate` (Σ invariant by construction), `type-enum-states` (parts as regime witness), `num-overflow-explicit`, `anti-over-abstraction` (no `Clock`/`TimeZone` traits — one adapter = hypothetical seam). Design record: `review.md` §4 (A2′), §5.1–5.2, §9 (S1+S2).
+Skills: `rust-skills`, `rust-unit-testing`, `codebase-design`. Rules: `api-parse-dont-validate` (Σ invariant by construction), `type-enum-states` (parts as regime witness), `num-overflow-explicit`, `anti-over-abstraction` (no `Clock`/`TimeZone` traits — one adapter = hypothetical seam). Design record: `../review.md` §4 (A2′), §5.1–5.2, §9 (S1+S2).
 
 - [ ] `DurationValue` retains `parts: Option<…>` alongside seconds; parsing is the only path filling `Some` and computes seconds by summing those same parts in one statement — no state where they disagree
 - [ ] `from_seconds` stores `None` (honest: cannot synthesize Month/Year); regime witness matches exhaustively: month/year parts ⇒ calendar, else fixed, `None` ⇒ fixed
 - [ ] `seconds()` renamed `fixed_seconds()` (and `seconds_i64` → `fixed_seconds_i64`) at every call site; calendar meaning exposed nowhere except behind the calendar owner
 - [ ] Exactly one unit-ratio table: the private ms-table is derived from the registry const; Month/Year omission from magnitude conversion documented (N18, N2)
 - [ ] Calendar owner exists in the date module: `shift(base, n, unit)`, `diff(a, b, unit)`, `apply(base, &DurationValue)` applying parts left-to-right in written order; the engine's copied shift/diff deleted and delegation in place (H4 shrinks)
-- [ ] A2′ pinning test demonstrates equal values shifting dates differently; CONTEXT.md regime clause (c) lands with it
-- [ ] `checked_add`/`checked_sub` superseded by `apply` (removed or re-backed — no API pretending to arithmetic it can't do)
+- [ ] A2′ pinning test demonstrates equal values shifting dates differently (`dur("1 month")` vs `dur("30 days")`); the cross-spelling equality contract (`dur("1h 30m") == dur("90m")`) stays pinned green; CONTEXT.md clause (c) text is ticket 08's job — this ticket supplies the executable test it cites
+- [ ] `checked_add`/`checked_sub` superseded by `apply` (removed or re-backed — no API pretending to arithmetic it can't do); ticket 09 verifies no residue remains
 - [ ] `mise run verify` green
