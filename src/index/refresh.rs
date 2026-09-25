@@ -338,12 +338,14 @@ impl RefreshPlan {
     ) -> IndexResult<PendingApply> {
         let (inlinks, inlink_delta) =
             if Self::is_paths_unchanged(&self.delta, &self.persisted_files) {
-                let links = Self::patch_links(
-                    &persisted,
+                let edited: HashSet<&Path> =
+                    modified_notes.iter().map(Note::path).collect();
+                let new_edges = inlinks::resolve_edges_for(
                     &modified_notes,
                     self.current_files.as_slice(),
                 );
-                let inlink_delta = InlinkDelta::compute(&links, &persisted);
+                let (links, inlink_delta) =
+                    persisted.patch_and_diff(&edited, &new_edges);
                 (
                     InlinkReconciliation {
                         links,
@@ -402,22 +404,6 @@ impl RefreshPlan {
             && delta.upserted().iter().all(|file| {
                 persisted_files.binary_search_by_path(file.path()).is_ok()
             })
-    }
-
-    /// Replaces inbound edges sourced by modified notes after re-resolving
-    /// their current outlinks.
-    ///
-    /// Sound only when [`Self::is_paths_unchanged`] holds.
-    fn patch_links(
-        persisted: &InlinkMap,
-        modified_notes: &[Note],
-        current_files: &[FileMeta],
-    ) -> InlinkMap {
-        let edited: HashSet<&Path> =
-            modified_notes.iter().map(Note::path).collect();
-        let new_edges =
-            inlinks::resolve_edges_for(modified_notes, current_files);
-        persisted.without_sources(&edited).with_edges(new_edges)
     }
 }
 

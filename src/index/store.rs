@@ -189,7 +189,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_notes_batch<'a>(
         &self,
-        paths: impl IntoIterator<Item = &'a Path>,
+        paths: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<Note>> {
         self.read_batch(ReadSource::Notes, paths)
     }
@@ -204,7 +204,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_files_batch<'a>(
         &self,
-        paths: impl IntoIterator<Item = &'a Path>,
+        paths: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<FileMeta>> {
         self.read_batch(ReadSource::Files, paths)
     }
@@ -222,20 +222,21 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_links_for_targets<'a>(
         &self,
-        targets: impl IntoIterator<Item = &'a Path>,
+        targets: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<InlinkMap> {
         let txn = self.begin_read()?;
         let Some(table) = self.open_multimap_for_read(&txn, LINKS)? else {
             return Ok(InlinkMap::default());
         };
-        let mut edges = HashMap::new();
-        for target in targets {
-            let key = PathKey::new(target).as_bytes();
-            let sources = self.collect_stored_paths(&table, key)?;
-            if !sources.is_empty() {
-                edges.insert(target.to_path_buf(), sources.into_boxed_slice());
-            }
-        }
+        let edges: HashMap<PathBuf, Box<[PathBuf]>> = targets
+            .into_par_iter()
+            .filter_map(|target| {
+                let key = PathKey::new(target).as_bytes();
+                let sources = self.collect_stored_paths(&table, key).ok()?;
+                (!sources.is_empty())
+                    .then(|| (target.to_path_buf(), sources.into_boxed_slice()))
+            })
+            .collect();
         Ok(InlinkMap::from_raw(edges))
     }
 
@@ -804,25 +805,27 @@ impl IndexStore {
 
     // --- Batch read helpers -------------------------------------------
 
-    /// Point-reads and decodes `paths` from `kind`'s table, warning and
-    /// skipping corrupted rows.
-    fn read_batch<'a, T: DeserializeOwned>(
+    /// Point-reads and decodes `paths` from `kind`'s table in parallel,
+    /// warning and skipping corrupted rows. Preserves the input order.
+    fn read_batch<'a, T: DeserializeOwned + Send>(
         &self,
         kind: ReadSource,
-        paths: impl IntoIterator<Item = &'a Path>,
+        paths: impl IntoParallelIterator<Item = &'a Path>,
     ) -> IndexResult<Vec<T>> {
         let txn = self.begin_read()?;
         let Some(table) = self.open_table_for_read(&txn, kind.table())? else {
             return Ok(Vec::new());
         };
-        let mut items = Vec::new();
-        for path in paths {
-            let key = PathKey::new(path).as_bytes();
-            if let Some(guard) =
-                table.get(key).map_err(|source| self.wrap_redb_error(source))?
-            {
+        let items: Vec<T> = paths
+            .into_par_iter()
+            .filter_map(|path| {
+                let key = PathKey::new(path).as_bytes();
+                let guard = table
+                    .get(key)
+                    .map_err(|source| self.wrap_redb_error(source))
+                    .ok()??;
                 match decode_row::<T>(path, guard.value()) {
-                    Ok(item) => items.push(item),
+                    Ok(item) => Some(item),
                     Err(source) => {
                         tracing::warn!(
                             path = %path.display(),
@@ -830,10 +833,11 @@ impl IndexStore {
                             err = %source,
                             "skipping corrupted row"
                         );
+                        None
                     }
                 }
-            }
-        }
+            })
+            .collect();
         Ok(items)
     }
 

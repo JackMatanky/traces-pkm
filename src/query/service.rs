@@ -14,6 +14,8 @@ use std::{
     sync::Arc,
 };
 
+use rayon::prelude::*;
+
 use super::{
     QueryBuilder, QueryMode, QueryRow, QuerySet,
     grammar::{BooleanExpr, FileClassExpander, SourceAtom, SourceSelector},
@@ -132,19 +134,19 @@ impl QueryService {
         let (notes_result, (files_result, inlinks_result)) = rayon::join(
             || {
                 store.read_notes_batch(
-                    candidate_paths.iter().map(PathBuf::as_path),
+                    candidate_paths.par_iter().map(PathBuf::as_path),
                 )
             },
             || {
                 rayon::join(
                     || {
                         store.read_files_batch(
-                            candidate_paths.iter().map(PathBuf::as_path),
+                            candidate_paths.par_iter().map(PathBuf::as_path),
                         )
                     },
                     || {
                         store.read_links_for_targets(
-                            candidate_paths.iter().map(PathBuf::as_path),
+                            candidate_paths.par_iter().map(PathBuf::as_path),
                         )
                     },
                 )

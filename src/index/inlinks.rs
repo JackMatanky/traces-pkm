@@ -204,27 +204,66 @@ impl InlinkMap {
         Self::from(edges)
     }
 
-    /// Removes edges from `sources`, dropping targets left without inlinks.
+    /// Patches inbound edges sourced by `edited_sources` and computes the
+    /// exact `InlinkDelta` in one pass.
     ///
-    /// `&self` lets incremental refresh diff against the original graph; the
-    /// implementation copies only retained sources instead of cloning the whole
-    /// map up front.
-    #[inline]
+    /// Operates in-place on the consumed map, touching only edited targets
+    /// and sources. Untouched targets and sources are moved, never copied.
+    /// This avoids both the map-wide clone of a manual `without_sources` call
+    /// and the full-vault scan of [`InlinkDelta::compute`].
     #[must_use]
-    pub(super) fn without_sources(&self, sources: &HashSet<&Path>) -> Self {
-        let mut edges = HashMap::with_capacity(self.0.len());
-        for (target, srcs) in &self.0 {
-            let mut filtered = Vec::with_capacity(srcs.len());
-            for source in srcs {
-                if !sources.contains(source.as_path()) {
-                    filtered.push(source.clone());
+    pub(super) fn patch_and_diff(
+        mut self,
+        edited_sources: &HashSet<&Path>,
+        new_edges: &[(PathBuf, PathBuf)],
+    ) -> (Self, crate::index::delta::InlinkDelta) {
+        let mut deleted: Vec<(PathBuf, PathBuf)> = Vec::new();
+        self.0.retain(|target, srcs| {
+            if srcs.iter().any(|s| edited_sources.contains(s.as_path())) {
+                let mut filtered = Vec::with_capacity(srcs.len());
+                for source in srcs.iter() {
+                    if edited_sources.contains(source.as_path()) {
+                        deleted.push((target.to_path_buf(), source.clone()));
+                    } else {
+                        filtered.push(source.clone());
+                    }
                 }
+                *srcs = filtered.into_boxed_slice();
             }
-            if !filtered.is_empty() {
-                edges.insert(target.clone(), filtered.into_boxed_slice());
+            !srcs.is_empty()
+        });
+
+        let mut upserted: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for (target, source) in new_edges {
+            let slot = self.0.entry(target.clone()).or_default();
+            let mut sources = std::mem::take(slot).into_vec();
+            if let Err(pos) = sources.binary_search(source) {
+                sources.insert(pos, source.clone());
+                upserted.push((target.clone(), source.clone()));
             }
+            *slot = sources.into_boxed_slice();
         }
-        Self(edges)
+
+        // Edges that were removed and then re-inserted by `new_edges` are
+        // pure no-ops relative to the persisted graph, so they must not
+        // appear in the delta (which compares the final state to the
+        // original).
+        upserted.retain(|edge| {
+            if let Some(pos) = deleted.iter().position(|d| d == edge) {
+                deleted.swap_remove(pos);
+                false
+            } else {
+                true
+            }
+        });
+
+        (
+            self,
+            crate::index::delta::InlinkDelta::from_raw(
+                upserted.into_boxed_slice(),
+                deleted.into_boxed_slice(),
+            ),
+        )
     }
 
     /// Inserts edge pairs into sorted, deduplicated per-target source lists.
@@ -1056,7 +1095,7 @@ mod tests {
         mod refresh_support {
             use super::*;
 
-            mod without_sources {
+            mod patch_and_diff {
                 use pretty_assertions::assert_eq;
 
                 use super::*;
@@ -1082,9 +1121,11 @@ mod tests {
                     let stale: HashSet<&Path> =
                         std::iter::once(Path::new("a.md")).collect();
 
-                    let patched = inlinks.without_sources(&stale);
+                    let (patched, delta) = inlinks.patch_and_diff(&stale, &[]);
 
                     assert!(!patched.has_target(Path::new("target.md")));
+                    assert_eq!(delta.deleted().len(), 1);
+                    assert!(delta.upserted().is_empty());
                 }
 
                 #[test]
@@ -1093,11 +1134,12 @@ mod tests {
                     let stale: HashSet<&Path> =
                         std::iter::once(Path::new("a.md")).collect();
 
-                    let patched = inlinks.without_sources(&stale);
+                    let (patched, delta) = inlinks.patch_and_diff(&stale, &[]);
 
                     assert_eq!(patched.inlinks_of(Path::new("target.md")), [
                         PathBuf::from("b.md")
                     ]);
+                    assert_eq!(delta.deleted().len(), 1);
                 }
 
                 #[test]
@@ -1106,12 +1148,13 @@ mod tests {
                     let stale: HashSet<&Path> =
                         std::iter::once(Path::new("missing.md")).collect();
 
-                    let patched = inlinks.without_sources(&stale);
+                    let (patched, delta) = inlinks.patch_and_diff(&stale, &[]);
 
                     assert_eq!(patched.inlinks_of(Path::new("target.md")), [
                         PathBuf::from("a.md"),
                         PathBuf::from("b.md")
                     ]);
+                    assert!(delta.is_empty());
                 }
             }
 
