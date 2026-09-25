@@ -16,9 +16,8 @@ Pipeline (load -> fit -> analyze -> render):
    into series.
 2. ModelFitter fits OLS complexity candidates and selects the lowest
    leave-one-out error.
-3. SeriesAnalysis derives trust and extrapolation decisions.
-4. Renderers emit a scan-first summary, optional terminal plot, and evidence
-   table; --summary [count] renders the aggregate view.
+3. SeriesAnalysis derives trust, outlook, and evidence diagnostics.
+4. SeriesReporter and SummaryReporter emit box-drawn terminal reports.
 
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
@@ -42,26 +41,27 @@ from sklearn.linear_model import LinearRegression
 # ------------------------------------------------------------- #
 
 # Defaults & sweep sizes
-DEFAULT_CRITERION_DIR: Final = "target/criterion"
-EXTRAPOLATION_TARGETS: Final = (50_000, 100_000)
-SUMMARY_TARGET: Final = 100_000
-DEFAULT_WORST_COUNT: Final = 10
+DEFAULT_CRITERION_DIR: Final[str] = "target/criterion"
+EXTRAPOLATION_TARGETS: Final[tuple[int, ...]] = (50_000, 100_000)
+SUMMARY_TARGET: Final[int] = 100_000
+DEFAULT_WORST_COUNT: Final[int] = 10
 
 # Fit-trust thresholds
-MIN_POINTS_TO_FIT: Final = 3
-MIN_POINTS_FOR_COMBINED: Final = 5
-MIN_POINTS_FOR_TRUSTED_FIT: Final = 6
-MIN_RESIDUAL_DOF: Final = 3
-CONSTANT_SPREAD_EPSILON: Final = 1e-4
-R2_RELIABLE_THRESHOLD: Final = 0.95
-R_SQUARED: Final = "R²"
+MIN_POINTS_TO_FIT: Final[int] = 3
+MIN_POINTS_FOR_COMBINED: Final[int] = 5
+MIN_POINTS_FOR_TRUSTED_FIT: Final[int] = 6
+MIN_RESIDUAL_DOF: Final[int] = 3
+CONSTANT_SPREAD_EPSILON: Final[float] = 1e-4
+R2_RELIABLE_THRESHOLD: Final[float] = 0.95
+R_SQUARED: Final[str] = "R²"
+
 # Report box and plot dimensions
-SERIES_BOX_WIDTH: Final = 60
-SUMMARY_BOX_WIDTH: Final = 64
-SUMMARY_NAME_WIDTH: Final = 32
-PLOT_MIN_WIDTH: Final = 60
-PLOT_MAX_WIDTH: Final = 100
-PLOT_HEIGHT: Final = 14
+SERIES_BOX_WIDTH: Final[int] = 60
+SUMMARY_BOX_WIDTH: Final[int] = 64
+SUMMARY_NAME_WIDTH: Final[int] = 32
+PLOT_MIN_WIDTH: Final[int] = 60
+PLOT_MAX_WIDTH: Final[int] = 100
+PLOT_HEIGHT: Final[int] = 14
 
 
 # ------------------------------------------------------------- #
@@ -72,43 +72,55 @@ PLOT_HEIGHT: Final = 14
 class ModelKind(Enum):
     """Complexity class of a fitted performance model."""
 
-    LINEAR = "linear"
-    LOG = "log"
-    COMBINED = "combined"
+    LINEAR = ("O(n) + constant", "O(n)", "linear cost", 2)
+    LOG = ("O(n·ln n) + constant", "O(n·ln n)", "n·ln n cost", 2)
+    COMBINED = (
+        "O(n) + O(n·ln n) + constant",
+        "O(n)+O(n·ln n)",
+        "combined cost",
+        3,
+    )
+
+    def __init__(
+        self,
+        label: str,
+        short_label: str,
+        breakdown_description: str,
+        parameter_count: int,
+    ) -> None:
+        self.label = label
+        self.short_label = short_label
+        self.breakdown_description = breakdown_description
+        self.parameter_count = parameter_count
+
+
+class FitTrust(Enum):
+    """Ordered evidence outcomes for model reporting and forecasting."""
+
+    INSUFFICIENT_INPUT_SIZES = (
+        "INCONCLUSIVE",
+        f"need at least {MIN_POINTS_FOR_TRUSTED_FIT} input sizes",
+    )
+    INSUFFICIENT_RESIDUAL_DOF = (
+        "INCONCLUSIVE",
+        f"need at least {MIN_RESIDUAL_DOF} residual DOF",
+    )
+    UNVALIDATED = ("UNVALIDATED", "leave-one-out validation is unavailable")
+    WEAK_R_SQUARED = (
+        "WEAK",
+        f"in-sample {R_SQUARED} is below {R2_RELIABLE_THRESHOLD:.2f}",
+    )
+    EXPLORATORY = ("EXPLORATORY", "supported")
+
+    def __init__(self, label: str, reason: str) -> None:
+        self.label = label
+        self.reason = reason
 
     @property
-    def label(self) -> str:
-        """Complexity including the constant term."""
-        return MODEL_TEXT[self]["label"]
+    def is_trusted(self) -> bool:
+        """Whether the status permits a curve and extrapolations."""
+        return self is FitTrust.EXPLORATORY
 
-    @property
-    def short_label(self) -> str:
-        """Compact complexity for table columns."""
-        return MODEL_TEXT[self]["short_label"]
-
-    @property
-    def breakdown_description(self) -> str:
-        """One-line meaning for the summary's scaling breakdown."""
-        return MODEL_TEXT[self]["breakdown_description"]
-
-
-MODEL_TEXT: Final = {
-    ModelKind.LINEAR: {
-        "label": "O(n) + constant",
-        "short_label": "O(n)",
-        "breakdown_description": "linear cost",
-    },
-    ModelKind.LOG: {
-        "label": "O(n·ln n) + constant",
-        "short_label": "O(n·ln n)",
-        "breakdown_description": "n·ln n cost",
-    },
-    ModelKind.COMBINED: {
-        "label": "O(n) + O(n·ln n) + constant",
-        "short_label": "O(n)+O(n·ln n)",
-        "breakdown_description": "combined cost",
-    },
-}
 
 # ------------------------------------------------------------- #
 #                          Domain model                         #
@@ -147,12 +159,10 @@ class FittedModel:
 
     @property
     def parameter_count(self) -> int:
-        """Number of fitted coefficients, including the intercept."""
-        return 3 if self.kind is ModelKind.COMBINED else 2
+        return self.kind.parameter_count
 
     @property
     def has_high_r_squared(self) -> bool:
-        """Whether the in-sample score clears the reporting threshold."""
         return self.r_squared >= R2_RELIABLE_THRESHOLD
 
     def predict(self, input_size: float) -> float:
@@ -194,106 +204,84 @@ class SeriesAnalysis:
 
     @property
     def input_sizes(self) -> tuple[int, ...]:
-        """Measured input sizes as integers."""
         return tuple(int(point.input_size) for point in self.data_points)
 
     @property
     def input_unit(self) -> str:
-        """Shared Criterion throughput unit, or a neutral fallback."""
         units = {point.input_unit for point in self.data_points}
         return units.pop() if len(units) == 1 else "input units"
 
     @property
     def size_range(self) -> str:
-        """Display string for the measured input-size domain."""
         sizes = [point.input_size for point in self.data_points]
         return f"{min(sizes):,.0f} → {max(sizes):,.0f}"
 
     @property
     def largest_measurement(self) -> BenchmarkDataPoint:
-        """Largest measured input, after repository ordering."""
         return self.data_points[-1]
 
     @property
     def mean_seconds(self) -> float:
-        """Mean measured time for constant-series reporting."""
         return float(np.mean([point.mean_seconds for point in self.data_points]))
 
     @property
     def is_constant(self) -> bool:
-        """True when the spread across input sizes is negligible."""
         times = [point.mean_seconds for point in self.data_points]
         return max(times) - min(times) < CONSTANT_SPREAD_EPSILON
 
     @property
     def residual_dof(self) -> int:
-        """Residual degrees of freedom for the selected candidate."""
         return len(self.data_points) - self.best_model.parameter_count
 
     @property
-    def has_insufficient_evidence(self) -> bool:
-        """Whether data quantity or residual evidence blocks extrapolation."""
-        return (
-            len(self.data_points) < MIN_POINTS_FOR_TRUSTED_FIT
-            or self.residual_dof < MIN_RESIDUAL_DOF
+    def trust(self) -> FitTrust:
+        checks = (
+            (
+                FitTrust.INSUFFICIENT_INPUT_SIZES,
+                len(self.data_points) < MIN_POINTS_FOR_TRUSTED_FIT,
+            ),
+            (
+                FitTrust.INSUFFICIENT_RESIDUAL_DOF,
+                self.residual_dof < MIN_RESIDUAL_DOF,
+            ),
+            (
+                FitTrust.UNVALIDATED,
+                not np.isfinite(self.best_model.validation_rmse),
+            ),
+            (FitTrust.WEAK_R_SQUARED, not self.best_model.has_high_r_squared),
         )
-
-    @property
-    def trust_reason(self) -> str:
-        """Human-readable reason forecasts are withheld, when applicable."""
-        if len(self.data_points) < MIN_POINTS_FOR_TRUSTED_FIT:
-            return f"need at least {MIN_POINTS_FOR_TRUSTED_FIT} input sizes"
-        if self.residual_dof < MIN_RESIDUAL_DOF:
-            return f"need at least {MIN_RESIDUAL_DOF} residual DOF"
-        if not np.isfinite(self.best_model.validation_rmse):
-            return "leave-one-out validation is unavailable"
-        if not self.best_model.has_high_r_squared:
-            return f"in-sample {R_SQUARED} is below {R2_RELIABLE_THRESHOLD:.2f}"
-        return "supported"
+        return next(
+            (status for status, failed in checks if failed),
+            FitTrust.EXPLORATORY,
+        )
 
     @property
     def is_fit_trusted(self) -> bool:
-        """Whether the fit may be drawn and used for extrapolation."""
-        return (
-            not self.has_insufficient_evidence
-            and self.best_model.has_high_r_squared
-            and np.isfinite(self.best_model.validation_rmse)
-        )
-
-    @property
-    def fit_status(self) -> str:
-        """Concise evidence status for the scan-first summary."""
-        if self.has_insufficient_evidence:
-            return "INCONCLUSIVE"
-        if not np.isfinite(self.best_model.validation_rmse):
-            return "UNVALIDATED"
-        if not self.best_model.has_high_r_squared:
-            return "WEAK"
-        return "EXPLORATORY"
+        return self.trust.is_trusted
 
     @property
     def extrapolations(self) -> tuple[Extrapolation, ...]:
-        """Predictions outside the observed domain, or none when untrusted."""
         if not self.is_fit_trusted:
             return ()
         return tuple(
-            Extrapolation(size, self.best_model.predict(float(size)), self.best_model.kind)
+            Extrapolation(
+                size,
+                self.best_model.predict(float(size)),
+                self.best_model.kind,
+            )
             for size in EXTRAPOLATION_TARGETS
             if size > self.largest_measurement.input_size
         )
 
     @property
     def has_negative_extrapolation(self) -> bool:
-        """True when a trusted model becomes negative beyond the data."""
         return any(ext.predicted_seconds < 0 for ext in self.extrapolations)
 
     @property
     def prediction_at_summary_target(self) -> float | None:
-        """Trusted prediction at the summary target for ranking."""
         if not self.is_fit_trusted:
             return None
         return self.best_model.predict(float(SUMMARY_TARGET))
-
 
 
 # ------------------------------------------------------------- #
@@ -519,7 +507,6 @@ class ModelFitter:
                 return np.column_stack([x, x * np.log(x)])
 
 
-
 # ------------------------------------------------------------- #
 #                        Summary Analysis                       #
 # ------------------------------------------------------------- #
@@ -563,7 +550,6 @@ class SummaryData:
 
     @property
     def supported_fit_count(self) -> int:
-        """Series with supported, positive summary estimates."""
         return len(self.ranked)
 
     @property
@@ -593,7 +579,7 @@ def build_summary(
         scaling[best.kind] += 1
         if not analysis.is_fit_trusted:
             unreliable.append(
-                UnreliableFit(analysis.name, best, analysis.fit_status.lower())
+                UnreliableFit(analysis.name, best, analysis.trust.label.lower())
             )
             continue
         predicted = best.predict(float(target))
@@ -625,7 +611,7 @@ class _Divider:
     __slots__ = ()
 
 
-DIVIDER: Final = _Divider()
+DIVIDER: Final[_Divider] = _Divider()
 BoxRow = str | _Divider
 
 
@@ -676,18 +662,7 @@ def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
 
 
 def truncate_middle(text: str, max_len: int) -> str:
-    """Shorten ``text`` to ``max_len`` keeping both ends.
-
-    Preserves the group prefix and the ``/function`` suffix, which are the
-    distinguishing parts of a series key.
-
-    Args:
-        text: String to shorten.
-        max_len: Maximum length including the ellipsis.
-
-    Returns:
-        Unmodified text, or head + ``…`` + tail.
-    """
+    """Shorten ``text`` to ``max_len`` keeping both ends."""
     if len(text) <= max_len:
         return text
     keep = max_len - 1
@@ -697,30 +672,13 @@ def truncate_middle(text: str, max_len: int) -> str:
 
 
 class Box:
-    """Renders box-drawing frames with consistent alignment.
-
-    Every line (borders included) has the same display width: the requested
-    minimum widened to fit the longest row or the title, so content can never
-    overflow the frame.
-
-    Args:
-        min_width: Minimum total width of the rendered box.
-    """
+    """Renders box-drawing frames with consistent alignment."""
 
     def __init__(self, min_width: int = SERIES_BOX_WIDTH) -> None:
         self._min_width = min_width
 
     def render(self, title: str, rows: Sequence[BoxRow]) -> str:
-        """Render a complete box.
-
-        Args:
-            title: Text centered in the top border.
-            rows: Body rows; strings become padded content, blank strings
-                become blank lines, and :data:`DIVIDER` becomes a rule.
-
-        Returns:
-            Multi-line box string.
-        """
+        """Render a complete box with centered title and formatted body."""
         width = self._resolve_width(title, rows)
         inner = width - 4
         body = [
@@ -774,12 +732,16 @@ class SeriesReporter:
             f"  n: {analysis.input_unit} · {len(analysis.data_points)} sizes",
             f"  observed: {analysis.size_range} {analysis.input_unit}",
             "",
-            f"FIT  {analysis.fit_status}",
+            f"FIT  {analysis.trust.label}",
             f"  Candidate: {best.label}",
             f"  Evidence: {len(analysis.data_points)} input sizes · "
             f"{analysis.residual_dof} residual DOF",
             f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
-            f"  Time: {format_interval(latest.mean_seconds, latest.lower_seconds, latest.upper_seconds)}  95% CI",
+            (
+                "  Time: "
+                f"{format_interval(latest.mean_seconds, latest.lower_seconds, latest.upper_seconds)}  "
+                "95% CI"
+            ),
             *self._outlook_rows(analysis),
         ]
         return self._box.render(analysis.name, rows)
@@ -788,19 +750,23 @@ class SeriesReporter:
         """Render evidence and selection diagnostics after the plot."""
         best = analysis.best_model
         extrapolation = (
-            "enabled" if analysis.is_fit_trusted else "withheld: insufficient evidence"
+            "enabled"
+            if analysis.is_fit_trusted
+            else "withheld: insufficient evidence"
         )
         rows: list[BoxRow] = [
             f"{'item':<28} value",
             DIVIDER,
             f"  {'candidate model':<26} {best.label}",
-            f"  {'fit status':<26} {analysis.fit_status.lower()}",
+            f"  {'fit status':<26} {analysis.trust.label.lower()}",
             f"  {'selection':<26} lowest leave-one-out RMSE",
             f"  {'leave-one-out RMSE':<26} {format_seconds(best.validation_rmse)}",
             f"  {'in-sample ' + R_SQUARED:<26} {best.r_squared:.4f}",
             f"  {'residual DOF':<26} {analysis.residual_dof}",
-            f"  {'sample outliers':<26} "
-            f"{format_outlier_summary(analysis.data_points)}",
+            (
+                f"  {'sample outliers':<26} "
+                f"{format_outlier_summary(analysis.data_points)}"
+            ),
             f"  {'extrapolation':<26} {extrapolation}",
             f"  {'coefficients':<26} omitted; terms are not interpreted",
         ]
@@ -812,7 +778,7 @@ class SeriesReporter:
             return [
                 "",
                 "FORECASTS WITHHELD",
-                f"  {analysis.trust_reason}.",
+                f"  {analysis.trust.reason}.",
                 "",
                 "NEXT",
                 "  Add input sizes before using this model for capacity estimates.",
@@ -845,19 +811,8 @@ class SeriesReporter:
         return rows
 
 
-
 class SummaryReporter:
-    """Renders the single-box overview of every fitted series.
-
-    Sections: counts, worst performers at the summary target (capped at
-    ``worst_count``), unreliable fits, scaling breakdown, and near-constant
-    series.
-
-    Args:
-        worst_count: Maximum rows in the worst-performers list.
-        width: Minimum box width.
-        target: Workspace size predictions are made at.
-    """
+    """Renders the single-box overview of every fitted series."""
 
     def __init__(
         self,
@@ -870,14 +825,7 @@ class SummaryReporter:
         self._target = target
 
     def render(self, data: SummaryData) -> str:
-        """Render the summary as one box.
-
-        Args:
-            data: Classified series from :func:`build_summary`.
-
-        Returns:
-            Multi-line box string (no trailing newline).
-        """
+        """Render the summary as one box."""
         rows: list[BoxRow] = [
             "",
             self._stats_row(data),
@@ -1006,7 +954,6 @@ class SeriesPlotRenderer:
         return min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, columns - 2))
 
 
-
 # ------------------------------------------------------------- #
 #                              CLI                              #
 # ------------------------------------------------------------- #
@@ -1014,14 +961,7 @@ class SeriesPlotRenderer:
 
 @dataclass(frozen=True, slots=True)
 class CliOptions:
-    """Resolved command-line options for one invocation.
-
-    Attributes:
-        criterion_dir: Criterion output directory to read.
-        plot: Render per-series terminal plots (default mode only).
-        summary: Print the single summary box instead of per-series boxes.
-        worst_count: Rows in the summary's worst-performer list.
-    """
+    """Resolved command-line options for one invocation."""
 
     criterion_dir: Path
     plot: bool = False
@@ -1030,22 +970,7 @@ class CliOptions:
 
     @classmethod
     def from_env(cls, argv: Sequence[str] | None = None) -> CliOptions:
-        """Build options from mise ``usage_*`` environment variables.
-
-        ``--summary`` is a value-optional flag: the variable is unset when
-        the flag is absent, ``""`` when given bare (default worst count),
-        and the count itself when given a value. Direct (non-``mise``)
-        invocation falls back to ``argv`` for the directory.
-
-        Args:
-            argv: Positional arguments (defaults to ``sys.argv[1:]``).
-
-        Returns:
-            Parsed options.
-
-        Raises:
-            SystemExit: If ``--summary``'s count is not a positive integer.
-        """
+        """Build options from mise ``usage_*`` environment variables."""
         argv = sys.argv[1:] if argv is None else argv
         raw_summary = os.environ.get("usage_summary")
         summary = raw_summary is not None
@@ -1079,16 +1004,7 @@ class CliOptions:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the `load -> fit -> render` pipeline.
-
-    Args:
-        argv: Positional arguments (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        ``0`` when every series fit; ``1`` on missing/empty criterion output or any
-        per-series fit failure (failures never abort the loop; successful series
-        still report).
-    """
+    """Run the `load -> fit -> render` pipeline."""
     options = CliOptions.from_env(argv)
 
     try:
