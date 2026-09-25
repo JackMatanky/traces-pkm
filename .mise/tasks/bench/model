@@ -5,28 +5,24 @@
 # [MISE] description="Fit performance models to criterion output"
 # [MISE] hide=true
 # [USAGE] arg "[criterion_dir]" help="Criterion output directory" default="target/criterion"
-# [USAGE] flag "-p --plot" help="Render scatter plots with fitted curves in the terminal"
+# [USAGE] flag "-p --plot" help="Render measured input-size plots and supported fit curves in the terminal"
 # [USAGE] flag "-s --summary [count]" value_optional=#true help="Print one high-level summary box; optional count caps the worst-performer list (default: 10)"
 
 """Fit performance models to Criterion benchmark output.
 
-Pipeline (`load -> fit -> analyze -> render`):
+Pipeline (load -> fit -> analyze -> render):
 
-1. :class:`CriterionRepository` walks the Criterion JSON tree and groups
-   measurements into series (a group's flat sweep, or ``<group>/<function>``
-   for groups with named sub-benchmarks).
-2. :class:`ModelFitter` fits candidate complexity models (:class:`ModelKind`)
-   to each series via OLS.
-3. :class:`SeriesAnalysis` wraps a fitted series with derived insights (fit
-   quality, constant detection, extrapolation eligibility).
-4. Renderers turn analyses into box-drawn terminal reports: one box per series
-   by default, or a single :class:`SummaryReporter` box with
-   ``--summary [count]``.
+1. CriterionRepository walks the Criterion JSON tree and groups measurements
+   into series.
+2. ModelFitter fits OLS complexity candidates and selects the lowest
+   leave-one-out error.
+3. SeriesAnalysis derives trust and extrapolation decisions.
+4. Renderers emit a scan-first summary, optional terminal plot, and evidence
+   table; --summary [count] renders the aggregate view.
 
-Exit code ``1`` if the criterion directory is missing, no usable series are found,
+Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
 """
-
 from __future__ import annotations
 
 import json
@@ -47,32 +43,25 @@ from sklearn.linear_model import LinearRegression
 
 # Defaults & sweep sizes
 DEFAULT_CRITERION_DIR: Final = "target/criterion"
-WORKSPACE_POINTS: Final = frozenset({50, 200, 1000, 5000, 20000, 40000})
 EXTRAPOLATION_TARGETS: Final = (50_000, 100_000)
 SUMMARY_TARGET: Final = 100_000
 DEFAULT_WORST_COUNT: Final = 10
 
-# Fit-quality thresholds
-MIN_POINTS_TO_FIT: Final = 2
+# Fit-trust thresholds
+MIN_POINTS_TO_FIT: Final = 3
 MIN_POINTS_FOR_COMBINED: Final = 5
-COMBINED_MIN_RESIDUAL_DOF: Final = 3
+MIN_POINTS_FOR_TRUSTED_FIT: Final = 6
+MIN_RESIDUAL_DOF: Final = 3
 CONSTANT_SPREAD_EPSILON: Final = 1e-4
-
-# R² quality grades
 R2_RELIABLE_THRESHOLD: Final = 0.95
-R2_QUALITY_LEVELS: Final = (
-    (0.99, "excellent"),
-    (0.95, "good"),
-    (0.90, "fair"),
-)
 R_SQUARED: Final = "R²"
-
 # Report box and plot dimensions
 SERIES_BOX_WIDTH: Final = 60
 SUMMARY_BOX_WIDTH: Final = 64
 SUMMARY_NAME_WIDTH: Final = 32
-PLOT_WIDTH: Final = 60
-PLOT_HEIGHT: Final = 10
+PLOT_MIN_WIDTH: Final = 60
+PLOT_MAX_WIDTH: Final = 100
+PLOT_HEIGHT: Final = 14
 
 
 # ------------------------------------------------------------- #
@@ -81,11 +70,7 @@ PLOT_HEIGHT: Final = 10
 
 
 class ModelKind(Enum):
-    """Complexity class of a fitted performance model.
-
-    Each member owns its label, formula, and coefficient meanings so nothing
-    string-matches model names.
-    """
+    """Complexity class of a fitted performance model."""
 
     LINEAR = "linear"
     LOG = "log"
@@ -94,69 +79,36 @@ class ModelKind(Enum):
     @property
     def label(self) -> str:
         """Complexity including the constant term."""
-        match self:
-            case ModelKind.LINEAR:
-                return "O(n) + constant"
-            case ModelKind.LOG:
-                return "O(n·ln n) + constant"
-            case ModelKind.COMBINED:
-                return "O(n) + O(n·ln n) + constant"
+        return MODEL_TEXT[self]["label"]
 
     @property
     def short_label(self) -> str:
         """Compact complexity for table columns."""
-        match self:
-            case ModelKind.LINEAR:
-                return "O(n)"
-            case ModelKind.LOG:
-                return "O(n·ln n)"
-            case ModelKind.COMBINED:
-                return "O(n)+O(n·ln n)"
-
-    @property
-    def formula(self) -> str:
-        """Mathematical formula shown on plots."""
-        match self:
-            case ModelKind.LINEAR:
-                return "y = a·n + b"
-            case ModelKind.LOG:
-                return "y = a·n·ln(n) + b"
-            case ModelKind.COMBINED:
-                return "y = a·n + b·n·ln(n) + c"
-
-    @property
-    def coefficient_specs(self) -> tuple[tuple[str, str], ...]:
-        """Ordered ``(symbol, meaning)`` pairs matching
-        :attr:`FittedModel.coefficients`."""
-        match self:
-            case ModelKind.LINEAR:
-                return (
-                    ("a", "per-file linear cost"),
-                    ("b", "fixed overhead"),
-                )
-            case ModelKind.LOG:
-                return (
-                    ("a", "sort/comparison overhead per file"),
-                    ("b", "fixed overhead"),
-                )
-            case ModelKind.COMBINED:
-                return (
-                    ("a", "per-file linear cost"),
-                    ("b", "sort/comparison overhead per file"),
-                    ("c", "fixed overhead"),
-                )
+        return MODEL_TEXT[self]["short_label"]
 
     @property
     def breakdown_description(self) -> str:
         """One-line meaning for the summary's scaling breakdown."""
-        match self:
-            case ModelKind.LINEAR:
-                return "linear per-file cost"
-            case ModelKind.LOG:
-                return "sort/comparison cost"
-            case ModelKind.COMBINED:
-                return "mixed cost"
+        return MODEL_TEXT[self]["breakdown_description"]
 
+
+MODEL_TEXT: Final = {
+    ModelKind.LINEAR: {
+        "label": "O(n) + constant",
+        "short_label": "O(n)",
+        "breakdown_description": "linear cost",
+    },
+    ModelKind.LOG: {
+        "label": "O(n·ln n) + constant",
+        "short_label": "O(n·ln n)",
+        "breakdown_description": "n·ln n cost",
+    },
+    ModelKind.COMBINED: {
+        "label": "O(n) + O(n·ln n) + constant",
+        "short_label": "O(n)+O(n·ln n)",
+        "breakdown_description": "combined cost",
+    },
+}
 
 # ------------------------------------------------------------- #
 #                          Domain model                         #
@@ -165,56 +117,28 @@ class ModelKind(Enum):
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkDataPoint:
-    """A single measured benchmark result from Criterion output.
-
-    Attributes:
-        group: Benchmark group name (e.g. ``FileIndex::build``); the
-            subdirectory under ``target/criterion/``.
-        file_count: Parameter value (the workspace size that was benchmarked).
-        mean_seconds: Mean wall-clock time in seconds, converted from
-            Criterion's nanosecond ``point_estimate``.
-        function: Sub-benchmark name within the group (e.g. ``sort_only``);
-            empty for a flat sweep.
-    """
+    """One Criterion timing estimate at a measured input size."""
 
     group: str
-    file_count: float
+    input_size: float
+    input_unit: str
     mean_seconds: float
+    lower_seconds: float
+    upper_seconds: float
+    mild_outlier_count: int = 0
+    severe_outlier_count: int = 0
     function: str = ""
 
 
 @dataclass(frozen=True, slots=True)
-class Coefficient:
-    """One fitted coefficient with its symbolic name and plain meaning.
-
-    Attributes:
-        symbol: Formula symbol (``a``, ``b``, or ``c``).
-        value: Fitted numeric value.
-        meaning: Human explanation of what the coefficient charges for.
-    """
-
-    symbol: str
-    value: float
-    meaning: str
-
-
-@dataclass(frozen=True, slots=True)
 class FittedModel:
-    """A regression model fitted to benchmark data.
-
-    Attributes:
-        kind: Complexity class the coefficients belong to.
-        coeff_n: Slope of the primary term (``a``).
-        coeff_intercept: Constant term (``b`` for linear/log, ``c`` for
-            combined).
-        r_squared: Coefficient of determination; 1.0 is a perfect fit.
-        coeff_nlogn: Slope of the ``n·ln(n)`` term; 0.0 unless combined.
-    """
+    """An OLS complexity model with in-sample and held-out evidence."""
 
     kind: ModelKind
     coeff_n: float
     coeff_intercept: float
     r_squared: float
+    validation_rmse: float
     coeff_nlogn: float = 0.0
 
     @property
@@ -222,47 +146,18 @@ class FittedModel:
         return self.kind.label
 
     @property
-    def formula(self) -> str:
-        return self.kind.formula
+    def parameter_count(self) -> int:
+        """Number of fitted coefficients, including the intercept."""
+        return 3 if self.kind is ModelKind.COMBINED else 2
 
     @property
-    def is_reliable(self) -> bool:
-        """Whether R² is high enough for extrapolation."""
+    def has_high_r_squared(self) -> bool:
+        """Whether the in-sample score clears the reporting threshold."""
         return self.r_squared >= R2_RELIABLE_THRESHOLD
 
-    @property
-    def quality(self) -> str:
-        """Fit-quality word: excellent / good / fair / poor."""
-        for threshold, label in R2_QUALITY_LEVELS:
-            if self.r_squared >= threshold:
-                return label
-        return "poor"
-
-    @property
-    def coefficients(self) -> tuple[Coefficient, ...]:
-        """Coefficients ordered to match :attr:`ModelKind.coefficient_specs`."""
-        values = {
-            "a": self.coeff_n,
-            "b": self.coeff_nlogn
-            if self.kind is ModelKind.COMBINED
-            else self.coeff_intercept,
-            "c": self.coeff_intercept,
-        }
-        return tuple(
-            Coefficient(symbol, values[symbol], meaning)
-            for symbol, meaning in self.kind.coefficient_specs
-        )
-
-    def predict(self, file_count: float) -> float:
-        """Predict mean seconds at the given workspace size.
-
-        Args:
-            file_count: Workspace size; must be > 0 for log/combined kinds.
-
-        Returns:
-            Predicted mean wall-clock time in seconds.
-        """
-        n = file_count
+    def predict(self, input_size: float) -> float:
+        """Predict mean seconds at a positive input size."""
+        n = input_size
         match self.kind:
             case ModelKind.LINEAR:
                 return self.coeff_n * n + self.coeff_intercept
@@ -275,59 +170,19 @@ class FittedModel:
                     + self.coeff_intercept
                 )
 
-    def dominant_term(self, file_count: float) -> str | None:
-        """Which cost component dominates at ``file_count``.
-
-        Only meaningful for the combined model (which has two growing terms);
-        returns ``None`` for linear/log models.
-
-        Args:
-            file_count: Workspace size at which to compare term magnitudes.
-
-        Returns:
-            ``"linear"``, ``"O(n·ln n) sort"``, or ``"mixed"`` for combined
-            models; ``None`` otherwise.
-        """
-        if self.kind is not ModelKind.COMBINED:
-            return None
-        n = float(file_count)
-        linear = abs(self.coeff_n * n)
-        log = abs(self.coeff_nlogn * n * np.log(n))
-        if linear > 2 * log:
-            return "linear"
-        if log > 2 * linear:
-            return "O(n·ln n) sort"
-        return "mixed"
-
 
 @dataclass(frozen=True, slots=True)
 class Extrapolation:
-    """A predicted time for a target workspace size.
+    """A model prediction beyond the measured input domain."""
 
-    Attributes:
-        file_count: Target workspace size (e.g. 50_000).
-        predicted_seconds: Predicted mean wall-clock time in seconds.
-        model_kind: Complexity class used for the prediction.
-    """
-
-    file_count: int
+    input_size: int
     predicted_seconds: float
     model_kind: ModelKind
 
 
 @dataclass(frozen=True, slots=True)
 class SeriesAnalysis:
-    """One benchmark series with its fitted models and derived insights.
-
-    All classification decisions (fit quality, constant detection, extrapolation
-    eligibility) live here so reporters only format.
-
-    Attributes:
-        name: Series key (the group, or ``<group>/<function>`` for nested
-            sweeps).
-        data_points: Measurements sorted ascending by file count.
-        models: Fitted models sorted best-first (R² descending).
-    """
+    """One benchmark series with fitted models and trust decisions."""
 
     name: str
     data_points: tuple[BenchmarkDataPoint, ...]
@@ -338,77 +193,107 @@ class SeriesAnalysis:
         return self.models[0]
 
     @property
-    def file_counts(self) -> tuple[int, ...]:
-        """Measured workspace sizes as integers."""
-        return tuple(int(point.file_count) for point in self.data_points)
+    def input_sizes(self) -> tuple[int, ...]:
+        """Measured input sizes as integers."""
+        return tuple(int(point.input_size) for point in self.data_points)
+
+    @property
+    def input_unit(self) -> str:
+        """Shared Criterion throughput unit, or a neutral fallback."""
+        units = {point.input_unit for point in self.data_points}
+        return units.pop() if len(units) == 1 else "input units"
 
     @property
     def size_range(self) -> str:
-        """``"<min> → <max>"`` display string for measured sizes."""
-        counts = [point.file_count for point in self.data_points]
-        return f"{min(counts):,.0f} → {max(counts):,.0f}"
+        """Display string for the measured input-size domain."""
+        sizes = [point.input_size for point in self.data_points]
+        return f"{min(sizes):,.0f} → {max(sizes):,.0f}"
+
+    @property
+    def largest_measurement(self) -> BenchmarkDataPoint:
+        """Largest measured input, after repository ordering."""
+        return self.data_points[-1]
 
     @property
     def mean_seconds(self) -> float:
-        """Mean of the measured times (for constant-series reporting)."""
-        return float(
-            np.mean([point.mean_seconds for point in self.data_points])
-        )
+        """Mean measured time for constant-series reporting."""
+        return float(np.mean([point.mean_seconds for point in self.data_points]))
 
     @property
     def is_constant(self) -> bool:
-        """True when the spread across sizes is negligible (fixed cost)."""
+        """True when the spread across input sizes is negligible."""
         times = [point.mean_seconds for point in self.data_points]
         return max(times) - min(times) < CONSTANT_SPREAD_EPSILON
 
     @property
-    def is_workspace_series(self) -> bool:
-        """True when every measured size is a known workspace size.
-
-        Only workspace-parameterized series have a meaningful "N notes"
-        interpretation, so only they get extrapolation rows.
-        """
-        return set(self.file_counts).issubset(WORKSPACE_POINTS)
+    def residual_dof(self) -> int:
+        """Residual degrees of freedom for the selected candidate."""
+        return len(self.data_points) - self.best_model.parameter_count
 
     @property
-    def residual_dof(self) -> int | None:
-        """Residual degrees of freedom when the combined model is best."""
-        if self.best_model.kind is not ModelKind.COMBINED:
-            return None
-        return len(self.data_points) - 3
+    def has_insufficient_evidence(self) -> bool:
+        """Whether data quantity or residual evidence blocks extrapolation."""
+        return (
+            len(self.data_points) < MIN_POINTS_FOR_TRUSTED_FIT
+            or self.residual_dof < MIN_RESIDUAL_DOF
+        )
 
     @property
-    def has_low_dof(self) -> bool:
-        """Combined model with too few points for its 3 free parameters."""
-        dof = self.residual_dof
-        return dof is not None and dof < COMBINED_MIN_RESIDUAL_DOF
+    def trust_reason(self) -> str:
+        """Human-readable reason forecasts are withheld, when applicable."""
+        if len(self.data_points) < MIN_POINTS_FOR_TRUSTED_FIT:
+            return f"need at least {MIN_POINTS_FOR_TRUSTED_FIT} input sizes"
+        if self.residual_dof < MIN_RESIDUAL_DOF:
+            return f"need at least {MIN_RESIDUAL_DOF} residual DOF"
+        if not np.isfinite(self.best_model.validation_rmse):
+            return "leave-one-out validation is unavailable"
+        if not self.best_model.has_high_r_squared:
+            return f"in-sample {R_SQUARED} is below {R2_RELIABLE_THRESHOLD:.2f}"
+        return "supported"
+
+    @property
+    def is_fit_trusted(self) -> bool:
+        """Whether the fit may be drawn and used for extrapolation."""
+        return (
+            not self.has_insufficient_evidence
+            and self.best_model.has_high_r_squared
+            and np.isfinite(self.best_model.validation_rmse)
+        )
+
+    @property
+    def fit_status(self) -> str:
+        """Concise evidence status for the scan-first summary."""
+        if self.has_insufficient_evidence:
+            return "INCONCLUSIVE"
+        if not np.isfinite(self.best_model.validation_rmse):
+            return "UNVALIDATED"
+        if not self.best_model.has_high_r_squared:
+            return "WEAK"
+        return "EXPLORATORY"
 
     @property
     def extrapolations(self) -> tuple[Extrapolation, ...]:
-        """Predictions at :data:`EXTRAPOLATION_TARGETS`, or empty.
-
-        Empty when the best fit is unreliable or the series is not
-        workspace-parameterized.
-        """
-        best = self.best_model
-        if not best.is_reliable or not self.is_workspace_series:
+        """Predictions outside the observed domain, or none when untrusted."""
+        if not self.is_fit_trusted:
             return ()
         return tuple(
-            Extrapolation(size, best.predict(float(size)), best.kind)
+            Extrapolation(size, self.best_model.predict(float(size)), self.best_model.kind)
             for size in EXTRAPOLATION_TARGETS
+            if size > self.largest_measurement.input_size
         )
 
     @property
     def has_negative_extrapolation(self) -> bool:
-        """True when any prediction goes negative (model broken at scale)."""
+        """True when a trusted model becomes negative beyond the data."""
         return any(ext.predicted_seconds < 0 for ext in self.extrapolations)
 
     @property
     def prediction_at_summary_target(self) -> float | None:
-        """Reliable prediction at :data:`SUMMARY_TARGET`, for ranking."""
-        if not self.best_model.is_reliable:
+        """Trusted prediction at the summary target for ranking."""
+        if not self.is_fit_trusted:
             return None
         return self.best_model.predict(float(SUMMARY_TARGET))
+
 
 
 # ------------------------------------------------------------- #
@@ -417,43 +302,13 @@ class SeriesAnalysis:
 
 
 class CriterionRepository:
-    """Reads benchmark measurements from a Criterion output directory.
-
-    Expected directory layout (both sweep styles)::
-
-        criterion_dir/
-        ├── FileIndex__build/
-        │   ├── 50/new/{benchmark,estimates}.json          <- flat
-        │   └── ...
-        └── QueryService__run__sort_by_metadata/
-            ├── sort_only/
-            │   ├── 5000/new/{benchmark,estimates}.json    <- nested
-            │   └── ...
-            └── sort_only_desc/
-                └── ...
-
-    Args:
-        root: Criterion output directory, typically ``target/criterion``.
-    """
+    """Reads benchmark measurements from a Criterion output directory."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
 
     def load_series(self) -> dict[str, list[BenchmarkDataPoint]]:
-        """Load all measurements grouped by series key.
-
-        Flat sweeps key on the group name; nested sweeps key on
-        ``<group>/<function>`` so distinct sub-benchmarks (ascending vs.
-        descending sort) never blend into one regression.
-
-        Returns:
-            Data points per series, each sorted ascending by file count. Series
-            with fewer than 2 points are still returned; the caller checks the
-            minimum.
-
-        Raises:
-            FileNotFoundError: If ``root`` does not exist.
-        """
+        """Load measurements grouped and ordered by numeric input size."""
         if not self._root.exists():
             raise FileNotFoundError(f"Criterion output not found: {self._root}")
 
@@ -462,7 +317,7 @@ class CriterionRepository:
             if group_dir.is_dir():
                 self._load_group(series, group_dir)
         for points in series.values():
-            points.sort(key=lambda point: point.file_count)
+            points.sort(key=lambda point: point.input_size)
         return series
 
     def _load_group(
@@ -470,7 +325,7 @@ class CriterionRepository:
         series: dict[str, list[BenchmarkDataPoint]],
         group_dir: Path,
     ) -> None:
-        """Load one group directory (flat and/or nested sweeps)."""
+        """Load one group directory, including nested function sweeps."""
         for child_dir in sorted(group_dir.iterdir()):
             if not child_dir.is_dir():
                 continue
@@ -487,7 +342,7 @@ class CriterionRepository:
         group: str,
         function_dir: Path,
     ) -> None:
-        """Load one ``<group>/<function>/`` sub-benchmark sweep."""
+        """Load one group/function sweep."""
         for size_dir in sorted(function_dir.iterdir()):
             if not size_dir.is_dir():
                 continue
@@ -496,9 +351,7 @@ class CriterionRepository:
                 continue
             point = self._parse(group, function_dir.name, results_dir)
             if point is not None:
-                series.setdefault(f"{group}/{function_dir.name}", []).append(
-                    point
-                )
+                series.setdefault(f"{group}/{function_dir.name}", []).append(point)
 
     @staticmethod
     def _parse(
@@ -506,15 +359,7 @@ class CriterionRepository:
         function: str,
         results_dir: Path,
     ) -> BenchmarkDataPoint | None:
-        """Parse one result from its ``new/`` directory.
-
-        Reads ``benchmark.json`` for the parameter value and ``estimates.json``
-        for the mean timing.
-
-        Returns:
-            A parsed point, or ``None`` if files are missing, malformed, or hold
-            unexpected values (normal for un-run benchmarks).
-        """
+        """Parse a Criterion estimate and its input-size metadata."""
         try:
             bench: dict[str, Any] = json.loads(
                 (results_dir / "benchmark.json").read_text()
@@ -522,8 +367,12 @@ class CriterionRepository:
             estimates: dict[str, Any] = json.loads(
                 (results_dir / "estimates.json").read_text()
             )
-            file_count = float(bench["value_str"])
-            mean_seconds = estimates["mean"]["point_estimate"] / 1e9
+            input_size, input_unit = CriterionRepository._parse_input(bench)
+            mean = estimates["mean"]
+            interval = mean["confidence_interval"]
+            mean_seconds = float(mean["point_estimate"]) / 1e9
+            lower_seconds = float(interval["lower_bound"]) / 1e9
+            upper_seconds = float(interval["upper_bound"]) / 1e9
         except (
             FileNotFoundError,
             json.JSONDecodeError,
@@ -532,12 +381,75 @@ class CriterionRepository:
             ValueError,
         ):
             return None
+        mild_outliers, severe_outliers = CriterionRepository._outlier_counts(
+            results_dir
+        )
         return BenchmarkDataPoint(
             group=group,
-            file_count=file_count,
+            input_size=input_size,
+            input_unit=input_unit,
             mean_seconds=mean_seconds,
+            lower_seconds=lower_seconds,
+            upper_seconds=upper_seconds,
+            mild_outlier_count=mild_outliers,
+            severe_outlier_count=severe_outliers,
             function=function,
         )
+
+    @staticmethod
+    def _outlier_counts(results_dir: Path) -> tuple[int, int]:
+        """Count Criterion's mild and severe Tukey outliers, if available."""
+        try:
+            sample: dict[str, list[float]] = json.loads(
+                (results_dir / "sample.json").read_text()
+            )
+            lower_severe, lower_mild, upper_mild, upper_severe = (
+                float(value)
+                for value in json.loads((results_dir / "tukey.json").read_text())
+            )
+            values = [
+                float(time) / float(iterations)
+                for time, iterations in zip(
+                    sample["times"], sample["iters"], strict=True
+                )
+            ]
+        except (
+            FileNotFoundError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            ZeroDivisionError,
+        ):
+            return 0, 0
+        mild = sum(
+            lower_severe <= value < lower_mild
+            or upper_mild < value <= upper_severe
+            for value in values
+        )
+        severe = sum(
+            value < lower_severe or value > upper_severe for value in values
+        )
+        return mild, severe
+
+    @staticmethod
+    def _parse_input(benchmark: Mapping[str, Any]) -> tuple[float, str]:
+        """Return Criterion throughput when present, else its numeric value."""
+        throughput = benchmark.get("throughput")
+        if isinstance(throughput, Mapping) and len(throughput) == 1:
+            kind, value = next(iter(throughput.items()))
+            if isinstance(value, int | float) and value > 0:
+                return float(value), CriterionRepository._throughput_unit(str(kind))
+        return float(benchmark["value_str"]), "input units"
+
+    @staticmethod
+    def _throughput_unit(kind: str) -> str:
+        """Map Criterion's serialized throughput kind to a display label."""
+        return {
+            "Elements": "elements",
+            "Bytes": "bytes",
+            "BytesDecimal": "bytes",
+        }.get(kind, kind.replace("_", " ").lower())
 
 
 # ------------------------------------------------------------- #
@@ -546,26 +458,13 @@ class CriterionRepository:
 
 
 class ModelFitter:
-    """Fits candidate complexity models to one benchmark series.
-
-    Candidates are linear (``O(n)``) and log (``O(n·ln n)``) always, plus the
-    combined model when there are at least :data:`MIN_POINTS_FOR_COMBINED`
-    points (3 free parameters need room).
-    """
+    """Fits OLS candidate models and ranks them by leave-one-out error."""
 
     def fit(
         self, data_points: Sequence[BenchmarkDataPoint]
     ) -> tuple[FittedModel, ...]:
-        """Fit every candidate kind and return models sorted by R².
-
-        Args:
-            data_points: Benchmark measurements for one series.
-
-        Returns:
-            Models best-first; empty when the data has zero variance
-            (R² undefined for constant measurements).
-        """
-        x = np.array([point.file_count for point in data_points])
+        """Fit every candidate kind, ordered by leave-one-out RMSE."""
+        x = np.array([point.input_size for point in data_points])
         y = np.array([point.mean_seconds for point in data_points])
         if np.var(y) == 0:
             return ()
@@ -575,12 +474,12 @@ class ModelFitter:
             kinds.append(ModelKind.COMBINED)
         models = [self._fit_kind(kind, x, y) for kind in kinds]
         return tuple(
-            sorted(models, key=lambda model: model.r_squared, reverse=True)
+            sorted(models, key=lambda model: (model.validation_rmse, -model.r_squared))
         )
 
     @staticmethod
     def _fit_kind(kind: ModelKind, x: np.ndarray, y: np.ndarray) -> FittedModel:
-        """OLS-fit one kind via scikit-learn on its design matrix."""
+        """OLS-fit one candidate and calculate its leave-one-out RMSE."""
         features = ModelFitter._design_matrix(kind, x)
         regression = LinearRegression().fit(features, y)
         return FittedModel(
@@ -591,19 +490,26 @@ class ModelFitter:
             else 0.0,
             coeff_intercept=float(regression.intercept_),
             r_squared=float(regression.score(features, y)),
+            validation_rmse=ModelFitter._leave_one_out_rmse(features, y),
         )
 
     @staticmethod
+    def _leave_one_out_rmse(features: np.ndarray, y: np.ndarray) -> float:
+        """Calculate prediction RMSE with each measurement held out once."""
+        if len(y) - 1 < features.shape[1] + 1:
+            return float("inf")
+        errors = np.empty(len(y))
+        for index in range(len(y)):
+            mask = np.ones(len(y), dtype=bool)
+            mask[index] = False
+            regression = LinearRegression().fit(features[mask], y[mask])
+            prediction = regression.predict(features[index : index + 1])[0]
+            errors[index] = y[index] - prediction
+        return float(np.sqrt(np.mean(np.square(errors))))
+
+    @staticmethod
     def _design_matrix(kind: ModelKind, x: np.ndarray) -> np.ndarray:
-        """Build the feature columns for one model kind.
-
-        Args:
-            kind: Complexity class to design for.
-            x: File counts (> 0 for log-bearing kinds).
-
-        Returns:
-            Column matrix: ``[x]``, ``[x·ln(x)]``, or ``[x, x·ln(x)]``.
-        """
+        """Build the feature columns for one model kind."""
         match kind:
             case ModelKind.LINEAR:
                 return x.reshape(-1, 1)
@@ -613,6 +519,7 @@ class ModelFitter:
                 return np.column_stack([x, x * np.log(x)])
 
 
+
 # ------------------------------------------------------------- #
 #                        Summary Analysis                       #
 # ------------------------------------------------------------- #
@@ -620,13 +527,7 @@ class ModelFitter:
 
 @dataclass(frozen=True, slots=True)
 class RankedFit:
-    """A reliable fit ranked by its extrapolated time.
-
-    Attributes:
-        name: Series name.
-        model: Best fitted model (reliable).
-        predicted_seconds: Prediction at :data:`SUMMARY_TARGET`.
-    """
+    """A supported fit ranked by its estimate at the summary target."""
 
     name: str
     model: FittedModel
@@ -635,13 +536,7 @@ class RankedFit:
 
 @dataclass(frozen=True, slots=True)
 class UnreliableFit:
-    """A series that cannot be extrapolated safely.
-
-    Attributes:
-        name: Series name.
-        model: Best fitted model.
-        reason: ``"poor fit"`` or ``"negative prediction"``.
-    """
+    """A series excluded from extrapolated ranking with its evidence status."""
 
     name: str
     model: FittedModel
@@ -650,12 +545,7 @@ class UnreliableFit:
 
 @dataclass(frozen=True, slots=True)
 class ConstantFit:
-    """A series whose time barely changes with size (fixed cost).
-
-    Attributes:
-        name: Series name.
-        mean_seconds: Average measured time across sizes.
-    """
+    """A series whose time barely changes with input size."""
 
     name: str
     mean_seconds: float
@@ -663,15 +553,7 @@ class ConstantFit:
 
 @dataclass(frozen=True, slots=True)
 class SummaryData:
-    """Classification of every fitted series for the summary report.
-
-    Attributes:
-        total_series: Number of series analyzed.
-        ranked: Reliable fits sorted slowest-first at the summary target.
-        unreliable: Fits excluded from ranking, with reasons.
-        constant: Near-constant series, fastest first by name order.
-        scaling_counts: Series count per complexity class.
-    """
+    """Classification of every fitted series for the aggregate report."""
 
     total_series: int
     ranked: tuple[RankedFit, ...]
@@ -680,8 +562,8 @@ class SummaryData:
     scaling_counts: Mapping[ModelKind, int]
 
     @property
-    def good_fit_count(self) -> int:
-        """Series with a reliable, positive prediction."""
+    def supported_fit_count(self) -> int:
+        """Series with supported, positive summary estimates."""
         return len(self.ranked)
 
     @property
@@ -697,18 +579,7 @@ def build_summary(
     analyses: Sequence[SeriesAnalysis],
     target: int = SUMMARY_TARGET,
 ) -> SummaryData:
-    """Classify analyses into summary buckets.
-
-    Every analysis lands in exactly one bucket: constant, unreliable (poor R² or
-    non-positive prediction), or ranked.
-
-    Args:
-        analyses: Fitted series to classify.
-        target: Workspace size used for ranking predictions.
-
-    Returns:
-        Frozen classification with ranked fits sorted slowest-first.
-    """
+    """Classify analyses into constant, untrusted, and ranked buckets."""
     ranked: list[RankedFit] = []
     unreliable: list[UnreliableFit] = []
     constant: list[ConstantFit] = []
@@ -720,8 +591,10 @@ def build_summary(
             continue
         best = analysis.best_model
         scaling[best.kind] += 1
-        if not best.is_reliable:
-            unreliable.append(UnreliableFit(analysis.name, best, "poor fit"))
+        if not analysis.is_fit_trusted:
+            unreliable.append(
+                UnreliableFit(analysis.name, best, analysis.fit_status.lower())
+            )
             continue
         predicted = best.predict(float(target))
         if predicted <= 0:
@@ -756,18 +629,50 @@ DIVIDER: Final = _Divider()
 BoxRow = str | _Divider
 
 
-def format_scientific(value: float) -> str:
-    """Format a float as ``x.yye±z``."""
-    return f"{value:.2e}"
+def time_unit(seconds: float) -> tuple[str, float]:
+    """Return a readable time unit and seconds-to-unit scale."""
+    magnitude = abs(seconds)
+    if magnitude < 0.001:
+        return "µs", 1_000_000
+    if magnitude < 1.0:
+        return "ms", 1_000
+    return "s", 1
 
 
 def format_seconds(seconds: float) -> str:
     """Format seconds with a unit chosen by magnitude."""
-    if seconds < 0.001:
-        return f"{seconds * 1_000_000:.1f}µs"
-    if seconds < 1.0:
-        return f"{seconds * 1_000:.1f}ms"
-    return f"{seconds:.2f}s"
+    unit, scale = time_unit(seconds)
+    precision = 2 if unit == "s" else 1
+    return f"{seconds * scale:.{precision}f}{unit}"
+
+
+def format_interval(
+    estimate_seconds: float,
+    lower_seconds: float,
+    upper_seconds: float,
+) -> str:
+    """Format one timing estimate and its Criterion confidence interval."""
+    unit, scale = time_unit(estimate_seconds)
+    precision = 2 if unit == "s" else 1
+    return (
+        f"{estimate_seconds * scale:.{precision}f}{unit} "
+        f"[{lower_seconds * scale:.{precision}f}, "
+        f"{upper_seconds * scale:.{precision}f}]"
+    )
+
+
+def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
+    """Summarize Criterion's Tukey outliers without removing measurements."""
+    mild = sum(point.mild_outlier_count for point in data_points)
+    severe = sum(point.severe_outlier_count for point in data_points)
+    if mild == severe == 0:
+        return "none"
+    parts = [
+        f"{count} {kind}"
+        for count, kind in ((mild, "mild"), (severe, "severe"))
+        if count
+    ]
+    return f"{' · '.join(parts)} across {len(data_points)} sizes"
 
 
 def truncate_middle(text: str, max_len: int) -> str:
@@ -855,101 +760,90 @@ class Box:
 
 
 class SeriesReporter:
-    """Renders the default per-series report box.
-
-    Sections: data range, best model with coefficient meanings, R² quality,
-    warnings (low DOF / low R² / negative predictions), and extrapolation with a
-    dominant-term note.
-
-    Args:
-        width: Minimum box width.
-    """
+    """Renders a scan-first report before a plot and evidence table after it."""
 
     def __init__(self, width: int = SERIES_BOX_WIDTH) -> None:
         self._box = Box(width)
 
-    def render(self, analysis: SeriesAnalysis) -> str:
-        """Render one series as a box.
-
-        Args:
-            analysis: Fitted series to report.
-
-        Returns:
-            Multi-line box string (no trailing newline).
-        """
+    def render_summary(self, analysis: SeriesAnalysis) -> str:
+        """Render the operational result that appears before the plot."""
         best = analysis.best_model
+        latest = analysis.largest_measurement
         rows: list[BoxRow] = [
+            "INPUT",
+            f"  n: {analysis.input_unit} · {len(analysis.data_points)} sizes",
+            f"  observed: {analysis.size_range} {analysis.input_unit}",
             "",
-            f"Data: {len(analysis.data_points)} points"
-            f"  |  Sizes: {analysis.size_range}",
-            "",
-            f"Best fit: {best.label}",
-            DIVIDER,
-            *self._coefficient_rows(best),
-            self._r2_row(best),
-            *self._warning_rows(analysis),
-            *self._extrapolation_rows(analysis),
+            f"FIT  {analysis.fit_status}",
+            f"  Candidate: {best.label}",
+            f"  Evidence: {len(analysis.data_points)} input sizes · "
+            f"{analysis.residual_dof} residual DOF",
+            f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
+            f"  Time: {format_interval(latest.mean_seconds, latest.lower_seconds, latest.upper_seconds)}  95% CI",
+            *self._outlook_rows(analysis),
         ]
         return self._box.render(analysis.name, rows)
 
-    @staticmethod
-    def _coefficient_rows(model: FittedModel) -> list[str]:
-        return [
-            f"  {coeff.symbol} = {format_scientific(coeff.value):<9}  "
-            f"{coeff.meaning}"
-            for coeff in model.coefficients
-        ]
-
-    @staticmethod
-    def _r2_row(model: FittedModel) -> str:
-        return (
-            f"  {R_SQUARED} = {f'{model.r_squared:.4f}':<9}  "
-            f"{model.quality} fit"
-        )
-
-    @staticmethod
-    def _warning_rows(analysis: SeriesAnalysis) -> list[BoxRow]:
-        rows: list[BoxRow] = []
-        if analysis.has_low_dof:
-            rows += [
-                "",
-                f"  ⚠ {analysis.residual_dof} residual DOF"
-                f": {R_SQUARED} may be optimistic",
-            ]
-        return rows
-
-    @staticmethod
-    def _extrapolation_rows(analysis: SeriesAnalysis) -> list[BoxRow]:
+    def render_details(self, analysis: SeriesAnalysis) -> str:
+        """Render evidence and selection diagnostics after the plot."""
         best = analysis.best_model
-        if not best.is_reliable:
+        extrapolation = (
+            "enabled" if analysis.is_fit_trusted else "withheld: insufficient evidence"
+        )
+        rows: list[BoxRow] = [
+            f"{'item':<28} value",
+            DIVIDER,
+            f"  {'candidate model':<26} {best.label}",
+            f"  {'fit status':<26} {analysis.fit_status.lower()}",
+            f"  {'selection':<26} lowest leave-one-out RMSE",
+            f"  {'leave-one-out RMSE':<26} {format_seconds(best.validation_rmse)}",
+            f"  {'in-sample ' + R_SQUARED:<26} {best.r_squared:.4f}",
+            f"  {'residual DOF':<26} {analysis.residual_dof}",
+            f"  {'sample outliers':<26} "
+            f"{format_outlier_summary(analysis.data_points)}",
+            f"  {'extrapolation':<26} {extrapolation}",
+            f"  {'coefficients':<26} omitted; terms are not interpreted",
+        ]
+        return self._box.render("Details", rows)
+
+    @staticmethod
+    def _outlook_rows(analysis: SeriesAnalysis) -> list[BoxRow]:
+        if not analysis.is_fit_trusted:
             return [
                 "",
-                f"  ⚠ Low {R_SQUARED}: extrapolation unreliable",
-                "  Measure directly at target sizes instead.",
+                "FORECASTS WITHHELD",
+                f"  {analysis.trust_reason}.",
+                "",
+                "NEXT",
+                "  Add input sizes before using this model for capacity estimates.",
             ]
-        extrapolations = analysis.extrapolations
-        if not extrapolations:
-            return []
         if analysis.has_negative_extrapolation:
             return [
                 "",
-                "  ⚠ Predictions negative: extrapolation suppressed",
+                "NEXT",
+                "  Forecasts withheld: the model becomes negative beyond the data.",
             ]
-        rows: list[BoxRow] = ["", "Extrapolation:"]
-        rows += [
-            f"    {ext.file_count:>6,} notes"
-            f" → {format_seconds(ext.predicted_seconds)}"
-            for ext in extrapolations
+        latest = analysis.largest_measurement
+        rows: list[BoxRow] = [
+            "",
+            "OUTLOOK — model-based",
+            "  input size           time                     basis",
+            DIVIDER,
+            "  "
+            f"{latest.input_size:>8,.0f} {analysis.input_unit:<10} "
+            f"{format_interval(latest.mean_seconds, latest.lower_seconds, latest.upper_seconds):<24} "
+            "measured · 95% CI",
         ]
-        probe = max(analysis.file_counts) * 2.5
-        dominant = best.dominant_term(probe)
-        if dominant is not None:
-            rows += [
-                "",
-                f"Scaling: {dominant} dominates at 2.5× the largest"
-                " measured size",
-            ]
+        for extrapolation in analysis.extrapolations:
+            distance = extrapolation.input_size / latest.input_size
+            rows.append(
+                "  "
+                f"{extrapolation.input_size:>8,} {analysis.input_unit:<10} "
+                f"{format_seconds(extrapolation.predicted_seconds):<24} "
+                f"extrapolated · {distance:.1f}× range"
+            )
         return rows
+
 
 
 class SummaryReporter:
@@ -997,7 +891,7 @@ class SummaryReporter:
     @staticmethod
     def _stats_row(data: SummaryData) -> str:
         return (
-            f"{data.total_series} series  |  {data.good_fit_count} good fits"
+            f"{data.total_series} series  |  {data.supported_fit_count} supported"
             f"  |  {data.unreliable_count} unreliable"
             f"  |  {data.constant_count} constant"
         )
@@ -1064,43 +958,53 @@ class SummaryReporter:
 
 
 class SeriesPlotRenderer:
-    """Renders a scatter plot with the fitted curve via `plotext`.
-
-    One plot block per series; imports `plotext` lazily so the default report path
-    never pays for it.
-    """
+    """Renders measured values and supported fit curves with plotext."""
 
     def render(self, analysis: SeriesAnalysis) -> None:
-        """Draw the measured points and best-fit curve to the terminal.
-
-        Args:
-            analysis: Fitted series to plot.
-        """
+        """Draw measured confidence intervals and an in-domain fit when trusted."""
         import plotext as plt
 
-        best = analysis.best_model
-        x = [point.file_count for point in analysis.data_points]
-        y = [point.mean_seconds for point in analysis.data_points]
+        x = [point.input_size for point in analysis.data_points]
+        max_time = max(point.mean_seconds for point in analysis.data_points)
+        unit, scale = time_unit(max_time)
+        y = [point.mean_seconds * scale for point in analysis.data_points]
 
         plt.clear_figure()
-        plt.plotsize(PLOT_WIDTH, PLOT_HEIGHT)
-        plt.title(analysis.name)
-        plt.xlabel("n (files)")
-        plt.ylabel("time (s)")
-        plt.scatter(x, y, label="measured", color="cyan")
+        plt.plotsize(self._width(), PLOT_HEIGHT)
+        plt.xlabel(f"n ({analysis.input_unit})")
+        plt.ylabel(f"time ({unit})")
+        for point in analysis.data_points:
+            plt.plot(
+                [point.input_size, point.input_size],
+                [point.lower_seconds * scale, point.upper_seconds * scale],
+                color="cyan",
+            )
+        plt.scatter(x, y, label="measured · 95% CI", color="cyan")
 
-        x_min, x_max = min(x), max(x)
-        pad = max((x_max - x_min) * 0.1, 1)
-        curve_x = np.linspace(max(x_min - pad, 1), x_max + pad, 100)
-        curve_y = np.array([best.predict(float(value)) for value in curve_x])
-        plt.plot(
-            curve_x.tolist(),
-            curve_y.tolist(),
-            label=best.kind.value,
-            color="yellow",
-        )
+        if analysis.is_fit_trusted:
+            curve_x = np.linspace(min(x), max(x), 100)
+            curve_y = [
+                analysis.best_model.predict(float(value)) * scale
+                for value in curve_x
+            ]
+            plt.plot(
+                curve_x.tolist(),
+                curve_y,
+                label=f"fit: {analysis.best_model.kind.short_label}",
+                color="yellow",
+            )
         plt.show()
         print()
+
+    @staticmethod
+    def _width() -> int:
+        """Fit the plot to the terminal without exceeding a readable maximum."""
+        try:
+            columns = os.get_terminal_size().columns
+        except OSError:
+            return PLOT_MIN_WIDTH
+        return min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, columns - 2))
+
 
 
 # ------------------------------------------------------------- #
@@ -1195,7 +1099,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not series:
         print(
             "No usable benchmark series found under "
-            f"{options.criterion_dir} (need numeric file-count parameters).",
+            f"{options.criterion_dir} (need numeric input-size parameters).",
             file=sys.stderr,
         )
         return 1
@@ -1232,9 +1136,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         reporter = SeriesReporter()
         for analysis in analyses:
             print()
-            print(reporter.render(analysis))
+            print(reporter.render_summary(analysis))
             if options.plot:
                 SeriesPlotRenderer().render(analysis)
+            print(reporter.render_details(analysis))
 
     return 1 if had_failure else 0
 
