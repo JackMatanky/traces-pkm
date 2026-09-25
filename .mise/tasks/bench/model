@@ -6,7 +6,7 @@
 # [MISE] hide=true
 # [USAGE] arg "[criterion_dir]" help="Criterion output directory" default="target/criterion"
 # [USAGE] flag "-p --plot" help="Render measured input-size plots and supported fit curves in the terminal"
-# [USAGE] flag "-s --summary [count]" value_optional=#true help="Print one high-level summary box; optional count caps the worst-performer list (default: 10)"
+# [USAGE] flag "-s --summary [count]" value_optional=#true help="Print one high-level summary table; optional count caps the worst-performer list (default: 10)"
 
 """Fit performance models to Criterion benchmark output.
 
@@ -16,7 +16,7 @@ Pipeline (load -> fit -> analyze -> render):
 2. ModelFitter fits OLS complexity candidates and selects the lowest
    leave-one-out cross-validation error.
 3. SeriesAnalysis evaluates evidence trust, outlook, and diagnostics.
-4. SeriesReporter and SummaryReporter render box-drawn terminal reports.
+4. SeriesReporter and SummaryReporter render clean, scan-first terminal reports.
 
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
@@ -52,12 +52,10 @@ CONSTANT_SPREAD_EPSILON: Final[float] = 1e-4
 R2_RELIABLE_THRESHOLD: Final[float] = 0.95
 R_SQUARED: Final[str] = "R²"
 
-SERIES_BOX_WIDTH: Final[int] = 60
-SUMMARY_BOX_WIDTH: Final[int] = 64
-SUMMARY_NAME_WIDTH: Final[int] = 32
-PLOT_MIN_WIDTH: Final[int] = 60
-PLOT_MAX_WIDTH: Final[int] = 100
-PLOT_HEIGHT: Final[int] = 14
+SUMMARY_NAME_WIDTH: Final[int] = 34
+PLOT_MIN_WIDTH: Final[int] = 54
+PLOT_MAX_WIDTH: Final[int] = 90
+PLOT_HEIGHT: Final[int] = 10
 
 
 # ------------------------------------------------------------- #
@@ -158,12 +156,11 @@ class TimingInterval:
     def format_with_ci(self) -> str:
         """Format the estimate and 95% confidence bounds with auto-scaled units."""
         unit, scale = Presentation.time_unit(self.mean_seconds)
-        precision = 2 if unit == "s" else 1
-        return (
-            f"{self.mean_seconds * scale:.{precision}f}{unit} "
-            f"[{self.lower_seconds * scale:.{precision}f}, "
-            f"{self.upper_seconds * scale:.{precision}f}]"
-        )
+        est = self.mean_seconds * scale
+        low = self.lower_seconds * scale
+        high = self.upper_seconds * scale
+        prec = Presentation.precision_for(unit, est)
+        return f"{est:.{prec}f}{unit} [{low:.{prec}f}, {high:.{prec}f}]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +196,6 @@ class BenchmarkSeries:
     data_points: tuple[BenchmarkDataPoint, ...]
 
     def __post_init__(self) -> None:
-        # Guarantee points are strictly sorted ascending by input size
         if any(
             self.data_points[i].input_size > self.data_points[i + 1].input_size
             for i in range(len(self.data_points) - 1)
@@ -701,16 +697,6 @@ def build_summary(
 # ------------------------------------------------------------- #
 
 
-class _Divider:
-    """Sentinel row that renders as a full-width horizontal rule."""
-
-    __slots__ = ()
-
-
-DIVIDER: Final[_Divider] = _Divider()
-BoxRow = str | _Divider
-
-
 class Presentation:
     """Shared formatting utilities for units, intervals, and text clipping."""
 
@@ -718,6 +704,8 @@ class Presentation:
     def time_unit(seconds: float) -> tuple[str, float]:
         """Return a readable time unit and seconds-to-unit scale."""
         magnitude = abs(seconds)
+        if magnitude < 0.000_001:
+            return "ns", 1_000_000_000
         if magnitude < 0.001:
             return "µs", 1_000_000
         if magnitude < 1.0:
@@ -725,11 +713,19 @@ class Presentation:
         return "s", 1
 
     @staticmethod
+    def precision_for(unit: str, scaled_value: float) -> int:
+        """Select readable decimal precision avoiding loss of resolution."""
+        if unit == "s":
+            return 2
+        return 2 if scaled_value < 10.0 else 1
+
+    @staticmethod
     def format_seconds(seconds: float) -> str:
-        """Format seconds with a unit chosen by magnitude."""
+        """Format seconds with a unit and precision chosen by magnitude."""
         unit, scale = Presentation.time_unit(seconds)
-        precision = 2 if unit == "s" else 1
-        return f"{seconds * scale:.{precision}f}{unit}"
+        scaled = seconds * scale
+        prec = Presentation.precision_for(unit, scaled)
+        return f"{scaled:.{prec}f}{unit}"
 
     @staticmethod
     def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
@@ -756,76 +752,29 @@ class Presentation:
         return f"{text[:head]}…{text[-tail:]}" if tail else f"{text[:head]}…"
 
 
-class Box:
-    """Renders box-drawing frames with consistent alignment."""
-
-    def __init__(self, min_width: int = SERIES_BOX_WIDTH) -> None:
-        self._min_width = min_width
-
-    def render(self, title: str, rows: Sequence[BoxRow]) -> str:
-        """Render a complete box with centered title and formatted body."""
-        width = self._resolve_width(title, rows)
-        inner = width - 4
-        body = [
-            self._row("─" * inner, inner)
-            if isinstance(row, _Divider)
-            else self._row(row, inner)
-            for row in rows
-        ]
-        return "\n".join([self._top(title, width), *body, self._bottom(width)])
-
-    def _resolve_width(self, title: str, rows: Sequence[BoxRow]) -> int:
-        longest = max(
-            (len(row) for row in rows if isinstance(row, str)),
-            default=0,
-        )
-        return max(self._min_width, len(title) + 4, longest + 4)
-
-    @staticmethod
-    def _row(content: str, inner: int) -> str:
-        return f"│ {content.ljust(inner)} │"
-
-    @staticmethod
-    def _top(title: str, width: int) -> str:
-        title_part = f" {title} "
-        pad = width - 2 - len(title_part)
-        left = pad // 2
-        return f"┌{'─' * left}{title_part}{'─' * (pad - left)}┐"
-
-    @staticmethod
-    def _bottom(width: int) -> str:
-        return f"└{'─' * (width - 2)}┘"
-
-
 # ------------------------------------------------------------- #
 #                           Reporting                           #
 # ------------------------------------------------------------- #
 
 
 class SeriesReporter:
-    """Renders a scan-first report before a plot and evidence table after it."""
-
-    def __init__(self, width: int = SERIES_BOX_WIDTH) -> None:
-        self._box = Box(width)
+    """Renders a clean, scan-first report before a plot and evidence table after it."""
 
     def render_summary(self, analysis: SeriesAnalysis) -> str:
-        """Render the operational result that appears before the plot."""
+        """Render the primary operational answer that leads the view."""
         best = analysis.best_model
         latest = analysis.largest_measurement
-        rows: list[BoxRow] = [
-            "INPUT",
-            f"  n: {analysis.input_unit} · {len(analysis.data_points)} sizes",
-            f"  observed: {analysis.size_range} {analysis.input_unit}",
+        lines: list[str] = [
+            f"{analysis.name:<46} {len(analysis.data_points)} sizes · {analysis.size_range} {analysis.input_unit}",
             "",
             f"FIT  {analysis.trust.label}",
             f"  Candidate: {best.label}",
-            f"  Evidence: {len(analysis.data_points)} input sizes · "
-            f"{analysis.residual_dof} residual DOF",
+            f"  Evidence: {len(analysis.data_points)} input sizes · {analysis.residual_dof} residual DOF",
             f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
-            f"  Time: {latest.timing.format_with_ci()}  95% CI",
-            *self._outlook_rows(analysis),
+            f"  Measured time: {latest.timing.format_with_ci()}  95% CI",
+            *self._outlook_lines(analysis),
         ]
-        return self._box.render(analysis.name, rows)
+        return "\n".join(lines)
 
     def render_details(self, analysis: SeriesAnalysis) -> str:
         """Render evidence and selection diagnostics after the plot."""
@@ -835,165 +784,150 @@ class SeriesReporter:
             if analysis.is_fit_trusted
             else "withheld: insufficient evidence"
         )
-        rows: list[BoxRow] = [
-            f"{'item':<28} value",
-            DIVIDER,
-            f"  {'candidate model':<26} {best.label}",
-            f"  {'fit status':<26} {analysis.trust.label.lower()}",
-            f"  {'selection':<26} lowest leave-one-out RMSE",
+        lines: list[str] = [
+            "DETAILS",
+            f"  {'candidate model':<23} {best.label}",
+            f"  {'fit status':<23} {analysis.trust.label.lower()}",
+            f"  {'selection':<23} lowest leave-one-out RMSE",
             (
-                f"  {'leave-one-out RMSE':<26} "
+                f"  {'leave-one-out RMSE':<23} "
                 f"{Presentation.format_seconds(best.validation_rmse)}"
             ),
-            f"  {'in-sample ' + R_SQUARED:<26} {best.r_squared:.4f}",
-            f"  {'residual DOF':<26} {analysis.residual_dof}",
+            f"  {'in-sample ' + R_SQUARED:<23} {best.r_squared:.4f}",
+            f"  {'residual DOF':<23} {analysis.residual_dof}",
             (
-                f"  {'sample outliers':<26} "
+                f"  {'sample outliers':<23} "
                 f"{Presentation.format_outlier_summary(analysis.data_points)}"
             ),
-            f"  {'extrapolation':<26} {extrapolation}",
-            f"  {'coefficients':<26} omitted; terms are not interpreted",
+            f"  {'extrapolation':<23} {extrapolation}",
+            f"  {'coefficients':<23} omitted; terms are not interpreted",
         ]
-        return self._box.render("Details", rows)
+        return "\n".join(lines)
 
     @staticmethod
-    def _outlook_rows(analysis: SeriesAnalysis) -> list[BoxRow]:
+    def _outlook_lines(analysis: SeriesAnalysis) -> list[str]:
         if not analysis.is_fit_trusted:
             return [
                 "",
                 "FORECASTS WITHHELD",
                 f"  {analysis.trust.reason}.",
-                "",
-                "NEXT",
                 "  Add input sizes before using this model for capacity estimates.",
             ]
         if analysis.has_negative_extrapolation:
             return [
                 "",
-                "NEXT",
-                "  Forecasts withheld: the model becomes negative beyond the data.",
+                "FORECASTS WITHHELD",
+                "  The model becomes negative beyond the measured data range.",
             ]
         latest = analysis.largest_measurement
-        rows: list[BoxRow] = [
+        lines: list[str] = [
             "",
-            "OUTLOOK — model-based",
-            "  input size           time                     basis",
-            DIVIDER,
-            "  "
-            f"{latest.input_size:>8,.0f} {analysis.input_unit:<10} "
-            f"{latest.timing.format_with_ci():<24} "
-            "measured · 95% CI",
+            "OUTLOOK (model-based estimates)",
+            f"  {'input size':<18} {'time':<22} basis",
+            f"  {'-' * 16:<18} {'-' * 20:<22} ----------------------------",
+            (
+                f"  {f'{latest.input_size:,.0f} {analysis.input_unit}':<18} "
+                f"{latest.timing.format_with_ci():<22} measured · 95% CI"
+            ),
         ]
         for extrapolation in analysis.extrapolations:
             distance = extrapolation.input_size / latest.input_size
-            rows.append(
-                "  "
-                f"{extrapolation.input_size:>8,} {analysis.input_unit:<10} "
-                f"{Presentation.format_seconds(extrapolation.predicted_seconds):<24} "
+            lines.append(
+                f"  {f'{extrapolation.input_size:,} {analysis.input_unit}':<18} "
+                f"{Presentation.format_seconds(extrapolation.predicted_seconds):<22} "
                 f"extrapolated · {distance:.1f}× range"
             )
-        return rows
+        return lines
 
 
 class SummaryReporter:
-    """Renders the single-box overview of every fitted series."""
+    """Renders the overview of every fitted series in a clean, scan-friendly layout."""
 
     def __init__(
         self,
         worst_count: int = DEFAULT_WORST_COUNT,
-        width: int = SUMMARY_BOX_WIDTH,
         target: int = SUMMARY_TARGET,
     ) -> None:
         self._worst_count = worst_count
-        self._box = Box(width)
         self._target = target
 
     def render(self, data: SummaryData) -> str:
-        """Render the summary as one box."""
-        rows: list[BoxRow] = [
-            "",
-            self._stats_row(data),
-            *self._ranked_rows(data),
-            *self._unreliable_rows(data),
-            *self._scaling_rows(data),
-            *self._constant_rows(data),
+        """Render the aggregate summary."""
+        lines: list[str] = [
+            "PERFORMANCE SUMMARY",
+            (
+                f"{data.total_series} series  |  {data.supported_fit_count} supported"
+                f"  |  {data.unreliable_count} unreliable"
+                f"  |  {data.constant_count} constant"
+            ),
+            *self._ranked_lines(data),
+            *self._unreliable_lines(data),
+            *self._scaling_lines(data),
+            *self._constant_lines(data),
         ]
-        return self._box.render("Performance Summary", rows)
+        return "\n".join(lines)
 
-    @staticmethod
-    def _stats_row(data: SummaryData) -> str:
-        return (
-            f"{data.total_series} series  |  {data.supported_fit_count} supported"
-            f"  |  {data.unreliable_count} unreliable"
-            f"  |  {data.constant_count} constant"
-        )
-
-    def _ranked_rows(self, data: SummaryData) -> list[BoxRow]:
+    def _ranked_lines(self, data: SummaryData) -> list[str]:
         if not data.ranked:
             return []
         shown = data.ranked[: self._worst_count]
-        rows: list[BoxRow] = [
+        lines: list[str] = [
             "",
             f"WORST AT {self._target // 1000}K (top {len(shown)}):",
-            DIVIDER,
         ]
         for rank, entry in enumerate(shown, start=1):
             name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
-            rows.append(
+            lines.append(
                 f"  {rank:>2}. {name:<{SUMMARY_NAME_WIDTH}}"
                 f" {Presentation.format_seconds(entry.predicted_seconds):>8}"
                 f"  {entry.model.kind.short_label:<14}"
                 f" {R_SQUARED}={entry.model.r_squared:.3f}"
             )
-        return rows
+        return lines
 
     @staticmethod
-    def _unreliable_rows(data: SummaryData) -> list[BoxRow]:
+    def _unreliable_lines(data: SummaryData) -> list[str]:
         if not data.unreliable:
             return []
-        rows: list[BoxRow] = ["", "UNRELIABLE FITS:", DIVIDER]
+        lines: list[str] = ["", "UNRELIABLE FITS:"]
         for entry in data.unreliable:
             name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
-            rows.append(
+            lines.append(
                 f"  {name:<{SUMMARY_NAME_WIDTH}}"
                 f" {R_SQUARED}={entry.model.r_squared:.3f}  {entry.reason}"
             )
-        return rows
+        return lines
 
     @staticmethod
-    def _scaling_rows(data: SummaryData) -> list[BoxRow]:
-        rows: list[BoxRow] = ["", "SCALING BREAKDOWN:", DIVIDER]
+    def _scaling_lines(data: SummaryData) -> list[str]:
+        lines: list[str] = ["", "SCALING BREAKDOWN:"]
         for kind, count in data.scaling_counts.items():
             if count > 0:
-                rows.append(
+                lines.append(
                     f"  {kind.short_label:<14}  {kind.breakdown_description}:"
                     f" {count} series"
                 )
-        return rows
+        return lines
 
     @staticmethod
-    def _constant_rows(data: SummaryData) -> list[BoxRow]:
+    def _constant_lines(data: SummaryData) -> list[str]:
         if not data.constant:
             return []
-        rows: list[BoxRow] = [
-            "",
-            "NEAR-CONSTANT (no scaling concern):",
-            DIVIDER,
-        ]
+        lines: list[str] = ["", "NEAR-CONSTANT (no scaling concern):"]
         for entry in data.constant:
             name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
-            rows.append(
+            lines.append(
                 f"  {name:<{SUMMARY_NAME_WIDTH}}"
                 f" {Presentation.format_seconds(entry.mean_seconds):>8}  all sizes"
             )
-        return rows
+        return lines
 
 
 class SeriesPlotRenderer:
-    """Renders measured values and supported fit curves with plotext."""
+    """Renders measured values and supported fit curves cleanly with plotext."""
 
     def render(self, analysis: SeriesAnalysis) -> None:
-        """Draw measured confidence intervals and an in-domain fit when trusted."""
+        """Draw a clear, high-contrast terminal plot with distinct dot markers."""
         import plotext as plt
 
         x = [point.input_size for point in analysis.data_points]
@@ -1003,15 +937,12 @@ class SeriesPlotRenderer:
 
         plt.clear_figure()
         plt.plotsize(self._width(), PLOT_HEIGHT)
+        plt.theme("clear")
         plt.xlabel(f"n ({analysis.input_unit})")
         plt.ylabel(f"time ({unit})")
-        for point in analysis.data_points:
-            plt.plot(
-                [point.input_size, point.input_size],
-                [point.lower_seconds * scale, point.upper_seconds * scale],
-                color="cyan",
-            )
-        plt.scatter(x, y, label="measured · 95% CI", color="cyan")
+
+        # Measured points as clean, unambiguous dots
+        plt.scatter(x, y, label="measured (mean)", color="cyan", marker="dot")
 
         if analysis.is_fit_trusted:
             curve_x = np.linspace(min(x), max(x), 100)
@@ -1024,18 +955,19 @@ class SeriesPlotRenderer:
                 curve_y,
                 label=f"fit: {analysis.best_model.kind.short_label}",
                 color="yellow",
+                marker="dot",
             )
         plt.show()
         print()
 
     @staticmethod
     def _width() -> int:
-        """Fit the plot to the terminal without exceeding a readable maximum."""
+        """Fit the plot to the terminal width comfortably."""
         try:
             columns = os.get_terminal_size().columns
         except OSError:
             return PLOT_MIN_WIDTH
-        return min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, columns - 2))
+        return min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, columns - 4))
 
 
 # ------------------------------------------------------------- #
@@ -1138,7 +1070,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print()
             print(reporter.render_summary(analysis))
             if options.plot:
+                print()
                 SeriesPlotRenderer().render(analysis)
+            print()
             print(reporter.render_details(analysis))
 
     return 1 if had_failure else 0
