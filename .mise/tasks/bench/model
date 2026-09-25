@@ -18,11 +18,15 @@
 
 Pipeline (load -> fit -> analyze -> render):
 
-1. CriterionRepository walks the Criterion JSON tree and produces BenchmarkSeries.
+1. CriterionRepository walks the Criterion JSON tree and produces BenchmarkSeries
+   with rich statistics (mean, median, MAD, std_dev, slope, change vs base, throughput).
 2. ModelFitter fits OLS complexity candidates and selects the lowest
    leave-one-out cross-validation error.
-3. SeriesAnalysis evaluates evidence trust, outlook, and diagnostics.
-4. SeriesReporter and SummaryReporter render clean, scan-first terminal reports.
+3. SeriesAnalysis evaluates evidence trust, outlook, baseline deltas, and diagnostics.
+4. SeriesReporter and SummaryReporter render responsive widescreen cards,
+   statistical diagnostics grids, and aggregate summary tables.
+5. SeriesPlotRenderer renders responsive terminal plots (scatter + fit curves +
+   multi-variant overlays).
 
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
@@ -31,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from collections.abc import Mapping, Sequence
@@ -47,7 +52,7 @@ from sklearn.linear_model import LinearRegression
 # ------------------------------------------------------------- #
 
 DEFAULT_CRITERION_DIR: Final[str] = "target/criterion"
-EXTRAPOLATION_TARGETS: Final[tuple[int, ...]] = (50_000, 100_000)
+EXTRAPOLATION_TARGETS: Final[tuple[int, ...]] = (20_000, 50_000, 100_000)
 SUMMARY_TARGET: Final[int] = 100_000
 DEFAULT_WORST_COUNT: Final[int] = 10
 
@@ -59,11 +64,62 @@ CONSTANT_SPREAD_EPSILON: Final[float] = 1e-4
 R2_RELIABLE_THRESHOLD: Final[float] = 0.95
 R_SQUARED: Final[str] = "R²"
 
+WIDESCREEN_THRESHOLD: Final[int] = 100
 SUMMARY_NAME_WIDTH: Final[int] = 34
-PLOT_MIN_WIDTH: Final[int] = 54
-PLOT_MAX_WIDTH: Final[int] = 90
+PLOT_MIN_WIDTH: Final[int] = 60
+PLOT_MAX_WIDTH: Final[int] = 110
 PLOT_HEIGHT: Final[int] = 10
 
+
+# ------------------------------------------------------------- #
+#                        ANSI Color & Styling                   #
+class Style:
+    """Terminal styling helpers respecting NO_COLOR and non-TTY stdout."""
+
+    _ENABLED = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+    RESET = "\033[0m" if _ENABLED else ""
+    BOLD = "\033[1m" if _ENABLED else ""
+    DIM = "\033[2m" if _ENABLED else ""
+
+    GREEN = "\033[32m" if _ENABLED else ""
+    YELLOW = "\033[33m" if _ENABLED else ""
+    RED = "\033[31m" if _ENABLED else ""
+    CYAN = "\033[36m" if _ENABLED else ""
+    MAGENTA = "\033[35m" if _ENABLED else ""
+    GRAY = "\033[90m" if _ENABLED else ""
+
+    @classmethod
+    def green(cls, text: str) -> str:
+        return f"{cls.GREEN}{text}{cls.RESET}"
+
+    @classmethod
+    def yellow(cls, text: str) -> str:
+        return f"{cls.YELLOW}{text}{cls.RESET}"
+
+    @classmethod
+    def red(cls, text: str) -> str:
+        return f"{cls.RED}{text}{cls.RESET}"
+
+    @classmethod
+    def cyan(cls, text: str) -> str:
+        return f"{cls.CYAN}{text}{cls.RESET}"
+
+    @classmethod
+    def bold(cls, text: str) -> str:
+        return f"{cls.BOLD}{text}{cls.RESET}"
+
+    @classmethod
+    def dim(cls, text: str) -> str:
+        return f"{cls.DIM}{text}{cls.RESET}"
+
+    @staticmethod
+    def pad_visible(text: str, target_width: int) -> str:
+        """Pad text to target_width based on visible characters ignoring ANSI escapes."""
+        import re
+        clean = re.sub(r"\033\[[0-9;]*m", "", text)
+        padding = max(0, target_width - len(clean))
+        return text + (" " * padding)
 
 # ------------------------------------------------------------- #
 #                        Model Complexity                       #
@@ -132,6 +188,18 @@ class FitTrust(Enum):
         """Whether the status permits drawing a fit curve and extrapolations."""
         return self is FitTrust.EXPLORATORY
 
+    def format_badge(self) -> str:
+        """Return a colored badge for terminal presentation."""
+        match self:
+            case FitTrust.EXPLORATORY:
+                return f"{Style.green('🟢 ' + self.label)}"
+            case FitTrust.INSUFFICIENT_INPUT_SIZES | FitTrust.INSUFFICIENT_RESIDUAL_DOF:
+                return f"{Style.yellow('🟡 ' + self.label)}"
+            case FitTrust.WEAK_R_SQUARED:
+                return f"{Style.red('🔴 ' + self.label)}"
+            case _:
+                return f"{Style.dim('⚪ ' + self.label)}"
+
 
 # ------------------------------------------------------------- #
 #                          Domain model                         #
@@ -171,6 +239,49 @@ class TimingInterval:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineChange:
+    """Criterion relative change estimate vs base baseline."""
+
+    mean_pct: float
+    lower_pct: float
+    upper_pct: float
+    p_value: float = 0.05
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BaselineChange | None:
+        try:
+            mean = data.get("mean", {})
+            ci = mean.get("confidence_interval", {})
+            point_est = float(mean.get("point_estimate", 0.0)) * 100.0
+            lower = float(ci.get("lower_bound", 0.0)) * 100.0
+            upper = float(ci.get("upper_bound", 0.0)) * 100.0
+            # Rough standard normal z-test approximation for p-value from standard error
+            std_err = float(mean.get("standard_error", 0.0))
+            z = abs(mean.get("point_estimate", 0.0)) / std_err if std_err > 0 else 0
+            p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2))))
+            return cls(mean_pct=point_est, lower_pct=lower, upper_pct=upper, p_value=p_val)
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    def format_badge(self) -> str:
+        """Format a color-coded percentage shift summary."""
+        sign = "+" if self.mean_pct > 0 else ""
+        text = f"{sign}{self.mean_pct:.1f}% [{self.lower_pct:.1f}%, {self.upper_pct:.1f}%] vs base"
+        if self.p_value < 0.05 and abs(self.mean_pct) >= 1.0:
+            if self.mean_pct < 0:
+                return f"{Style.green('🟢 ' + text + f' (improved, p={self.p_value:.3f})')}"
+            return f"{Style.red('🔴 ' + text + f' (regressed, p={self.p_value:.3f})')}"
+        return f"{Style.dim('⚪ ' + text + ' (no change)')}"
+
+    def format_short(self) -> str:
+        sign = "+" if self.mean_pct > 0 else ""
+        text = f"{sign}{self.mean_pct:.1f}%"
+        if self.p_value < 0.05 and abs(self.mean_pct) >= 1.0:
+            return Style.green(text) if self.mean_pct < 0 else Style.red(text)
+        return Style.dim(text)
+
+
+@dataclass(frozen=True, slots=True)
 class BenchmarkDataPoint:
     """One Criterion timing estimate at a measured input size."""
 
@@ -178,6 +289,13 @@ class BenchmarkDataPoint:
     input_size: float
     input_unit: str
     timing: TimingInterval
+    median_seconds: float | None = None
+    mad_seconds: float | None = None
+    std_dev_seconds: float | None = None
+    slope_seconds_per_iter: float | None = None
+    throughput_bytes: float | None = None
+    throughput_elements: float | None = None
+    change_vs_base: BaselineChange | None = None
     mild_outlier_count: int = 0
     severe_outlier_count: int = 0
     function: str = ""
@@ -193,6 +311,19 @@ class BenchmarkDataPoint:
     @property
     def upper_seconds(self) -> float:
         return self.timing.upper_seconds
+
+    @property
+    def throughput_rate_str(self) -> str | None:
+        """Format throughput as human-readable rate string (e.g. 12.5 MB/s)."""
+        if self.mean_seconds <= 0:
+            return None
+        if self.throughput_bytes is not None and self.throughput_bytes > 0:
+            bytes_per_sec = self.throughput_bytes / self.mean_seconds
+            return Presentation.format_bytes_per_sec(bytes_per_sec)
+        if self.throughput_elements is not None and self.throughput_elements > 0:
+            elems_per_sec = self.throughput_elements / self.mean_seconds
+            return Presentation.format_elements_per_sec(elems_per_sec)
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,11 +420,12 @@ class Extrapolation:
     input_size: int
     predicted_seconds: float
     model_kind: ModelKind
+    throughput_rate_str: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SeriesAnalysis:
-    """One benchmark series with fitted models and trust decisions."""
+    """One benchmark series with fitted models, baseline changes, and trust decisions."""
 
     series: BenchmarkSeries
     models: tuple[FittedModel, ...]
@@ -365,18 +497,29 @@ class SeriesAnalysis:
         return self.trust.is_trusted
 
     @property
+    def latest_change(self) -> BaselineChange | None:
+        return self.largest_measurement.change_vs_base
+
+    @property
     def extrapolations(self) -> tuple[Extrapolation, ...]:
         if not self.is_fit_trusted:
             return ()
-        return tuple(
-            Extrapolation(
-                size,
-                self.best_model.predict(float(size)),
-                self.best_model.kind,
-            )
-            for size in EXTRAPOLATION_TARGETS
-            if size > self.largest_measurement.input_size
-        )
+        results: list[Extrapolation] = []
+        latest = self.largest_measurement
+        for size in EXTRAPOLATION_TARGETS:
+            if size <= latest.input_size:
+                continue
+            pred_time = self.best_model.predict(float(size))
+            rate_str = None
+            if pred_time > 0:
+                if latest.throughput_bytes and latest.input_size > 0:
+                    bytes_at_size = (latest.throughput_bytes / latest.input_size) * size
+                    rate_str = Presentation.format_bytes_per_sec(bytes_at_size / pred_time)
+                elif latest.throughput_elements and latest.input_size > 0:
+                    elems_at_size = (latest.throughput_elements / latest.input_size) * size
+                    rate_str = Presentation.format_elements_per_sec(elems_at_size / pred_time)
+            results.append(Extrapolation(size, pred_time, self.best_model.kind, rate_str))
+        return tuple(results)
 
     @property
     def has_negative_extrapolation(self) -> bool:
@@ -407,7 +550,7 @@ class CriterionRepository:
 
         points_by_key: dict[str, list[BenchmarkDataPoint]] = {}
         for group_dir in sorted(self._root.iterdir()):
-            if group_dir.is_dir():
+            if group_dir.is_dir() and not group_dir.name.startswith("."):
                 self._load_group(points_by_key, group_dir)
 
         return {
@@ -422,10 +565,10 @@ class CriterionRepository:
     ) -> None:
         """Load one group directory, including nested function sweeps."""
         for child_dir in sorted(group_dir.iterdir()):
-            if not child_dir.is_dir():
+            if not child_dir.is_dir() or child_dir.name in ("report", "change"):
                 continue
             if (child_dir / "new").is_dir():
-                point = self._parse(group_dir.name, "", child_dir / "new")
+                point = self._parse(group_dir.name, "", child_dir)
                 if point is not None:
                     series.setdefault(group_dir.name, []).append(point)
                 continue
@@ -439,22 +582,22 @@ class CriterionRepository:
     ) -> None:
         """Load one group/function sweep."""
         for size_dir in sorted(function_dir.iterdir()):
-            if not size_dir.is_dir():
+            if not size_dir.is_dir() or size_dir.name in ("report", "change"):
                 continue
-            results_dir = size_dir / "new"
-            if not results_dir.is_dir():
-                continue
-            point = self._parse(group, function_dir.name, results_dir)
-            if point is not None:
-                series.setdefault(f"{group}/{function_dir.name}", []).append(point)
+            if (size_dir / "new").is_dir():
+                point = self._parse(group, function_dir.name, size_dir)
+                if point is not None:
+                    series.setdefault(f"{group}/{function_dir.name}", []).append(point)
 
     @staticmethod
     def _parse(
         group: str,
         function: str,
-        results_dir: Path,
+        sweep_dir: Path,
     ) -> BenchmarkDataPoint | None:
-        """Parse a Criterion estimate and its input-size metadata."""
+        """Parse a Criterion estimate, statistics, throughput, and baseline change."""
+        results_dir = sweep_dir / "new"
+        change_dir = sweep_dir / "change"
         try:
             bench: dict[str, Any] = json.loads(
                 (results_dir / "benchmark.json").read_text()
@@ -462,7 +605,10 @@ class CriterionRepository:
             estimates: dict[str, Any] = json.loads(
                 (results_dir / "estimates.json").read_text()
             )
-            input_size, input_unit = CriterionRepository._parse_input(bench)
+            input_size, input_unit, th_bytes, th_elems = (
+                CriterionRepository._parse_input(bench)
+            )
+
             mean = estimates["mean"]
             interval = mean["confidence_interval"]
             timing = TimingInterval.from_criterion_nanoseconds(
@@ -470,6 +616,23 @@ class CriterionRepository:
                 lower_ns=interval["lower_bound"],
                 upper_ns=interval["upper_bound"],
             )
+
+            median_sec = None
+            if "median" in estimates:
+                median_sec = float(estimates["median"]["point_estimate"]) / 1e9
+
+            mad_sec = None
+            if "median_abs_dev" in estimates:
+                mad_sec = float(estimates["median_abs_dev"]["point_estimate"]) / 1e9
+
+            std_dev_sec = None
+            if "std_dev" in estimates:
+                std_dev_sec = float(estimates["std_dev"]["point_estimate"]) / 1e9
+
+            slope_sec = None
+            if "slope" in estimates:
+                slope_sec = float(estimates["slope"]["point_estimate"]) / 1e9
+
         except (
             FileNotFoundError,
             json.JSONDecodeError,
@@ -478,6 +641,17 @@ class CriterionRepository:
             ValueError,
         ):
             return None
+
+        # Load baseline delta if present
+        change_vs_base = None
+        change_estimates_file = change_dir / "estimates.json"
+        if change_estimates_file.exists():
+            try:
+                change_data = json.loads(change_estimates_file.read_text())
+                change_vs_base = BaselineChange.from_dict(change_data)
+            except Exception:
+                change_vs_base = None
+
         mild_outliers, severe_outliers = CriterionRepository._outlier_counts(
             results_dir
         )
@@ -486,6 +660,13 @@ class CriterionRepository:
             input_size=input_size,
             input_unit=input_unit,
             timing=timing,
+            median_seconds=median_sec,
+            mad_seconds=mad_sec,
+            std_dev_seconds=std_dev_sec,
+            slope_seconds_per_iter=slope_sec,
+            throughput_bytes=th_bytes,
+            throughput_elements=th_elems,
+            change_vs_base=change_vs_base,
             mild_outlier_count=mild_outliers,
             severe_outlier_count=severe_outliers,
             function=function,
@@ -528,18 +709,32 @@ class CriterionRepository:
         return mild, severe
 
     @staticmethod
-    def _parse_input(benchmark: Mapping[str, Any]) -> tuple[float, str]:
-        """Return Criterion throughput when present, else its numeric value."""
+    def _parse_input(
+        benchmark: Mapping[str, Any]
+    ) -> tuple[float, str, float | None, float | None]:
+        """Return numeric size, unit, and optional bytes/elements throughput."""
         throughput = benchmark.get("throughput")
-        if isinstance(throughput, Mapping) and len(throughput) == 1:
-            kind, value = next(iter(throughput.items()))
-            if isinstance(value, int | float) and value > 0:
-                return float(value), CriterionRepository._throughput_unit(str(kind))
-        return float(benchmark["value_str"]), "input units"
+        th_bytes = None
+        th_elems = None
+
+        if isinstance(throughput, Mapping):
+            if "Bytes" in throughput or "BytesDecimal" in throughput:
+                th_bytes = float(
+                    throughput.get("Bytes") or throughput.get("BytesDecimal", 0)
+                )
+            if "Elements" in throughput:
+                th_elems = float(throughput["Elements"])
+
+            if len(throughput) == 1:
+                kind, value = next(iter(throughput.items()))
+                if isinstance(value, int | float) and value > 0:
+                    unit_label = CriterionRepository._throughput_unit(str(kind))
+                    return float(value), unit_label, th_bytes, th_elems
+
+        return float(benchmark.get("value_str", 1)), "input units", th_bytes, th_elems
 
     @staticmethod
     def _throughput_unit(kind: str) -> str:
-        """Map Criterion's serialized throughput kind to a display label."""
         return {
             "Elements": "elements",
             "Bytes": "bytes",
@@ -577,7 +772,6 @@ class ModelFitter:
 
     @staticmethod
     def _fit_kind(kind: ModelKind, x: np.ndarray, y: np.ndarray) -> FittedModel:
-        """OLS-fit one candidate and calculate its leave-one-out RMSE."""
         features = kind.design_matrix(x)
         regression = LinearRegression().fit(features, y)
         return FittedModel(
@@ -593,7 +787,6 @@ class ModelFitter:
 
     @staticmethod
     def _leave_one_out_rmse(features: np.ndarray, y: np.ndarray) -> float:
-        """Calculate prediction RMSE with each measurement held out once."""
         if len(y) - 1 < features.shape[1] + 1:
             return float("inf")
         errors = np.empty(len(y))
@@ -618,6 +811,8 @@ class RankedFit:
     name: str
     model: FittedModel
     predicted_seconds: float
+    range_str: str
+    change_vs_base: BaselineChange | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,6 +822,10 @@ class UnreliableFit:
     name: str
     model: FittedModel
     reason: str
+    range_str: str
+    sizes_count: int
+    residual_dof: int
+    change_vs_base: BaselineChange | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,6 +834,7 @@ class ConstantFit:
 
     name: str
     mean_seconds: float
+    range_str: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -672,22 +872,48 @@ def build_summary(
 
     for analysis in analyses:
         if analysis.is_constant:
-            constant.append(ConstantFit(analysis.name, analysis.mean_seconds))
+            constant.append(
+                ConstantFit(analysis.name, analysis.mean_seconds, analysis.size_range)
+            )
             continue
         best = analysis.best_model
         scaling[best.kind] += 1
         if not analysis.is_fit_trusted:
             unreliable.append(
-                UnreliableFit(analysis.name, best, analysis.trust.label.lower())
+                UnreliableFit(
+                    name=analysis.name,
+                    model=best,
+                    reason=analysis.trust.label.lower(),
+                    range_str=analysis.size_range,
+                    sizes_count=len(analysis.data_points),
+                    residual_dof=analysis.residual_dof,
+                    change_vs_base=analysis.latest_change,
+                )
             )
             continue
         predicted = best.predict(float(target))
         if predicted <= 0:
             unreliable.append(
-                UnreliableFit(analysis.name, best, "negative prediction")
+                UnreliableFit(
+                    name=analysis.name,
+                    model=best,
+                    reason="negative prediction",
+                    range_str=analysis.size_range,
+                    sizes_count=len(analysis.data_points),
+                    residual_dof=analysis.residual_dof,
+                    change_vs_base=analysis.latest_change,
+                )
             )
             continue
-        ranked.append(RankedFit(analysis.name, best, predicted))
+        ranked.append(
+            RankedFit(
+                name=analysis.name,
+                model=best,
+                predicted_seconds=predicted,
+                range_str=analysis.size_range,
+                change_vs_base=analysis.latest_change,
+            )
+        )
 
     ranked.sort(key=lambda entry: entry.predicted_seconds, reverse=True)
     return SummaryData(
@@ -709,7 +935,6 @@ class Presentation:
 
     @staticmethod
     def time_unit(seconds: float) -> tuple[str, float]:
-        """Return a readable time unit and seconds-to-unit scale."""
         magnitude = abs(seconds)
         if magnitude < 0.000_001:
             return "ns", 1_000_000_000
@@ -721,22 +946,37 @@ class Presentation:
 
     @staticmethod
     def precision_for(unit: str, scaled_value: float) -> int:
-        """Select readable decimal precision avoiding loss of resolution."""
         if unit == "s":
             return 2
         return 2 if scaled_value < 10.0 else 1
 
     @staticmethod
     def format_seconds(seconds: float) -> str:
-        """Format seconds with a unit and precision chosen by magnitude."""
         unit, scale = Presentation.time_unit(seconds)
         scaled = seconds * scale
         prec = Presentation.precision_for(unit, scaled)
         return f"{scaled:.{prec}f}{unit}"
 
     @staticmethod
+    def format_bytes_per_sec(bps: float) -> str:
+        if bps >= 1e9:
+            return f"{bps / 1e9:.2f} GB/s"
+        if bps >= 1e6:
+            return f"{bps / 1e6:.2f} MB/s"
+        if bps >= 1e3:
+            return f"{bps / 1e3:.1f} KB/s"
+        return f"{bps:.0f} B/s"
+
+    @staticmethod
+    def format_elements_per_sec(eps: float) -> str:
+        if eps >= 1e6:
+            return f"{eps / 1e6:.2f}M elem/s"
+        if eps >= 1e3:
+            return f"{eps / 1e3:.1f}K elem/s"
+        return f"{eps:.0f} elem/s"
+
+    @staticmethod
     def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
-        """Summarize Criterion's Tukey outliers without discarding data."""
         mild = sum(point.mild_outlier_count for point in data_points)
         severe = sum(point.severe_outlier_count for point in data_points)
         if mild == severe == 0:
@@ -750,7 +990,6 @@ class Presentation:
 
     @staticmethod
     def truncate_middle(text: str, max_len: int) -> str:
-        """Shorten ``text`` to ``max_len`` keeping prefix and suffix."""
         if len(text) <= max_len:
             return text
         keep = max_len - 1
@@ -758,6 +997,20 @@ class Presentation:
         tail = keep - head
         return f"{text[:head]}…{text[-tail:]}" if tail else f"{text[:head]}…"
 
+    @staticmethod
+    def terminal_width() -> int:
+        cols_env = os.environ.get("COLUMNS")
+        if cols_env:
+            try:
+                val = int(cols_env)
+                if val > 0:
+                    return val
+            except ValueError:
+                pass
+        try:
+            return os.get_terminal_size().columns
+        except OSError:
+            return 100
 
 # ------------------------------------------------------------- #
 #                           Reporting                           #
@@ -765,90 +1018,195 @@ class Presentation:
 
 
 class SeriesReporter:
-    """Renders a clean, scan-first report before a plot and evidence table after it."""
+    """Renders scan-first cards, forecasts, and statistical grids."""
 
-    def render_summary(self, analysis: SeriesAnalysis) -> str:
-        """Render the primary operational answer that leads the view."""
+    def render_card(self, analysis: SeriesAnalysis, width: int | None = None) -> str:
+        width = Presentation.terminal_width() if width is None else width
+        if width >= WIDESCREEN_THRESHOLD:
+            return self._render_wide_card(analysis, width)
+        return self._render_narrow_card(analysis)
+
+    def _render_wide_card(self, analysis: SeriesAnalysis, width: int) -> str:
+        card_w = min(114, max(96, width - 2))
+        col_w = (card_w - 7) // 2
+
+        latest = analysis.largest_measurement
+        best = analysis.best_model
+
+        # Left Column: Profile
+        rate_str = latest.throughput_rate_str or ""
+        left_lines = [
+            f"{Style.bold('CURRENT BENCHMARK PROFILE'):<{col_w}}",
+            f"{'─' * (col_w - 2):<{col_w}}",
+            f"Status    : {analysis.trust.format_badge()}",
+            f"Candidate : {best.label}",
+            f"Largest   : {latest.input_size:,.0f} {analysis.input_unit}",
+            f"Runtime   : {latest.timing.format_with_ci()}",
+            f"Rate      : {rate_str if rate_str else 'N/A'}",
+            f"Change    : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
+        ]
+
+        # Right Column: Outlook / Withhold
+        right_lines = []
+        if analysis.is_fit_trusted:
+            right_lines = [
+                f"{Style.bold('OUTLOOK & CAPACITY FORECAST'):<{col_w}}",
+                f"{'─' * (col_w - 2):<{col_w}}",
+                f"{'input size':<14} {'latency':<12} {'throughput':<12} basis",
+                f"{latest.input_size:,.0f} {analysis.input_unit:<6} {Presentation.format_seconds(latest.mean_seconds):<12} {rate_str:<12} meas 95%",
+            ]
+            for ext in analysis.extrapolations:
+                dist = ext.input_size / latest.input_size
+                ext_rate = ext.throughput_rate_str or "-"
+                right_lines.append(
+                    f"{ext.input_size:,.0f} {analysis.input_unit:<6} "
+                    f"{Presentation.format_seconds(ext.predicted_seconds):<12} "
+                    f"{ext_rate:<12} ext ({dist:.0f}×)"
+                )
+        else:
+            right_lines = [
+                f"{Style.bold('STATUS & REASONING'):<{col_w}}",
+                f"{'─' * (col_w - 2):<{col_w}}",
+                f"{Style.yellow('⚠ FORECASTS WITHHELD')}",
+                f"  {analysis.trust.reason}.",
+                f"  Currently: {len(analysis.data_points)} sizes · {analysis.residual_dof} residual DOF.",
+                "  Add parameter sizes in the benchmark harness",
+                "  before using this model for capacity estimates.",
+            ]
+
+        # Pad lines
+        max_rows = max(len(left_lines), len(right_lines))
+        while len(left_lines) < max_rows:
+            left_lines.append("")
+        while len(right_lines) < max_rows:
+            right_lines.append("")
+
+        header_title = f" {analysis.name} "
+        header_meta = f" {len(analysis.data_points)} sizes · {analysis.size_range} {analysis.input_unit} "
+        gap = card_w - 4 - len(header_title) - len(header_meta)
+        if gap < 2:
+            header_line = f"╭──{header_title}{'─' * max(2, card_w - 6 - len(header_title))}╮"
+        else:
+            header_line = f"╭──{header_title}{'─' * gap}{header_meta}──╮"
+
+        body_lines = [header_line, f"│ {' ' * (card_w - 4)} │"]
+        for l_txt, r_txt in zip(left_lines, right_lines, strict=True):
+            l_pad = Style.pad_visible(l_txt, col_w)
+            r_pad = Style.pad_visible(r_txt, col_w)
+            body_lines.append(f"│  {l_pad}  │  {r_pad}  │")
+        body_lines.append(f"│ {' ' * (card_w - 4)} │")
+        body_lines.append(f"╰{'─' * (card_w - 2)}╯")
+        return "\n".join(body_lines)
+
+    def _render_narrow_card(self, analysis: SeriesAnalysis) -> str:
         best = analysis.best_model
         latest = analysis.largest_measurement
         lines: list[str] = [
             f"{analysis.name:<46} {len(analysis.data_points)} sizes · {analysis.size_range} {analysis.input_unit}",
             "",
-            f"FIT  {analysis.trust.label}",
+            f"FIT  {analysis.trust.format_badge()}",
             f"  Candidate: {best.label}",
             f"  Evidence: {len(analysis.data_points)} input sizes · {analysis.residual_dof} residual DOF",
             f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
             f"  Measured time: {latest.timing.format_with_ci()}  95% CI",
-            *self._outlook_lines(analysis),
+            f"  Baseline Δ: {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
         ]
+        if not analysis.is_fit_trusted:
+            lines.extend([
+                "",
+                f"{Style.yellow('FORECASTS WITHHELD')}",
+                f"  {analysis.trust.reason}.",
+                "  Add input sizes before using this model for capacity estimates.",
+            ])
+        else:
+            lines.extend([
+                "",
+                "OUTLOOK (model-based estimates)",
+                f"  {'input size':<18} {'time':<22} basis",
+                f"  {'-' * 16:<18} {'-' * 20:<22} ----------------------------",
+                (
+                    f"  {f'{latest.input_size:,.0f} {analysis.input_unit}':<18} "
+                    f"{latest.timing.format_with_ci():<22} measured · 95% CI"
+                ),
+            ])
+            for extrapolation in analysis.extrapolations:
+                distance = extrapolation.input_size / latest.input_size
+                lines.append(
+                    f"  {f'{extrapolation.input_size:,} {analysis.input_unit}':<18} "
+                    f"{Presentation.format_seconds(extrapolation.predicted_seconds):<22} "
+                    f"extrapolated · {distance:.1f}× range"
+                )
         return "\n".join(lines)
 
-    def render_details(self, analysis: SeriesAnalysis) -> str:
-        """Render evidence and selection diagnostics after the plot."""
+    def render_details(self, analysis: SeriesAnalysis, width: int | None = None) -> str:
+        width = Presentation.terminal_width() if width is None else width
         best = analysis.best_model
-        extrapolation = (
-            "enabled"
+        latest = analysis.largest_measurement
+
+        extrap_text = (
+            "enabled (exploratory)"
             if analysis.is_fit_trusted
             else "withheld: insufficient evidence"
         )
-        lines: list[str] = [
+
+        med_text = (
+            f"Mean {Presentation.format_seconds(latest.mean_seconds)}"
+            + (f" │ Median {Presentation.format_seconds(latest.median_seconds)}" if latest.median_seconds else "")
+            + (f" │ MAD {Presentation.format_seconds(latest.mad_seconds)}" if latest.mad_seconds else "")
+        )
+
+        slope_text = (
+            f"{Presentation.format_seconds(latest.slope_seconds_per_iter)} / iter"
+            if latest.slope_seconds_per_iter
+            else "N/A"
+        )
+
+        if width >= WIDESCREEN_THRESHOLD:
+            col_w = min(54, (width - 6) // 2)
+            left_col = [
+                f"{Style.bold('EVIDENCE & MODEL SELECTION'):<{col_w}}",
+                f"{'─' * col_w}",
+                f"├─ Candidate Complexity : {best.label}",
+                f"├─ In-Sample {R_SQUARED} Score   : {best.r_squared:.4f}",
+                f"├─ Leave-One-Out RMSE   : {Presentation.format_seconds(best.validation_rmse)}",
+                f"├─ Degrees of Freedom   : {len(analysis.data_points)} sizes · {analysis.residual_dof} residual DOF",
+                f"╰─ Extrapolation Status : {extrap_text}",
+            ]
+            right_col = [
+                f"{Style.bold('STATISTICAL DIAGNOSTICS & BASELINE'):<{col_w}}",
+                f"{'─' * col_w}",
+                f"├─ Central Tendency    : {med_text}",
+                f"├─ Iteration Slope     : {slope_text}",
+                f"├─ Outlier Count       : {Presentation.format_outlier_summary(analysis.data_points)}",
+                f"├─ Change vs Baseline  : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
+                f"╰─ Robust MAD          : {Presentation.format_seconds(latest.mad_seconds) if latest.mad_seconds else 'N/A'}",
+            ]
+            max_rows = max(len(left_col), len(right_col))
+            while len(left_col) < max_rows:
+                left_col.append("")
+            while len(right_col) < max_rows:
+                right_col.append("")
+            lines = [""]
+            for l_txt, r_txt in zip(left_col, right_col, strict=True):
+                lines.append(f"  {l_txt:<{col_w}}   {r_txt:<{col_w}}")
+            return "\n".join(lines)
+        lines = [
             "DETAILS",
             f"  {'candidate model':<23} {best.label}",
             f"  {'fit status':<23} {analysis.trust.label.lower()}",
             f"  {'selection':<23} lowest leave-one-out RMSE",
-            (
-                f"  {'leave-one-out RMSE':<23} "
-                f"{Presentation.format_seconds(best.validation_rmse)}"
-            ),
+            f"  {'leave-one-out RMSE':<23} {Presentation.format_seconds(best.validation_rmse)}",
             f"  {'in-sample ' + R_SQUARED:<23} {best.r_squared:.4f}",
             f"  {'residual DOF':<23} {analysis.residual_dof}",
-            (
-                f"  {'sample outliers':<23} "
-                f"{Presentation.format_outlier_summary(analysis.data_points)}"
-            ),
-            f"  {'extrapolation':<23} {extrapolation}",
-            f"  {'coefficients':<23} omitted; terms are not interpreted",
+            f"  {'central tendency':<23} {med_text}",
+            f"  {'sample outliers':<23} {Presentation.format_outlier_summary(analysis.data_points)}",
+            f"  {'extrapolation':<23} {extrap_text}",
         ]
         return "\n".join(lines)
 
-    @staticmethod
-    def _outlook_lines(analysis: SeriesAnalysis) -> list[str]:
-        if not analysis.is_fit_trusted:
-            return [
-                "",
-                "FORECASTS WITHHELD",
-                f"  {analysis.trust.reason}.",
-                "  Add input sizes before using this model for capacity estimates.",
-            ]
-        if analysis.has_negative_extrapolation:
-            return [
-                "",
-                "FORECASTS WITHHELD",
-                "  The model becomes negative beyond the measured data range.",
-            ]
-        latest = analysis.largest_measurement
-        lines: list[str] = [
-            "",
-            "OUTLOOK (model-based estimates)",
-            f"  {'input size':<18} {'time':<22} basis",
-            f"  {'-' * 16:<18} {'-' * 20:<22} ----------------------------",
-            (
-                f"  {f'{latest.input_size:,.0f} {analysis.input_unit}':<18} "
-                f"{latest.timing.format_with_ci():<22} measured · 95% CI"
-            ),
-        ]
-        for extrapolation in analysis.extrapolations:
-            distance = extrapolation.input_size / latest.input_size
-            lines.append(
-                f"  {f'{extrapolation.input_size:,} {analysis.input_unit}':<18} "
-                f"{Presentation.format_seconds(extrapolation.predicted_seconds):<22} "
-                f"extrapolated · {distance:.1f}× range"
-            )
-        return lines
-
 
 class SummaryReporter:
-    """Renders the overview of every fitted series in a clean, scan-friendly layout."""
+    """Renders the overview of every fitted series in a clean widescreen table."""
 
     def __init__(
         self,
@@ -858,56 +1216,72 @@ class SummaryReporter:
         self._worst_count = worst_count
         self._target = target
 
-    def render(self, data: SummaryData) -> str:
-        """Render the aggregate summary."""
+    def render(self, data: SummaryData, width: int | None = None) -> str:
+        width = Presentation.terminal_width() if width is None else width
         lines: list[str] = [
-            "PERFORMANCE SUMMARY",
+            f"{'═' * min(100, width)}",
+            f"{Style.bold('PERFORMANCE SUMMARY')}",
             (
-                f"{data.total_series} series  |  {data.supported_fit_count} supported"
-                f"  |  {data.unreliable_count} unreliable"
-                f"  |  {data.constant_count} constant"
+                f"{data.total_series} series evaluated  │  {Style.green(str(data.supported_fit_count) + ' supported')}"
+                f"  │  {Style.yellow(str(data.unreliable_count) + ' inconclusive')}"
+                f"  │  {Style.dim(str(data.constant_count) + ' near-constant')}"
             ),
-            *self._ranked_lines(data),
-            *self._unreliable_lines(data),
+            *self._ranked_lines(data, width),
+            *self._unreliable_lines(data, width),
             *self._scaling_lines(data),
-            *self._constant_lines(data),
+            *self._constant_lines(data, width),
+            f"{'═' * min(100, width)}",
         ]
         return "\n".join(lines)
 
-    def _ranked_lines(self, data: SummaryData) -> list[str]:
+    def _ranked_lines(self, data: SummaryData, width: int) -> list[str]:
         if not data.ranked:
             return []
         shown = data.ranked[: self._worst_count]
         lines: list[str] = [
             "",
-            f"WORST AT {self._target // 1000}K (top {len(shown)}):",
+            f"{Style.bold(f'TOP PERFORMANCE CONSUMERS AT {self._target // 1000}K (top {len(shown)}):')}",
+            f"  {'Rank':<5} {'Benchmark Name':<34} {'Range (n)':<16} {'Baseline Δ':<14} {'Complexity':<14} {R_SQUARED:<6} {'Est. @ 100K':<12} Status",
+            f"  {'─'*4:<5} {'─'*32:<34} {'─'*14:<16} {'─'*12:<14} {'─'*12:<14} {'─'*5:<6} {'─'*10:<12} {'─'*12}",
         ]
         for rank, entry in enumerate(shown, start=1):
-            name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
+            name = Presentation.truncate_middle(entry.name, 32)
+            delta = entry.change_vs_base.format_short() if entry.change_vs_base else Style.dim("n/a")
+            est = Presentation.format_seconds(entry.predicted_seconds)
             lines.append(
-                f"  {rank:>2}. {name:<{SUMMARY_NAME_WIDTH}}"
-                f" {Presentation.format_seconds(entry.predicted_seconds):>8}"
-                f"  {entry.model.kind.short_label:<14}"
-                f" {R_SQUARED}={entry.model.r_squared:.3f}"
+                f"   {rank:<3} {name:<34} {entry.range_str:<16} {delta:<14} "
+                f"{entry.model.kind.short_label:<14} {entry.model.r_squared:.3f}  "
+                f"{est:>10}  {Style.green('🟢 EXPLORATORY')}"
             )
         return lines
 
-    @staticmethod
-    def _unreliable_lines(data: SummaryData) -> list[str]:
+    def _unreliable_lines(self, data: SummaryData, width: int) -> list[str]:
         if not data.unreliable:
             return []
-        lines: list[str] = ["", "UNRELIABLE FITS:"]
+        lines: list[str] = [
+            "",
+            f"{Style.bold('INCONCLUSIVE SERIES (insufficient DOF or weak correlation):')}",
+            f"  {'Benchmark Name':<34} {'Range (n)':<16} {'Sizes / DOF':<12} {'Baseline Δ':<14} {R_SQUARED:<6} Reason",
+            f"  {'─'*32:<34} {'─'*14:<16} {'─'*10:<12} {'─'*12:<14} {'─'*5:<6} {'─'*24}",
+        ]
         for entry in data.unreliable:
-            name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
+            name = Presentation.truncate_middle(entry.name, 32)
+            delta = entry.change_vs_base.format_short() if entry.change_vs_base else Style.dim("n/a")
+            dof_str = f"{entry.sizes_count} / {entry.residual_dof}"
+            reason_badge = (
+                Style.yellow("🟡 " + entry.reason)
+                if "need" in entry.reason or "inconclusive" in entry.reason
+                else Style.red("🔴 " + entry.reason)
+            )
             lines.append(
-                f"  {name:<{SUMMARY_NAME_WIDTH}}"
-                f" {R_SQUARED}={entry.model.r_squared:.3f}  {entry.reason}"
+                f"  {name:<34} {entry.range_str:<16} {dof_str:<12} {delta:<14} "
+                f"{entry.model.r_squared:.3f}  {reason_badge}"
             )
         return lines
 
     @staticmethod
     def _scaling_lines(data: SummaryData) -> list[str]:
-        lines: list[str] = ["", "SCALING BREAKDOWN:"]
+        lines: list[str] = ["", f"{Style.bold('SCALING BREAKDOWN:')}"]
         for kind, count in data.scaling_counts.items():
             if count > 0:
                 lines.append(
@@ -917,10 +1291,10 @@ class SummaryReporter:
         return lines
 
     @staticmethod
-    def _constant_lines(data: SummaryData) -> list[str]:
+    def _constant_lines(data: SummaryData, width: int) -> list[str]:
         if not data.constant:
             return []
-        lines: list[str] = ["", "NEAR-CONSTANT (no scaling concern):"]
+        lines: list[str] = ["", f"{Style.bold('NEAR-CONSTANT (no scaling concern):')}"]
         for entry in data.constant:
             name = Presentation.truncate_middle(entry.name, SUMMARY_NAME_WIDTH)
             lines.append(
@@ -931,45 +1305,49 @@ class SummaryReporter:
 
 
 class SeriesPlotRenderer:
-    """Renders measured values and supported fit curves cleanly with plotext."""
+    """Renders measured scatter dots, connected steps, and regression curves with plotext."""
 
-    def render(self, analysis: SeriesAnalysis) -> None:
-        """Draw a clear, high-contrast terminal plot with distinct dot markers."""
+    def render(self, analysis: SeriesAnalysis, siblings: Sequence[SeriesAnalysis] = ()) -> None:
         import plotext as plt
 
-        x = [point.input_size for point in analysis.data_points]
-        max_time = max(point.mean_seconds for point in analysis.data_points)
-        unit, scale = Presentation.time_unit(max_time)
-        y = [point.mean_seconds * scale for point in analysis.data_points]
-
+        width = self._width()
         plt.clear_figure()
-        plt.plotsize(self._width(), PLOT_HEIGHT)
+        plt.plotsize(width, PLOT_HEIGHT)
         plt.theme("clear")
-        plt.xlabel(f"n ({analysis.input_unit})")
-        plt.ylabel(f"time ({unit})")
+        plt.xlabel(f"Input Size: n ({analysis.input_unit})")
 
-        # Measured points as clean, unambiguous dots
-        plt.scatter(x, y, label="measured (mean)", color="cyan", marker="dot")
+        # Determine if we have sibling variants to overlay (e.g. InlinkMap__new variants)
+        variants = [analysis]
+        if siblings:
+            variants.extend([s for s in siblings if s.name != analysis.name])
 
-        if analysis.is_fit_trusted:
-            curve_x = np.linspace(min(x), max(x), 100)
-            curve_y = [
-                analysis.best_model.predict(float(value)) * scale
-                for value in curve_x
-            ]
-            plt.plot(
-                curve_x.tolist(),
-                curve_y,
-                label=f"fit: {analysis.best_model.kind.short_label}",
-                color="yellow",
-                marker="dot",
-            )
+        # Find global scale
+        max_time = max(max(p.mean_seconds for p in var.data_points) for var in variants)
+        unit, scale = Presentation.time_unit(max_time)
+        plt.ylabel(f"Time ({unit})")
+
+        colors = ["cyan", "yellow", "green", "magenta", "red"]
+        for idx, var in enumerate(variants):
+            color = colors[idx % len(colors)]
+            x = [p.input_size for p in var.data_points]
+            y = [p.mean_seconds * scale for p in var.data_points]
+            lbl = var.name.split("/")[-1] if len(variants) > 1 else "measured (mean)"
+
+            # Scatter points
+            plt.scatter(x, y, label=lbl, color=color, marker="dot")
+
+            # Fitted curve for trusted models
+            if var.is_fit_trusted:
+                curve_x = np.linspace(min(x), max(x), 100)
+                curve_y = [var.best_model.predict(float(val)) * scale for val in curve_x]
+                fit_lbl = f"fit: {var.best_model.kind.short_label}" if len(variants) == 1 else None
+                plt.plot(curve_x.tolist(), curve_y, label=fit_lbl, color=color, marker="dot")
+
         plt.show()
         print()
 
     @staticmethod
     def _width() -> int:
-        """Fit the plot to the terminal width comfortably."""
         try:
             columns = os.get_terminal_size().columns
         except OSError:
@@ -993,7 +1371,6 @@ class CliOptions:
 
     @classmethod
     def from_env(cls, argv: Sequence[str] | None = None) -> CliOptions:
-        """Parse CLI options from argv with environment-variable defaults."""
         raw_argv = sys.argv[1:] if argv is None else list(argv)
 
         parser = argparse.ArgumentParser(add_help=False)
@@ -1035,9 +1412,7 @@ class CliOptions:
                 " (need a positive integer)"
             )
 
-        plot_active = (
-            args.plot or os.environ.get("usage_plot") == "true"
-        )
+        plot_active = args.plot or os.environ.get("usage_plot") == "true"
 
         return cls(
             criterion_dir=Path(args.criterion_dir),
@@ -1076,22 +1451,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not models:
             had_failure = True
             continue
-        analyses.append(
-            SeriesAnalysis(series=series, models=models)
-        )
+        analyses.append(SeriesAnalysis(series=series, models=models))
 
     if options.summary:
         data = build_summary(analyses)
         print(SummaryReporter(worst_count=options.worst_count).render(data))
     else:
         reporter = SeriesReporter()
+        plot_renderer = SeriesPlotRenderer()
         for analysis in analyses:
             print()
-            print(reporter.render_summary(analysis))
+            print(reporter.render_card(analysis))
             if options.plot:
                 print()
-                SeriesPlotRenderer().render(analysis)
-            print()
+                plot_renderer.render(analysis)
             print(reporter.render_details(analysis))
 
     return 1 if had_failure else 0
