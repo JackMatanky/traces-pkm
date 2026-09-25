@@ -93,12 +93,6 @@ impl DirNode {
         }
     }
 
-    /// Consumes the node and returns the raw `walkdir` entry.
-    #[must_use]
-    pub(crate) fn into_inner(self) -> DirEntry {
-        self.0
-    }
-
     /// Returns the node's full path, including the walk root prefix.
     #[must_use]
     pub(crate) fn path(&self) -> &Path {

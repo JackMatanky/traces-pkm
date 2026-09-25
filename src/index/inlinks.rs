@@ -269,6 +269,7 @@ impl InlinkMap {
     /// Inserts edge pairs into sorted, deduplicated per-target source lists.
     #[inline]
     #[must_use]
+    #[cfg(test)]
     pub(super) fn with_edges(
         mut self,
         edges: impl IntoIterator<Item = (PathBuf, PathBuf)>,
