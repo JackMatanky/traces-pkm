@@ -415,7 +415,7 @@ impl IndexStore {
         def: TableDefinition<'static, &'static [u8], &'static [u8]>,
     ) -> IndexResult<SortedByPath<T>>
     where
-        T: DeserializeOwned + crate::path::HasPath,
+        T: DeserializeOwned + Send + crate::path::HasPath,
     {
         let Some(table) = self.open_table_for_read(txn, def)? else {
             return Ok(SortedByPath::assumed_sorted(Vec::new()));
@@ -961,8 +961,8 @@ impl IndexStore {
         table.iter().map_err(|source| self.wrap_redb_error(source))
     }
 
-    /// Deserializes every row in an already-open `table`.
-    fn decode_table_rows<T: DeserializeOwned>(
+    /// Deserializes every row in an already-open `table` in parallel.
+    fn decode_table_rows<T: DeserializeOwned + Send>(
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
     ) -> StoreResult<Vec<T>> {
@@ -970,23 +970,19 @@ impl IndexStore {
             table.len().map_err(|source| self.wrap_redb_error(source))?,
         )
         .unwrap_or(usize::MAX);
-        self.decode_rows(self.open_table_iter(table)?, capacity)
-    }
-
-    #[inline(never)]
-    fn decode_rows<T: DeserializeOwned>(
-        &self,
-        iter: TableRange<'_>,
-        capacity: usize,
-    ) -> StoreResult<Vec<T>> {
-        let mut items = Vec::with_capacity(capacity);
-        for entry in iter {
+        let mut raw_rows = Vec::with_capacity(capacity);
+        for entry in self.open_table_iter(table)? {
             let (key, value) =
                 entry.map_err(|source| self.wrap_redb_error(source))?;
-            let path = path_from_bytes(key.value());
-            items.push(decode_row(&path, value.value())?);
+            raw_rows
+                .push((path_from_bytes(key.value()), value.value().to_vec()));
         }
-        Ok(items)
+        // B-tree iteration is inherently sequential, but `postcard` decoding
+        // is CPU-bound and parallelizes cleanly across rayon.
+        raw_rows
+            .into_par_iter()
+            .map(|(path, bytes)| decode_row(&path, &bytes))
+            .collect()
     }
 
     /// Reads raw `NOTES` rows before parallel decoding.
