@@ -1133,10 +1133,9 @@ impl IndexStore {
     /// Best-effort tables tolerate only a missing table (the fresh-database
     /// case); every other storage error propagates.
     fn delete_tables(&self, txn: &WriteTransaction) -> IndexResult<()> {
-        for spec in &TABLES {
-            spec.delete(self, txn)?;
-        }
-        Ok(())
+        TABLES.par_iter().try_for_each(|spec| {
+            spec.delete(self, txn).map_err(IndexError::from)
+        })
     }
 
     /// Runs every [`WriteTarget`] concurrently against the same write
