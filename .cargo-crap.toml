@@ -1,4 +1,11 @@
-# Change Risk Anti-Patterns (CRAP) configuration
+# -----------------------------------------------------------------------------
+# Filename:    cargo-crap.toml
+# Docs:        https://crates.io/crates/cargo-crap
+# Description: Configuration for Change Risk Anti-Patterns (CRAP) metric analysis.
+#              Identifies high-complexity, poorly tested functions across the
+#              workspace to prioritize refactoring and test coverage efforts.
+# -----------------------------------------------------------------------------
+
 threshold = 20.0
 fail-above = false
 missing = "pessimistic"
