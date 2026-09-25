@@ -5,7 +5,8 @@
 #USAGE flag "-m --mod <module>" {
 #USAGE   help "Run tests for a specific module only"
 #USAGE   long_help """
-#USAGE   Scopes nextest to the named module using a filter expression (e.g. `-m index` filters to tests under module `index`).
+#USAGE   Scopes nextest to the named module using a filter expression. For example:
+#USAGE   - `-m index` filters to tests under module `index`
 #USAGE   """
 #USAGE }
 #USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
@@ -13,7 +14,10 @@
 #USAGE flag "--feature <feature>" default="all" {
 #USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
 #USAGE   long_help """
-#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
+#USAGE   Selects Cargo feature set:
+#USAGE   - `all`: passes `--all-features`
+#USAGE   - `default`: passes no feature flags
+#USAGE   - any other value passes `--features <feature>`
 #USAGE   """
 #USAGE }
 #USAGE arg "[args]" var=#true {

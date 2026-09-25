@@ -7,9 +7,10 @@
 #MISE depends_post = ["bench:report"]
 #MISE extends="bench"
 #USAGE flag "-f --files <pattern>" {
-#USAGE   help "Select bench targets (`benches/*.rs`) by file-name substring"
+#USAGE   help "Select bench targets (`benches/*.rs`) by file-name substring match"
 #USAGE   long_help """
-#USAGE   Matches bench target file names under `benches/*.rs` by substring (e.g. `-f note` runs `benches/note_parsing.rs`).
+#USAGE   Examples:
+#USAGE   - `-f note` runs `benches/note_parsing.rs`.
 #USAGE
 #USAGE   Note: This selects bench target files, not Criterion benchmark names. To filter benchmark functions within a target, pass a regex in `[args]` after `--` (e.g. `mise run bench -f note -- fast`).
 #USAGE   """

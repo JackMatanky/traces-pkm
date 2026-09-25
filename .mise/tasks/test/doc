@@ -1,11 +1,14 @@
 #!/bin/bash
-#MISE description="Run Rust doctests via cargo test --doc"
+#MISE description="Run Rust doctests via `cargo test --doc`"
 #MISE sources=["@group:rust"]
 #MISE extends="gate:never-skip"
 #USAGE flag "--feature <feature>" default="all" {
 #USAGE   help "Cargo feature to activate (e.g. all, default, or specific feature)"
 #USAGE   long_help """
-#USAGE   Selects Cargo feature set: `all` passes `--all-features`, `default` passes no feature flags, any other value passes `--features <feature>`.
+#USAGE   Selects Cargo feature set:
+#USAGE   - `all`: passes `--all-features`
+#USAGE   - `default`: passes no feature flags
+#USAGE   - any other value passes `--features <feature>`
 #USAGE   """
 #USAGE }
 #USAGE arg "[args]" var=#true {
