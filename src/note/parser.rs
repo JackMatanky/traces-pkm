@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! The parser is organized into six specialized submodules:
+//! The parser is organized into five specialized submodules:
 //!
 //! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
 //!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
@@ -15,9 +15,6 @@
 //! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
 //!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
 //!   tokens from plain-text scan buffers using [`logos`].
-//! - [`mod@line`]: [`ByteTracker`] precomputes line-start byte offsets for
-//!   $O(\log n)$ byte-to-line translation without scanning the source string
-//!   multiple times.
 //! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
 //!   nested Markdown never recurses through the call stack, driving the
 //!   item-leading marker state machine, tag filter classification, and flushing
@@ -27,7 +24,10 @@
 //!   whitespace rules.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
-//! specialized handlers and assembles the final [`Note`].
+//! specialized handlers and assembles the final [`Note`]. List-item line
+//! numbers come from the shared [`crate::ByteTracker`], which precomputes
+//! line-start byte offsets for $O(\log n)$ byte-to-line translation without
+//! scanning the source string multiple times.
 //!
 //! # Metadata Extraction
 //!
@@ -50,18 +50,16 @@ use pulldown_cmark::{
 use super::{
     Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
-use crate::{ByteOffset, FieldKey, Tag, TaskStatusMap};
+use crate::{ByteOffset, ByteTracker, FieldKey, Tag, TaskStatusMap};
 
 mod inline;
 mod input;
 mod lexer;
-mod line;
 mod list;
 mod marker;
 
 pub use input::MarkdownParserInput;
 use lexer::InlineTokenLexer;
-use line::ByteTracker;
 use list::ListTracker;
 
 /// Block parser options: YAML metadata blocks and Obsidian wikilinks.
@@ -88,7 +86,10 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
     for (event, range) in
         Parser::new_ext(input.src(), MARKDOWN_OPTIONS).into_offset_iter()
     {
-        ctx.handle_event(event, ByteOffset::from(range.start));
+        ctx.handle_event(
+            event,
+            ByteOffset::try_from(range.start).unwrap_or(ByteOffset::MAX),
+        );
     }
     ctx.into_note(input.path())
 }

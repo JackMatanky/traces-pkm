@@ -129,8 +129,8 @@ pub use note::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use path::codec as path_codec;
-pub(crate) use position::ByteOffset;
 pub use position::SourceLine;
+pub(crate) use position::{ByteOffset, ByteTracker};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
     QueryBuilder, QueryBuilderError, QueryResult, QueryRow, QueryService,

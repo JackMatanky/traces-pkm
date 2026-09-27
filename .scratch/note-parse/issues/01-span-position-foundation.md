@@ -3,24 +3,43 @@
 **Source:** .scratch/md-pkm-lsp/issues/11-source-span-and-position-model.md (resolved decision)
 **What to build:** The shared position primitives that every later span-bearing work depends on: `ByteOffset` narrows from `usize` to `u32` (with `From<u32>`, `TryFrom<usize>` and an overflow error) across all existing call sites; `ByteTracker` relocates to `src/position.rs` and widens to crate-level visibility with zero behaviour change for its current parser caller; and a recorded decision settles the span representation shape — a `ByteSpan` newtype wrapping `Range<ByteOffset>` vs a bare `Range<ByteOffset>` — noting that ticket 19 already writes `ByteSpan(Range<ByteOffset>)` for frontmatter field spans while ticket 11 writes bare `Range` for AST spans, so one consistent shape must be chosen and recorded for ticket 04 and the deferred frontmatter-span work to follow.
 **Blocked by:** None (can start immediately)
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Acceptance criteria:**
-- [ ] `ByteOffset` is `u32`-backed with `From<u32>`, `TryFrom<usize>`, `ByteOffsetError`, and `ByteOffset::MAX`
-- [ ] `ByteOffset::from(0u32)` and `ByteOffset::try_from(0usize)` succeed; `ByteOffset::try_from` of a `usize` value greater than `u32::MAX` returns `ByteOffsetError`
-- [ ] `ByteOffset::try_from` of `u32::MAX` widened to `usize` succeeds and equals `ByteOffset::MAX`
-- [ ] No `From<usize> for ByteOffset` impl remains; all existing call sites updated to the explicit fallible/infallible paths
-- [ ] Parser pulldown-cmark event boundary saturates via `unwrap_or(ByteOffset::MAX)` (no panic on oversized input)
-- [ ] No persisted encode path depends on `ByteOffset`'s old width (spans stay transient, never persisted)
-- [ ] `ByteTracker` lives in `src/position.rs` at `pub(crate)` visibility with its tests moved alongside it, and is constructible from outside the note module
-- [ ] Parser behaviour unchanged: full existing test suite passes without assertion edits (only import/conversion-mechanics edits allowed); edge cases preserved (empty source → line 1, offset beyond source length → last line, empty lines counted)
-- [ ] Span-type decision (newtype vs bare range) recorded in this ticket under `## Answer`, with rationale and explicit guidance for ticket 04 and md-pkm-lsp ticket 19's `ByteSpan` mention
-- [ ] `byte_to_utf16_cu` explicitly NOT added (LSP-wire concern, deferred)
-- [ ] Project lint and test tasks pass (`mise run verify`)
+- [x] `ByteOffset` is `u32`-backed with `From<u32>`, `TryFrom<usize>`, `ByteOffsetError`, and `ByteOffset::MAX`
+- [x] `ByteOffset::from(0u32)` and `ByteOffset::try_from(0usize)` succeed; `ByteOffset::try_from` of a `usize` value greater than `u32::MAX` returns `ByteOffsetError`
+- [x] `ByteOffset::try_from` of `u32::MAX` widened to `usize` succeeds and equals `ByteOffset::MAX`
+- [x] No `From<usize> for ByteOffset` impl remains; all existing call sites updated to the explicit fallible/infallible paths
+- [x] Parser pulldown-cmark event boundary saturates via `unwrap_or(ByteOffset::MAX)` (no panic on oversized input)
+- [x] No persisted encode path depends on `ByteOffset`'s old width (spans stay transient, never persisted)
+- [x] `ByteTracker` lives in `src/position.rs` at `pub(crate)` visibility with its tests moved alongside it, and is constructible from outside the note module
+- [x] Parser behaviour unchanged: full existing test suite passes without assertion edits (only import/conversion-mechanics edits allowed); edge cases preserved (empty source → line 1, offset beyond source length → last line, empty lines counted)
+- [x] Span-type decision (newtype vs bare range) recorded in this ticket under `## Answer`, with rationale and explicit guidance for ticket 04 and md-pkm-lsp ticket 19's `ByteSpan` mention
+- [x] `byte_to_utf16_cu` explicitly NOT added (LSP-wire concern, deferred)
+- [x] Project lint and test tasks pass (`mise run verify`)
+
+## Answer
+
+**Decision (2026-09-27): spans are a bare `Range<ByteOffset>` (`std::ops::Range<ByteOffset>`). No wrapper newtype. A `ByteSpan` name, if wanted for readability, may exist only as a type alias — never a tuple struct or newtype.**
+
+**Rationale:**
+
+1. The codebase's newtype discipline (`SourceLine` vs `ByteOffset`) exists to stop *different kinds of positions* being mixed. Every span endpoint is already the same kind of value — `ByteOffset` — so the element type supplies the distinctness; a wrapper over `Range<ByteOffset>` adds no new type-level protection against the errors that discipline guards against (mixing line numbers, offsets, and ranges of either is still caught).
+2. A wrapper encodes no invariant worth its cost: it could not guarantee `start <= end` without validation, and carries no other data. Nothing would be made impossible by the type that is possible today.
+3. Ergonomics: `.start`/`.end` and the full `Range`/iterator API come free; a newtype needs `Deref`, accessor methods, or trait impls at every use site.
+4. Fewest edits to already-written downstream text (the tiebreaker the Agent Brief asked for): md-pkm-lsp ticket 11 (resolved) and md-pkm-lsp tickets 16/17/20 — plus `.scratch/md-pkm-lsp/research/20-designs.md` (`pub(crate) type ByteSpan = std::ops::Range<ByteOffset>;`, explicitly "chosen over wrapper/tuple/newtype alternatives … zero call-site breakage") — already specify the bare range. Note-parse ticket 04 is neutral: it defers entirely to this ticket ("the span type decided in ticket 01", AC "Span type matches ticket 01's recorded decision"). Only md-pkm-lsp ticket 19's `ByteSpan(Range<ByteOffset>)` write-up and `.scratch/md-pkm-lsp/map.md` say newtype; the weight of written text says bare range, and the alias form reconciles the name.
+
+**Guidance for downstream work:**
+
+- **Ticket 04 (AST spans):** declare span fields directly as `Range<ByteOffset>`. Do not introduce a `ByteSpan` newtype. This ticket deliberately introduces **no span type at all** (the first `Range<ByteOffset>` field lands with ticket 04's first consumer, per the Agent Brief's "agent's call" — chose first-consumer).
+- **md-pkm-lsp ticket 19 (frontmatter field spans):** its `ByteSpan(Range<ByteOffset>)` notation is superseded by this decision — use bare `Range<ByteOffset>` for frontmatter field spans too, so frontmatter and AST spans share one shape. If the name reads better at those call sites, `type ByteSpan = Range<ByteOffset>` is acceptable; a tuple struct is not.
+- Consistency rule: every future span is `Range<ByteOffset>`; any `ByteSpan` identifier in old ticket prose means that alias, not a type.
 
 ## Comments
 
 > *This was generated by AI during triage.*
+
+**2026-09-27 — implementation note (post-review):** AC 5's saturation (`unwrap_or(ByteOffset::MAX)`) means that on input ≥ 4 GiB the parser clamps every later pulldown-cmark event to `ByteOffset::MAX`, so `ByteTracker::line_at` reports the same line for everything past the cap — silently misattributed line numbers rather than a panic. This is exactly what AC 5 and the Agent Brief prescribe (no panic on oversized input); flagging for **ticket 04**: if oversized-input correctness ever matters, prefer a parse-time size guard over per-event saturation.
 
 ## Agent Brief
 
