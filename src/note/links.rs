@@ -81,12 +81,12 @@ impl Link {
         let raw_inner = inner_source.get(0..inner_end)?;
         let consumed =
             source.advance(source.advance(inner_start, inner_end), 2);
-        let (target, text) = split_wikilink_text(raw_inner);
+        let (target, raw_alias) = split_wikilink_text(raw_inner);
         let target = unescape_wikilink_part(target.trim());
         if target.is_empty() {
             return None;
         }
-        let alias = unescape_wikilink_part(text.trim());
+        let alias = unescape_wikilink_part(raw_alias.trim());
         let text = (!alias.is_empty()).then_some(alias);
         Some((
             Self {

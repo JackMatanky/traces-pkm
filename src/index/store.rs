@@ -970,15 +970,9 @@ impl IndexStore {
             table.len().map_err(|source| self.wrap_redb_error(source))?,
         )
         .unwrap_or(usize::MAX);
-        let mut raw_rows = Vec::with_capacity(capacity);
-        for entry in self.open_table_iter(table)? {
-            let (key, value) =
-                entry.map_err(|source| self.wrap_redb_error(source))?;
-            raw_rows
-                .push((path_from_bytes(key.value()), value.value().to_vec()));
-        }
-        // B-tree iteration is inherently sequential, but `postcard` decoding
-        // is CPU-bound and parallelizes cleanly across rayon.
+        let raw_rows = self
+            .collect_raw_note_bytes(self.open_table_iter(table)?, capacity)?;
+        // B-tree iteration is sequential; postcard decoding is CPU-bound.
         raw_rows
             .into_par_iter()
             .map(|(path, bytes)| decode_row(&path, &bytes))

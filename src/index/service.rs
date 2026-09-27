@@ -346,7 +346,7 @@ impl IndexerService {
             })
             .collect::<IndexResult<Vec<DirNode>>>()?;
         let mut files = entries
-            .into_par_iter()
+            .par_iter()
             .map(|node| scan_file_metadata(node, root))
             .collect::<IndexResult<Vec<FileMeta>>>()?;
         files.par_sort_unstable_by(|a, b| a.path().cmp(b.path()));
@@ -355,7 +355,7 @@ impl IndexerService {
 }
 
 /// Builds `node`'s [`FileMeta`] from metadata relative to `root`.
-fn scan_file_metadata(node: DirNode, root: &Path) -> IndexResult<FileMeta> {
+fn scan_file_metadata(node: &DirNode, root: &Path) -> IndexResult<FileMeta> {
     // `node.path()` borrows from `node`, so no owned path is allocated on the
     // success path: the clone inside the error constructors only runs when a
     // failure actually occurs.

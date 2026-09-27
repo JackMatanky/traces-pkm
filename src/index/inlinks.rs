@@ -86,38 +86,23 @@ impl InlinkMap {
 
         flat_edges.par_sort_unstable();
         flat_edges.dedup();
-        Self::from_flat_edges(flat_edges)
+        Self::from_flat_edges(&flat_edges)
     }
 
     /// Groups sorted, deduplicated edge pairs into canonical source lists.
-    fn from_flat_edges(flat_edges: Vec<(Target<'_>, Source<'_>)>) -> Self {
-        if flat_edges.is_empty() {
-            return Self(HashMap::new());
+    fn from_flat_edges(flat_edges: &[(Target<'_>, Source<'_>)]) -> Self {
+        let mut edges = HashMap::new();
+        let mut remaining = flat_edges;
+        while let Some((first, rest)) = remaining.split_first() {
+            let group_len = rest.partition_point(|edge| edge.0 == first.0);
+            let (same_target, tail) = rest.split_at(group_len);
+            let sources = std::iter::once(first.1)
+                .chain(same_target.iter().map(|edge| edge.1))
+                .map(Source::to_path_buf)
+                .collect();
+            edges.insert(first.0.to_path_buf(), sources);
+            remaining = tail;
         }
-
-        let target_count =
-            flat_edges.windows(2).filter(|w| w[0].0 != w[1].0).count() + 1;
-
-        let mut edges = HashMap::with_capacity(target_count);
-        let mut start = 0;
-        for i in 1..flat_edges.len() {
-            if flat_edges[i].0 != flat_edges[start].0 {
-                let target = flat_edges[start].0;
-                let sources: Box<[PathBuf]> = Box::from_iter(
-                    flat_edges[start..i]
-                        .iter()
-                        .map(|(_, src)| src.to_path_buf()),
-                );
-                edges.insert(target.to_path_buf(), sources);
-                start = i;
-            }
-        }
-        let target = flat_edges[start].0;
-        let sources: Box<[PathBuf]> = Box::from_iter(
-            flat_edges[start..].iter().map(|(_, src)| src.to_path_buf()),
-        );
-        edges.insert(target.to_path_buf(), sources);
-
         Self(edges)
     }
 
@@ -219,17 +204,18 @@ impl InlinkMap {
     ) -> (Self, crate::index::delta::InlinkDelta) {
         let mut deleted: Vec<(PathBuf, PathBuf)> = Vec::new();
         self.0.retain(|target, srcs| {
-            if srcs.iter().any(|s| edited_sources.contains(s.as_path())) {
-                let mut filtered = Vec::with_capacity(srcs.len());
-                for source in srcs.iter() {
-                    if edited_sources.contains(source.as_path()) {
-                        deleted.push((target.to_path_buf(), source.clone()));
-                    } else {
-                        filtered.push(source.clone());
-                    }
-                }
-                *srcs = filtered.into_boxed_slice();
+            if !srcs.iter().any(|s| edited_sources.contains(s.as_path())) {
+                return true;
             }
+            let mut filtered = Vec::with_capacity(srcs.len());
+            for source in srcs.iter() {
+                if edited_sources.contains(source.as_path()) {
+                    deleted.push((target.clone(), source.clone()));
+                    continue;
+                }
+                filtered.push(source.clone());
+            }
+            *srcs = filtered.into_boxed_slice();
             !srcs.is_empty()
         });
 
@@ -1126,7 +1112,7 @@ mod tests {
 
                     assert!(!patched.has_target(Path::new("target.md")));
                     assert_eq!(delta.deleted().len(), 1);
-                    assert!(delta.upserted().is_empty());
+                    assert_eq!(delta.upserted(), []);
                 }
 
                 #[test]
