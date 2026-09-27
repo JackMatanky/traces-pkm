@@ -41,6 +41,32 @@
 
 **2026-09-27 — implementation note (post-review):** AC 5's saturation (`unwrap_or(ByteOffset::MAX)`) means that on input ≥ 4 GiB the parser clamps every later pulldown-cmark event to `ByteOffset::MAX`, so `ByteTracker::line_at` reports the same line for everything past the cap — silently misattributed line numbers rather than a panic. This is exactly what AC 5 and the Agent Brief prescribe (no panic on oversized input); flagging for **ticket 04**: if oversized-input correctness ever matters, prefer a parse-time size guard over per-event saturation. Follow-up: the mechanism now lives in `ByteOffset::saturating_from(usize)` (implemented as exactly `try_from(...).unwrap_or(ByteOffset::MAX)`), which the parser boundary calls — done so the saturation behavior is unit-testable (`saturates_oversized_offset_to_max`) without a >4 GiB fixture.
 
+## Implementation
+
+**Landed:** branch `01-span-position-foundation` (base `b80e3ccf`) — `fa75ba3b` (feature) + `94f929f0` (review fixes). `mise run verify` green at `94f929f0`: fmt, check, lint (`--workspace --all-targets --all-features`), 2876 tests, 58 doctests.
+
+**`src/position.rs`** — module doc rewritten as shared conversion infrastructure:
+
+- `pub(crate) struct ByteOffset(u32)`; derives `Copy, Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize`. Serde derives kept deliberately — grep audit confirms no persisted encode path references `ByteOffset` outside `position.rs`, `note/parser.rs`, `lib.rs`, so the width change cannot alter stored formats (AC 6).
+- API: `const fn new(u32)`; `ByteOffset::MAX`; `saturating_from(usize)` (body exactly `Self::try_from(offset).unwrap_or(Self::MAX)`); infallible `From<u32>`; `TryFrom<usize, Error = ByteOffsetError>` with a `# Errors` section; infallible widening `From<ByteOffset> for u32`/`for usize` (usize path documented as saturating only on <32-bit targets).
+- `pub struct ByteOffsetError` — unit struct, thiserror, `byte offset exceeds u32 range`, styled after `SourceLineError` (`Copy` first in derive order per the canonical ordering discipline).
+- `ByteTracker` relocated from `src/note/parser/line.rs` (file deleted, 130 lines), zero API/behaviour change: `pub(crate)`, `new(&str)` / `line_at(ByteOffset) -> SourceLine`, `line_starts: Box<[usize]>`; five tests moved verbatim; re-exported at crate level.
+
+**`src/note/parser.rs`:**
+
+- `mod line` removed; imports now `crate::{ByteOffset, ByteTracker, FieldKey, Tag, TaskStatusMap}`; module doc six → five submodules, `mod@line` bullet replaced by a `crate::ByteTracker` sentence.
+- Boundary: `ByteOffset::saturating_from(range.start)` replacing infallible `ByteOffset::from(range.start)` (`From<usize>`). AC 5's literal `unwrap_or(ByteOffset::MAX)` now lives inside `saturating_from` — extracted post-review so saturation is unit-testable without a >4 GiB fixture (see Comments).
+- `parse_markdown` docs state the 4 GiB clamp (offsets saturate at `u32::MAX`, line numbers clamp rather than fail).
+- Zero parser test edits — AC 7's "no assertion edits" holds.
+
+**`src/lib.rs`:** `pub(crate) use position::{ByteOffset, ByteTracker};` (was `position::ByteOffset` only).
+
+**Tests — 15, Structure A per the rust-unit-testing naming spec:** `mod tests` → `mod source_line` (3, legacy names kept), `mod byte_offset` (6), `mod byte_tracker` (6). Coverage: boundary round-trip table `round_trips_u32_boundary_values` (0, 128, `u32::MAX` — folds the old conversions + constructs pair), `narrows_from_usize_within_u32_range` (0 + mid-range), `returns_max_when_narrowing_widened_u32_max` (AC 3), `returns_byte_offset_error_when_usize_exceeds_u32_max` + `displays_exceeds_u32_range_message` (split), `saturates_oversized_offset_to_max` (AC 5 mechanism), `resolves_offset_past_trailing_newline_to_final_line` (tracker edge). Moved tracker tests keep verbatim names and use `SourceLine::MIN`.
+
+**Review passes:** two-axis code-review (standards + spec), then dedicated `rust-unit-testing` and `rust-doc` reviews; all hard findings fixed — derive order, Structure A split, verb-first renames/splits, `# Errors` on `TryFrom`, stale "tracking strategy local" module clause, softened 4 GiB claim, `dictionary.txt` additions (`UTF`, `representable`). Accepted caveat recorded in Comments: >4 GiB input silently misattributes line numbers — flagged for ticket 04.
+
+**Downstream:** `Status: resolved` here is ticket 04's unblock condition (`Blocked by: 01`); span shape for 04 and md-pkm-lsp 19 is bare `Range<ByteOffset>` per `## Answer`.
+
 ## Agent Brief
 
 **Category:** enhancement
