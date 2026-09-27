@@ -1114,8 +1114,13 @@ impl IndexStore {
     /// Deletes every table's contents ahead of a full rebuild write.
     /// Best-effort tables tolerate only a missing table (the fresh-database
     /// case); every other storage error propagates.
+    ///
+    /// Sequential: redb serializes every `delete_table`/`delete_multimap_table`
+    /// call behind `WriteTransaction`'s single table-namespace mutex, so
+    /// dispatching the seven deletions through Rayon adds scheduling overhead
+    /// without any actual concurrent page-walk work underneath it.
     fn delete_tables(&self, txn: &WriteTransaction) -> IndexResult<()> {
-        TABLES.par_iter().try_for_each(|spec| {
+        TABLES.iter().try_for_each(|spec| {
             spec.delete(self, txn).map_err(IndexError::from)
         })
     }
