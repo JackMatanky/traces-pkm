@@ -41,6 +41,7 @@
 - **`set -e` trap (discovered live):** a bash function whose last statement is a failing `[[ … ]] && cmd` list returns 1, and `set -e` kills the script. The legacy `.mise/tasks/mutants/_default` is broken *today* by this (verified: `bash -x` dies at end of `build_filter_flags`; `mise run mutants -- --list` → `ERROR task failed`) — which is also why the Task 9 old-engine baseline runs raw `cargo mutants` instead of the legacy task. Every conditional function in this plan ends with explicit `return 0`, and `"$@"`-style empty arrays use the `${arr[@]+…}` guard (macOS bash 3.2 + `set -u`).
 - **Pinned mutarust mutual exclusions** (task must honor): `--dry-run` ⊥ timeout controls (`--timeout`/`--exec-timeout`/`--timeout-coefficient`) ⊥ Cargo test controls (`--test-flags`/`--test-recursive`) ⊥ `--exec`/`--no-exec` ⊥ `--workers` ⊥ `--coverage` ⊥ `--per-test` ⊥ `--do-not-remove-tmp-folder`; `--timeout`/`--exec-timeout` ⊥ `--timeout-coefficient`; `--update-baseline` ⊥ `--dry-run`/`--no-exec`/`--run-mutant-id` and writes **no reports**; `--git-diff-base` requires `--git-diff-lines`; `--run-mutant-id` silently bypasses score gates. The task rejects the reachable combinations with a clear `mutants:` message (see `reject_conflicting_flags`).
 - **Report facts:** `report.json` is written after a completed run and is **clobbered by every subsequent run, including `--dry-run`** — read stats immediately after the scored run. A run whose *clean* test suite fails stops before mutation and most likely writes no reports (distinguish this from "gate failed but reports missing"). A zero-mutant run still writes reports.
+- **List/inspect modes (live-probed on 0.1.10 during Task 7; amends the script):** `--list-mutators`/`--list-files`/`--print-ast` reject ALL configuration and mutation options — `--config`, `--test-flags`, `--dry-run`, `--min-msi`, loggers, even `--verbose` (rc=3) — **and a TARGET placed *before* the list flag counts as a mutation option**: `mutarust --list-files ./src...` rc=0 (123 files, absolute paths), `mutarust ./src... --list-files` rc=3. `--list-mutators` accepts no target at all. The script therefore branches in `main` → `build_inspect_args`: task-owned flags omitted, passthrough appended first (flag before target), target appended only for `--list-files`/`--print-ast` and only when the user supplied none; declared run flags are consumed by mise and cannot reach mutarust, so the task rejects them itself (exit 2).
 - **Template merge semantics:** a task's `depends` **replaces** the template's `depends` entirely (never appends) — `docs/refs/mise_tasks/09_templates.md:54,89-97`. `[task_templates.mutants]` currently defines no `depends`, so `#MISE depends=["test"]` survives; if anyone later adds `depends` to the template, it would be silently dropped.
 - **shellcheck** is installed (`/opt/homebrew/bin/shellcheck`); use it on every new/edited task script. The directive idiom `# shellcheck disable=SC2154  # usage_* are injected by mise` directly above `set -euo pipefail` is the repo standard and shellcheck-clean (verified against existing tasks).
 - **Shell style:** all planned shell follows `docs/refs/google_shell_style_guide.md` **except where mise task conventions conflict — mise conventions win** (per instruction). Documented conflicts: (a) `eval "arr=(${usage_args:-})"` is Google §6.6-avoided but is mise's documented variadic-args pattern (`mise_tasks/06_arguments.md:190-206`) — intentional, do not "fix"; (b) single-line `help "…"` usage strings may exceed 80 cols (Google §5.2) — KDL data strings stay single-line, wrap code/comments only; (c) `#MISE`/`#USAGE` headers must come first in the file, so the Google §4.1 file-description comment sits *after* the header block.
@@ -517,6 +518,9 @@ Overwrite `.mise/tasks/mutants/_default` with exactly this content:
 #USAGE   - `mise run mutants -- --list-mutators` - list built-in mutators
 #USAGE   - `mise run mutants -- --list-files` - print selected files (NOTE: ignores exclude_dirs)
 #USAGE   - `mise run mutants -- --run-mutant-id <id>` - re-run one mutant to verify a kill
+#USAGE   List/inspect passthrough (--list-files, --list-mutators,
+#USAGE   --print-ast) runs WITHOUT --config or task flags (mutarust
+#USAGE   rejects them there); declared run flags are rejected (exit 2).
 #USAGE   Exit codes: THIS TASK exits 2 for usage errors (bad -m/-f, conflicting
 #USAGE   flags). mutarust directly: 0 pass · 1 tool error · 2 bash completion
 #USAGE   (not a run) · 3 config/parse error · 4 quality gate (min_msi,
@@ -673,6 +677,141 @@ reject_conflicting_flags() {
 }
 
 ########################################
+# True when passthrough requests a list/inspect mode. mutarust rejects all
+# configuration and mutation options there (verified live on 0.1.10: even
+# --verbose and loggers are refused), so main() bypasses every task-owned
+# flag and forwards only the list flag, optional target, and raw tokens.
+# Globals:
+#   passthrough
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 in a list/inspect mode, 1 otherwise.
+########################################
+is_inspect_mode() {
+  if passthrough_has_token "--list-mutators"; then
+    return 0
+  fi
+  if passthrough_has_token "--list-files"; then
+    return 0
+  fi
+  if passthrough_has_token "--print-ast"; then
+    return 0
+  fi
+  return 1
+}
+
+########################################
+# True when the passthrough array carries a non-flag token — a target the
+# user supplied themselves. Flag values are rare in list modes and, when
+# present, the mode errors anyway, so treating them as positionals here is
+# harmless (it only suppresses the task's default-target append).
+# Globals:
+#   passthrough
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 when a positional token exists, 1 otherwise.
+########################################
+passthrough_has_positional() {
+  local t
+  for t in "${passthrough[@]+"${passthrough[@]}"}"; do
+    case "${t}" in
+      -*) ;;
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+########################################
+# Rejects declared run flags in list/inspect modes. mise consumes declared
+# flags before the script sees them, so they cannot be forwarded for
+# mutarust to diagnose — exit 2 with a task-level message instead.
+# Globals:
+#   usage_min_msi
+#   usage_update_baseline
+#   usage_fail_on_escaped
+#   usage_git_diff
+#   usage_dry_run
+#   usage_timeout
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for a rejected flag.
+# Returns:
+#   Exits 2 when a declared run flag is present; 0 otherwise.
+########################################
+reject_declared_in_inspect() {
+  if [[ -n "${usage_min_msi:-}" ]]; then
+    echo "mutants: --min-msi cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_update_baseline:-false}" == "true" ]]; then
+    echo "mutants: --update-baseline cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_fail_on_escaped:-false}" == "true" ]]; then
+    echo "mutants: --fail-on-escaped cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_git_diff:-false}" == "true" ]]; then
+    echo "mutants: --git-diff cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_dry_run:-false}" == "true" ]]; then
+    echo "mutants: --dry-run cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ -n "${usage_timeout:-}" ]]; then
+    echo "mutants: --timeout cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  return 0
+}
+
+########################################
+# Assembles arguments for list/inspect modes. Task-owned flags are omitted
+# (mutarust forbids them there); the list flag must precede any target, so
+# passthrough is appended first. --list-mutators takes no target; the
+# target-taking modes append the -f/-m scope, else DEFAULT_TARGET unless
+# the user already supplied a positional.
+# Globals:
+#   passthrough
+#   usage_file
+#   usage_mod
+#   DEFAULT_TARGET
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for -f/-m with --list-mutators.
+# Returns:
+#   Exits 2 for -f/-m with --list-mutators; 0 on success.
+########################################
+build_inspect_args() {
+  reject_declared_in_inspect
+  mutarust_args+=("${passthrough[@]+"${passthrough[@]}"}")
+  if passthrough_has_token "--list-mutators"; then
+    if [[ -n "${usage_file:-}" || -n "${usage_mod:-}" ]]; then
+      echo "mutants: -f/-m cannot be combined with --list-mutators" >&2
+      exit 2
+    fi
+    return 0
+  fi
+  if [[ -n "${usage_file:-}" || -n "${usage_mod:-}" ]]; then
+    build_target_flags
+  elif ! passthrough_has_positional; then
+    mutarust_args+=("${DEFAULT_TARGET}")
+  fi
+  return 0
+}
+
+########################################
 # Appends policy and logging flags, then the Cargo test controls — omitted
 # entirely under --dry-run (mutarust: dry-run ⊥ test/timeout controls).
 # A passthrough --timeout/--exec-timeout or --timeout-coefficient wins over
@@ -790,10 +929,14 @@ build_gate_flags() {
 main() {
   parse_passthrough_tokens
   reject_conflicting_flags
-  build_static_flags
-  build_target_flags
-  build_gate_flags
-  mutarust_args+=("${passthrough[@]+"${passthrough[@]}"}")
+  if is_inspect_mode; then
+    build_inspect_args
+  else
+    build_static_flags
+    build_target_flags
+    build_gate_flags
+    mutarust_args+=("${passthrough[@]+"${passthrough[@]}"}")
+  fi
 
   mutarust "${mutarust_args[@]}"
 }
@@ -818,8 +961,8 @@ Expected: rc=0; usage block showing `-f`, `-m`, `--min-msi`, `--update-baseline`
 
 - [ ] **Step 6: Passthrough probe (`--` forwarding on file tasks)**
 
-Run: `mise run mutants -- --list-mutators | head -5; echo "rc=$?"`
-Expected: rc=0 and mutator names — proves `--`-args land in `usage_args` for this file task. If instead you get a usage error, record it in §11 (Task 10) and stop: every later passthrough step needs rework first.
+Run: `mise run mutants -- --list-mutators > /tmp/mut-list.txt 2>&1; echo "rc=$?"; head -5 /tmp/mut-list.txt`
+Expected: rc=0 and mutator names — proves `--`-args land in `usage_args` for this file task (redirect to a file rather than `| head`, which SIGPIPE-kills the `depends` test task and corrupts the rc). If instead you get a usage error, record it in §11 (Task 10) and stop: every later passthrough step needs rework first.
 
 - [ ] **Step 7: Dry-run through the task (proves flag conditionality)**
 
@@ -828,8 +971,8 @@ Expected: rc=0 with a count. If the static `--test-flags`/`--timeout-coefficient
 
 - [ ] **Step 8: Default-target scope**
 
-Run: `mise run mutants -- --list-files > /tmp/mf.txt; echo "rc=$?"; wc -l < /tmp/mf.txt; grep -c '^src/cli' /tmp/mf.txt || true`
-Expected: rc=0; count > 100 files; `src/cli` lines **will** appear — `exclude_dirs` intentionally does not affect `--list-files` (known quirk, §9.18.5); scope is enforced at run time.
+Run: `mise run mutants -- --list-files > /tmp/mf.txt 2>&1; echo "rc=$?"; wc -l < /tmp/mf.txt; grep -c 'src/cli' /tmp/mf.txt || true`
+Expected: rc=0; count > 100 files (the task appends DEFAULT_TARGET `./src...` → 123); `src/cli` lines **will** appear — paths are ABSOLUTE (match with plain substring `src/cli`, not `^src/cli`), and `exclude_dirs` intentionally does not affect `--list-files` (known quirk, §9.18.5); scope is enforced at run time.
 Branch: if mutarust rejects `./src...` (rc 1/3 with a usage/target error), edit `DEFAULT_TARGET` to `"./src"`, re-run Step 7 (expect rc=0), then compare `mise run mutants --dry-run` counts before/after the change to confirm the fallback still selects the full production tree; record the outcome in Task 10's §11 record (`default target` row).
 
 - [ ] **Step 9: `-m` mapping for dir and file modules**
