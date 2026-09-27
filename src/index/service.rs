@@ -135,10 +135,8 @@ impl IndexerService {
         store: &IndexStore,
         files: SortedByPath<FileMeta>,
     ) -> IndexResult<(WorkspaceIndex, RefreshReport)> {
-        let (notes_res, links_res) = rayon::join(
-            || store.read_all_notes(),
-            || store.read_all_links(&files),
-        );
+        let notes_res = store.read_all_notes();
+        let links_res = store.read_all_links(&files);
         let notes = notes_res?;
         let links = links_res?;
         Ok((
