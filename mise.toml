@@ -28,6 +28,7 @@ cargo-deny = "latest"
 "cargo:cargo-tarpaulin" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:cargo-mutants" = "latest"
+"cargo:https://github.com/quality-gates/messrust" = { version = "tag:v0.1.15" }
 
 # -- Benchmarking --
 # Top-level `[tools]` keeps `critcmp` on `PATH` for `bench --compare` tab-completion.
