@@ -251,86 +251,44 @@ pub struct SourceLineError;
 mod tests {
     use super::*;
 
-    mod source_line {
+    mod byte_tracker {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn source_line_displays_as_its_numeric_value() {
-            let line = SourceLine::new(7).expect("non-zero");
-
-            assert_eq!(line.to_string(), "7");
+        fn line(number: u32) -> SourceLine {
+            SourceLine::new(number).expect("test line numbers are non-zero")
         }
 
-        #[test]
-        fn round_trips_u32_value_through_source_line() {
-            let line = SourceLine::try_from(42u32).expect("non-zero");
+        #[rstest]
+        #[case::empty_source("", 0, 1)]
+        #[case::single_line_start("no newlines here", 0, 1)]
+        #[case::single_line_middle("no newlines here", 10, 1)]
+        #[case::start_of_line_one("one\ntwo\nthree", 0, 1)]
+        #[case::mid_line_one("one\ntwo\nthree", 2, 1)]
+        #[case::newline_char_of_line_one("one\ntwo\nthree", 3, 1)]
+        #[case::start_of_line_two("one\ntwo\nthree", 4, 2)]
+        #[case::start_of_line_three("one\ntwo\nthree", 8, 3)]
+        #[case::last_byte_of_line_three("one\ntwo\nthree", 12, 3)]
+        #[case::exact_end_of_source("one\ntwo\nthree", 13, 3)]
+        #[case::beyond_source_length("one\ntwo\nthree", 1000, 3)]
+        #[case::empty_line_in_middle("one\n\nthree", 4, 2)]
+        #[case::line_after_empty_line("one\n\nthree", 5, 3)]
+        #[case::end_after_trailing_newline("one\n", 4, 2)]
+        #[case::crlf_carriage_return("one\r\ntwo", 3, 1)]
+        #[case::crlf_line_start("one\r\ntwo", 5, 2)]
+        fn resolves_expected_line_for_offset_in_source(
+            #[case] source: &str,
+            #[case] offset: u32,
+            #[case] expected_line: u32,
+        ) {
+            let tracker = ByteTracker::new(source);
 
-            assert_eq!(u32::from(line), 42);
-            assert_eq!(line.get(), 42);
-        }
-
-        #[test]
-        fn source_line_rejects_zero() {
-            assert!(SourceLine::new(0).is_none());
-            assert!(SourceLine::try_from(0u32).is_err());
-        }
-
-        #[test]
-        fn defines_minimum_line_as_one() {
-            assert_eq!(SourceLine::MIN.get(), 1);
-        }
-
-        #[test]
-        fn displays_source_line_error_message() {
             assert_eq!(
-                SourceLineError.to_string(),
-                "source line number must be non-zero"
+                tracker.line_at(ByteOffset::new(offset)),
+                line(expected_line)
             );
-        }
-    }
-
-    mod serialization {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn round_trips_source_line_as_plain_u32() {
-            let line = SourceLine::try_from(7u32).expect("non-zero");
-
-            let encoded = serde_json::to_string(&line).expect("serializable");
-            let decoded: SourceLine =
-                serde_json::from_str(&encoded).expect("decodable");
-
-            assert_eq!(encoded, "7");
-            assert_eq!(decoded, line);
-        }
-
-        #[test]
-        fn rejects_zero_when_deserializing() {
-            let error = serde_json::from_str::<SourceLine>("0")
-                .expect_err("zero is not a source line");
-
-            assert!(
-                error
-                    .to_string()
-                    .contains("source line number must be non-zero"),
-                "unexpected error message: {error}"
-            );
-        }
-
-        #[test]
-        fn round_trips_byte_offset_as_plain_u32() {
-            let offset = ByteOffset::new(5);
-
-            let encoded = serde_json::to_string(&offset).expect("serializable");
-            let decoded: ByteOffset =
-                serde_json::from_str(&encoded).expect("decodable");
-
-            assert_eq!(encoded, "5");
-            assert_eq!(decoded, offset);
         }
     }
 
@@ -428,44 +386,86 @@ mod tests {
         }
     }
 
-    mod byte_tracker {
+    mod source_line {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
 
         use super::*;
 
-        fn line(number: u32) -> SourceLine {
-            SourceLine::new(number).expect("test line numbers are non-zero")
+        #[test]
+        fn source_line_displays_as_its_numeric_value() {
+            let line = SourceLine::new(7).expect("non-zero");
+
+            assert_eq!(line.to_string(), "7");
         }
 
-        #[rstest]
-        #[case::empty_source("", 0, 1)]
-        #[case::single_line_start("no newlines here", 0, 1)]
-        #[case::single_line_middle("no newlines here", 10, 1)]
-        #[case::start_of_line_one("one\ntwo\nthree", 0, 1)]
-        #[case::mid_line_one("one\ntwo\nthree", 2, 1)]
-        #[case::newline_char_of_line_one("one\ntwo\nthree", 3, 1)]
-        #[case::start_of_line_two("one\ntwo\nthree", 4, 2)]
-        #[case::start_of_line_three("one\ntwo\nthree", 8, 3)]
-        #[case::last_byte_of_line_three("one\ntwo\nthree", 12, 3)]
-        #[case::exact_end_of_source("one\ntwo\nthree", 13, 3)]
-        #[case::beyond_source_length("one\ntwo\nthree", 1000, 3)]
-        #[case::empty_line_in_middle("one\n\nthree", 4, 2)]
-        #[case::line_after_empty_line("one\n\nthree", 5, 3)]
-        #[case::end_after_trailing_newline("one\n", 4, 2)]
-        #[case::crlf_carriage_return("one\r\ntwo", 3, 1)]
-        #[case::crlf_line_start("one\r\ntwo", 5, 2)]
-        fn resolves_expected_line_for_offset_in_source(
-            #[case] source: &str,
-            #[case] offset: u32,
-            #[case] expected_line: u32,
-        ) {
-            let tracker = ByteTracker::new(source);
+        #[test]
+        fn round_trips_u32_value_through_source_line() {
+            let line = SourceLine::try_from(42u32).expect("non-zero");
 
+            assert_eq!(u32::from(line), 42);
+            assert_eq!(line.get(), 42);
+        }
+
+        #[test]
+        fn source_line_rejects_zero() {
+            assert!(SourceLine::new(0).is_none());
+            assert!(SourceLine::try_from(0u32).is_err());
+        }
+
+        #[test]
+        fn defines_minimum_line_as_one() {
+            assert_eq!(SourceLine::MIN.get(), 1);
+        }
+
+        #[test]
+        fn displays_source_line_error_message() {
             assert_eq!(
-                tracker.line_at(ByteOffset::new(offset)),
-                line(expected_line)
+                SourceLineError.to_string(),
+                "source line number must be non-zero"
             );
+        }
+    }
+
+    mod serialization {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn round_trips_source_line_as_plain_u32() {
+            let line = SourceLine::try_from(7u32).expect("non-zero");
+
+            let encoded = serde_json::to_string(&line).expect("serializable");
+            let decoded: SourceLine =
+                serde_json::from_str(&encoded).expect("decodable");
+
+            assert_eq!(encoded, "7");
+            assert_eq!(decoded, line);
+        }
+
+        #[test]
+        fn rejects_zero_when_deserializing() {
+            let error = serde_json::from_str::<SourceLine>("0")
+                .expect_err("zero is not a source line");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("source line number must be non-zero"),
+                "unexpected error message: {error}"
+            );
+        }
+
+        #[test]
+        fn round_trips_byte_offset_as_plain_u32() {
+            let offset = ByteOffset::new(5);
+
+            let encoded = serde_json::to_string(&offset).expect("serializable");
+            let decoded: ByteOffset =
+                serde_json::from_str(&encoded).expect("decodable");
+
+            assert_eq!(encoded, "5");
+            assert_eq!(decoded, offset);
         }
     }
 }
