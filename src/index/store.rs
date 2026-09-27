@@ -113,9 +113,6 @@ type LinkEntry<'a> = Result<
 /// Resolved `LINKS` row, or `None` when target/source filtering empties it.
 type ResolvedLink = Option<(PathBuf, Box<[PathBuf]>)>;
 
-/// Raw note rows collected before parallel decoding.
-type RawNoteRows = Vec<(PathBuf, Vec<u8>)>;
-
 /// Read-only table typed for raw byte keys and values.
 type BytesReadTable = redb::ReadOnlyTable<&'static [u8], &'static [u8]>;
 
@@ -453,7 +450,7 @@ impl IndexStore {
         let txn = self.begin_read()?;
         let (files_result, notes_result) = rayon::join(
             || self.read_table(&txn, FILES),
-            || self.collect_notes(&txn),
+            || self.read_table(&txn, NOTES),
         );
         let files: SortedByPath<FileMeta> = files_result?;
         let notes = notes_result?;
@@ -488,7 +485,7 @@ impl IndexStore {
     /// [`Store`]: IndexError::Store
     pub(super) fn read_all_notes(&self) -> IndexResult<SortedByPath<Note>> {
         let txn = self.begin_read()?;
-        Ok(self.collect_notes(&txn)?)
+        self.read_table(&txn, NOTES)
     }
 
     /// Reads every persisted [`FileMeta`], sorted by path.
@@ -979,8 +976,27 @@ impl IndexStore {
         table.iter().map_err(|source| self.wrap_redb_error(source))
     }
 
-    /// Deserializes every row in an already-open `table` in parallel.
-    fn decode_table_rows<T: DeserializeOwned + Send>(
+    /// Deserializes every row in an already-open `table`.
+    ///
+    /// Decodes each row directly from its borrowed `redb::AccessGuard` bytes
+    /// during the sequential B-tree walk. An earlier revision copied every
+    /// row into an owned buffer first so decoding could run through Rayon;
+    /// measurement showed that copy costing more than the parallel decode
+    /// saved at every workspace size actually benchmarked (regressions up to
+    /// +27% at small/medium table sizes, flat at 20,000 rows), so this
+    /// forfeits decode parallelism in favor of the zero-copy read.
+    ///
+    /// `T` is [`FileMeta`] or [`Note`]; `Note`'s inline fields put this
+    /// function's monomorphized frame just over clippy's default stack-size
+    /// threshold. `read_batch`'s equivalent per-row `decode_row::<T>` call
+    /// carries the same worst-case frame size inside a closure, where the
+    /// lint does not fire.
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "decode_row<Note> owns a same-sized frame in read_batch's \
+                  closure; only the size differs from a plain function"
+    )]
+    fn decode_table_rows<T: DeserializeOwned>(
         &self,
         table: &redb::ReadOnlyTable<&[u8], &[u8]>,
     ) -> StoreResult<Vec<T>> {
@@ -988,60 +1004,14 @@ impl IndexStore {
             table.len().map_err(|source| self.wrap_redb_error(source))?,
         )
         .unwrap_or(usize::MAX);
-        let raw_rows = self
-            .collect_raw_note_bytes(self.open_table_iter(table)?, capacity)?;
-        // B-tree iteration is sequential; postcard decoding is CPU-bound.
-        raw_rows
-            .into_par_iter()
-            .map(|(path, bytes)| decode_row(&path, &bytes))
-            .collect()
-    }
-
-    /// Reads raw `NOTES` rows before parallel decoding.
-    fn collect_notes(
-        &self,
-        txn: &ReadTransaction,
-    ) -> StoreResult<SortedByPath<Note>> {
-        let Some(table) = self.open_table_for_read(txn, NOTES)? else {
-            return Ok(SortedByPath::assumed_sorted(Vec::new()));
-        };
-        let capacity = usize::try_from(
-            table.len().map_err(|source| self.wrap_redb_error(source))?,
-        )
-        .unwrap_or(usize::MAX);
-        Self::decode_note_bytes(
-            self.collect_raw_note_bytes(
-                self.open_table_iter(&table)?,
-                capacity,
-            )?,
-        )
-    }
-
-    #[inline(never)]
-    fn collect_raw_note_bytes(
-        &self,
-        iter: TableRange<'_>,
-        capacity: usize,
-    ) -> StoreResult<RawNoteRows> {
-        let mut rows = Vec::with_capacity(capacity);
-        for entry in iter {
+        let mut items = Vec::with_capacity(capacity);
+        for entry in self.open_table_iter(table)? {
             let (key, value) =
                 entry.map_err(|source| self.wrap_redb_error(source))?;
-            rows.push((path_from_bytes(key.value()), value.value().to_vec()));
+            let path = path_from_bytes(key.value());
+            items.push(decode_row(&path, value.value())?);
         }
-        Ok(rows)
-    }
-
-    /// Decodes every raw `(path, bytes)` pair in parallel and returns the
-    /// results sorted by path.
-    fn decode_note_bytes(
-        raw_entries: RawNoteRows,
-    ) -> StoreResult<SortedByPath<Note>> {
-        let notes: Vec<Note> = raw_entries
-            .into_par_iter()
-            .map(|(path, bytes)| decode_row(&path, &bytes))
-            .collect::<Result<Vec<Note>, StoreError>>()?;
-        Ok(SortedByPath::sorted(notes))
+        Ok(items)
     }
 
     /// Collects an already-open `LINKS` table into an [`InlinkMap`].
