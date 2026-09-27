@@ -222,6 +222,21 @@ sources = ["@group:rust", "tarpaulin.toml"]
 outputs = ["lcov.info"]
 run = "cargo crap --lcov lcov.info"
 
+[tasks.mess]
+description = "Static mess detection with `messrust` (advisory)"
+extends = "gate:never-skip"
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to messrust (e.g. --strict, --only Rule, --reportfile f.json)"'
+run = '''
+#!/bin/bash
+# usage_args is shell-quoted (var=#true arg); mise documents eval-into-array
+# as the pattern for variadic args — intentional despite Google style §6.6.
+# shellcheck disable=SC2154
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+messrust src text messrust.xml --ignore-tests "${extra[@]+"${extra[@]}"}"
+'''
+
 # ------------------------------------------------------------- #
 #                    Release & Verification                     #
 # ------------------------------------------------------------- #
