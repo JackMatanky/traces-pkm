@@ -26,7 +26,9 @@ Decide:
 
 ### Parsing strategy: replace `serde_yaml` with `noyalib`
 
-Replace `serde_yaml` with `noyalib` (v0.0.44, ~500K downloads; `serde_yml`'s 23M downloads now forward to it). Use `noyalib::compat::serde_yaml` feature for drop-in migration. `noyalib` provides `Spanned<T>` with byte ranges (`line()`, `column()`, `index()`), enabling single-pass value+position extraction. Enable `YamlVersion::V1_1` for Dataview compatibility. CST module available for future lossless editing. Zero unsafe, YAML 1.2 (406/406 tests), 8 deps.
+Replace `serde_yaml` with `noyalib` (v0.0.51; `serde_yml`'s 23M downloads now forward to it). Use noyalib's core API — `from_str_with_config` with a shared `ParserConfig::serde_yaml_compat()` — not the `compat::serde_yaml` drop-in feature. `noyalib` provides `Spanned<T>` with byte ranges (`line()`, `column()`, `index()`), enabling single-pass value+position extraction. CST module available for future lossless editing. Zero unsafe, YAML 1.2 (406/406 tests), 8 deps.
+
+*Amended 2026-09-27 (by note-parse ticket 02 review): the original "Enable `YamlVersion::V1_1` for Dataview compatibility" is corrected — **use YAML 1.2**. Obsidian/Dataview parse via `eemeli/yaml` (1.2 default), the current yaml_serde is already 1.2.2, and V1_1 would diverge from Dataview (`Bool(true)` vs `"yes"`), contradict this repo's own inline parser, and retype vault content (sexagesimal/octal). Full evidence: note-parse ticket 02, "Rationale: YAML 1.2, not 1.1". Parity comes from the `serde_yaml_compat()` config knobs instead of a version flag.*
 
 ### Frontmatter byte-range extraction
 
