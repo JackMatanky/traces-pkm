@@ -1116,9 +1116,15 @@ Structural facts from `src/` (~80k lines; `wc` + `grep`, 2026-09-27):
 | `--ignore-tests` | honest production metrics | scoped/bisectable runs unaffected by the 171 `cfg(test)` blocks |
 | `explicitness` (on-demand) | boundary/refactor map | impurity list — "what does this function secretly touch?" |
 
+---
+
 ## 9. First advisory run (2026-09-27)
 
-Rule counts from `messrust src json messrust.xml --ignore-tests --reportfile`
+The counts block below is the **post-tuning re-run** (the pre-tuning
+measurement had `CyclomaticComplexity` at 50 — see decisions). Produced by:
+
+`messrust src json messrust.xml --ignore-tests --reportfile /tmp/messrust.json --ignore-violations-on-exit && grep -oE '"rule"[[:space:]]*:[[:space:]]*"[^"]+"' /tmp/messrust.json | sort | uniq -c | sort -rn`
+
 (counts as measured, key excerpts):
 
 ```
@@ -1131,8 +1137,10 @@ Rule counts from `messrust src json messrust.xml --ignore-tests --reportfile`
    1 "rule": "TooManyMethods"
 ```
 
-(Pre-tuning measurement: `CyclomaticComplexity` was 50; the counts above are
-the post-tuning re-run — see decisions.)
+Action thresholds applied (from the quality-gates triage plan): any rule with
+count > 25 → consider exclusion (written reason required); `CyclomaticComplexity`
+count > 15 → retune `reportLevel`; `NPathComplexity` count > 10 → retune
+`minimum`.
 
 Decision-table rows, count → action:
 
@@ -1140,7 +1148,7 @@ Decision-table rows, count → action:
 | --- | --- | --- |
 | `CyclomaticComplexity` | 50 (> 15) | **Edit applied**: `codesize/CyclomaticComplexity` ref with `reportLevel=12` appended to `messrust.xml`; re-run → 26. |
 | `NPathComplexity` | 4 (≤ 10) | No edit. |
-| `ExcessiveClassLength` | 0 | No findings; nothing to record. |
+| `ExcessiveClassLength` | 0 | No findings; discrepancy with §8.11 noted below. |
 | `ShortMethodName` | 0 | No findings (exceptions list from Task 2 retained). |
 | `LongVariable` / `LongClassName` | 0 / 0 | No findings. |
 | `CouplingBetweenObjects` | 9 | Recorded below — kept as signal, no tuning (no confirmed false positive). |
@@ -1153,8 +1161,12 @@ Decisions taken: `CyclomaticComplexity` threshold edit applied (`reportLevel`
 otherwise accepted as-is.
 
 Notable findings kept as signals (esp. `ExcessiveClassLength` files): no
-`ExcessiveClassLength` findings (rule did not fire). Example locations for
-rules that did fire:
+`ExcessiveClassLength` findings (rule did not fire), which contradicts §8.11's
+prediction of "expect real hits" against 14 files over 1000 lines. The
+discrepancy is unexplained and warrants a follow-up check — §8.11 already
+noted the rule counts type span + attached inherent methods rather than whole
+files, which may explain part of the gap, but that was not verified against
+these results. Example locations for rules that did fire:
 
 - `LackOfCohesionOfMethods`: src/cli/task.rs:28, src/config/file.rs:117,
   src/config/model.rs:54

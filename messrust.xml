@@ -38,6 +38,9 @@
        `messrust src text messrust.xml,explicitness` plus the ignore-tests
        flag for deep passes instead of loading it here (§8.10 of
        quality_gates_messrust). -->
+  <!-- reportLevel 10 → 12: default fired on 50 fns; 12 is upstream's own
+       tuning example (docs/codesize.md), re-run → 26 — details §9 of
+       quality_gates_messrust -->
   <rule ref="codesize/CyclomaticComplexity">
     <properties>
       <property name="reportLevel" value="12"/>
