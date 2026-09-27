@@ -1119,13 +1119,13 @@ Expected: rc=0 (docs-only changes ⇒ zero mutable lines) **and** `report.json` 
 
 - [ ] **Step 5: Mutator inventory reachable**
 
-Run: `mise run mutants -- --list-mutators | head -15`
-Expected: rc=0, list of mutator names.
+Run: `mise run mutants -- --list-mutators > /tmp/mutators.txt 2>&1; echo "rc=$?"; sed -n '1,15p' /tmp/mutators.txt`
+Expected: rc=0, list of mutator names (read from the file).
 
 - [ ] **Step 6: Duplicate `--config` precedence**
 
-Run: `printf 'silent_mode: false\n' > /tmp/other.yml && mise run mutants -m strsim --dry-run -- --config /tmp/other.yml; echo "rc=$?"; ls -la report.json 2>&1 | tail -1`
-Expected: rc=0 and no config error — the run completes, proving a passthrough `--config` does not hard-fail the command line; `report.json` still exists (if the *losing* config were the task's own with `json_output: false`, reports would vanish — its presence indicates the task config won or both agree). Record "accepted"/"rejected" (+ report presence) in Task 10's §11 record. If mutarust rejects duplicate `--config` outright, document in the task's `long_help` that `--config` is task-owned.
+Run: `printf 'silent_mode: false\n' > /tmp/other.yml && mise run mutants -m strsim --dry-run -- --config /tmp/other.yml > /tmp/cfg.txt 2>&1; echo "rc=$?"; head -3 /tmp/cfg.txt`
+Expected: rc=2 and message `mutants: task owns --config; policy lives in mutarust.yml` — the `mutants` task rejects passthrough `--config` itself (Task 7 finding I2b; raw mutarust would instead rc=3 with `--config can be supplied only once`). The step's purpose: confirm the task's pre-emptive rejection fires (not mutarust's). Record in Task 10's §11 record: `--config passthrough: rejected at task level (rc=2, task-owns message) — task config always wins; the losing-config/report-vanish scenario is unreachable.`
 
 - [ ] **Step 7: Commit**
 
