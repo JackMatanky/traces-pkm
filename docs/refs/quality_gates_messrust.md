@@ -1115,3 +1115,56 @@ Structural facts from `src/` (~80k lines; `wc` + `grep`, 2026-09-27):
 | json/sarif/checkstyle + `--reportfile` | html/checkstyle for review, github annotations in CI | path/line/rule/priority/message/context/suppression rows, sorted, stdout-free |
 | `--ignore-tests` | honest production metrics | scoped/bisectable runs unaffected by the 171 `cfg(test)` blocks |
 | `explicitness` (on-demand) | boundary/refactor map | impurity list — "what does this function secretly touch?" |
+
+## 9. First advisory run (2026-09-27)
+
+Rule counts from `messrust src json messrust.xml --ignore-tests --reportfile`
+(counts as measured, key excerpts):
+
+```
+  29 "rule": "LackOfCohesionOfMethods"
+  26 "rule": "CyclomaticComplexity"
+   9 "rule": "CouplingBetweenObjects"
+   5 "rule": "ExcessiveClassComplexity"
+   4 "rule": "NPathComplexity"
+   2 "rule": "EmptyCatchBlock"
+   1 "rule": "TooManyMethods"
+```
+
+(Pre-tuning measurement: `CyclomaticComplexity` was 50; the counts above are
+the post-tuning re-run — see decisions.)
+
+Decision-table rows, count → action:
+
+| Rule | Count | Action |
+| --- | --- | --- |
+| `CyclomaticComplexity` | 50 (> 15) | **Edit applied**: `codesize/CyclomaticComplexity` ref with `reportLevel=12` appended to `messrust.xml`; re-run → 26. |
+| `NPathComplexity` | 4 (≤ 10) | No edit. |
+| `ExcessiveClassLength` | 0 | No findings; nothing to record. |
+| `ShortMethodName` | 0 | No findings (exceptions list from Task 2 retained). |
+| `LongVariable` / `LongClassName` | 0 / 0 | No findings. |
+| `CouplingBetweenObjects` | 9 | Recorded below — kept as signal, no tuning (no confirmed false positive). |
+| `LackOfCohesionOfMethods` | 29 | Recorded below — kept as signal, no tuning. |
+| `ShortClassName` | 0 | No findings. |
+| any other rule (> 25 to exclude) | `ExcessiveClassComplexity` 5, `EmptyCatchBlock` 2, `TooManyMethods` 1 | All ≤ 25 → no exclusions; recorded as signals. |
+
+Decisions taken: `CyclomaticComplexity` threshold edit applied (`reportLevel`
+10 → 12, upstream's own tuning example); no other threshold edits — policy
+otherwise accepted as-is.
+
+Notable findings kept as signals (esp. `ExcessiveClassLength` files): no
+`ExcessiveClassLength` findings (rule did not fire). Example locations for
+rules that did fire:
+
+- `LackOfCohesionOfMethods`: src/cli/task.rs:28, src/config/file.rs:117,
+  src/config/model.rs:54
+- `CyclomaticComplexity`: src/cli/error.rs:259, src/cli/error.rs:341,
+  src/cli/error.rs:413
+- `CouplingBetweenObjects`: src/cli/error.rs:51, src/cli/mod.rs:149,
+  src/index/service.rs:35
+- `ExcessiveClassComplexity`: src/duration.rs:36, src/index/store.rs:135,
+  src/note/field.rs:152
+- `NPathComplexity`: src/query/grammar/field.rs:242,
+  src/query/grammar/source.rs:425, src/schema/fields/select.rs:359
+- `EmptyCatchBlock`: src/file_tracker.rs:179, src/file_tracker.rs:292
+- `TooManyMethods`: src/index/store.rs:135
