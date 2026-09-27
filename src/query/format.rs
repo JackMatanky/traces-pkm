@@ -5,6 +5,8 @@
 //! and task checkbox lists. It supports optional file-path parenthetical
 //! suffixes via [`TaskPathStyle`] to disambiguate task origin in CLI task
 //! aggregation.
+use std::borrow::Cow;
+
 use unicode_width::UnicodeWidthStr as _;
 
 use super::{QueryError, QueryResult, grammar::FieldPath, results::QueryRow};
@@ -139,7 +141,7 @@ impl QueryDisplayFormat {
             .collect::<Result<Vec<_>, _>>()?;
         let headers: Vec<String> = headers
             .iter()
-            .map(|header| Self::escape_table_cell(header))
+            .map(|header| Self::escape_table_cell(header.as_str()))
             .collect();
         let data: Vec<Vec<String>> = rows
             .iter()
@@ -147,7 +149,7 @@ impl QueryDisplayFormat {
                 paths
                     .iter()
                     .map(|path| {
-                        Self::escape_table_cell(&row.resolve_ref(path).text())
+                        Self::escape_table_cell(row.resolve_ref(path).text())
                     })
                     .collect()
             })
@@ -264,12 +266,17 @@ impl QueryDisplayFormat {
     }
 
     /// Escapes Markdown table cell text by replacing newlines with spaces and
-    /// escaping pipes. Short-circuits to a plain copy when neither character is
-    /// present, avoiding the two intermediate allocations a chained
-    /// `.replace().replace()` would otherwise cost every cell.
-    fn escape_table_cell(text: &str) -> String {
+    /// escaping pipes. Short-circuits to a plain copy when neither character
+    /// is present, avoiding the two intermediate allocations a chained
+    /// `.replace().replace()` would otherwise cost every cell. Accepts an
+    /// owned `String` (the common case: `row.resolve_ref(path).text()`
+    /// already allocates one) so the no-escape-needed fast path returns it
+    /// directly with zero extra allocation, instead of re-copying into a
+    /// second `String` the way a `&str -> String` signature would force.
+    fn escape_table_cell<'a>(text: impl Into<Cow<'a, str>>) -> String {
+        let text = text.into();
         if !text.contains(['\n', '|']) {
-            return text.to_owned();
+            return text.into_owned();
         }
         let mut out = String::with_capacity(text.len());
         for ch in text.chars() {
