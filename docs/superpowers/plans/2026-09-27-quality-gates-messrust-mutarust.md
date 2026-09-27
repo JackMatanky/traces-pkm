@@ -1033,8 +1033,8 @@ Expected: rc=0; usage block showing `-f`, `-m`, `--min-msi`, `--update-baseline`
 
 - [ ] **Step 6: Passthrough probe (`--` forwarding on file tasks)**
 
-Run: `mise run mutants -- --list-mutators > /tmp/mut-list.txt 2>&1; echo "rc=$?"; head -5 /tmp/mut-list.txt`
-Expected: rc=0 and mutator names — proves `--`-args land in `usage_args` for this file task (redirect to a file rather than `| head`, which SIGPIPE-kills the `depends` test task and corrupts the rc). If instead you get a usage error, record it in §11 (Task 10) and stop: every later passthrough step needs rework first.
+Run: `mise run mutants -- --list-mutators > /tmp/mut-list.txt 2>&1; echo "rc=$?"; tail -n 15 /tmp/mut-list.txt`
+Expected: rc=0, mutator names shown from file tail — proves `--`-args land in `usage_args` for this file task (redirect to a file rather than `| head`, which SIGPIPE-kills the `depends` test task and corrupts the rc; the `depends=test` output prefixes the captured stream, so read the tail, not the head). If instead you get a usage error, record it in §11 (Task 10) and stop: every later passthrough step needs rework first.
 
 - [ ] **Step 7: Dry-run through the task (proves flag conditionality)**
 
@@ -1119,13 +1119,13 @@ Expected: rc=0 (docs-only changes ⇒ zero mutable lines) **and** `report.json` 
 
 - [ ] **Step 5: Mutator inventory reachable**
 
-Run: `mise run mutants -- --list-mutators > /tmp/mutators.txt 2>&1; echo "rc=$?"; sed -n '1,15p' /tmp/mutators.txt`
-Expected: rc=0, list of mutator names (read from the file).
+Run: `mise run mutants -- --list-mutators > /tmp/mutators.txt 2>&1; echo "rc=$?"; tail -n 15 /tmp/mutators.txt`
+Expected: rc=0, mutator names shown from file tail.
 
 - [ ] **Step 6: Duplicate `--config` precedence**
 
-Run: `printf 'silent_mode: false\n' > /tmp/other.yml && mise run mutants -m strsim --dry-run -- --config /tmp/other.yml > /tmp/cfg.txt 2>&1; echo "rc=$?"; head -3 /tmp/cfg.txt`
-Expected: rc=2 and message `mutants: task owns --config; policy lives in mutarust.yml` — the `mutants` task rejects passthrough `--config` itself (Task 7 finding I2b; raw mutarust would instead rc=3 with `--config can be supplied only once`). The step's purpose: confirm the task's pre-emptive rejection fires (not mutarust's). Record in Task 10's §11 record: `--config passthrough: rejected at task level (rc=2, task-owns message) — task config always wins; the losing-config/report-vanish scenario is unreachable.`
+Run: `printf 'silent_mode: false\n' > /tmp/other.yml && mise run mutants -m strsim --dry-run -- --config /tmp/other.yml > /tmp/cfg.txt 2>&1; echo "rc=$?"; grep -m1 'task owns --config' /tmp/cfg.txt`
+Expected: rc=2 and message `mutants: task owns --config; policy lives in mutarust.yml` — the `mutants` task rejects passthrough `--config` itself (per Task 7's conflict-matrix hardening (passthrough `--config` now rejected at task level); raw mutarust would instead rc=3 with `--config can be supplied only once`). The step's purpose: confirm the task's pre-emptive rejection fires (not mutarust's). Record in Task 10's §11 record: `--config passthrough: rejected at task level (rc=2, task-owns message) — task config always wins; the losing-config/report-vanish scenario is unreachable.`
 
 - [ ] **Step 7: Commit**
 
@@ -1228,8 +1228,8 @@ P2 (`--profile mutants`): <accepted → TEST_FLAGS updated | rejected → reason
 P3 (cap-lints): stats with RUSTFLAGS=<...>; stats without=<...>;
   skippedCount delta=<n> of <total> → <inflation | no material inflation>.
 `default target` (`./src...`): <accepted | replaced with <fallback> — notes>
-Duplicate `--config` passthrough: <accepted | rejected → long_help note;
-  report.json present: yes/no>
+Duplicate `--config` passthrough: rejected at task level (rc=2, task-owns
+  message) — task config always wins; losing-config scenario unreachable.
 Passthrough probe (`-- --list-mutators`): <worked | usage error → rework>
 Any other surprises: <list or "none">
 ```
