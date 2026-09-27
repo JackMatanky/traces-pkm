@@ -517,6 +517,7 @@ Overwrite `.mise/tasks/mutants/_default` with exactly this content:
 #USAGE   - `mise run mutants --git-diff` - only changed lines (tracked; stage new files)
 #USAGE   - `mise run mutants -- --list-mutators` - list built-in mutators
 #USAGE   - `mise run mutants -- --list-files` - print selected files (NOTE: ignores exclude_dirs)
+#USAGE   - `mise run mutants src/cli/error.rs` - explicit target positional (skips the default)
 #USAGE   - `mise run mutants -- --run-mutant-id <id>` - re-run one mutant to verify a kill
 #USAGE   List/inspect passthrough (--list-files, --list-mutators,
 #USAGE   --print-ast) runs WITHOUT --config or task flags (mutarust
@@ -561,6 +562,7 @@ DEFAULT_TARGET="./src..."
 # Parses variadic passthrough tokens into an array.
 # Globals:
 #   usage_args
+#   passthrough
 # Arguments:
 #   None
 # Outputs:
@@ -624,11 +626,16 @@ has_fixed_timeout() {
 
 ########################################
 # Rejects flag combinations mutarust rejects opaquely, giving a task-level
-# diagnostic instead.
+# diagnostic instead: task-owned --config/--test-flags, --update-baseline
+# vs --run-mutant-id, fixed --timeout/--exec-timeout vs
+# --timeout-coefficient, and the declared --update-baseline/--timeout vs
+# --dry-run pairings.
 # Globals:
 #   usage_update_baseline
 #   usage_dry_run
 #   usage_git_diff
+#   usage_timeout
+#   passthrough
 # Arguments:
 #   None
 # Outputs:
@@ -642,10 +649,14 @@ reject_conflicting_flags() {
     echo "mutants: --update-baseline cannot be combined with --dry-run" >&2
     exit 2
   fi
+  if [[ "${usage_dry_run:-false}" == "true" && -n "${usage_timeout:-}" ]]; then
+    echo "mutants: --timeout cannot be combined with --dry-run" >&2
+    exit 2
+  fi
   local t
   for t in "${passthrough[@]+"${passthrough[@]}"}"; do
     case "${t}" in
-      --exec | --no-exec)
+      --exec | --no-exec | --test-flags | --test-flags=*)
         if [[ "${usage_dry_run:-false}" == "true" ]]; then
           echo "mutants: ${t} cannot be combined with --dry-run" >&2
           exit 2
@@ -653,11 +664,42 @@ reject_conflicting_flags() {
         echo "mutants: ${t} conflicts with task-owned --test-flags" >&2
         exit 2
         ;;
+      --config | --config=*)
+        echo "mutants: task owns --config; policy lives in mutarust.yml" >&2
+        exit 2
+        ;;
+      --update-baseline)
+        if [[ "${usage_dry_run:-false}" == "true" ]]; then
+          echo \
+            "mutants: --update-baseline cannot be combined with --dry-run" >&2
+          exit 2
+        fi
+        if passthrough_has_token "--run-mutant-id"; then
+          echo \
+            "mutants: --update-baseline cannot be combined with" \
+            "--run-mutant-id" >&2
+          exit 2
+        fi
+        ;;
       --dry-run)
         echo "mutants: use the declared --dry-run flag, not passthrough" >&2
         exit 2
         ;;
-      --timeout | --exec-timeout | --timeout-coefficient | --workers | \
+      --timeout-coefficient)
+        if [[ "${usage_dry_run:-false}" == "true" ]]; then
+          echo \
+            "mutants: --timeout-coefficient cannot be combined with" \
+            "--dry-run" >&2
+          exit 2
+        fi
+        if has_fixed_timeout; then
+          echo \
+            "mutants: --timeout-coefficient cannot be combined with" \
+            "--timeout/--exec-timeout" >&2
+          exit 2
+        fi
+        ;;
+      --timeout | --exec-timeout | --workers | \
         --coverage | --per-test | --test-recursive | \
         --do-not-remove-tmp-folder)
         if [[ "${usage_dry_run:-false}" == "true" ]]; then
@@ -752,11 +794,13 @@ reject_declared_in_inspect() {
     exit 2
   fi
   if [[ "${usage_update_baseline:-false}" == "true" ]]; then
-    echo "mutants: --update-baseline cannot be combined with list/inspect mode" >&2
+    echo \
+      "mutants: --update-baseline cannot be combined with list/inspect mode" >&2
     exit 2
   fi
   if [[ "${usage_fail_on_escaped:-false}" == "true" ]]; then
-    echo "mutants: --fail-on-escaped cannot be combined with list/inspect mode" >&2
+    echo \
+      "mutants: --fail-on-escaped cannot be combined with list/inspect mode" >&2
     exit 2
   fi
   if [[ "${usage_git_diff:-false}" == "true" ]]; then
@@ -845,10 +889,16 @@ build_static_flags() {
 
 ########################################
 # Maps -f / -m to mutarust TARGET positionals; the default target keeps a
-# bare `mise run mutants` scoped to production code.
+# bare `mise run mutants` scoped to production code. It applies only when
+# neither -f/-m nor a user-supplied positional target is present: a bare
+# positional invocation like `mise run mutants src/cli/x.rs` scopes to
+# the user's target. Value-like tokens such as `4` in `--workers 4`
+# suppress the append too, which is harmless — mutarust's own no-target
+# default selects the same production tree today (counts 3820 == 3820).
 # Globals:
 #   usage_file
 #   usage_mod
+#   passthrough
 #   DEFAULT_TARGET
 #   mutarust_args
 # Arguments:
@@ -876,7 +926,8 @@ build_target_flags() {
       exit 2
     fi
   fi
-  if [[ -z "${usage_file:-}" && -z "${usage_mod:-}" ]]; then
+  if [[ -z "${usage_file:-}" && -z "${usage_mod:-}" ]] &&
+    ! passthrough_has_positional; then
     mutarust_args+=("${DEFAULT_TARGET}")
   fi
   return 0
@@ -919,6 +970,7 @@ build_gate_flags() {
 # Assembles the argument list and executes mutarust.
 # Globals:
 #   mutarust_args
+#   passthrough
 # Arguments:
 #   CLI arguments vector (unused; usage_* carries the parsed values).
 # Outputs:
@@ -938,7 +990,7 @@ main() {
     mutarust_args+=("${passthrough[@]+"${passthrough[@]}"}")
   fi
 
-  mutarust "${mutarust_args[@]}"
+  mutarust "${mutarust_args[@]+"${mutarust_args[@]}"}"
 }
 
 main "$@"
