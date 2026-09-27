@@ -165,6 +165,18 @@ reject_conflicting_flags() {
     echo "mutants: --update-baseline cannot be combined with --dry-run" >&2
     exit 2
   fi
+  if [[ "${usage_update_baseline:-false}" == "true" ]] &&
+    passthrough_has_token "--run-mutant-id"; then
+    echo \
+      "mutants: --update-baseline cannot be combined with --run-mutant-id" >&2
+    exit 2
+  fi
+  if [[ -n "${usage_timeout:-}" ]] &&
+    { passthrough_has_token "--timeout" ||
+      passthrough_has_token "--exec-timeout"; }; then
+    echo "mutants: --timeout is declared; drop it from passthrough" >&2
+    exit 2
+  fi
   if [[ "${usage_dry_run:-false}" == "true" && -n "${usage_timeout:-}" ]]; then
     echo "mutants: --timeout cannot be combined with --dry-run" >&2
     exit 2
@@ -172,7 +184,7 @@ reject_conflicting_flags() {
   local t
   for t in "${passthrough[@]+"${passthrough[@]}"}"; do
     case "${t}" in
-      --exec | --no-exec | --test-flags | --test-flags=*)
+      --exec | --no-exec)
         if [[ "${usage_dry_run:-false}" == "true" ]]; then
           echo "mutants: ${t} cannot be combined with --dry-run" >&2
           exit 2
@@ -182,6 +194,14 @@ reject_conflicting_flags() {
         ;;
       --config | --config=*)
         echo "mutants: task owns --config; policy lives in mutarust.yml" >&2
+        exit 2
+        ;;
+      --test-flags | --test-flags=*)
+        if [[ "${usage_dry_run:-false}" == "true" ]]; then
+          echo "mutants: --test-flags cannot be combined with --dry-run" >&2
+          exit 2
+        fi
+        echo "mutants: task owns --test-flags; drop it from passthrough" >&2
         exit 2
         ;;
       --update-baseline)
