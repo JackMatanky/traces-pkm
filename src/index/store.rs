@@ -184,7 +184,7 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if opening the transaction or table fails.
+    /// - [`Store`] if opening the transaction or table, or reading a row fails.
     ///
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_notes_batch<'a>(
@@ -199,7 +199,7 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if opening the transaction or table fails.
+    /// - [`Store`] if opening the transaction or table, or reading a row fails.
     ///
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_files_batch<'a>(
@@ -217,7 +217,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`Store`] if opening the transaction or table fails.
+    /// - [`Store`] if opening the transaction or table, or reading a target's
+    ///   stored sources fails.
     ///
     /// [`Store`]: IndexError::Store
     pub(crate) fn read_links_for_targets<'a>(
@@ -228,15 +229,27 @@ impl IndexStore {
         let Some(table) = self.open_multimap_for_read(&txn, LINKS)? else {
             return Ok(InlinkMap::default());
         };
+        Self::collect_target_links(targets, |target| {
+            let key = PathKey::new(target).as_bytes();
+            self.collect_stored_paths(&table, key)
+        })
+    }
+
+    fn collect_target_links<'a>(
+        targets: impl IntoParallelIterator<Item = &'a Path>,
+        read: impl Fn(&Path) -> IndexResult<Vec<PathBuf>> + Sync + Send,
+    ) -> IndexResult<InlinkMap> {
         let edges: HashMap<PathBuf, Box<[PathBuf]>> = targets
             .into_par_iter()
-            .filter_map(|target| {
-                let key = PathKey::new(target).as_bytes();
-                let sources = self.collect_stored_paths(&table, key).ok()?;
-                (!sources.is_empty())
-                    .then(|| (target.to_path_buf(), sources.into_boxed_slice()))
+            .map(|target| {
+                read(target).map(|sources| {
+                    (!sources.is_empty()).then(|| {
+                        (target.to_path_buf(), sources.into_boxed_slice())
+                    })
+                })
             })
-            .collect();
+            .filter_map(Result::transpose)
+            .collect::<IndexResult<_>>()?;
         Ok(InlinkMap::from_raw(edges))
     }
 
@@ -816,29 +829,34 @@ impl IndexStore {
         let Some(table) = self.open_table_for_read(&txn, kind.table())? else {
             return Ok(Vec::new());
         };
-        let items: Vec<T> = paths
-            .into_par_iter()
-            .filter_map(|path| {
-                let key = PathKey::new(path).as_bytes();
-                let guard = table
-                    .get(key)
-                    .map_err(|source| self.wrap_redb_error(source))
-                    .ok()??;
-                match decode_row::<T>(path, guard.value()) {
-                    Ok(item) => Some(item),
-                    Err(source) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            table = kind.label(),
-                            err = %source,
-                            "skipping corrupted row"
-                        );
-                        None
-                    }
+        Self::collect_batch(paths, |path| {
+            let key = PathKey::new(path).as_bytes();
+            let Some(guard) = table
+                .get(key)
+                .map_err(|source| self.wrap_redb_error(source))?
+            else {
+                return Ok(None);
+            };
+            match decode_row::<T>(path, guard.value()) {
+                Ok(item) => Ok(Some(item)),
+                Err(source) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        table = kind.label(),
+                        err = %source,
+                        "skipping corrupted row"
+                    );
+                    Ok(None)
                 }
-            })
-            .collect();
-        Ok(items)
+            }
+        })
+    }
+
+    fn collect_batch<'a, T: Send>(
+        paths: impl IntoParallelIterator<Item = &'a Path>,
+        read: impl Fn(&Path) -> IndexResult<Option<T>> + Sync + Send,
+    ) -> IndexResult<Vec<T>> {
+        paths.into_par_iter().map(read).filter_map(Result::transpose).collect()
     }
 
     /// Collects path values stored under `key` and propagates lookup errors.
@@ -2017,6 +2035,36 @@ mod tests {
             let (_, _, loaded_links) = store.read_all().expect("load links");
 
             assert_eq!(loaded_links, links);
+            let targeted = store
+                .read_links_for_targets([
+                    Path::new("target.md"),
+                    Path::new("other.md"),
+                    Path::new("absent.md"),
+                ])
+                .expect("read targeted links");
+            assert_eq!(targeted, links);
+        }
+
+        #[test]
+        fn targeted_links_propagate_a_failed_read_instead_of_omitting_the_target()
+         {
+            let paths = [Path::new("good.md"), Path::new("broken.md")];
+            let result = IndexStore::collect_target_links(paths, |target| {
+                if target == Path::new("broken.md") {
+                    Err(IndexError::Store(StoreError::Io {
+                        path: target.to_path_buf(),
+                        source: std::io::Error::other("simulated read failure"),
+                    }))
+                } else {
+                    Ok(vec![PathBuf::from("source.md")])
+                }
+            });
+
+            assert!(matches!(
+                result,
+                Err(IndexError::Store(StoreError::Io { path, .. }))
+                    if path == Path::new("broken.md")
+            ));
         }
 
         #[test]
@@ -2445,6 +2493,56 @@ mod tests {
             #[case] error: redb::TableError,
         ) {
             assert!(!IndexStore::is_rebuild_trigger(&error));
+        }
+    }
+
+    mod batch_reads {
+        use super::*;
+
+        #[test]
+        fn propagates_a_failed_row_read_instead_of_omitting_the_row() {
+            let paths = [Path::new("good.md"), Path::new("broken.md")];
+            let result = IndexStore::collect_batch(paths, |path| {
+                if path == Path::new("broken.md") {
+                    Err(IndexError::Store(StoreError::Io {
+                        path: path.to_path_buf(),
+                        source: std::io::Error::other("simulated read failure"),
+                    }))
+                } else {
+                    Ok(Some(path.to_path_buf()))
+                }
+            });
+
+            assert!(matches!(
+                result,
+                Err(IndexError::Store(StoreError::Io { path, .. }))
+                    if path == Path::new("broken.md")
+            ));
+        }
+
+        #[test]
+        fn skips_missing_and_undecodable_notes_but_keeps_valid_ones() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let note = parse("good.md", "# Good");
+            write_all_parts(
+                &store,
+                &note_files(&["good.md"]),
+                std::slice::from_ref(&note),
+                &InlinkMap::default(),
+            )
+            .expect("persist note");
+            write_raw_value(&store, NOTES, "bad.md", &[0xFF, 0xFE]);
+
+            let notes = store
+                .read_notes_batch([
+                    Path::new("good.md"),
+                    Path::new("missing.md"),
+                    Path::new("bad.md"),
+                ])
+                .expect("read available notes");
+
+            assert_eq!(notes.as_slice(), [note]);
         }
     }
 
