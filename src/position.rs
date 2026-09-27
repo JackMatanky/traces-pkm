@@ -258,12 +258,15 @@ mod tests {
 
         #[test]
         fn source_line_displays_as_its_numeric_value() {
-            assert_eq!(SourceLine::new(7).expect("non-zero").to_string(), "7");
+            let line = SourceLine::new(7).expect("non-zero");
+
+            assert_eq!(line.to_string(), "7");
         }
 
         #[test]
-        fn source_line_conversions_and_accessors() {
+        fn round_trips_u32_value_through_source_line() {
             let line = SourceLine::try_from(42u32).expect("non-zero");
+
             assert_eq!(u32::from(line), 42);
             assert_eq!(line.get(), 42);
         }
@@ -273,57 +276,141 @@ mod tests {
             assert!(SourceLine::new(0).is_none());
             assert!(SourceLine::try_from(0u32).is_err());
         }
+
+        #[test]
+        fn defines_minimum_line_as_one() {
+            assert_eq!(SourceLine::MIN.get(), 1);
+        }
+
+        #[test]
+        fn displays_source_line_error_message() {
+            assert_eq!(
+                SourceLineError.to_string(),
+                "source line number must be non-zero"
+            );
+        }
     }
 
-    mod byte_offset {
+    mod serialization {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn round_trips_u32_boundary_values() {
-            for value in [0_u32, 128, u32::MAX] {
-                let offset = ByteOffset::from(value);
-                assert_eq!(u32::from(offset), value);
-                assert_eq!(
-                    usize::from(offset),
-                    usize::try_from(value).expect("u32 always fits in usize")
-                );
-                assert_eq!(offset, ByteOffset::new(value));
-            }
+        fn round_trips_source_line_as_plain_u32() {
+            let line = SourceLine::try_from(7u32).expect("non-zero");
+
+            let encoded = serde_json::to_string(&line).expect("serializable");
+            let decoded: SourceLine =
+                serde_json::from_str(&encoded).expect("decodable");
+
+            assert_eq!(encoded, "7");
+            assert_eq!(decoded, line);
         }
 
         #[test]
-        fn narrows_from_usize_within_u32_range() {
-            for value in [0_usize, 1_048_576] {
-                let offset =
-                    ByteOffset::try_from(value).expect("within u32 range");
-                let expected = u32::try_from(value).expect("value fits u32");
-                assert_eq!(offset, ByteOffset::from(expected));
-            }
+        fn rejects_zero_when_deserializing() {
+            let error = serde_json::from_str::<SourceLine>("0")
+                .expect_err("zero is not a source line");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("source line number must be non-zero"),
+                "unexpected error message: {error}"
+            );
         }
 
         #[test]
-        fn returns_max_when_narrowing_widened_u32_max() {
+        fn round_trips_byte_offset_as_plain_u32() {
+            let offset = ByteOffset::new(5);
+
+            let encoded = serde_json::to_string(&offset).expect("serializable");
+            let decoded: ByteOffset =
+                serde_json::from_str(&encoded).expect("decodable");
+
+            assert_eq!(encoded, "5");
+            assert_eq!(decoded, offset);
+        }
+    }
+
+    mod byte_offset {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        fn offset_past_u32_max() -> usize {
+            usize::try_from(u32::MAX)
+                .expect("u32 always fits in usize")
+                .saturating_add(1)
+        }
+
+        #[rstest]
+        #[case::zero(0)]
+        #[case::non_ascii_byte(128)]
+        #[case::u32_max(u32::MAX)]
+        fn round_trips_u32_boundary_values(#[case] value: u32) {
+            let offset = ByteOffset::from(value);
+
+            assert_eq!(u32::from(offset), value);
+            assert_eq!(
+                usize::from(offset),
+                usize::try_from(value).expect("u32 always fits in usize")
+            );
+            assert_eq!(offset, ByteOffset::new(value));
+        }
+
+        #[test]
+        fn defines_maximum_offset_as_u32_max() {
+            assert_eq!(u32::from(ByteOffset::MAX), u32::MAX);
+        }
+
+        #[rstest]
+        #[case::zero(0)]
+        #[case::mid_range(1_048_576)]
+        #[case::u32_max(u32::MAX)]
+        fn narrows_from_usize_within_u32_range(#[case] value: u32) {
             let widened =
-                usize::try_from(u32::MAX).expect("u32 always fits in usize");
+                usize::try_from(value).expect("u32 always fits in usize");
 
             let offset =
-                ByteOffset::try_from(widened).expect("u32::MAX narrows");
+                ByteOffset::try_from(widened).expect("within u32 range");
 
-            assert_eq!(offset, ByteOffset::MAX);
+            assert_eq!(offset, ByteOffset::from(value));
         }
 
-        #[test]
-        fn returns_byte_offset_error_when_usize_exceeds_u32_max() {
-            let oversized = usize::try_from(u32::MAX)
-                .expect("u32 always fits in usize")
-                .saturating_add(1);
-
+        #[rstest]
+        #[case::one_past_u32_max(offset_past_u32_max())]
+        #[case::usize_max(usize::MAX)]
+        fn returns_byte_offset_error_when_usize_exceeds_u32_max(
+            #[case] oversized: usize,
+        ) {
             let error =
                 ByteOffset::try_from(oversized).expect_err("beyond u32 range");
 
             assert!(matches!(error, ByteOffsetError));
+        }
+
+        #[rstest]
+        #[case::zero(0)]
+        #[case::mid_range(1_048_576)]
+        #[case::u32_max(u32::MAX)]
+        fn keeps_in_range_offsets_unsaturated(#[case] value: u32) {
+            let widened =
+                usize::try_from(value).expect("u32 always fits in usize");
+
+            assert_eq!(
+                ByteOffset::saturating_from(widened),
+                ByteOffset::from(value)
+            );
+        }
+
+        #[rstest]
+        #[case::one_past_u32_max(offset_past_u32_max())]
+        #[case::usize_max(usize::MAX)]
+        fn saturates_oversized_offset_to_max(#[case] oversized: usize) {
+            assert_eq!(ByteOffset::saturating_from(oversized), ByteOffset::MAX);
         }
 
         #[test]
@@ -335,99 +422,49 @@ mod tests {
         }
 
         #[test]
-        fn saturates_oversized_offset_to_max() {
-            let oversized = usize::try_from(u32::MAX)
-                .expect("u32 always fits in usize")
-                .saturating_add(1);
-
-            assert_eq!(ByteOffset::saturating_from(oversized), ByteOffset::MAX);
-            assert_eq!(ByteOffset::saturating_from(0), ByteOffset::from(0_u32));
+        fn orders_offsets_by_numeric_value() {
+            assert!(ByteOffset::new(1) < ByteOffset::new(2));
+            assert!(ByteOffset::new(0) < ByteOffset::MAX);
         }
     }
 
     mod byte_tracker {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn resolves_any_offset_in_single_line_source_to_line_one() {
-            let tracker = ByteTracker::new("no newlines here");
-
-            assert_eq!(tracker.line_at(ByteOffset::new(0)), SourceLine::MIN);
-            assert_eq!(tracker.line_at(ByteOffset::new(10)), SourceLine::MIN);
+        fn line(number: u32) -> SourceLine {
+            SourceLine::new(number).expect("test line numbers are non-zero")
         }
 
-        #[test]
-        fn resolves_offsets_within_each_line_of_multi_line_source() {
-            let tracker = ByteTracker::new("one\ntwo\nthree");
+        #[rstest]
+        #[case::empty_source("", 0, 1)]
+        #[case::single_line_start("no newlines here", 0, 1)]
+        #[case::single_line_middle("no newlines here", 10, 1)]
+        #[case::start_of_line_one("one\ntwo\nthree", 0, 1)]
+        #[case::mid_line_one("one\ntwo\nthree", 2, 1)]
+        #[case::newline_char_of_line_one("one\ntwo\nthree", 3, 1)]
+        #[case::start_of_line_two("one\ntwo\nthree", 4, 2)]
+        #[case::start_of_line_three("one\ntwo\nthree", 8, 3)]
+        #[case::last_byte_of_line_three("one\ntwo\nthree", 12, 3)]
+        #[case::exact_end_of_source("one\ntwo\nthree", 13, 3)]
+        #[case::beyond_source_length("one\ntwo\nthree", 1000, 3)]
+        #[case::empty_line_in_middle("one\n\nthree", 4, 2)]
+        #[case::line_after_empty_line("one\n\nthree", 5, 3)]
+        #[case::end_after_trailing_newline("one\n", 4, 2)]
+        #[case::crlf_carriage_return("one\r\ntwo", 3, 1)]
+        #[case::crlf_line_start("one\r\ntwo", 5, 2)]
+        fn resolves_expected_line_for_offset_in_source(
+            #[case] source: &str,
+            #[case] offset: u32,
+            #[case] expected_line: u32,
+        ) {
+            let tracker = ByteTracker::new(source);
 
             assert_eq!(
-                tracker.line_at(ByteOffset::new(0)),
-                SourceLine::MIN,
-                "start of line 1"
-            );
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(2)),
-                SourceLine::MIN,
-                "mid line 1"
-            );
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(4)),
-                SourceLine::new(2).expect("non-zero"),
-                "start of line 2"
-            );
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(8)),
-                SourceLine::new(3).expect("non-zero"),
-                "start of line 3"
-            );
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(12)),
-                SourceLine::new(3).expect("non-zero"),
-                "last byte of line 3"
-            );
-        }
-
-        #[test]
-        fn counts_empty_lines_as_separate_lines() {
-            let tracker = ByteTracker::new("one\n\nthree");
-
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(4)),
-                SourceLine::new(2).expect("non-zero"),
-                "the empty line"
-            );
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(5)),
-                SourceLine::new(3).expect("non-zero")
-            );
-        }
-
-        #[test]
-        fn resolves_empty_source_to_line_one() {
-            let tracker = ByteTracker::new("");
-
-            assert_eq!(tracker.line_at(ByteOffset::new(0)), SourceLine::MIN);
-        }
-
-        #[test]
-        fn resolves_an_offset_beyond_source_length_to_the_last_line() {
-            let tracker = ByteTracker::new("one\ntwo\nthree");
-
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(1000)),
-                SourceLine::new(3).expect("non-zero")
-            );
-        }
-
-        #[test]
-        fn resolves_offset_past_trailing_newline_to_final_line() {
-            let tracker = ByteTracker::new("one\n");
-
-            assert_eq!(
-                tracker.line_at(ByteOffset::new(4)),
-                SourceLine::new(2).expect("non-zero")
+                tracker.line_at(ByteOffset::new(offset)),
+                line(expected_line)
             );
         }
     }
