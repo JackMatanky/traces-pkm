@@ -683,8 +683,12 @@ impl IndexStore {
         dimensions: &IndexDimensions,
     ) -> IndexResult<()> {
         self.delete_tables(&txn)?;
-        self.write_all_parallel(&txn, entries)?;
-        self.write_axes_parallel(&txn, entries, dimensions)?;
+        let (all_res, axes_res) = rayon::join(
+            || self.write_all_parallel(&txn, entries),
+            || self.write_axes_parallel(&txn, entries, dimensions),
+        );
+        all_res?;
+        axes_res?;
         self.commit(txn)?;
         Ok(())
     }
