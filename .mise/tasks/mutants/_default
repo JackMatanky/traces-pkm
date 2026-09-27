@@ -1,177 +1,460 @@
 #!/bin/bash
-#MISE description="Run parallel mutation testing with `cargo-mutants`"
+#MISE description="Run mutation testing (engine: `mutarust`)"
 #MISE sources=["@group:rust"]
 #MISE extends="mutants"
 #MISE depends=["test"]
-#MISE depends_post=["mutants:report"]
 #USAGE flag "-f --file <file>" {
-#USAGE   help "Run mutants in a specific file only (e.g. -f src/config.rs)"
+#USAGE   help "Mutate one file only (e.g. -f src/config/service.rs)"
 #USAGE }
 #USAGE flag "-m --mod <module>" {
-#USAGE   help "Run mutants in a specific module only (matches src/<module>/**/*.rs)"
+#USAGE   help "Mutate one module only (target src/<module>/ recursively)"
 #USAGE }
 #USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
 #USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
-#USAGE flag "--exclude <glob>" help="Exclude files matching glob"
-#USAGE flag "--check" {
-#USAGE   help "Build-only check: verify generated mutants compile without running tests"
+#USAGE flag "--min-msi <n>" help="Fail (exit 4) if total mutation score < n"
+#USAGE flag "--update-baseline" {
+#USAGE   help "Accept current escapes into mutarust-baseline.json (writes NO reports, exits 0)"
 #USAGE }
-#USAGE flag "--iterate" negate="--no-iterate" default=#true {
-#USAGE   help "Incremental mode: skip mutants caught in previous runs"
+#USAGE flag "--fail-on-escaped" help="Fail (exit 4) only on escapes absent from mutarust-baseline.json"
+#USAGE flag "--git-diff" negate="--no-git-diff" default=#false {
+#USAGE   help "Mutate only lines changed vs origin/HEAD (falls back to current branch; untracked files are invisible — stage new files first)"
 #USAGE }
-#USAGE flag "--timeout <secs>" help="Override test timeout in seconds"
-#USAGE flag "--no-config" help="Ignore .cargo/mutants.toml"
-#USAGE flag "-L --level <level>" {
-#USAGE   choices "trace" "debug" "info" "warn" "error"
-#USAGE   help "Log verbosity level"
+#USAGE flag "--dry-run" {
+#USAGE   help "Count mutants only; omits --test-flags/--timeout-coefficient (mutual exclusions). Pass as this declared flag, never as passthrough."
 #USAGE }
-#USAGE flag "-v --caught" help="Also print mutants caught by tests"
-#USAGE flag "-V --unviable" help="Also print mutants that failed to build"
-#USAGE flag "--all-logs" help="Print all Cargo output to stdout"
-#USAGE flag "--json" help="Emit machine-readable output"
+#USAGE flag "--timeout <secs>" help="Fixed per-test timeout; emits --timeout and suppresses the default --timeout-coefficient (mutual exclusions)"
 #USAGE arg "[args]" var=#true {
-#USAGE   help "Extra arguments forwarded to cargo-mutants"
+#USAGE   help "Extra arguments forwarded to mutarust"
 #USAGE   long_help """
 #USAGE   Examples:
-#USAGE   - `mise run mutants -- --list` - list mutants without running tests
-#USAGE   - `mise run mutants -m index -- --list` - list mutants for module `index`
-#USAGE   - `mise run mutants -m index` - test mutants for module `index`
-#USAGE   - `mise run mutants -f src/config.rs` - test mutants in a single file
-#USAGE   - `mise run mutants --check` - build check only (fast syntax/type validation)
+#USAGE   - `mise run mutants -m index` - mutate module `index`
+#USAGE   - `mise run mutants -m index --dry-run` - count only for one module
+#USAGE   - `mise run mutants --min-msi 60 --fail-on-escaped` - gate on new escapes only
+#USAGE   - `mise run mutants --git-diff` - only changed lines (tracked; stage new files)
+#USAGE   - `mise run mutants -- --list-mutators` - list built-in mutators
+#USAGE   - `mise run mutants -- --list-files` - print selected files (NOTE: ignores exclude_dirs)
+#USAGE   - `mise run mutants -- --run-mutant-id <id>` - re-run one mutant to verify a kill
+#USAGE   List/inspect passthrough (--list-files, --list-mutators,
+#USAGE   --print-ast) runs WITHOUT --config or task flags (mutarust
+#USAGE   rejects them there); declared run flags are rejected (exit 2).
+#USAGE   Exit codes: THIS TASK exits 2 for usage errors (bad -m/-f, conflicting
+#USAGE   flags). mutarust directly: 0 pass · 1 tool error · 2 bash completion
+#USAGE   (not a run) · 3 config/parse error · 4 quality gate (min_msi,
+#USAGE   min_covered_msi, or --fail-on-escaped; --run-mutant-id bypasses gates).
+#USAGE   A zero-mutant scope with --min-msi exits 4 (score is 0); only --git-diff
+#USAGE   auto-pairs --ignore-msi-with-no-mutations. Retry 4s with narrower scope.
+#USAGE   Migration from the previous engine: --exclude → config exclude_dirs /
+#USAGE   -f / -m; --check → none (drop); --iterate → none (baseline +
+#USAGE   --fail-on-escaped); -L/--all-logs → --verbose / --debug (the old -v/-V
+#USAGE   were caught/unviable printers; mutarust -V is --version!); --json →
+#USAGE   report.json (on via this task's config); --jobs → --workers N;
+#USAGE   --no-config → never pass (task owns --config).
 #USAGE   """
 #USAGE }
+
+# Optional cap-lints: see quality_gates_mise_adoption.md §10.2 row 2 —
+# verify the Task 10 P3 A/B before enabling; it also affects depends=["test"]
+# and invalidates build caches.
+# #MISE env={ RUSTFLAGS = "--cap-lints=allow" }
+
+# File description (Google style §4.1) — placed after the #MISE/#USAGE block
+# because mise requires its headers at the top of the file.
+# The `mutants` task: stable, tool-agnostic entrypoint for mutation testing.
+# Engine: mutarust. All conditional builders end in `return 0` (set -e trap).
 
 # shellcheck disable=SC2154  # usage_* are injected by mise
 set -euo pipefail
 
-declare -a mutants_args=()
+declare -a mutarust_args=()
+declare -a passthrough=()
 
-#######################################
-# Appends base cargo-mutants compilation and profile arguments.
+# Edit here for the Task 10 P2 experiment (--profile mutants acceptance).
+TEST_FLAGS="--features test-utils --all-targets"
+TIMEOUT_COEFFICIENT=5
+DEFAULT_TARGET="./src..."
+
+########################################
+# Parses variadic passthrough tokens into an array.
 # Globals:
-#   mutants_args
+#   usage_args
 # Arguments:
 #   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
-#######################################
-build_static_flags() {
-  mutants_args+=(
-    --baseline run
-    --cap-lints true
-    --build-timeout-multiplier 3
-    --profile mutants
-  )
+########################################
+parse_passthrough_tokens() {
+  # usage_args arrives shell-quoted; mise documents eval-into-array as the
+  # pattern for variadic args — intentional (mise_tasks 06_arguments.md).
+  eval "passthrough=(${usage_args:-})"
+  return 0
 }
 
-#######################################
-# Appends file, module, and exclusion filter arguments.
+########################################
+# True when the passthrough array contains the given exact token.
+# Globals:
+#   passthrough
+# Arguments:
+#   $1 - token to look for.
+# Outputs:
+#   None
+# Returns:
+#   0 when present, 1 otherwise.
+########################################
+passthrough_has_token() {
+  local t
+  for t in "${passthrough[@]+"${passthrough[@]}"}"; do
+    if [[ "${t}" == "$1" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+########################################
+# True when a fixed per-test timeout is requested (declared --timeout, or
+# passthrough --timeout/--exec-timeout) — either suppresses the task's
+# --timeout-coefficient, which mutarust rejects alongside them.
+# Globals:
+#   usage_timeout
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 when a fixed timeout is present, 1 otherwise.
+########################################
+has_fixed_timeout() {
+  if [[ -n "${usage_timeout:-}" ]]; then
+    return 0
+  fi
+  if passthrough_has_token "--timeout"; then
+    return 0
+  fi
+  if passthrough_has_token "--exec-timeout"; then
+    return 0
+  fi
+  return 1
+}
+
+########################################
+# Rejects flag combinations mutarust rejects opaquely, giving a task-level
+# diagnostic instead.
+# Globals:
+#   usage_update_baseline
+#   usage_dry_run
+#   usage_git_diff
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for a rejected combination.
+# Returns:
+#   Exits 2 on a known-bad combination; 0 otherwise.
+########################################
+reject_conflicting_flags() {
+  if [[ "${usage_update_baseline:-false}" == "true" &&
+    "${usage_dry_run:-false}" == "true" ]]; then
+    echo "mutants: --update-baseline cannot be combined with --dry-run" >&2
+    exit 2
+  fi
+  local t
+  for t in "${passthrough[@]+"${passthrough[@]}"}"; do
+    case "${t}" in
+      --exec | --no-exec)
+        if [[ "${usage_dry_run:-false}" == "true" ]]; then
+          echo "mutants: ${t} cannot be combined with --dry-run" >&2
+          exit 2
+        fi
+        echo "mutants: ${t} conflicts with task-owned --test-flags" >&2
+        exit 2
+        ;;
+      --dry-run)
+        echo "mutants: use the declared --dry-run flag, not passthrough" >&2
+        exit 2
+        ;;
+      --timeout | --exec-timeout | --timeout-coefficient | --workers | \
+        --coverage | --per-test | --test-recursive | \
+        --do-not-remove-tmp-folder)
+        if [[ "${usage_dry_run:-false}" == "true" ]]; then
+          echo "mutants: ${t} cannot be combined with --dry-run" >&2
+          exit 2
+        fi
+        ;;
+      --git-diff-base)
+        if [[ "${usage_git_diff:-false}" != "true" ]]; then
+          echo "mutants: --git-diff-base requires the --git-diff flag" >&2
+          exit 2
+        fi
+        ;;
+    esac
+  done
+  return 0
+}
+
+########################################
+# True when passthrough requests a list/inspect mode. mutarust rejects all
+# configuration and mutation options there (verified live on 0.1.10: even
+# --verbose and loggers are refused), so main() bypasses every task-owned
+# flag and forwards only the list flag, optional target, and raw tokens.
+# Globals:
+#   passthrough
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 in a list/inspect mode, 1 otherwise.
+########################################
+is_inspect_mode() {
+  if passthrough_has_token "--list-mutators"; then
+    return 0
+  fi
+  if passthrough_has_token "--list-files"; then
+    return 0
+  fi
+  if passthrough_has_token "--print-ast"; then
+    return 0
+  fi
+  return 1
+}
+
+########################################
+# True when the passthrough array carries a non-flag token — a target the
+# user supplied themselves. Flag values are rare in list modes and, when
+# present, the mode errors anyway, so treating them as positionals here is
+# harmless (it only suppresses the task's default-target append).
+# Globals:
+#   passthrough
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 when a positional token exists, 1 otherwise.
+########################################
+passthrough_has_positional() {
+  local t
+  for t in "${passthrough[@]+"${passthrough[@]}"}"; do
+    case "${t}" in
+      -*) ;;
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+########################################
+# Rejects declared run flags in list/inspect modes. mise consumes declared
+# flags before the script sees them, so they cannot be forwarded for
+# mutarust to diagnose — exit 2 with a task-level message instead.
+# Globals:
+#   usage_min_msi
+#   usage_update_baseline
+#   usage_fail_on_escaped
+#   usage_git_diff
+#   usage_dry_run
+#   usage_timeout
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for a rejected flag.
+# Returns:
+#   Exits 2 when a declared run flag is present; 0 otherwise.
+########################################
+reject_declared_in_inspect() {
+  if [[ -n "${usage_min_msi:-}" ]]; then
+    echo "mutants: --min-msi cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_update_baseline:-false}" == "true" ]]; then
+    echo "mutants: --update-baseline cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_fail_on_escaped:-false}" == "true" ]]; then
+    echo "mutants: --fail-on-escaped cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_git_diff:-false}" == "true" ]]; then
+    echo "mutants: --git-diff cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ "${usage_dry_run:-false}" == "true" ]]; then
+    echo "mutants: --dry-run cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  if [[ -n "${usage_timeout:-}" ]]; then
+    echo "mutants: --timeout cannot be combined with list/inspect mode" >&2
+    exit 2
+  fi
+  return 0
+}
+
+########################################
+# Assembles arguments for list/inspect modes. Task-owned flags are omitted
+# (mutarust forbids them there); the list flag must precede any target, so
+# passthrough is appended first. --list-mutators takes no target; the
+# target-taking modes append the -f/-m scope, else DEFAULT_TARGET unless
+# the user already supplied a positional.
+# Globals:
+#   passthrough
+#   usage_file
+#   usage_mod
+#   DEFAULT_TARGET
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for -f/-m with --list-mutators.
+# Returns:
+#   Exits 2 for -f/-m with --list-mutators; 0 on success.
+########################################
+build_inspect_args() {
+  reject_declared_in_inspect
+  mutarust_args+=("${passthrough[@]+"${passthrough[@]}"}")
+  if passthrough_has_token "--list-mutators"; then
+    if [[ -n "${usage_file:-}" || -n "${usage_mod:-}" ]]; then
+      echo "mutants: -f/-m cannot be combined with --list-mutators" >&2
+      exit 2
+    fi
+    return 0
+  fi
+  if [[ -n "${usage_file:-}" || -n "${usage_mod:-}" ]]; then
+    build_target_flags
+  elif ! passthrough_has_positional; then
+    mutarust_args+=("${DEFAULT_TARGET}")
+  fi
+  return 0
+}
+
+########################################
+# Appends policy and logging flags, then the Cargo test controls — omitted
+# entirely under --dry-run (mutarust: dry-run ⊥ test/timeout controls).
+# A passthrough --timeout/--exec-timeout or --timeout-coefficient wins over
+# the task's defaults; a declared --timeout is emitted here.
+# Globals:
+#   usage_dry_run
+#   usage_timeout
+#   TEST_FLAGS
+#   TIMEOUT_COEFFICIENT
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+########################################
+build_static_flags() {
+  mutarust_args+=(--config mutarust.yml --logger-agentic-json)
+  if [[ "${usage_dry_run:-false}" != "true" ]]; then
+    mutarust_args+=(--test-flags "${TEST_FLAGS}")
+    if [[ -n "${usage_timeout:-}" ]]; then
+      mutarust_args+=(--timeout "${usage_timeout}")
+    elif ! has_fixed_timeout &&
+      ! passthrough_has_token "--timeout-coefficient"; then
+      mutarust_args+=(--timeout-coefficient "${TIMEOUT_COEFFICIENT}")
+    fi
+  fi
+  return 0
+}
+
+########################################
+# Maps -f / -m to mutarust TARGET positionals; the default target keeps a
+# bare `mise run mutants` scoped to production code.
 # Globals:
 #   usage_file
 #   usage_mod
-#   usage_exclude
-#   mutants_args
+#   DEFAULT_TARGET
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for an unknown file/module.
+# Returns:
+#   Exits 2 on a bad scope; 0 on success.
+########################################
+build_target_flags() {
+  if [[ -n "${usage_file:-}" ]]; then
+    if [[ ! -f "${usage_file}" ]]; then
+      echo "mutants: no such file: ${usage_file}" >&2
+      exit 2
+    fi
+    mutarust_args+=("${usage_file}")
+  fi
+  if [[ -n "${usage_mod:-}" ]]; then
+    if [[ -d "src/${usage_mod}" ]]; then
+      mutarust_args+=("./src/${usage_mod}...")
+    elif [[ -f "src/${usage_mod}.rs" ]]; then
+      mutarust_args+=("./src/${usage_mod}.rs")
+    else
+      echo "mutants: unknown module: ${usage_mod}" >&2
+      exit 2
+    fi
+  fi
+  if [[ -z "${usage_file:-}" && -z "${usage_mod:-}" ]]; then
+    mutarust_args+=("${DEFAULT_TARGET}")
+  fi
+  return 0
+}
+
+########################################
+# Gate flags. An empty --git-diff-lines run must not trip a min-msi gate
+# (cli.md pairs --ignore-msi-with-no-mutations with the score gate).
+# Globals:
+#   usage_min_msi
+#   usage_fail_on_escaped
+#   usage_update_baseline
+#   usage_git_diff
+#   usage_dry_run
+#   mutarust_args
 # Arguments:
 #   None
 # Outputs:
 #   None
 # Returns:
 #   0 on success.
-#######################################
-build_filter_flags() {
-  [[ -n "${usage_file:-}" ]] && mutants_args+=(--file "${usage_file}")
-  [[ -n "${usage_mod:-}" ]] && \
-    mutants_args+=(--file "src/${usage_mod}/**/*.rs")
-  [[ -n "${usage_exclude:-}" ]] && \
-    mutants_args+=(--exclude "${usage_exclude}")
+########################################
+build_gate_flags() {
+  [[ -n "${usage_min_msi:-}" ]] && mutarust_args+=(--min-msi "${usage_min_msi}")
+  [[ "${usage_fail_on_escaped:-false}" == "true" ]] &&
+    mutarust_args+=(--fail-on-escaped)
+  [[ "${usage_update_baseline:-false}" == "true" ]] &&
+    mutarust_args+=(--update-baseline)
+  if [[ "${usage_git_diff:-false}" == "true" ]]; then
+    mutarust_args+=(--git-diff-lines)
+    if [[ -n "${usage_min_msi:-}" ]]; then
+      mutarust_args+=(--ignore-msi-with-no-mutations)
+    fi
+  fi
+  [[ "${usage_dry_run:-false}" == "true" ]] && mutarust_args+=(--dry-run)
+  return 0
 }
 
-#######################################
-# Appends iteration, check, timeout, and verbosity level arguments.
+########################################
+# Assembles the argument list and executes mutarust.
 # Globals:
-#   usage_iterate
-#   usage_check
-#   usage_timeout
-#   usage_level
-#   mutants_args
+#   mutarust_args
 # Arguments:
-#   None
+#   CLI arguments vector (unused; usage_* carries the parsed values).
 # Outputs:
-#   None
+#   mutarust output to STDOUT/STDERR.
 # Returns:
-#   0 on success.
-#######################################
-build_execution_flags() {
-  [[ "${usage_iterate:-true}" == "true" ]] && mutants_args+=(--iterate)
-  [[ "${usage_check:-false}" == "true" ]] && mutants_args+=(--check)
-  [[ -n "${usage_timeout:-}" ]] && \
-    mutants_args+=(--timeout "${usage_timeout}")
-  [[ -n "${usage_level:-}" ]] && mutants_args+=(--level "${usage_level}")
-}
-
-#######################################
-# Appends output logging and reporting flags.
-# Globals:
-#   usage_caught
-#   usage_unviable
-#   usage_all_logs
-#   usage_json
-#   usage_no_config
-#   mutants_args
-# Arguments:
-#   None
-# Outputs:
-#   None
-# Returns:
-#   0 on success.
-#######################################
-build_reporting_flags() {
-  [[ "${usage_caught:-false}" == "true" ]] && mutants_args+=(--caught)
-  [[ "${usage_unviable:-false}" == "true" ]] && mutants_args+=(--unviable)
-  [[ "${usage_all_logs:-false}" == "true" ]] && mutants_args+=(--all-logs)
-  [[ "${usage_json:-false}" == "true" ]] && mutants_args+=(--json)
-  [[ "${usage_no_config:-false}" == "true" ]] && \
-    mutants_args+=(--no-config)
-}
-
-#######################################
-# Evaluates and parses variadic usage_args tokens into mutants_args.
-# Globals:
-#   usage_args
-#   mutants_args
-# Arguments:
-#   None
-# Outputs:
-#   None
-# Returns:
-#   0 on success.
-#######################################
-parse_passthrough_tokens() {
-  # usage_args arrives shell-quoted; eval expands it into array elements.
-  eval "mutants_args+=(${usage_args:-})"
-}
-
-#######################################
-# Assembles full argument list and executes cargo mutants.
-# Globals:
-#   mutants_args
-# Arguments:
-#   CLI arguments vector.
-# Outputs:
-#   cargo mutants test output to STDOUT/STDERR.
-# Returns:
-#   Status of cargo mutants.
-#######################################
+#   Status of mutarust.
+########################################
 main() {
-  build_static_flags
-  build_filter_flags
-  build_execution_flags
-  build_reporting_flags
   parse_passthrough_tokens
+  reject_conflicting_flags
+  if is_inspect_mode; then
+    build_inspect_args
+  else
+    build_static_flags
+    build_target_flags
+    build_gate_flags
+    mutarust_args+=("${passthrough[@]+"${passthrough[@]}"}")
+  fi
 
-  cargo mutants "${mutants_args[@]}"
+  mutarust "${mutarust_args[@]}"
 }
 
 main "$@"
