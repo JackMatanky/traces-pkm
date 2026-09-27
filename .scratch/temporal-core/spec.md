@@ -13,11 +13,11 @@ For a vault tool, this is user-facing: a note written in New York silently compa
 Make `date.rs`/`duration.rs` a set of deep modules with declared, single-owner seams, then land the parity gaps as registry entries on top:
 
 - **One calendar owner:** shift/diff/apply live in the date module; the template engine and (future) query functions become thin adapters over it. Adding a unit means editing one table, not four matches.
-- **One declared duration regime:** identity is seconds (fixed ratios, named as such); application of month/year parts to dates is calendar, left-to-right — the Luxon-style "equal values, different shifts" behavior is declared, pinned by test, and documented instead of hidden in an engine `match`.
+- **One declared duration regime:** identity is seconds (fixed ratios, named as such); application of day/month/year parts to dates is calendar (local wall-clock frame), left-to-right — the Luxon-style "equal values, different shifts" behavior is declared, pinned by test, and documented instead of hidden in an engine `match`.
 - **One recognition entry per domain:** a `classify` trichotomy (`None` = cheap shape gate, `Some(Ok/Err)`) retires the guard-protocol functions that two call sites have already forgotten to honor.
 - **Precision lives at the recognition layer**, so `YYYY-MM` survives arithmetic and the engine deletes the shadow type it had to invent.
 - **Deserialization funnels through the same parser as inline input**, making the documented funnel claim true.
-- **Naive datetimes mean local time** (both plugins' behavior), stored as UTC, with a decided DST policy (ambiguous → earliest, nonexistent → shift forward).
+- **Naive datetimes mean local time** (both plugins' behavior), stored as UTC, with a decided DST policy (ambiguous → earliest, nonexistent → shift forward) enforced by a single gap-verified resolver.
 - **Parity arrives as registry entries:** query temporal functions in the `FilterFunction` registry, `durationformat` and a scoped moment→strftime translator as template filters, shorthands as engine adapters over the calendar owner.
 
 Everything is verified through three existing seams — value-type interfaces (unit), the query `FilterFunction` registry (integration), and template filters (integration) — with no new seams.
@@ -65,7 +65,7 @@ Everything is verified through three existing seams — value-type interfaces (u
 39. As an agent, I want the config-level default date format constant removed in favor of the crate's documented default (with its different value noted), so that there's one source of truth.
 40. As a maintainer, I want every public date/duration item to have rustdoc-conformant comments (`# Errors` listing real variants, intra-doc links, one-sentence summaries), so that rustdoc builds clean and callers know failure modes.
 41. As a user writing dates with offsets, I want RFC3339 `…Z` reserved for explicit interop while everyday serial uses the display spelling, so that each channel has one canonical form.
-42. As a maintainer, I want the divergence register to record every intentional difference from Dataview/Templater (UTC instants, space-separated datetimes, magnitude-vs-calendar identity, explicit `NoteFieldType` rank, canonical duration Eq, null ordering, ISO Monday weeks, local-naive + DST, strictness-by-seam, strftime dialect), so that "is this a bug?" has one place to look.
+42. As a maintainer, I want the divergence register to record every intentional difference from Dataview/Templater (UTC instants, space-separated datetimes, magnitude-vs-calendar identity, explicit `NoteFieldType` rank, canonical duration Eq, null ordering, ISO Monday weeks, local-naive + DST, strictness-by-seam, strftime dialect, DST overlap resolves earlier (ecosystem consensus: Temporal/jiff/BigQuery; PostgreSQL resolves later — the outlier), first day of week pinned ISO Monday (elsewhere it is CLDR locale data — deliberately not followed), null ordering unique among engines (SQL engines themselves disagree: PG nulls-largest, Trino/DuckDB always-last, SQLite first), day/month/year calendar vs sub-hour exact (PG `1 day` ≠ `24 hours` parity), wasm `Local` caveat (chrono #1701) documented, out-of-scope), so that "is this a bug?" has one place to look.
 
 ## Implementation Decisions
 
@@ -81,8 +81,9 @@ Everything is verified through three existing seams — value-type interfaces (u
 
 - `DurationValue` shape: `raw: Box<str>` + `seconds: DurationSeconds` (sole Eq/Ord/Hash identity) + `parts: Option<Box<[(f64, DurationUnit)]>>`. Parsing is the only path that fills `Some`, and it computes `seconds` by summing those same parts in one statement — the Σ invariant holds by construction, no runtime validation.
 - `parts` doubles as the regime witness: `Some` containing Month/Year ⇒ calendar application; `Some` without ⇒ fixed; `None` (synthesized values) ⇒ fixed. Matched exhaustively as data, no extra enum.
-- Identity stays seconds-based (fixed ratios); application to dates is calendar for month/year parts, applied left-to-right in written order.
-- The Luxon-style incoherence (equal values, different date-shifts) is **accepted and declared**: glossary clause + a pinning test that demonstrates it. A1′ (reject `mo`/`y`) and A3′ (shape identity) explicitly rejected — they break pinned cross-spelling equality and the plugins' documented idioms.
+- Identity stays seconds-based (fixed ratios); day joins month/year as a **calendar** application unit, applied left-to-right in written order (chrono's `Days` type exists because `TimeDelta::days(1)` surprises; PostgreSQL documents `+ interval '1 day'` ≠ `+ interval '24 hours'` across DST). So `1d == 24h` as values but may shift differently — the A2′ incoherence extends to days and is pinned by test. Sub-day units (h/min/s/ms) apply as exact durations on the instant.
+- **Calendar frame (D12):** calendar application preserves the **local wall clock**: `shift`/`apply` round-trip through the local zone — `DateTime<Utc>` → local naive → chrono `checked_add_months(Months)`/`checked_add_days(Days)` (never fail on DST — naive has no DST) → back to UTC through the single resolver. Precedent: Temporal `relativeTo`, Luxon `plus`, PostgreSQL `+ interval '1 day'`/`'1 month'`.
+- The Luxon-style incoherence (equal values, different date-shifts — the incoherence now extends to `1d` vs `24h` across DST) is **accepted and declared**: glossary clause + a pinning test that demonstrates it. A1′ (reject `mo`/`y`) and A3′ (shape identity) explicitly rejected — they break pinned cross-spelling equality and the plugins' documented idioms.
 - Duration arithmetic: `Add`/`Sub` on `DurationValue` (seconds add, parts concatenate when both present, `-0.0` normalized); `Mul<f64>` scales both; equality remains seconds-only.
 
 **Recognition & precision**
@@ -93,14 +94,16 @@ Everything is verified through three existing seams — value-type interfaces (u
 
 **Parsing, formatting, serde**
 
-- Naive datetime input parses as **local zone → UTC**; date-only input is zone-free; `now`/`today`/file-stat reads use the local clock, storage is always UTC. DST policy: ambiguous → `.earliest()`, nonexistent → shifted forward by the gap. Tests inject `TZ`.
+- Naive datetime input parses as **local zone → UTC**; date-only input is zone-free; `now`/`today`/file-stat reads use the local clock, storage is always UTC. DST policy: one named resolver owns local→UTC, exhaustively matching `MappedLocalTime::{Single, Ambiguous, None}` — ambiguous → earliest, true gap → shifted forward by the gap, while `None` caused by a tz-data/OS error surfaces as an error, never a silent shift (gap verified by probing adjacent local times). Its rustdoc cites Temporal `'compatible'` (RFC 5545) and jiff `Disambiguation::Compatible`; `LocalResult` is chrono's old name for `MappedLocalTime`. The wasm caveat (chrono #1701: `Local` on wasm returns only `Single`) is documented as out-of-scope. Tests inject `TZ`.
 - `date_add` documentation widens to "any `DurationUnit` spelling"; the caveat that sub-day units may not change a date-only result lands with the precision fix.
-- Deserialization uses a manual `Deserialize` via the module's own parser (house precedent: the duration type's existing manual impl); serialization uses the display spelling; RFC3339 `…Z` output is reserved for explicit interop. Both errors get `#[non_exhaustive]`; exports made symmetric across the two domains.
+- Deserialization uses a manual `Deserialize` via the module's own parser (house precedent: the duration type's existing manual impl); serialization uses the display spelling; RFC3339 `…Z` output is reserved for explicit interop — emitted via chrono `to_rfc3339_opts(SecondsFormat::Secs, use_z = true)`; `%+` is never used. Both errors get `#[non_exhaustive]`; exports made symmetric across the two domains.
 - Display rules: duration seconds render through a chosen dialect (exponent above a threshold), never raw `f64`; extreme/small synthesized values must not render as a lie (`"0s"` for nonzero).
 - One shared renderer owns invalid-pattern detection; each call site maps its error to its own error type (template vs core).
 - Moment→strftime translator is template-seam only, scope 1: bracket literals, `YYYY MM DD HH mm ss` family, `Do`/`S`, `dddd`/`ddd`/`MMM`/`MMMM`; everything else errors naming the token and dialect. Core `format_with` keeps strftime as its only grammar.
 - `parse_with(text, fmt)` returns `Result` (one implementation serving the query `reference` case and future LSP needs).
 - ISO-8601 duration strings (`P1M`, `P-1M`) are translated at the shorthand adapter, not added as a second grammar.
+- **Format bindings:** core formatting stays a thin chrono wrapper; `chrono::format::strftime` is the documented grammar (intra-doc link in touched rustdoc); invalid-pattern detection is chrono's `DelayedFormat` error only — no parallel specifier validator; `%+` never emitted (chrono advises against it) — RFC3339 interop uses `to_rfc3339_opts(SecondsFormat::Secs, true)` to produce the `…Z` channel; format docs note `%Z` prints only an offset, `%S` may render `60` (leap second), and week numbers use `%V`/`%G` (ISO), not `%U`/`%W`.
+- **Week mandate:** week bucketing/numbering delegates to chrono `NaiveDate::iso_week()` / `from_isoywd_opt` and weekday accessors; epoch-day division for weeks is forbidden (Dataview `.week` footgun).
 
 **Dead surface & config (Decision C)**
 
@@ -109,14 +112,14 @@ Everything is verified through three existing seams — value-type interfaces (u
 
 **Docs**
 
-- CONTEXT.md gains: calendar-arithmetic owner clause; duration regime clause (identity = magnitude, application = calendar for month/year, equal-values-may-shift-differently, test-backed); date interface facts (four-digit year, `YYYY-MM` → day 1, precision at recognition layer, naive datetime = local → stored UTC); funnel claim extended to deserialization; registry-owner claim without caveat; strictness-by-seam rule; pinned ISO Monday; DST policy; single `*Avoid*` glossary rule.
-- ADR: null ordering ("null never satisfies an ordering") replacing the code comment; divergence register covering UTC instants, space-datetime, magnitude-vs-calendar identity, null ordering, ISO Monday, local-naive+DST, strictness-by-seam.
+- CONTEXT.md gains: calendar-arithmetic owner clause; duration regime clause (identity = magnitude, application = calendar for day/month/year with sub-hour units exact, calendar frame = local wall clock, equal-values-may-shift-differently, test-backed); date interface facts (four-digit year, `YYYY-MM` → day 1, precision at recognition layer, naive datetime = local → stored UTC); funnel claim extended to deserialization; registry-owner claim without caveat; strictness-by-seam rule; pinned ISO Monday; DST policy (resolver cited to Temporal `'compatible'`/RFC 5545); single `*Avoid*` glossary rule.
+- ADR: null ordering ("null never satisfies an ordering") replacing the code comment; divergence register covering UTC instants, space-datetime, magnitude-vs-calendar identity, null ordering, ISO Monday, local-naive+DST, strictness-by-seam, DST overlap resolves earlier (ecosystem consensus: Temporal/jiff/BigQuery; PostgreSQL resolves later — the outlier), first day of week pinned ISO Monday (elsewhere it is CLDR locale data — deliberately not followed), null ordering unique among engines (SQL engines themselves disagree: PG nulls-largest, Trino/DuckDB always-last, SQLite first), day/month/year calendar vs sub-hour exact (PG `1 day` ≠ `24 hours` parity), wasm `Local` caveat (chrono #1701) documented, out-of-scope.
 - All touched public items documented per `rust-doc` (one-sentence summaries, real `# Errors` variants, intra-doc links).
 
 ## Testing Decisions
 
 - **A good test here exercises external behavior through a seam — never past it.** Tests assert contracts (trichotomy, Σ invariant, round-trip, equal-values-different-shifts) not implementation lines; Arrange/Act/Assert kept visually separate; fresh per-test fixtures; time and `TZ` injected per test, never shared/global.
-- **Seam 1 (primary) — value-type interfaces, in-module `#[cfg(test)]`:** parse/classify/shift/diff/format/serde for the date and duration types. Covers: panic→error (N1), signed-zero (`-0m`), `parts`/`fixed_seconds` invariants, the A2′ pinning test, DST earliest/gap tests, `YYYY-MM` precision round-trip, serde round-trip and `…Z` rejection, error source chains, classify trichotomy (`None` doesn't allocate — assert via behavior, not internals), sign-rule pinning (N15b).
+- **Seam 1 (primary) — value-type interfaces, in-module `#[cfg(test)]`:** parse/classify/shift/diff/format/serde for the date and duration types. Covers: panic→error (N1), signed-zero (`-0m`), `parts`/`fixed_seconds` invariants, the A2′ pinning test (and `1d` vs `24h` shifting differently across a DST boundary), DST earliest/gap tests with resolver gap-verification (error vs gap), `YYYY-MM` precision round-trip, serde round-trip and `…Z` rejection, error source chains, classify trichotomy (`None` doesn't allocate — assert via behavior, not internals), sign-rule pinning (N15b).
 - **Seam 2 — query `FilterFunction` registry, integration (`tests/integration/`):** every public temporal function workflow and edge failure (null operand, wrong type, out-of-range component) maps to a case or an explicit out-of-scope reason. Prior art: `index_query`, `task_tag_filters`.
 - **Seam 3 — template filters/engine, integration:** `durationformat`, moment-token rendering (incl. the token-naming error), shorthands, `weekday`, local-clock display. The engine adapter is tested **through the template seam only**. Prior art: `template_render`.
 - **Doctests:** every changed public example runs under `cargo test --doc`; new rustdoc examples marked with the appropriate attribute and reason where not runnable.
@@ -130,6 +133,7 @@ Everything is verified through three existing seams — value-type interfaces (u
 - Full moment.js token table (scope 1 only; growth is additive later).
 - Locale-configurable first day of week; `Clock`/`TimeZone`/`Dialect` traits; typestate builders; merged error enums; `date/` directory split (revisit only if the calendar owner + precision hoist + `parse_with` actually push the module size).
 - Benchmark work; changes to chrono, minijinja, or other dependency pins.
+- wasm target — chrono `Local` returns only `Single` on wasm (chrono #1701); documented, not supported.
 
 ## Further Notes
 
@@ -142,4 +146,4 @@ Everything is verified through three existing seams — value-type interfaces (u
 
 **Decisions fully settled:** A2′ (parts + fixed-ratio identity + calendar application), B1 + naive=local→UTC with earliest/gap DST policy, D-b scoped translator with token-naming errors, D11 doc widening bundled with the precision fix, ISO Monday, null-never-satisfies-ordering ADR. No open questions remain.
 
-**Design record:** the full findings catalogue (N1–N23, D1–D11, H3/H4), seam landscape, principles audit, and rust-skills conformance table live alongside this spec in `review.md` — tickets should cite finding IDs from it rather than re-deriving them.
+**Design record:** the full findings catalogue (N1–N23, D1–D11, H3/H4), seam landscape, principles audit, and rust-skills conformance table live alongside this spec in `review.md` — tickets should cite finding IDs from it rather than re-deriving them. External prior-art evidence lives in `research/` (`sql-temporal-conventions.md`, `general-temporal-libraries.md`, `rust-temporal-ecosystem.md`).

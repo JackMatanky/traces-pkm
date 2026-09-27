@@ -11,7 +11,7 @@ Skills: `rust-integration-testing`, `rust-skills`. Rules: `FilterFunction` regis
 - [ ] `date + duration` / `date - duration` evaluate in filter expressions (B17)
 - [ ] `date - date` yields a duration (B17)
 - [ ] Duration arithmetic (`+`, `-`, `* number`) available to queries (B18)
-- [ ] `date_add` / `date_diff` / `date_component` work, with `date_add` accepting any `DurationUnit` spelling; `date_component` covers year/month/day/… per B24 (Dataview's components minus the `.week` footgun) — start/end-of-period bucketing helpers (`sow`/`eow`/`soy`/`eoy`, B11) are ticket 07's deliverable, not claimed here
+- [ ] `date_add` / `date_diff` / `date_component` work, with `date_add` accepting any `DurationUnit` spelling; `date_component` covers year/month/day/… per B24 (Dataview's components minus the `.week` footgun) — start/end-of-period bucketing helpers (`sow`/`eow`/`soy`/`eoy`, B11) are ticket 07's deliverable, not claimed here — components read chrono accessors directly (`year()`, `iso_week()`, …); the week component is ISO via `iso_week()` (never `%U`/`%W` semantics)
 - [ ] Every public workflow and edge failure (null operand, wrong type, out-of-range component) maps to an integration case or an explicit out-of-scope reason, tested at the `FilterFunction` registry seam
 - [ ] Engine and query paths agree on the same calendar owner (no reimplementation in the query layer)
 - [ ] `mise run verify` green

@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-Skills: `rust-skills`, `rust-unit-testing`, `codebase-design`. Rules: `api-parse-dont-validate` (Σ invariant by construction), `type-enum-states` (parts as regime witness), `num-overflow-explicit`, `anti-over-abstraction` (no `Clock`/`TimeZone` traits — one adapter = hypothetical seam). Design record: `../review.md` §4 (A2′), §5.1–5.2, §9 (S1+S2).
+Skills: `rust-skills`, `rust-unit-testing`, `codebase-design`. Rules: `api-parse-dont-validate` (Σ invariant by construction), `type-enum-states` (parts as regime witness), `num-overflow-explicit`, `anti-over-abstraction` (no `Clock`/`TimeZone` traits — one adapter = hypothetical seam); calendar application uses chrono's own primitives (`checked_add_months(Months)` / `checked_add_days(Days)` on the local naive value — never `naive_local()`, which panics) — no hand-rolled month arithmetic. Design record: `../review.md` §4 (A2′), §5.1–5.2, §9 (S1+S2).
 
 - [ ] `DurationValue` retains `parts: Option<…>` alongside seconds; parsing is the only path filling `Some` and computes seconds by summing those same parts in one statement — no state where they disagree
 - [ ] `from_seconds` stores `None` (honest: cannot synthesize Month/Year); regime witness matches exhaustively: month/year parts ⇒ calendar, else fixed, `None` ⇒ fixed
@@ -15,4 +15,7 @@ Skills: `rust-skills`, `rust-unit-testing`, `codebase-design`. Rules: `api-parse
 - [ ] Calendar owner exists in the date module: `shift(base, n, unit)`, `diff(a, b, unit)`, `apply(base, &DurationValue)` applying parts left-to-right in written order; the engine's copied shift/diff deleted and delegation in place (H4 shrinks)
 - [ ] A2′ pinning test demonstrates equal values shifting dates differently (`dur("1 month")` vs `dur("30 days")`); the cross-spelling equality contract (`dur("1h 30m") == dur("90m")`) stays pinned green; CONTEXT.md clause (c) text is ticket 08's job — this ticket supplies the executable test it cites
 - [ ] `checked_add`/`checked_sub` superseded by `apply` (removed or re-backed — no API pretending to arithmetic it can't do); ticket 09 verifies no residue remains
+- [ ] `shift`/`apply` preserve the local wall clock (spec D12): `DateTime<Utc>` → local naive → chrono calendar add → back through the resolver; month clamping matches chrono's documented behavior (Jan 31 + 1 month → last day of Feb), pinned by a test citing chrono's own example
+- [ ] `day` is a calendar application unit (spec D13): `1d == 24h` as values but they shift differently across a DST transition — the extended A2′ incoherence pinned by test; sub-day units apply as exact durations
+- [ ] `signed_years_since`/`signed_months_since` relocated from the template engine into the calendar owner (chrono has no months-between primitive — this custom code is justified and single-owned here)
 - [ ] `mise run verify` green

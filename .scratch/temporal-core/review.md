@@ -4,7 +4,7 @@ Companion to `spec.md` (the tracker feature `temporal-core`): the full findings/
 
 **Status:** decisions A2′, B1+local-naive, D-b(scoped), and D11-doc-widening are **accepted**. This document is the full findings/analysis/deepening record. No implementation performed.
 
-**Post-v4 evolutions (settled at spec time, marked inline below):** DST policy = ambiguous → `.earliest()`, nonexistent → shift forward (was the single open item); null ordering = keep current behavior, ADR replaces the code comment; the three test seams confirmed (value types / `FilterFunction` registry / template filters).
+**Post-v4 evolutions (settled at spec time, marked inline below):** DST policy = ambiguous → `.earliest()`, nonexistent → shift forward (was the single open item); null ordering = keep current behavior, ADR replaces the code comment; the three test seams confirmed (value types / `FilterFunction` registry / template filters); calendar frame = local wall clock for day/month/year application (chrono `checked_add_*` + local round-trip; Temporal/Luxon/PG parity), sub-hour units exact, incoherence extended to `1d` vs `24h` across DST (pinned by test); one gap-verified local→UTC resolver (`MappedLocalTime` exhaustive match; tz-data errors must not shift; rustdoc cited to Temporal `'compatible'`/RFC 5545 and jiff `Compatible`; wasm caveat chrono #1701 out-of-scope); format grammar formally bound to `chrono::format::strftime` (intra-doc link, no parallel invalid-pattern validator, `%+` forbidden, interop `…Z` via `to_rfc3339_opts(Secs, use_z=true)`), week bucketing mandated to `iso_week()`/`from_isoywd_opt`; external prior-art research completed (see `research/`), backing the divergence register.
 
 ---
 
@@ -246,4 +246,10 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 5. **Docs:** S13.
 6. **Dead surface:** Decision-C deletions/wirings (`to_time_string`, `start_of_day`, `cmp_date`, `to_offset_string`→serial?, `checked_add/sub`→superseded by `apply`, `from_seconds`→keep or re-target).
 
-**Post-v4 evolution:** the DST-ambiguity policy (the one open item below) is now **settled** — ambiguous → `.earliest()`, nonexistent → shift forward (see §4 B1) — and null ordering is **decided** (keep current behavior + ADR, §3). Everything else is decided.
+## External prior art (post-v4)
+
+- `research/sql-temporal-conventions.md` — SQL engines' temporal conventions (PG/MySQL/SQLite/DuckDB/Trino/BigQuery); backs: UTC-storage precedent, DST gap-forward + PG-later-vs-earlier overlap divergence, magnitude interval equality, ISO Monday in PG `date_trunc`, null-ordering disagreement among engines.
+- `research/general-temporal-libraries.md` — Temporal/Luxon/Java/Python/standards; backs: DST `compatible`/earlier consensus, dual civil-vs-zoned timelines, magnitude duration equality, strict-parse norm, CLDR locale-data weeks.
+- `research/rust-temporal-ecosystem.md` — chrono/time/jiff/Arrow/DataFusion; backs: `MappedLocalTime` semantics + gap/error conflation, chrono `Days`/`Months` vs `TimeDelta` regime split, Arrow Duration-vs-Interval, chrono strftime as the de-facto Rust dialect, known chrono critiques (RUSTSEC, serde history).
+
+**Post-v4 evolution:** the DST-ambiguity policy (the one open item below) is now **settled** — ambiguous → `.earliest()`, nonexistent → shift forward (see §4 B1) — and null ordering is **decided** (keep current behavior + ADR, §3). Everything else is decided. Post-v4: external prior-art research (`research/`) and the chrono-API audit added the local-wall-clock calendar frame, day-as-calendar, the gap-verified resolver, and the chrono format/week delegation mandates (spec 'Implementation Decisions').

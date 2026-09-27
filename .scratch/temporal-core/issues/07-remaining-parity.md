@@ -15,4 +15,5 @@ Skills: `rust-integration-testing`, `rust-skills`. Rules: edge strategies named 
 - [ ] The `reference`/`reference_format` consumer is wired end-to-end through its seam — B12/T2 demonstrated by a user-facing case, not just the library function
 - [ ] `file.day` computed at index time, exposed to queries (B26/B30)
 - [ ] Integration cases cover each workflow and edge failure (bad format string, missing date field, out-of-range week number) or state an out-of-scope reason
+- [ ] `sow`/`eow`/`soy`/`eoy` and `weekday(n)` are built from chrono primitives (`NaiveDate::iso_week()` / `from_isoywd_opt` / weekday accessors) — no epoch-day division for weeks (Dataview `.week` footgun)
 - [ ] `mise run verify` green
