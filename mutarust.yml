@@ -1,0 +1,43 @@
+---
+# mutarust.yml — mutation-testing policy for traces-pkm.
+# mutarust reads this ONLY via `--config mutarust.yml` (no auto-discovery);
+# the `mutants` mise task always passes it. Schema (11 fields,
+# additionalProperties: false): docs/refs/mutarust/schema/mutarust.schema.json
+
+# Reports land in CWD (all gitignored): report.json (triage) and
+# mutarust-report.html (human). mutarust-agentic.json comes from the task's
+# --logger-agentic-json. NOTE: report.json is clobbered by every run,
+# including --dry-run — read stats immediately after a scored run.
+json_output: true
+html_output: true
+silent_mode: false
+
+# Port of .cargo/mutants.toml exclude_globs "src/cli/**" (path prefix).
+# Accepted gaps (no file-level exclude exists): src/main.rs and the 8 non-cli
+# src/**/error.rs files ARE mutated, and exclude_re has no port, so impl-body
+# mutants appear that cargo-mutants skipped (noisier than the old baseline).
+# Absorbed by the committed baseline; revisit with `// mutator-disable-func`
+# annotations only if escape noise demands it.
+exclude_dirs:
+  - src/cli
+
+# Zero-yield operator group for this repo (no tokio-style select! sites in
+# src/; see quality_gates_mutarust.md §9.17) — drops mutants that only burn
+# build time.
+disable_mutators:
+  - "select/*"
+
+# Do NOT enable without a --dry-run A/B: this repo gates many items with
+# #[cfg(any(test, feature = "test-utils"))] and the docs never classify
+# `any(test, …)` (§9.3) — enabling could suppress active test-support mutants.
+skip_without_test: false
+skip_with_cfg: false
+
+# Score gate stays commented until the stage-2 baseline run (Task 11):
+# enable ONLY if measured MSI >= 60 (ci.md "active" tier; score strictly
+# below min_msi exits 4). The same ci.md row's companion 75 is min_covered_msi,
+# which we do NOT set: without --coverage a positive min_covered_msi exits 4.
+# min_msi: 60
+
+enable_mutators: []
+ignore_source_lines: []
