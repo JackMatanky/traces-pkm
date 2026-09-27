@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<ruleset name="Controversial Rules"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+         xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+
+    <description>
+This ruleset checks Rust style names under historical CamelCase rule ids.
+Types use PascalCase; functions, fields, parameters, and locals use snake_case.
+See docs/controversial.md.
+    </description>
+
+    <!--
+    Superglobals is omitted: Rust has no request-superglobal analog.
+    See docs/controversial.md.
+    -->
+
+    <rule name="CamelCaseClassName"
+          since="0.2"
+          message="The type {0} is not named in PascalCase."
+          class="PHPMD\Rule\Controversial\CamelCaseClassName"
+          externalInfoUrl="https://phpmd.org/rules/controversial.html#camelcaseclassname">
+        <description>
+            <![CDATA[
+It is considered best practice to use PascalCase notation to name structs,
+enums, traits, and unions in Rust.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="camelcase-abbreviations"
+                      description="Reject consecutive uppercase letters in type names (HTTP → Http)."
+                      value="false" />
+        </properties>
+        <example>
+            <![CDATA[
+struct bad_name;      // violation
+struct GoodName;      // OK
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="CamelCaseMethodName"
+          since="0.2"
+          message="The method {0} is not named in snake_case."
+          class="PHPMD\Rule\Controversial\CamelCaseMethodName"
+          externalInfoUrl="https://phpmd.org/rules/controversial.html#camelcasemethodname">
+        <description>
+            <![CDATA[
+It is considered best practice to use snake_case notation to name functions
+and methods in Rust.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="allow-underscore"
+                      description="Kept for phpmd XML parity; snake_case already allows underscores."
+                      value="true" />
+            <property name="allow-underscore-test"
+                      description="Kept for phpmd XML parity; snake_case already allows underscores."
+                      value="true" />
+        </properties>
+        <example>
+            <![CDATA[
+impl ClassName {
+    fn GetName() {}   // violation
+    fn get_name() {}  // OK
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="CamelCasePropertyName"
+          since="0.2"
+          message="The property {0} is not named in snake_case."
+          class="PHPMD\Rule\Controversial\CamelCasePropertyName"
+          externalInfoUrl="https://phpmd.org/rules/controversial.html#camelcasepropertyname">
+        <description>
+            <![CDATA[
+It is considered best practice to use snake_case notation to name fields in Rust.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="allow-underscore"
+                      description="Kept for phpmd XML parity; snake_case already allows underscores."
+                      value="true" />
+        </properties>
+        <example>
+            <![CDATA[
+struct ClassName {
+    badField: i32,   // violation
+    good_field: i32, // OK
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="CamelCaseParameterName"
+          since="0.2"
+          message="The parameter {0} is not named in snake_case."
+          class="PHPMD\Rule\Controversial\CamelCaseParameterName"
+          externalInfoUrl="https://phpmd.org/rules/controversial.html#camelcaseparametername">
+        <description>
+            <![CDATA[
+It is considered best practice to use snake_case notation to name parameters in Rust.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="allow-underscore"
+                      description="Kept for phpmd XML parity; snake_case already allows underscores."
+                      value="true" />
+        </properties>
+        <example>
+            <![CDATA[
+fn do_something(userName: &str) {}  // violation
+fn do_something(user_name: &str) {} // OK
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="CamelCaseVariableName"
+          since="0.2"
+          message="The variable {0} is not named in snake_case."
+          class="PHPMD\Rule\Controversial\CamelCaseVariableName"
+          externalInfoUrl="https://phpmd.org/rules/controversial.html#camelcasevariablename">
+        <description>
+            <![CDATA[
+It is considered best practice to use snake_case notation to name local
+variables in Rust.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="allow-underscore"
+                      description="Kept for phpmd XML parity; snake_case already allows underscores."
+                      value="true" />
+        </properties>
+        <example>
+            <![CDATA[
+fn do_something() {
+    let dataModule = 1;  // violation
+    let data_module = 1; // OK
+}
+            ]]>
+        </example>
+    </rule>
+
+</ruleset>

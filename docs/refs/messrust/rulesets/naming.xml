@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Naming Rules"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+         xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+    <description>
+The Naming Ruleset contains a collection of rules about names - too long, too short, and so forth.
+Rust behavior: docs/naming.md.
+    </description>
+
+    <rule name="ShortClassName"
+          since="2.9"
+          message="Avoid types with short names like {0}. Configured minimum length is {1}."
+          class="PHPMD\Rule\Naming\ShortClassName"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#shortclassname">
+        <description>
+            Detects when structs, enums, traits, or unions have a very short name.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="minimum" description="The type name length reporting threshold" value="3"/>
+            <property name="exceptions" description="Comma-separated list of exceptions. Example: Id,Io,Db" value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+struct Fo;
+trait Ab {}
+enum X { A }
+]]>
+        </example>
+    </rule>
+
+    <rule name="LongClassName"
+          since="2.9"
+          message="Avoid excessively long type names like {0}. Keep type name length under {1}."
+          class="PHPMD\Rule\Naming\LongClassName"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#longclassname">
+        <description>
+            Detects when structs, enums, traits, or unions are declared with excessively long names.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="maximum" description="The type name length reporting threshold" value="40"/>
+            <property name="subtract-prefixes" description="Comma-separated list of prefixes that will not count in the length of the type name. Only the first matching prefix will be subtracted." value=""/>
+            <property name="subtract-suffixes" description="Comma-separated list of suffixes that will not count in the length of the type name. Only the first matching suffix will be subtracted." value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+struct ATooLongClassNameThatHintsAtADesignProblem;
+]]>
+        </example>
+    </rule>
+
+    <rule name="ShortVariable"
+          since="0.2"
+          message="Avoid variables with short names like {0}. Configured minimum length is {1}."
+          class="PHPMD\Rule\Naming\ShortVariable"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#shortvariable">
+        <description>
+Detects when a field, local, or parameter has a very short name.
+For-loop and while-let binders are skipped (Rust analogue of phpmd's for-initializer skip).
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="minimum" description="Minimum length for a variable, field or parameter name" value="3"/>
+            <property name="exceptions" description="Comma-separated list of exceptions" value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+struct Something {
+    q: i32, // VIOLATION - Field
+}
+fn main(xs: i32) { // VIOLATION - Parameter
+    let r = 20; // VIOLATION - Local
+    for i in 0..10 { // Not a violation (for binder)
+        let _ = (i, r, xs);
+    }
+}
+]]>
+        </example>
+    </rule>
+
+    <rule name="LongVariable"
+          since="0.2"
+          message="Avoid excessively long variable names like {0}. Keep variable name length under {1}."
+          class="PHPMD\Rule\Naming\LongVariable"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#longvariable">
+        <description>
+Detects when a field, formal or local variable is declared with a long name.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="maximum" description="The variable length reporting threshold" value="20"/>
+            <property name="subtract-prefixes" description="Comma-separated list of prefixes that will not count in the length of the variable name. Only the first matching prefix will be subtracted." value=""/>
+            <property name="subtract-suffixes" description="Comma-separated list of suffixes that will not count in the length of the variable name. Only the first matching suffix will be subtracted." value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+struct Something {
+    really_long_int_name_var: i32, // VIOLATION - Field
+}
+fn main(interesting_arguments_list: i32) { // VIOLATION - Parameter
+    let other_really_long_name = -5; // VIOLATION - Local
+    let _ = (interesting_arguments_list, other_really_long_name);
+}
+]]>
+        </example>
+    </rule>
+
+    <rule name="ShortMethodName"
+          since="0.2"
+          message="Avoid using short method names like {0}::{1}(). The configured minimum method name length is {2}."
+          class="PHPMD\Rule\Naming\ShortMethodName"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#shortmethodname">
+        <description>
+Detects when very short function or method names are used.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="minimum" description="Minimum length for a method or function name" value="3"/>
+            <property name="exceptions" description="Comma-separated list of exceptions" value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+struct ShortMethod;
+impl ShortMethod {
+    fn a(&self, index: i32) { // Violation
+        let _ = index;
+    }
+}
+]]>
+        </example>
+    </rule>
+
+    <rule name="ConstantNamingConventions"
+          since="0.2"
+          message="Constant {0} should be defined in SCREAMING_SNAKE_CASE"
+          class="PHPMD\Rule\Naming\ConstantNamingConventions"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#constantnamingconventions">
+        <description>
+Const and static names should follow the configured naming convention.
+The default convention is upper (SCREAMING_SNAKE_CASE), matching Rust idioms and
+clippy's non_upper_case_globals. Set convention=pascal for PascalCase (no underscores).
+        </description>
+        <priority>4</priority>
+        <properties>
+            <property name="convention" description="Naming convention: upper (default, SCREAMING_SNAKE) or pascal (PascalCase)" value="upper"/>
+        </properties>
+        <example>
+            <![CDATA[
+const MY_NUM: i32 = 0;    // ok (upper)
+const badName: i32 = 1;   // fail
+]]>
+        </example>
+    </rule>
+
+    <rule name="BooleanGetMethodName"
+          since="0.2"
+          message="The '{0}()' method which returns a boolean should be named 'is_...()' or 'has_...()'"
+          class="PHPMD\Rule\Naming\BooleanGetMethodName"
+          externalInfoUrl="https://phpmd.org/rules/naming.html#booleangetmethodname">
+        <description>
+Looks for functions or methods named get_... / Get... with bool as the return type.
+Rust convention prefers is_... or has_....
+        </description>
+        <priority>4</priority>
+        <properties>
+            <property name="checkParameterizedMethods" value="false" description="When true, also check get_... methods that take parameters"/>
+        </properties>
+        <example>
+            <![CDATA[
+struct Foo;
+impl Foo {
+    fn get_foo(&self) -> bool { true } // bad
+    fn is_foo(&self) -> bool { true }  // ok
+    fn get_foo_flag(&self, bar: i32) -> bool { bar > 0 } // ok unless checkParameterizedMethods=true
+}
+]]>
+        </example>
+    </rule>
+
+    <!--
+    ConstructorWithNameAsEnclosingClass is a documented no-op for Rust.
+
+    PHP's old-style constructor (a method named after its class) does not exist
+    in Rust. Types are constructed via inherent methods such as `new` or via
+    struct literal syntax; a free function may share a type's name without
+    being a constructor, and rustc does not treat that as a special form.
+    Keeping a live rule would invent PHP-class noise. The rule remains here as
+    a comment for catalog traceability.
+
+    phpmd class: PHPMD\Rule\Naming\ConstructorWithNameAsEnclosingClass
+    phpmd message: Classes should not have a constructor method with the same name as the class
+    -->
+
+</ruleset>

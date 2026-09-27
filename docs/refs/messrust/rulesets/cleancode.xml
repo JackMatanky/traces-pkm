@@ -1,0 +1,184 @@
+<?xml version="1.0"?>
+
+<ruleset name="Clean Code Rules"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+         xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+
+    <description>
+The Clean Code ruleset contains rules that enforce a clean code base. This includes rules from SOLID and object calisthenics.
+Rust behavior: docs/cleancode.md.
+    </description>
+
+    <rule name="BooleanArgumentFlag"
+          since="1.4.0"
+          message="The method {0} has a boolean flag argument {1}, which is a certain sign of a Single Responsibility Principle violation."
+          class="PHPMD\Rule\CleanCode\BooleanArgumentFlag"
+          externalInfoUrl="https://phpmd.org/rules/cleancode.html#booleanargumentflag">
+        <description>
+            <![CDATA[
+A boolean flag argument is a reliable indicator for a violation of
+the Single Responsibility Principle (SRP). You can fix this problem
+by extracting the logic in the boolean flag into its own type
+or function.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="exceptions" description="Comma-separated enclosing type name list of exceptions" value=""/>
+            <property name="ignorepattern" description="Ignore methods matching this regex. Example: /(^(__construct|get.*Filtered)$)/ or (^(new|create))i" value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+fn process(flag: bool) {
+    let _ = flag;
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="ElseExpression"
+          since="1.4.0"
+          message="The method {0} uses an else expression. Else clauses are basically not necessary and you can simplify the code by not using them."
+          class="PHPMD\Rule\CleanCode\ElseExpression"
+          externalInfoUrl="https://phpmd.org/rules/cleancode.html#elseexpression">
+        <description>
+            <![CDATA[
+            An if expression with an else branch is basically not necessary. You can rewrite the
+            conditions in a way that the else clause is not necessary and the code becomes simpler
+            to read. To achieve this, use early returns, or split the work into smaller functions.
+            Prefer `match` or separate early-return arms over a terminal `else`.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties/>
+        <example>
+            <![CDATA[
+fn choose(flag: bool) -> i32 {
+    if flag {
+        1
+    } else {
+        2
+    }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="IfStatementAssignment"
+          since="2.7.0"
+          message="Avoid assigning values to variables in if clauses and the like (line '{0}', column '{1}')."
+          class="PHPMD\Rule\CleanCode\IfStatementAssignment"
+          externalInfoUrl="http://phpmd.org/rules/cleancode.html#ifstatementassignment">
+        <description>
+            <![CDATA[
+Assignments in if and while conditions are considered a code smell.
+In Rust this usually appears as an assignment inside a condition block
+(e.g. `if { x = foo(); true }`). Prefer binding with `let` / `if let`
+outside the condition.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties/>
+        <example>
+            <![CDATA[
+fn scan(mut x: i32) {
+    if { x = 1; true } {
+        let _ = x;
+    }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="DuplicatedArrayKey"
+          message="Duplicated array key {0}, first declared at line {1}."
+          class="PHPMD\Rule\CleanCode\DuplicatedArrayKey"
+          externalInfoUrl="http://phpmd.org/rules/cleancode.html#duplicatedarraykey">
+        <description>
+            <![CDATA[
+Defining another value for the same field in a struct literal
+overrides the previous field binding in languages that allow it.
+In Rust, duplicate fields are invalid; this rule still reports them
+when the syntax tree contains them (catalog parity with phpmd).
+            ]]>
+        </description>
+        <priority>2</priority>
+        <properties/>
+        <example>
+            <![CDATA[
+struct Point { x: i32, y: i32 }
+fn make() -> Point {
+    Point { x: 1, y: 2, x: 3 }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="StaticAccess"
+          since="1.4.0"
+          message="Avoid using static access to class '{0}' in method '{1}'."
+          class="PHPMD\Rule\CleanCode\StaticAccess"
+          externalInfoUrl="https://phpmd.org/rules/cleancode.html#staticaccess">
+        <description>
+            <![CDATA[
+Associated-function calls on another type (`Other::make()`) create hard
+dependencies that are difficult to replace in tests. Prefer injecting
+behaviour. `Self::…` and snake_case module paths are not flagged.
+Add commonly used utility types to the exceptions list.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="exceptions" description="Comma-separated type name list of exceptions (e.g. Math,String)" value=""/>
+            <property name="ignorepattern" description="Ignore methods matching this regex. Example: (^create)i" value=""/>
+        </properties>
+        <example>
+            <![CDATA[
+struct Helper;
+impl Helper {
+    fn make() -> i32 { 1 }
+}
+struct Worker;
+impl Worker {
+    fn run() -> i32 {
+        Helper::make()
+    }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <!--
+    ErrorControlOperator is a documented no-op for Rust.
+
+    PHP's `@` error-control operator has no Rust analog. Failures surface as
+    Result / panic / compile errors; inventing findings would be PHP noise.
+
+    phpmd class: PHPMD\Rule\CleanCode\ErrorControlOperator
+    phpmd message: Remove error control operator '@' on line {0}.
+    -->
+
+    <!--
+    MissingImport is a documented no-op for Rust.
+
+    PHP can reference classes without a `use` statement (global / FQCN). Rust
+    unresolved paths are compile errors; there is nothing meaningful for a
+    syntax-only detector to report beyond what rustc already enforces.
+
+    phpmd class: PHPMD\Rule\CleanCode\MissingImport
+    phpmd message: Missing class import via use statement (line '{0}', column '{1}').
+    -->
+
+    <!--
+    UndefinedVariable is a documented no-op for Rust.
+
+    Unresolved binders are compile errors in Rust. A syntax-only pass cannot
+    usefully mirror PHP's notice-prone undefined variables.
+
+    phpmd class: PHPMD\Rule\CleanCode\UndefinedVariable
+    phpmd message: Avoid using undefined variables such as '{0}' which will lead to PHP notices.
+    -->
+
+</ruleset>

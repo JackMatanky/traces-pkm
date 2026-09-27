@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<ruleset name="Explicitness Rules"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+         xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+    <description>
+The Explicitness Ruleset finds implicit inputs and implicit outputs of functions.
+The parameters are the explicit inputs. The return value is the explicit output.
+Rust behavior: docs/explicitness.md.
+    </description>
+
+    <rule name="ImplicitInput"
+          since="0.1.12"
+          message="The {0} '{1}' has an implicit input: {2}."
+          class="Messrust\Rule\Explicitness\ImplicitInput">
+        <description>
+            <![CDATA[
+Reports data that goes into a function but not through its parameters:
+reads of mutable or interior-mutable statics and thread-local keys, and calls
+that read the environment, the clock, the file system, or a random source.
+Set include-self to true to also report each read of 'self' in a method.
+            ]]>
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="include-self" description="Report reads of 'self' in methods as implicit inputs" value="false"/>
+        </properties>
+        <example>
+            <![CDATA[
+static LIMIT: AtomicUsize = AtomicUsize::new(10);
+
+fn over_limit(count: usize) -> bool {
+    count > LIMIT.load(Ordering::Relaxed) // implicit input
+}
+
+fn over_limit_explicit(count: usize, limit: usize) -> bool {
+    count > limit
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="ImplicitOutput"
+          since="0.1.12"
+          message="The {0} '{1}' has an implicit output: {2}."
+          class="Messrust\Rule\Explicitness\ImplicitOutput">
+        <description>
+            <![CDATA[
+Reports data that goes out of a function but not through its return value:
+writes to mutable or interior-mutable statics and thread-local keys, print and
+log macros, calls that change the file system, the environment, or the process,
+and '&mut' parameters. Set include-self to true to also report '&mut self'
+receivers and writes to 'self' in methods.
+            ]]>
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="include-self" description="Report changes to 'self' in methods as implicit outputs" value="false"/>
+        </properties>
+        <example>
+            <![CDATA[
+fn add_item(cart: &mut Vec<Item>, item: Item) { // implicit output
+    cart.push(item);
+}
+
+fn add_item_explicit(cart: &[Item], item: Item) -> Vec<Item> {
+    let mut next = cart.to_vec();
+    next.push(item);
+    next
+}
+            ]]>
+        </example>
+    </rule>
+</ruleset>

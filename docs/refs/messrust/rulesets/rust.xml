@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<ruleset name="Rust Rules"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+         xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+    <description>
+The recommended rules for idiomatic Rust. This set keeps checks that find
+maintainability and correctness risks, and omits checks that conflict with
+common Rust expression and naming patterns.
+    </description>
+
+    <rule ref="codesize" />
+
+    <!-- Rust permits short binders such as i, x, and v in local scopes. -->
+    <!-- Raise the long-name limit to fit descriptive Rust identifiers. -->
+    <rule ref="naming/LongVariable">
+        <properties>
+            <property name="maximum" value="35" />
+        </properties>
+    </rule>
+    <rule ref="naming">
+        <exclude name="ShortVariable" />
+        <exclude name="LongVariable" />
+    </rule>
+
+    <!-- Unused parameters are often intentional in trait and callback APIs. -->
+    <rule ref="unusedcode">
+        <exclude name="UnusedFormalParameter" />
+    </rule>
+
+    <!-- Rust uses expression-oriented control flow and boolean options. -->
+    <rule ref="cleancode">
+        <exclude name="BooleanArgumentFlag" />
+        <exclude name="ElseExpression" />
+        <exclude name="StaticAccess" />
+    </rule>
+
+    <!-- Loop counts and process exits have valid Rust use cases. -->
+    <rule ref="design">
+        <exclude name="CountInLoopExpression" />
+        <exclude name="ExitExpression" />
+    </rule>
+
+    <rule ref="controversial" />
+</ruleset>

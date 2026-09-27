@@ -1,0 +1,234 @@
+<?xml version="1.0"?>
+
+<ruleset name="Design Rules"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+         xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+
+    <description>
+The Design Ruleset contains a collection of rules that find software design related problems.
+Rust behavior: docs/design.md.
+    </description>
+
+    <rule name="ExitExpression"
+          since="0.2"
+          message="The {0} {1}() contains an exit expression."
+          class="PHPMD\Rule\Design\ExitExpression"
+          externalInfoUrl="https://phpmd.org/rules/design.html#exitexpression">
+        <description>
+            <![CDATA[
+An exit-expression within regular code is untestable and therefore it should
+be avoided. Consider moving the exit call into `main` or a thin startup
+wrapper that returns an error code to the calling environment.
+In Rust this means calls to `std::process::exit` or `std::process::abort`
+(including shorter paths that end in `exit` / `abort`).
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties />
+        <example>
+            <![CDATA[
+fn bail(code: i32) {
+    if code != 0 {
+        std::process::exit(code);
+    }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="GotoStatement"
+          since="1.1.0"
+          message="The {0} {1}() utilizes a goto statement."
+          class="PHPMD\Rule\Design\GotoStatement"
+          externalInfoUrl="https://phpmd.org/rules/design.html#gotostatement">
+        <description>
+            <![CDATA[
+IDENTITY / QUIET for Rust: the language has no `goto`. The rule remains
+loadable for catalog parity and never fabricates findings.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties />
+        <example>
+            <![CDATA[
+// No Rust example — goto does not exist.
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="CountInLoopExpression"
+          since="2.7.0"
+          message="Avoid using {0} in {1} loops."
+          class="PHPMD\Rule\Design\CountInLoopExpression"
+          externalInfoUrl="https://phpmd.org/rules/design.html#countinloopexpression">
+        <description>
+            <![CDATA[
+Using `.len()` or `.capacity()` in loop conditions is considered bad practice
+and is a potential source of bugs, especially when the loop manipulates a
+collection, as the count is re-evaluated on each iteration. Prefer binding
+the length once before the loop.
+            ]]>
+        </description>
+        <priority>2</priority>
+        <properties />
+        <example>
+            <![CDATA[
+fn scan(items: &[i32]) {
+    let mut i = 0;
+    while i < items.len() {
+        i += 1;
+    }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="DevelopmentCodeFragment"
+          since="2.3.0"
+          message="The {0} {1}() calls the typical debug function {2}() which is mostly only used during development."
+          class="PHPMD\Rule\Design\DevelopmentCodeFragment"
+          externalInfoUrl="https://phpmd.org/rules/design.html#developmentcodefragment">
+        <description>
+            <![CDATA[
+Macros and functions like `println!`, `print!`, `eprintln!`, and `dbg!` are
+normally only used during development and therefore such calls in production
+code are a good indicator that they were just forgotten.
+            ]]>
+        </description>
+        <priority>2</priority>
+        <properties>
+            <property name="unwanted-functions" value="" description="Comma-separated list of additional suspect function or macro names (e.g. tracing_debug,todo)." />
+        </properties>
+        <example>
+            <![CDATA[
+fn work(items: &[i32]) {
+    for item in items {
+        println!("{item}");
+    }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="EmptyCatchBlock"
+          since="2.7.0"
+          message="Avoid using empty catch blocks in {0}."
+          class="PHPMD\Rule\Design\EmptyCatchBlock"
+          externalInfoUrl="https://phpmd.org/rules/design.html#emptycatchblock">
+        <description>
+            <![CDATA[
+Rust has no try/catch. The analog of a swallowed exception is an empty
+error-handling block: `if let Err(_) = … {}` or an empty `Err(…)` match arm.
+Usually empty error handlers are a bad idea because you are silently
+swallowing a failure and then continuing execution.
+            ]]>
+        </description>
+        <priority>2</priority>
+        <properties />
+        <example>
+            <![CDATA[
+fn work() {
+    if let Err(_e) = might_fail() {}
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="CouplingBetweenObjects"
+          since="1.1.0"
+          message="The class {0} has a coupling between objects value of {1}. Consider to reduce the number of dependencies under {2}."
+          class="PHPMD\Rule\Design\CouplingBetweenObjects"
+          externalInfoUrl="https://phpmd.org/rules/design.html#couplingbetweenobjects">
+        <description>
+            <![CDATA[
+A type with too many dependencies has negative impacts on several quality
+aspects. This includes stability, maintainability and understandability.
+The coupling is measured by counting distinct non-builtin type names
+referenced in fields, method parameters, and return types.
+            ]]>
+        </description>
+        <priority>2</priority>
+        <properties>
+            <property name="maximum" value="13" description="Maximum number of acceptable dependencies." />
+        </properties>
+        <example>
+            <![CDATA[
+struct Foo {
+    a: A, b: B, c: C, d: D, e: E, f: F, g: G,
+    h: H, i: I, j: J, k: K, l: L, m: M, n: N,
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="GlobalVariable"
+          since="0.2"
+          message="Avoid using static mutable state: {0}."
+          class="PHPMD\Rule\Design\GlobalVariable"
+          externalInfoUrl="https://phpmd.org/rules/design.html#globalvariable">
+        <description>
+            <![CDATA[
+ADAPTED: Flags `static mut` items that are actually mutated somewhere in the
+file (assigned or compound-assigned). Mutable static state hurts testability
+and is unsafe under concurrency.
+
+By default only statics that are actually mutated are reported. Set the
+`report-immutable` property to also flag un-mutated `static mut` items.
+
+Immutable `static` and `const` items are never flagged.
+            ]]>
+        </description>
+        <priority>1</priority>
+        <properties>
+            <property name="report-immutable" value="false" description="Also flag static mut items that are never mutated in the file." />
+        </properties>
+        <example>
+            <![CDATA[
+static mut COUNTER: i32 = 0;
+
+fn bump() {
+    unsafe { COUNTER += 1; }
+}
+            ]]>
+        </example>
+    </rule>
+
+    <rule name="LackOfCohesionOfMethods"
+          since="0.2"
+          message="The {0} has a Lack of Cohesion Of Methods (LCOM4) value of {1}. Consider to split this class into {1} smaller classes."
+          class="PHPMD\Rule\Design\LackOfCohesionOfMethods"
+          externalInfoUrl="https://phpmd.org/rules/design.html#lackofcohesionofmethods">
+        <description>
+            <![CDATA[
+Computes the LCOM4 cohesion metric per type. Methods are linked when they
+share a field or when one calls another via `self`. The metric is the number
+of disconnected method groups; a value above `maximum` (default 1) means the
+type bundles unrelated responsibilities and is a candidate for splitting.
+
+Trivial getters and setters are excluded from the graph; a call to a getter
+counts as use of its backing field. Stateless methods (no field use, no sibling
+calls) are ignored so data carriers with accessors are not falsely flagged.
+            ]]>
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="maximum" value="1" description="The maximum number of allowed LCOM4 components." />
+        </properties>
+        <example>
+            <![CDATA[
+struct Server {
+    conns: i32,
+    stats: i32,
+}
+impl Server {
+    fn accept(&mut self) { self.conns += 1; }
+    fn record(&mut self) { self.stats += 1; }
+    // Two disjoint clusters → LCOM4 = 2 → violation
+}
+            ]]>
+        </example>
+    </rule>
+
+</ruleset>

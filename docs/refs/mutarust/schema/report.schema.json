@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "mutant": {
+      "additionalProperties": false,
+      "properties": {
+        "blacklistChecksum": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "diff": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "mutator": {
+          "additionalProperties": false,
+          "properties": {
+            "mutatorName": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "originalFilePath": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "originalStartLine": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "mutatorName",
+            "originalFilePath",
+            "originalStartLine"
+          ],
+          "type": "object"
+        },
+        "processOutput": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "blacklistChecksum",
+        "mutator",
+        "diff"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Full mutation report written to report.json when json_output is enabled.",
+  "properties": {
+    "errored": {
+      "items": {
+        "$ref": "#/$defs/mutant"
+      },
+      "type": "array"
+    },
+    "escaped": {
+      "items": {
+        "$ref": "#/$defs/mutant"
+      },
+      "type": "array"
+    },
+    "generated": {
+      "items": {
+        "$ref": "#/$defs/mutant"
+      },
+      "type": "array"
+    },
+    "killed": {
+      "items": {
+        "$ref": "#/$defs/mutant"
+      },
+      "type": "array"
+    },
+    "metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "hasCoverage": {
+          "type": "boolean"
+        },
+        "oneMutant": {
+          "type": "boolean"
+        },
+        "version": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "hasCoverage",
+        "oneMutant"
+      ],
+      "type": "object"
+    },
+    "mutatorStats": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "escaped": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "killed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "skipped": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "killed",
+          "escaped",
+          "skipped",
+          "total"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "notCovered": {
+      "items": {
+        "$ref": "#/$defs/mutant"
+      },
+      "type": "array"
+    },
+    "skipped": {
+      "items": {
+        "$ref": "#/$defs/mutant"
+      },
+      "type": "array"
+    },
+    "stats": {
+      "$ref": "summary.schema.json"
+    }
+  },
+  "required": [
+    "metadata",
+    "stats",
+    "escaped",
+    "killed",
+    "errored"
+  ],
+  "title": "Mutarust full JSON report",
+  "type": "object"
+}

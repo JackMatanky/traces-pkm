@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Agent-ready report written to mutarust-agentic.json when --logger-agentic-json is enabled.",
+  "properties": {
+    "escaped_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "generated_at": {
+      "description": "RFC 3339 generation time",
+      "minLength": 1,
+      "type": "string"
+    },
+    "msi": {
+      "description": "Mutation score from zero to one",
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "mutants": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "context_lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "context_start_line": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "string"
+          },
+          "file": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "kill_hint": {
+            "type": "string"
+          },
+          "line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mutator": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "test_files": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "file",
+          "line",
+          "mutator",
+          "description",
+          "kill_hint",
+          "diff",
+          "context_start_line",
+          "context_lines",
+          "test_files"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "reminder": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "generated_at",
+    "msi",
+    "escaped_count",
+    "reminder",
+    "mutants"
+  ],
+  "title": "Mutarust agent-ready escaped-mutant report",
+  "type": "object"
+}

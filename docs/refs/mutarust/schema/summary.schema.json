@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Compact mutation summary written to mutarust-summary.json when --logger-summary-json is enabled.",
+  "properties": {
+    "coveredCodeMsi": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "errorCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "escapedCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "killedCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "msi": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "notCoveredCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skippedCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "totalMutantsCount": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "totalMutantsCount",
+    "killedCount",
+    "notCoveredCount",
+    "escapedCount",
+    "errorCount",
+    "skippedCount",
+    "msi",
+    "coveredCodeMsi"
+  ],
+  "title": "Mutarust compact JSON summary",
+  "type": "object"
+}
