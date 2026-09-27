@@ -2,110 +2,103 @@
 # Agent skills
 
 ## Issue tracker
-
 Issues: local markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
 
 ## Triage labels
-
 Five roles mapped to local state strings in issue files. See `docs/agents/triage-labels.md`.
 
 ## Domain docs
-
 Multi-context — `CONTEXT-MAP.md` + per-module `CONTEXT.md` under `src/`. See `docs/agents/domain.md`.
 <!-- agent-skills:end -->
 
 <!-- mise:start -->
 ## Mise — Environment & Task Orchestration
 
-> Note: Mise tools require `MISE_EXPERIMENTAL=1`.
+Prerequisite: Set `MISE_EXPERIMENTAL=1` for tool/task discovery.
 
-### Always Do
+### Execution Policy
+- Route all build, test, lint, format, and audit operations through `run_task`; restrict raw shell commands to operations uncovered by any task.
+- Inspect `mise://tasks` before executing builds or tests; inspect `mise://tools`, `mise://env`, and `mise://config` to diagnose environment failures.
+- Verify downstream dependency and tooling impact before modifying `.tool-versions` or `mise.toml`.
 
-- Check `mise://tasks` before assuming how to build/test/lint; check `mise://tools` on environment issues.
-- Prefer `run_task` over raw `cargo`/`gitleaks`/build/test/lint/fmt — only raw shell when no task covers it.
+### Tasks & Completion Gates
 
-### Never Do
-
-- NEVER run a shell command with an equivalent `mise` task.
-- NEVER modify `.tool-versions` or `mise.toml` without verifying impact.
-
-### Resources
-
-| Resource | Use for |
-| -------- | ------- |
-| `mise://tools` | List managed tools and their versions |
-| `mise://tasks` | List all tasks with names, descriptions, dependencies, and command definitions |
-| `mise://env` | View environment variables defined in mise |
-| `mise://config` | View active mise configuration and project root |
-
-### Tools
-
-| Tool | Action |
-| ---- | ------ |
-| `run_task` | Execute any mise task (e.g., `run_task({task: "test"})`). Runs both root tasks and those discovered in `.mise/tasks/`. |
-
-### Tasks
-
-| Task | Alias | Use for |
-| ---- | ----- | ------- |
-| `test` | `t` | Prove it works; scope with `-- --lib <module>`, `-- --test <file>`, or a name substring |
-| `bench` | — | Criterion benchmarks; scope with `-m <module>`/`-f <pattern>`; `--mode quick\|test\|normal`; auto-tags a comparable git baseline, `--compare <baseline>` diffs via critcmp |
-| `lint` | `l` | Strict clippy: workspace, all targets, all features. `--fix` applies known lints; depends on `fmt` |
-| `fmt` | `f` | Format before diffing/committing |
-| `verify` | `v` | Full gate: fmt first, then check/lint/test in parallel — run before yielding/committing non-trivial changes |
+| Task | Alias | Scope / Arguments | Gate & Purpose |
+| :--- | :--- | :--- | :--- |
+| `verify` | `v` | Runs `fmt`, then executes `check`, `lint`, and `test` concurrently | **Completion Gate**: Mandatory before yielding or committing non-trivial work |
+| `test` | `t` | `-- --lib <module>`, `-- --test <file>`, or substring filter | Proves correctness |
+| `bench` | — | `-m <module>`, `-f <pattern>`, `--mode quick\|test\|normal`, `--compare <baseline>` | Criterion benchmarks; auto-tags git baselines and diffs via `critcmp` |
+| `lint` | `l` | Workspace, all targets, all features; `--fix` applies known lints | Strict clippy check; depends on `fmt` |
+| `fmt` | `f` | Workspace scope | Apply formatting prior to diffing or staging |
 <!-- mise:end -->
 
 <!-- hk:start -->
-## hk
+## hk — Static Analysis & Safe Fixes
 
-- Before changing files, inspect the project with `hk mcp` or `hk check --safe --format json`.
-- Scope checks to the files you changed. For exact filenames, write a NUL-delimited list and use `--files0-from`; use `--cd` instead of changing hk's process-wide directory.
-- Inspect each planned command's effect. Prefer `--safe`; never run an unknown or destructive command without explicit user approval.
-- Consume normalized diagnostics from JSON/JSONL, preserve raw tool output for debugging, and review the resulting diff after fixes.
-- Use `hk check --safe --format jsonl` for streaming lifecycle events. A final summary is emitted even when a step fails.
+### Inspection & Execution Workflow
+1. **Pre-edit Check**: Inspect project status using `hk mcp` or `hk check --safe --format json`.
+2. **Scoping**: Confine checks strictly to touched files. For exact filenames, supply a NUL-delimited file list via `--files0-from <path>`. Target subdirectories with `--cd <dir>` rather than modifying process working directories.
+3. **Execution**: Restrict commands to `--safe` flags. Obtain explicit user authorization before running destructive or unknown commands.
+4. **Diagnostics**: Parse normalized diagnostics from JSON/JSONL output while preserving raw output for triage; inspect the working diff after running fixes.
 
 ### Commands
 
-| Command | Use for |
-| ------- | ------- |
-| `hk check --safe --format jsonl` | Run project checks after every edit |
-| `hk fix --safe --no-stage --unstaged` | Apply safe fixes without staging |
+| Command | Action |
+| :--- | :--- |
+| `hk check --safe --format jsonl` | Stream lifecycle events post-edit; provides a final summary on both success and step failure |
+| `hk fix --safe --no-stage --unstaged` | Apply non-destructive automated fixes directly to unstaged files without staging |
 <!-- hk:end -->
 
 <!-- codegraph:start -->
-## CodeGraph
+## CodeGraph — Semantic Code Navigation
 
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+Query CodeGraph before using `grep`, `find`, or reading source files when tracing symbols, definitions, hierarchies, or dynamic dispatch. Returns line-numbered verbatim source in a single pass.
 
-- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+### Worktree & Indexing Policy
+- **Isolation**: Execute exclusively against the active worktree root. Avoid referencing or borrowing parent repository `.codegraph/` indexes.
+- **Lifecycle**:
+  - In a new Git worktree lacking `.codegraph/`, run `codegraph init -i`.
+  - In a primary repository lacking `.codegraph/`, bypass CodeGraph and use standard file search tools.
+- **Boundaries**: Restrict CodeGraph to code navigation. Use file/shell tools for raw string/regex searches, documentation, non-code assets, and editing.
 
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+### Querying
+- **MCP (Primary)**: Call `codegraph_explore` with a symbol name, file path, or targeted question. When a returned symbol is flagged as `deferred`, issue a secondary query for that specific symbol name to expand it.
+- **Shell Fallback**: Run `codegraph explore "<symbols or question>"`.
 <!-- codegraph:end -->
 
 <!-- rust-docs:start -->
-## rust-docs-mcp — Rust Crate Documentation
+## rust-docs-mcp — Rust Documentation Engine
 
-Query Rust crate docs/source/deps/module structure via `rust-docs_*` tools.
+Resolve Rust crate API documentation, source implementations, and dependency graphs exclusively from the local `.rust-docs/` directory via `rust-docs_*` tools. Treat `.rust-docs/` as the single source of truth for crate reference.
 
-### Always Do
+### Caching & Storage Scope
+- Scope index loading strictly to `.rust-docs/`: initialize via `cache_crate` using `source_type: "local"` targeting the crate directory inside `.rust-docs/`.
+- Workspace crates: pass `member: "<path>"` (e.g., `member: "crates/rmcp"`).
+- Local external crates: pass `source_type: "local"` pointing to `.rust-docs/<crate_name>`.
 
-- Prefer `rust-docs_*` over web search. `cache_crate` first (workspace crates: pass `member`, e.g. `crates/rmcp`; local: `source_type: "local"`).
-- `structure` for module overview. `search_items_preview` (id/name/kind only) → `get_item_details`; `get_item_source` for implementation with context lines.
-- Fuzzy: `search_items_fuzzy({query})`. Deps: `get_dependencies` (`include_tree: true` for transitive). Browse: `list_crate_items` (`kind_filter`).
+### Navigation Workflow & Tools
+1. **Hierarchy**: `structure` to inspect module layout.
+2. **Discovery**: `search_items_preview` to find item ID, name, and kind; use `search_items_fuzzy({query})` for approximate names.
+3. **Specification**: `get_item_details` to inspect signatures, types, and docstrings.
+4. **Implementation**: `get_item_source` to read function and type implementations with context lines.
+5. **Dependencies**: `get_dependencies({include_tree: true})` for direct and transitive dependency trees.
+6. **Filtering**: `list_crate_items({kind_filter})` to browse items filtered by kind.
 <!-- rust-docs:end -->
 
 <!-- adrs:start -->
 ## ADRs — Architecture Decision Records
 
-[`adrs`](https://crates.io/crates/adrs) ([docs](https://joshrotenberg.com/adrs/)). MCP server exposes ADR tools (also via CLI: `adrs init`, `adrs new "Title"`, `adrs list`, `adrs get 1`).
+Manage architectural decisions via ADR tools or CLI ([adrs docs](https://joshrotenberg.com/adrs/)).
 
-Best practices: AI-created ADRs start as `proposed` — review before accepting. Use `link_adrs` for decision traceability.
+### Lifecycle & Practices
+- Set initial status to `proposed` on all AI-generated ADRs; require explicit human review before transitioning to accepted.
+- Maintain decision history and dependency graphs using `link_adrs`.
 
-| CLI | MCP tools |
-| --- | --------- |
-| `adrs init` | Read: `list_adrs`, `get_adr`, `search_adrs`, `run_doctor`, `export_adrs` |
-| `adrs new "Title"` | Write: `create_adr`, `update_status`, `link_adrs`, `update_content` |
-| `adrs list` | Analyse: `validate_adr`, `compare_adrs`, `suggest_tags` |
-| `adrs get 1` |  |
+### Tool Matrix
+
+| Domain | MCP Tools | CLI Equivalent |
+| :--- | :--- | :--- |
+| **Read** | `list_adrs`, `get_adr`, `search_adrs`, `run_doctor`, `export_adrs` | `adrs list`, `adrs get <id>` |
+| **Write** | `create_adr`, `update_status`, `link_adrs`, `update_content` | `adrs init`, `adrs new "<Title>"` |
+| **Analyze** | `validate_adr`, `compare_adrs`, `suggest_tags` | — |
 <!-- adrs:end -->
