@@ -106,7 +106,6 @@ blake3 = "1.8"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4.6.9"
-comfy-table = { version = "7.2.2", default-features = false }
 convert_case = "0.11.0"
 indexmap = { version = "2.14.2", features = ["rayon", "serde"] }
 indextree = "4.9"
@@ -136,6 +135,7 @@ strsim = "0.11"
 thiserror = "2"
 toml = "1.1"
 tracing = "0.1"
+unicode-width = "0.2"
 uuid = { version = "1.26.0", features = ["v4"] }
 walkdir = "2.5"
 
