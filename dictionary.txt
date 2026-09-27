@@ -5,9 +5,11 @@ Minijinja
 Obsidian
 OS
 PKM
+UTF
 XDG
 frontmatter
 newtypes
+representable
 unparsed
 wikilink
 wikilinks

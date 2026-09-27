@@ -75,6 +75,9 @@ const MARKDOWN_OPTIONS: Options =
 /// frontmatter, lists, outlinks, inline fields, and tags in document order.
 /// Inline fields and tags are excluded from fenced code blocks, indented code
 /// blocks, and inline code spans.
+///
+/// Inputs larger than 4 `GiB` saturate event byte offsets at `u32::MAX`,
+/// clamping reported line numbers past that point rather than failing.
 #[inline]
 #[must_use]
 pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
@@ -86,10 +89,7 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
     for (event, range) in
         Parser::new_ext(input.src(), MARKDOWN_OPTIONS).into_offset_iter()
     {
-        ctx.handle_event(
-            event,
-            ByteOffset::try_from(range.start).unwrap_or(ByteOffset::MAX),
-        );
+        ctx.handle_event(event, ByteOffset::saturating_from(range.start));
     }
     ctx.into_note(input.path())
 }
