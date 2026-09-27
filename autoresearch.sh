@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 # Autoresearch benchmark harness for the traces-pkm index/query system.
 #
-# Segment 3: primary metric shifts to query execution (filter+sort) and
-# template rendering, per user direction after segment 2 concluded the
-# ingestion/persist/load area and async I/O were exhausted (see session
-# notes). Build/refresh/persist/load/sort_by_text are kept as secondary
-# guardrail metrics so a change here can't silently regress the area
-# segment 1/2 already tuned.
+# Segment 3: primary metric shifts to query execution (filter+sort), per
+# user direction after segment 2 concluded the ingestion/persist/load
+# area and async I/O were exhausted (see session notes). Build/refresh/
+# persist/load/sort_by_text are kept as secondary guardrail metrics so a
+# change here can't silently regress the area segment 1/2 already tuned.
 #
-# TemplateService::render_to_file internally re-syncs the index on every
-# call, so `list`/`table_filtered` alone are dominated by the same
-# disk-I/O refresh floor segment 2 already investigated and ruled
-# un-fixable (see notes: no viable cross-platform async I/O win). Using
-# them directly would just re-measure that floor under a new name. The
-# bench file's own documented subtraction (`list - refresh_floor`,
-# `table_filtered - refresh_floor`) isolates the template/query-specific
-# cost, so the primary metric here uses that isolated delta instead of
-# the raw render time.
+# QueryService::run/filter_then_sort runs against a pre-built in-memory
+# WorkspaceIndex, so it's already free of disk I/O - a clean signal for
+# query-engine-only work, unlike TemplateService::render_to_file (which
+# internally re-syncs the index on every call and is dominated by the
+# same disk-I/O refresh floor segment 2 already investigated). An
+# earlier version of this harness tried to isolate template-specific
+# cost via `list - refresh_floor` subtraction; that was abandoned after
+# two consecutive runs on identical code produced +552,513ns and then
+# -713,562ns for the same delta - the ~13ms refresh_floor's own
+# measurement variance (>1ms) swamps the <1ms signal being isolated,
+# since refresh_floor and list are separately-sampled Criterion
+# benchmarks, not measured in the same batch. Raw template numbers are
+# still reported below as informational secondary metrics only; they are
+# NOT part of the primary keep/discard decision.
 #
-# Two sizes for the primary query metric (1000 and 5000). The template
-# render bench only exercises up to 1000 files (its own fixture ceiling),
-# so the template deltas are single-size; treat single-size deltas with
-# the same "verify before trusting" caution as any single-size reading.
+# Two sizes for the primary metric (1000 and 5000), matching the
+# crossover-safety discipline established in segment 2.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -54,17 +56,13 @@ tmpl_refresh_floor_1000_ns=$(read_mean_ns 'TemplateService__render_to_file/refre
 tmpl_list_1000_ns=$(read_mean_ns 'TemplateService__render_to_file/list/1000')
 tmpl_table_filtered_1000_ns=$(read_mean_ns 'TemplateService__render_to_file/table_filtered/1000')
 
-pipeline_ns=$(python3 -c "print(
-    ${filter_sort_1000_ns} + ${filter_sort_5000_ns}
-    + (${tmpl_list_1000_ns} - ${tmpl_refresh_floor_1000_ns})
-    + (${tmpl_table_filtered_1000_ns} - ${tmpl_refresh_floor_1000_ns})
-)")
+pipeline_ns=$(python3 -c "print(${filter_sort_1000_ns} + ${filter_sort_5000_ns})")
 
 echo "METRIC pipeline_ns=${pipeline_ns}"
 echo "METRIC filter_then_sort_1000_ns=${filter_sort_1000_ns}"
 echo "METRIC filter_then_sort_5000_ns=${filter_sort_5000_ns}"
-echo "METRIC template_list_minus_refresh_1000_ns=$(python3 -c "print(${tmpl_list_1000_ns} - ${tmpl_refresh_floor_1000_ns})")"
-echo "METRIC template_table_minus_refresh_1000_ns=$(python3 -c "print(${tmpl_table_filtered_1000_ns} - ${tmpl_refresh_floor_1000_ns})")"
+echo "METRIC template_list_1000_ns=${tmpl_list_1000_ns}"
+echo "METRIC template_table_filtered_1000_ns=${tmpl_table_filtered_1000_ns}"
 echo "METRIC template_refresh_floor_1000_ns=${tmpl_refresh_floor_1000_ns}"
 echo "METRIC build_1000_ns=${build_1000_ns}"
 echo "METRIC build_5000_ns=${build_5000_ns}"
