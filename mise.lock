@@ -142,6 +142,11 @@ specifiers = ["branch:main"]
 [tools."cargo:https://github.com/snowmead/rust-docs-mcp".options]
 crate = "rust-docs-mcp"
 
+[[tools."cargo:mutarust"]]
+version = "0.1.10"
+backend = "cargo:mutarust"
+specifiers = ["0.1.10"]
+
 [[tools."cargo:ryl"]]
 version = "0.22.0"
 backend = "cargo:ryl"
