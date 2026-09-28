@@ -132,21 +132,6 @@ impl Frontmatter {
         self.fields.get(&FieldKeyRef::new(key))
     }
 
-    /// Returns the value of the field matching `key`, if present.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Frontmatter \
-                      accessor symmetry with its fields"
-        )
-    )]
-    pub(crate) fn get_by_key(&self, key: &FieldKey) -> Option<&NoteFieldValue> {
-        self.fields.get(key)
-    }
-
     /// Returns a flat iterator over the scalar value or list elements of the
     /// field matching `key` by string lookup, if present.
     pub(crate) fn get_values(
@@ -215,19 +200,6 @@ mod tests {
         fn treats_whitespace_only_as_empty() {
             let raw = RawFrontmatter::new("   \n  \t  ");
             assert!(raw.is_empty());
-        }
-
-        #[test]
-        fn last_duplicate_frontmatter_key_wins() {
-            let key = FieldKey::try_new("title").unwrap();
-            let mut fields = IndexMap::new();
-            fields.insert(key.clone(), NoteFieldValue::String("First".into()));
-            fields.insert(key.clone(), NoteFieldValue::String("Second".into()));
-            let fm = Frontmatter::new(fields);
-            assert_eq!(
-                fm.get_by_key(&key),
-                Some(&NoteFieldValue::String("Second".into()))
-            );
         }
 
         #[test]
