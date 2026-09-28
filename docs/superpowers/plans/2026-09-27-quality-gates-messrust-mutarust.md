@@ -1305,7 +1305,7 @@ git commit -m "chore: commit mutarust baseline"
 
 Delete `"cargo:cargo-mutants" = "latest"` from `mise.toml`, then:
 Run: `mise lock && mise install && mise ls 2>/dev/null | grep -c cargo-mutants; echo "rc=$?"`
-Expected: lock diff drops cargo-mutants; install exit 0; grep finds nothing (rc=1).
+Expected: lock diff drops cargo-mutants; install exit 0. Note: `mise ls` may still print 1 hit sourced from the ancestor main checkout's `mise.toml` (out of scope — the main branch still declares cargo-mutants until this work merges). Verify cleanliness against this worktree's own files: `rg cargo-mutants mise.toml mise.lock` → no output.
 
 - [ ] **Step 2: Delete legacy report task, config, and stale artifacts**
 
@@ -1340,14 +1340,15 @@ Run:
 ```bash
 rg -n 'cargo-mutants|mutants\.out|mutants-report|mutants\.toml' \
   --hidden -g '!.git' -g '!docs/refs/quality_gates_*' \
-  -g '!docs/refs/mutation_testing.md' -g '!docs/superpowers/**' .
+  -g '!docs/refs/mutation_testing.md' -g '!docs/superpowers/**' \
+  -g '!mutarust.yml' -g '!.mise/tasks/clean/**' .
 ```
-Expected: no output. (Allowed leftovers: the research docs, the plan itself, and `docs/refs/mutation_testing.md` — rewritten next task. The live `.mise/tasks/mutants/_default` intentionally contains none of these strings — its cheatsheet says "the previous engine", not `cargo-mutants`.) Also run `rg 'cargo-mutants' mise.lock` → no output.
+Expected: no output. (Allowed leftovers outside these exclusions: the research docs, the plan itself, `docs/refs/mutation_testing.md` — rewritten next task, `mutarust.yml` provenance comments, and the `.mise/tasks/clean/*` stale-artifact registry, which intentionally keeps deleting old cargo-mutants artifacts when present. The live `.mise/tasks/mutants/_default` intentionally contains none of these strings — its cheatsheet says "the previous engine", not `cargo-mutants`.) Also run `rg 'cargo-mutants' mise.lock` → no output.
 
 - [ ] **Step 6: Entrypoints healthy**
 
-Run: `mise run mutants -m strsim --dry-run; echo "mu_rc=$?"` then `mise run mutants:report 2>&1 | tail -2; echo "rep_rc=$?"`
-Expected: `mu_rc=0` (the stable `mutants` entrypoint runs the mutarust engine); `mutants:report` errors with a task-not-found style message and nonzero rc.
+Run: `mise run mutants -m strsim --dry-run; echo "mu_rc=$?"` then `out=$(mise run mutants:report 2>&1); rep_rc=$?; printf '%s\n' "$out" | tail -2; echo "rep_rc=$rep_rc"` (capture `rep_rc` BEFORE piping — a `cmd | tail; echo $?` pipeline reports `tail`'s status, not `mise`'s).
+Expected: `mu_rc=0` (the stable `mutants` entrypoint runs the mutarust engine); `mutants:report` errors with a task-not-found style message and nonzero `rep_rc`. Caveat: mise resolves tasks through ancestor configs too — if `rep_rc=0` because the main checkout still ships `.mise/tasks/mutants/report`, fall back to the worktree-local assertion: `.mise/tasks/mutants/` contains only `_default` and `mise tasks | grep -c mutants:report` → 0.
 
 - [ ] **Step 7: Commit**
 
