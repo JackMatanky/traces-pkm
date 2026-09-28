@@ -111,3 +111,38 @@ All other realistic vault content is behaviour-identical (yaml_serde parity pres
   to module-private. `mise run verify` green after each pass: 2907 tests +
   58 doctests, clippy/fmt/audit/gitleaks clean; `cargo doc --all-features`
   clean with `-D warnings`.
+- **2026-09-28 (agent, final passes and closeout):** Two more review tiers
+  applied after the design/architecture passes above, plus a strict clippy
+  sweep. `#[inline]` added to `crate::yaml::parse` (`src/yaml.rs`) — trivial
+  one-line delegation on the per-note hot path
+  (`files.par_iter().map(parse_note)` in `src/index/service.rs`), matching
+  this module's own convention for trivial wrappers. Full 265-rule
+  `rust-skills` checklist cross-checked line-by-line against the complete
+  diff (all 26 categories: ownership, error handling, memory, API design,
+  numeric safety, type safety, naming, testing, docs, performance,
+  anti-patterns, etc.) — zero further findings; `LazyLock<ParserConfig>`
+  first-access race under `files.par_iter()` confirmed sound
+  (`std::sync::LazyLock`'s internal `Once` serializes exactly one
+  initializer run, no soundness or cancellation-safety concern). Ran
+  `cargo bench --bench note_parsing --features test-utils -- --quick
+  "dense_frontmatter"` to substantiate no allocation/perf regression: dense
+  frontmatter workloads at 17–34µs / 28–57 MiB/s, consistent with a
+  behavior-preserving refactor (no stored `main` baseline existed in this
+  worktree for a `critcmp` diff). Ran the maximal strict clippy sweep
+  (`-D warnings -D clippy::all -D clippy::pedantic -D clippy::nursery
+  -D clippy::cargo`) workspace-wide: 268 findings total, but every finding
+  inside this diff's own files is `redundant_pub_crate` or
+  `missing_const_for_fn` — both fire identically on pre-existing,
+  untouched code across the *entire* crate (this project deliberately does
+  not enable `pedantic`/`nursery`/`cargo` groups; the real gate,
+  `mise run lint`, stays clean). No further changes made.
+
+  Final state: branch `noyalib-frontmatter-swap`, 6 commits over `main`
+  (`1667e267` swap, `6b605282` test, `de5c3348` cleanup, `f5d34da4`
+  least-privilege/feature-trim/rstest-merge, `db430e7e` `yaml::parse`
+  extraction, `28e92690` `#[inline]`), 723-line diff across
+  `Cargo.toml`, `src/lib.rs`, `src/yaml.rs` (new), `src/field.rs`,
+  `src/note/field.rs`, `src/note/metadata.rs`,
+  `src/template/engine/yaml.rs`. `mise run verify` green throughout: 2907
+  tests + 58 doctests, clippy/fmt/audit/gitleaks/conventional-commit clean;
+  `cargo doc --all-features -D warnings` clean.
