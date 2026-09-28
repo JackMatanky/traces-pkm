@@ -260,7 +260,9 @@ depends = ["coverage:html"]
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
 depends = ["coverage:lcov"]
-sources = ["@group:rust", "tarpaulin.toml"]
+# `.cargo-crap.toml` changes CRAP output (threshold/excludes) and must be a
+# declared input for cache correctness; bare paths resolve from the repo root.
+sources = ["@group:rust", ".cargo-crap.toml"]
 outputs = ["lcov.info"]
 run = "cargo crap --lcov lcov.info"
 
