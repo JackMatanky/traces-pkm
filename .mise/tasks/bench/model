@@ -1291,30 +1291,53 @@ class SeriesReporter:
 
     def _render_wide_card(self, analysis: SeriesAnalysis, width: int) -> str:
         card_w = min(114, max(96, width - 2))
-        col_w = (card_w - 7) // 2
+        col_w = (card_w - 11) // 2
 
         latest = analysis.largest_measurement
         best = analysis.best_model
-
-        # Left Column: Profile
         rate_str = latest.throughput_rate_str or "N/A"
-        left_lines = [
-            f"{Style.bold('CURRENT BENCHMARK PROFILE'):<{col_w}}",
-            f"{'─' * (col_w - 2):<{col_w}}",
-            f"Status    : {analysis.trust.format_badge()}",
-            f"Candidate : {best.label}",
-            f"Largest   : {latest.input_size:,.0f} {analysis.input_unit}",
-            f"Runtime   : {latest.timing.format_with_ci()}",
-            f"Throughput: {rate_str}",
-            f"Change    : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
-        ]
+        r2_label = f"{R_SQUARED} (in-sample)"
+        slope_str = f"{Presentation.format_estimate_interval(latest.slope)}" + (
+            f" ({R_SQUARED}={latest.slope_r_squared:.3f})" if latest.slope_r_squared else ""
+        )
 
-        # Right Column: Outlook / Withhold
-        right_lines = []
+        # Left column: raw measurement facts, then how they compare to base.
+        left_lines = [
+            f"{Style.bold('MEASUREMENT'):<{col_w}}",
+            f"{'─' * (col_w - 2):<{col_w}}",
+            f"{'Largest':<10}: {latest.input_size:,.0f} {analysis.input_unit}",
+            f"{'Runtime':<10}: {latest.timing.format_with_ci()}  95% CI",
+            f"{'Throughput':<10}: {rate_str}",
+            f"{'Median':<10}: {Presentation.format_estimate_interval(latest.median)}",
+            f"{'MAD':<10}: {Presentation.format_estimate_interval(latest.mad)}",
+            f"{'Std Dev':<10}: {Presentation.format_estimate_interval(latest.std_dev)}",
+            f"{'Outliers':<10}: {latest.outliers.format_summary()}",
+            "",
+            f"{Style.bold('BASELINE COMPARISON'):<{col_w}}",
+            f"{'─' * (col_w - 2):<{col_w}}",
+        ]
+        if latest.change_vs_base:
+            left_lines += [
+                f"{'Δ vs base':<9}: {latest.change_vs_base.format_badge()}",
+                f"{'Decision':<9}: {latest.change_vs_base.format_decision_line()}",
+            ]
+        else:
+            left_lines.append(f"{'Δ vs base':<9}: {Style.dim('⚪ n/a (no baseline recorded)')}")
+
+        # Right column: everything the complexity model produces, facts and forecasts.
+        right_lines = [
+            f"{Style.bold('CAPACITY MODEL'):<{col_w}}",
+            f"{'─' * (col_w - 2):<{col_w}}",
+            f"{'Status':<14}: {analysis.trust.format_badge()}",
+            f"{'Candidate':<14}: {best.label}",
+            f"{r2_label:<14}: {best.r_squared:.4f}",
+            f"{'LOO RMSE':<14}: {Presentation.format_seconds(best.validation_rmse)}",
+            f"{'DOF':<14}: {len(analysis.data_points)} sizes · {analysis.residual_dof} residual",
+            f"{'Slope':<14}: {slope_str}",
+            "",
+        ]
         if analysis.is_fit_trusted:
-            right_lines = [
-                f"{Style.bold('OUTLOOK & CAPACITY FORECAST'):<{col_w}}",
-                f"{'─' * (col_w - 2):<{col_w}}",
+            right_lines += [
                 f"{'input size':<14} {'latency':<12} {'throughput':<12} basis",
                 f"{latest.input_size:,.0f} {analysis.input_unit:<6} {Presentation.format_seconds(latest.mean_seconds):<12} {rate_str.split(' ')[0]:<12} meas 95%",
             ]
@@ -1326,24 +1349,19 @@ class SeriesReporter:
                     f"{Presentation.format_seconds(ext.predicted_seconds):<12} "
                     f"{ext_rate:<12} ext ({dist:.0f}×)"
                 )
-            if latest.change_vs_base:
-                right_lines.append(latest.change_vs_base.format_decision_line())
         else:
-            right_lines = [
-                f"{Style.bold('STATUS & REASONING'):<{col_w}}",
-                f"{'─' * (col_w - 2):<{col_w}}",
+            right_lines += [
                 f"{Style.yellow('⚠ FORECASTS WITHHELD')}",
                 f"  {analysis.trust.reason}.",
-                f"  Currently: {len(analysis.data_points)} sizes · {analysis.residual_dof} residual DOF.",
-                "  Add parameter sizes in the benchmark harness",
-                "  before using this model for capacity estimates.",
+                "  Add parameter sizes before using this model",
+                "  for capacity estimates.",
             ]
 
         header_title = f" {analysis.name} "
         header_meta = f" {len(analysis.data_points)} sizes · {analysis.size_range} {analysis.input_unit} "
-        gap = card_w - 4 - len(header_title) - len(header_meta)
+        gap = card_w - 6 - len(header_title) - len(header_meta)
         if gap < 2:
-            header_line = f"╭──{header_title}{'─' * max(2, card_w - 6 - len(header_title))}╮"
+            header_line = f"╭──{header_title}{'─' * max(2, card_w - 4 - len(header_title))}╮"
         else:
             header_line = f"╭──{header_title}{'─' * gap}{header_meta}──╮"
 
@@ -1357,35 +1375,59 @@ class SeriesReporter:
     def _render_narrow_card(self, analysis: SeriesAnalysis) -> str:
         best = analysis.best_model
         latest = analysis.largest_measurement
+        r2_label = f"{R_SQUARED} (in-sample)"
+        slope_str = f"{Presentation.format_estimate_interval(latest.slope)}" + (
+            f" ({R_SQUARED}={latest.slope_r_squared:.3f})" if latest.slope_r_squared else ""
+        )
         lines: list[str] = [
             f"{analysis.name:<46} {len(analysis.data_points)} sizes · {analysis.size_range} {analysis.input_unit}",
             "",
-            f"FIT  {analysis.trust.format_badge()}",
-            f"  Candidate: {best.label}",
-            f"  Evidence: {len(analysis.data_points)} input sizes · {analysis.residual_dof} residual DOF",
-            f"  Largest input: {latest.input_size:,.0f} {analysis.input_unit}",
-            f"  Measured time: {latest.timing.format_with_ci()}  95% CI",
-            f"  Throughput: {latest.throughput_rate_str or 'N/A'}",
-            f"  Baseline Δ: {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
+            "MEASUREMENT",
+            f"  {'Largest':<10}: {latest.input_size:,.0f} {analysis.input_unit}",
+            f"  {'Runtime':<10}: {latest.timing.format_with_ci()}  95% CI",
+            f"  {'Throughput':<10}: {latest.throughput_rate_str or 'N/A'}",
+            f"  {'Median':<10}: {Presentation.format_estimate_interval(latest.median)}",
+            f"  {'MAD':<10}: {Presentation.format_estimate_interval(latest.mad)}",
+            f"  {'Std Dev':<10}: {Presentation.format_estimate_interval(latest.std_dev)}",
+            f"  {'Outliers':<10}: {latest.outliers.format_summary()}",
+            "",
+            "BASELINE COMPARISON",
+        ]
+        if latest.change_vs_base:
+            lines += [
+                f"  {'Δ vs base':<9}: {latest.change_vs_base.format_badge()}",
+                f"  {'Decision':<9}: {latest.change_vs_base.format_decision_line()}",
+            ]
+        else:
+            lines.append(f"  {'Δ vs base':<9}: {Style.dim('⚪ n/a (no baseline recorded)')}")
+        lines += [
+            "",
+            "CAPACITY MODEL",
+            f"  {'Status':<14}: {analysis.trust.format_badge()}",
+            f"  {'Candidate':<14}: {best.label}",
+            f"  {r2_label:<14}: {best.r_squared:.4f}",
+            f"  {'LOO RMSE':<14}: {Presentation.format_seconds(best.validation_rmse)}",
+            f"  {'DOF':<14}: {len(analysis.data_points)} sizes · {analysis.residual_dof} residual",
+            f"  {'Slope':<14}: {slope_str}",
         ]
         if not analysis.is_fit_trusted:
-            lines.extend([
+            lines += [
                 "",
-                f"{Style.yellow('FORECASTS WITHHELD')}",
+                f"  {Style.yellow('⚠ FORECASTS WITHHELD')}",
                 f"  {analysis.trust.reason}.",
                 "  Add input sizes before using this model for capacity estimates.",
-            ])
+            ]
         else:
-            lines.extend([
+            lines += [
                 "",
-                "OUTLOOK (model-based estimates)",
+                "  OUTLOOK (model-based estimates)",
                 f"  {'input size':<18} {'time':<22} basis",
                 f"  {'-' * 16:<18} {'-' * 20:<22} ----------------------------",
                 (
                     f"  {f'{latest.input_size:,.0f} {analysis.input_unit}':<18} "
                     f"{latest.timing.format_with_ci():<22} measured · 95% CI"
                 ),
-            ])
+            ]
             for extrapolation in analysis.extrapolations:
                 distance = extrapolation.input_size / latest.input_size
                 lines.append(
@@ -1407,9 +1449,9 @@ class SeriesReporter:
 
         header_title = f" Group: {group} "
         header_meta = f" {len(analyses)} variants "
-        gap = card_w - 4 - len(header_title) - len(header_meta)
+        gap = card_w - 6 - len(header_title) - len(header_meta)
         if gap < 2:
-            header_line = f"╭──{header_title}{'─' * max(2, card_w - 6 - len(header_title))}╮"
+            header_line = f"╭──{header_title}{'─' * max(2, card_w - 4 - len(header_title))}╮"
         else:
             header_line = f"╭──{header_title}{'─' * gap}{header_meta}──╮"
 
@@ -1443,65 +1485,6 @@ class SeriesReporter:
             lines.append(f"│ {Style.pad_visible(row, inner_w)} │")
         lines.append(f"│ {' ' * inner_w} │")
         lines.append(f"╰{'─' * (card_w - 2)}╯")
-        return "\n".join(lines)
-
-    def render_details(self, analysis: SeriesAnalysis, width: int | None = None) -> str:
-        width = Presentation.terminal_width() if width is None else width
-        best = analysis.best_model
-        latest = analysis.largest_measurement
-
-        extrap_text = (
-            "enabled (exploratory)"
-            if analysis.is_fit_trusted
-            else "withheld: insufficient evidence"
-        )
-
-        slope_str = (
-            f"{Presentation.format_estimate_interval(latest.slope)}"
-            + (f" (Criterion R²={latest.slope_r_squared:.3f})" if latest.slope_r_squared else "")
-        )
-
-        if width >= WIDESCREEN_THRESHOLD:
-            col_w = min(54, (width - 6) // 2)
-            left_col = [
-                f"{Style.bold('EVIDENCE & MODEL SELECTION'):<{col_w}}",
-                f"{'─' * col_w}",
-                f"├─ Candidate Complexity : {best.label}",
-                f"├─ In-Sample {R_SQUARED} Score   : {best.r_squared:.4f}",
-                f"├─ Leave-One-Out RMSE   : {Presentation.format_seconds(best.validation_rmse)}",
-                f"├─ Degrees of Freedom   : {len(analysis.data_points)} sizes · {analysis.residual_dof} residual DOF",
-                f"├─ Iteration Slope      : {slope_str}",
-                f"╰─ Extrapolation Status : {extrap_text}",
-            ]
-            right_col = [
-                f"{Style.bold('STATISTICAL DIAGNOSTICS & BASELINE'):<{col_w}}",
-                f"{'─' * col_w}",
-                f"├─ Mean [95% CI]       : {Presentation.format_seconds(latest.mean_seconds)} [{Presentation.format_seconds(latest.lower_seconds)}, {Presentation.format_seconds(latest.upper_seconds)}]",
-                f"├─ Median [95% CI]     : {Presentation.format_estimate_interval(latest.median)}",
-                f"├─ Med. Abs. Dev (MAD) : {Presentation.format_estimate_interval(latest.mad)}",
-                f"├─ Std. Deviation      : {Presentation.format_estimate_interval(latest.std_dev)}",
-                f"├─ Tukey Outliers      : {latest.outliers.format_summary()}",
-                f"╰─ Baseline Decision   : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
-            ]
-            lines = [""]
-            for l_pad, r_pad in self._pad_columns(left_col, right_col, col_w):
-                lines.append(f"  {l_pad}   {r_pad}")
-            return "\n".join(lines)
-
-        lines = [
-            "DETAILS",
-            f"  {'candidate model':<23} {best.label}",
-            f"  {'fit status':<23} {analysis.trust.label.lower()}",
-            f"  {'selection':<23} lowest leave-one-out RMSE",
-            f"  {'leave-one-out RMSE':<23} {Presentation.format_seconds(best.validation_rmse)}",
-            f"  {'in-sample ' + R_SQUARED:<23} {best.r_squared:.4f}",
-            f"  {'residual DOF':<23} {analysis.residual_dof}",
-            f"  {'median [95% CI]':<23} {Presentation.format_estimate_interval(latest.median)}",
-            f"  {'MAD [95% CI]':<23} {Presentation.format_estimate_interval(latest.mad)}",
-            f"  {'std dev [95% CI]':<23} {Presentation.format_estimate_interval(latest.std_dev)}",
-            f"  {'tukey outliers':<23} {latest.outliers.format_summary()}",
-            f"  {'extrapolation':<23} {extrap_text}",
-        ]
         return "\n".join(lines)
 
 
@@ -1831,19 +1814,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seen_groups.add(analysis.group)
             units.append((analysis.group, members))
 
+        width = Presentation.terminal_width()
         total = len(units)
         for i, (group, members) in enumerate(units, 1):
             print()
             print(Style.dim(f"[{i}/{total}]"))
-            if len(members) > 1:
-                print(reporter.render_group_card(group, members))
+            if len(members) > 1 and width >= WIDESCREEN_THRESHOLD:
+                print(reporter.render_group_card(group, members, width))
                 continue
-            analysis = members[0]
-            print(reporter.render_card(analysis))
-            if options.plot:
-                print()
-                plot_renderer.render(analysis)
-            print(reporter.render_details(analysis))
+            for analysis in members:
+                print(reporter.render_card(analysis, width))
+                if options.plot:
+                    print()
+                    plot_renderer.render(analysis, width)
 
     return 1 if had_failure else 0
 
