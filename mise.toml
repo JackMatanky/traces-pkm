@@ -9,6 +9,7 @@
 rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
   "clippy",
   "rustfmt",
+  "llvm-tools-preview",
 ] }
 hk = "2.0.0"
 cargo-binstall = "latest"
@@ -25,7 +26,7 @@ cargo-deny = "latest"
 
 # -- Testing & Quality --
 "github:nextest-rs/nextest" = "latest"
-"cargo:cargo-tarpaulin" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:cargo-mutants" = "latest"
 
@@ -51,6 +52,12 @@ experimental = true
 [env]
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
+# Coverage filename-exclusion regex, consumed by `coverage:lcov`/`coverage:html`
+# as cargo-llvm-cov's --ignore-filename-regex. Ported from the deleted
+# tarpaulin.toml exclude-files; keep in sync with .cargo/mutants.toml's
+# exclude globs. POSIX ERE only: no lookahead, no (?:...), no \d \w \s —
+# an invalid regex silently disables ALL exclusions (defaults included).
+COVERAGE_IGNORE_REGEX = 'src/main\.rs$|src/cli($|/)|src/(.*/)?error\.rs$'
 
 [task_config]
 global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
@@ -178,19 +185,25 @@ run = [{ tasks = ["audit:deny", "audit:sec"] }]
 
 [tasks."coverage:lcov"]
 description = "Generate LCOV coverage report for CRAP analysis"
-sources = ["@group:rust", "tarpaulin.toml"]
+sources = ["@group:rust"]
 outputs = ["lcov.info"]
-run = "cargo tarpaulin --workspace --out lcov"
+# TOML single quotes are consumed by TOML; the task runs under `sh -c`, so the
+# shell expands "$COVERAGE_IGNORE_REGEX". `--lcov` conflicts with `--html`, so
+# this stays a separate run from coverage:html. Do NOT add --no-clean: stale
+# *.profraw from prior runs would merge into the report.
+run = 'cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"'
 
 [tasks."coverage:html"]
 description = "Generate HTML coverage report"
-sources = ["@group:rust", "tarpaulin.toml"]
-outputs = ["tarpaulin-report.html"]
+sources = ["@group:rust"]
+outputs = ["target/llvm-cov/html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
   long_help """
-  Scopes Tarpaulin coverage to files under `src/<module>/**` (e.g. `-m index`).
+  Scopes coverage to files under `src/<module>/**` (e.g. `-m index`);
+  every other path under `src/` is excluded from the report.
+  Globally ignored paths (see COVERAGE_IGNORE_REGEX) remain excluded.
   """
 }
 // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
@@ -198,16 +211,46 @@ complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 '''
 run = '''
 #!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
 set -euo pipefail
-declare -a args=(--workspace --out html)
+
+# Start from the shared static exclusions; cargo-llvm-cov appends its default
+# ignores (rustc/registry/target/tests...) to whatever we pass here.
+regex="${COVERAGE_IGNORE_REGEX:?}"
+
 if [[ -n "${usage_mod:-}" ]]; then
   if [[ ! -d "src/${usage_mod}" ]]; then
     echo "coverage: unknown module: ${usage_mod}" >&2
     exit 2
   fi
-  args=(--include-files "src/${usage_mod}/**" --out html)
+  # Globally ignored modules (COVERAGE_IGNORE_REGEX) can never produce a
+  # report — reject instead of silently emitting an empty one. grep -E shares
+  # the POSIX ERE flavor of the llvm-cov regex.
+  if printf 'src/%s\n' "${usage_mod}" | grep -Eq "${COVERAGE_IGNORE_REGEX}"; then
+    echo "coverage: module is excluded from coverage by COVERAGE_IGNORE_REGEX: ${usage_mod}" >&2
+    exit 2
+  fi
+  # llvm-cov has no include-file flag, so scope TO the module by excluding
+  # every sibling directory under src/ plus all src-root .rs files.
+  # POSIX ERE only: no lookahead — enumerate exclusions positively.
+  declare -a exclude=()
+  for entry in src/*; do
+    [[ -d "${entry}" ]] || continue
+    name="${entry#src/}"
+    [[ "${name}" == "${usage_mod}" ]] && continue
+    exclude+=("src/${name}"'($|/)')
+  done
+  exclude+=('src/[^/]+\.rs$')
+  # exclude must stay non-empty: bash 3.2 + set -u rejects expanding "${exclude[*]}" on an empty array
+  regex="$(IFS='|'; echo "${exclude[*]}")|${regex}"
 fi
-cargo tarpaulin "${args[@]}"
+
+# `--html` writes to the default target/llvm-cov/html/ (rm -rf'd each run, so
+# directory-output freshness settles). `--lcov` and `--html` conflict.
+cargo llvm-cov nextest --workspace --all-features \
+  --html \
+  --ignore-filename-regex "${regex}"
 '''
 
 [tasks.coverage]
@@ -217,7 +260,9 @@ depends = ["coverage:html"]
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
 depends = ["coverage:lcov"]
-sources = ["@group:rust", "tarpaulin.toml"]
+# `.cargo-crap.toml` changes CRAP output (threshold/excludes) and must be a
+# declared input for cache correctness; bare paths resolve from the repo root.
+sources = ["@group:rust", ".cargo-crap.toml"]
 outputs = ["lcov.info"]
 run = "cargo crap --lcov lcov.info"
 

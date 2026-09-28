@@ -29,12 +29,12 @@ Where:
 
 ---
 
-## 2. Tooling: `cargo-crap` & `cargo-tarpaulin`
+## 2. Tooling: `cargo-crap` & `cargo-llvm-cov`
 
 To calculate CRAP metrics for this Rust codebase, we combine two tools:
 
-1. **`cargo-tarpaulin`**: Generates line coverage reports in the standard
-   `Lcov` format.
+1. **`cargo-llvm-cov`** (v0.9.1, via `cargo llvm-cov nextest`): Generates
+   line coverage reports in the standard `Lcov` format.
 2. **`cargo-crap`**: Parses Rust source code to calculate cyclomatic
    complexity and consumes the `lcov.info` file to compute individual
    function CRAP scores.
@@ -68,19 +68,27 @@ The tool is declared in `mise.toml` under `[tools]`:
 "cargo:cargo-crap" = "latest"
 ```
 
-A `crap` task is defined to automate coverage collection and analysis:
+Coverage collection and CRAP analysis are two `mise` tasks — `crap` depends
+on `coverage:lcov`:
 
 ```toml
+[tasks."coverage:lcov"]
+description = "Generate LCOV coverage report for CRAP analysis"
+sources = ["@group:rust"]
+outputs = ["lcov.info"]
+run = 'cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"'
+
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
-depends = ["check"]
-run = [
-  "cargo tarpaulin --workspace --out Lcov",
-  "cargo crap --lcov lcov.info"
-]
+depends = ["coverage:lcov"]
+sources = ["@group:rust", ".cargo-crap.toml"]
 outputs = ["lcov.info"]
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+run = "cargo crap --lcov lcov.info"
 ```
+
+Filename exclusions come from `COVERAGE_IGNORE_REGEX` in `mise.toml`'s
+`[env]` (a POSIX ERE passed as `--ignore-filename-regex`); llvm-cov's own
+default ignores apply on top.
 
 ---
 
