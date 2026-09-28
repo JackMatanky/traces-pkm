@@ -1740,6 +1740,7 @@ dependencies = [
  "regex",
  "rstest",
  "rustc-hash",
+ "rustix",
  "serde",
  "serde_json",
  "stats_alloc",

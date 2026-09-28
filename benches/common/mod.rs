@@ -52,6 +52,8 @@ use std::time::Duration;
 
 use criterion::Criterion;
 
+/// Page-cache controls for filesystem benchmarks.
+pub(crate) mod cache;
 /// Raw Markdown fixture text and shared project shapes.
 pub(crate) mod content;
 /// Parsed-note collections for benchmarks that do not need disk state.

@@ -135,9 +135,9 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 /// isolate source-row construction, followed by `sort_only` (`rating`
 /// ascending) and `sort_only_desc`.
 ///
-/// Subtraction formula:
-/// - `sort_only - pages_unsorted`: Isolates key extraction, comparison, and row
-///   permutation from base query scan and row construction.
+/// Relative anchor:
+/// - Compare `sort_only` with `pages_unsorted` to estimate key extraction,
+///   comparison, and row permutation overhead above base row construction.
 ///
 /// Expected outcomes:
 /// - `pages_unsorted` scales linearly with row count.

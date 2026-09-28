@@ -57,7 +57,7 @@ use common::{
     },
 };
 
-const SAME_STEM_CANDIDATE_COUNTS: &[usize] = &[2, 10, 100];
+const SAME_STEM_CANDIDATE_COUNTS: &[usize] = &[2, 10, 32, 63, 64, 65, 100, 128];
 
 // ----------------------------------------------------------- //
 //               Benchmarks: InlinkMap Compilation             //

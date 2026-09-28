@@ -50,6 +50,7 @@ mod common;
 
 use common::{
     WORKSPACE_FILE_COUNTS,
+    cache::{drop_page_cache, index_db_path},
     content::{
         ProjectShape, linked_note_source, plain_note_source, rich_note_source,
         tagged_note_source,
@@ -143,7 +144,9 @@ fn bench_sync_and_run_scenario<F>(
                 let (temp, indexer, source) = setup_source();
                 ((temp, indexer), Some(source))
             },
-            |((_temp, indexer), source)| {
+            |((temp, indexer), source)| {
+                drop_page_cache(&index_db_path(temp.path()))
+                    .expect("drop index db page cache");
                 observe_sync_and_run(
                     service,
                     indexer,
@@ -162,17 +165,21 @@ fn bench_sync_and_run_scenario<F>(
 /// `linked-single-upsert`) across [`MUTATION_ANCHOR_COUNTS`] (`[1_000,
 /// 5_000]`); reports note throughput. Fixture: persisted project created
 /// outside timing. Timed work scans mtimes, reconciles deltas, and updates the
-/// in-memory [`WorkspaceIndex`].
+/// in-memory [`WorkspaceIndex`]. Directory-wide OS page-cache state is
+/// intentionally warm-cache: dropping cache for every file at the largest tier
+/// would dominate the measured refresh work.
 ///
 /// Expected outcomes:
 /// - No-op refresh scales with directory scan/diff without note parsing or
 ///   database writes.
-/// - Single-upsert and delete times remain within constant factor of no-op at
-///   anchor sizes.
+/// - Content-only upserts patch inlinks for the changed note delta.
+/// - Added, deleted, or renamed paths force full inlink recomputation, because
+///   any unchanged note's wikilink target can change when candidate paths
+///   change.
 ///
 /// Unexpected outcomes:
-/// - No-op refresh scaling with full vault parse time, or single-note mutations
-///   taking time proportional to full index rebuilds.
+/// - No-op refresh scaling with full vault parse time, or mutation scenarios
+///   growing worse than the documented full-recompute path-change cost model.
 fn bench_file_index_refresh(c: &mut Criterion) {
     let mut group = c.benchmark_group("WorkspaceIndex::refresh");
     group.plot_config(
@@ -282,11 +289,12 @@ fn bench_file_index_refresh(c: &mut Criterion) {
 /// - `full_vault_scan`: Selector [`SourceSelector::All`] (all notes read and
 ///   decoded).
 ///
-/// Subtraction formulas:
-/// - `no-op - zero-row`: Isolates tag index lookup cost.
-/// - `full_vault_scan - zero-row`: Isolates full-table row decode cost.
-/// - `refresh no-op - zero-row`: Isolates full [`WorkspaceIndex`]
-///   materialization cost.
+/// Relative readings:
+/// - `no-op`, `zero-row`, and `full_vault_scan` share the same tagged fixture,
+///   so their deltas are useful order-of-magnitude signals.
+/// - Do not treat subtraction between independently warmed Criterion entries as
+///   an isolated cost measurement; use a paired `iter_custom` benchmark if an
+///   exact component cost is needed.
 ///
 /// Expected outcomes:
 /// - `zero-row` tracks filesystem scan/diff time without query work.
@@ -313,14 +321,24 @@ fn bench_sync_and_run(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             u64::try_from(n).expect("note count fits u64"),
         ));
-        let (_temp, indexer) = setup_persisted_project(n, ProjectShape::Tagged);
+        let (tagged_temp, indexer) =
+            setup_persisted_project(n, ProjectShape::Tagged);
+        let db_path = index_db_path(tagged_temp.path());
 
         group.bench_with_input(BenchmarkId::new("zero-row", n), &n, |b, _| {
-            b.iter(|| observe_sync_and_run(&service, &indexer, zero_match()));
+            b.iter_batched(
+                || drop_page_cache(&db_path).expect("drop index db page cache"),
+                |()| observe_sync_and_run(&service, &indexer, zero_match()),
+                BatchSize::SmallInput,
+            );
         });
 
         group.bench_with_input(BenchmarkId::new("no-op", n), &n, |b, _| {
-            b.iter(|| observe_sync_and_run(&service, &indexer, one_match()));
+            b.iter_batched(
+                || drop_page_cache(&db_path).expect("drop index db page cache"),
+                |()| observe_sync_and_run(&service, &indexer, one_match()),
+                BatchSize::SmallInput,
+            );
         });
 
         bench_sync_and_run_scenario(
@@ -338,13 +356,20 @@ fn bench_sync_and_run(c: &mut Criterion) {
             BenchmarkId::new("full_vault_scan", n),
             &n,
             |b, _| {
-                b.iter(|| {
-                    observe_sync_and_run(
-                        &service,
-                        &indexer,
-                        SourceSelector::All,
-                    )
-                });
+                b.iter_batched(
+                    || {
+                        drop_page_cache(&db_path)
+                            .expect("drop index db page cache");
+                    },
+                    |()| {
+                        observe_sync_and_run(
+                            &service,
+                            &indexer,
+                            SourceSelector::All,
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
             },
         );
     }
@@ -362,12 +387,13 @@ fn bench_sync_and_run(c: &mut Criterion) {
 /// Expected outcomes:
 /// - Rich no-op refresh scales with scan/diff without reparsing unchanged
 ///   notes.
-/// - Single tag and multi-upsert costs scale with the number of mutated files
-///   only.
+/// - Content-only rich upserts scale with the number of changed notes.
+/// - Rich deletion follows the documented path-change path and recomputes
+///   inlinks across the remaining notes.
 ///
 /// Unexpected outcomes:
-/// - Multi-upsert or delete triggering secondary index reconstruction beyond
-///   the modified delta.
+/// - Content-only rich upserts triggering full inlink recomputation, or delete
+///   costs growing worse than the documented full-recompute path-change model.
 fn bench_file_index_refresh_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("WorkspaceIndex::refresh/profiles");
     group.plot_config(

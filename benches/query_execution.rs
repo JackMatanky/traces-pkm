@@ -215,9 +215,9 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
 /// Runs `rows_floor` (unfiltered page selection across varied field width)
 /// alongside `filter` (`rating > 2`).
 ///
-/// Subtraction formula:
-/// - `filter - rows_floor`: Isolates filter predicate evaluation from
-///   field-width note row construction.
+/// Relative anchor:
+/// - Compare `filter` with `rows_floor` to estimate filter predicate overhead
+///   above field-width note row construction.
 ///
 /// Expected outcomes:
 /// - `rows_floor` reflects field-width row extraction cost.
@@ -375,11 +375,12 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///
 /// Expected outcomes:
 /// - Cost stays close to iterator consumption and does not deep-copy row data.
+///   The row materialization in the setup closure is intentionally outside the
+///   timed window, so sub-microsecond quick-mode deltas in this group should be
+///   confirmed with a longer normal-mode run before treating them as
+///   regressions.
 ///
 /// Unexpected outcomes:
-/// - Cost scales beyond simple row consumption, indicating shared-cache
-///   fallback, row cloning, or iterator materialization overhead needs
-///   inspection.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/into_iter_owned");
     group.plot_config(
