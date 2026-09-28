@@ -1532,8 +1532,12 @@ empty diff cannot fail the gate.
 
 - [ ] **Step 2: Sanity-scan the rewrite**
 
-Run: `rg -n 'cargo mutants --|mutants\.out|--in-diff|--iterate' docs/refs/mutation_testing.md; echo "rc=$?"`
-Expected: rc=1 (no stale cargo-mutants usage remains except the one historical mention of the retirement).
+Run:
+```bash
+rg -n 'cargo mutants --|mutants\.out|--in-diff' docs/refs/mutation_testing.md; echo "rc=$?"
+rg -n -- '--iterate' docs/refs/mutation_testing.md; echo "rc=$?"
+```
+Expected: first rg rc=1 (no stale cargo-mutants usage). Second rg rc=0 with **exactly one** hit — the intentional negation line (`There is no \`--iterate\``), which documents the flag's absence; any other `--iterate` hit is stale usage and must be fixed.
 
 - [ ] **Step 3: Commit**
 
