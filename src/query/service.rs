@@ -245,14 +245,28 @@ impl QueryService {
 
     /// Expands matching notes into one [`QueryRow`] per list item whose kind
     /// satisfies `is_wanted`, in document order.
+    ///
+    /// Reserves capacity up front from the exact count of list items across
+    /// all matched notes (an exact bound for `lists()`, an upper bound for
+    /// `tasks()`), avoiding the reallocation-copy cost that
+    /// [`QueryRow`]'s `Arc<WorkspaceIndex>` field makes non-trivial: unlike a
+    /// `Copy` type, growing this `Vec` without a hint cannot reuse the old
+    /// buffer in place, so every regrowth copies live `Arc` clones one by one.
     fn item_rows(
         &self,
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
         is_wanted: impl Fn(&ListItem) -> bool,
     ) -> Vec<QueryRow> {
-        let mut out = Vec::new();
-        for base in self.matched_file_rows(index, source) {
+        let base_rows: Vec<QueryRow> =
+            self.matched_file_rows(index, source).collect();
+        let capacity: usize = base_rows
+            .iter()
+            .filter_map(|base| base.note())
+            .map(|note| note.lists().len())
+            .sum();
+        let mut out = Vec::with_capacity(capacity);
+        for base in base_rows {
             let Some(note) = base.note() else {
                 continue;
             };
