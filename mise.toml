@@ -200,6 +200,51 @@ cmd+=("${extra[@]+"${extra[@]}"}")
 exec "${cmd[@]}"
 '''
 
+[tasks."modules:deps"]
+description = "Print the module dependency graph as DOT (`cargo modules dependencies`)"
+sources = ["@group:rust"]
+outputs = []
+cache = { enabled = false }
+env = { NO_COLOR = "1" }
+usage = '''
+flag "-d --depth <n>" help="Max depth from the crate root (`--max-depth`)"
+flag "-m --mod <module>" {
+  help "Focus the graph on one module (`--focus-on`)"
+  long_help "Passes `--focus-on <module>`. Relative paths are auto-prefixed with `crate::` (see modules:tree): `-m index` and `-m index::codec` work as written. Conflicts with `--acyclic`."
+}
+// `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+flag "--acyclic" help="Exit non-zero if the module graph has a cycle (conflicts with -m)"
+arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules dependencies` (e.g. `--no-externs`, `--no-uses`, `--layout dot`)"
+'''
+run = '''
+#!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
+set -euo pipefail
+# `--lib` is required: the package has both [lib] and [[bin]] (same rule as
+# modules:tree / modules:orphans).
+declare -a cmd=(cargo modules dependencies --lib)
+[[ -n "${usage_depth:-}" ]] && cmd+=(--max-depth "${usage_depth}")
+# same focus qualification as modules:tree (see above)
+pkg="$(sed -n 's/^name = "\(.*\)"$/\1/p' Cargo.toml | head -1 | tr '-' '_')"
+focus="${usage_mod:-}"
+if [[ -n "$focus" ]]; then
+  focus="${focus#::}"
+  case "$focus" in
+    crate::*|"${pkg}"::*) ;;
+    *) focus="crate::${focus}" ;;
+  esac
+fi
+[[ -n "$focus" ]] && cmd+=(--focus-on "$focus")
+[[ "${usage_acyclic:-false}" == "true" ]] && cmd+=(--acyclic)
+declare -a extra=()
+# usage_args is shell-quoted (var=#true arg); eval parses it into the extra array.
+eval "extra=(${usage_args:-})"
+cmd+=("${extra[@]+"${extra[@]}"}")
+exec "${cmd[@]}"
+'''
+
 # ------------------------------------------------------------- #
 #                     Formatting & Linting                      #
 # ------------------------------------------------------------- #
