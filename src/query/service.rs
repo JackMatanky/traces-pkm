@@ -203,7 +203,25 @@ impl QueryService {
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
-        self.matched_file_rows(index, source).collect()
+        // `Filter`'s `size_hint` lower bound is always 0 (any entry could
+        // fail the predicate), so a bare `.collect()` can't know the exact
+        // output length upfront and falls back to `Vec`'s amortized
+        // power-of-two growth, which can overshoot the real length by up to
+        // ~2x depending on where it lands (empirically: 28% waste at
+        // n=100, 64% at n=10000, only 2.4% at n=1000 - pure luck of the
+        // draw, not a fixable-by-input-shape coincidence).
+        // `SourceSelector::All` matches every entry unconditionally
+        // (see `is_match` above), so its output length is exactly
+        // `index.entries().len()` - known upfront, so pre-sizing
+        // eliminates the waste entirely for this common "select
+        // everything" case.
+        if matches!(source, SourceSelector::All) {
+            let mut rows = Vec::with_capacity(index.entries().len());
+            rows.extend(self.matched_file_rows(index, source));
+            rows
+        } else {
+            self.matched_file_rows(index, source).collect()
+        }
     }
 
     /// Expands matching notes into one [`QueryRow`] per list item, including
