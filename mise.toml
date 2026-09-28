@@ -175,19 +175,18 @@ exec "${cmd[@]}"
 '''
 
 [tasks."modules:orphans"]
-description = "Detect source files not wired into the module tree (`cargo modules orphans`)"
+description = "Detect source files not wired into the module tree (`cargo modules orphans`); exits non-zero when orphans are found"
 sources = ["@group:rust"]
 outputs = []
 cache = { enabled = false }
 env = { NO_COLOR = "1" }
 usage = '''
 flag "--cfg-test" help="Analyze with #[cfg(test)] enabled"
-arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules orphans`"
+arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules orphans` (`--lib`/`--deny` are applied automatically — don't repeat them)"
 '''
 run = '''
 #!/bin/bash
 # usage_* vars are injected by mise from the `usage` spec above.
-# usage_args is shell-quoted (var=#true arg); eval parses it into the extra array.
 # shellcheck disable=SC2154
 set -euo pipefail
 # `--lib` required (same multi-target rule as modules:tree); `--deny` always on
@@ -195,6 +194,7 @@ set -euo pipefail
 declare -a cmd=(cargo modules orphans --lib --deny)
 [[ "${usage_cfg_test:-false}" == "true" ]] && cmd+=(--cfg-test)
 declare -a extra=()
+# usage_args is shell-quoted (var=#true arg); eval parses it into the extra array.
 eval "extra=(${usage_args:-})"
 cmd+=("${extra[@]+"${extra[@]}"}")
 exec "${cmd[@]}"
