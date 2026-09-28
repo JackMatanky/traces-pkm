@@ -37,7 +37,7 @@ skip_with_cfg: false
 # enable ONLY if measured MSI >= 60 (ci.md "active" tier; score strictly
 # below min_msi exits 4). The same ci.md row's companion 75 is min_covered_msi,
 # which we do NOT set: without --coverage a positive min_covered_msi exits 4.
-# min_msi: 60
+# min_msi: 60  # scoped measurement MSI = 0.8333333333333334 on strsim 2026-09-28; full-project measurement deferred (see .scratch/quality-gates/issues/01-full-project-mutation-baseline.md)
 
 enable_mutators: []
 ignore_source_lines: []

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mutants": [
+    {
+      "id": "ee774235394b47be269f8b94f89c2554",
+      "file": "src/strsim.rs",
+      "mutator": "numbers/incrementer",
+      "line": 15
+    }
+  ]
+}
