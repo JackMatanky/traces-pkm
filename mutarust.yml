@@ -29,7 +29,8 @@ disable_mutators:
 
 # Do NOT enable without a --dry-run A/B: this repo gates many items with
 # #[cfg(any(test, feature = "test-utils"))] and the docs never classify
-# `any(test, …)` (§9.3) — enabling could suppress active test-support mutants.
+# `any(test, …)` (§9.3) — enabling could suppress active test-support
+# mutants.
 skip_without_test: false
 skip_with_cfg: false
 
