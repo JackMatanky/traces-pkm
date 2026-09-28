@@ -61,12 +61,17 @@ pub(crate) mod notes;
 /// Temporary project trees and index builders for filesystem benchmarks.
 pub(crate) mod project;
 
-/// File-count sweep shared by workspace-scale benchmarks.
-///
-/// Five log-spaced points spanning 50 to 20,000 notes with a steady 4x to 5x
-/// ratio. Covers small personal wikis (50–200 notes), standard vaults (1K),
-/// large vaults (5K), and a 20K anchor for reliable extrapolation.
-pub const WORKSPACE_FILE_COUNTS: &[usize] = &[50, 200, 1_000, 5_000, 20_000];
+/// Six log-spaced points spanning 50 to 20,000 notes. The last hop (5,000 to
+/// 20,000) is split into two 2x steps instead of one 4x step, following
+/// Criterion's own convention for range-of-values benchmarks (criterion book,
+/// "Benchmarking With A Range Of Values"): more resolution right below the
+/// measured ceiling tightens `bench/model`'s extrapolation toward the 50K/100K
+/// forecast targets the most. Covers small personal wikis (50-200 notes),
+/// standard vaults (1K), large vaults (5K-10K), and a 20K anchor. Clears
+/// `bench/model`'s `MIN_POINTS_FOR_TRUSTED_FIT=6` and `MIN_RESIDUAL_DOF=3`
+/// (the `COMBINED` model has 3 parameters) with zero slack, by design.
+pub const WORKSPACE_FILE_COUNTS: &[usize] =
+    &[50, 200, 1_000, 5_000, 10_000, 20_000];
 
 /// File-count sweep for multi-shape profile benchmarks across two orders of
 /// magnitude.
