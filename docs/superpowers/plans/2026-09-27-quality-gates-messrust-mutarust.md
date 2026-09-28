@@ -1595,7 +1595,7 @@ Run:
 printf 'docs/refs/quality_gates_messrust.md\0docs/refs/quality_gates_mise_adoption.md\0docs/refs/mutation_testing.md\0docs/superpowers/plans/2026-09-27-quality-gates-messrust-mutarust.md\0' \
   | hk check --skip-step gitleaks --format json --files0-from -
 ```
-Expected: `overall: passed` (gitleaks skipped because `--safe` refuses its unknown effect; run `gitleaks detect` manually if secrets are a concern for these files — they contain no secrets).
+Expected: `status: passed` (gitleaks skipped because `--safe` refuses its unknown effect; run `gitleaks detect` manually if secrets are a concern for these files — they contain no secrets).
 
 - [ ] **Step 4: Clean tree**
 
