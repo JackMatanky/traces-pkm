@@ -44,11 +44,15 @@ gate failure: retry the run before touching `mutarust-baseline.json`.
 ## Deferred procedure
 
 <!-- Run from the repo root — `--config mutarust.yml` is a relative path.
-     `mise exec` (not `mise run mutants`) because the task rejects
-     passthrough `--config`/`--test-flags` with exit 2 (see `_default`
-     `reject_conflicting_flags`; `--timeout-coefficient` is only rejected
-     alongside `--dry-run`/`--timeout`, but `--workers` and friends pass
-     through fine); the raw invocation bypasses that guard entirely. -->
+     `mise exec` (not `mise run mutants`) because the task inherits
+     `[task_templates.mutants] timeout = "1h"` (mise.toml) and would kill
+     a multi-hour run; it also re-runs `depends=["test"]` first, and its
+     guard rejects passthrough `--config`/`--test-flags` with exit 2
+     (see `_default` `reject_conflicting_flags`; `--timeout-coefficient`
+     is only rejected alongside `--dry-run`/`--timeout`, while `--workers`
+     passes through). The raw invocation sidesteps all of that — a
+     knowing bypass of AGENTS.md's run_task preference, for those
+     reasons. -->
 
 > `TEST_FLAGS` value, from `.mise/tasks/mutants/_default` (line `TEST_FLAGS=`):
 > `--features test-utils --all-targets --profile mutants`
