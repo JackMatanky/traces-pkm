@@ -808,10 +808,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
-name = "libyaml-rs"
-version = "0.3.0"
+name = "libm"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "linux-raw-sys"
@@ -952,6 +952,23 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys",
+]
+
+[[package]]
+name = "noyalib"
+version = "0.0.51"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77d00fc12936a62c370ddaaba83218c753ba110b34a60ed6e278fd7b7389e350"
+dependencies = [
+ "hashbrown",
+ "indexmap",
+ "itoa",
+ "libm",
+ "memchr",
+ "rustc-hash",
+ "ryu",
+ "serde_core",
+ "smallvec",
 ]
 
 [[package]]
@@ -1730,6 +1747,7 @@ dependencies = [
  "logos",
  "miette",
  "minijinja",
+ "noyalib",
  "num-traits",
  "phf",
  "postcard",
@@ -1754,7 +1772,6 @@ dependencies = [
  "unicode-width 0.2.2",
  "uuid",
  "walkdir",
- "yaml_serde",
 ]
 
 [[package]]
@@ -2054,19 +2071,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "yaml_serde"
-version = "0.10.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
-dependencies = [
- "indexmap",
- "itoa",
- "libyaml-rs",
- "ryu",
- "serde",
 ]
 
 [[package]]

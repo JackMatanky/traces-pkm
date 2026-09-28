@@ -554,8 +554,8 @@ mod tests {
         use crate::note::LinkType;
 
         #[test]
-        fn converts_serde_yaml_value_into_field_value_variants() {
-            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+        fn converts_noyalib_value_into_field_value_variants() {
+            let yaml = noyalib::from_str::<noyalib::Value>(
                 "
                 str: hello
                 num: 42.5
@@ -600,7 +600,7 @@ mod tests {
 
         #[test]
         fn converts_wikilink_strings_into_link_values() {
-            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+            let yaml = noyalib::from_str::<noyalib::Value>(
                 r#"
                 link: "[[Project Alpha|Alpha]]"
                 "#,
@@ -622,7 +622,7 @@ mod tests {
 
         #[test]
         fn preserves_nested_yaml_objects() {
-            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+            let yaml = noyalib::from_str::<noyalib::Value>(
                 "
                 outer:
                   inner: value
@@ -644,7 +644,7 @@ mod tests {
 
         #[test]
         fn converts_duration_strings_into_duration_values() {
-            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+            let yaml = noyalib::from_str::<noyalib::Value>(
                 "
                 scalar: 1h 30m
                 list: [1h, 30m]
@@ -696,9 +696,8 @@ mod tests {
 
         #[test]
         fn keeps_a_bare_number_string_as_string_not_duration() {
-            let yaml =
-                serde_yaml::from_str::<serde_yaml::Value>(r#"code: "42""#)
-                    .expect("valid yaml");
+            let yaml = noyalib::from_str::<noyalib::Value>(r#"code: "42""#)
+                .expect("valid yaml");
 
             assert_eq!(
                 NoteFieldValue::from(FieldValueRef::from(yaml)),

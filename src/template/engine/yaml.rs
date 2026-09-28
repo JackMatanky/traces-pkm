@@ -38,9 +38,16 @@ impl YamlOps {
 /// Returns [`minijinja::ErrorKind::InvalidOperation`] if the value cannot be
 /// serialized into YAML.
 pub(super) fn to_yaml(value: &Value) -> TemplateEngineResult<String> {
-    serde_yaml::to_string(value).map_err(|err| {
+    let mut yaml = noyalib::to_string(value).map_err(|err| {
         invalid_operation("to_yaml: failed to serialize value to YAML", err)
-    })
+    })?;
+    // noyalib omits the document-terminating newline the previous
+    // serializer emitted; a block scalar for a trailing-newline string
+    // already ends in one.
+    if !yaml.ends_with('\n') {
+        yaml.push('\n');
+    }
+    Ok(yaml)
 }
 
 /// Parses a YAML string into a template [`Value`].
@@ -55,10 +62,9 @@ pub(super) fn from_yaml(text: &str) -> TemplateEngineResult<Value> {
     if text.trim().is_empty() {
         return Ok(Value::from(()));
     }
-    let parsed =
-        serde_yaml::from_str::<serde_yaml::Value>(text).map_err(|err| {
-            invalid_operation("from_yaml: failed to parse YAML string", err)
-        })?;
+    let parsed = crate::yaml::parse(text).map_err(|err| {
+        invalid_operation("from_yaml: failed to parse YAML string", err)
+    })?;
     Ok(Value::from_serialize(&parsed))
 }
 
@@ -170,7 +176,7 @@ mod tests {
             let out = env()
                 .render_str("{{ val | to_yaml }}", context! { val => input })
                 .expect("render succeeds");
-            let parsed = serde_yaml::from_str::<String>(&out)
+            let parsed = noyalib::from_str::<String>(&out)
                 .expect("serialized string parses");
 
             assert_eq!(parsed, input);
