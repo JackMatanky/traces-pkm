@@ -20,7 +20,7 @@ use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
-    LexTokenStream, LexedToken, TokenSpec,
+    LexTokenStream, LexedToken, Tag, TokenSpec,
     index::FileEntry,
     lexical_unquote,
     note::{Note, NoteFieldValue},
@@ -654,7 +654,7 @@ enum SourceToken {
     WithChildren,
     #[token(".with_descendants()", priority = 4)]
     WithDescendants,
-    #[regex(r"#[a-zA-Z][a-zA-Z0-9_\-/]+", |lex| lex.slice().to_owned())]
+    #[token("#", tag_callback)]
     Tag(String),
     #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
     ClassSigil(String),
@@ -662,6 +662,22 @@ enum SourceToken {
     Quoted(String),
     #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
     Bare(String),
+}
+
+/// Parses a `#tag`-shaped token starting at the already-consumed leading `#`.
+///
+/// Delegates the character-class rules to [`Tag::prefix_len`], the same
+/// tag-token scanner the Markdown body lexer uses, so a query source
+/// expression accepts exactly the tag shapes a note can carry (including
+/// single-letter tags like `#a`). Errors (surfaced as
+/// [`LexError::UnexpectedToken`](crate::LexError::UnexpectedToken)) when `#`
+/// is not followed by a valid tag body.
+fn tag_callback(lex: &mut Lexer<'_, SourceToken>) -> Result<String, ()> {
+    let tag_start = lex.span().start;
+    let tail = lex.source().get(tag_start..).ok_or(())?;
+    let tag_len = Tag::prefix_len(tail).ok_or(())?;
+    lex.bump(tag_len.saturating_sub('#'.len_utf8()));
+    Ok(lex.slice().to_owned())
 }
 
 #[expect(
@@ -734,6 +750,11 @@ mod tests {
                 SourceExpr::parse("books/"),
                 Ok(SourceExpr(path("books/")))
             );
+        }
+
+        #[test]
+        fn parses_a_single_letter_tag() {
+            assert_eq!(SourceExpr::parse("#a"), Ok(SourceExpr(tag("#a"))));
         }
 
         #[test]
@@ -963,6 +984,18 @@ mod tests {
             let expression =
                 SourceExpr::parse("(#book and books/) and not archive/")
                     .expect("valid source");
+
+            assert!(expression.is_match(entry, "class"));
+        }
+
+        #[test]
+        fn matches_a_tag_sourced_only_from_frontmatter() {
+            let (_temp, index) = indexed_note(
+                "---\ntags: [book]\n---\nNo body tag here.",
+                "books/dune.md",
+            );
+            let entry = find_entry(index.entries(), Path::new("books/dune.md"));
+            let expression = SourceExpr::parse("#book").expect("valid source");
 
             assert!(expression.is_match(entry, "class"));
         }

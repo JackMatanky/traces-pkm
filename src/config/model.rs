@@ -39,6 +39,9 @@ const DEFAULT_TITLE_FIELD: &str = "title";
 /// Default `[frontmatter] aliases` key when unconfigured.
 const DEFAULT_ALIASES_FIELD: &str = "aliases";
 
+/// Default `[frontmatter] tags` key when unconfigured.
+const DEFAULT_TAGS_FIELD: &str = "tags";
+
 /// Default `[frontmatter] date_created.name` key when unconfigured.
 const DEFAULT_DATE_CREATED_FIELD: &str = "date_created";
 
@@ -422,11 +425,12 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
 }
 
 /// Resolved `[frontmatter]` settings mapping key names for title, aliases,
-/// and date roles.
+/// tags, and date roles.
 #[derive(Clone, Debug)]
 pub struct FrontmatterConfig {
     title: FieldName,
     aliases: FieldName,
+    tags: FieldName,
     date_created: DateFieldConfig,
     date_modified: DateFieldConfig,
 }
@@ -444,6 +448,13 @@ impl FrontmatterConfig {
     #[must_use]
     pub fn aliases_name(&self) -> &str {
         self.aliases.as_str()
+    }
+
+    /// Returns the frontmatter key holding a Note's tags.
+    #[inline]
+    #[must_use]
+    pub fn tags_name(&self) -> &str {
+        self.tags.as_str()
     }
 
     /// Returns the creation-timestamp frontmatter key and date format.
@@ -487,19 +498,41 @@ impl FrontmatterConfig {
             ..Self::default()
         }
     }
+
+    /// Overrides the tags key on a test-built frontmatter config, for tests
+    /// that exercise non-default tags-key resolution.
+    ///
+    /// # Panics
+    ///
+    /// If `tags` fails `FieldName` validation (empty or whitespace-only): a
+    /// test-fixture bug, not a runtime error path.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "test-only constructor; an invalid literal here is a test \
+                  fixture bug, not a recoverable caller error"
+    )]
+    pub fn with_tags_name<T: Into<String>>(mut self, tags: T) -> Self {
+        self.tags = FieldName::try_from(tags.into())
+            .expect("test fixture tags is a valid field key");
+        self
+    }
 }
 
 impl Default for FrontmatterConfig {
     /// # Panics
     ///
-    /// Never in practice: [`DEFAULT_TITLE_FIELD`]/[`DEFAULT_ALIASES_FIELD`]
-    /// are hardcoded, always-valid field keys.
+    /// Never in practice: [`DEFAULT_TITLE_FIELD`]/[`DEFAULT_ALIASES_FIELD`]/
+    /// [`DEFAULT_TAGS_FIELD`] are hardcoded, always-valid field keys.
     #[inline]
     #[expect(
         clippy::expect_used,
-        reason = "DEFAULT_TITLE_FIELD/DEFAULT_ALIASES_FIELD are hardcoded \
-                  constants; failure here means a constant itself is \
-                  malformed, not a recoverable caller error"
+        reason = "DEFAULT_TITLE_FIELD/DEFAULT_ALIASES_FIELD/\
+                  DEFAULT_TAGS_FIELD are hardcoded constants; failure here \
+                  means a constant itself is malformed, not a recoverable \
+                  caller error"
     )]
     fn default() -> Self {
         Self {
@@ -507,6 +540,8 @@ impl Default for FrontmatterConfig {
                 .expect("DEFAULT_TITLE_FIELD is a valid field key"),
             aliases: FieldName::try_from(DEFAULT_ALIASES_FIELD)
                 .expect("DEFAULT_ALIASES_FIELD is a valid field key"),
+            tags: FieldName::try_from(DEFAULT_TAGS_FIELD)
+                .expect("DEFAULT_TAGS_FIELD is a valid field key"),
             date_created: DateFieldConfig::default_for(
                 DEFAULT_DATE_CREATED_FIELD,
             ),
@@ -522,8 +557,8 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
 
     /// # Errors
     ///
-    /// - [`ConfigFileError::InvalidFieldKey`] if `title` or `aliases` fails
-    ///   field name validation.
+    /// - [`ConfigFileError::InvalidFieldKey`] if `title`, `aliases`, or `tags`
+    ///   fails field name validation.
     #[inline]
     fn try_from(raw: RawFrontmatterConfig) -> Result<Self, Self::Error> {
         let invalid_key =
@@ -535,6 +570,10 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
             .map_err(invalid_key)?,
             aliases: FieldName::try_from(
                 raw.aliases.unwrap_or_else(|| DEFAULT_ALIASES_FIELD.to_owned()),
+            )
+            .map_err(invalid_key)?,
+            tags: FieldName::try_from(
+                raw.tags.unwrap_or_else(|| DEFAULT_TAGS_FIELD.to_owned()),
             )
             .map_err(invalid_key)?,
             date_created: DateFieldConfig::from_raw_or_default(
@@ -647,8 +686,7 @@ impl TryFrom<RawTaskConfig> for TaskConfig {
             .tag_filters
             .into_iter()
             .map(|entry| {
-                let normalized = normalize_tag_filter(&entry);
-                Tag::parse(&normalized).map_err(|source| {
+                Tag::parse_lenient(&entry).map_err(|source| {
                     ConfigFileError::InvalidTagFilter {
                         entry,
                         source,
@@ -802,23 +840,6 @@ impl DateFieldConfig {
     }
 }
 
-/// Normalizes a `[tasks] tag_filters` entry by trimming whitespace and
-/// prefixing a leading `#` if absent, before constructing a [`Tag`].
-///
-/// Users may write `"task"` or `"#task"` interchangeably; both normalize to
-/// the same internal `Tag`.
-fn normalize_tag_filter(entry: &str) -> String {
-    let trimmed = entry.trim();
-    if trimmed.starts_with('#') {
-        trimmed.to_owned()
-    } else {
-        let mut s = String::with_capacity(trimmed.len().saturating_add(1));
-        s.push('#');
-        s.push_str(trimmed);
-        s
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,6 +902,13 @@ mod tests {
 
             assert_eq!(config.title_name(), "heading");
             assert_eq!(config.aliases_name(), "also_known");
+        }
+
+        #[test]
+        fn defaults_tags_to_tags() {
+            let config = FrontmatterConfig::for_test("heading", "also_known");
+
+            assert_eq!(config.tags_name(), "tags");
         }
     }
     mod schemas_for_test {

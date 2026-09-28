@@ -118,6 +118,10 @@ impl ConfigBuilder {
                 local_raw.frontmatter.aliases.as_ref(),
                 global_raw.and_then(|g| g.frontmatter.aliases.as_ref()),
             ),
+            tags: merge_optional(
+                local_raw.frontmatter.tags.as_ref(),
+                global_raw.and_then(|g| g.frontmatter.tags.as_ref()),
+            ),
             date_created: merge_date_field(
                 local_raw.frontmatter.date_created.as_ref(),
                 global_raw.and_then(|g| g.frontmatter.date_created.as_ref()),

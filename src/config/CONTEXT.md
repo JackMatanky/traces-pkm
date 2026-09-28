@@ -53,8 +53,8 @@ execution, kept independent of trust decisions.
 #### Metadata Roles
 
 Canonical frontmatter keys configured under `[frontmatter]` mapping
-project-specific names for title, aliases, creation date, and modification
-date.
+project-specific names for title, aliases, tags, creation date, and
+modification date.
 *Avoid*: field mapping, canonical attributes
 
 ### Task Recognition
