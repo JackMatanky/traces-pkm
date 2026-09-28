@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# dependencies = ["numpy", "scikit-learn", "plotext<6"]
+# dependencies = ["numpy", "plotext<6"]
 # ///
 # [MISE] description="Fit performance models to criterion output"
 # [MISE] hide=true
@@ -48,7 +48,6 @@ from pathlib import Path
 from typing import Any, Final
 
 import numpy as np
-from sklearn.linear_model import LinearRegression
 
 # ------------------------------------------------------------- #
 #                           Constants                           #
@@ -896,22 +895,60 @@ class ModelFitter:
         if len(data_points) >= MIN_POINTS_FOR_COMBINED:
             kinds.append(ModelKind.COMBINED)
         models = [self._fit_kind(kind, x, y) for kind in kinds]
-        return tuple(
-            sorted(models, key=lambda model: (model.validation_rmse, -model.r_squared))
+        return tuple(sorted(models, key=self._rank_key))
+
+    @staticmethod
+    def _rank_key(model: FittedModel) -> tuple[float, float, int]:
+        """Rank by RMSE (relative) then R² (absolute), then declaration order.
+
+        Different least-squares solvers can disagree in the last float bits
+        on degenerate inputs (e.g. a constant or two-point ``x``), which
+        would otherwise make the winning candidate depend on which solver
+        ran rather than on real fit quality. RMSE spans nanoseconds to
+        seconds, so it needs *relative* rounding (9 significant figures);
+        R² is bounded near ``[0, 1]``, so noise shows up as tiny deviations
+        around zero where relative rounding does nothing, needing *absolute*
+        rounding instead. Both snap solver noise into exact ties, which then
+        fall back to ``ModelKind`` declaration order (simplest model first)
+        via the enum ordinal, instead of leaving the tiebreak an incidental
+        side effect of sort stability.
+        """
+        return (
+            float(f"{model.validation_rmse:.9g}"),
+            round(-model.r_squared, 9),
+            tuple(ModelKind).index(model.kind),
         )
+
+    @staticmethod
+    def _ols_fit(features: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, float]:
+        """Fit ``y = features @ coeffs[:-1] + coeffs[-1]`` via least squares.
+
+        Returns the coefficient vector (feature weights then intercept) and
+        the in-sample R² score. Plain ``numpy.linalg.lstsq`` reproduces
+        scikit-learn's ``LinearRegression`` exactly for this two-to-three
+        parameter design, avoiding a whole extra dependency for one OLS solve.
+        """
+        design = np.column_stack([features, np.ones(len(y))])
+        coeffs, *_ = np.linalg.lstsq(design, y, rcond=None)
+        residuals = y - design @ coeffs
+        ss_res = float(np.sum(residuals**2))
+        ss_tot = float(np.sum((y - y.mean()) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+        return coeffs, r_squared
 
     @staticmethod
     def _fit_kind(kind: ModelKind, x: np.ndarray, y: np.ndarray) -> FittedModel:
         features = kind.design_matrix(x)
-        regression = LinearRegression().fit(features, y)
+        coeffs, r_squared = ModelFitter._ols_fit(features, y)
+        *feature_coeffs, intercept = coeffs
         return FittedModel(
             kind=kind,
-            coeff_n=float(regression.coef_[0]),
-            coeff_nlogn=float(regression.coef_[1])
+            coeff_n=float(feature_coeffs[0]),
+            coeff_nlogn=float(feature_coeffs[1])
             if kind is ModelKind.COMBINED
             else 0.0,
-            coeff_intercept=float(regression.intercept_),
-            r_squared=float(regression.score(features, y)),
+            coeff_intercept=float(intercept),
+            r_squared=r_squared,
             validation_rmse=ModelFitter._leave_one_out_rmse(features, y),
         )
 
@@ -923,9 +960,9 @@ class ModelFitter:
         for index in range(len(y)):
             mask = np.ones(len(y), dtype=bool)
             mask[index] = False
-            regression = LinearRegression().fit(features[mask], y[mask])
-            prediction = regression.predict(features[index : index + 1])[0]
-            errors[index] = y[index] - prediction
+            coeffs, _ = ModelFitter._ols_fit(features[mask], y[mask])
+            design_row = np.append(features[index], 1.0)
+            errors[index] = y[index] - design_row @ coeffs
         return float(np.sqrt(np.mean(np.square(errors))))
 
 
@@ -1117,28 +1154,6 @@ class Presentation:
         return f"{eps:.0f} elem/s"
 
     @staticmethod
-    def format_outlier_summary(data_points: Sequence[BenchmarkDataPoint]) -> str:
-        tot_samples = sum(p.outliers.total_samples for p in data_points)
-        high_mld = sum(p.outliers.high_mild for p in data_points)
-        high_sev = sum(p.outliers.high_severe for p in data_points)
-        low_mld = sum(p.outliers.low_mild for p in data_points)
-        low_sev = sum(p.outliers.low_severe for p in data_points)
-        tot_out = high_mld + high_sev + low_mld + low_sev
-        if tot_out == 0:
-            return "none"
-        pct = (tot_out / tot_samples * 100.0) if tot_samples > 0 else 0
-        parts = []
-        if high_mld:
-            parts.append(f"{high_mld} high mild")
-        if high_sev:
-            parts.append(f"{high_sev} high severe")
-        if low_mld:
-            parts.append(f"{low_mld} low mild")
-        if low_sev:
-            parts.append(f"{low_sev} low severe")
-        return f"{' · '.join(parts)} ({pct:.1f}% across {len(data_points)} sizes)"
-
-    @staticmethod
     def truncate_middle(text: str, max_len: int) -> str:
         if len(text) <= max_len:
             return text
@@ -1176,6 +1191,19 @@ class SeriesReporter:
         if width >= WIDESCREEN_THRESHOLD:
             return self._render_wide_card(analysis, width)
         return self._render_narrow_card(analysis)
+
+    @staticmethod
+    def _pad_columns(
+        left_lines: Sequence[str], right_lines: Sequence[str], col_w: int
+    ) -> list[tuple[str, str]]:
+        """Pad two label/value line lists to col_w; extend the shorter with blanks."""
+        max_rows = max(len(left_lines), len(right_lines))
+        left = list(left_lines) + [""] * (max_rows - len(left_lines))
+        right = list(right_lines) + [""] * (max_rows - len(right_lines))
+        return [
+            (Style.pad_visible(l, col_w), Style.pad_visible(r, col_w))
+            for l, r in zip(left, right, strict=True)
+        ]
 
     def _render_wide_card(self, analysis: SeriesAnalysis, width: int) -> str:
         card_w = min(114, max(96, width - 2))
@@ -1227,13 +1255,6 @@ class SeriesReporter:
                 "  before using this model for capacity estimates.",
             ]
 
-        # Pad lines
-        max_rows = max(len(left_lines), len(right_lines))
-        while len(left_lines) < max_rows:
-            left_lines.append("")
-        while len(right_lines) < max_rows:
-            right_lines.append("")
-
         header_title = f" {analysis.name} "
         header_meta = f" {len(analysis.data_points)} sizes · {analysis.size_range} {analysis.input_unit} "
         gap = card_w - 4 - len(header_title) - len(header_meta)
@@ -1243,9 +1264,7 @@ class SeriesReporter:
             header_line = f"╭──{header_title}{'─' * gap}{header_meta}──╮"
 
         body_lines = [header_line, f"│ {' ' * (card_w - 4)} │"]
-        for l_txt, r_txt in zip(left_lines, right_lines, strict=True):
-            l_pad = Style.pad_visible(l_txt, col_w)
-            r_pad = Style.pad_visible(r_txt, col_w)
+        for l_pad, r_pad in self._pad_columns(left_lines, right_lines, col_w):
             body_lines.append(f"│  {l_pad}  │  {r_pad}  │")
         body_lines.append(f"│ {' ' * (card_w - 4)} │")
         body_lines.append(f"╰{'─' * (card_w - 2)}╯")
@@ -1330,14 +1349,9 @@ class SeriesReporter:
                 f"├─ Tukey Outliers      : {latest.outliers.format_summary()}",
                 f"╰─ Baseline Decision   : {latest.change_vs_base.format_badge() if latest.change_vs_base else Style.dim('⚪ n/a')}",
             ]
-            max_rows = max(len(left_col), len(right_col))
-            while len(left_col) < max_rows:
-                left_col.append("")
-            while len(right_col) < max_rows:
-                right_col.append("")
             lines = [""]
-            for l_txt, r_txt in zip(left_col, right_col, strict=True):
-                lines.append(f"  {l_txt:<{col_w}}   {r_txt:<{col_w}}")
+            for l_pad, r_pad in self._pad_columns(left_col, right_col, col_w):
+                lines.append(f"  {l_pad}   {r_pad}")
             return "\n".join(lines)
 
         lines = [
@@ -1460,8 +1474,6 @@ class SeriesPlotRenderer:
     """Renders responsive terminal plots (side-by-side or single wide)."""
 
     def render(self, analysis: SeriesAnalysis, width: int | None = None) -> None:
-        import plotext as plt
-
         width = Presentation.terminal_width() if width is None else width
 
         if width >= DUAL_PLOT_THRESHOLD and analysis.has_throughput:
