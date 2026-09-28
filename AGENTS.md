@@ -31,8 +31,8 @@ Prerequisite: Set `MISE_EXPERIMENTAL=1` for tool/task discovery.
 | `lint` | `l` | Workspace, all targets, all features; `--fix` applies known lints | Strict clippy check; depends on `fmt` |
 | `fmt` | `f` | Workspace scope | Apply formatting prior to diffing or staging |
 | `modules:tree` | — | `-d <n>`, `-m <module>`, `--cfg-test`; extra args | Print module tree via `cargo modules`; standalone, not part of `verify` |
-| `modules:orphans` | — | `--cfg-test`; extra args | Check for source files outside the module tree; exits non-zero on orphans |
-| `modules:deps` | — | `-d <n>`, `-m <module>`, `--acyclic`; extra args | Emit DOT module graph; capture output before previewing; `--acyclic` is informational |
+| `modules:orphans` | — | `--cfg-test`; extra args (`--lib`/`--deny` automatic) | Standalone check for source files outside the module tree; exits non-zero on orphans |
+| `modules:deps` | — | `-d <n>`, `-m <module>`, `--acyclic`; extra args (`--lib` automatic) | Standalone DOT graph; capture before previewing (early close panics); `--acyclic` informational |
 <!-- mise:end -->
 
 <!-- hk:start -->
