@@ -853,7 +853,7 @@ mise run mutarust -- --config other.yml              # task's --config + passthr
 mise run mutarust -- --exclude 'src/*'               # confirm clean "unknown" error, document wording
 ```
 
-## 11. Pilot results (observed 2026-09-27)
+## 11. Pilot results (observed 2026-09-27/28)
 
 Scope module: `M` = dirs
 
@@ -861,6 +861,8 @@ Scope module: `M` = dirs
 | --- | --- | --- | --- | --- | --- | --- |
 | old engine, raw `cargo mutants` (Task 9) | 1664.33 s | 0 | 0 | n/a | n/a | 5 |
 | `mise run mutants -m dirs` (mutarust) | 461.26 s | 0 | 1 | 0 | 0.0 | 1 |
+
+n = 1 (new) vs 5 (old) — MSI and escape counts are not statistically comparable across engines; treat msi 0.0 as a single data point.
 
 Old-engine totals: 5 mutants tested, 5 caught, 0 survivors (`missed.txt`
 0 lines). New-engine totals: 1 mutant, 1 escaped, 0 killed.
@@ -877,14 +879,24 @@ completed rc=0 (cargo accepted `--profile mutants`; `[profile.mutants]`
 retained in Cargo.toml); re-verified `mise run mutants -m dirs --dry-run`
 rc=0 with no `--test-flags`/`--profile` in the emitted command
 (`build_static_flags` skips test controls under `--dry-run`).
-P3 (cap-lints): stats with RUSTFLAGS=--cap-lints=allow={"totalMutantsCount":1,"killedCount":0,"notCoveredCount":0,"escapedCount":1,"errorCount":0,"skippedCount":0,"msi":0.0,"coveredCodeMsi":0.0}; stats without={"totalMutantsCount":1,"killedCount":0,"notCoveredCount":0,"escapedCount":1,"errorCount":0,"skippedCount":0,"msi":0.0,"coveredCodeMsi":0.0};
-  skippedCount delta=0 of 1 → no material inflation observed on M. (Both rc=0. Caveat: M
-  is a single-mutant scope, so the A/B has almost no statistical power —
-  "no material inflation observed on M" only. Still off by default: the
+Supersedes §5.2's "✗ no equivalent" and §5.4's "--profile does not port"
+rows, and resolves §10.2 row 4 (portable candidate → accepted).
+P3 (cap-lints): rule: `skippedCount(off) − skippedCount(on) > 5% of
+  totalMutantsCount → inflation`. Observed: stats(ON) (RUSTFLAGS=
+  --cap-lints=allow) == stats(OFF) (identical), both rc=0:
+```json
+{"totalMutantsCount":1,"killedCount":0,"notCoveredCount":0,"escapedCount":1,"errorCount":0,"skippedCount":0,"msi":0.0,"coveredCodeMsi":0.0}
+```
+  skippedCount delta=0 of 1 → no material inflation observed on M. The
+  threshold is degenerate at n=1 (5% of 1 = 0.05), so any single skipped
+  mutant would have tripped it. Caveat: M is a single-mutant scope, so the
+  A/B has almost no statistical power — "no material inflation observed on
+  M" only. Env inheritance into cargo was confirmed: the cl-on run did a
+  full rebuild under RUSTFLAGS=--cap-lints=allow. Still off by default: the
   RUSTFLAGS switch also invalidates build caches, and the ON run was ~33 s
   slower than OFF (225.27 s vs 191.98 s "Finished in"), consistent with a
   cold rebuild. The old engine always cap-lints, so "off" is a deliberate
-  divergence.)
+  divergence.
 `default target` (`./src...`): accepted — bare `--dry-run` = 3820 == `./src...` set-identical (123 files); user positional now narrows scope (post-Task-7 default-target guard).
 Duplicate `--config` passthrough: rejected at task level (rc=2, task-owns
   message) — task config always wins; losing-config scenario unreachable.
@@ -896,9 +908,12 @@ Any other surprises:
   the P2 probe used the file form.
 - Engine granularity gap on the same file: cargo-mutants tested 5 mutants in
   `src/dirs.rs`, mutarust generated 1 (`statement/remove`) — and it escaped,
-  so M's mutarust MSI = 0.0.
+  so M's mutarust MSI = 0.0. Therefore 0-vs-1 escaped is not an
+  engine-quality comparison.
 - Baseline `depends=test` did NOT dominate wall-clock: ~11 s warm of the
   461.26 s Step-1 run (real from `time -p`); the mutation phase dominates.
-- `report.json` clobbering confirmed live: the P2 dry-run verification
-  rewrote the Step-1 stats (escaped 1 → 0). Every stats read above was taken
-  immediately after its scored run.
+
+Note (not a surprise): `report.json` clobbering behaved exactly as
+  pre-documented (Task 8 reminder + §11 intro) — the P2 dry-run verification
+  rewrote the Step-1 stats (escaped 1 → 0), a live confirmation. Every stats
+  read above was taken immediately after its scored run.
