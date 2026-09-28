@@ -436,7 +436,6 @@ mod tests {
         QueryService::new("class")
             .run(index, QueryBuilder::tasks(source.clone()))
     }
-
     fn query_lists(
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
