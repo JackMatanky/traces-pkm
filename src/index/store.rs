@@ -1692,6 +1692,23 @@ mod tests {
 
             assert_eq!(paths.as_ref(), [Path::new("tagged.md")]);
         }
+
+        #[test]
+        fn resolves_tags_sourced_only_from_frontmatter() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            let files = vec![FileMeta::note_for_test(Path::new("tagged.md"))];
+            let notes = vec![parse(
+                "tagged.md",
+                "---\ntags: [x]\n---\nNo body tag here.",
+            )];
+            write_all_parts(&store, &files, &notes, &InlinkMap::default())
+                .expect("persist tagged note");
+
+            let paths = store.paths_with_tag("x").expect("read tag paths");
+
+            assert_eq!(paths.as_ref(), [Path::new("tagged.md")]);
+        }
     }
 
     const TEST_TABLE: TableDefinition<&[u8], &[u8]> =

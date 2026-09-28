@@ -85,6 +85,7 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
         input.src(),
         input.tasks().statuses(),
         input.tasks().tag_filters(),
+        input.frontmatter().tags_name(),
     );
     for (event, range) in
         Parser::new_ext(input.src(), MARKDOWN_OPTIONS).into_offset_iter()
@@ -92,6 +93,32 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
         ctx.handle_event(event, ByteOffset::saturating_from(range.start));
     }
     ctx.into_note(input.path())
+}
+
+/// Extracts and validates tags from the frontmatter value at `key`.
+///
+/// Reuses [`Frontmatter::get_values`]'s scalar/list flattening: a list
+/// value yields one candidate per element, a scalar string yields one
+/// candidate. Every candidate, whether it came from a list element or the
+/// scalar itself, is then split on commas and each whitespace-trimmed
+/// segment becomes its own candidate, so a single list element containing
+/// a literal comma (`tags:\n  - "a, b"`) yields two candidates the same
+/// way a comma-separated scalar (`tags: a, b`) does. Each candidate is
+/// parsed leniently via [`Tag::parse_lenient_into`] (trims whitespace,
+/// treats a missing leading `#` as implicit); candidates that fail
+/// validation are silently dropped.
+fn frontmatter_tags<'a>(
+    frontmatter: &'a Frontmatter,
+    key: &'a str,
+) -> impl Iterator<Item = Tag> + 'a {
+    let mut buf = String::new();
+    frontmatter
+        .get_values(key)
+        .filter_map(NoteFieldValue::as_str)
+        .flat_map(|value| value.split(','))
+        .filter_map(move |candidate| {
+            Tag::parse_lenient_into(candidate, &mut buf).ok()
+        })
 }
 
 /// The top-level block currently being parsed.
@@ -134,6 +161,10 @@ struct ParserContext<'a> {
     task_statuses: &'a TaskStatusMap,
     /// Tag filters that classify status-marked items as Tasks vs Checkboxes.
     tag_filters: &'a [Tag],
+    /// Frontmatter key holding a note's tags, read via
+    /// [`Frontmatter::get_values`] and merged into [`Self::tags`] in
+    /// [`Self::into_note`].
+    frontmatter_tags_key: &'a str,
 }
 
 impl<'a> ParserContext<'a> {
@@ -145,6 +176,7 @@ impl<'a> ParserContext<'a> {
         source: &str,
         task_statuses: &'a TaskStatusMap,
         tag_filters: &'a [Tag],
+        frontmatter_tags_key: &'a str,
     ) -> Self {
         // Sizing heuristic: body text occupies most of a typical note, while
         // metadata, outlinks, inline fields, and tags are sparser but rarely
@@ -166,6 +198,7 @@ impl<'a> ParserContext<'a> {
             line_tracker: ByteTracker::new(source),
             task_statuses,
             tag_filters,
+            frontmatter_tags_key,
         }
     }
 
@@ -242,7 +275,17 @@ impl<'a> ParserContext<'a> {
     }
 
     /// Consumes the accumulated context into a [`Note`] at `path`.
+    ///
+    /// Merges frontmatter-sourced tags (read from
+    /// [`Self::frontmatter_tags_key`]) after body-sourced tags.
     fn into_note(self, path: impl Into<PathBuf>) -> Note {
+        let mut tags = self.tags;
+        if let Some(frontmatter) = self.frontmatter.as_ref() {
+            tags.extend(frontmatter_tags(
+                frontmatter,
+                self.frontmatter_tags_key,
+            ));
+        }
         Note::new(
             path,
             self.frontmatter,
@@ -250,7 +293,7 @@ impl<'a> ParserContext<'a> {
             self.outlinks,
         )
         .with_inline_fields(self.inline_fields)
-        .with_tags(self.tags)
+        .with_tags(tags)
     }
 
     fn start_metadata_block(&mut self) {
@@ -465,6 +508,20 @@ mod tests {
             src,
             tasks,
             &frontmatter,
+        );
+        parse_markdown(&input)
+    }
+
+    fn parse_with_frontmatter(
+        src: &str,
+        frontmatter: &crate::config::FrontmatterConfig,
+    ) -> Note {
+        let tasks = crate::TaskConfig::default();
+        let input = MarkdownParserInput::new(
+            std::path::Path::new("note.md"),
+            src,
+            &tasks,
+            frontmatter,
         );
         parse_markdown(&input)
     }
@@ -1326,6 +1383,70 @@ mod tests {
                 note.inline_fields().iter().next().expect("field present");
             assert!(key.is_canonical_match("status"));
             assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
+        }
+    }
+
+    mod frontmatter_tags {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::yaml_flow_list("---\ntags: [a, b]\n---\nBody", &["#a", "#b"])]
+        #[case::yaml_block_list(
+            "---\ntags:\n  - a\n  - b\n---\nBody",
+            &["#a", "#b"]
+        )]
+        #[case::bare_scalar("---\ntags: a\n---\nBody", &["#a"])]
+        #[case::comma_separated_scalar(
+            "---\ntags: a, b\n---\nBody",
+            &["#a", "#b"]
+        )]
+        #[case::leading_hash_normalizes_instead_of_doubling(
+            "---\ntags: [\"#a\"]\n---\nBody",
+            &["#a"]
+        )]
+        #[case::invalid_candidates_dropped(
+            "---\ntags: [a, \"\", \"1bad\", \"bad!\"]\n---\nBody",
+            &["#a"]
+        )]
+        #[case::comma_inside_a_list_element_splits_like_a_scalar(
+            "---\ntags:\n  - \"a, b\"\n  - c\n---\nBody",
+            &["#a", "#b", "#c"]
+        )]
+        fn extracts_tags_from_a_frontmatter_value_form(
+            #[case] input: &str,
+            #[case] expected: &[&str],
+        ) {
+            let note = parse(input);
+
+            let expected: Vec<Tag> =
+                expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
+            assert_eq!(note.tags(), expected.as_slice());
+        }
+
+        #[test]
+        fn reads_from_a_configured_non_default_tags_key_without_tags_fallback()
+        {
+            let frontmatter = crate::config::FrontmatterConfig::default()
+                .with_tags_name("categories");
+            let note = parse_with_frontmatter(
+                "---\ncategories: [a]\ntags: [b]\n---\nBody",
+                &frontmatter,
+            );
+
+            assert_eq!(note.tags(), [Tag::parse("#a").unwrap()]);
+        }
+
+        #[test]
+        fn combines_frontmatter_tags_with_body_tags() {
+            let note = parse("---\ntags: [a]\n---\nBody with #b tag");
+
+            assert_eq!(note.tags(), [
+                Tag::parse("#b").unwrap(),
+                Tag::parse("#a").unwrap()
+            ]);
         }
     }
 

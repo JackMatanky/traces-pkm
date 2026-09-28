@@ -511,16 +511,9 @@ fn scan_tag_candidate<'a>(
     start_idx: usize,
     iter: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
 ) -> Option<(usize, usize, &'a str)> {
-    let (_, next_ch) = iter.peek().copied()?;
-    if !next_ch.is_alphabetic() {
-        return None;
-    }
-    let mut tag_end = start_idx.saturating_add('#'.len_utf8());
-    while let Some(&(cur_idx, cur_ch)) = iter.peek() {
-        if !cur_ch.is_alphanumeric() && !matches!(cur_ch, '_' | '/' | '-') {
-            break;
-        }
-        tag_end = cur_idx.saturating_add(cur_ch.len_utf8());
+    let tag_len = Tag::prefix_len(text.get(start_idx..)?)?;
+    let tag_end = start_idx.saturating_add(tag_len);
+    while iter.peek().is_some_and(|(idx, _)| *idx < tag_end) {
         iter.next();
     }
     let candidate = text.get(start_idx..tag_end)?;

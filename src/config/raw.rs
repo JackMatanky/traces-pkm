@@ -77,6 +77,9 @@ pub(crate) struct RawFrontmatterConfig {
     /// Frontmatter key holding a Note's aliases.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) aliases: Option<String>,
+    /// Frontmatter key holding a Note's tags.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tags: Option<String>,
     /// Frontmatter key and date format used for the creation timestamp.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) date_created: Option<RawDateFieldConfig>,

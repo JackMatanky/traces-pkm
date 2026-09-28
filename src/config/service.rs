@@ -1787,6 +1787,40 @@ mod tests {
             }
 
             #[test]
+            fn parses_tags() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\ntags = \"Categories\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().tags_name(), "Categories");
+            }
+
+            #[test]
+            fn defaults_tags_when_unconfigured() {
+                let fixture = Fixture::new();
+                let local_path = fixture
+                    .write_config("project/.traces/config.toml", "[templates]");
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().tags_name(), "tags");
+            }
+
+            #[test]
             fn parses_date_created() {
                 let fixture = Fixture::new();
                 let local_path = fixture.write_config(
@@ -2087,6 +2121,32 @@ mod tests {
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
                     "[frontmatter]\naliases = \"   \"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let result = build(&fixture, local, None);
+
+                // Assert
+                assert!(matches!(
+                    result,
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::InvalidFieldKey {
+                            table: "frontmatter",
+                            ..
+                        }
+                    ))
+                ));
+            }
+
+            #[test]
+            fn rejects_empty_tags() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\ntags = \"\"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)
