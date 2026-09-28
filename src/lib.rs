@@ -57,6 +57,7 @@
 //!   file writes.
 //! - `Blake3FileHash`, `Blake3PathHash`: BLAKE3 hashing primitives.
 
+pub mod cli;
 mod config;
 mod date;
 mod delimiter;
@@ -81,8 +82,6 @@ mod strsim;
 mod tag;
 mod task;
 mod template;
-
-pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
