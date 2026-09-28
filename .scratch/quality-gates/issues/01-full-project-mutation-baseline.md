@@ -9,16 +9,27 @@ baseline (`-m strsim`, 6 mutants) and recorded a scoped MSI measurement
 (`docs/refs/quality_gates_mise_adoption.md` §11.1), leaving `# min_msi: 60`
 commented in `mutarust.yml`. The full-project run was deferred under a hard
 user constraint: **no multi-hour runs**. Evidence: a 12-worker full attempt
-was killed with **0 of 3820 mutants completed in 6 h** (3,820 mutants ×
-rebuild+test each ≈ 16–24 h per invocation, no resume).
+was killed after ~6 h with no mutant completing (stdout log
+/tmp/full-run.txt, 0 bytes — killed before flush); full-scope cost is
+hours per invocation with no resume.
 
 Consequence of the scoped baseline (documented, accepted): a future
-full-scope `--fail-on-escaped` exits 4 until the official full
-`--update-baseline` run happens — exactly what this issue tracks.
+full-scope `--fail-on-escaped` exits 4 for any escape not in the committed
+baseline (expected on a full-scope run) until the baseline is refreshed
+from a full-scope run — exactly what this issue tracks.
+
+Known flake (observed 2026-09-28 on Task 11's first `--update-baseline`
+attempt): `tests/e2e`'s `init` and `golden_path` race on the process cwd —
+a documented, accepted limitation (`tests/e2e/support.rs`, "CwdGuard and
+process cwd"). A `cargo test`-based run can therefore abort with
+`.tmp<…>` AlreadyExists/InvalidArgument panics; the nextest-based `test`
+hook is immune (per-test processes). A harness abort is NOT a baseline or
+gate failure: retry the run before touching `mutarust-baseline.json`.
 
 ## Acceptance criteria
 
-- [ ] Full-scope scored run (`./src...`, 3,820 mutants) completes with
+- [ ] Full-scope scored run (`./src...`; 3,820 mutants at measurement
+      time — descriptive, not a pass/fail number) completes with
       stats recorded immediately after the run (reports clobber per run).
 - [ ] `min_msi` activation only from full-project MSI ≥ 60 — activate
       `# min_msi: 60` in `mutarust.yml` only if the full-project measured
@@ -31,6 +42,15 @@ full-scope `--fail-on-escaped` exits 4 until the official full
 
 ## Deferred procedure
 
+<!-- Run from the repo root — `--config mutarust.yml` is a relative path.
+     `<TEST_FLAGS value from the task>` comes from
+     `.mise/tasks/mutants/_default` (currently
+     "--features test-utils --all-targets --profile mutants").
+     `mise exec` (not `mise run mutants`) because the task rejects
+     passthrough `--config`/`--test-flags`/`--timeout-coefficient` with
+     exit 2 (see `_default` `reject_conflicting_flags`); the raw
+     invocation bypasses that. -->
+
 ```bash
 nice -n 10 script -q /tmp/full-run.txt mise exec -- mutarust \
   --config mutarust.yml --logger-agentic-json --workers 4 \
@@ -38,9 +58,13 @@ nice -n 10 script -q /tmp/full-run.txt mise exec -- mutarust \
 ```
 
 with the run-count collapse: scored run → construct
-`mutarust-baseline.json` from `report.json`'s `escaped[]`
-(`{id, file: originalFilePath, mutator: mutatorName, line: originalStartLine}`
-per the Mutago-compatible format in `docs/refs/mutarust/docs/cli.md`) →
-one `--fail-on-escaped` verification run; on rc=4 fall back to the official
-`--update-baseline` full run. Note: no resume — any kill restarts from
-zero; keep the machine otherwise idle; 3 runs → 2 runs.
+`mutarust-baseline.json` with the full envelope
+`{"version": 1, "mutants": [{...}]}`, each entry mapping the four leaf
+fields `{id, file: originalFilePath, mutator: mutatorName, line:
+originalStartLine}` from `report.json`'s `escaped[]` (per the
+Mutago-compatible format in `docs/refs/mutarust/docs/cli.md`) → one
+`--fail-on-escaped` verification run; on rc=4 fall back to the official
+`--update-baseline` full run. Note: `--update-baseline` overwrites
+`mutarust-baseline.json` with the run's full escaped set — it never
+merges. Note: no resume — any kill restarts from zero; keep the machine
+otherwise idle; 3 runs → 2 runs.

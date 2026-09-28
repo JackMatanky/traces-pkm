@@ -938,7 +938,9 @@ mutarust invocation):
 ```
 
 - Baseline: `mutarust-baseline.json` written via `--update-baseline`,
-  length 1 (= the Step-1 escaped count).
+  length 1 (= the Step-1 escaped count); first attempt aborted on the
+  known tests/e2e cwd race after 58 s; retry succeeded
+  (length still 1).
 - Gate: `mise run mutants -m strsim --fail-on-escaped` rc=0 — the scope's
   single escape is covered by the committed baseline.
 - Decision: `min_msi` stays commented — scoped measurement cannot
