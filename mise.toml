@@ -126,6 +126,40 @@ outputs = []
 cache = { enabled = false }
 run = "cargo watch -x check -x test"
 
+[tasks."modules:tree"]
+description = "Print the crate's module tree (`cargo modules structure`)"
+sources = ["@group:rust"]
+outputs = []
+cache = { enabled = false }
+env = { NO_COLOR = "1" }
+usage = '''
+flag "-d --depth <n>" help="Max depth from the crate root (`--max-depth`)"
+flag "-m --mod <module>" {
+  help "Focus the tree on one top-level module (`--focus-on`)"
+  long_help "Passes `--focus-on <module>`; e.g. `-m index` centers the tree on module `index`."
+}
+// `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+flag "--cfg-test" help="Analyze with #[cfg(test)] enabled"
+arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules structure` (e.g. `--sort-by kind`, `--no-fns`)"
+'''
+run = '''
+#!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
+set -euo pipefail
+# `--lib` is required: the package has both [lib] and [[bin]], and
+# cargo-modules errors with "Multiple targets present in package" otherwise.
+declare -a cmd=(cargo modules structure --lib)
+[[ -n "${usage_depth:-}" ]] && cmd+=(--max-depth "${usage_depth}")
+[[ -n "${usage_mod:-}" ]] && cmd+=(--focus-on "${usage_mod}")
+[[ "${usage_cfg_test:-false}" == "true" ]] && cmd+=(--cfg-test)
+declare -a extra=()
+eval "extra=(${usage_args:-})"
+cmd+=("${extra[@]+"${extra[@]}"}")
+exec "${cmd[@]}"
+'''
+
 # ------------------------------------------------------------- #
 #                     Formatting & Linting                      #
 # ------------------------------------------------------------- #
