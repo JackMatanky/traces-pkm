@@ -9,6 +9,7 @@
 rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
   "clippy",
   "rustfmt",
+  "llvm-tools-preview",
 ] }
 hk = "2.0.0"
 cargo-binstall = "latest"
@@ -25,7 +26,7 @@ cargo-deny = "latest"
 
 # -- Testing & Quality --
 "github:nextest-rs/nextest" = "latest"
-"cargo:cargo-tarpaulin" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:cargo-mutants" = "latest"
 
@@ -51,6 +52,12 @@ experimental = true
 [env]
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
+# Coverage filename-exclusion regex, consumed by `coverage:lcov`/`coverage:html`
+# as cargo-llvm-cov's --ignore-filename-regex. Ported from the deleted
+# tarpaulin.toml exclude-files; keep in sync with .cargo/mutants.toml's
+# exclude globs. POSIX ERE only: no lookahead, no (?:...), no \d \w \s —
+# an invalid regex silently disables ALL exclusions (defaults included).
+COVERAGE_IGNORE_REGEX = 'src/main\.rs$|src/cli($|/)|src/(.*/)?error\.rs$'
 
 [task_config]
 global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
