@@ -152,7 +152,11 @@ set -euo pipefail
 # cargo-modules errors with "Multiple targets present in package" otherwise.
 declare -a cmd=(cargo modules structure --lib)
 [[ -n "${usage_depth:-}" ]] && cmd+=(--max-depth "${usage_depth}")
-[[ -n "${usage_mod:-}" ]] && cmd+=(--focus-on "${usage_mod}")
+focus="${usage_mod:-}"
+if [[ -n "$focus" && "$focus" != *"::"* ]]; then
+  focus="crate::${focus}"
+fi
+[[ -n "$focus" ]] && cmd+=(--focus-on "$focus")
 [[ "${usage_cfg_test:-false}" == "true" ]] && cmd+=(--cfg-test)
 declare -a extra=()
 eval "extra=(${usage_args:-})"
