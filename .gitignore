@@ -17,9 +17,6 @@ __MACOSX/
 /target
 lcov.info
 tarpaulin-report.html
-/mutants.out/
-/mutants.out.old/
-/mutants-report.md
 /report.json
 /mutarust-agentic.json
 /mutarust-summary.json

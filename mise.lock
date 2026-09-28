@@ -104,11 +104,6 @@ version = "0.5.0"
 backend = "cargo:cargo-crap"
 specifiers = ["latest"]
 
-[[tools."cargo:cargo-mutants"]]
-version = "27.1.0"
-backend = "cargo:cargo-mutants"
-specifiers = ["latest"]
-
 [[tools."cargo:cargo-sweep"]]
 version = "0.8.0"
 backend = "cargo:cargo-sweep"
