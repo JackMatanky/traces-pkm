@@ -4,7 +4,7 @@
 #USAGE flag "--dry-run" {
 #USAGE   help "Show what report files would be deleted"
 #USAGE   long_help """
-#USAGE   Preview mode: prints what report files (`lcov.info`, `tarpaulin-report.html`, `mutants.out/`, `mutants-report.md`) exist and would be deleted without removing them.
+#USAGE   Preview mode: prints what report files (`lcov.info`, `target/llvm-cov/html/`, `mutants.out/`, `mutants-report.md`) exist and would be deleted without removing them.
 #USAGE   """
 #USAGE }
 
@@ -25,7 +25,7 @@ set -euo pipefail
 get_known_report_registry() {
   known_reports=(
     lcov.info
-    tarpaulin-report.html
+    target/llvm-cov/html
     mutants.out
     mutants.out.old
     mutants-report.md

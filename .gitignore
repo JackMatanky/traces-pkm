@@ -16,7 +16,6 @@ __MACOSX/
 # -------------------- Build & Compilation -------------------- #
 /target
 lcov.info
-tarpaulin-report.html
 /mutants.out/
 /mutants.out.old/
 /mutants-report.md
