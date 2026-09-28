@@ -163,7 +163,12 @@ impl From<&RawFrontmatter> for Frontmatter {
             );
             return Self::default();
         };
-        let mut fields = IndexMap::new();
+        // Every top-level key normally parses into a field (skips are rare:
+        // a non-scalar key, or a key failing `FieldKey` validation), so
+        // `map.len()` is a tight upper bound known upfront - avoids
+        // `IndexMap`'s amortized growth needing to guess capacity across
+        // repeated `insert` calls.
+        let mut fields = IndexMap::with_capacity(map.len());
         for (raw_key, raw_value) in map {
             let Some(key_str) = yaml_scalar_to_string(raw_key) else {
                 continue;
