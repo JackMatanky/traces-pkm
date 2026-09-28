@@ -82,6 +82,7 @@ mod strsim;
 mod tag;
 mod task;
 mod template;
+mod yaml;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};

@@ -125,27 +125,6 @@ impl FromStr for FieldName {
     }
 }
 
-impl TryFrom<serde_yaml::Value> for FieldName {
-    type Error = FieldNameError;
-
-    /// Coerces a YAML scalar `value` into a [`FieldName`].
-    ///
-    /// # Errors
-    ///
-    /// - [`NotScalar`] for `Null`, `Sequence`, `Mapping`, and `Tagged` values
-    /// - [`Empty`] if the coerced string is empty or whitespace-only
-    /// - [`ContainsSlash`] if the coerced string contains `/`
-    ///
-    /// [`NotScalar`]: FieldNameError::NotScalar
-    /// [`Empty`]: FieldNameError::Empty
-    /// [`ContainsSlash`]: FieldNameError::ContainsSlash
-    fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw =
-            yaml_scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
-        Self::try_from(raw)
-    }
-}
-
 impl TryFrom<serde_json::Value> for FieldName {
     type Error = FieldNameError;
 
@@ -508,28 +487,6 @@ impl FromStr for FieldKey {
     }
 }
 
-impl TryFrom<serde_yaml::Value> for FieldKey {
-    type Error = FieldKeyError;
-
-    /// Coerces a YAML scalar `value` into a [`FieldKey`].
-    ///
-    /// # Errors
-    ///
-    /// - [`NotScalar`] for `Null`, `Sequence`, `Mapping`, and `Tagged` values
-    /// - [`Name`] if the coerced string fails [`FieldName`] validation
-    /// - [`EmptyCanonical`] if canonicalization strips every searchable
-    ///   character
-    ///
-    /// [`NotScalar`]: FieldNameError::NotScalar
-    /// [`Name`]: FieldKeyError::Name
-    /// [`EmptyCanonical`]: FieldKeyError::EmptyCanonical
-    fn try_from(value: serde_yaml::Value) -> Result<Self, Self::Error> {
-        let raw =
-            yaml_scalar_to_string(value).ok_or(FieldNameError::NotScalar)?;
-        Self::try_new(raw)
-    }
-}
-
 impl TryFrom<serde_json::Value> for FieldKey {
     type Error = FieldKeyError;
 
@@ -796,44 +753,33 @@ impl Serialize for FieldValueRef<'_> {
     }
 }
 
-impl From<serde_yaml::Value> for FieldValueRef<'static> {
-    /// Converts a [`serde_yaml::Value`] into a [`FieldValueRef`] with date
+impl From<noyalib::Value> for FieldValueRef<'static> {
+    /// Converts a [`noyalib::Value`] into a [`FieldValueRef`] with date
     /// classification.
     ///
-    /// Mapping keys are coerced from scalars; entries with non-scalar keys
-    /// are skipped. Date strings are classified as [`FieldValueRef::Date`] or
-    /// [`FieldValueRef::DateTime`].
-    fn from(value: serde_yaml::Value) -> Self {
+    /// Date strings are classified as [`FieldValueRef::Date`] or
+    /// [`FieldValueRef::DateTime`]. `noyalib` mapping keys are always
+    /// strings, so no key coercion is needed.
+    fn from(value: noyalib::Value) -> Self {
         match value {
-            serde_yaml::Value::Null => Self::Null,
-            serde_yaml::Value::Bool(b) => Self::Bool(b),
-            serde_yaml::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Self::Float(f)
-                } else if let Some(i) = n.as_i64() {
-                    Self::Int(i)
-                } else {
-                    Self::Null
-                }
-            }
-            serde_yaml::Value::String(s) => {
-                FieldStringValue::new(Cow::Owned(s))
-                    .classify(FormatParsePolicy::Classify)
-            }
-            serde_yaml::Value::Sequence(seq) => {
+            noyalib::Value::Null => Self::Null,
+            noyalib::Value::Bool(b) => Self::Bool(b),
+            noyalib::Value::Number(n) => Self::Float(n.as_f64()),
+            noyalib::Value::String(s) => FieldStringValue::new(Cow::Owned(s))
+                .classify(FormatParsePolicy::Classify),
+            noyalib::Value::Sequence(seq) => {
                 Self::List(seq.into_iter().map(Self::from).collect())
             }
-            serde_yaml::Value::Mapping(map) => {
-                let mut index_map = IndexMap::new();
+            noyalib::Value::Mapping(map) => {
+                let mut index_map = IndexMap::with_capacity(map.len());
                 for (k, v) in map {
-                    let Some(key) = yaml_scalar_to_string(k) else {
-                        continue;
-                    };
-                    index_map.insert(Cow::Owned(key), Self::from(v));
+                    index_map.insert(Cow::Owned(k), Self::from(v));
                 }
                 Self::Object(index_map)
             }
-            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
+            noyalib::Value::Tagged(tagged) => {
+                Self::from((*tagged).into_parts().1)
+            }
         }
     }
 }
@@ -1053,8 +999,8 @@ pub(crate) enum FieldNameError {
     ContainsSlash {
         name: String,
     },
-    /// Rejects a YAML value that cannot be represented as scalar field text.
-    #[error("YAML value is not a scalar")]
+    /// Rejects a JSON value that cannot be represented as scalar field text.
+    #[error("JSON value is not a scalar")]
     NotScalar,
 }
 
@@ -1069,22 +1015,6 @@ pub(crate) enum FieldKeyError {
     EmptyCanonical {
         name: String,
     },
-}
-
-/// Coerces a YAML scalar into its string representation, returning `None` for
-/// non-scalar values.
-pub(crate) fn yaml_scalar_to_string(
-    value: serde_yaml::Value,
-) -> Option<String> {
-    match value {
-        serde_yaml::Value::String(s) => Some(s),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        serde_yaml::Value::Null
-        | serde_yaml::Value::Sequence(_)
-        | serde_yaml::Value::Mapping(_)
-        | serde_yaml::Value::Tagged(_) => None,
-    }
 }
 
 #[cfg(test)]
@@ -1169,47 +1099,6 @@ mod tests {
             fn field_name_ref_rejects_an_invalid_name() {
                 assert!(matches!(
                     FieldNameRef::try_from(""),
-                    Err(FieldNameError::Empty)
-                ));
-            }
-        }
-
-        mod yaml {
-            use pretty_assertions::assert_eq;
-            use rstest::rstest;
-
-            use super::super::super::*;
-
-            #[rstest]
-            #[case::string_scalar("hello", "hello")]
-            #[case::number_scalar("3", "3")]
-            #[case::bool_scalar("true", "true")]
-            fn accepts_a_scalar(
-                #[case] yaml_source: &str,
-                #[case] expected: &str,
-            ) {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str(yaml_source).expect("valid yaml");
-                let name = FieldName::try_from(value).expect("valid name");
-                assert_eq!(name.as_str(), expected);
-            }
-
-            #[test]
-            fn rejects_a_null_value() {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str("null").expect("valid yaml");
-                assert!(matches!(
-                    FieldName::try_from(value),
-                    Err(FieldNameError::NotScalar)
-                ));
-            }
-
-            #[test]
-            fn rejects_an_empty_string_after_coercion() {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str(r#""""#).expect("valid yaml");
-                assert!(matches!(
-                    FieldName::try_from(value),
                     Err(FieldNameError::Empty)
                 ));
             }
@@ -1319,38 +1208,6 @@ mod tests {
                 assert!(matches!(
                     FieldKey::try_new("!!!"),
                     Err(FieldKeyError::EmptyCanonical { .. })
-                ));
-            }
-        }
-
-        mod yaml {
-            use pretty_assertions::assert_eq;
-
-            use super::super::super::*;
-
-            #[test]
-            fn accepts_a_string_scalar() {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str("hello").expect("valid yaml");
-                let key = FieldKey::try_from(value).expect("valid key");
-                assert_eq!(key.name(), "hello");
-            }
-
-            #[test]
-            fn accepts_a_number_scalar() {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str("3").expect("valid yaml");
-                let key = FieldKey::try_from(value).expect("valid key");
-                assert_eq!(key.name(), "3");
-            }
-
-            #[test]
-            fn rejects_a_null_value() {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str("null").expect("valid yaml");
-                assert!(matches!(
-                    FieldKey::try_from(value),
-                    Err(FieldKeyError::Name(FieldNameError::NotScalar))
                 ));
             }
         }

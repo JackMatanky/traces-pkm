@@ -5,13 +5,11 @@
 //! values.
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::warn;
 
 use super::field::NoteFieldValue;
-use crate::{
-    FieldKey, FieldKeyRef,
-    field::{FieldValueRef, yaml_scalar_to_string},
-};
+use crate::{FieldKey, FieldKeyRef, field::FieldValueRef, yaml::YAML_CONFIG};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -40,6 +38,55 @@ impl RawFrontmatter {
     pub(crate) fn is_empty(&self) -> bool {
         self.0.trim().is_empty()
     }
+
+    /// Parses the raw YAML text into structured frontmatter fields.
+    ///
+    /// Mapping keys deserialize directly to `String` under the shared
+    /// [`YAML_CONFIG`]; a key that fails [`FieldKey`] validation (e.g. an
+    /// empty canonical form) is skipped rather than failing the whole parse.
+    ///
+    /// # Errors
+    ///
+    /// - [`Parse`] if the YAML text fails to parse.
+    /// - [`NotMapping`] if the top-level YAML value is not a mapping.
+    ///
+    /// [`Parse`]: FrontmatterParseError::Parse
+    /// [`NotMapping`]: FrontmatterParseError::NotMapping
+    pub(crate) fn parse(&self) -> Result<Frontmatter, FrontmatterParseError> {
+        let parsed = noyalib::from_str_with_config::<noyalib::Value>(
+            self.as_str(),
+            &YAML_CONFIG,
+        )
+        .map_err(FrontmatterParseError::Parse)?;
+        let noyalib::Value::Mapping(map) = parsed else {
+            return Err(FrontmatterParseError::NotMapping);
+        };
+        // Every top-level key normally parses into a field (a skip is rare:
+        // a key failing `FieldKey` validation), so `map.len()` is a tight
+        // upper bound known upfront - avoids `IndexMap`'s amortized growth
+        // needing to guess capacity across repeated `insert` calls.
+        let mut fields = IndexMap::with_capacity(map.len());
+        for (key_str, raw_value) in map {
+            let Ok(key) = FieldKey::try_new(key_str) else {
+                continue;
+            };
+            let field_value = FieldValueRef::from(raw_value);
+            fields.insert(key, NoteFieldValue::from(field_value));
+        }
+        Ok(Frontmatter::new(fields))
+    }
+}
+
+/// Reports why [`RawFrontmatter::parse`] could not produce structured
+/// [`Frontmatter`] fields.
+#[derive(Debug, Error)]
+pub(crate) enum FrontmatterParseError {
+    /// The raw YAML text failed to parse.
+    #[error("failed to parse YAML frontmatter: {0}")]
+    Parse(#[source] noyalib::Error),
+    /// The parsed YAML document is not a top-level key-value mapping.
+    #[error("YAML frontmatter is not a key-value mapping")]
+    NotMapping,
 }
 
 /// Structured frontmatter fields parsed from `RawFrontmatter`.
@@ -144,42 +191,14 @@ impl From<&RawFrontmatter> for Frontmatter {
         if raw.is_empty() {
             return Self::default();
         }
-        let val = match serde_yaml::from_str::<serde_yaml::Value>(raw.as_str())
-        {
-            Ok(v) => v,
-            Err(err) => {
-                warn!(
-                    %err,
-                    "failed to parse YAML frontmatter block; \
-                    ignoring malformed fields"
-                );
-                return Self::default();
-            }
-        };
-        let serde_yaml::Value::Mapping(map) = val else {
+        raw.parse().unwrap_or_else(|err| {
             warn!(
-                "YAML frontmatter is not a key-value mapping; ignoring \
-                 top-level value"
+                %err,
+                "failed to parse YAML frontmatter block; ignoring malformed \
+                fields"
             );
-            return Self::default();
-        };
-        // Every top-level key normally parses into a field (skips are rare:
-        // a non-scalar key, or a key failing `FieldKey` validation), so
-        // `map.len()` is a tight upper bound known upfront - avoids
-        // `IndexMap`'s amortized growth needing to guess capacity across
-        // repeated `insert` calls.
-        let mut fields = IndexMap::with_capacity(map.len());
-        for (raw_key, raw_value) in map {
-            let Some(key_str) = yaml_scalar_to_string(raw_key) else {
-                continue;
-            };
-            let Ok(key) = FieldKey::try_new(key_str) else {
-                continue;
-            };
-            let fv = FieldValueRef::from(raw_value);
-            fields.insert(key, NoteFieldValue::from(fv));
-        }
-        Self::new(fields)
+            Self::default()
+        })
     }
 }
 
@@ -253,6 +272,142 @@ mod tests {
                 fm.get("mytitle"),
                 Some(&NoteFieldValue::String("hello".into()))
             );
+        }
+
+        mod parse {
+            use pretty_assertions::assert_eq;
+
+            use super::super::*;
+
+            #[test]
+            fn returns_structured_fields_for_a_valid_mapping() {
+                let raw = RawFrontmatter::new("title: Test\n");
+
+                let fm = raw.parse().expect("valid mapping");
+
+                assert_eq!(
+                    fm.get("title"),
+                    Some(&NoteFieldValue::String("Test".to_owned()))
+                );
+            }
+
+            #[test]
+            fn returns_parse_error_for_malformed_yaml() {
+                let raw = RawFrontmatter::new("invalid: [yaml: :");
+
+                assert!(matches!(
+                    raw.parse(),
+                    Err(FrontmatterParseError::Parse(_))
+                ));
+            }
+
+            #[test]
+            fn returns_not_mapping_error_for_a_top_level_sequence() {
+                let raw = RawFrontmatter::new("- a\n- b\n");
+
+                assert!(matches!(
+                    raw.parse(),
+                    Err(FrontmatterParseError::NotMapping)
+                ));
+            }
+
+            #[test]
+            fn returns_parse_error_for_a_non_scalar_mapping_key() {
+                let raw = RawFrontmatter::new("[a, b]: v\n");
+
+                assert!(matches!(
+                    raw.parse(),
+                    Err(FrontmatterParseError::Parse(_))
+                ));
+                assert!(Frontmatter::from(&raw).is_empty());
+            }
+        }
+
+        mod yaml_1_2_parity {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::super::*;
+            use crate::DateValue;
+
+            #[rstest]
+            #[case::yes("draft: yes\n", "draft", "yes")]
+            #[case::no("draft: no\n", "draft", "no")]
+            fn legacy_yaml_1_1_boolean_spelling_stays_a_string(
+                #[case] source: &str,
+                #[case] key: &str,
+                #[case] expected: &str,
+            ) {
+                let raw = RawFrontmatter::new(source);
+
+                let fm = Frontmatter::from(&raw);
+
+                assert_eq!(
+                    fm.get(key),
+                    Some(&NoteFieldValue::String(expected.to_owned()))
+                );
+            }
+
+            #[test]
+            fn leading_zero_integer_stays_a_string() {
+                let raw = RawFrontmatter::new("zip: 01234\n");
+
+                let fm = Frontmatter::from(&raw);
+
+                assert_eq!(
+                    fm.get("zip"),
+                    Some(&NoteFieldValue::String("01234".to_owned()))
+                );
+            }
+
+            #[test]
+            fn sexagesimal_looking_value_stays_a_string() {
+                let raw = RawFrontmatter::new("meeting: 10:30\n");
+
+                let fm = Frontmatter::from(&raw);
+
+                assert_eq!(
+                    fm.get("meeting"),
+                    Some(&NoteFieldValue::String("10:30".to_owned()))
+                );
+            }
+
+            #[test]
+            fn iso_date_value_parses_as_a_date() {
+                let raw = RawFrontmatter::new("date: 2026-07-29\n");
+
+                let fm = Frontmatter::from(&raw);
+
+                assert_eq!(
+                    fm.get("date"),
+                    Some(&NoteFieldValue::Date(
+                        DateValue::parse_iso("2026-07-29").expect("valid date")
+                    ))
+                );
+            }
+
+            #[test]
+            fn merge_key_stays_a_literal_entry_instead_of_merging() {
+                let raw =
+                    RawFrontmatter::new("base: &b\n  x: 1\n<<: *b\ny: 2\n");
+
+                let fm = Frontmatter::from(&raw);
+
+                assert_eq!(fm.get("y"), Some(&NoteFieldValue::Number(2.0)));
+                assert_eq!(fm.get("x"), None);
+            }
+
+            #[test]
+            fn last_duplicate_yaml_key_wins() {
+                let raw = RawFrontmatter::new("title: First\ntitle: Second\n");
+
+                let fm = Frontmatter::from(&raw);
+
+                assert_eq!(
+                    fm.get("title"),
+                    Some(&NoteFieldValue::String("Second".to_owned()))
+                );
+            }
         }
     }
 }

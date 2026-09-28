@@ -60,12 +60,35 @@ All other realistic vault content is behaviour-identical (yaml_serde parity pres
 
 ## Checklist
 
-- [ ] Frontmatter parsing routes through `noyalib::from_str_with_config` with the shared `serde_yaml_compat` config (YAML 1.2); the frontmatter path no longer calls `serde_yaml`
-- [ ] Template `to_yaml`/`from_yaml` route through noyalib; `yaml_serde` fully removed from `Cargo.toml`/`Cargo.lock`; no `serde_yaml`/`yaml_serde` references remain under `src/`
-- [ ] All existing frontmatter and template tests pass unchanged (valid-YAML, malformed-YAML, and format assertions)
-- [ ] Malformed-YAML behaviour stated and tested: silent-empty kept via `From` (warn logged) + structured `RawFrontmatter::parse` try-API returning `FrontmatterParseError`
-- [ ] Parity guard tests pin YAML-1.2 semantics on realistic vault content: `draft: yes`/`no` → String; `zip: 01234` → String; `meeting: 10:30` → String; `date: 2026-07-29` → `NoteFieldValue::Date`; `<<` stays a literal key; duplicate YAML keys → last wins
-- [ ] Stated-deviation test: non-scalar key → structured error → empty Frontmatter
-- [ ] Performance assertions from the Performance section are not regressed by config changes (no extra features, config shared via `LazyLock`)
-- [ ] Amendment filed against md-pkm-lsp ticket 19 line 29 (and its echo in issue 20): V1_1/Dataview claim corrected, pointer to this ticket's Rationale
-- [ ] Tests and lint pass (`mise verify`)
+- [x] Frontmatter parsing routes through `noyalib::from_str_with_config` with the shared `serde_yaml_compat` config (YAML 1.2); the frontmatter path no longer calls `serde_yaml`
+- [x] Template `to_yaml`/`from_yaml` route through noyalib; `yaml_serde` fully removed from `Cargo.toml`/`Cargo.lock`; no `serde_yaml`/`yaml_serde` references remain under `src/`
+- [x] All existing frontmatter and template tests pass unchanged (valid-YAML, malformed-YAML, and format assertions)
+- [x] Malformed-YAML behaviour stated and tested: silent-empty kept via `From` (warn logged) + structured `RawFrontmatter::parse` try-API returning `FrontmatterParseError`
+- [x] Parity guard tests pin YAML-1.2 semantics on realistic vault content: `draft: yes`/`no` → String; `zip: 01234` → String; `meeting: 10:30` → String; `date: 2026-07-29` → `NoteFieldValue::Date`; `<<` stays a literal key; duplicate YAML keys → last wins
+- [x] Stated-deviation test: non-scalar key → structured error → empty Frontmatter
+- [x] Performance assertions from the Performance section are not regressed by config changes (no extra features, config shared via `LazyLock`)
+- [x] Amendment filed against md-pkm-lsp ticket 19 line 29 (and its echo in issue 20): V1_1/Dataview claim corrected, pointer to this ticket's Rationale
+- [x] Tests and lint pass (`mise verify`)
+
+## Comments
+
+- **2026-09-28 (agent, branch `noyalib-frontmatter-swap`, worktree
+  `.worktrees/noyalib-frontmatter-swap`):** Implemented per spec. All YAML
+  routing now goes through `noyalib` behind the shared `YAML_CONFIG`
+  (`src/yaml.rs`, `ParserConfig::serde_yaml_compat()`, YAML 1.2); `yaml_serde`
+  is gone from `Cargo.toml`/`Cargo.lock`. New fallible seam:
+  `RawFrontmatter::parse -> Result<Frontmatter, FrontmatterParseError>`
+  (`Parse(noyalib::Error)` | `NotMapping`); `From<&RawFrontmatter>` delegates
+  to it and keeps silent-empty with `warn!`. `TryFrom<serde_yaml::Value>`
+  impls for `FieldName`/`FieldKey` deleted (no live callers, verified);
+  `yaml_scalar_to_string` deleted (noyalib mappings are string-keyed);
+  `From<noyalib::Value> for FieldValueRef` keeps int→`Float` widening and the
+  `Tagged` arm. Template `to_yaml` appends the document-terminating newline
+  noyalib omits (no `SerializerConfig` knob exists for it); `from_yaml` uses
+  the shared config. Amendment: ticket 19 already carried the corrected
+  wording (2026-09-27); the surviving echo was in `md-pkm-lsp/map.md`
+  (corrected with a pointer to this ticket's Rationale); issue 20 contains no
+  V1_1 claim (grep-verified). `mise run verify` green: 2907 tests + 58
+  doctests, clippy/fmt/audit clean; `cargo doc --all-features` clean with
+  `-D warnings`. Two-axis code review findings addressed (variable naming,
+  comment wording).
