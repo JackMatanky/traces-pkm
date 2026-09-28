@@ -1,190 +1,160 @@
 # Mutation Testing Setup
 
-Mutation testing is a software testing methodology designed to evaluate the
-quality and robustness of a test suite. By injecting small, artificial defects
-("mutants") into the source code and running the test suite, mutation testing
-determines whether the tests are capable of detecting these changes.
+Mutation testing evaluates a test suite by injecting small artificial defects
+("mutants") into the source and checking whether the tests detect them.
+Unlike line coverage — which only says code was *executed* — mutation testing
+measures whether assertions would *notice* the change.
 
 ---
 
-## 1. How Mutation Testing Works
+## 1. Terminology
 
-When mutation testing runs, the tool automatically generates modified versions
-of the codebase:
-
-- **Mutant**: A single, synthetic bug injected into a function (e.g., changing
-  `x > y` to `x >= y`, replacing a return value, or deleting a function body).
-- **Caught**: The test suite fails when run against the mutated code. This is
-  the desired outcome.
-- **Survived**: The test suite passes despite the injected bug. This indicates
-  a gap in test coverage or weak assertions.
-- **Unviable**: The mutated code fails to compile. These mutants are ignored.
-
-Unlike standard code coverage, which only measures if lines of code are
-executed, mutation testing measures the **effectiveness** and assertiveness of
-your tests.
+- **Mutant**: a synthetic bug injected into one location (e.g. `>` → `>=`,
+  removing a statement, replacing a return value).
+- **killed**: the suite failed on the mutated code — desired.
+- **escaped (survived)**: the suite passed despite the bug — a coverage or
+  assertion gap.
+- **errored**: the mutated code failed to compile.
+- **skipped**: not run (no tests reference it, cfg-gated, or type-proof
+  machinery declined it). Skipped mutants count toward the score — they are
+  not evidence of test strength.
+- **MSI**: mutation score = (killed + errored + skipped) / total, reported as
+  a 0–1 ratio in JSON and accepted as 0–100 on `--min-msi`.
 
 ---
 
-## 2. Tooling: `cargo-mutants` & `cargo-nextest`
+## 2. Tooling: `mutarust` (+ `cargo-nextest` for the test task)
 
-To implement mutation testing in this Rust project, we use:
+1. **`mutarust`** — the mutation engine. Installed via `mise` in
+   `mise.toml` `[tools]` (`"cargo:mutarust" = "0.1.10"`), wrapped by the
+   **tool-agnostic `mutants` task** (`.mise/tasks/mutants/_default`) — the
+   entrypoint name predates the engine and outlives it.
+2. **`cargo-nextest`** — still used by the `mise run test` task for its
+   fail-fast/parallel runner. Mutation runs themselves use plain
+   `cargo test` (mutarust's default); the custom `--exec` nextest path is
+   serial and silently skips type-proof mutators, so it is not used.
 
-1. **`cargo-mutants`**: An actively maintained mutation testing tool built
-   specifically for Rust. It runs mutations in separate, isolated
-   copy-on-write scratch directories.
-2. **`cargo-nextest`**: A high-performance test runner for Rust. Since
-   mutation testing requires repeatedly running tests, `nextest` provides
-   critical speedups through its fail-fast mechanism and parallel execution
-   model.
+Config lives in two committed files (per-tool convention, like
+`clippy.toml`/`deny.toml`):
 
-Both tools are managed via **`mise`** in `mise.toml`.
+- `mutarust.yml` — policy (exclusions, mutators, outputs, score gate).
+  mutarust has **no config auto-discovery**: the task always passes
+  `--config mutarust.yml`.
+- `mutarust-baseline.json` — committed list of accepted escapes
+  (Mutago-compatible). Treat it like a lockfile.
 
 ---
 
-## 3. Implementation Details
+## 3. The `mutants` mise task
 
-### Step 3.1: Project-Level Configuration (`.cargo/mutants.toml`)
-
-A configuration file is placed at the project root under `.cargo/mutants.toml`
-to define default arguments and tool integrations:
-
-```toml
-# .cargo/mutants.toml
-test_tool = "nextest"
-features = ["test-utils"]
-additional_cargo_args = ["--all-targets"]
+```bash
+mise run mutants                 # full scope (./src...), score-reporting
+mise run mutants -m index        # one module (src/index/ recursively)
+mise run mutants -f src/hash.rs  # one file
+mise run mutants --dry-run       # count mutants, no test runs
+mise run mutants --git-diff      # only changed tracked lines (stage new files!)
 ```
 
-### Step 3.2: Configure `mise` Tasks (`mise.toml`)
+Declared flags (see `mise run mutants --help` for the full contract):
 
-`cargo-mutants` is declared in `mise.toml` under `[tools]`:
+| Flag | Meaning |
+| --- | --- |
+| `-f` / `-m` | scope to one file / one module (with `src/lib.rs` completion) |
+| `--min-msi <n>` | exit 4 if total score < n (0–100) |
+| `--update-baseline` | accept current escapes into the baseline; writes **no** reports |
+| `--fail-on-escaped` | exit 4 only on escapes *not* in the baseline |
+| `--git-diff` | scope to lines changed vs `origin/HEAD` |
+| `--dry-run` | count only (omits `--test-flags`/timeout flags) |
+| `--timeout <secs>` | fixed per-test timeout (suppresses `--timeout-coefficient`) |
+| `[args]` | passthrough after `--` (e.g. `--list-mutators`, `--workers 4`) |
 
-```toml
-"cargo:cargo-mutants" = "latest"
+Static behavior of the task: `--config mutarust.yml
+--logger-agentic-json --test-flags "--features test-utils --all-targets
+--timeout-coefficient 5"`, `depends = ["test"]`, 1 h template timeout.
+Conflicting flag combinations (e.g. `--update-baseline --dry-run`) are
+rejected at the task level with exit 2 and a `mutants:` message.
+
+**Exit codes:** task usage errors exit `2`. mutarust itself: `0` pass ·
+`1` tool error · `2` bash completion (not a run) · `3` config/parse/
+annotation error · `4` quality gate red (`min_msi`, `min_covered_msi`, or
+`--fail-on-escaped`; `--run-mutant-id` bypasses gates). **Four is the only
+failure worth retrying with a narrower scope.** Any zero-mutant scope with
+`--min-msi` exits 4 (score 0); only `--git-diff` auto-pairs
+`--ignore-msi-with-no-mutations`.
+
+### Scoping / performance knobs
+
+```bash
+mise run mutants --git-diff          # cheapest meaningful local run
+mise run mutants -m query            # bounded scope while iterating
+mise run mutants -- --workers 4      # cap parallel workers
 ```
-
-A `mutants` task is defined to run the analysis:
-
-```toml
-[tasks.mutants]
-description = "Run mutation testing with cargo-mutants"
-depends = ["check"]
-run = "cargo mutants"
-```
+Workers × cargo `-j` share the CPUs; results always print in plan order.
+There is no `--iterate`: rerun cost is controlled by *scoping*, and the
+baseline only changes what **fails**, not what runs.
 
 ---
 
-## 4. CI and Delivery Integration
+## 4. Baseline workflow (the methodology centerpiece)
 
-Because mutation testing is resource-intensive, running a full scan on every
-commit in CI can be slow. To integrate mutation testing efficiently in GitHub
-Actions, use **differential mutation testing**:
+```bash
+# 1. Full scored run
+mise run mutants
+
+# 2. Accept every current escape as policy
+mise run mutants --update-baseline
+git add mutarust-baseline.json && git commit -m "chore: commit mutarust baseline"
+
+# 3. Day-to-day gate: only NEW escapes fail
+mise run mutants --fail-on-escaped        # rc=0 → no regressions
+
+# 4. Kill a new escape (agent loop)
+jq '.mutants[0]' mutarust-agentic.json     # id, diff, context_lines, kill_hint
+#    ...write a targeted assertion in the nearby test file...
+mise run mutants -- --run-mutant-id <id>  # re-run just that mutant → killed?
+# 5. Accept any remaining intentional escapes
+mise run mutants --update-baseline
+```
+
+`mutarust-agentic.json` (always written by the task) is the structured
+successor of the old `mutants-report.md` "Instructions for Next Agent
+Session" block: per escape it carries the mutation diff, context lines,
+nearby test files, and a kill hint. Human triage: stdout table,
+`report.json`, and `mutarust-report.html`.
+
+Report files (all gitignored, written to CWD after a completed run):
+`report.json`, `mutarust-agentic.json`, `mutarust-report.html`. Every run —
+including `--dry-run` — overwrites them: read stats right after the run you
+care about.
+
+---
+
+## 5. CI / delivery integration (aspirational — no CI job today)
+
+If a mutation job is ever added, scope it to the change set:
 
 ```yaml
 - name: Install tools via mise
   uses: jdx/mise-action@v2
 
-- name: Run mutation testing on changed files
-  run: mise run mutants -- --in-diff
+- name: Mutation test changed lines
+  run: mise run mutants --git-diff --min-msi 60 --fail-on-escaped
 ```
 
-### Key CI Options
-
-- **`--in-diff`**: Limits mutation testing only to the lines/files modified in
-  the current pull request or commit range.
-- **`--baseline=skip`**: Speeds up runs by skipping the baseline check (running
-  tests on clean code) if the CI suite has already passed.
+Caveats that make this safe: untracked files are invisible to
+`--git-diff-lines` (stage new files first); an empty change-set exits 0 —
+the task pairs `--ignore-msi-with-no-mutations` with `--min-msi` so an
+empty diff cannot fail the gate.
 
 ---
 
-## 5. Local Usage & Performance Optimization
+## 6. Version notes
 
-Run mutation testing locally using `mise`:
-
-```bash
-mise run mutants
-```
-
-### Speed Optimization Flags
-
-For larger crates or faster feedback loops during development:
-
-1. **Test Only Uncommitted Changes**
-
-   ```bash
-   mise run mutants -- --in-diff
-   ```
-
-2. **Iterative Mode** (only retry mutants that survived the previous run)
-
-   ```bash
-   mise run mutants -- --iterate
-   ```
-
-3. **Limit to Specific Files/Modules**
-
-   ```bash
-   mise run mutants -- --file src/schema/resolver.rs
-   ```
-
-4. **Control Parallel Jobs**
-
-    ```bash
-    mise run mutants -- --jobs 4
-    ```
-
----
-
-## 6. `cargo-mutants` 27.1.0 Notes
-
-Primary sources checked on 2026-08-21:
-
-- `cargo mutants --version`: `cargo-mutants 27.1.0`
-- `cargo mutants --help`
-- `cargo mutants --emit-schema config`
-- Rust docs MCP cached crate `cargo-mutants` `27.1.0`
-- `cargo_mutants::config::Config` in `src/config.rs`
-- `cargo_mutants::options::Options::new` in `src/options.rs`
-- `cargo_mutants::timeouts::{test_timeout, build_timeout}` in `src/timeouts.rs`
-
-Important setup facts:
-
-- `.cargo/mutants.toml` uses `#[serde(deny_unknown_fields)]`, so unsupported
-  keys are rejected.
-- `jobs` is not a configuration file key. It is a command-line or environment option only:
-  `--jobs` / `CARGO_MUTANTS_JOBS`.
-- The default test timeout is the greater of `minimum_test_timeout` or baseline
-  test time multiplied by `timeout_multiplier`. In 27.1.0, unset values default
-  to `minimum_test_timeout = 20` and `timeout_multiplier = 5`.
-- Build timeouts are disabled unless `build_timeout` or
-  `build_timeout_multiplier` is set.
-- `test_tool = "nextest"` is valid.
-- `additional_cargo_args` applies to every cargo invocation.
-- `additional_cargo_test_args` applies only to test invocations.
-- `sharding = "slice"` is the 27.1.0 default; `round-robin` is available when
-  more balanced shard runtimes matter more than incremental build locality.
-- `--iterate` reads prior `mutants.out/caught.txt`, `unviable.txt`, and
-  `previously_caught.txt`. Use it for local loops, not final validation.
-
-Recommended baseline for this repo:
-
-```toml
-test_tool = "nextest"
-features = ["test-utils"]
-additional_cargo_test_args = ["--all-targets"]
-
-# Keep this no stricter than cargo-mutants defaults unless local timings prove it.
-timeout_multiplier = 5
-minimum_test_timeout = 30
-```
-
-Keep parallelism in `mise.toml`, not `.cargo/mutants.toml`:
-
-```toml
-flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
-```
-
-Use lower parallelism first. `cargo-mutants` warns above `8`, and each mutant
-job starts cargo, which can start its own build/test workers. If mutants show
-many exact timeout-duration failures, reduce `--jobs` before weakening tests.
+- `mutarust 0.1.10` (pinned in `mise.toml`; bump deliberately — the config
+  schema is `docs/refs/mutarust/schema/mutarust.schema.json` and unknown
+  fields fail fast).
+- Schema/report drift notes and the full flag inventory live in
+  `docs/refs/quality_gates_mutarust.md` (§8–§9); migration decisions for
+  this repo are in `docs/refs/quality_gates_mise_adoption.md`.
+- Replaces `cargo-mutants` (retired 2026-09-27); the historical
+  cargo-mutants research remains in `docs/refs/quality_gates_*.md`.
