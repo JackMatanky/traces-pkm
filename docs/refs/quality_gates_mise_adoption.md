@@ -862,7 +862,8 @@ Scope module: `M` = dirs
 | old engine, raw `cargo mutants` (Task 9) | 1664.33 s | 0 | 0 | n/a | n/a | 5 |
 | `mise run mutants -m dirs` (mutarust) | 461.26 s | 0 | 1 | 0 | 0.0 | 1 |
 
-n = 1 (new) vs 5 (old) — MSI and escape counts are not statistically comparable across engines; treat msi 0.0 as a single data point.
+n = 1 (new) vs 5 (old) — MSI and escape counts are not statistically
+comparable across engines; treat msi 0.0 as a single data point.
 
 Old-engine totals: 5 mutants tested, 5 caught, 0 survivors (`missed.txt`
 0 lines). New-engine totals: 1 mutant, 1 escaped, 0 killed.
@@ -879,8 +880,10 @@ completed rc=0 (cargo accepted `--profile mutants`; `[profile.mutants]`
 retained in Cargo.toml); re-verified `mise run mutants -m dirs --dry-run`
 rc=0 with no `--test-flags`/`--profile` in the emitted command
 (`build_static_flags` skips test controls under `--dry-run`).
-Supersedes §5.2's "✗ no equivalent" and §5.4's "--profile does not port"
-rows, and resolves §10.2 row 4 (portable candidate → accepted).
+Supersedes §5.2's "✗ no equivalent" for --profile mutants (the --cap-lints
+half stands — still no mutarust equivalent), and resolves §10.2 row 4
+(portable candidate → accepted). §5.4's "--profile does not port" row is
+likewise superseded for --profile only.
 P3 (cap-lints): rule: `skippedCount(off) − skippedCount(on) > 5% of
   totalMutantsCount → inflation`. Observed: stats(ON) (RUSTFLAGS=
   --cap-lints=allow) == stats(OFF) (identical), both rc=0:
@@ -914,6 +917,6 @@ Any other surprises:
   461.26 s Step-1 run (real from `time -p`); the mutation phase dominates.
 
 Note (not a surprise): `report.json` clobbering behaved exactly as
-  pre-documented (Task 8 reminder + §11 intro) — the P2 dry-run verification
+  pre-documented (Task 8 reminder + plan grounding facts) — the P2 dry-run verification
   rewrote the Step-1 stats (escaped 1 → 0), a live confirmation. Every stats
   read above was taken immediately after its scored run.
