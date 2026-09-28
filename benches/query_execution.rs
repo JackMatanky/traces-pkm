@@ -181,7 +181,7 @@ fn bench_run_pages_by_metadata(c: &mut Criterion) {
             u64::try_from(n).expect("note count fits u64"),
         ));
         group.bench_with_input(
-            BenchmarkId::new("pages filter+sort by metadata", n),
+            BenchmarkId::new("pages_filter_sort_metadata", n),
             &n,
             |b, _| {
                 b.iter_batched(
@@ -381,6 +381,9 @@ fn bench_clone_query_set(c: &mut Criterion) {
 ///   regressions.
 ///
 /// Unexpected outcomes:
+/// - Cost approaching [`bench_clone_query_set`]'s deep-copy levels or growing
+///   super-linearly with `n`, indicating `Arc::try_unwrap` failed on the fresh
+///   set and `into_iter` clones row bodies.
 fn bench_into_iter_owned(c: &mut Criterion) {
     let mut group = c.benchmark_group("QueryService::run/into_iter_owned");
     group.plot_config(

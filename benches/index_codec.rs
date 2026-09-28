@@ -390,7 +390,7 @@ fn bench_codec_batch(c: &mut Criterion) {
 ///   serialization, output-buffer reuse, or allocator behavior needs inspection
 ///   before changing `IndexStore` internals.
 fn bench_row_value_encode(c: &mut Criterion) {
-    let mut group = c.benchmark_group("IndexStore::encode_row (Note)");
+    let mut group = c.benchmark_group("IndexStore::encode_row/note");
     group.plot_config(
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
