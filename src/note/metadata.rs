@@ -321,6 +321,15 @@ mod tests {
                 ));
                 assert!(Frontmatter::from(&raw).is_empty());
             }
+
+            #[test]
+            fn skips_keys_that_fail_field_key_validation() {
+                let raw = RawFrontmatter::new("a/b: 1\n");
+
+                let fm = raw.parse().expect("valid mapping");
+
+                assert!(fm.is_empty());
+            }
         }
 
         mod yaml_1_2_parity {
