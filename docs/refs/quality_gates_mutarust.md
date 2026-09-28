@@ -133,9 +133,9 @@ and release APIs, the crates.io crate API, and — for the comparison —
 - `--per-test` collects one LLVM coverage report per Cargo test and runs only
   tests touching the mutated line — but **per-test collection is sequential**
   ([docs/cli.md](https://github.com/quality-gates/mutarust/blob/main/docs/cli.md)).
-- This is a *different coverage engine* from this repo's `cargo-tarpaulin`
-  stack ([crap_metric.md](crap_metric.md)); llvm-cov would be an additional
-  tool in `mise.toml`.
+- This is the *same coverage engine* this repo's stack already uses
+  ([crap_metric.md](crap_metric.md)); `cargo-llvm-cov` is declared in
+  `mise.toml`, so `--coverage` adds no new tool.
 
 ### 2.6 Configuration
 
@@ -285,8 +285,8 @@ Caveats:
 - The custom URL form used for `rust-docs-mcp`
   (`"cargo:https://github.com/..."`) is unnecessary — the crate is on
   crates.io.
-- Optional extra if `--coverage` is wanted:
-  `"cargo:cargo-llvm-cov" = "latest"` (llvm-cov, not tarpaulin)
+- No extra tool for `--coverage`: `"cargo:cargo-llvm-cov" = "latest"` is
+  already declared in this repo's `mise.toml`
   ([docs/cli.md](https://github.com/quality-gates/mutarust/blob/main/docs/cli.md)).
 
 ---
@@ -353,8 +353,10 @@ Risks:
    ([docs/cli.md](https://github.com/quality-gates/mutarust/blob/main/docs/cli.md)).
 5. **Config not auto-discovered** — easy to forget `--config` and silently run
    with no policy ([docs/config.md](https://github.com/quality-gates/mutarust/blob/main/docs/config.md)).
-6. **Coverage tool split:** `--coverage` pulls in `cargo-llvm-cov` alongside
-   the existing `cargo-tarpaulin` — two coverage engines in one repo.
+6. **Coverage tool split (resolved):** `--coverage` pulls in
+   `cargo-llvm-cov`, the same engine this repo's coverage gates already use —
+   no second coverage engine enters `mise.toml`
+   ([crap_metric.md](crap_metric.md)).
 7. **Exclusion gaps:** `.cargo/mutants.toml`'s `exclude_re` (skip `impl
    Debug/Display/Serialize…` boilerplate) has no direct mutarust equivalent;
    porting would need `ignore_source_lines` regexes or in-source annotations.
