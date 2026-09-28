@@ -234,7 +234,7 @@ failing, and richer machine-readable reports (agentic/summary JSON).
 **What mutarust drops that this stack relies on:** nextest as the mutation
 test runner, `--iterate`, glob/regex-based exclusions, the existing
 `mutants.out/missed.txt` → `mutants-report.md` pipeline
-([.mise/tasks/mutants/report](../../.mise/tasks/mutants/report)), the
+(`.mise/tasks/mutants/report`, deleted in ffb725d6), the
 module-scoped task UX with `-m/-f/--check` flags
 ([.mise/tasks/mutants/_default](../../.mise/tasks/mutants/_default)),
 and `--profile mutants` / `--cap-lints` build tuning.
@@ -748,7 +748,7 @@ lacks: *baseline* = "these survivors are policy, only new escapes fail"
 (the adoption story in §8.4); *blacklist* = "this exact mutant is a known
 false positive, don't burn a build on it". For a repo whose
 `mutants:report` pipeline currently re-lists the same survivors every run
-([.mise/tasks/mutants/report](../../.mise/tasks/mutants/report)),
+(`.mise/tasks/mutants/report`, deleted in ffb725d6),
 `--fail-on-escaped` + committed baseline converts the report task from
 "here is the same list again" to "here is what changed".
 

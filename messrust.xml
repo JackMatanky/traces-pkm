@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- messrust.xml — messrust policy for traces-pkm (sibling: mutarust.yml).
+     Run via `mise run mess`; advisory only: findings exit 2 (the exit
+     status contract), never wired into hk/verify/CI. Created fail-first
+     per the quality-gates plan (missing policy file errors with rc=1,
+     then this loadable policy). -->
 <ruleset name="traces-pkm policy" xmlns="http://pmd.sf.net/ruleset/1.0.0">
   <description>traces-pkm: rust preset minus rules already denied by
   clippy/rustc, minus rules with open upstream FP bugs.</description>
