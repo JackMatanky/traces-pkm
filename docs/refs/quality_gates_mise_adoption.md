@@ -920,3 +920,27 @@ Note (not a surprise): `report.json` clobbering behaved exactly as
   pre-documented (Task 8 reminder + plan grounding facts) — the P2 dry-run verification
   rewrote the Step-1 stats (escaped 1 → 0), a live confirmation. Every stats
   read above was taken immediately after its scored run.
+
+### 11.1 Scoped baseline run (2026-09-28)
+
+Scope module: `M` = strsim (`-m strsim`, total 6; broader probe
+`-m 'strsim|dirs'` rejected — rc=2 `mutants: unknown module: strsim|dirs`).
+
+| | wall-clock | rc | killed | escaped | msi | total |
+| --- | --- | --- | --- | --- | --- | --- |
+| `mise run mutants -m strsim` (mutarust) | 534.16 s | 0 | 5 | 1 | 0.8333333333333334 | 6 |
+
+Stats JSON (read immediately after the scored run, before any other
+mutarust invocation):
+
+```json
+{"totalMutantsCount":6,"killedCount":5,"notCoveredCount":0,"escapedCount":1,"errorCount":0,"skippedCount":0,"msi":0.8333333333333334,"coveredCodeMsi":0.0}
+```
+
+- Baseline: `mutarust-baseline.json` written via `--update-baseline`,
+  length 1 (= the Step-1 escaped count).
+- Gate: `mise run mutants -m strsim --fail-on-escaped` rc=0 — the scope's
+  single escape is covered by the committed baseline.
+- Decision: `min_msi` stays commented — scoped measurement cannot
+  activate a project gate regardless of value. Full-project measurement
+  deferred: `.scratch/quality-gates/issues/01-full-project-mutation-baseline.md`.
