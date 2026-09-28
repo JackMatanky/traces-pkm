@@ -214,8 +214,24 @@ flag "-m --mod <module>" {
 }
 // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
 complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
-flag "--acyclic" help="Exit non-zero if the module graph has a cycle (conflicts with -m)"
-arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules dependencies` (e.g. `--no-externs`, `--no-uses`, `--layout dot`)"
+flag "--acyclic" {
+  help "Run cargo-modules graph cycle check (conflicts with -m)"
+  long_help """
+  Runs cargo-modules' rust-analyzer graph-model cycle check and conflicts with `-m`. This crate currently exits non-zero from a struct/impl edge such as `TaskError`/`TaskError::fmt`, not a real traces-pkm code cycle; it is informational and MUST NOT be used as a gate.
+  """
+}
+arg "[args]" var=#true {
+  help "Extra arguments for `cargo modules dependencies` (`--lib` is already applied; do not repeat it)"
+  long_help """
+  `--lib` is already applied and must not be repeated. Forwards options such as `--no-externs`, `--no-uses`, and `--layout dot`.
+
+  cargo-modules 0.27 panics if a consumer closes DOT stdout early (for example, `mise run modules:deps | head`). For previewing or inspection, capture first:
+    mise run modules:deps > module-deps.dot
+    head -5 module-deps.dot
+
+  This does not apply to full consumers such as Graphviz.
+  """
+}
 '''
 run = '''
 #!/bin/bash
