@@ -28,7 +28,7 @@ impl RawFrontmatter {
     /// Returns the YAML text between frontmatter delimiters.
     #[inline]
     #[must_use]
-    pub(crate) fn as_str(&self) -> &str {
+    fn as_str(&self) -> &str {
         &self.0
     }
 
@@ -52,7 +52,7 @@ impl RawFrontmatter {
     ///
     /// [`Parse`]: FrontmatterParseError::Parse
     /// [`NotMapping`]: FrontmatterParseError::NotMapping
-    pub(crate) fn parse(&self) -> Result<Frontmatter, FrontmatterParseError> {
+    fn parse(&self) -> Result<Frontmatter, FrontmatterParseError> {
         let parsed = noyalib::from_str_with_config::<noyalib::Value>(
             self.as_str(),
             &YAML_CONFIG,
@@ -80,7 +80,7 @@ impl RawFrontmatter {
 /// Reports why [`RawFrontmatter::parse`] could not produce structured
 /// [`Frontmatter`] fields.
 #[derive(Debug, Error)]
-pub(crate) enum FrontmatterParseError {
+enum FrontmatterParseError {
     /// The raw YAML text failed to parse.
     #[error("failed to parse YAML frontmatter: {0}")]
     Parse(#[source] noyalib::Error),
@@ -314,7 +314,9 @@ mod tests {
             #[rstest]
             #[case::yes("draft: yes\n", "draft", "yes")]
             #[case::no("draft: no\n", "draft", "no")]
-            fn legacy_yaml_1_1_boolean_spelling_stays_a_string(
+            #[case::leading_zero("zip: 01234\n", "zip", "01234")]
+            #[case::sexagesimal("meeting: 10:30\n", "meeting", "10:30")]
+            fn ambiguous_yaml_1_1_scalar_stays_a_string(
                 #[case] source: &str,
                 #[case] key: &str,
                 #[case] expected: &str,
@@ -326,30 +328,6 @@ mod tests {
                 assert_eq!(
                     fm.get(key),
                     Some(&NoteFieldValue::String(expected.to_owned()))
-                );
-            }
-
-            #[test]
-            fn leading_zero_integer_stays_a_string() {
-                let raw = RawFrontmatter::new("zip: 01234\n");
-
-                let fm = Frontmatter::from(&raw);
-
-                assert_eq!(
-                    fm.get("zip"),
-                    Some(&NoteFieldValue::String("01234".to_owned()))
-                );
-            }
-
-            #[test]
-            fn sexagesimal_looking_value_stays_a_string() {
-                let raw = RawFrontmatter::new("meeting: 10:30\n");
-
-                let fm = Frontmatter::from(&raw);
-
-                assert_eq!(
-                    fm.get("meeting"),
-                    Some(&NoteFieldValue::String("10:30".to_owned()))
                 );
             }
 
