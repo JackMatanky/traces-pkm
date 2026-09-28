@@ -10,7 +10,7 @@ baseline (`-m strsim`, 6 mutants) and recorded a scoped MSI measurement
 commented in `mutarust.yml`. The full-project run was deferred under a hard
 user constraint: **no multi-hour runs**. Evidence: a 12-worker full attempt
 was killed after ~6 h with no mutant completing (stdout log
-/tmp/full-run.txt, 0 bytes — killed before flush); full-scope cost is
+/tmp/full-run.txt, 0 bytes — no output captured); full-scope cost is
 hours per invocation with no resume.
 
 Consequence of the scoped baseline (documented, accepted): a future
@@ -20,8 +20,8 @@ from a full-scope run — exactly what this issue tracks.
 
 Known flake (observed 2026-09-28 on Task 11's first `--update-baseline`
 attempt): `tests/e2e`'s `init` and `golden_path` race on the process cwd —
-a documented, accepted limitation (`tests/e2e/support.rs`, "CwdGuard and
-process cwd"). A `cargo test`-based run can therefore abort with
+a documented, accepted limitation (`tests/e2e/support.rs`, heading
+`` # `CwdGuard` and process cwd ``). A `cargo test`-based run can therefore abort with
 `.tmp<…>` AlreadyExists/InvalidArgument panics; the nextest-based `test`
 hook is immune (per-test processes). A harness abort is NOT a baseline or
 gate failure: retry the run before touching `mutarust-baseline.json`.
@@ -43,13 +43,14 @@ gate failure: retry the run before touching `mutarust-baseline.json`.
 ## Deferred procedure
 
 <!-- Run from the repo root — `--config mutarust.yml` is a relative path.
-     `<TEST_FLAGS value from the task>` comes from
-     `.mise/tasks/mutants/_default` (currently
-     "--features test-utils --all-targets --profile mutants").
      `mise exec` (not `mise run mutants`) because the task rejects
-     passthrough `--config`/`--test-flags`/`--timeout-coefficient` with
-     exit 2 (see `_default` `reject_conflicting_flags`); the raw
-     invocation bypasses that. -->
+     passthrough `--config`/`--test-flags` with exit 2 (see `_default`
+     `reject_conflicting_flags`; `--timeout-coefficient` is only rejected
+     alongside `--dry-run`/`--timeout`, but `--workers` and friends pass
+     through fine); the raw invocation bypasses that guard entirely. -->
+
+> `TEST_FLAGS` value, from `.mise/tasks/mutants/_default` (line `TEST_FLAGS=`):
+> `--features test-utils --all-targets --profile mutants`
 
 ```bash
 nice -n 10 script -q /tmp/full-run.txt mise exec -- mutarust \
