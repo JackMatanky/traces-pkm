@@ -1385,10 +1385,10 @@ measures whether assertions would *notice* the change.
 - **killed**: the suite failed on the mutated code — desired.
 - **escaped (survived)**: the suite passed despite the bug — a coverage or
   assertion gap.
-- **errored**: the mutated code failed to compile.
-- **skipped**: not run (no tests reference it, cfg-gated, or type-proof
-  machinery declined it). Skipped mutants count toward the score — they are
-  not evidence of test strength.
+- **errored**: the mutant ran but the test command failed or timed out.
+- **skipped**: never run — the mutation does not compile, no tests reference
+  it, it is cfg-gated, or type-proof machinery declined it. Skipped mutants
+  count toward the score — they are not evidence of test strength.
 - **MSI**: mutation score = (killed + errored + skipped) / total, reported as
   a 0–1 ratio in JSON and accepted as 0–100 on `--min-msi`.
 
@@ -1401,7 +1401,7 @@ measures whether assertions would *notice* the change.
    **tool-agnostic `mutants` task** (`.mise/tasks/mutants/_default`) — the
    entrypoint name predates the engine and outlives it.
 2. **`cargo-nextest`** — still used by the `mise run test` task for its
-   fail-fast/parallel runner. Mutation runs themselves use plain
+   parallel runner. Mutation runs themselves use plain
    `cargo test` (mutarust's default); the custom `--exec` nextest path is
    serial and silently skips type-proof mutators, so it is not used.
 
@@ -1409,10 +1409,11 @@ Config lives in two committed files (per-tool convention, like
 `clippy.toml`/`deny.toml`):
 
 - `mutarust.yml` — policy (exclusions, mutators, outputs, score gate).
-  mutarust has **no config auto-discovery**: the task always passes
-  `--config mutarust.yml`.
-- `mutarust-baseline.json` — committed list of accepted escapes
-  (Mutago-compatible). Treat it like a lockfile.
+  mutarust has **no config auto-discovery**: mutation runs always pass
+  `--config mutarust.yml`; list/inspect passthrough runs (`--list-mutators`,
+  `--list-files`, `--print-ast`) run without it.
+- `mutarust-baseline.json` — the accepted-escapes baseline, written by
+  `--update-baseline` and meant to be committed like a lockfile.
 
 ---
 
@@ -1434,14 +1435,14 @@ Declared flags (see `mise run mutants --help` for the full contract):
 | `--min-msi <n>` | exit 4 if total score < n (0–100) |
 | `--update-baseline` | accept current escapes into the baseline; writes **no** reports |
 | `--fail-on-escaped` | exit 4 only on escapes *not* in the baseline |
-| `--git-diff` | scope to lines changed vs `origin/HEAD` |
+| `--git-diff` | scope to lines changed vs `origin/HEAD` (falls back to the current branch) |
 | `--dry-run` | count only (omits `--test-flags`/timeout flags) |
 | `--timeout <secs>` | fixed per-test timeout (suppresses `--timeout-coefficient`) |
 | `[args]` | passthrough after `--` (e.g. `--list-mutators`, `--workers 4`) |
 
-Static behavior of the task: `--config mutarust.yml
---logger-agentic-json --test-flags "--features test-utils --all-targets
---timeout-coefficient 5"`, `depends = ["test"]`, 1 h template timeout.
+Static behavior of the task: `--config mutarust.yml --logger-agentic-json
+--test-flags "--features test-utils --all-targets --profile mutants"
+--timeout-coefficient 5`, `depends = ["test"]`, 1 h template timeout.
 Conflicting flag combinations (e.g. `--update-baseline --dry-run`) are
 rejected at the task level with exit 2 and a `mutants:` message.
 
@@ -1451,7 +1452,8 @@ annotation error · `4` quality gate red (`min_msi`, `min_covered_msi`, or
 `--fail-on-escaped`; `--run-mutant-id` bypasses gates). **Four is the only
 failure worth retrying with a narrower scope.** Any zero-mutant scope with
 `--min-msi` exits 4 (score 0); only `--git-diff` auto-pairs
-`--ignore-msi-with-no-mutations`.
+`--ignore-msi-with-no-mutations` — it only takes effect paired with
+`--min-msi` (the task pairs them).
 
 ### Scoping / performance knobs
 
@@ -1481,22 +1483,25 @@ mise run mutants --fail-on-escaped        # rc=0 → no regressions
 
 # 4. Kill a new escape (agent loop)
 jq '.mutants[0]' mutarust-agentic.json     # id, diff, context_lines, kill_hint
+#    pick an id NOT already in mutarust-baseline.json (.mutants[0] may be
+#    an accepted escape; the agentic report carries all escapes of the run)
 #    ...write a targeted assertion in the nearby test file...
 mise run mutants -- --run-mutant-id <id>  # re-run just that mutant → killed?
 # 5. Accept any remaining intentional escapes
 mise run mutants --update-baseline
 ```
 
-`mutarust-agentic.json` (always written by the task) is the structured
-successor of the old `mutants-report.md` "Instructions for Next Agent
-Session" block: per escape it carries the mutation diff, context lines,
-nearby test files, and a kill hint. Human triage: stdout table,
-`report.json`, and `mutarust-report.html`.
+`mutarust-agentic.json` (written by every scored run; `--update-baseline`
+writes no reports) is the structured successor of the old
+`mutants-report.md` "Instructions for Next Agent Session" output (from the
+deleted `.mise/tasks/mutants/report` task): per escape it carries the
+mutation diff, context lines, nearby test files, and a kill hint. Human
+triage: stdout table, `report.json`, and `mutarust-report.html`.
 
 Report files (all gitignored, written to CWD after a completed run):
-`report.json`, `mutarust-agentic.json`, `mutarust-report.html`. Every run —
-including `--dry-run` — overwrites them: read stats right after the run you
-care about.
+`report.json`, `mutarust-agentic.json`, `mutarust-report.html`. Every run
+that produces reports — including `--dry-run` — overwrites them: read
+stats right after the run you care about.
 
 ---
 
@@ -1527,7 +1532,7 @@ empty diff cannot fail the gate.
 - Schema/report drift notes and the full flag inventory live in
   `docs/refs/quality_gates_mutarust.md` (§8–§9); migration decisions for
   this repo are in `docs/refs/quality_gates_mise_adoption.md`.
-- Replaces `cargo-mutants` (retired 2026-09-27); the historical
+- Replaces `cargo-mutants` (retired 2026-09-28); the historical
   cargo-mutants research remains in `docs/refs/quality_gates_*.md`.
 ````
 
