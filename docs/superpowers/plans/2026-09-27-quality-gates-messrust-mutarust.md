@@ -1246,49 +1246,71 @@ git commit -m "chore: record quality-gate pilot results"
 
 ---
 
-### Task 11: Stage 2 — full run + committed baseline
+### Task 11: Stage 2 — scoped run + committed baseline
+
+**Deviation note (2026-09-28):** the original full-project run (3,820 mutants × rebuild+test each ≈ 16–24 h per invocation, up to 3 invocations, no resume) was killed mid-flight — multi-hour runs are ruled out on this machine. All steps below run on a **small `--match` scope** instead; the full-project baseline + MSI measurement is deferred to the follow-up issue created in Step 7. Consequence (documented, accepted): the committed baseline covers only scoped escapes, so a future full-scope `--fail-on-escaped` exits 4 until the official full `--update-baseline` run happens — exactly what the issue tracks.
 
 **Files:**
 - Create: `mutarust-baseline.json` (commit)
-- Modify: `mutarust.yml` (only if MSI ≥ 60)
+- Modify: `mutarust.yml` (gate comment — measurement record only; never activated from scoped data)
+- Modify: `docs/refs/quality_gates_mise_adoption.md` (§11 record)
+- Create: `.scratch/<feature-slug>/issues/01-full-project-mutation-baseline.md` (follow-up)
 
-- [ ] **Step 1: Full run**
+- [ ] **Step 0: Pick + probe the scope**
 
-Run: `mise run mutants > /tmp/full-run.txt 2>&1; echo "rc=$?"`
-Expected: rc=0 (no score gates configured yet). Runtime up to the template's 1 h cap.
-Branch: if mise kills it at the 1 h timeout, rerun unbounded (same flags, no task wrapper):
-```bash
-mise exec -- mutarust --config mutarust.yml --logger-agentic-json \
-  --test-flags "<TEST_FLAGS value from the task>" --timeout-coefficient 5 "./src..."
-```
+Run: `nice -n 10 mise run mutants -m strsim --dry-run > /tmp/scoped-dry.txt 2>&1; echo "rc=$?"; tail -3 /tmp/scoped-dry.txt`
+Expected: rc=0, `Total: 6 mutation(s)`. Default scope is `-m strsim` (known-good, 6 mutants). Optionally probe ONE broader alternation regexp (e.g. `-m 'strsim|dirs'`) and accept it only if the total stays in **6–40**; >40 or rc≠0 → fall back to `-m strsim`. Record the chosen `<SCOPE>` regexp + total. (Dry-run clobbers `report.json` — harmless; stats come after Step 1.)
+
+- [ ] **Step 1: Scoped scored run**
+
+Run: `nice -n 10 mise run mutants -m <SCOPE> > /tmp/scoped-run.txt 2>&1; echo "rc=$?"`
+Expected: rc=0 (no score gates configured). Runtime ≤ ~10 min (task hooks run the test suite first, then ≤ min(12, total) workers build in isolated temp dirs). If > 15 min, stop and investigate — report the verbatim tail of `/tmp/scoped-run.txt`. Run nothing else cargo-heavy concurrently.
 
 - [ ] **Step 2: Record the score**
 
-Run: `jq -c '.stats' report.json | tee /tmp/full-stats.json`
-Expected: all counts + `msi` (ratio 0–1). Save the output — it goes into the §11-style record below and drives Step 4. Do this **before** any other mutarust invocation (reports are clobbered per run).
+Run: `jq -c '.stats' report.json | tee /tmp/scoped-stats.json`
+Expected: all counts + `msi` (ratio 0–1). Save the output — it goes into the §11 record (Step 6) and the Step 4 comment. Do this **before** any other mutarust invocation (reports are clobbered per run).
 
 - [ ] **Step 3: Write the baseline**
 
-Run: `mise run mutants --update-baseline; echo "rc=$?"` then `jq '.mutants | length' mutarust-baseline.json`
-Expected: rc=0; length is the escaped count (likely > 0). Note: by design this writes **no report files** and exits before gates — do not mistake exit 0 for a completed scored run.
+Run: `nice -n 10 mise run mutants -m <SCOPE> --update-baseline; echo "rc=$?"` then `jq '.mutants | length' mutarust-baseline.json`
+Expected: rc=0; length equals the Step 1 escaped count (0 is valid — an empty `mutants` array still makes the Step 5 gate provable). Note: by design this writes **no report files** and exits before gates — do not mistake exit 0 for a completed scored run. If the scope probe (Step 1) produced different results than Step 1's record, stop and reconcile before proceeding.
 
-- [ ] **Step 4: Score gate decision**
+- [ ] **Step 4: Score gate decision (scoped — never activates)**
 
 Run: `jq '.stats.msi' report.json`
-- If `msi >= 0.6`: in `mutarust.yml` replace the commented gate block with an active `min_msi: 60`.
-- If `< 0.6`: leave it commented; change the comment to `# min_msi: 60  # blocked: measured MSI = <value> on 2026-09-27` and note in §11.
+- Scoped data must **not** activate the project gate regardless of value: leave `# min_msi: 60` commented; replace the comment block's last line with `# min_msi: 60  # scoped measurement MSI = <value> on <scope> 2026-09-28; full-project measurement deferred (see .scratch/<feature-slug>/issues/01-full-project-mutation-baseline.md)`.
+- Record the value + decision in §11 either way (Step 6).
 
-- [ ] **Step 5: Green gate with baseline (green)**
+- [ ] **Step 5: Green gate with baseline (scoped, green)**
 
-Run: `mise run mutants --fail-on-escaped > /tmp/gate.txt 2>&1; echo "rc=$?"; jq -c '.stats' report.json`
-Expected: rc=0 (every escape is in the committed baseline). rc=4 here means `mutarust-baseline.json` is stale vs the run — re-run Step 3 once and retry.
+Run: `nice -n 10 mise run mutants -m <SCOPE> --fail-on-escaped > /tmp/gate.txt 2>&1; echo "rc=$?"; jq -c '.stats' report.json`
+Expected: rc=0 (every escape of this scope is in the committed baseline). rc=4 here means `mutarust-baseline.json` is stale vs the run — re-run Step 3 once and retry.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Record in §11**
+
+Append to `docs/refs/quality_gates_mise_adoption.md` §11 (match the existing entries' style): date 2026-09-28, scope regexp + total, killed/escaped/msi from Step 2, baseline length, gate rc from Step 5, decision (`min_msi` stays commented — scoped measurement cannot activate a project gate), and a pointer to the Step 7 issue.
+
+- [ ] **Step 7: Follow-up issue + commits**
+
+Create `.scratch/<feature-slug>/issues/01-full-project-mutation-baseline.md` per `docs/agents/issue-tracker.md` (Status line per `docs/agents/triage-labels.md`; pick/reuse a sensible feature slug — check what already exists under `.scratch/`). Body: why deferred (user constraint: no multi-hour runs; the killed attempt's evidence), acceptance criteria (full-scope scored run; `min_msi` activation only from full-project MSI ≥ 60; baseline covering all current escapes), and the deferred procedure:
 
 ```bash
-git add mutarust-baseline.json mutarust.yml
-git commit -m "chore: commit mutarust baseline"
+nice -n 10 script -q /tmp/full-run.txt mise exec -- mutarust \
+  --config mutarust.yml --logger-agentic-json --workers 4 \
+  --test-flags "<TEST_FLAGS value from the task>" --timeout-coefficient 5 "./src..."
 ```
+
+with the run-count collapse: scored run → construct `mutarust-baseline.json` from `report.json`'s `escaped[]` (`{id, file: originalFilePath, mutator: mutatorName, line: originalStartLine}` per the Mutago-compatible format in `docs/refs/mutarust/docs/cli.md`) → one `--fail-on-escaped` verification run; on rc=4 fall back to the official `--update-baseline` full run. Note: no resume — any kill restarts from zero; keep the machine otherwise idle; 3 runs → 2 runs.
+
+Commits (hooks, no bypasses):
+```bash
+git add mutarust-baseline.json mutarust.yml
+git commit -m "chore: commit scoped mutarust baseline"
+git add docs/refs/quality_gates_mise_adoption.md .scratch/
+git commit -m "docs: record scoped mutation measurement + full-run follow-up"
+```
+Expected: `git status --porcelain` empty.
 
 ---
 
