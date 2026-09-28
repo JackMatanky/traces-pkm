@@ -21,7 +21,8 @@ from a full-scope run — exactly what this issue tracks.
 Known flake (observed 2026-09-28 on Task 11's first `--update-baseline`
 attempt): `tests/e2e`'s `init` and `golden_path` race on the process cwd —
 a documented, accepted limitation (`tests/e2e/support.rs`, heading
-`` # `CwdGuard` and process cwd ``). A `cargo test`-based run can therefore abort with
+`` # `CwdGuard` and process cwd ``). A `cargo test`-based run can
+therefore abort with
 `.tmp<…>` AlreadyExists/InvalidArgument panics; the nextest-based `test`
 hook is immune (per-test processes). A harness abort is NOT a baseline or
 gate failure: retry the run before touching `mutarust-baseline.json`.
