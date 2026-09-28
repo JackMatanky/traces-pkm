@@ -24,12 +24,14 @@ Pipeline (load -> fit -> analyze -> render):
 2. ModelFitter fits OLS complexity candidates and selects the lowest
    leave-one-out cross-validation error.
 3. SeriesAnalysis evaluates evidence trust, capacity forecasts, and diagnostics.
-4. SeriesReporter and SummaryReporter render responsive widescreen cards,
+4. SeriesReporter and SummaryReporter render responsive widescreen cards
+   (or compact multi-row cards for series sharing a Criterion group),
    dual-column diagnostic grids, and aggregate summary tables.
-5. SeriesPlotRenderer renders responsive terminal plots:
-   - On wide terminals (>= 110 cols): Side-by-side Latency Scaling (left)
-     and Throughput Efficiency (right) plots.
-   - On standard terminals (< 110 cols): Single wide Latency graph.
+5. SeriesPlotRenderer renders responsive terminal plots with 95% CI error
+   bars, a log-x scale on wide-range series, and a baseline reference line:
+   - On wide terminals (>= 110 cols) with throughput data: one plot with
+     latency (left axis) and throughput (right axis) sharing one x-axis.
+   - Otherwise: a single latency graph.
 
 Exit code 1 if the criterion directory is missing, no usable series are found,
 or any series failed to fit; every series that could fit is still reported.
@@ -71,7 +73,7 @@ NOISE_THRESHOLD_PCT: Final[float] = 1.0
 R_SQUARED: Final[str] = "R²"
 
 WIDESCREEN_THRESHOLD: Final[int] = 100
-DUAL_PLOT_THRESHOLD: Final[int] = 110
+COMBINED_PLOT_THRESHOLD: Final[int] = 110
 SUMMARY_NAME_WIDTH: Final[int] = 34
 PLOT_MIN_WIDTH: Final[int] = 56
 PLOT_MAX_WIDTH: Final[int] = 110
@@ -591,6 +593,11 @@ class SeriesAnalysis:
     @property
     def size_range(self) -> str:
         return self.series.size_range
+
+    @property
+    def group(self) -> str:
+        """Criterion benchmark_group_id shared by all variants of one function sweep."""
+        return self.series.data_points[0].group
 
     @property
     def largest_measurement(self) -> BenchmarkDataPoint:
@@ -1222,14 +1229,65 @@ class SeriesReporter:
     def _pad_columns(
         left_lines: Sequence[str], right_lines: Sequence[str], col_w: int
     ) -> list[tuple[str, str]]:
-        """Pad two label/value line lists to col_w; extend the shorter with blanks."""
-        max_rows = max(len(left_lines), len(right_lines))
-        left = list(left_lines) + [""] * (max_rows - len(left_lines))
-        right = list(right_lines) + [""] * (max_rows - len(right_lines))
+        """Pad two label/value line lists to col_w: wrap any line overflowing col_w
+        into multiple physical rows first, then extend the shorter side with blanks."""
+        left = SeriesReporter._wrap_lines(left_lines, col_w)
+        right = SeriesReporter._wrap_lines(right_lines, col_w)
+        max_rows = max(len(left), len(right))
+        left += [""] * (max_rows - len(left))
+        right += [""] * (max_rows - len(right))
         return [
             (Style.pad_visible(l, col_w), Style.pad_visible(r, col_w))
             for l, r in zip(left, right, strict=True)
         ]
+
+    @staticmethod
+    def _wrap_lines(lines: Sequence[str], width: int) -> list[str]:
+        wrapped: list[str] = []
+        for line in lines:
+            wrapped.extend(SeriesReporter._wrap_line(line, width))
+        return wrapped
+
+    @staticmethod
+    def _wrap_line(text: str, width: int) -> list[str]:
+        """Wrap one line to `width` visible columns. Continuation lines indent to
+        align under the value, detected as the text after the first ": " label
+        separator (every card field in this file follows a "label: value" shape).
+        # ponytail: assumes at most one ANSI color run per line, true for every
+        # field rendered today; a genuinely multi-color line would need a
+        # per-run wrap instead of reapplying one leading color to every row.
+        """
+        if Style.visible_width(text) <= width:
+            return [text]
+
+        clean = re.sub(r"\033\[[0-9;]*m", "", text)
+        color_match = re.match(r"^(\033\[[0-9;]*m)", text)
+        color = color_match.group(1) if color_match else ""
+        reset = Style.RESET if color else ""
+
+        sep = clean.find(": ")
+        indent = " " * (sep + 2) if sep != -1 else ""
+
+        wrapped = SeriesReporter._wrap_plain(clean, width, indent)
+        return [f"{color}{line}{reset}" if color else line for line in wrapped]
+
+    @staticmethod
+    def _wrap_plain(text: str, width: int, indent: str) -> list[str]:
+        """Greedy word-wrap using visible-column width: correctly accounts for
+        wide/emoji characters, unlike stdlib textwrap's plain character count."""
+        lines: list[str] = []
+        prefix = ""
+        current = ""
+        for word in text.split(" "):
+            candidate = f"{current} {word}" if current else word
+            if current and Style.visible_width(prefix + candidate) > width:
+                lines.append(prefix + current)
+                prefix = indent
+                current = word
+            else:
+                current = candidate
+        lines.append(prefix + current)
+        return lines
 
     def _render_wide_card(self, analysis: SeriesAnalysis, width: int) -> str:
         card_w = min(114, max(96, width - 2))
@@ -1335,6 +1393,56 @@ class SeriesReporter:
                     f"{Presentation.format_seconds(extrapolation.predicted_seconds):<22} "
                     f"extrapolated · {distance:.1f}× range"
                 )
+        return "\n".join(lines)
+
+    def render_group_card(
+        self, group: str, analyses: Sequence[SeriesAnalysis], width: int | None = None
+    ) -> str:
+        """Compact multi-row card for benchmark variants sharing one Criterion group:
+        one row per variant instead of N fully-chromed individual cards, since the
+        rows are directly comparable and full per-variant chrome is pure duplication."""
+        width = Presentation.terminal_width() if width is None else width
+        card_w = min(114, max(96, width - 2))
+        inner_w = card_w - 4
+
+        header_title = f" Group: {group} "
+        header_meta = f" {len(analyses)} variants "
+        gap = card_w - 4 - len(header_title) - len(header_meta)
+        if gap < 2:
+            header_line = f"╭──{header_title}{'─' * max(2, card_w - 6 - len(header_title))}╮"
+        else:
+            header_line = f"╭──{header_title}{'─' * gap}{header_meta}──╮"
+
+        columns = (
+            f"{'VARIANT':<20} {'STATUS':<15} {'SIZES':<18} {'LATEST':<9} "
+            f"{'THROUGHPUT':<13} {'Δ vs BASE':<9}"
+        )
+        body_rows = [columns, "─" * len(columns)]
+        for analysis in analyses:
+            latest = analysis.largest_measurement
+            variant = latest.function or "(default)"
+            delta = (
+                latest.change_vs_base.format_short()
+                if latest.change_vs_base
+                else Style.dim("n/a")
+            )
+            throughput = (latest.throughput_rate_str or "N/A").split(" [")[0]
+            body_rows.append(
+                " ".join((
+                    Presentation.truncate_middle(variant, 20).ljust(20),
+                    Style.pad_visible(analysis.trust.format_badge(), 15),
+                    f"{len(analysis.data_points)} \u00b7 {analysis.size_range}".ljust(18),
+                    Presentation.format_seconds(latest.mean_seconds).ljust(9),
+                    throughput.ljust(13),
+                    Style.pad_visible(delta, 9),
+                ))
+            )
+
+        lines = [header_line, f"│ {' ' * inner_w} │"]
+        for row in body_rows:
+            lines.append(f"│ {Style.pad_visible(row, inner_w)} │")
+        lines.append(f"│ {' ' * inner_w} │")
+        lines.append(f"╰{'─' * (card_w - 2)}╯")
         return "\n".join(lines)
 
     def render_details(self, analysis: SeriesAnalysis, width: int | None = None) -> str:
@@ -1497,15 +1605,48 @@ class SummaryReporter:
 
 
 class SeriesPlotRenderer:
-    """Renders responsive terminal plots (side-by-side or single wide)."""
+    """Renders responsive terminal plots (single latency, or latency+throughput combined)."""
 
     def render(self, analysis: SeriesAnalysis, width: int | None = None) -> None:
         width = Presentation.terminal_width() if width is None else width
 
-        if width >= DUAL_PLOT_THRESHOLD and analysis.has_throughput:
-            self._render_dual_plots(analysis, width)
+        if width >= COMBINED_PLOT_THRESHOLD and analysis.has_throughput:
+            self._render_combined_plot(analysis, width)
         else:
             self._render_single_latency_plot(analysis, width)
+
+    @staticmethod
+    def _spans_orders_of_magnitude(x: Sequence[float]) -> bool:
+        """True when x spans more than one order of magnitude: a linear axis would
+        crush most points into a sliver near the origin, so prefer log-x instead."""
+        positive = [v for v in x if v > 0]
+        return bool(positive) and max(positive) / min(positive) >= 10
+
+    @staticmethod
+    def _plot_latency(plt, analysis: SeriesAnalysis, x: list[float], scale: float) -> None:
+        """Measured points (95% CI error bars) plus, when trusted, the fit curve as a
+        smooth 'braille' line, visually distinct from the measured crosshairs, plus a
+        dim reference line at the previous baseline mean when a comparison exists."""
+        y = [p.mean_seconds * scale for p in analysis.data_points]
+        yerr = [(p.upper_seconds - p.lower_seconds) / 2 * scale for p in analysis.data_points]
+        plt.error(x, y, yerr=yerr, color=Style.plot_color("cyan"), label="measured (95% CI)")
+
+        if analysis.is_fit_trusted:
+            curve_x = np.linspace(min(x), max(x), 100)
+            curve_y = [analysis.best_model.predict(float(val)) * scale for val in curve_x]
+            plt.plot(
+                curve_x.tolist(),
+                curve_y,
+                label=f"fit: {analysis.best_model.kind.short_label}",
+                color=Style.plot_color("yellow"),
+                marker="braille",
+            )
+
+        latest = analysis.largest_measurement
+        change = latest.change_vs_base
+        if change and change.time_pct != -100.0:
+            baseline_seconds = latest.mean_seconds / (1.0 + change.time_pct / 100.0)
+            plt.hline(baseline_seconds * scale, color=Style.plot_color("magenta"))
 
     def _render_single_latency_plot(self, analysis: SeriesAnalysis, width: int) -> None:
         import plotext as plt
@@ -1517,64 +1658,35 @@ class SeriesPlotRenderer:
         plt.xlabel(f"Input Size: n ({analysis.input_unit})")
 
         x = [p.input_size for p in analysis.data_points]
+        if self._spans_orders_of_magnitude(x):
+            plt.xscale("log")
         max_time = max(p.mean_seconds for p in analysis.data_points)
         unit, scale = Presentation.time_unit(max_time)
-        y = [p.mean_seconds * scale for p in analysis.data_points]
         plt.ylabel(f"Time ({unit})")
 
-        plt.scatter(x, y, label="measured (mean)", color=Style.plot_color("cyan"), marker="dot")
-
-        if analysis.is_fit_trusted:
-            curve_x = np.linspace(min(x), max(x), 100)
-            curve_y = [analysis.best_model.predict(float(val)) * scale for val in curve_x]
-            plt.plot(
-                curve_x.tolist(),
-                curve_y,
-                label=f"fit: {analysis.best_model.kind.short_label}",
-                color=Style.plot_color("yellow"),
-                marker="dot",
-            )
+        self._plot_latency(plt, analysis, x, scale)
         plt.show()
         print()
 
-    def _render_dual_plots(self, analysis: SeriesAnalysis, width: int) -> None:
+    def _render_combined_plot(self, analysis: SeriesAnalysis, width: int) -> None:
+        """Latency (left axis, with fit + error bars) and throughput (right axis) on
+        one plot sharing a single x-axis, so both are directly comparable at the same
+        input size instead of paying for two independent, half-width x-axes."""
         import plotext as plt
 
-        sub_w = min(52, (width - 6) // 2)
-
-        # Plot 1: Latency
         plt.clear_figure()
-        plt.subplots(1, 2)
-        plt.subplot(1, 1)
-        plt.plotsize(sub_w, PLOT_HEIGHT)
+        plt.plotsize(min(PLOT_MAX_WIDTH, max(PLOT_MIN_WIDTH, width - 4)), PLOT_HEIGHT)
         plt.theme("clear")
-        plt.title("LATENCY SCALING (T vs n)")
+        plt.title("LATENCY & THROUGHPUT (T, Rate vs n)")
         plt.xlabel(f"n ({analysis.input_unit})")
 
         x = [p.input_size for p in analysis.data_points]
+        if self._spans_orders_of_magnitude(x):
+            plt.xscale("log")
         max_time = max(p.mean_seconds for p in analysis.data_points)
         unit, scale = Presentation.time_unit(max_time)
-        y = [p.mean_seconds * scale for p in analysis.data_points]
         plt.ylabel(f"Time ({unit})")
-        plt.scatter(x, y, label="measured", color=Style.plot_color("cyan"), marker="dot")
-
-        if analysis.is_fit_trusted:
-            curve_x = np.linspace(min(x), max(x), 100)
-            curve_y = [analysis.best_model.predict(float(val)) * scale for val in curve_x]
-            plt.plot(
-                curve_x.tolist(),
-                curve_y,
-                label=f"fit: {analysis.best_model.kind.short_label}",
-                color=Style.plot_color("yellow"),
-                marker="dot",
-            )
-
-        # Plot 2: Throughput
-        plt.subplot(1, 2)
-        plt.plotsize(sub_w, PLOT_HEIGHT)
-        plt.theme("clear")
-        plt.title("THROUGHPUT EFFICIENCY (Rate vs n)")
-        plt.xlabel(f"n ({analysis.input_unit})")
+        self._plot_latency(plt, analysis, x, scale)
 
         th_values = [p.throughput_rate_value for p in analysis.data_points]
         valid_th = [v for v in th_values if v is not None]
@@ -1588,9 +1700,11 @@ class SeriesPlotRenderer:
                 th_scale = 1e-6 if max_th >= 1e6 else 1e-3
 
             th_y = [(v * th_scale if v is not None else 0) for v in th_values]
-            plt.ylabel(f"Rate ({th_unit})")
-            plt.scatter(x, th_y, label="rate", color=Style.plot_color("green"), marker="dot")
-            plt.plot(x, th_y, color=Style.plot_color("green"), marker="dot")
+            plt.ylabel(f"Rate ({th_unit})", yside="right")
+            plt.scatter(
+                x, th_y, label="rate", color=Style.plot_color("green"), marker="dot", yside="right"
+            )
+            plt.plot(x, th_y, color=Style.plot_color("green"), marker="dot", yside="right")
 
         plt.show()
         print()
@@ -1700,8 +1814,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         reporter = SeriesReporter()
         plot_renderer = SeriesPlotRenderer()
+
+        groups: dict[str, list[SeriesAnalysis]] = {}
         for analysis in analyses:
+            groups.setdefault(analysis.group, []).append(analysis)
+
+        # One unit per standalone series, or per group of 2+ variants sharing a
+        # Criterion group (rendered once, compactly, at its first occurrence).
+        units: list[tuple[str, list[SeriesAnalysis]]] = []
+        seen_groups: set[str] = set()
+        for analysis in analyses:
+            if analysis.group in seen_groups:
+                continue
+            members = groups[analysis.group]
+            if len(members) > 1:
+                seen_groups.add(analysis.group)
+            units.append((analysis.group, members))
+
+        total = len(units)
+        for i, (group, members) in enumerate(units, 1):
             print()
+            print(Style.dim(f"[{i}/{total}]"))
+            if len(members) > 1:
+                print(reporter.render_group_card(group, members))
+                continue
+            analysis = members[0]
             print(reporter.render_card(analysis))
             if options.plot:
                 print()
