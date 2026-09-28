@@ -195,13 +195,14 @@ run = 'cargo llvm-cov nextest --workspace --all-features --lcov --output-path lc
 
 [tasks."coverage:html"]
 description = "Generate HTML coverage report"
-sources = ["@group:rust", "tarpaulin.toml"]
-outputs = ["tarpaulin-report.html"]
+sources = ["@group:rust"]
+outputs = ["target/llvm-cov/html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
   long_help """
-  Scopes Tarpaulin coverage to files under `src/<module>/**` (e.g. `-m index`).
+  Scopes coverage to files under `src/<module>/**` (e.g. `-m index`);
+  every other path under `src/` is excluded from the report.
   """
 }
 // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
@@ -209,16 +210,38 @@ complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 '''
 run = '''
 #!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
 set -euo pipefail
-declare -a args=(--workspace --out html)
+
+# Start from the shared static exclusions; cargo-llvm-cov appends its default
+# ignores (rustc/registry/target/tests...) to whatever we pass here.
+regex="${COVERAGE_IGNORE_REGEX:?}"
+
 if [[ -n "${usage_mod:-}" ]]; then
   if [[ ! -d "src/${usage_mod}" ]]; then
     echo "coverage: unknown module: ${usage_mod}" >&2
     exit 2
   fi
-  args=(--include-files "src/${usage_mod}/**" --out html)
+  # llvm-cov has no include-file flag, so scope TO the module by excluding
+  # every sibling directory under src/ plus all src-root .rs files.
+  # POSIX ERE only: no lookahead — enumerate exclusions positively.
+  declare -a exclude=()
+  for entry in src/*; do
+    [[ -d "${entry}" ]] || continue
+    name="${entry#src/}"
+    [[ "${name}" == "${usage_mod}" ]] && continue
+    exclude+=("src/${name}"'($|/)')
+  done
+  exclude+=('src/[^/]+\.rs$')
+  regex="$(IFS='|'; echo "${exclude[*]}")|${regex}"
 fi
-cargo tarpaulin "${args[@]}"
+
+# `--html` writes to the default target/llvm-cov/html/ (rm -rf'd each run, so
+# directory-output freshness settles). `--lcov` and `--html` conflict.
+cargo llvm-cov nextest --workspace --all-features \
+  --html \
+  --ignore-filename-regex "${regex}"
 '''
 
 [tasks.coverage]
