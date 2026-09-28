@@ -10,6 +10,7 @@ rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
   "clippy",
   "rustfmt",
 ] }
+# Keep every `install_env.RUSTUP_TOOLCHAIN` below in sync with this version and rust-toolchain.toml.
 hk = "2.0.0"
 cargo-binstall = "latest"
 
