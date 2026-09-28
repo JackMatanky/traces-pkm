@@ -945,4 +945,4 @@ mutarust invocation):
   single escape is covered by the committed baseline.
 - Decision: `min_msi` stays commented — scoped measurement cannot
   activate a project gate regardless of value. Full-project measurement
-  deferred: `.scratch/quality-gates/issues/01-full-project-mutation-baseline.md`.
+  deferred (no multi-hour runs; never measured at full scope).

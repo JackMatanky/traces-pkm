@@ -35,15 +35,14 @@ skip_without_test: false
 skip_with_cfg: false
 
 # Score gate stays commented until the FULL-project baseline + measurement
-# run (Task 11 scoped variant done; full-project run deferred, see issue
-# linked on the min_msi line below):
+# run (Task 11 scoped variant done; full-project run deferred under the
+# no-multi-hour-runs constraint):
 # enable ONLY if measured MSI >= 60 (ci.md "active" tier; score strictly
 # below min_msi exits 4). The same ci.md row's companion 75 is min_covered_msi,
 # which we do NOT set: without --coverage a positive min_covered_msi exits 4.
 # min_msi unit: integer percent 0-100 (config.md; cli.md `--min-msi PERCENT`).
 # min_msi: 60  # scoped measurement MSI = 0.8333333333333334 on strsim
-#   2026-09-28; full-project measurement deferred (see
-#   .scratch/quality-gates/issues/01-full-project-mutation-baseline.md)
+#   2026-09-28; full-project measurement deferred (no multi-hour runs)
 
 # Empty allowlist = all mutators enabled (config.md: "An empty mutator
 # list, or `*`, means all mutators"), minus disable_mutators above.
