@@ -92,3 +92,22 @@ All other realistic vault content is behaviour-identical (yaml_serde parity pres
   doctests, clippy/fmt/audit clean; `cargo doc --all-features` clean with
   `-D warnings`. Two-axis code review findings addressed (variable naming,
   comment wording).
+- **2026-09-28 (agent, review passes):** Three adversarial review tiers
+  applied after initial implementation. Design-hardening pass: reduced
+  `RawFrontmatter::as_str`/`parse` and `FrontmatterParseError` from
+  `pub(crate)` to private (single same-file caller each); **deviated from
+  the Cargo section's literal `strict-deserialise` feature listing** —
+  `default-features = false, features = ["std", "fast-int", "fast-float"]`
+  instead, since `strict-deserialise` only gates `from_str_strict`/
+  `from_slice_strict`/`from_reader_strict`, none called anywhere in this
+  codebase, and pulls in an unused transitive `serde_ignored` dependency;
+  confirmed via `Cargo.lock` diff and codebase-wide grep. Consolidated two
+  standalone string-stays-a-string tests into the existing `yaml_1_2_parity`
+  `rstest` table. Architecture pass: extracted the duplicated
+  `noyalib::from_str_with_config::<noyalib::Value>(text, &YAML_CONFIG)` call
+  (previously inlined at both `RawFrontmatter::parse` and the template
+  engine's `from_yaml`) into one `crate::yaml::parse(text) ->
+  Result<noyalib::Value, noyalib::Error>`, letting `YAML_CONFIG` itself drop
+  to module-private. `mise run verify` green after each pass: 2907 tests +
+  58 doctests, clippy/fmt/audit/gitleaks clean; `cargo doc --all-features`
+  clean with `-D warnings`.

@@ -62,11 +62,7 @@ pub(super) fn from_yaml(text: &str) -> TemplateEngineResult<Value> {
     if text.trim().is_empty() {
         return Ok(Value::from(()));
     }
-    let parsed = noyalib::from_str_with_config::<noyalib::Value>(
-        text,
-        &crate::yaml::YAML_CONFIG,
-    )
-    .map_err(|err| {
+    let parsed = crate::yaml::parse(text).map_err(|err| {
         invalid_operation("from_yaml: failed to parse YAML string", err)
     })?;
     Ok(Value::from_serialize(&parsed))

@@ -9,7 +9,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, FieldKeyRef, field::FieldValueRef, yaml::YAML_CONFIG};
+use crate::{FieldKey, FieldKeyRef, field::FieldValueRef, yaml};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -41,9 +41,10 @@ impl RawFrontmatter {
 
     /// Parses the raw YAML text into structured frontmatter fields.
     ///
-    /// Mapping keys deserialize directly to `String` under the shared
-    /// [`YAML_CONFIG`]; a key that fails [`FieldKey`] validation (e.g. an
-    /// empty canonical form) is skipped rather than failing the whole parse.
+    /// Mapping keys deserialize directly to `String` under the shared YAML
+    /// config (see [`crate::yaml::parse`]); a key that fails [`FieldKey`]
+    /// validation (e.g. an empty canonical form) is skipped rather than
+    /// failing the whole parse.
     ///
     /// # Errors
     ///
@@ -53,11 +54,8 @@ impl RawFrontmatter {
     /// [`Parse`]: FrontmatterParseError::Parse
     /// [`NotMapping`]: FrontmatterParseError::NotMapping
     fn parse(&self) -> Result<Frontmatter, FrontmatterParseError> {
-        let parsed = noyalib::from_str_with_config::<noyalib::Value>(
-            self.as_str(),
-            &YAML_CONFIG,
-        )
-        .map_err(FrontmatterParseError::Parse)?;
+        let parsed =
+            yaml::parse(self.as_str()).map_err(FrontmatterParseError::Parse)?;
         let noyalib::Value::Mapping(map) = parsed else {
             return Err(FrontmatterParseError::NotMapping);
         };
