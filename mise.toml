@@ -203,6 +203,7 @@ flag "-m --mod <module>" {
   long_help """
   Scopes coverage to files under `src/<module>/**` (e.g. `-m index`);
   every other path under `src/` is excluded from the report.
+  Globally ignored paths (see COVERAGE_IGNORE_REGEX) remain excluded.
   """
 }
 // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
@@ -223,6 +224,13 @@ if [[ -n "${usage_mod:-}" ]]; then
     echo "coverage: unknown module: ${usage_mod}" >&2
     exit 2
   fi
+  # Globally ignored modules (COVERAGE_IGNORE_REGEX) can never produce a
+  # report — reject instead of silently emitting an empty one. grep -E shares
+  # the POSIX ERE flavor of the llvm-cov regex.
+  if printf 'src/%s\n' "${usage_mod}" | grep -Eq "${COVERAGE_IGNORE_REGEX}"; then
+    echo "coverage: module is excluded from coverage by COVERAGE_IGNORE_REGEX: ${usage_mod}" >&2
+    exit 2
+  fi
   # llvm-cov has no include-file flag, so scope TO the module by excluding
   # every sibling directory under src/ plus all src-root .rs files.
   # POSIX ERE only: no lookahead — enumerate exclusions positively.
@@ -234,6 +242,7 @@ if [[ -n "${usage_mod:-}" ]]; then
     exclude+=("src/${name}"'($|/)')
   done
   exclude+=('src/[^/]+\.rs$')
+  # exclude must stay non-empty: bash 3.2 + set -u rejects expanding "${exclude[*]}" on an empty array
   regex="$(IFS='|'; echo "${exclude[*]}")|${regex}"
 fi
 
