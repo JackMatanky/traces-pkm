@@ -218,7 +218,7 @@ complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 flag "--acyclic" {
   help "Run cargo-modules graph cycle check (conflicts with -m)"
   long_help """
-  Runs cargo-modules' rust-analyzer graph-model cycle check and conflicts with `-m`. This crate currently exits non-zero from a struct/impl edge such as `TaskError`/`TaskError::fmt`, not a real traces-pkm code cycle; it is informational and MUST NOT be used as a gate.
+  Runs cargo-modules' rust-analyzer graph-model cycle check and conflicts with `-m`. cargo-modules currently reports at least one struct/impl graph-model cycle in this crate, not a real traces-pkm code cycle; it is informational and MUST NOT be used as a gate.
   """
 }
 arg "[args]" var=#true {
