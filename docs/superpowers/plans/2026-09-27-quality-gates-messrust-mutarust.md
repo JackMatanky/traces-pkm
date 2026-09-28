@@ -73,12 +73,12 @@
 **Files:**
 - Stage: `docs/refs/quality_gates_messrust.md`, `docs/refs/quality_gates_mutarust.md`, `docs/refs/quality_gates_mise_adoption.md`, `docs/superpowers/plans/2026-09-27-quality-gates-messrust-mutarust.md`
 
-- [ ] **Step 1: Confirm exactly these files are pending**
+- [x] **Step 1: Confirm exactly these files are pending**
 
 Run: `git status --porcelain`
 Expected: the three `docs/refs/quality_gates_*` paths (two modified, one untracked) plus `?? docs/superpowers/plans/`. Nothing else.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/refs/quality_gates_messrust.md docs/refs/quality_gates_mutarust.md \
@@ -95,12 +95,12 @@ Expected: commit created; `git status --porcelain` empty.
 - Modify: `mise.toml` (line ~30, `# -- Testing & Quality --` block)
 - Modify: `mise.lock`
 
-- [ ] **Step 1: Confirm the tool is absent (red)**
+- [x] **Step 1: Confirm the tool is absent (red)**
 
 Run: `command -v messrust || echo "messrust: not installed"`
 Expected: `messrust: not installed`
 
-- [ ] **Step 2: Add the tools line**
+- [x] **Step 2: Add the tools line**
 
 In `mise.toml`, in the `# -- Testing & Quality --` block, after the line `"cargo:cargo-mutants" = "latest"` (line 30), insert:
 
@@ -108,23 +108,23 @@ In `mise.toml`, in the `# -- Testing & Quality --` block, after the line `"cargo
 "cargo:https://github.com/quality-gates/messrust" = { version = "tag:v0.1.15" }
 ```
 
-- [ ] **Step 3: Lock**
+- [x] **Step 3: Lock**
 
 Run: `mise lock`
 Expected: exit 0; `git diff --stat mise.lock` shows a change; `rg 'messrust' mise.lock` prints an entry.
 Fallback: if lock refuses the fresh pin (24 h release-age), change to `tag:v0.1.14`, re-run `mise lock`, note the substitution.
 
-- [ ] **Step 4: Install (source build, ~1–3 min)**
+- [x] **Step 4: Install (source build, ~1–3 min)**
 
 Run: `mise install`
 Expected: exit 0.
 
-- [ ] **Step 5: Verify (green)**
+- [x] **Step 5: Verify (green)**
 
 Run: `messrust --version; echo "rc=$?"`
 Expected: rc=0 and output containing `0.1.15` (exact format unverified; any nonzero rc → stop and read install output).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add mise.toml mise.lock
@@ -138,12 +138,12 @@ git commit -m "chore: install messrust via mise"
 **Files:**
 - Create: `messrust.xml` (repo root)
 
-- [ ] **Step 1: Run against the missing policy file (red)**
+- [x] **Step 1: Run against the missing policy file (red)**
 
 Run: `messrust src text messrust.xml --ignore-tests; echo "rc=$?"`
 Expected: **rc=1** (error beats findings) with an error about the ruleset (an unloadable policy is a configuration error; rc=2 is impossible here because rc=2 requires *findings*, which need a loaded policy). The message naming `messrust.xml` is likely but undocumented — rc=1 alone is the pass criterion. If in doubt add `--verbose` (documented as "ruleset load diagnostics").
 
-- [ ] **Step 2: Write the policy**
+- [x] **Step 2: Write the policy**
 
 Create `messrust.xml` at repo root:
 
@@ -190,23 +190,23 @@ Create `messrust.xml` at repo root:
 </ruleset>
 ```
 
-- [ ] **Step 3: Run the policy (green)**
+- [x] **Step 3: Run the policy (green)**
 
 Run: `messrust src text messrust.xml --ignore-tests; echo "rc=$?"`
 Expected: rc=2 with findings listed (the research predicts codesize findings on this codebase), **or** rc=0 if the policy is already quiet. rc=1 = config error → add `--verbose` (`messrust src text messrust.xml --ignore-tests --verbose`) and fix the XML (most likely a rule name).
 
-- [ ] **Step 4: Machine triage output (format `json`, not `text`)**
+- [x] **Step 4: Machine triage output (format `json`, not `text`)**
 
 Run: `messrust src json messrust.xml --ignore-tests --reportfile /tmp/messrust.json --ignore-violations-on-exit; echo "rc=$?"`
 Expected: rc=0; `/tmp/messrust.json` exists and is non-empty.
 **Note:** the FORMAT positional (2nd) selects report content — `--reportfile` only redirects it to a file (and empties stdout). The `.json` extension does *not* imply JSON (`text … --reportfile x.json` writes text). Structured fields documented: `path`, `line`, `rule`, `priority`, `message`, `context`, `suppression`.
 
-- [ ] **Step 5: Count findings per rule**
+- [x] **Step 5: Count findings per rule**
 
 Run: `grep -oE '"rule"[[:space:]]*:[[:space:]]*"[^"]+"' /tmp/messrust.json | sort | uniq -c | sort -rn`
 Expected: one line per rule with findings. If the grep is empty, inspect the real shape first (`jq 'keys' /tmp/messrust.json`, then drill into the findings array) and adapt — then continue with the counts.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add messrust.xml
@@ -220,12 +220,12 @@ git commit -m "chore: add messrust policy file"
 **Files:**
 - Modify: `mise.toml` (after `[tasks.crap]`, line ~222)
 
-- [ ] **Step 1: Task absent (red)**
+- [x] **Step 1: Task absent (red)**
 
 Run: `mise tasks | grep -w mess; echo "rc=$?"`
 Expected: rc=1 (no match).
 
-- [ ] **Step 2: Add the task**
+- [x] **Step 2: Add the task**
 
 In `mise.toml`, immediately after the `[tasks.crap]` block (`run = "cargo crap --lcov lcov.info"`), insert:
 
@@ -246,27 +246,27 @@ messrust src text messrust.xml --ignore-tests "${extra[@]+"${extra[@]}"}"
 '''
 ```
 
-- [ ] **Step 3: Task present (green)**
+- [x] **Step 3: Task present (green)**
 
 Run: `mise tasks | grep -w mess`
 Expected: a line `mess  Static mess detection with ...`.
 
-- [ ] **Step 4: Run through the task**
+- [x] **Step 4: Run through the task**
 
 Run: `mise run mess; echo "rc=$?"`
 Expected: same findings as Task 2 Step 3; rc=2 (mise may wrap it — any nonzero other than a mise usage error is acceptable here; findings must be on stdout).
 
-- [ ] **Step 5: Passthrough works**
+- [x] **Step 5: Passthrough works**
 
 Run: `mise run mess -- --ignore-violations-on-exit --reportfile /tmp/messrust.json; echo "rc=$?"`
 Expected: rc=0; `/tmp/messrust.json` refreshed (text format — this file is only a smoke artifact; use Task 2 Step 4's `json` invocation for real triage).
 
-- [ ] **Step 6: Lint surface still healthy**
+- [x] **Step 6: Lint surface still healthy**
 
 Run: `mise run lint`
 Expected: exit 0 (no Rust changes; confirms mise/hk plumbing still healthy after the mise.toml edit).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add mise.toml
@@ -281,12 +281,12 @@ git commit -m "feat: add mise mess task"
 - Modify: `messrust.xml` (only if a threshold below trips)
 - Modify: `docs/refs/quality_gates_messrust.md` (append §9)
 
-- [ ] **Step 1: Get per-rule counts**
+- [x] **Step 1: Get per-rule counts**
 
 Run: `messrust src json messrust.xml --ignore-tests --reportfile /tmp/messrust.json --ignore-violations-on-exit && grep -oE '"rule"[[:space:]]*:[[:space:]]*"[^"]+"' /tmp/messrust.json | sort | uniq -c | sort -rn | tee /tmp/mess-rule-counts.txt`
 Expected: file of `count rule` lines. (Format `json` is required — see Task 2 Step 4.)
 
-- [ ] **Step 2: Apply the decision table**
+- [x] **Step 2: Apply the decision table**
 
 For each row, find the count in `/tmp/mess-rule-counts.txt` (missing rule = count 0):
 
@@ -300,7 +300,7 @@ For each row, find the count in `/tmp/mess-rule-counts.txt` (missing rule = coun
 | `ShortClassName` | **any**: record in §9. Property is **`minimum`** (default 3) — *not* `maximum` — with a companion `exceptions` list (messrust §8.4 corrects any blanket `maximum` reading). |
 | any other rule | **> 25**: append `<exclude name="RuleName"/>` inside the `rust` ref **only with a written reason in §9**. |
 
-- [ ] **Step 3: Record the observations**
+- [x] **Step 3: Record the observations**
 
 Append a new section to `docs/refs/quality_gates_messrust.md`:
 
@@ -320,12 +320,12 @@ Notable findings kept as signals (esp. `ExcessiveClassLength` files):
 <list, or "none">
 ```
 
-- [ ] **Step 4: Verify still runnable**
+- [x] **Step 4: Verify still runnable**
 
 Run: `mise run mess -- --ignore-violations-on-exit; echo "rc=$?"`
 Expected: rc=0; no config errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add messrust.xml docs/refs/quality_gates_messrust.md
@@ -340,12 +340,12 @@ git commit -m "chore: triage first messrust run and tune policy"
 - Modify: `mise.toml` (Testing & Quality block)
 - Modify: `mise.lock`
 
-- [ ] **Step 1: Absent (red)**
+- [x] **Step 1: Absent (red)**
 
 Run: `command -v mutarust || echo "mutarust: not installed"`
 Expected: `mutarust: not installed`
 
-- [ ] **Step 2: Add tools line**
+- [x] **Step 2: Add tools line**
 
 After the messrust line inserted in Task 1, insert:
 
@@ -353,7 +353,7 @@ After the messrust line inserted in Task 1, insert:
 "cargo:mutarust" = "0.1.10"
 ```
 
-- [ ] **Step 3: Lock**
+- [x] **Step 3: Lock**
 
 Run: `mise lock`
 Expected: exit 0; `rg 'mutarust' mise.lock` prints an entry.
@@ -362,12 +362,12 @@ Fallback B (crate/version unpublished — vendored `docs/parity.md` says crates.
 `"cargo:https://github.com/quality-gates/mutarust" = { version = "tag:v0.1.10" }`
 (or the latest existing tag if that ref 404s — check `git ls-remote --tags https://github.com/quality-gates/mutarust`), re-lock, note the substitution and the actual version.
 
-- [ ] **Step 4: Install**
+- [x] **Step 4: Install**
 
 Run: `mise install`
 Expected: exit 0. (cargo-binstall may report no prebuilt asset and fall back to source build — that is normal, not an error.)
 
-- [ ] **Step 5: Verify (green) + doc-conformance spot check**
+- [x] **Step 5: Verify (green) + doc-conformance spot check**
 
 Run:
 ```bash
@@ -376,7 +376,7 @@ mutarust --help | grep -cE -- '--logger-agentic-json|--git-diff-lines|--run-muta
 ```
 Expected: rc=0; version output resolves the pin; grep count ≥ 3 (proves the installed build matches the vendored docs' flag surface — the docs were generated against 0.2.0, so this check matters). If flags are missing, STOP: the pin and the docs disagree; escalate before writing config/tasks.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add mise.toml mise.lock
@@ -390,12 +390,12 @@ git commit -m "chore: install mutarust via mise"
 **Files:**
 - Create: `mutarust.yml` (repo root)
 
-- [ ] **Step 1: Run without the config (red)**
+- [x] **Step 1: Run without the config (red)**
 
 Run: `mise exec -- mutarust --config mutarust.yml --dry-run; echo "rc=$?"`
 Expected: nonzero rc (3 config error or 1 command error) with a message naming `mutarust.yml`.
 
-- [ ] **Step 2: Write the policy**
+- [x] **Step 2: Write the policy**
 
 Create `mutarust.yml` at repo root:
 
@@ -444,18 +444,18 @@ enable_mutators: []
 ignore_source_lines: []
 ```
 
-- [ ] **Step 3: Run with the config (green)**
+- [x] **Step 3: Run with the config (green)**
 
 Run: `mise exec -- mutarust --config mutarust.yml --dry-run; echo "rc=$?"`
 Expected: rc=0 and a mutant count printed.
 **Note:** mutarust's no-target default is *undocumented* (docs only document a default for `--list-files`). If this errors about a missing/invalid target, rerun with an explicit `./src...`, record which form worked in Task 10's §11 record (row "default target"), and continue — the `mutants` task always supplies a target anyway.
 
-- [ ] **Step 4: Validate schema-shape acceptance**
+- [x] **Step 4: Validate schema-shape acceptance**
 
 Run: `mise exec -- mutarust --config mutarust.yml --dry-run 2>&1 | head -5`
 Expected: no config/schema error lines (unknown field or bad type would exit 3 naming the file).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add mutarust.yml
@@ -471,13 +471,13 @@ The entrypoint keeps its stable name `mutants`; only the engine changes (locked 
 **Files:**
 - Modify (replace): `.mise/tasks/mutants/_default` (keep executable bit)
 
-- [ ] **Step 1: Confirm the legacy script is what's there today (red)**
+- [x] **Step 1: Confirm the legacy script is what's there today (red)**
 
 Run: `head -6 .mise/tasks/mutants/_default; mise tasks | grep -w mutants`
 Expected: line 2 is `#MISE description="Run parallel mutation testing with \`cargo-mutants\`"`; the `mutants` task (and `mutants:report`) are listed with the legacy description.
 Also (background, no action): `bash -x .mise/tasks/mutants/_default --list 2>&1 | tail -3` dies at `build_filter_flags` under `set -e` — the legacy task is dead today, which is fine; we are replacing it, not fixing it.
 
-- [ ] **Step 2: Replace the file content**
+- [x] **Step 2: Replace the file content**
 
 Overwrite `.mise/tasks/mutants/_default` with exactly this content:
 
@@ -1018,53 +1018,53 @@ main() {
 main "$@"
 ```
 
-- [ ] **Step 3: Keep executable + shellcheck**
+- [x] **Step 3: Keep executable + shellcheck**
 
 Run: `chmod +x .mise/tasks/mutants/_default && shellcheck .mise/tasks/mutants/_default; echo "rc=$?"`
 Expected: rc=0, no findings.
 
-- [ ] **Step 4: Task visible with new description (green)**
+- [x] **Step 4: Task visible with new description (green)**
 
 Run: `mise tasks | grep -w '^mutants'`
 Expected: `mutants` line now reads "Run mutation testing (engine: `mutarust`)" (the `mutants:report` line still exists — deleted at cutover).
 
-- [ ] **Step 5: Help renders**
+- [x] **Step 5: Help renders**
 
 Run: `mise run mutants --help`
 Expected: rc=0; usage block showing `-f`, `-m`, `--min-msi`, `--update-baseline`, `--fail-on-escaped`, `--git-diff`, `--dry-run`, `--timeout`, and the long_help (exit codes + migration cheatsheet).
 
-- [ ] **Step 6: Passthrough probe (`--` forwarding on file tasks)**
+- [x] **Step 6: Passthrough probe (`--` forwarding on file tasks)**
 
 Run: `mise run mutants -- --list-mutators > /tmp/mut-list.txt 2>&1; echo "rc=$?"; tail -n 15 /tmp/mut-list.txt`
 Expected: rc=0, mutator names shown from file tail — proves `--`-args land in `usage_args` for this file task (redirect to a file rather than `| head`, which SIGPIPE-kills the `depends` test task and corrupts the rc; the `depends=test` output prefixes the captured stream, so read the tail, not the head). If instead you get a usage error, record it in §11 (Task 10) and stop: every later passthrough step needs rework first.
 
-- [ ] **Step 7: Dry-run through the task (proves flag conditionality)**
+- [x] **Step 7: Dry-run through the task (proves flag conditionality)**
 
 Run: `mise run mutants --dry-run; echo "rc=$?"`
 Expected: rc=0 with a count. If the static `--test-flags`/`--timeout-coefficient` were *not* omitted, mutarust would reject the line (rc 1/3) — rc=0 proves the condition works.
 
-- [ ] **Step 8: Default-target scope**
+- [x] **Step 8: Default-target scope**
 
 Run: `mise run mutants -- --list-files > /tmp/mf.txt 2>&1; echo "rc=$?"; wc -l < /tmp/mf.txt; grep -c 'src/cli' /tmp/mf.txt || true`
 Expected: rc=0; count > 100 files (the task appends DEFAULT_TARGET `./src...` → 123); `src/cli` lines **will** appear — paths are ABSOLUTE (match with plain substring `src/cli`, not `^src/cli`), and `exclude_dirs` intentionally does not affect `--list-files` (known quirk, §9.18.5); scope is enforced at run time.
 Branch: if mutarust rejects `./src...` (rc 1/3 with a usage/target error), edit `DEFAULT_TARGET` to `"./src"`, re-run Step 7 (expect rc=0), then compare `mise run mutants --dry-run` counts before/after the change to confirm the fallback still selects the full production tree; record the outcome in Task 10's §11 record (`default target` row).
 
-- [ ] **Step 9: `-m` mapping for dir and file modules**
+- [x] **Step 9: `-m` mapping for dir and file modules**
 
 Run: `mise run mutants -m index --dry-run; echo "rc=$?"` then `mise run mutants -m strsim --dry-run; echo "rc=$?"`
 Expected: both rc=0 (`index` is a dir → `./src/index...`; `strsim` is `src/strsim.rs` → file target).
 
-- [ ] **Step 10: Unknown module errors cleanly**
+- [x] **Step 10: Unknown module errors cleanly**
 
 Run: `mise run mutants -m nosuchmod --dry-run; echo "rc=$?"`
 Expected: rc=2, stderr `mutants: unknown module: nosuchmod`.
 
-- [ ] **Step 11: Conflicting flags reject at task level**
+- [x] **Step 11: Conflicting flags reject at task level**
 
 Run: `mise run mutants --update-baseline --dry-run; echo "rc=$?"` then `mise run mutants --dry-run -- --workers 4; echo "rc=$?"`
 Expected: both rc=2 with `mutants:` diagnostics (never reaching mutarust).
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add .mise/tasks/mutants/_default
@@ -1078,7 +1078,7 @@ git commit -m "feat(mutants): swap task engine from cargo-mutants to mutarust"
 **Files:**
 - Modify: `.gitignore` (after line 22 `/mutants-report.md`)
 
-- [ ] **Step 1: Add mutarust artifacts to .gitignore**
+- [x] **Step 1: Add mutarust artifacts to .gitignore**
 
 After the `/mutants-report.md` line, insert:
 
@@ -1092,7 +1092,7 @@ After the `/mutants-report.md` line, insert:
 
 (`mutarust-baseline.json` is deliberately NOT ignored — it gets committed in Task 11.)
 
-- [ ] **Step 2: Pick a small test module**
+- [x] **Step 2: Pick a small test module**
 
 Run:
 ```bash
@@ -1103,7 +1103,7 @@ done
 ```
 Expected: one printed count per module. Choose the module with the **smallest count > 0**; call it `M` for later steps (it must work for both engines: raw cargo-mutants in Task 9 handles dir modules via `src/<M>/**/*.rs` and file modules via `src/<M>.rs`).
 
-- [ ] **Step 3: CRITICAL — reports must exist on gate failure (exit 4)**
+- [x] **Step 3: CRITICAL — reports must exist on gate failure (exit 4)**
 
 Run: `mise run mutants -m M --min-msi 99 -- --timeout 600 > /tmp/m4.txt 2>&1; echo "rc=$?"` (substitute the real module), then `tail -20 /tmp/m4.txt`.
 Expected: rc=4 (or rc=0 if M scored 100 — check `jq '.stats.msi' report.json`), **and**:
@@ -1113,23 +1113,23 @@ This run also proves timeout conditionality under *both* possible `--`-parse rea
 - rc 1/3 or the run stopped *before* mutation (clean test suite failed — see tail of `/tmp/m4.txt`) → fix the build/test failure first; missing reports are then expected, not a design failure.
 - Gate genuinely exited 4 but a report file is missing → **stop.** Record the failure in `docs/refs/quality_gates_mise_adoption.md` §8 checklist and escalate to the user — the agent triage design depends on reports surviving exit 4.
 
-- [ ] **Step 4: Zero-mutant run still writes reports**
+- [x] **Step 4: Zero-mutant run still writes reports**
 
 Run: `rm -f report.json && mise run mutants --git-diff; echo "rc=$?"; jq -c '.stats' report.json`
 Expected: rc=0 (docs-only changes ⇒ zero mutable lines) **and** `report.json` exists again with zero-mutant stats. If the file was not rewritten on the empty run, note it in Task 10's §11 record (limitation: rely on stdout for empty runs).
 **Reminder:** report.json is clobbered by *every* later run — never read it after an intervening `--dry-run`.
 
-- [ ] **Step 5: Mutator inventory reachable**
+- [x] **Step 5: Mutator inventory reachable**
 
 Run: `mise run mutants -- --list-mutators > /tmp/mutators.txt 2>&1; echo "rc=$?"; tail -n 15 /tmp/mutators.txt`
 Expected: rc=0, mutator names shown from file tail.
 
-- [ ] **Step 6: Duplicate `--config` precedence**
+- [x] **Step 6: Duplicate `--config` precedence**
 
 Run: `printf 'silent_mode: false\n' > /tmp/other.yml && mise run mutants -m strsim --dry-run -- --config /tmp/other.yml > /tmp/cfg.txt 2>&1; echo "rc=$?"; grep -m1 'task owns --config' /tmp/cfg.txt`
 Expected: rc=2 and message `mutants: task owns --config; policy lives in mutarust.yml` — the `mutants` task rejects passthrough `--config` itself (per Task 7's conflict-matrix hardening (passthrough `--config` now rejected at task level); raw mutarust would instead rc=3 with `--config can be supplied only once`). The step's purpose: confirm the task's pre-emptive rejection fires (not mutarust's). Record in Task 10's §11 record: `--config passthrough: rejected at task level (rc=2, task-owns message) — task config always wins; the losing-config/report-vanish scenario is unreachable.`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add .gitignore
@@ -1144,12 +1144,12 @@ Task 7 replaced the legacy task script, so the old engine is measured via raw CL
 
 **Files:** none written outside gitignored `mutants.out/`
 
-- [ ] **Step 1: Confirm both engines available**
+- [x] **Step 1: Confirm both engines available**
 
 Run: `mise exec -- cargo mutants --version; mutarust --version`
 Expected: both rc=0.
 
-- [ ] **Step 2: Run the old engine on module M**
+- [x] **Step 2: Run the old engine on module M**
 
 Run (substitute `M`; choose the `--file` form by module kind):
 ```bash
@@ -1163,7 +1163,7 @@ tail -3 /tmp/ab-old.txt
 Expected: rc=0 (a `cargo mutants` failure here is a real blocker for the A/B — read `/tmp/ab-old.txt` and fix before proceeding). Record: wall-clock seconds (`real` from `time -p`), survivor count `if [[ -f mutants.out/missed.txt ]]; then wc -l < mutants.out/missed.txt; else echo 0; fi`.
 Notes to carry into §11: the old engine **always** ran with `--cap-lints true` (relevant to interpreting P3), `--profile mutants`, and nextest (config).
 
-- [ ] **Step 3: No commit**
+- [x] **Step 3: No commit**
 
 Nothing tracked changes (`mutants.out/` is still gitignored). Proceed to Task 10.
 
@@ -1177,12 +1177,12 @@ Nothing tracked changes (`mutants.out/` is still gitignored). Proceed to Task 10
 
 Use the module `M` chosen in Task 8 Step 2; old-engine numbers come from Task 9.
 
-- [ ] **Step 1 (P1): New tool on same scope**
+- [x] **Step 1 (P1): New tool on same scope**
 
 Run: `/usr/bin/time -p mise run mutants -m M > /tmp/ab-new.txt 2>&1; echo "new_rc=$?"`
 Expected: rc=0 (no gates yet). Record wall-clock from `time -p` and `jq -c '.stats' report.json` (escapedCount, msi, skippedCount) — read it **immediately**, before any other run clobbers it.
 
-- [ ] **Step 2 (P2): `--profile mutants` in `--test-flags`**
+- [x] **Step 2 (P2): `--profile mutants` in `--test-flags`**
 
 Run:
 ```bash
@@ -1194,7 +1194,7 @@ Two outcomes:
 - **Accepted** (rc=0 or 4, run completes): edit `TEST_FLAGS` in `.mise/tasks/mutants/_default` to `"--features test-utils --all-targets --profile mutants"`; `[profile.mutants]` in `Cargo.toml` is retained at cutover. Re-verify: `mise run mutants -m M --dry-run` → rc 0 (dry-run still omits it).
 - **Rejected** (rc=1 or 3, argument error): record "profile does not port"; `[profile.mutants]` gets removed in Task 12.
 
-- [ ] **Step 3 (P3): cap-lints A/B (highest-risk gap)**
+- [x] **Step 3 (P3): cap-lints A/B (highest-risk gap)**
 
 Run:
 ```bash
@@ -1208,7 +1208,7 @@ Record both stats objects (read `report.json` immediately after each run). Decis
 - Otherwise → document "no material inflation observed on M"; still leave it off by default (cache invalidation cost).
 Context for the write-up: the old engine *always* cap-lints (`--cap-lints true`, Task 9), so "off" here is a deliberate divergence from old behavior.
 
-- [ ] **Step 4 (P4): Record everything**
+- [x] **Step 4 (P4): Record everything**
 
 Append to `docs/refs/quality_gates_mise_adoption.md`:
 
@@ -1236,7 +1236,7 @@ Passthrough probe (`-- --list-mutators`): <worked | usage error → rework>
 Any other surprises: <list or "none">
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/refs/quality_gates_mise_adoption.md .mise/tasks/mutants/_default
@@ -1256,42 +1256,42 @@ git commit -m "chore: record quality-gate pilot results"
 - Modify: `docs/refs/quality_gates_mise_adoption.md` (§11 record)
 - Create: `.scratch/<feature-slug>/issues/01-full-project-mutation-baseline.md` (follow-up)
 
-- [ ] **Step 0: Pick + probe the scope**
+- [x] **Step 0: Pick + probe the scope**
 
 Run: `nice -n 10 mise run mutants -m strsim --dry-run > /tmp/scoped-dry.txt 2>&1; echo "rc=$?"; tail -3 /tmp/scoped-dry.txt`
 Expected: rc=0, `Total: 6 mutation(s)`. Default scope is `-m strsim` (known-good, 6 mutants). Optionally probe ONE broader alternation regexp (e.g. `-m 'strsim|dirs'`) and accept it only if the total stays in **6–40**; >40 or rc≠0 → fall back to `-m strsim`. Record the chosen `<SCOPE>` regexp + total. (Dry-run clobbers `report.json` — harmless; stats come after Step 1.)
 
-- [ ] **Step 1: Scoped scored run**
+- [x] **Step 1: Scoped scored run**
 
 Run: `nice -n 10 mise run mutants -m <SCOPE> > /tmp/scoped-run.txt 2>&1; echo "rc=$?"`
 Expected: rc=0 (no score gates configured). Runtime ≤ ~10 min (task hooks run the test suite first, then ≤ min(12, total) workers build in isolated temp dirs). If > 15 min, stop and investigate — report the verbatim tail of `/tmp/scoped-run.txt`. Run nothing else cargo-heavy concurrently.
 
-- [ ] **Step 2: Record the score**
+- [x] **Step 2: Record the score**
 
 Run: `jq -c '.stats' report.json | tee /tmp/scoped-stats.json`
 Expected: all counts + `msi` (ratio 0–1). Save the output — it goes into the §11 record (Step 6) and the Step 4 comment. Do this **before** any other mutarust invocation (reports are clobbered per run).
 
-- [ ] **Step 3: Write the baseline**
+- [x] **Step 3: Write the baseline**
 
 Run: `nice -n 10 mise run mutants -m <SCOPE> --update-baseline; echo "rc=$?"` then `jq '.mutants | length' mutarust-baseline.json`
 Expected: rc=0; length equals the Step 1 escaped count (0 is valid — an empty `mutants` array still makes the Step 5 gate provable). Note: by design this writes **no report files** and exits before gates — do not mistake exit 0 for a completed scored run. If the scope probe (Step 1) produced different results than Step 1's record, stop and reconcile before proceeding.
 
-- [ ] **Step 4: Score gate decision (scoped — never activates)**
+- [x] **Step 4: Score gate decision (scoped — never activates)**
 
 Run: `jq '.stats.msi' report.json`
 - Scoped data must **not** activate the project gate regardless of value: leave `# min_msi: 60` commented; replace the comment block's last line with `# min_msi: 60  # scoped measurement MSI = <value> on <scope> 2026-09-28; full-project measurement deferred (see .scratch/<feature-slug>/issues/01-full-project-mutation-baseline.md)`.
 - Record the value + decision in §11 either way (Step 6).
 
-- [ ] **Step 5: Green gate with baseline (scoped, green)**
+- [x] **Step 5: Green gate with baseline (scoped, green)**
 
 Run: `nice -n 10 mise run mutants -m <SCOPE> --fail-on-escaped > /tmp/gate.txt 2>&1; echo "rc=$?"; jq -c '.stats' report.json`
 Expected: rc=0 (every escape of this scope is in the committed baseline). rc=4 here means `mutarust-baseline.json` is stale vs the run — re-run Step 3 once and retry.
 
-- [ ] **Step 6: Record in §11**
+- [x] **Step 6: Record in §11**
 
 Append to `docs/refs/quality_gates_mise_adoption.md` §11 (match the existing entries' style): date 2026-09-28, scope regexp + total, killed/escaped/msi from Step 2, baseline length, gate rc from Step 5, decision (`min_msi` stays commented — scoped measurement cannot activate a project gate), and a pointer to the Step 7 issue.
 
-- [ ] **Step 7: Follow-up issue + commits**
+- [x] **Step 7: Follow-up issue + commits**
 
 Create `.scratch/<feature-slug>/issues/01-full-project-mutation-baseline.md` per `docs/agents/issue-tracker.md` (Status line per `docs/agents/triage-labels.md`; pick/reuse a sensible feature slug — check what already exists under `.scratch/`). Body: why deferred (user constraint: no multi-hour runs; the killed attempt's evidence), acceptance criteria (full-scope scored run; `min_msi` activation only from full-project MSI ≥ 60; baseline covering all current escapes), and the deferred procedure:
 
@@ -1323,18 +1323,18 @@ Expected: `git status --porcelain` empty.
 - Modify: `.gitignore` (remove 3 lines)
 - Modify: `Cargo.toml` (conditional: remove `[profile.mutants]`)
 
-- [ ] **Step 1: Remove the tools line + relock**
+- [x] **Step 1: Remove the tools line + relock**
 
 Delete `"cargo:cargo-mutants" = "latest"` from `mise.toml`, then:
 Run: `mise lock && mise install && mise ls 2>/dev/null | grep -c cargo-mutants; echo "rc=$?"`
 Expected: lock diff drops cargo-mutants; install exit 0. Note: `mise ls` may still print 1 hit sourced from the ancestor main checkout's `mise.toml` (out of scope — the main branch still declares cargo-mutants until this work merges). Verify cleanliness against this worktree's own files: `rg cargo-mutants mise.toml mise.lock` → no output.
 
-- [ ] **Step 2: Delete legacy report task, config, and stale artifacts**
+- [x] **Step 2: Delete legacy report task, config, and stale artifacts**
 
 Run: `rm .mise/tasks/mutants/report && rm .cargo/mutants.toml && rm -rf mutants.out mutants.out.old mutants-report.md`
 Expected: report task + config gone, stale cargo-mutants run artifacts removed (they must NOT be re-ignored once Step 3 lands, or `git add -A` would sweep them in); **`.mise/tasks/mutants/_default` must still exist**; `git status --porcelain` shows only the intended deletions.
 
-- [ ] **Step 3: Clean .gitignore**
+- [x] **Step 3: Clean .gitignore**
 
 Remove these three lines (20–22) from `.gitignore`:
 
@@ -1344,7 +1344,7 @@ Remove these three lines (20–22) from `.gitignore`:
 /mutants-report.md
 ```
 
-- [ ] **Step 4: `[profile.mutants]` decision**
+- [x] **Step 4: `[profile.mutants]` decision**
 
 - If Task 10 P2 **passed** (TEST_FLAGS contains `--profile mutants`): keep `Cargo.toml:264-267` unchanged.
 - If P2 **failed**: remove from `Cargo.toml`:
@@ -1356,7 +1356,7 @@ opt-level = 1
 debug = false
 ```
 
-- [ ] **Step 5: No dangling references in code/config**
+- [x] **Step 5: No dangling references in code/config**
 
 Run:
 ```bash
@@ -1367,12 +1367,12 @@ rg -n 'cargo-mutants|mutants\.out|mutants-report|mutants\.toml' \
 ```
 Expected: no output. (Allowed leftovers outside these exclusions: the research docs, the plan itself, `docs/refs/mutation_testing.md` — rewritten next task, `mutarust.yml` provenance comments, and the `.mise/tasks/clean/*` stale-artifact registry, which intentionally keeps deleting old cargo-mutants artifacts when present. The live `.mise/tasks/mutants/_default` intentionally contains none of these strings — its cheatsheet says "the previous engine", not `cargo-mutants`.) Also run `rg 'cargo-mutants' mise.lock` → no output.
 
-- [ ] **Step 6: Entrypoints healthy**
+- [x] **Step 6: Entrypoints healthy**
 
 Run: `mise run mutants -m strsim --dry-run; echo "mu_rc=$?"` then `out=$(mise run mutants:report 2>&1); rep_rc=$?; printf '%s\n' "$out" | tail -2; echo "rep_rc=$rep_rc"` (capture `rep_rc` BEFORE piping — a `cmd | tail; echo $?` pipeline reports `tail`'s status, not `mise`'s).
 Expected: `mu_rc=0` (the stable `mutants` entrypoint runs the mutarust engine); `mutants:report` errors with a task-not-found style message and nonzero `rep_rc`. Caveat: mise resolves tasks through ancestor configs too — if `rep_rc=0` because the main checkout still ships `.mise/tasks/mutants/report`, fall back to the worktree-local assertion: `.mise/tasks/mutants/` contains only `_default` and `mise tasks | grep -c mutants:report` → 0.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A mise.toml mise.lock .mise/tasks .cargo .gitignore Cargo.toml
@@ -1386,7 +1386,7 @@ git commit -m "chore: retire cargo-mutants in favor of mutarust"
 **Files:**
 - Rewrite: `docs/refs/mutation_testing.md` (replace all 190 lines)
 
-- [ ] **Step 1: Replace the file**
+- [x] **Step 1: Replace the file**
 
 Write `docs/refs/mutation_testing.md` with exactly this content:
 
@@ -1558,7 +1558,7 @@ empty diff cannot fail the gate.
   cargo-mutants research remains in `docs/refs/quality_gates_*.md`.
 ````
 
-- [ ] **Step 2: Sanity-scan the rewrite**
+- [x] **Step 2: Sanity-scan the rewrite**
 
 Run:
 ```bash
@@ -1567,7 +1567,7 @@ rg -n -- '--iterate' docs/refs/mutation_testing.md; echo "rc=$?"
 ```
 Expected: first rg rc=1 (no stale cargo-mutants usage). Second rg rc=0 with **exactly one** hit — the intentional negation line (`There is no \`--iterate\``), which documents the flag's absence; any other `--iterate` hit is stale usage and must be fixed.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/refs/mutation_testing.md
@@ -1578,17 +1578,17 @@ git commit -m "docs: rewrite mutation testing guide for mutarust"
 
 ### Task 14: Final verification
 
-- [ ] **Step 1: Full gate**
+- [x] **Step 1: Full gate**
 
 Run: `mise run verify`
 Expected: exit 0 (`fmt` → `check`/`lint`/`test` all pass; no Rust sources changed, so this is a plumbing check).
 
-- [ ] **Step 2: Both entrypoints from cold**
+- [x] **Step 2: Both entrypoints from cold**
 
 Run: `mise run mess -- --ignore-violations-on-exit; echo "mess_rc=$?"` then `mise run mutants -m strsim --dry-run; echo "mu_rc=$?"`
 Expected: `mess_rc=0`, `mu_rc=0`.
 
-- [ ] **Step 3: hk check on changed docs**
+- [x] **Step 3: hk check on changed docs**
 
 Run:
 ```bash
@@ -1597,12 +1597,12 @@ printf 'docs/refs/quality_gates_messrust.md\0docs/refs/quality_gates_mise_adopti
 ```
 Expected: `status: passed` (gitleaks skipped because `--safe` refuses its unknown effect; run `gitleaks detect` manually if secrets are a concern for these files — they contain no secrets).
 
-- [ ] **Step 4: Clean tree**
+- [x] **Step 4: Clean tree**
 
 Run: `git status --porcelain`
 Expected: empty. `git log --oneline -12` shows the plan's commits in order.
 
-- [ ] **Step 5: Final commit (if any verification fix was needed)**
+- [x] **Step 5: Final commit (if any verification fix was needed)**
 
 ```bash
 git add -A
