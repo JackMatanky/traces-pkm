@@ -53,9 +53,10 @@
 #USAGE   """
 #USAGE }
 
-# Optional cap-lints: see quality_gates_mise_adoption.md §10.2 row 2 —
-# verify the Task 10 P3 A/B before enabling; it also affects depends=["test"]
-# and invalidates build caches.
+# Optional cap-lints: Task 10 P3 A/B completed — inconclusive at n=1, so it
+# stays off by default. Hypothesis: quality_gates_mise_adoption.md §10.2 row
+# 2; observed result: §11 P3. Also affects depends=["test"] and invalidates
+# build caches.
 # #MISE env={ RUSTFLAGS = "--cap-lints=allow" }
 
 # File description (Google style §4.1) — placed after the #MISE/#USAGE block
@@ -69,7 +70,8 @@ set -euo pipefail
 declare -a mutarust_args=()
 declare -a passthrough=()
 
-# `--profile mutants` accepted in Task 10 P2 (see quality_gates_mise_adoption.md §11).
+# `--profile mutants` accepted in Task 10 P2 (see
+# quality_gates_mise_adoption.md §11).
 TEST_FLAGS="--features test-utils --all-targets --profile mutants"
 TIMEOUT_COEFFICIENT=5
 DEFAULT_TARGET="./src..."
