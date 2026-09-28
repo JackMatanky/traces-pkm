@@ -852,3 +852,53 @@ mise run mutarust -- --config other.yml              # task's --config + passthr
 # UX regressions
 mise run mutarust -- --exclude 'src/*'               # confirm clean "unknown" error, document wording
 ```
+
+## 11. Pilot results (observed 2026-09-27)
+
+Scope module: `M` = dirs
+
+| | wall-clock | rc | escaped | skipped | msi | total |
+| --- | --- | --- | --- | --- | --- | --- |
+| old engine, raw `cargo mutants` (Task 9) | 1664.33 s | 0 | 0 | n/a | n/a | 5 |
+| `mise run mutants -m dirs` (mutarust) | 461.26 s | 0 | 1 | 0 | 0.0 | 1 |
+
+Old-engine totals: 5 mutants tested, 5 caught, 0 survivors (`missed.txt`
+0 lines). New-engine totals: 1 mutant, 1 escaped, 0 killed.
+
+Old-engine invocation notes: raw CLI (legacy task was dead under set -e);
+flags replicated; nextest + excludes via .cargo/mutants.toml; always
+--cap-lints true, --profile mutants.
+
+P2 (`--profile mutants`): accepted → TEST_FLAGS updated
+(`"--features test-utils --all-targets"` →
+`"--features test-utils --all-targets --profile mutants"`). Direct probe
+`mutarust --test-flags "... --profile mutants" --timeout-coefficient 5`
+completed rc=0 (cargo accepted `--profile mutants`; `[profile.mutants]`
+retained in Cargo.toml); re-verified `mise run mutants -m dirs --dry-run`
+rc=0 with no `--test-flags`/`--profile` in the emitted command
+(`build_static_flags` skips test controls under `--dry-run`).
+P3 (cap-lints): stats with RUSTFLAGS=--cap-lints=allow={"totalMutantsCount":1,"killedCount":0,"notCoveredCount":0,"escapedCount":1,"errorCount":0,"skippedCount":0,"msi":0.0,"coveredCodeMsi":0.0}; stats without={"totalMutantsCount":1,"killedCount":0,"notCoveredCount":0,"escapedCount":1,"errorCount":0,"skippedCount":0,"msi":0.0,"coveredCodeMsi":0.0};
+  skippedCount delta=0 of 1 → no material inflation observed on M. (Both rc=0. Caveat: M
+  is a single-mutant scope, so the A/B has almost no statistical power —
+  "no material inflation observed on M" only. Still off by default: the
+  RUSTFLAGS switch also invalidates build caches, and the ON run was ~33 s
+  slower than OFF (225.27 s vs 191.98 s "Finished in"), consistent with a
+  cold rebuild. The old engine always cap-lints, so "off" is a deliberate
+  divergence.)
+`default target` (`./src...`): accepted — bare `--dry-run` = 3820 == `./src...` set-identical (123 files); user positional now narrows scope (post-Task-7 default-target guard).
+Duplicate `--config` passthrough: rejected at task level (rc=2, task-owns
+  message) — task config always wins; losing-config scenario unreachable.
+Passthrough probe (`-- --list-mutators`): worked (verified in Tasks 7/8: rc=0, 33 names).
+Any other surprises:
+- The plan's literal P2 target `./src/dirs...` does not resolve for a file
+  module: rc=3 `mutarust: cannot read source target ./src/dirs: No such file
+  or directory`. The task's `-m` mapping emits `./src/dirs.rs`, which works;
+  the P2 probe used the file form.
+- Engine granularity gap on the same file: cargo-mutants tested 5 mutants in
+  `src/dirs.rs`, mutarust generated 1 (`statement/remove`) — and it escaped,
+  so M's mutarust MSI = 0.0.
+- Baseline `depends=test` did NOT dominate wall-clock: ~11 s warm of the
+  461.26 s Step-1 run (real from `time -p`); the mutation phase dominates.
+- `report.json` clobbering confirmed live: the P2 dry-run verification
+  rewrote the Step-1 stats (escaped 1 → 0). Every stats read above was taken
+  immediately after its scored run.

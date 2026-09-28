@@ -69,8 +69,8 @@ set -euo pipefail
 declare -a mutarust_args=()
 declare -a passthrough=()
 
-# Edit here for the Task 10 P2 experiment (--profile mutants acceptance).
-TEST_FLAGS="--features test-utils --all-targets"
+# `--profile mutants` accepted in Task 10 P2 (see quality_gates_mise_adoption.md §11).
+TEST_FLAGS="--features test-utils --all-targets --profile mutants"
 TIMEOUT_COEFFICIENT=5
 DEFAULT_TARGET="./src..."
 
