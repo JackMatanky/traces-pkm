@@ -23,6 +23,7 @@ static YAML_CONFIG: LazyLock<ParserConfig> =
 ///
 /// Returns [`noyalib::Error`] if `text` is not valid YAML 1.2 under the
 /// shared `serde_yaml_compat` parity config.
+#[inline]
 pub(crate) fn parse(text: &str) -> Result<noyalib::Value, noyalib::Error> {
     noyalib::from_str_with_config(text, &YAML_CONFIG)
 }
