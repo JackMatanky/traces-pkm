@@ -40,7 +40,9 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -64,6 +66,8 @@ MIN_POINTS_FOR_TRUSTED_FIT: Final[int] = 6
 MIN_RESIDUAL_DOF: Final[int] = 3
 CONSTANT_SPREAD_EPSILON: Final[float] = 1e-4
 R2_RELIABLE_THRESHOLD: Final[float] = 0.95
+SIGNIFICANCE_P_THRESHOLD: Final[float] = 0.05
+NOISE_THRESHOLD_PCT: Final[float] = 1.0
 R_SQUARED: Final[str] = "R²"
 
 WIDESCREEN_THRESHOLD: Final[int] = 100
@@ -119,13 +123,22 @@ class Style:
     def dim(cls, text: str) -> str:
         return f"{cls.DIM}{text}{cls.RESET}"
 
-    @staticmethod
-    def pad_visible(text: str, target_width: int) -> str:
-        """Pad text to target_width based on visible characters ignoring ANSI escapes."""
-        import re
+    @classmethod
+    def plot_color(cls, name: str) -> str | None:
+        """Named color for plotext, or None to disable it (NO_COLOR / non-TTY)."""
+        return name if cls._ENABLED else None
 
+    @staticmethod
+    def visible_width(text: str) -> int:
+        """Terminal column width of text: strips ANSI escapes, counts wide/fullwidth
+        Unicode (emoji status badges, CJK) as 2 columns instead of Python's 1."""
         clean = re.sub(r"\033\[[0-9;]*m", "", text)
-        padding = max(0, target_width - len(clean))
+        return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in clean)
+
+    @classmethod
+    def pad_visible(cls, text: str, target_width: int) -> str:
+        """Pad text to target_width based on visible terminal columns, ignoring ANSI escapes."""
+        padding = max(0, target_width - cls.visible_width(text))
         return text + (" " * padding)
 
 
@@ -310,16 +323,27 @@ class BaselineChange:
 
     @property
     def is_significant(self) -> bool:
-        return self.p_value < 0.05 and abs(self.time_pct) >= 1.0
+        """A real change: statistically detected AND beyond Criterion's noise floor."""
+        return self.p_value < SIGNIFICANCE_P_THRESHOLD and abs(self.time_pct) >= NOISE_THRESHOLD_PCT
+
+    @property
+    def is_within_noise(self) -> bool:
+        """Statistically detected a difference, but it's within Criterion's documented
+        ~1% noise threshold: neither a real regression nor a real improvement."""
+        return self.p_value < SIGNIFICANCE_P_THRESHOLD and abs(self.time_pct) < NOISE_THRESHOLD_PCT
 
     def format_badge(self) -> str:
         sign = "+" if self.time_pct > 0 else ""
         text = f"{sign}{self.time_pct:.1f}% [{self.time_lower_pct:.1f}%, {self.time_upper_pct:.1f}%] vs base"
-        p_str = f"p={self.p_value:.3f} < 0.05" if self.p_value < 0.05 else f"p={self.p_value:.2f} > 0.05"
+        # "≈" not "=": this is a Gaussian z-test approximation on the bootstrap SE, not
+        # Criterion's own bootstrap T-test statistic (which isn't persisted to disk).
+        p_str = f"p≈{self.p_value:.3f} < 0.05" if self.p_value < SIGNIFICANCE_P_THRESHOLD else f"p≈{self.p_value:.2f} > 0.05"
         if self.is_significant:
             if self.time_pct < 0:
                 return f"{Style.green('🟢 ' + text + f' ({p_str})')}"
             return f"{Style.red('🔴 ' + text + f' ({p_str})')}"
+        if self.is_within_noise:
+            return f"{Style.yellow('🟡 ' + text + f' ({p_str})')}"
         return f"{Style.dim('⚪ ' + text + f' ({p_str})')}"
 
     def format_short(self) -> str:
@@ -330,6 +354,8 @@ class BaselineChange:
         return Style.dim(text)
 
     def format_decision_line(self) -> str:
+        if self.is_within_noise:
+            return Style.yellow("Change within noise threshold.")
         if not self.is_significant:
             return Style.dim("No change in performance detected.")
         if self.time_pct < 0:
@@ -1496,7 +1522,7 @@ class SeriesPlotRenderer:
         y = [p.mean_seconds * scale for p in analysis.data_points]
         plt.ylabel(f"Time ({unit})")
 
-        plt.scatter(x, y, label="measured (mean)", color="cyan", marker="dot")
+        plt.scatter(x, y, label="measured (mean)", color=Style.plot_color("cyan"), marker="dot")
 
         if analysis.is_fit_trusted:
             curve_x = np.linspace(min(x), max(x), 100)
@@ -1505,7 +1531,7 @@ class SeriesPlotRenderer:
                 curve_x.tolist(),
                 curve_y,
                 label=f"fit: {analysis.best_model.kind.short_label}",
-                color="yellow",
+                color=Style.plot_color("yellow"),
                 marker="dot",
             )
         plt.show()
@@ -1530,7 +1556,7 @@ class SeriesPlotRenderer:
         unit, scale = Presentation.time_unit(max_time)
         y = [p.mean_seconds * scale for p in analysis.data_points]
         plt.ylabel(f"Time ({unit})")
-        plt.scatter(x, y, label="measured", color="cyan", marker="dot")
+        plt.scatter(x, y, label="measured", color=Style.plot_color("cyan"), marker="dot")
 
         if analysis.is_fit_trusted:
             curve_x = np.linspace(min(x), max(x), 100)
@@ -1539,7 +1565,7 @@ class SeriesPlotRenderer:
                 curve_x.tolist(),
                 curve_y,
                 label=f"fit: {analysis.best_model.kind.short_label}",
-                color="yellow",
+                color=Style.plot_color("yellow"),
                 marker="dot",
             )
 
@@ -1563,8 +1589,8 @@ class SeriesPlotRenderer:
 
             th_y = [(v * th_scale if v is not None else 0) for v in th_values]
             plt.ylabel(f"Rate ({th_unit})")
-            plt.scatter(x, th_y, label="rate", color="green", marker="dot")
-            plt.plot(x, th_y, color="green", marker="dot")
+            plt.scatter(x, th_y, label="rate", color=Style.plot_color("green"), marker="dot")
+            plt.plot(x, th_y, color=Style.plot_color("green"), marker="dot")
 
         plt.show()
         print()
