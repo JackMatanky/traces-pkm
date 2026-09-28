@@ -185,9 +185,13 @@ run = [{ tasks = ["audit:deny", "audit:sec"] }]
 
 [tasks."coverage:lcov"]
 description = "Generate LCOV coverage report for CRAP analysis"
-sources = ["@group:rust", "tarpaulin.toml"]
+sources = ["@group:rust"]
 outputs = ["lcov.info"]
-run = "cargo tarpaulin --workspace --out lcov"
+# TOML single quotes are consumed by TOML; the task runs under `sh -c`, so the
+# shell expands "$COVERAGE_IGNORE_REGEX". `--lcov` conflicts with `--html`, so
+# this stays a separate run from coverage:html. Do NOT add --no-clean: stale
+# *.profraw from prior runs would merge into the report.
+run = 'cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"'
 
 [tasks."coverage:html"]
 description = "Generate HTML coverage report"
