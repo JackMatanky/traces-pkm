@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** implemented — pending merge (branch `temporal-core-hardening-pass`)
+**Status:** resolved — merged into `main` (`c990f6c9`)
 
 Skills: `rust-skills`, `rust-unit-testing`. Rules: `err-result-over-panic` (value-side guard tests), `num-float-compare` (N3′), `type-display-vs-debug` + `type-numeric-fmt` (N14/N19), `serde-try-from-validate` + `api-parse-dont-validate` (N12), `api-non-exhaustive` + `proj-pub-crate-internal` (N17). Design record: `../review.md` §2, §5.5.
 
@@ -95,3 +95,5 @@ Skills: `rust-skills`, `rust-unit-testing`. Rules: `err-result-over-panic` (valu
   `84b177f4` Soundness follow-ups, `736ffbd8` design-review findings),
   385-line diff across `src/date.rs`, `src/duration.rs`, `src/lib.rs`. Ready
   for merge; ticket 03 (`Blocked by: 01`) can proceed once this lands.
+
+- **Resolution:** Merged into `main` at `c990f6c9`; ticket 03 is unblocked.

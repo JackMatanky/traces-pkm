@@ -2,7 +2,7 @@
 
 **What to build:** `dur("1 month")` means one thing, declared in one place: the value's identity is its magnitude (fixed ratios, named `fixed_seconds`), its parsed shape is retained, and applying it to a date is calendar-correct through a single calendar owner that the template engine delegates to. Demo contract: `dur("1 month") == dur("30 days")` as values yet they shift a date differently — demonstrated by a pinning test, documented in the glossary.
 
-**Blocked by:** 01 (duration display/`from_seconds` settled first), 02 (datetime `apply` needs the zone doctrine).
+**Blocked by:** None (01 and 02 merged).
 
 **Status:** ready-for-agent
 

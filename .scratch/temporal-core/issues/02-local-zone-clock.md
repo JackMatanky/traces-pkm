@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** implemented — pending merge (branch `02-local-zone-clock`)
+**Status:** resolved — merged into `main` (`90696f25`)
 
 Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `conv-tryfrom-fallible`, `err-source-chain` (N4); `MappedLocalTime` (not the old name `LocalResult`) is the resolver's type; zone conversions are named and direction-explicit — local→UTC via `and_utc()`/`naive_utc()`; UTC→local wall clock for calendar application (spec D12) via offset-based checked arithmetic (`Local.offset_from_utc_datetime(&naive_utc)` then `naive_utc.checked_add_offset(offset.fix())`, `None` → out-of-range error — panic-safe because `checked_add_offset` returns `Option` where `naive_local()` would `expect`); never `.naive_local()` (documented `# Panics` when the offset overflows `NaiveDateTime` — chrono `datetime/mod.rs` `expect("Local time out of range…")`) and never `.naive_utc()` where the local wall clock is wanted (wrong frame); doctrine = data + docs, no `Clock`/`TimeZone` traits (review §5.7). Design record: `../review.md` §4 (B1 + DST), §2.1 (D9, N4).
 
@@ -251,3 +251,5 @@ Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `con
   `Result`-returning function in the module. `mise run verify` green:
   2985 tests + 53 doctests, fmt/lint/check clean;
   `cargo doc --all-features` (`RUSTDOCFLAGS=-D warnings`) clean.
+
+- **Resolution:** Merged into `main` at `90696f25`; ticket 03 is unblocked.
