@@ -45,7 +45,7 @@ No changes to `docs/refs/quality_gates_mise_adoption.md` (all five cited lines a
 **Files:**
 - Modify: `.mise/tasks/mutants/_default` (replace `#USAGE` block lines 6–54; functions `parse_passthrough_tokens`, `passthrough_has_token`, `has_fixed_timeout`, `reject_conflicting_flags`, `is_inspect_mode`, `passthrough_has_positional`, `reject_declared_in_inspect`, `build_inspect_args`, `build_static_flags`, `build_gate_flags`, `build_target_flags`, `main`)
 
-- [ ] **Step 1: Record baseline behavior (red)**
+- [x] **Step 1: Record baseline behavior (red)**
 
 ```bash
 cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
@@ -55,7 +55,7 @@ out=$(mise run --skip-deps mutants --config mutarust.yml 2>&1); echo "rc=$?"; pr
 
 Expected: `rc=2` both, with `mutants:` messages (`--update-baseline cannot be combined with --dry-run`; `task owns --config`). These two cases must diverge after the rewrite: first → rc 1 (mise usage), second → rc 2 (scan).
 
-- [ ] **Step 2: Replace the entire `#USAGE` block (lines 6–54) with the following**
+- [x] **Step 2: Replace the entire `#USAGE` block (lines 6–54) with the following**
 
 ```kdl
 #USAGE flag "-f --file <file>" {
@@ -171,7 +171,7 @@ Spec deviations recorded at conversion (report again in Task 7 Step 4):
 - **Spec A4's "declared flags after `--`" claim is void:** mise strips `--` before usage parsing, so `-- --workers 4` parses as `--workers 4` → rc 0 (bounded run), not rc 2. Undeclared post-`--` tokens still exit 2 via the scan. Matrix case updated accordingly; spec text left as-is (correction recorded here).
 - **Two refusal-message rewordings (review nit):** spec A2 says the `--test-flags` refusal keeps the existing tailored text, but "drop it from passthrough" became "drop it from the command line" (passthrough no longer exists); spec A4's generic shape `flag-like token in target list: …` is implemented as `unknown or misplaced flag: … (declared flags go before --; …)`. Same intent, clearer text; spec left as-is.
 
-- [ ] **Step 3: Script — header, arrays, parse + scan (replaces lines 70–143 and `parse_passthrough_tokens`/`passthrough_has_token`/`has_fixed_timeout`)**
+- [x] **Step 3: Script — header, arrays, parse + scan (replaces lines 70–143 and `parse_passthrough_tokens`/`passthrough_has_token`/`has_fixed_timeout`)**
 
 Replace the array declarations and the first three functions with:
 
@@ -261,9 +261,9 @@ reject_bad_targets() {
 }
 ```
 
-- [ ] **Step 4: Delete `reject_conflicting_flags`, `passthrough_has_token`, `passthrough_has_positional`, `reject_declared_in_inspect`, `has_fixed_timeout` and their docblocks entirely** (approx. current lines 98–143, 145–257, 286–309, 311–357).
+- [x] **Step 4: Delete `reject_conflicting_flags`, `passthrough_has_token`, `passthrough_has_positional`, `reject_declared_in_inspect`, `has_fixed_timeout` and their docblocks entirely** (approx. current lines 98–143, 145–257, 286–309, 311–357).
 
-- [ ] **Step 5: Rewrite `is_inspect_mode` (current lines 259–284)**
+- [x] **Step 5: Rewrite `is_inspect_mode` (current lines 259–284)**
 
 ```bash
 ########################################
@@ -289,7 +289,7 @@ is_inspect_mode() {
 }
 ```
 
-- [ ] **Step 6: Rewrite `build_inspect_args` (current lines 359–394)**
+- [x] **Step 6: Rewrite `build_inspect_args` (current lines 359–394)**
 
 ```bash
 ########################################
@@ -335,7 +335,7 @@ build_inspect_args() {
 }
 ```
 
-- [ ] **Step 7: Rewrite `build_static_flags` (current lines 396–426)**
+- [x] **Step 7: Rewrite `build_static_flags` (current lines 396–426)**
 
 ```bash
 ########################################
@@ -379,7 +379,7 @@ build_static_flags() {
 }
 ```
 
-- [ ] **Step 8: `build_gate_flags` — add `--git-diff-base` inside the `--git-diff` branch (current lines 491–505)**
+- [x] **Step 8: `build_gate_flags` — add `--git-diff-base` inside the `--git-diff` branch (current lines 491–505)**
 
 Also add `usage_git_diff_base` to the function docblock's Globals list (the branch now reads it).
 
@@ -404,7 +404,7 @@ build_gate_flags() {
 }
 ```
 
-- [ ] **Step 9: Add `build_declared_flags` (new function, place after `build_gate_flags`) and update `build_target_flags` + `main`**
+- [x] **Step 9: Add `build_declared_flags` (new function, place after `build_gate_flags`) and update `build_target_flags` + `main`**
 
 ```bash
 ########################################
@@ -498,7 +498,7 @@ main() {
 
 Also fix docblocks that still list `passthrough` as a global (`build_inspect_args` done in Step 6; `build_target_flags`, `main`) and the comment in `parse_targets` header (done in Step 3). Keep `# shellcheck disable=SC2154` (line 67) — `usage_*` are injected by mise.
 
-- [ ] **Step 10: Syntax + help render**
+- [x] **Step 10: Syntax + help render**
 
 ```bash
 bash -n .mise/tasks/mutants/_default && echo SYNTAX_OK
@@ -509,7 +509,7 @@ printf '%s\n' "$out" | grep -q -- "--workers 4" && echo EXAMPLES_OK
 
 Expected: `SYNTAX_OK`, `rc=0`, `HELP_OK`, `EXAMPLES_OK`.
 
-- [ ] **Step 11: Parse-level matrix (validation cases are instant; scan cases use `--skip-deps`)**
+- [x] **Step 11: Parse-level matrix (validation cases are instant; scan cases use `--skip-deps`)**
 
 ```bash
 declare -a fails=()
@@ -580,7 +580,7 @@ fi
 
 Expected: `MATRIX: ALL PASS (33 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
 
-- [ ] **Step 12: `hk` on the edited file + commit**
+- [x] **Step 12: `hk` on the edited file + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true
@@ -597,7 +597,7 @@ Expected: commit lands; hooks green; no other files staged.
 
 **Files:** none (verification only; fix `_default` fallout if a step fails)
 
-- [ ] **Step 1: Dry-run count (bounded scope)**
+- [x] **Step 1: Dry-run count (bounded scope)**
 
 ```bash
 nice -n 10 mise run --skip-deps mutants -m strsim --dry-run
@@ -605,7 +605,7 @@ nice -n 10 mise run --skip-deps mutants -m strsim --dry-run
 
 Expected: rc 0, mutant counts printed (≈6 mutants), `report.json` written. Timeout 900000 ms.
 
-- [ ] **Step 1b: dry-run happy paths — `-f`, `--`-targets, bare (spec verification 3)**
+- [x] **Step 1b: dry-run happy paths — `-f`, `--`-targets, bare (spec verification 3)**
 
 ```bash
 out=$(nice -n 10 mise run --skip-deps mutants --dry-run -f src/lib.rs 2>&1); echo "rc=$?"
@@ -615,7 +615,7 @@ out=$(nice -n 10 mise run --skip-deps mutants --dry-run 2>&1); echo "rc=$?"
 
 Expected: `rc=0` ×3 — single-file scope, explicit `--`-target positional, then the full-project count (the last is the slowest matrix-adjacent step; count-only, no tests). Timeout 900000 ms.
 
-- [ ] **Step 2: Scored gate against the committed baseline**
+- [x] **Step 2: Scored gate against the committed baseline**
 
 ```bash
 out=$(nice -n 10 mise run --skip-deps mutants -m strsim --fail-on-escaped 2>&1); echo "rc=$?"; printf '%s\n' "$out" | tail -5
@@ -623,7 +623,7 @@ out=$(nice -n 10 mise run --skip-deps mutants -m strsim --fail-on-escaped 2>&1);
 
 Expected: rc 0 (baseline absorbs current escapes; `-m strsim` is Task 11's proven bounded scope). Timeout 900000 ms.
 
-- [ ] **Step 3: git-diff empty-Rust-diff run**
+- [x] **Step 3: git-diff empty-Rust-diff run**
 
 ```bash
 out=$(nice -n 10 mise run --skip-deps mutants --git-diff 2>&1); echo "rc=$?"; printf '%s\n' "$out" | grep -E 'total|score|mutant' | tail -3
@@ -631,7 +631,7 @@ out=$(nice -n 10 mise run --skip-deps mutants --git-diff 2>&1); echo "rc=$?"; pr
 
 Expected: rc 0 — the branch changes touch no `src/` lines, so mutarust selects zero mutants (fast; no gate present).
 
-- [ ] **Step 4: Real inspect run**
+- [x] **Step 4: Real inspect run**
 
 ```bash
 out=$(mise run --skip-deps mutants --list-mutators 2>&1); echo "rc=$?"; printf '%s\n' "$out" | grep -c 'statement/'
@@ -639,7 +639,7 @@ out=$(mise run --skip-deps mutants --list-mutators 2>&1); echo "rc=$?"; printf '
 
 Expected: rc 0, count = 4 (`statement/*` — mutarust 0.1.10 has only 4 statement mutators; 33 names total. Verified: raw `mutarust --list-mutators` also returns 4, so this is taxonomy, not task fallout. Original `> 10` expectation was a plan-text error, corrected after the Task 2 run).
 
-- [ ] **Step 5: Commit any fallout fixes (or skip when clean)**
+- [x] **Step 5: Commit any fallout fixes (or skip when clean)**
 
 ```bash
 git status --porcelain
@@ -654,7 +654,7 @@ Expected: empty (verification-only). If any earlier step forced `_default` fixes
 **Files:**
 - Modify: `.mise/tasks/clean/reports` (lines 4–9 long_help; lines 25–33 registry)
 
-- [ ] **Step 1: Add the five mutarust files to `get_known_report_registry`**
+- [x] **Step 1: Add the five mutarust files to `get_known_report_registry`**
 
 ```bash
 get_known_report_registry() {
@@ -675,13 +675,13 @@ get_known_report_registry() {
 
 Deliberately absent: `mutarust-baseline.json` (committed policy artifact).
 
-- [ ] **Step 2: Update the `--dry-run` long_help (lines 6–8)**
+- [x] **Step 2: Update the `--dry-run` long_help (lines 6–8)**
 
 ```bash
 #USAGE   Preview mode: prints what report files (`lcov.info`, `tarpaulin-report.html`, `mutants.out/`, `mutants-report.md`, `report.json`, `mutarust-report.html`, `mutarust-agentic.json`, `mutarust-summary.json`, `mutarust-gitlab.json`) exist and would be deleted without removing them.
 ```
 
-- [ ] **Step 3: Verify listing (Task 2's runs regenerated the mutarust reports)**
+- [x] **Step 3: Verify listing (Task 2's runs regenerated the mutarust reports)**
 
 ```bash
 bash -n .mise/tasks/clean/reports && echo SYNTAX_OK
@@ -690,7 +690,7 @@ out=$(mise run clean:reports --dry-run 2>&1); echo "rc=$?"; printf '%s\n' "$out"
 
 Expected: `SYNTAX_OK`, `rc=0`, count ≥ 3 — at least `report.json` + `mutarust-report.html` + `mutarust-agentic.json` regenerated by Task 2 (`mutarust-summary.json`/`mutarust-gitlab.json` appear only when their logger flags are passed, so they may be absent). Never run `clean:reports` without `--dry-run` in this session.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .mise/tasks/clean/reports
@@ -704,7 +704,7 @@ git commit -m "feat(clean): register mutarust report files"
 **Files:**
 - Modify: `mise.toml` lines 225–238 (`[tasks.mess]`)
 
-- [ ] **Step 1: Confirm baseline advisory contract (red for the help, green for behavior)**
+- [x] **Step 1: Confirm baseline advisory contract (red for the help, green for behavior)**
 
 ```bash
 out=$(mise run mess 2>&1); echo "rc=$?"          # expect 2 (findings)
@@ -714,7 +714,7 @@ out=$(mise run mess --help 2>&1); printf '%s\n' "$out" | head -3   # current one
 
 Expected: `2`, `0`, then the current minimal usage. Preserve both rc values after the rewrite.
 
-- [ ] **Step 2: Replace the `usage = '…'` line (mise.toml line 228) with a multiline TOML basic-string spec**
+- [x] **Step 2: Replace the `usage = '…'` line (mise.toml line 228) with a multiline TOML basic-string spec**
 
 ```toml
 usage = """
@@ -742,7 +742,7 @@ arg "[args]" var=#true {
 
 If mise rejects the multiline spec (`invalid usage spec` warning or `--help` failing), fall back to keeping the original one-line `usage` and moving the workflow text into Task 5's doc section only — then note the fallback in the commit message.
 
-- [ ] **Step 3: Verify help renders, behavior unchanged, forwarding intact**
+- [x] **Step 3: Verify help renders, behavior unchanged, forwarding intact**
 
 ```bash
 out=$(mise run mess --help 2>&1); echo "rc=$?"; printf '%s\n' "$out" | grep -q "Workflow" && echo HELP_OK
@@ -752,7 +752,7 @@ out=$(mise run mess -- --ignore-violations-on-exit >/dev/null 2>&1); echo "rc=$?
 
 Expected: `rc=0`, `HELP_OK`, `2`, `0`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add mise.toml
@@ -766,7 +766,7 @@ git commit -m "feat(mess): workflow help for the advisory task"
 **Files:**
 - Modify: `docs/refs/quality_gates_messrust.md` (append after §9, line 1182; file currently ends inside §9's location list)
 
-- [ ] **Step 1: Append the new section**
+- [x] **Step 1: Append the new section**
 
 ````markdown
 ---
@@ -797,7 +797,7 @@ Flag reference: `docs/refs/messrust/docs/usage.md` (all 16 flags; the task
 forwards everything verbatim after `--`). Policy file: `messrust.xml`.
 ````
 
-- [ ] **Step 2: Sanity-check heading sequence and trailing whitespace**
+- [x] **Step 2: Sanity-check heading sequence and trailing whitespace**
 
 ```bash
 grep -n '^## ' docs/refs/quality_gates_messrust.md | tail -3
@@ -805,7 +805,7 @@ grep -n '^## ' docs/refs/quality_gates_messrust.md | tail -3
 
 Expected: `## 9. First advisory run (2026-09-27)` then `## 10. Workflow` as the last heading.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/refs/quality_gates_messrust.md
@@ -819,7 +819,7 @@ git commit -m "docs(messrust): add day-to-day workflow section"
 **Files:**
 - Modify: `docs/refs/mutation_testing.md` (six edits)
 
-- [ ] **Step 1: §2 config paragraph (lines 41–43)**
+- [x] **Step 1: §2 config paragraph (lines 41–43)**
 
 Before:
 ```markdown
@@ -836,7 +836,7 @@ After:
   `--print-ast` — declared task flags, no `--` needed) run without it.
 ```
 
-- [ ] **Step 2: §3 flag table (lines 59 and 70)**
+- [x] **Step 2: §3 flag table (lines 59 and 70)**
 
 Line 59 before: `Declared flags (see \`mise run mutants --help\` for the full contract):`
 Line 59 after: `Selected declared flags (the task declares mutarust's full surface minus its owned flags — see \`mise run mutants --help\` for the complete contract):`
@@ -844,7 +844,7 @@ Line 59 after: `Selected declared flags (the task declares mutarust's full surfa
 Line 70 before: `| \`[args]\` | passthrough after \`--\` (e.g. \`--list-mutators\`, \`--workers 4\`) |`
 Line 70 after: `| \`[targets]\` | positional target paths (flags are declared above; never passed after \`--\`) |`
 
-- [ ] **Step 3: rejection + exit-code prose (lines 75–79)**
+- [x] **Step 3: rejection + exit-code prose (lines 75–79)**
 
 Before:
 ```markdown
@@ -865,7 +865,7 @@ with exit 2 and a `mutants:` message.
 scope/target-scan errors exit `2`. mutarust itself: `0` pass ·
 ```
 
-- [ ] **Step 4: example commands (lines 92 and 118)**
+- [x] **Step 4: example commands (lines 92 and 118)**
 
 Line 92 before: `mise run mutants -- --workers 4      # cap parallel workers`
 Line 92 after: `mise run mutants --workers 4        # cap parallel workers`
@@ -873,7 +873,7 @@ Line 92 after: `mise run mutants --workers 4        # cap parallel workers`
 Line 118 before: `mise run mutants -- --run-mutant-id <id>  # re-run just that mutant → killed?`
 Line 118 after: `mise run mutants --run-mutant-id <id>  # re-run just that mutant → killed?`
 
-- [ ] **Step 5: Confirm no other stale forms remain in live docs**
+- [x] **Step 5: Confirm no other stale forms remain in live docs**
 
 ```bash
 grep -rn 'run mutants -- ' docs/refs/ || echo "no stale passthrough forms"
@@ -882,7 +882,7 @@ grep -rn 'exit 2' docs/refs/mutation_testing.md
 
 Expected: first grep → `no stale passthrough forms` (scope is `docs/refs/` only — historical plan files under `docs/superpowers/` legitimately quote the old forms and are out of scope); second shows only the line updated in Step 3 (plus any mutarust-internal `exit 2` mentions, which stay). `docs/refs/quality_gates_mise_adoption.md` lines 198/418/577/627/736 are a historical research log (they quote the pre-rename `mutarust` entrypoint and completed recommendations) — **leave them untouched**; this deviates from the spec's tentative "736 might need update" note because context reading showed it records a completed recommendation, not current behavior.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/refs/mutation_testing.md
@@ -893,7 +893,7 @@ git commit -m "docs: align mutation testing guide with strict mutants args"
 
 ### Task 7: Final gates
 
-- [ ] **Step 1: Full verify gate**
+- [x] **Step 1: Full verify gate**
 
 ```bash
 mise run verify
@@ -901,15 +901,15 @@ mise run verify
 
 Expected: rc 0 (fmt, check, lint, test — ~2904 tests + 58 doctests; the pre-existing `dead_code` warning in `src/index/inlinks.rs` is not ours). Timeout 900000 ms.
 
-- [ ] **Step 2: hk pass over the tree**
+- [x] **Step 2: hk pass over the tree**
 
 ```bash
-hk check --safe --format json 2>/dev/null | jq -r '.status'
+hk check --safe --skip-step gitleaks --format json 2>/dev/null | jq -r '.status'
 ```
 
-Expected: `passed` (key is `status`, not `overall`). If not: `hk fix --safe --no-stage --unstaged`, review diff, re-run.
+Expected: `passed` (key is `status`, not `overall`). `--skip-step gitleaks` is required: `--safe` refuses that step's unknown effect (pre-existing, documented in the 2026-09-27 plan — run `gitleaks detect` manually if secrets are a concern; task files contain no secrets). Without the skip, status is `failed` with `--safe refused to run: gitleaks.check: effect is unknown`. If not `passed`: `hk fix --safe --no-stage --unstaged`, review diff, re-run.
 
-- [ ] **Step 3: Tree state + summary**
+- [x] **Step 3: Tree state + summary**
 
 ```bash
 git status --porcelain; git log --oneline -7
@@ -917,7 +917,7 @@ git status --porcelain; git log --oneline -7
 
 Expected: clean tree; the five task commits (Tasks 1, 3, 4, 5, 6 — plus any Task 2 fallout fix) visible on top of `01933d0d`.
 
-- [ ] **Step 4: Report back** — outcomes of matrix, happy paths, verify/hk, plus any spec deviations (e.g. mess multiline-spec fallback) for the user's review.
+- [x] **Step 4: Report back** — outcomes of matrix, happy paths, verify/hk, plus any spec deviations (e.g. mess multiline-spec fallback) for the user's review.
 
 ---
 
