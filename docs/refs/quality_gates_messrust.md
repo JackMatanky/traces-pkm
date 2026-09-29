@@ -276,13 +276,13 @@ a verified figure. Structurally it is orders of magnitude cheaper than
 
 **1h mutants template**: unrelated — `[task_templates.mutants]` with
 `timeout = "1h"` only binds tasks that `extends = "mutants"`
-([mise.toml:279](../../mise.toml), [`.mise/tasks/mutants/_default`](../../.mise/tasks/mutants/_default)).
+([mise.toml:279](../../mise.toml), [`.mise/tasks/test/mutants`](../../.mise/tasks/test/mutants)).
 A messrust task inherits nothing from it; give it its own short timeout or none.
 
 **Integration options, cheapest first:**
 
 1. **Advisory mise task** (recommended first step) — a file task
-   `.mise/tasks/mess/_default` (pattern matches `.mise/tasks/mutants/_default`)
+   `.mise/tasks/mess/_default` (pattern matches `.mise/tasks/test/mutants`)
    or a TOML task:
 
    ```toml

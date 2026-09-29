@@ -421,7 +421,7 @@ Expected: commit lands; hooks green.
 - Modify: `docs/superpowers/specs/2026-09-28-quality-gates-task-ux-design.md` (addendum table)
 - Modify: `docs/superpowers/specs/2026-09-29-mutants-task-rename-design.md` (Decision 4 scope note + Verification 5 widened)
 
-- [ ] **Step 1: Stale-path repairs (current-state prose only)**
+- [x] **Step 1: Stale-path repairs (current-state prose only)**
 
 ```bash
 # mutarust.md:514 — sibling reference
@@ -436,7 +436,7 @@ rg -n 'mutants/_default' docs/refs/quality_gates_mutarust.md docs/refs/quality_g
 Expected remaining hits (all snapshots, untouched by design): `mutarust.md:418`,
 `:431`, `messrust.md:427`. Zero hits at `:514`/`:279`/`:285`.
 
-- [ ] **Step 2: Append the addendum row**
+- [x] **Step 2: Append the addendum row**
 
 In the `## Post-implementation corrections (2026-09-29)` table of the 09-28 spec, after the last row (the `A5 keep/delete function names` row), append exactly one new row:
 
@@ -447,7 +447,7 @@ In the `## Post-implementation corrections (2026-09-29)` table of the 09-28 spec
 (The rename spec's Decision 4 / Verification 5 scope note for these repairs
 is already applied on disk — uncommitted until Step 3.)
 
-- [ ] **Step 3: hk + commit**
+- [x] **Step 3: hk + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true

@@ -511,7 +511,7 @@ in CI), coexisting with the cargo-mutants setup. Primary sources: upstream
    ignore_source_lines: []    # add regexes only after seeing escape noise
    ```
 
-3. **Task:** `.mise/tasks/mutarust/_default` — sibling of `mutants/_default`,
+3. **Task:** `.mise/tasks/mutarust/_default` — sibling of `test/mutants`,
    **extends the same `[task_templates.mutants]`** (1 h timeout, cache off,
    `outputs = []`) so both mutation tools share budget and never-skip
    semantics. Names don't collide (`mutants` vs `mutarust`). Mirrors the
