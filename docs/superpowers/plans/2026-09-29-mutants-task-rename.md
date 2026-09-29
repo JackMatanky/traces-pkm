@@ -14,7 +14,10 @@
 
 ## Ground rules (non-negotiable)
 
-- **Worktree:** `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates` (branch `quality-gates`). Never touch the main checkout.
+- **Checkout:** the main directory `/Users/jack/Documents/41_personal/traces-pkm`, currently on branch `quality-gates` (user-approved 2026-09-29: the nested worktree was retired mid-plan — see Incidents). All editing happens here. This IS the repo root, so the old `.mise/tasks/mutants/` path is gone and no ancestor can shadow the alias. Branch `main` stays untouched until Task 5's merge step.
+- **Clone = runner only:** logic is proven in place; a clean clone under `/var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/` exists solely to execute suites that must not see local runtime state (the matrix) — never to author edits.
+- **Socket policy:** `.codegraph/daemon.sock` (live codegraph daemon, pid from `.codegraph/daemon.pid`) makes mutarust abort with `could not copy unsupported workspace entry` — gitignore does not protect it (probe-verified: root `.gitignore` entry changes nothing). Single bounded probes in the main dir: move the socket aside under a `trap … EXIT` guard that restores it in all cases. Long suites: use the clone — never leave the socket moved for minutes. `mise run verify` does not invoke mutarust and runs in place.
+- **Anomaly protocol:** if on-disk state contradicts git (file missing/extra/restored), STOP — capture `git status --porcelain`, `git log --oneline -3`, `ls -la <path>`, `git reflog -5`; log it under Incidents; reconcile with forward-fix commits only — never amend or re-stage history to "correct" an anomaly.
 - **Capture rc safely:** `out=$(cmd 2>&1); rc=$?` — never `cmd | tail; echo $?`; never pipe `mise run …` into `head` (SIGPIPE). No `timeout` binary on macOS.
 - **All probes use `--skip-deps`** (skips `depends=["test"]`, ~10 s saved per probe). The one alias run (`-f src/lib.rs --match __zz_no_match__`) is bounded by spec and finishes in seconds.
 - **Matrix never commits a baseline:** if the guard prints `BASELINE_RESTORED`, accept it; `mutarust-baseline.json` must be unmodified in every commit.
@@ -32,15 +35,18 @@
 | `docs/refs/quality_gates_mutarust.md` | Task 2 — :570 invocation, :239 link, :308 path |
 | `docs/superpowers/plans/2026-09-28-quality-gates-task-ux.md` | Task 3 — 37 matrix checks, 12 step-command invocations (6 `Line N` records reverted), alias case 38, Expected 38, Step 2 block sync |
 | `docs/superpowers/specs/2026-09-28-quality-gates-task-ux-design.md`, `docs/superpowers/specs/2026-09-29-mutants-task-rename-design.md` | Task 4 — addendum row; Decision 4 already refined pre-plan |
+| `docs/refs/quality_gates_mutarust.md` (:514), `docs/refs/quality_gates_messrust.md` (:279, :285) | Task 4 — reviewer-flagged current-state stale paths (sibling prose, broken relative link, pattern reference); snapshot lines (:418/:431, :427) stay historical |
 
 ---
 
 ### Task 1: Move the file + self-references + alias
 
+> **Completed 2026-09-29** — commit `c38d75b6`. Steps 1–6 re-verified in place after the worktree → main-checkout move (counts 12/1, help `10`/`1`, refusal rc=2, mode 755). Step 8 rewritten below for the new checkout.
+
 **Files:**
 - Move: `.mise/tasks/mutants/_default` → `.mise/tasks/test/mutants`
 
-- [ ] **Step 1: Move the file**
+- [x] **Step 1: Move the file**
 
 ```bash
 cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
@@ -52,7 +58,7 @@ test ! -d .mise/tasks/mutants && echo DIR_GONE
 
 Expected: `MOVED` then `DIR_GONE`.
 
-- [ ] **Step 2: Add the alias header line**
+- [x] **Step 2: Add the alias header line**
 
 The header currently is:
 
@@ -72,7 +78,7 @@ rg -o '^#MISE aliases=\["mutants"\]$' .mise/tasks/test/mutants | wc -l   # 1
 
 Expected: `1`. (`extends="mutants"` is untouched — it targets `[task_templates.mutants]`, a template name independent of the task name.)
 
-- [ ] **Step 3: Replace all 12 invocations in the file**
+- [x] **Step 3: Replace all 12 invocations in the file**
 
 ```bash
 sed -i '' 's/mise run mutants/mise run test:mutants/g' .mise/tasks/test/mutants
@@ -82,7 +88,7 @@ rg -o 'mise run mutants' .mise/tasks/test/mutants | wc -l        # 0
 
 Expected: `12` then `0`. The 12 = 9 help examples + the refusal message (`see 'mise run mutants --help'`) + 2 comments.
 
-- [ ] **Step 4: Add the alias sentence to `long_help`**
+- [x] **Step 4: Add the alias sentence to `long_help`**
 
 In the `#USAGE   """` long_help block, the current tail is:
 
@@ -111,7 +117,7 @@ rg -o 'mise run mutants' .mise/tasks/test/mutants | wc -l        # 1 (the alias 
 
 Expected: `12` then `1`. These two numbers are the file's permanent invariants (spec Verification 5).
 
-- [ ] **Step 5: Syntax + help render**
+- [x] **Step 5: Syntax + help render**
 
 ```bash
 bash -n .mise/tasks/test/mutants && echo SYNTAX_OK
@@ -125,7 +131,7 @@ usage line `Usage: test:mutants …` (1) + the 9 example mentions (an earlier
 draft said 9 — it forgot the usage line; `grep -o 'test:mutants' help` was
 verified to be exactly those 10 lines).
 
-- [ ] **Step 6: Refusal message probe**
+- [x] **Step 6: Refusal message probe**
 
 ```bash
 out=$(mise run --skip-deps test:mutants --bogus 2>&1); rc=$?
@@ -135,7 +141,7 @@ echo "rc=$rc"; printf '%s\n' "$out" | grep -m1 'unknown or misplaced'
 Expected: `rc=2` and the line
 `mutants: unknown or misplaced flag: --bogus (declared flags go before --; see 'mise run test:mutants --help')`.
 
-- [ ] **Step 7: hk + commit**
+- [x] **Step 7: hk + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true
@@ -146,43 +152,44 @@ git commit -m "refactor(tasks): rename mutants task to test:mutants"
 
 Expected: commit lands (rename + edits), hooks green, no other files staged, tree otherwise clean.
 
-- [ ] **Step 8: Alias probes — in a clean clone (NOT the worktree)**
+- [ ] **Step 8: Alias probes — in place (guarded socket move)**
 
-**Why a clone:** the worktree is nested inside the main checkout, which still
-ships the *old* `.mise/tasks/mutants/_default` (main has not been updated —
-that happens when this branch merges). `mise run mutants` inside the worktree
-therefore resolves to main's ancestor task and shadows the new alias (observed:
-it executed `~/Documents/41_personal/traces-pkm/.mise/tasks/mutants/_default`,
-rc=1; `mise tasks` listed `mutants` with main's `cargo-mutants` description).
-The ancestor disappears on merge, so a fresh clone of this branch *is* the
-post-merge environment. Never touch the main checkout to work around this.
+**Why in place now:** the worktree retired mid-plan (Incidents I1); this
+checkout IS the repo root on `quality-gates`, so the old `.mise/tasks/mutants/`
+path is gone and nothing can shadow the alias. The bounded alias run invokes
+mutarust, which trips over `.codegraph/daemon.sock` — the socket is therefore
+moved aside for the duration of the probe under an `EXIT` trap that restores it
+no matter what (Ground rules: socket policy).
 
 ```bash
-clone=/var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/rename-alias-clone
-rm -rf "$clone"
-git clone -q /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates "$clone"
-git -C "$clone" rev-parse --abbrev-ref HEAD          # quality-gates
-cd "$clone"
+cd /Users/jack/Documents/41_personal/traces-pkm
+SOCK="$PWD/.codegraph/daemon.sock"; BAK=/var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/sock-probe.bak
+[ -e "$SOCK" ] && mv "$SOCK" "$BAK"
+trap 'mv -f "$BAK" "$SOCK" 2>/dev/null; echo SOCKET_RESTORED' EXIT
 out=$(mise run --skip-deps mutants -f src/lib.rs --match __zz_no_match__ 2>&1); rc=$?
 echo "alias_rc=$rc"                                   # 0 — resolves via #MISE aliases → test:mutants
-printf '%s' "$out" | grep -c 'test:mutants' || true   # >0 — ran the NEW task
+printf '%s\n' "$out" | grep -c 'test:mutants' || true # >0 — ran the NEW task
+trap - EXIT; [ -e "$BAK" ] && mv -f "$BAK" "$SOCK"
 mise tasks | grep -c '^mutants'                       # 0 — alias hidden from listing
 mise tasks | grep -c 'mutants:report'                 # 0 — no report task
-cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
+test -e "$SOCK" && echo SOCK_IN_PLACE
 ```
 
-Expected: `quality-gates`, `alias_rc=0`, a nonzero `test:mutants` hit (the new
-task's output), `0`, `0`.
+Expected: `alias_rc=0`, a nonzero `test:mutants` hit (the new task's
+`[test:mutants] $ …/.mise/tasks/test/mutants` line), `0`, `0`,
+`SOCK_IN_PLACE`. (Listing probes need no guard — they don't run mutarust.)
 
 ---
 
 ### Task 2: Live docs
 
+> **Completed 2026-09-29** — commit `89f036e8` (counts 15→0/1→0, paths 1/3 verified).
+
 **Files:**
 - Modify: `docs/refs/mutation_testing.md` (:30 + 15 invocations)
 - Modify: `docs/refs/quality_gates_mutarust.md` (:570, :239, :308)
 
-- [ ] **Step 1: mutation_testing.md**
+- [x] **Step 1: mutation_testing.md**
 
 ```bash
 rg -o 'mise run mutants' docs/refs/mutation_testing.md | wc -l   # pre-check: 15
@@ -217,7 +224,7 @@ rg -o '\.mise/tasks/test/mutants' docs/refs/mutation_testing.md | wc -l   # 1
 
 Expected: `0`, then `1`. (Line :130's deleted-`report` mention stays historical.)
 
-- [ ] **Step 2: quality_gates_mutarust.md**
+- [x] **Step 2: quality_gates_mutarust.md**
 
 ```bash
 rg -o 'mise run mutants' docs/refs/quality_gates_mutarust.md | wc -l   # 1
@@ -257,7 +264,7 @@ rg -o '\.mise/tasks/test/mutants' docs/refs/quality_gates_mutarust.md | wc -l   
 
 Expected: `0`, then `3`. Lines citing the deleted `mutants/report` task and `mutants:report` history stay untouched.
 
-- [ ] **Step 3: hk + commit**
+- [x] **Step 3: hk + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true
@@ -359,18 +366,21 @@ diff /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/plan_s2.sh <(sed 
 
 Expected: `STEP2_IDENTICAL`.
 
-- [ ] **Step 6: Extract the matrix and run it (38 cases) — in a clean clone**
+- [ ] **Step 6: Extract the matrix and run it (38 cases) — clone as runner**
 
-**Why a clone:** case 38 invokes the bare `mutants` alias; inside the worktree
-that name is shadowed by main's not-yet-updated old task (see Task 1 Step 8),
-so case 38 can only pass in the post-merge environment, which a fresh clone of
-this branch reproduces. The 37 `test:mutants` cases pass anywhere; running the
-whole block in the clone keeps one authoritative ALL-PASS run. Extraction
-stays in the worktree (the edited plan lives there); execution `cd`s to the
-clone. Requires Tasks 1+2 committed (clone = HEAD).
+**Why a clone (runner only):** the matrix invokes mutarust ~38× and the main
+checkout's live `.codegraph/daemon.sock` makes every mutarust run abort (Ground
+rules: socket policy). The clone has no `.codegraph`, so the suite runs clean
+without touching the socket — unlike the old worktree rationale, shadowing is
+NOT a factor anymore (this checkout is the repo root; alias proven in place by
+Task 1 Step 8). Extraction happens in the main checkout (the edited plan lives
+here); execution `cd`s to the clone. matrix.sh is self-contained, so the
+uncommitted Task 3 plan edits don't need to be in the clone — but the clone
+must include Tasks 1+2 (commit `89f036e8`). Expect one cold cargo build on the
+first cargo-touching case; subsequent cases reuse the clone's `target/`.
 
 ```bash
-cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
+cd /Users/jack/Documents/41_personal/traces-pkm
 p=docs/superpowers/plans/2026-09-28-quality-gates-task-ux.md
 start=$(rg -n 'declare -a fails=\(\)' "$p" | cut -d: -f1)
 rel=$(sed -n "$start,$((start+95))p" "$p" | grep -n '^```$' | head -1 | cut -d: -f1)
@@ -379,17 +389,18 @@ sed -n "${start},${end}p" "$p" > /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/
 bash -n /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/matrix.sh
 clone=/var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/rename-matrix-clone
 rm -rf "$clone"
-git clone -q /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates "$clone"
+git clone -q /Users/jack/Documents/41_personal/traces-pkm "$clone"
 git -C "$clone" rev-parse --abbrev-ref HEAD           # quality-gates (must include T1+T2 commits)
 cd "$clone" && bash /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/matrix.sh
-git status --porcelain mutarust-baseline.json
-cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
+git status --porcelain mutarust-baseline.json         # empty — clone baseline untouched
+git -C /Users/jack/Documents/41_personal/traces-pkm status --porcelain mutarust-baseline.json  # empty
+cd /Users/jack/Documents/41_personal/traces-pkm
 ```
 
-Expected: `MATRIX: ALL PASS (38 cases)` (plus possibly `BASELINE_RESTORED` from
-the guard), empty `git status` for the baseline, and back in the worktree.
-(If the clone HEAD predates the rename commits — a stale clone — the run will
-mass-fail on `test:mutants` unknown-task errors; delete and re-clone.)
+Expected: `MATRIX: ALL PASS (38 cases)` (plus possibly `BASELINE_RESTORED`
+from the guard), empty baseline status in both checkouts, back in the main
+checkout. (If the clone HEAD predates the rename commits — a stale clone — the
+run will mass-fail on `test:mutants` unknown-task errors; delete and re-clone.)
 
 - [ ] **Step 7: hk + commit**
 
@@ -403,13 +414,29 @@ Expected: commit lands; hooks green.
 
 ---
 
-### Task 4: Spec addenda
+### Task 4: Stale-path repairs + spec addenda
 
 **Files:**
+- Modify: `docs/refs/quality_gates_mutarust.md` (:514) and `docs/refs/quality_gates_messrust.md` (:279, :285) — reviewer-flagged current-state stale paths
 - Modify: `docs/superpowers/specs/2026-09-28-quality-gates-task-ux-design.md` (addendum table)
-- Modify: `docs/superpowers/specs/2026-09-29-mutants-task-rename-design.md` (Decision 4 was refined pre-plan — no further edit needed here)
+- Modify: `docs/superpowers/specs/2026-09-29-mutants-task-rename-design.md` (Decision 4 scope note + Verification 5 widened)
 
-- [ ] **Step 1: Append the addendum row**
+- [ ] **Step 1: Stale-path repairs (current-state prose only)**
+
+```bash
+# mutarust.md:514 — sibling reference
+sed -i '' 's|sibling of `mutants/_default`|sibling of `test/mutants`|' docs/refs/quality_gates_mutarust.md
+# messrust.md:279 — link text + href
+sed -i '' 's|\[`.mise/tasks/mutants/_default`\](../../.mise/tasks/mutants/_default)|[`.mise/tasks/test/mutants`](../../.mise/tasks/test/mutants)|' docs/refs/quality_gates_messrust.md
+# messrust.md:285 — pattern reference
+sed -i '' 's|pattern matches `.mise/tasks/mutants/_default`|pattern matches `.mise/tasks/test/mutants`|' docs/refs/quality_gates_messrust.md
+rg -n 'mutants/_default' docs/refs/quality_gates_mutarust.md docs/refs/quality_gates_messrust.md
+```
+
+Expected remaining hits (all snapshots, untouched by design): `mutarust.md:418`,
+`:431`, `messrust.md:427`. Zero hits at `:514`/`:279`/`:285`.
+
+- [ ] **Step 2: Append the addendum row**
 
 In the `## Post-implementation corrections (2026-09-29)` table of the 09-28 spec, after the last row (the `A5 keep/delete function names` row), append exactly one new row:
 
@@ -417,12 +444,17 @@ In the `## Post-implementation corrections (2026-09-29)` table of the 09-28 spec
 | Whole spec (approved body + earlier addendum rows) | Renamed 2026-09-29: the task is now `test:mutants` with `mutants` kept as a file-task alias (hidden from `mise tasks`); every quoted invocation above predates the rename; the plan matrix now runs 38 cases (37 renamed + one alias regression case). See `2026-09-29-mutants-task-rename-design.md` |
 ```
 
-- [ ] **Step 2: hk + commit**
+(The rename spec's Decision 4 / Verification 5 scope note for these repairs
+is already applied on disk — uncommitted until Step 3.)
+
+- [ ] **Step 3: hk + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true
-git add docs/superpowers/specs/2026-09-28-quality-gates-task-ux-design.md docs/superpowers/specs/2026-09-29-mutants-task-rename-design.md
-git commit -m "docs(spec): record task rename in addenda"
+git add docs/refs/quality_gates_mutarust.md docs/refs/quality_gates_messrust.md \
+        docs/superpowers/specs/2026-09-28-quality-gates-task-ux-design.md \
+        docs/superpowers/specs/2026-09-29-mutants-task-rename-design.md
+git commit -m "docs: repair stale task paths, record rename addenda"
 ```
 
 Expected: commit lands; hooks green.
@@ -438,20 +470,45 @@ Expected: commit lands; hooks green.
 ```bash
 rg -o 'mise run mutants' .mise/tasks/test/mutants | wc -l                            # 1 (alias sentence)
 rg -o 'mise run test:mutants' .mise/tasks/test/mutants | wc -l                        # 12
-rg -o 'mise run mutants' docs/refs/mutation_testing.md docs/refs/quality_gates_mutarust.md | wc -l   # 0
+rg -o 'mise run mutants' docs/refs/mutation_testing.md docs/refs/quality_gates_mutarust.md docs/refs/quality_gates_messrust.md | wc -l   # 0
+rg -n 'mutants/_default' docs/refs/quality_gates_mutarust.md docs/refs/quality_gates_messrust.md | cut -d: -f1,2   # only 418, 431, 427
 ```
 
-Expected: `1`, `12`, `0`. (Historical docs — adoption, 2026-09-27 plan, approved spec bodies, `.scratch/` — are excluded by design.)
+Expected: `1`, `12`, `0`, and line numbers `418`/`431`/`427` only (the
+"sources consulted" snapshots — excluded by design; historical docs like
+adoption, the 2026-09-27 plan, approved spec bodies, and `.scratch/` also
+excluded by design).
 
-- [ ] **Step 2: Completion gate**
+- [ ] **Step 2: Merge `main` into `quality-gates` (before verify)**
+
+Gates must run on the merged result (branch is 67/76 apart; both sides touched
+`.gitignore`, `messrust.md`, `mutarust.md`, `mise.toml`, `mise.lock`,
+`.mise/tasks/clean/reports`). Merge — never rebase (repo history uses merge
+commits). Resolve conflicts in favor of *both* semantics (union of ignore
+entries; keep our rename + main's line edits).
+
+```bash
+git merge --no-ff main -m "chore(merge): merge main into quality-gates for rename gates"
+# resolve any conflicts, then:
+git status --porcelain | grep -v '^??'   # empty
+rg -o 'mise run test:mutants' .mise/tasks/test/mutants | wc -l   # 12 (rename survived)
+test -f .mise/tasks/test/mutants && test ! -e .mise/tasks/mutants && echo RENAME_SURVIVED
+```
+
+Expected: merge lands, rename intact, working tree clean (user's three
+untracked plan files are fine).
+
+- [ ] **Step 3: Completion gate**
 
 ```bash
 mise run verify; echo "verify_rc=$?"
 ```
 
-Expected: `verify_rc=0` (fmt → check/lint/test; docs+task-file changes only, so this is the standard warm run).
+Expected: `verify_rc=0` (fmt → check/lint/test; docs+task-file changes only,
+so this is the standard warm run; verify does not invoke mutarust, so the
+socket policy does not apply).
 
-- [ ] **Step 3: hk gate**
+- [ ] **Step 4: hk gate**
 
 ```bash
 hk check --safe --skip-step gitleaks --format json 2>/dev/null | jq -r '.status'
@@ -459,13 +516,36 @@ hk check --safe --skip-step gitleaks --format json 2>/dev/null | jq -r '.status'
 
 Expected: `passed`.
 
-- [ ] **Step 4: Tick the plan + final commit**
+- [ ] **Step 5: Tick the plan + final commit**
 
 ```bash
 sed -i '' 's/^- \[ \] \*\*Step/- [x] **Step/' docs/superpowers/plans/2026-09-29-mutants-task-rename.md
 git add docs/superpowers/plans/2026-09-29-mutants-task-rename.md
 git commit -m "docs(plan): mark rename plan completed"
-git status --porcelain; git log --oneline -6
+git status --porcelain; git log --oneline -8
 ```
 
-Expected: tree clean; six commits total across the plan (T1–T5, with T4 possibly folding into the flow); final report to the user.
+Expected: tree clean (aside from the user's three untracked plan files);
+commits in order: T1 `c38d75b6`, T2 `89f036e8`, plan amendments, T3, T4,
+merge, this tick; final report to the user (Phase 5: switch the directory back
+to `main` after the branch merges, file the mutarust upstream issue, clean up
+temp clones).
+
+---
+
+## Incidents (log — forward-fix only, never amend)
+
+- **I1 — worktree retired mid-plan (2026-09-29).** The nested worktree
+  `.worktrees/quality-gates` shadowed `mutants` via main's ancestor task and
+  produced unexplained state churn (staged rename split across commits;
+  `.mise/tasks/mutants/_default` reappearing with no hooks; `.mise/tasks/test/mutants`
+  missing from disk with a clean status — cause never found). User directed
+  the move to the main checkout; worktree deregistered and its leftover dir
+  removed. All subsequent work happens in `/Users/jack/Documents/41_personal/traces-pkm`
+  on `quality-gates`.
+- **I2 — `.codegraph/daemon.sock` vs mutarust (pre-existing).** mutarust's
+  workspace copier aborts on the live socket (`could not copy unsupported
+  workspace entry`) and consults no gitignore (root `.gitignore` entry
+  probe-verified useless — residue reverted). Mitigated per Ground rules
+  socket policy; durable fix = upstream issue against
+  `quality-gates/mutarust` (skip non-regular entries when copying), Phase 5.

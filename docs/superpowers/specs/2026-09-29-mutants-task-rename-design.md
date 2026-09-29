@@ -62,6 +62,12 @@ Verified during brainstorm:
      link (text + href), :308 current-state path. Lines citing the deleted
      `mutants/report` task (including its historical `mutants:report`
      mentions) stay untouched.
+   - Stale-path repairs flagged by review — current-state prose only, not
+     snapshots: `quality_gates_mutarust.md:514` (sibling reference),
+     `quality_gates_messrust.md:279` (link text + href) and `:285`
+     (pattern reference), all `mutants/_default` → `test/mutants`.
+     The "sources consulted" snapshots (`mutarust.md:418/:431`,
+     `messrust.md:427`) keep the pre-rename paths as recorded history.
    - Plan `2026-09-28-quality-gates-task-ux.md` — **runnable lines only**: the
      37 matrix `check N mutants …` lines become `check N test:mutants …`, plus
      one new alias case (below), plus `mise run mutants …` in step commands
@@ -89,7 +95,9 @@ Verified during brainstorm:
    regression proof). Baseline guard behavior unchanged; never commit a
    matrix-touched baseline.
 5. Stale-name grep over the live set (`mutation_testing.md`,
-   `quality_gates_mutarust.md`) → zero `run mutants`; the task file counts 1
-   (the alias sentence). Historical globs excluded as in previous audits.
+   `quality_gates_mutarust.md`, `quality_gates_messrust.md`) → zero
+   `run mutants`, zero current-state `mutants/_default`; the task file counts
+   1 (the alias sentence). Snapshot exclusions: `mutarust.md:418/:431`,
+   `messrust.md:427`. Historical globs excluded as in previous audits.
 6. `mise run verify` green; `hk check --safe --skip-step gitleaks --format
    json` → `passed`; tree clean; conventional commits (no `--no-verify`).
