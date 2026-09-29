@@ -219,7 +219,7 @@ Parse-level cases are free (no cargo). Full matrix:
 
 Append-only addendum recorded while implementing plan
 `2026-09-28-quality-gates-task-ux.md` (all seven tasks landed, matrix
-34/34, `mise run verify` green). The approved text above stands as
+35/35, `mise run verify` green). The approved text above stands as
 written; where execution disproved or amended a claim, the correction is
 below. Full deviation record lives in the plan's deviation notes.
 
@@ -233,5 +233,5 @@ below. Full deviation record lives in the plan's deviation notes.
 | A3 negate rule "reject in either spelling" for `--silent`/`--no-silent` | Held only at mutarust rc 3 before; now declared as a bidirectional `conflicts` pair (rc 1) |
 | A4 scan case: "`-- --workers 4`" → rc 2 | Void: mise strips `--` before usage parsing, so a declared flag after `--` parses normally → rc 0 (bounded matrix case). Undeclared post-`--` tokens still exit 2 via the scan; a *second* `--` also leaves following tokens in scan range (matrix case) |
 | A4 generic message `flag-like token in target list: <tok> …` | Implemented as `unknown or misplaced flag: <tok> (declared flags go before --; see 'mise run mutants --help')` — same intent, clearer text |
-| A4 implies a bare `--` can appear in the token scan | It cannot (mise strips every separator before the script runs — verified incl. the double-`--` edge); the scan's `--)` arm was dead code and was removed post-review |
+| A4 implies a bare `--` can appear in the token scan | One separator is stripped before the script runs (single-`--` cases, matrix-verified), but with extra separators a literal `--` can survive into `targets` (triple-`--` case: rc 2, `unknown or misplaced flag: --`). Removing the old silent `--) ;;` arm is behavior-compatible: same rc, the generic arm now names the token — both edges matrix-cased |
 | A5 keep/delete function names (`build_static_target_flags`, `build_mutarust_args`, `run_inspect_mode`, `run_count_mode`, …) | Partially fictional — they do not exist in the file; implementation followed the actual structure (`main` → `build_inspect_args` \| `build_static_flags` + `build_target_flags` + `build_gate_flags` + `build_declared_flags`) |
