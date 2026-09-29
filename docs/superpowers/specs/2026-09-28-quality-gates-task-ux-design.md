@@ -6,7 +6,7 @@ Status: approved (design brainstorm + user review "proceed", 2026-09-28)
 ## Context
 
 Three follow-ups to the completed quality-gates track (plan
-`2026-09-27-quality-gates-messrust-mutarust.md`, fully reviewed and ticked):
+`2026-09-27-quality-gates-messrust-mutarust.md` (now Part I of `2026-09-27-quality-gates.md`, fully reviewed and ticked):
 
 1. `.mise/tasks/mutants/_default` enforces its conflict matrix with two hand-rolled
    cascades (`reject_conflicting_flags`, `reject_declared_in_inspect`) that scan raw
@@ -218,7 +218,7 @@ Parse-level cases are free (no cargo). Full matrix:
 ## Post-implementation corrections (2026-09-29)
 
 Append-only addendum recorded while implementing plan
-`2026-09-28-quality-gates-task-ux.md` (all seven tasks landed, matrix
+`2026-09-28-quality-gates-task-ux.md` (now Part II of `2026-09-27-quality-gates.md`; all seven tasks landed, matrix
 37/37, `mise run verify` green). The approved text above stands as
 written; where execution disproved or amended a claim, the correction is
 below. Full deviation record lives in the plan's deviation notes.
@@ -237,4 +237,4 @@ below. Full deviation record lives in the plan's deviation notes.
 | A5 keep/delete function names (`build_static_target_flags`, `build_mutarust_args`, `run_inspect_mode`, `run_count_mode`, …) | Partially fictional — they do not exist in the file; implementation followed the actual structure (`main` → `build_inspect_args` \| `build_static_flags` + `build_target_flags` + `build_gate_flags` + `build_declared_flags`) |
 | A1 short help states "these are paths / package names" | Help says paths only — package names are not a mutarust surface concept (row 1: `--package`/`--workspace` never existed; cargo packages move via `--test-flags`/`--test-recursive`) |
 | A3 inspect conflicts: "every other declared flag except `-f`/`-m` and the sibling inspect flag" | Implemented literally, with two clarifications: `--list-mutators` is not in the two 34-selector lists — its `exclusive` refuses any companion anyway (same rc 1, matrix-cased); sibling inspect flags pair legally and both were probed (`--list-files --print-ast` → rc 0, list-files wins — now matrix-cased) |
-| Whole spec (approved body + earlier addendum rows) | Renamed 2026-09-29: the task is now `test:mutants` with `mutants` kept as a file-task alias (hidden from `mise tasks`); every quoted invocation above predates the rename; the plan matrix now runs 38 cases (37 renamed + one alias regression case). See `2026-09-29-mutants-task-rename-design.md` |
+| Whole spec (approved body + earlier addendum rows) | Renamed 2026-09-29: the task is now `test:mutants` with `mutants` kept as a file-task alias (hidden from `mise tasks`); every quoted invocation above predates the rename; the plan matrix now runs 38 cases (37 renamed + one alias regression case). See `docs/superpowers/plans/2026-09-27-quality-gates.md` (Part III; the former plan files were consolidated into it 2026-09-29) |
