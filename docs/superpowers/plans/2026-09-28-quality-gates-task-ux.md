@@ -113,7 +113,7 @@ Expected: `rc=2` both, with `mutants:` messages (`--update-baseline cannot be co
 #USAGE flag "--silent" conflicts="--no-silent" help="No per-mutant output (overrides --output-statuses)"
 #USAGE flag "--no-silent" conflicts="--silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
 #USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/n/x; overrides --quiet)"
-#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses)"
+#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses; --silent overrides --quiet)"
 #USAGE flag "--verbose" help="Print file/line/worker/mutator/test-command detail"
 #USAGE flag "--debug" help="Maximum mutarust diagnostics"
 #USAGE flag "--html-output" help="Write mutarust-report.html (task config already enables it)"
@@ -168,7 +168,7 @@ Spec deviations recorded at conversion (report again in Task 7 Step 4):
 - **`--no-git-diff` added to both inspect conflict lists:** spec A3's "negate spellings reject in either spelling" rule, applied to the inspect row.
 - **Spec A5's `build_static_target_flags`/`build_mutarust_args`/`run_inspect_mode`/`run_count_mode` do not exist in the file** — the plan follows the actual structure (`main` → `build_inspect_args` | `build_static_flags` + `build_target_flags` + `build_gate_flags`).
 - **`--git-diff-base` requires needs a script backstop (beyond spec A3's parse-time `requires`):** mise satisfies `requires` with a declared `default` *and* with any explicit value (`--no-git-diff`). Fix: no `default` on `--git-diff` (absence → rc 1) + `reject_bad_targets` guard (explicit `--no-git-diff` + base → rc 2, old cascade message). Both paths matrix-verified.
-- **Spec A4's "declared flags after `--`" claim is void:** mise strips `--` before usage parsing, so `-- --workers 4` parses as `--workers 4` → rc 0 (bounded run), not rc 2. Undeclared post-`--` tokens still exit 2 via the scan. Matrix case updated accordingly; spec text left as-is (correction recorded here).
+- **Spec A4's "declared flags after `--`" claim is void:** mise strips `--` before usage parsing, so `-- --workers 4` parses as `--workers 4` → rc 0 (bounded run), not rc 2. Undeclared post-`--` tokens still exit 2 via the scan; with *additional* separators a declared flag (double case) or a literal `--` (triple case) can land in the scan too → rc 2. Matrix cases cover all three edges; spec text left as-is (correction recorded here and in the spec addendum).
 - **Two refusal-message rewordings (review nit):** spec A2 says the `--test-flags` refusal keeps the existing tailored text, but "drop it from passthrough" became "drop it from the command line" (passthrough no longer exists); spec A4's generic shape `flag-like token in target list: …` is implemented as `unknown or misplaced flag: … (declared flags go before --; …)`. Same intent, clearer text; spec left as-is.
 
 - [x] **Step 3: Script — header, arrays, parse + scan (replaces lines 70–143 and `parse_passthrough_tokens`/`passthrough_has_token`/`has_fixed_timeout`)**
@@ -562,6 +562,8 @@ check 2 mutants --bogus -f src/lib.rs --match __zz_no_match__
 check 2 mutants -x -f src/lib.rs --match __zz_no_match__
 # a second `--` still lands following declared flags in scan range
 check 2 mutants -- -- --dry-run -f src/lib.rs --match __zz_no_match__
+# a third `--` survives into the scan itself (generic arm names the token)
+check 2 mutants -- -- -- --dry-run -f src/lib.rs --match __zz_no_match__
 # happy parse path → rc 0 (inspect is the only fast rc-0 path; dry-run
 # happy paths are Task 2's Steps 1/1b). `-- --workers 4` parses as
 # `--workers 4`: mise strips `--` before usage parsing, so a DECLARED flag
@@ -578,7 +580,7 @@ if [[ -n "$(git status --porcelain mutarust-baseline.json)" ]]; then
 fi
 ```
 
-Expected: `MATRIX: ALL PASS (34 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
+Expected: `MATRIX: ALL PASS (35 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
 
 - [x] **Step 12: `hk` on the edited file + commit**
 
