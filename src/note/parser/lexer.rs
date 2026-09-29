@@ -291,17 +291,14 @@ fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
     if preceded_by_word_char {
         return Filter::Skip;
     }
-    let remainder = lex.remainder();
-    if !remainder.chars().next().is_some_and(char::is_alphabetic) {
+    let tag_start = lex.span().start;
+    let Some(tail) = lex.source().get(tag_start..) else {
         return Filter::Skip;
-    }
-    let body_end = remainder
-        .char_indices()
-        .find(|&(_, ch)| {
-            !(ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-'))
-        })
-        .map_or(remainder.len(), |(offset, _)| offset);
-    lex.bump(body_end);
+    };
+    let Some(tag_len) = Tag::prefix_len(tail) else {
+        return Filter::Skip;
+    };
+    lex.bump(tag_len.saturating_sub('#'.len_utf8()));
     match Tag::parse(lex.slice()) {
         Ok(tag) => Filter::Emit(tag),
         Err(_) => Filter::Skip,

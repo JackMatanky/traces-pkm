@@ -43,6 +43,8 @@ use traces_pkm::{Blake3FileHash, Blake3PathHash};
 )]
 mod common;
 
+use common::cache::drop_page_cache;
+
 // ----------------------------------------------------------- //
 //                  Benchmarks: File Hashing                   //
 // ----------------------------------------------------------- //
@@ -52,7 +54,8 @@ mod common;
 /// Parameters: varies `BenchmarkId` `1kb` vs. `1mb`; reports byte throughput.
 /// Fixture files are zero-filled and written outside timing. Timed work is
 /// [`Blake3FileHash::from_path`]: open, read into a fresh buffer, hash, and
-/// return a digest. OS page-cache state is not controlled.
+/// return a digest. Benchmark setup asks the OS to drop or bypass cached pages
+/// for this fixture file where a safe per-file primitive exists.
 ///
 /// Expected outcomes:
 /// - `1 MiB` cost is higher than `1 KiB` cost but byte throughput improves as
@@ -75,12 +78,17 @@ fn bench_file_hash(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &path,
             |b, path| {
-                b.iter(|| {
-                    let hash =
-                        Blake3FileHash::from_path(black_box(path.as_path()))
-                            .expect("hash file");
-                    black_box(hash);
-                });
+                b.iter_batched(
+                    || drop_page_cache(path).expect("drop file page cache"),
+                    |()| {
+                        let hash = Blake3FileHash::from_path(black_box(
+                            path.as_path(),
+                        ))
+                        .expect("hash file");
+                        black_box(hash);
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
             },
         );
     }

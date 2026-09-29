@@ -6,7 +6,7 @@
 //! tags.
 
 use crate::{
-    DateValue, DurationValue,
+    DateValue, DurationValue, Tag,
     note::{Link, NoteFieldValue, cursor::SourceText},
 };
 
@@ -222,20 +222,9 @@ impl<'a> InlineValueParser<'a> {
     /// as [`NoteFieldValue::String`] holding the tag text, including the
     /// leading `#`, since there's no dedicated tag value kind.
     fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
-        let rest = self.source.from(pos)?.strip_prefix('#')?;
-        let mut chars = rest.chars();
-        chars.next().filter(|ch| ch.is_alphabetic())?;
-        let end = self
-            .source
-            .from(pos)?
-            .char_indices()
-            .skip(1)
-            .take_while(|(_, ch)| {
-                ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-')
-            })
-            .map(|(offset, ch)| self.source.token_end(pos, offset, ch))
-            .last()
-            .unwrap_or_else(|| self.source.advance(pos, 1));
+        let tail = self.source.from(pos)?;
+        let tag_len = Tag::prefix_len(tail)?;
+        let end = self.source.advance(pos, tag_len);
         let raw = self.source.get(pos..end)?;
         Some((NoteFieldValue::String(raw.to_owned()), end))
     }

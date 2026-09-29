@@ -9,7 +9,7 @@
 #USAGE flag "--reports" {
 #USAGE   help "Remove generated coverage and mutation report files"
 #USAGE   long_help """
-#USAGE   Removes coverage and mutation test reports (`lcov.info`, `tarpaulin-report.html`, `mutants.out/`, `mutants-report.md`) without cleaning Cargo target build artifacts.
+#USAGE   Removes coverage and mutation test reports (`lcov.info`, `target/llvm-cov/html/`, `mutants.out/`, `mutants-report.md`) without cleaning Cargo target build artifacts.
 #USAGE   """
 #USAGE }
 #USAGE flag "--all" {

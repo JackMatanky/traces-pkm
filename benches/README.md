@@ -102,21 +102,14 @@ Sort stress benchmarks (`query_sort.rs`) sweep:
 | `query_sort.rs` | Sort/TopK (CPU, pre-built index) |
 | `template_render.rs` | TemplateService render (CPU, DryRun) |
 
-## Attribution Floors & Subtraction Formulas
+## Attribution Floors & Relative Anchors
 
-Several benchmark suites provide baseline floor rungs to isolate specific subsystem overhead:
+Several benchmark suites provide baseline floor rungs. Treat independently warmed Criterion entries as order-of-magnitude anchors, not exact subtraction formulas, unless a benchmark explicitly uses paired timing such as `iter_custom`:
 
-- **`sort_only - pages_unsorted`** (`query_sort.rs`): Isolates key extraction, comparison,
-  and row permutation machinery from base query row materialization.
-- **`no-op - zero-row`** (`index_refresh.rs`): Isolates tag index lookup from the filesystem
-  scan/diff prelude.
-- **`full_vault_scan - zero-row`** (`index_refresh.rs`): Isolates full-table row decode from
-  the scan/diff prelude.
-- **`refresh no-op - zero-row`** (`index_refresh.rs`): Isolates full `WorkspaceIndex` materialization.
-- **`list - refresh_floor`** (`template_render.rs`): Isolates template parsing, AST execution,
-  and Markdown formatting from the project refresh prelude.
-- **`filter - rows_floor`** (`query_execution.rs`): Isolates filter predicate evaluation
-  from field-width note row construction.
+- **`sort_only` vs. `pages_unsorted`** (`query_sort.rs`): Separates sort machinery from base query row materialization well enough to spot large regressions.
+- **`zero-row`, `no-op`, and `full_vault_scan`** (`index_refresh.rs`): Share the same tagged fixture and expose store-open, tag lookup, and full-table row decode shapes.
+- **`refresh_floor`, `list`, and `table_filtered`** (`template_render.rs`): Expose the refresh prelude and rendering shapes as comparable anchors without exact subtraction.
+- **`filter` vs. `rows_floor`** (`query_execution.rs`): Separates filter predicate evaluation from field-width note row construction.
 ## Common Module
 
 `benches/common/` provides shared fixtures:

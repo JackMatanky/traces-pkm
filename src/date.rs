@@ -5,6 +5,13 @@
 //! crate. Every date-shaped string funnels through [`DateValue::parse_iso`];
 //! every date-time-shaped string through [`DateTimeValue::parse_iso`].
 //!
+//! # Clock doctrine
+//!
+//! A naive datetime means what a human means: it is interpreted in the
+//! process's local zone and stored as UTC (see [`local_naive_to_utc`]), while
+//! a date-only value stays a zone-free civil date. Instants render as the
+//! local wall clock for humans and travel as UTC for storage and comparison.
+//!
 //! # Key types
 //!
 //! - [`DateValue`] - Parsed calendar date with no time-of-day component.
@@ -13,10 +20,13 @@
 //! - [`DateTimeFormat`] - Format grammar for date-time recognition.
 //! - [`DateError`] - Error type for parse and formatting failures.
 
-use std::{fmt, str::FromStr, time::SystemTime};
+use std::{borrow::Cow, fmt, str::FromStr, time::SystemTime};
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::{
+    DateTime, FixedOffset, Local, MappedLocalTime, NaiveDate, NaiveDateTime,
+    NaiveTime, Offset as _, SecondsFormat, TimeDelta, TimeZone as _, Utc,
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::duration::DurationValue;
 
@@ -126,7 +136,11 @@ impl DateTimeFormat {
         }
     }
 
-    /// Attempts to parse `s` according to this format.
+    /// Attempts to parse `s` according to this format's shape.
+    ///
+    /// A naive input attaches UTC as a placeholder; shape matching never
+    /// consults the local zone. [`DateTimeValue::parse_iso`] resolves the
+    /// matched naive value through [`local_naive_to_utc`] after the cascade.
     ///
     /// # Errors
     ///
@@ -146,24 +160,104 @@ impl DateTimeFormat {
     }
 }
 
+/// Resolves a naive local wall-clock datetime to a UTC instant under the
+/// crate's DST doctrine.
+///
+/// A wall-clock time written without a zone means what a human means: it is
+/// interpreted in the process's local zone and stored as UTC. Ambiguous
+/// fall-back times resolve to their earliest occurrence and nonexistent
+/// spring-forward gap times shift forward by the gap, the convention
+/// Temporal's `'compatible'` disambiguation (RFC 5545) and jiff's
+/// [`Disambiguation::Compatible`] implement; an ambiguity or a gap never
+/// fails to parse. Only a local timezone lookup failure (a broken tz-data or
+/// OS environment) surfaces as an error.
+///
+/// On wasm, chrono's `Local` reports every local time as unambiguous
+/// ([chrono#1701]), so the ambiguous arm is unreachable there; that target is
+/// out of scope.
+///
+/// # Errors
+///
+/// - [`DateError::LocalZoneLookup`] if no local time within the 25-hour
+///   backward search (nor `wall` itself) resolves, which indicates a tz-data/OS
+///   lookup failure rather than a DST boundary.
+///
+/// [`Disambiguation::Compatible`]:
+///     https://docs.rs/jiff/latest/jiff/tz/enum.Disambiguation.html
+/// [chrono#1701]: https://github.com/chronotope/chrono/issues/1701
+fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
+    let zone_lookup = || DateError::LocalZoneLookup {
+        input: wall.to_string().into(),
+    };
+    // Offset application goes through the checked forms: they return `None`
+    // instead of panicking if the instant lands outside `NaiveDateTime`'s
+    // range (unreachable for the 4-digit-year inputs the parsers accept).
+    match Local.offset_from_local_datetime(&wall) {
+        MappedLocalTime::Single(offset) => {
+            let instant =
+                wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
+            Ok(instant.and_utc())
+        }
+        MappedLocalTime::Ambiguous(a, b) => {
+            // chrono orders the pair by offset value (tzfile data) or by
+            // transition side (POSIX rules); the earliest occurrence is
+            // always the one with the larger offset, since instant =
+            // wall - offset.
+            let earliest = if a.local_minus_utc() >= b.local_minus_utc() {
+                a
+            } else {
+                b
+            };
+            let instant =
+                wall.checked_sub_offset(earliest).ok_or_else(zone_lookup)?;
+            Ok(instant.and_utc())
+        }
+        MappedLocalTime::None => {
+            // A DST gap resolves `None` across the whole skipped span, so a
+            // one-second probe would still land inside it. The gap resolver
+            // finds the pre-transition offset; interpreting the wall clock
+            // with it shifts the gap time forward by exactly the gap.
+            let offset = resolve_gap_offset(wall, &zone_lookup)?;
+            let instant =
+                wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
+            Ok(instant.and_utc())
+        }
+    }
+}
+
+/// Finds the offset in effect just before a DST gap by stepping back one
+/// hour at a time from `wall` (the widest recorded gap is 24 hours).
+///
+/// # Errors
+///
+/// - [`DateError::LocalZoneLookup`] if no nearby local time resolves within the
+///   25-hour backward search, indicating a broken tz-data/OS lookup rather than
+///   a gap; never a silent shift.
+fn resolve_gap_offset(
+    wall: NaiveDateTime,
+    zone_lookup: &impl Fn() -> DateError,
+) -> Result<FixedOffset, DateError> {
+    let hour = TimeDelta::try_hours(1).ok_or_else(zone_lookup)?;
+    let mut probe = wall;
+    for _ in 0..25 {
+        probe = probe.checked_sub_signed(hour).ok_or_else(zone_lookup)?;
+        if let MappedLocalTime::Single(offset)
+        | MappedLocalTime::Ambiguous(offset, _) =
+            Local.offset_from_local_datetime(&probe)
+        {
+            return Ok(offset);
+        }
+    }
+    Err(zone_lookup())
+}
+
 /// Parsed calendar date with no time-of-day component.
 ///
 /// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition.
 /// All four-digit years are accepted; two-digit years
 /// are rejected to prevent chrono's silent century misinterpretation.
 #[repr(transparent)]
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateValue(NaiveDate);
 
 impl DateValue {
@@ -302,24 +396,40 @@ impl FromStr for DateValue {
     }
 }
 
+/// Serializes as the canonical `YYYY-MM-DD` string (the crate-internal
+/// `to_date_string` formatter).
+impl Serialize for DateValue {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_date_string())
+    }
+}
+
+/// Deserializes via the crate-internal `parse_iso` parser, so the
+/// four-digit-year rule and `YYYY-MM` acceptance apply identically to
+/// inline and deserialized dates.
+impl<'de> Deserialize<'de> for DateValue {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::parse_iso(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Parsed UTC date-time instant.
 ///
 /// Wraps [`DateTime<Utc>`] as a newtype, enforcing ISO-8601/RFC-3339
-/// recognition through [`DateTimeValue::parse_iso`]. All values are
-/// UTC-normalized; offset-bearing input is converted to UTC at parse time.
+/// recognition through its crate-internal `parse_iso` parser. All values
+/// are UTC-normalized; offset-bearing input is converted to UTC at parse
+/// time.
 #[repr(transparent)]
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateTimeValue(DateTime<Utc>);
 
 impl DateTimeValue {
@@ -334,11 +444,19 @@ impl DateTimeValue {
     /// Parses an RFC-3339 or ISO-8601 date-time string using
     /// [`DateTimeFormat::ALL`].
     ///
+    /// The cascade matches shapes only; after a shape matches, a naive input
+    /// resolves through [`local_naive_to_utc`] (an explicit-offset input
+    /// already is the instant). Resolution failures must not be retried
+    /// against later formats, so the cascade separates shape matching from
+    /// resolution.
+    ///
     /// # Errors
     ///
     /// - [`DateError::InvalidYearDigits`] if the year segment is not exactly 4
     ///   ASCII digits.
     /// - [`DateError::Unparseable`] if no accepted shape matches.
+    /// - [`DateError::LocalZoneLookup`] if the local timezone lookup fails
+    ///   while resolving a naive input.
     pub(crate) fn parse_iso(s: &str) -> Result<Self, DateError> {
         let trimmed = s.trim();
         if !DateValue::has_four_digit_year(trimmed) {
@@ -347,17 +465,27 @@ impl DateTimeValue {
             });
         }
         let [first, rest @ ..] = DateTimeFormat::ALL;
+        let mut matched = first;
         let mut result = first.parse(trimmed);
         for format in rest {
             if result.is_ok() {
                 break;
             }
+            matched = format;
             result = format.parse(trimmed);
         }
-        result.map(Self).map_err(|source| DateError::Unparseable {
+        let parsed = result.map_err(|source| DateError::Unparseable {
             input: trimmed.into(),
             source,
-        })
+        })?;
+        let instant = if matches!(matched, DateTimeFormat::Rfc3339) {
+            parsed
+        } else {
+            // The shape pass attached UTC as a placeholder; recover the
+            // wall clock (an identity round-trip) and resolve it locally.
+            local_naive_to_utc(parsed.naive_utc())?
+        };
+        Ok(Self(instant))
     }
 
     /// Formats this date-time as an RFC 3339 date and time with a UTC offset
@@ -403,7 +531,7 @@ impl DateTimeValue {
     #[inline]
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {
-        self.0.format(DEFAULT_DATE_FORMAT).to_string()
+        self.date().to_string()
     }
 
     /// Formats this date-time as a bare time-of-day component.
@@ -421,10 +549,10 @@ impl DateTimeValue {
     #[inline]
     #[must_use]
     pub(crate) fn to_time_string(self) -> String {
-        self.0.format("%H:%M:%S").to_string()
+        self.wall_or_utc().format("%H:%M:%S").to_string()
     }
 
-    /// Returns a new date-time truncated to the start of the UTC day.
+    /// Returns a new date-time truncated to the start of the local day.
     #[cfg_attr(
         not(test),
         expect(
@@ -439,11 +567,41 @@ impl DateTimeValue {
         Self::from(self.date())
     }
 
-    /// Returns the calendar date component, discarding time-of-day.
+    /// Returns the local wall-clock rendering of this instant.
+    ///
+    /// A date or time component means the reader's calendar day and clock,
+    /// so every human-facing rendering goes through this conversion. It
+    /// follows the offset-based checked form:
+    /// [`Local::offset_from_utc_datetime`] supplies the zone's offset for
+    /// the instant and [`NaiveDateTime::checked_add_offset`] applies it,
+    /// returning [`None`] instead of panicking when the local time would
+    /// overflow [`NaiveDateTime`]'s range (`.naive_local()` would panic
+    /// there).
+    #[inline]
+    #[must_use]
+    pub(crate) fn local_wall(self) -> Option<NaiveDateTime> {
+        let naive_utc = self.0.naive_utc();
+        let offset = Local.offset_from_utc_datetime(&naive_utc);
+        naive_utc.checked_add_offset(offset.fix())
+    }
+
+    /// Returns the local wall clock, falling back to the UTC wall clock when
+    /// the local offset cannot be applied (see [`Self::local_wall`]).
+    #[inline]
+    #[must_use]
+    pub(crate) fn wall_or_utc(self) -> NaiveDateTime {
+        self.local_wall().unwrap_or_else(|| self.0.naive_utc())
+    }
+
+    /// Returns the local calendar date of this instant, discarding
+    /// time-of-day.
+    ///
+    /// When the local offset cannot be applied (an instant at the extreme
+    /// edge of [`NaiveDateTime`]'s range), the UTC date renders instead.
     #[inline]
     #[must_use]
     pub(crate) fn date(self) -> DateValue {
-        DateValue(self.0.date_naive())
+        DateValue(self.wall_or_utc().date())
     }
 
     /// Formats this date-time with an arbitrary strftime `pattern`.
@@ -466,7 +624,9 @@ impl DateTimeValue {
     ) -> Result<String, DateError> {
         use std::fmt::Write as _;
         let mut out = String::with_capacity(pattern.len().max(32));
-        write!(out, "{}", self.0.format(pattern)).map_err(|_fmt_error| {
+        // Arbitrary patterns render the local wall clock, matching `Display`.
+        let wall = self.wall_or_utc();
+        write!(out, "{}", wall.format(pattern)).map_err(|_fmt_error| {
             DateError::InvalidPattern {
                 pattern: pattern.into(),
             }
@@ -511,7 +671,8 @@ impl DateTimeValue {
         self.0.checked_sub_signed(delta).map(Self)
     }
 
-    /// Compares this date-time against `date`, coercing `date` to midnight UTC.
+    /// Compares this date-time against `date`, coercing `date` to midnight in
+    /// the local zone (see the [`From<DateValue>`] promotion).
     #[cfg_attr(
         not(test),
         expect(
@@ -527,7 +688,8 @@ impl DateTimeValue {
         self.0.cmp(&Self::from(date).0)
     }
 
-    /// Returns `true` if this date-time is exactly midnight UTC on `date`.
+    /// Returns `true` if this date-time is exactly local-zone midnight on
+    /// `date` (see the [`From<DateValue>`] promotion).
     #[must_use]
     pub(crate) fn is_equal_to_date(self, date: DateValue) -> bool {
         self.0 == Self::from(date).0
@@ -544,12 +706,16 @@ impl fmt::Display for DateTimeValue {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use chrono::Timelike as _;
-        let format = if self.0.nanosecond() == 0 {
+        // The everyday human spelling is the local wall clock (see
+        // `local_wall`); when the local offset cannot be applied, the UTC
+        // wall clock renders instead of panicking.
+        let wall = self.wall_or_utc();
+        let format = if wall.nanosecond() == 0 {
             DEFAULT_DATETIME_FORMAT
         } else {
             "%Y-%m-%dT%H:%M:%S%.f"
         };
-        write!(f, "{}", self.0.format(format))
+        write!(f, "{}", wall.format(format))
     }
 }
 
@@ -563,8 +729,9 @@ impl From<SystemTime> for DateTimeValue {
 impl From<SystemTime> for DateValue {
     #[inline]
     fn from(time: SystemTime) -> Self {
-        let dt: DateTime<Utc> = time.into();
-        Self(dt.date_naive())
+        // A file's calendar date means the reader's local day (the same
+        // doctrine as `DateTimeValue::date`), not the UTC calendar day.
+        DateTimeValue::from(time).date()
     }
 }
 
@@ -582,11 +749,22 @@ impl From<DateTimeValue> for DateTime<Utc> {
     }
 }
 
-/// Promotes a [`DateValue`] to a [`DateTimeValue`] at midnight UTC.
+/// Promotes a [`DateValue`] to a [`DateTimeValue`] at midnight in the local
+/// zone: a zone-free civil date has no instant until a reader's zone supplies
+/// one, so the promotion resolves through the crate's local-zone DST
+/// resolver.
+///
+/// A local timezone lookup failure falls back to UTC midnight (matching
+/// chrono's own silent fallback for a broken zone); strict callers resolve
+/// through `local_naive_to_utc` directly to surface that failure.
 impl From<DateValue> for DateTimeValue {
     #[inline]
     fn from(date: DateValue) -> Self {
-        Self(date.0.and_time(NaiveTime::MIN).and_utc())
+        let midnight = date.0.and_time(NaiveTime::MIN);
+        Self(
+            local_naive_to_utc(midnight)
+                .unwrap_or_else(|_zone_failure| midnight.and_utc()),
+        )
     }
 }
 
@@ -599,18 +777,50 @@ impl FromStr for DateTimeValue {
     }
 }
 
+/// Serializes as an explicit RFC 3339 `…Z` interop spelling via
+/// [`DateTime::to_rfc3339_opts`], independent of [`Display`](fmt::Display)'s
+/// local-naive rendering.
+impl Serialize for DateTimeValue {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer
+            .serialize_str(&self.0.to_rfc3339_opts(SecondsFormat::Secs, true))
+    }
+}
+
+/// Deserializes via the crate-internal `parse_iso` parser, so the
+/// four-digit-year rule and every accepted shape (including the `…Z`
+/// interop spelling) apply identically to inline and deserialized
+/// date-times.
+impl<'de> Deserialize<'de> for DateTimeValue {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::parse_iso(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Error type for date/date-time parse and formatting failures.
 ///
-/// Returned by [`DateValue::parse_iso`], [`DateTimeValue::parse_iso`],
-/// [`DateValue::format_with`], and [`DateTimeValue::format_with`].
+/// Returned by [`DateValue`]'s and [`DateTimeValue`]'s crate-internal
+/// `parse_iso` and `format_with` methods.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum DateError {
     /// No accepted date/time shape matched `input`.
     ///
     /// Wraps the last-attempted format's [`chrono::ParseError`].
     #[error("`{input}` is not a recognized date/time: {source}")]
     Unparseable {
+        /// The raw input that failed to parse.
         input: Box<str>,
+        /// The last-attempted format's underlying parse failure.
         #[source]
         source: chrono::ParseError,
     },
@@ -619,20 +829,30 @@ pub enum DateError {
     /// chrono's `%Y` accepts fewer digits, silently misreading the year.
     #[error("`{input}` does not have a 4-digit year")]
     InvalidYearDigits {
+        /// The raw input that failed to parse.
         input: Box<str>,
     },
     /// `pattern` is not a valid strftime specifier.
     #[error("`{pattern}` is not a valid format pattern")]
     InvalidPattern {
+        /// The pattern that failed to render.
         pattern: Box<str>,
+    },
+    /// The process's local timezone could not resolve a naive input.
+    ///
+    /// DST ambiguities and gaps never produce this error (they resolve
+    /// deterministically); it is reserved for a broken tz-data/OS lookup.
+    #[error("local timezone lookup failed for `{input}`")]
+    LocalZoneLookup {
+        /// The naive wall-clock input that could not be resolved.
+        input: Box<str>,
     },
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone as _;
-
     use super::*;
+    use crate::TzGuard;
 
     fn fixed_datetime() -> DateTimeValue {
         DateTimeValue(
@@ -640,6 +860,104 @@ mod tests {
                 "2026-07-29 14:30:05 UTC is a valid, unambiguous instant",
             ),
         )
+    }
+
+    /// Local-zone doctrine: a naive datetime means the reader's local wall
+    /// clock, resolved to UTC through the DST resolver; a date-only value
+    /// stays zone-free until a zone is needed. Every test here injects `TZ`
+    /// via [`TzGuard`] so the asserted zone is deterministic.
+    mod local_zone {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn parses_a_naive_datetime_in_the_local_zone_and_stores_utc() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            let parsed = DateTimeValue::parse_iso("2026-07-29 14:30:00")
+                .expect("naive datetime parses");
+
+            assert_eq!(
+                parsed,
+                DateTimeValue::parse_iso("2026-07-29T12:30:00Z")
+                    .expect("equivalent explicit-offset instant parses")
+            );
+        }
+
+        #[test]
+        fn resolves_an_ambiguous_fall_back_time_to_the_earliest_occurrence() {
+            TzGuard::set("America/New_York");
+
+            let parsed = DateTimeValue::parse_iso("2026-11-01 01:30:00")
+                .expect("ambiguous wall clock still parses");
+
+            // 01:30 happens twice (EDT, then EST); the earliest occurrence
+            // is the EDT reading, 05:30Z.
+            assert_eq!(
+                parsed,
+                DateTimeValue::parse_iso("2026-11-01T05:30:00Z")
+                    .expect("equivalent explicit-offset instant parses")
+            );
+        }
+
+        #[test]
+        fn shifts_a_spring_forward_gap_forward_by_the_gap() {
+            TzGuard::set("America/New_York");
+
+            let parsed = DateTimeValue::parse_iso("2026-03-08 02:30:00")
+                .expect("gap wall clock still parses, never fails");
+
+            // 02:30 does not exist; interpreting it with the pre-transition
+            // offset shifts it forward by the one-hour gap to 03:30 EDT.
+            assert_eq!(
+                parsed,
+                DateTimeValue::parse_iso("2026-03-08T07:30:00Z")
+                    .expect("equivalent explicit-offset instant parses")
+            );
+        }
+
+        #[test]
+        fn resolves_local_times_adjacent_to_a_gap_without_error() {
+            TzGuard::set("America/New_York");
+
+            let before = DateTimeValue::parse_iso("2026-03-08 01:59:59")
+                .expect("wall clock one second before the gap parses");
+            let after = DateTimeValue::parse_iso("2026-03-08 03:00:00")
+                .expect("wall clock at the gap's end parses");
+
+            // A real gap resolves `None` only inside the gap; the adjacent
+            // local times must resolve normally, not be swept into a silent
+            // shift or an error.
+            assert_eq!(
+                before,
+                DateTimeValue::parse_iso("2026-03-08T06:59:59Z")
+                    .expect("equivalent explicit-offset instant parses")
+            );
+            assert_eq!(
+                after,
+                DateTimeValue::parse_iso("2026-03-08T07:00:00Z")
+                    .expect("equivalent explicit-offset instant parses")
+            );
+        }
+
+        #[test]
+        fn promotes_a_date_value_to_local_zone_midnight() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
+
+            let promoted = DateTimeValue::from(date);
+
+            // Civil midnight in UTC+2 is 22:00Z on the previous day, so this
+            // pins the promotion to the local zone rather than UTC.
+            assert_eq!(
+                promoted.into_inner(),
+                Utc.with_ymd_and_hms(2026, 7, 28, 22, 0, 0)
+                    .single()
+                    .expect("unambiguous instant")
+            );
+        }
     }
 
     mod constructor {
@@ -670,6 +988,8 @@ mod tests {
 
         #[test]
         fn renders_to_datetime_string_without_the_offset() {
+            TzGuard::set("UTC");
+
             assert_eq!(
                 fixed_datetime().to_datetime_string(),
                 "2026-07-29T14:30:05"
@@ -678,6 +998,8 @@ mod tests {
 
         #[test]
         fn round_trips_fractional_seconds_in_to_datetime_string() {
+            TzGuard::set("UTC");
+
             let with_nanos = DateTimeValue(
                 fixed_datetime().into_inner()
                     + chrono::TimeDelta::milliseconds(123),
@@ -690,16 +1012,22 @@ mod tests {
 
         #[test]
         fn renders_to_date_string_without_the_time() {
+            TzGuard::set("UTC");
+
             assert_eq!(fixed_datetime().to_date_string(), "2026-07-29");
         }
 
         #[test]
         fn renders_to_time_string_without_the_date() {
+            TzGuard::set("UTC");
+
             assert_eq!(fixed_datetime().to_time_string(), "14:30:05");
         }
 
         #[test]
-        fn truncates_to_midnight_utc_in_start_of_day() {
+        fn truncates_to_local_midnight_in_start_of_day() {
+            TzGuard::keep();
+
             assert_eq!(
                 fixed_datetime().start_of_day(),
                 DateTimeValue::from(
@@ -710,9 +1038,21 @@ mod tests {
 
         #[test]
         fn extracts_the_calendar_date_discarding_time_of_day() {
+            TzGuard::set("UTC");
+
             let extracted = fixed_datetime().date();
             let expected =
                 DateValue::parse_iso("2026-07-29").expect("valid date");
+            assert_eq!(extracted, expected);
+        }
+
+        #[test]
+        fn extracts_the_local_calendar_date_of_the_instant() {
+            TzGuard::set("Etc/GMT-12"); // UTC+12: 14:30Z is already July 30
+
+            let extracted = fixed_datetime().date();
+            let expected =
+                DateValue::parse_iso("2026-07-30").expect("valid date");
             assert_eq!(extracted, expected);
         }
 
@@ -727,6 +1067,8 @@ mod tests {
         #[test]
         fn round_trips_a_datetime_value_through_to_datetime_string_and_parse_iso()
          {
+            TzGuard::keep();
+
             let value = fixed_datetime();
             let reparsed =
                 DateTimeValue::parse_iso(&value.to_datetime_string())
@@ -767,6 +1109,8 @@ mod tests {
         #[case::space_separated_with_seconds("2026-07-29 14:30:00")]
         #[case::space_separated_minute_only("2026-07-29 14:30")]
         fn accepts_every_datetime_shape(#[case] input: &str) {
+            TzGuard::keep();
+
             assert!(
                 DateTimeValue::parse_iso(input).is_ok(),
                 "{input} should parse"
@@ -850,6 +1194,8 @@ mod tests {
 
         #[test]
         fn rejects_an_invalid_pattern_in_datetime_value_format_with() {
+            TzGuard::keep();
+
             let result = fixed_datetime().format_with("%Q");
             assert!(matches!(result, Err(DateError::InvalidPattern { .. })));
         }
@@ -863,6 +1209,8 @@ mod tests {
 
         #[test]
         fn renders_a_custom_pattern_in_datetime_value_format_with() {
+            TzGuard::set("UTC");
+
             let rendered = fixed_datetime()
                 .format_with("%d/%m/%Y %H:%M")
                 .expect("valid pattern");
@@ -886,6 +1234,8 @@ mod tests {
 
         #[test]
         fn datetime_value_parses_via_from_str() {
+            TzGuard::keep();
+
             let datetime: DateTimeValue =
                 "2026-07-29T14:30:00".parse().expect("valid datetime");
             let expected = DateTimeValue::parse_iso("2026-07-29T14:30:00")
@@ -964,6 +1314,8 @@ mod tests {
 
         #[test]
         fn requires_exact_midnight_in_is_equal_to_date() {
+            TzGuard::keep();
+
             let midnight = DateTimeValue::from(
                 DateValue::parse_iso("2026-07-29").expect("valid date"),
             );
@@ -977,6 +1329,8 @@ mod tests {
 
         #[test]
         fn cmp_date_reports_greater_when_the_instant_is_after_midnight() {
+            TzGuard::set("UTC");
+
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             assert_eq!(
                 fixed_datetime().cmp_date(date),
@@ -986,6 +1340,8 @@ mod tests {
 
         #[test]
         fn cmp_date_reports_equal_at_exact_midnight() {
+            TzGuard::keep();
+
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             let midnight = DateTimeValue::from(date);
             assert_eq!(midnight.cmp_date(date), std::cmp::Ordering::Equal);
@@ -993,6 +1349,8 @@ mod tests {
 
         #[test]
         fn cmp_date_reports_less_when_the_instant_is_before_midnight() {
+            TzGuard::set("UTC");
+
             let date = DateValue::parse_iso("2026-07-30").expect("valid date");
             assert_eq!(
                 fixed_datetime().cmp_date(date),
@@ -1008,6 +1366,8 @@ mod tests {
 
         #[test]
         fn converts_from_system_time() {
+            TzGuard::set("UTC");
+
             let system_time = std::time::SystemTime::UNIX_EPOCH
                 + std::time::Duration::from_secs(1_000);
             let converted = DateTimeValue::from(system_time);
@@ -1015,6 +1375,20 @@ mod tests {
                 converted,
                 DateTimeValue::parse_iso("1970-01-01T00:16:40")
                     .expect("valid datetime")
+            );
+        }
+
+        #[test]
+        fn converts_from_system_time_to_the_local_date() {
+            TzGuard::set("Etc/GMT+5"); // UTC-05:00, no DST
+
+            let system_time = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(1_000);
+
+            // 00:16:40Z is 19:16:40 on December 31 in UTC-5.
+            assert_eq!(
+                DateValue::from(system_time),
+                DateValue::parse_iso("1969-12-31").expect("valid date")
             );
         }
 
@@ -1090,6 +1464,8 @@ mod tests {
 
         #[test]
         fn compares_datetimes_chronologically() {
+            TzGuard::keep();
+
             let earlier = DateTimeValue::parse_iso("2026-01-01T00:00:00")
                 .expect("valid datetime");
             let later = fixed_datetime();
@@ -1112,7 +1488,18 @@ mod tests {
 
         #[test]
         fn displays_a_datetime_value_as_its_canonical_string() {
+            TzGuard::set("UTC");
+
             assert_eq!(fixed_datetime().to_string(), "2026-07-29T14:30:05");
+        }
+
+        #[test]
+        fn displays_the_local_wall_clock_of_the_instant() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            // The everyday human spelling is the local wall clock, so a
+            // 14:30:05Z instant reads as 16:30:05 local.
+            assert_eq!(fixed_datetime().to_string(), "2026-07-29T16:30:05");
         }
 
         #[test]
@@ -1145,6 +1532,15 @@ mod tests {
         }
 
         #[test]
+        fn exposes_the_chrono_source_for_an_unparseable_error() {
+            use std::error::Error as _;
+            let err = DateValue::parse_iso("2026/08/22")
+                .expect_err("unrecognized shape");
+            let source = err.source().expect("chrono parse error is chained");
+            assert_eq!(source.to_string(), "input contains invalid characters");
+        }
+
+        #[test]
         fn round_trips_a_date_value_through_json() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             let json = serde_json::to_string(&date).expect("serializable");
@@ -1163,12 +1559,100 @@ mod tests {
         }
 
         #[test]
+        fn serializes_datetime_value_with_the_explicit_rfc3339_z_suffix() {
+            let json =
+                serde_json::to_string(&fixed_datetime()).expect("serializable");
+            assert_eq!(json, "\"2026-07-29T14:30:05Z\"");
+        }
+
+        #[test]
+        fn deserializes_year_month_precision_date_through_json() {
+            let restored: DateValue =
+                serde_json::from_str("\"2026-07\"").expect("deserializable");
+            assert_eq!(
+                restored,
+                DateValue::parse_iso("2026-07-01").expect("valid date")
+            );
+        }
+
+        #[test]
+        fn rejects_a_two_digit_year_through_json_deserialization() {
+            let err = serde_json::from_str::<DateValue>("\"26-08-22\"")
+                .expect_err("short year rejected");
+            assert!(err.to_string().contains("does not have a 4-digit year"));
+        }
+
+        #[test]
         fn is_usable_as_a_hash_set_key() {
             let mut set = std::collections::HashSet::new();
             set.insert(DateValue::parse_iso("2026-07-29").expect("valid date"));
             set.insert(DateValue::parse_iso("2026-07-29").expect("valid date"));
             set.insert(DateValue::parse_iso("2026-07-30").expect("valid date"));
             assert_eq!(set.len(), 2);
+        }
+    }
+
+    mod hostile_yaml_note {
+        use pretty_assertions::{assert_eq, assert_ne};
+
+        use super::*;
+
+        #[derive(Deserialize)]
+        struct HostileNote {
+            duration_extreme: DurationValue,
+            duration_zero: DurationValue,
+            date: DateValue,
+            datetime: DateTimeValue,
+        }
+
+        #[test]
+        fn parses_round_trips_and_displays_without_panic_or_lying() {
+            let extreme_digits = "9".repeat(50);
+            let yaml = format!(
+                "duration_extreme: {extreme_digits}y\nduration_zero: \
+                 \"-0m\"\ndate: \"2026-07\"\ndatetime: \
+                 \"2026-07-29T14:30:00Z\"\n"
+            );
+
+            let note = noyalib::from_str::<HostileNote>(&yaml)
+                .expect("hostile note deserializes without panicking");
+
+            // Extreme-magnitude duration: a value synthesized back from its
+            // parsed seconds (as arithmetic/formatting code does, having no
+            // original spelling to echo) renders honestly in scientific
+            // notation, never a silently truncated "0s".
+            let synthesized =
+                DurationValue::from_seconds(note.duration_extreme.to_seconds());
+            let rendered_extreme = synthesized.to_string();
+            assert_ne!(rendered_extreme, "0s");
+            assert!(rendered_extreme.contains('e'));
+
+            // "-0m": equals and orders as zero, not a hidden negative.
+            assert_eq!(
+                note.duration_zero,
+                DurationValue::parse("0m").expect("valid duration")
+            );
+            assert!(note.duration_zero >= DurationValue::parse("0m").unwrap());
+
+            // "YYYY-MM" date: precision defaults to day 1, matches inline
+            // parsing exactly.
+            assert_eq!(
+                note.date,
+                DateValue::parse_iso("2026-07-01").expect("valid date")
+            );
+
+            // "…Z" datetime: parses to the same instant as the equivalent
+            // explicit-offset spelling (a naive spelling would mean the local
+            // zone) and re-serializes with the same spelling.
+            assert_eq!(
+                note.datetime,
+                DateTimeValue::parse_iso("2026-07-29T14:30:00+00:00")
+                    .expect("valid datetime")
+            );
+            assert_eq!(
+                serde_json::to_string(&note.datetime).expect("serializable"),
+                "\"2026-07-29T14:30:00Z\""
+            );
         }
     }
 }

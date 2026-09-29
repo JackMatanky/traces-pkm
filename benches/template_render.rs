@@ -103,19 +103,19 @@ fn prepare_project(n: usize) -> (TempDir, std::path::PathBuf, Config) {
 /// `table_filtered`); reports note throughput.
 ///
 /// Fixture projects, config, dialog provider, service, and template path inputs
-/// are built outside timing.
+/// are built outside timing. Directory-wide OS page-cache state is
+/// intentionally warm-cache; dropping cache for every note file would dominate
+/// this benchmark.
 ///
-/// Runs `refresh_floor` before template rendering to isolate the persisted
-/// project refresh prelude.
-///
-/// Subtraction formula:
-/// - `list - refresh_floor`: Isolates template parsing, AST execution, and
-///   output formatting from the ~12.5 ms project refresh prelude.
+/// Runs `refresh_floor` before template rendering to expose the common
+/// persisted project refresh prelude. These entries are independently warmed
+/// Criterion measurements, not paired samples; compare them as
+/// order-of-magnitude anchors, not by exact subtraction.
 ///
 /// Expected outcomes:
 /// - `refresh_floor` accounts for the common filesystem scan and database
 ///   reconciliation.
-/// - `list - refresh_floor` scales with rendering `n` paths.
+/// - `list` scales with rendering `n` paths on top of the refresh prelude.
 /// - `table_filtered` adds filter predicate evaluation, sort permutation, and
 ///   Markdown table generation.
 ///

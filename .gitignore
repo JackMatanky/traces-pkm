@@ -22,6 +22,9 @@ tarpaulin-report.html
 /mutarust-summary.json
 /mutarust-gitlab.json
 /mutarust-report.html
+/mutants.out/
+/mutants.out.old/
+/mutants-report.md
 # ----------------------- Git Worktrees ----------------------- #
 .worktrees/
 

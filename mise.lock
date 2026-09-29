@@ -104,14 +104,19 @@ version = "0.5.0"
 backend = "cargo:cargo-crap"
 specifiers = ["latest"]
 
+[[tools."cargo:cargo-llvm-cov"]]
+version = "0.9.1"
+backend = "cargo:cargo-llvm-cov"
+specifiers = ["latest"]
+
+[[tools."cargo:cargo-modules"]]
+version = "0.27.0"
+backend = "cargo:cargo-modules"
+specifiers = ["latest"]
+
 [[tools."cargo:cargo-sweep"]]
 version = "0.8.0"
 backend = "cargo:cargo-sweep"
-specifiers = ["latest"]
-
-[[tools."cargo:cargo-tarpaulin"]]
-version = "0.37.4"
-backend = "cargo:cargo-tarpaulin"
 specifiers = ["latest"]
 
 [[tools."cargo:cargo-watch"]]
@@ -275,7 +280,7 @@ backend = "core:rust"
 specifiers = ["nightly-2026-09-09"]
 
 [tools.rust.options]
-components = "clippy,rustfmt"
+components = "clippy,llvm-tools-preview,rustfmt"
 profile = "minimal"
 
 [[tools.taplo]]

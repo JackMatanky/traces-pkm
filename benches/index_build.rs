@@ -80,6 +80,8 @@ fn observe_index(index: &WorkspaceIndex) {
 /// Timed work scans the filesystem, parses notes, extracts tags, resolves
 /// links, and compiles inlinks into a complete [`WorkspaceIndex`]. Path sorting
 /// adds an $n \cdot \ln(n)$ component to the linear scan and parse baseline.
+/// OS page-cache state is intentionally warm-cache: dropping cache for every
+/// file in a 20,000-note tree costs enough to dominate this benchmark.
 ///
 /// Expected outcomes:
 /// - Near-linear $O(n \log n)$ scaling governed primarily by single-pass note
@@ -123,7 +125,8 @@ fn bench_file_index_build(c: &mut Criterion) {
 /// Compares dense link graphs, rich realistic note shapes, and binary
 /// attachments against the plain baseline. Redundant shapes (`tagged`,
 /// `classified`, `list_heavy`) whose build scaling matches plain notes are
-/// omitted.
+/// omitted. OS page-cache state is intentionally warm-cache for the same
+/// directory-wide cache-drop cost reason as the plain build benchmark.
 ///
 /// Expected outcomes:
 /// - Rich realistic and dense link shapes exhibit higher constant factors due

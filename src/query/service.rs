@@ -23,7 +23,7 @@ use super::{
 #[cfg(any(test, feature = "test-utils"))]
 use crate::index::IndexerService;
 use crate::{
-    ListItem,
+    ListItem, Note,
     index::{IndexResult, IndexStore, RowIndex, SortedByPath, WorkspaceIndex},
 };
 
@@ -198,12 +198,41 @@ impl QueryService {
         }
     }
 
+    /// Materializes [`Self::matched_file_rows`] into a `Vec`, pre-sized
+    /// exactly when `source` is [`SourceSelector::All`] (every entry
+    /// matches, so the output length is `index.entries().len()`, known
+    /// upfront) and left to `Vec`'s default growth otherwise, since a
+    /// selective filter's true output length isn't knowable ahead of time
+    /// and pre-sizing to the full entry count there would be the opposite
+    /// mistake.
+    ///
+    /// `Filter`'s `size_hint` lower bound is always 0 (any entry could fail
+    /// the predicate), so a bare `.collect()` can't know the exact output
+    /// length upfront and falls back to `Vec`'s amortized power-of-two
+    /// growth, which can overshoot the real length by up to ~2x depending on
+    /// where it lands (empirically: 28% waste at n=100, 64% at n=10000, only
+    /// 2.4% at n=1000 - pure luck of the draw, not a fixable-by-input-shape
+    /// coincidence).
+    fn collect_matched_file_rows(
+        &self,
+        index: &Arc<WorkspaceIndex>,
+        source: &SourceSelector,
+    ) -> Vec<QueryRow> {
+        if matches!(source, SourceSelector::All) {
+            let mut rows = Vec::with_capacity(index.entries().len());
+            rows.extend(self.matched_file_rows(index, source));
+            rows
+        } else {
+            self.matched_file_rows(index, source).collect()
+        }
+    }
+
     fn pages(
         &self,
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
     ) -> Vec<QueryRow> {
-        self.matched_file_rows(index, source).collect()
+        self.collect_matched_file_rows(index, source)
     }
 
     /// Expands matching notes into one [`QueryRow`] per list item, including
@@ -227,14 +256,35 @@ impl QueryService {
 
     /// Expands matching notes into one [`QueryRow`] per list item whose kind
     /// satisfies `is_wanted`, in document order.
+    ///
+    /// Reserves exact capacity by counting matching items with `is_wanted`
+    /// before building rows, avoiding the reallocation-copy cost that
+    /// [`QueryRow`]'s `Arc<WorkspaceIndex>` field makes non-trivial: unlike a
+    /// `Copy` type, growing this `Vec` without a hint cannot reuse the old
+    /// buffer in place, so every regrowth copies live `Arc` clones one by
+    /// one. Counting via `is_wanted` itself (rather than reserving every
+    /// matched note's total list-item count as an upper bound) matters for
+    /// sparse predicates like `tasks()`: a vault with many list-heavy but
+    /// task-free notes would otherwise reserve megabytes for a handful of
+    /// actual rows. `base_rows` itself goes through
+    /// [`Self::collect_matched_file_rows`] for the same reason: a bare
+    /// `.collect()` here would reintroduce the exact overshoot this method
+    /// exists to avoid, one level up.
     fn item_rows(
         &self,
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,
         is_wanted: impl Fn(&ListItem) -> bool,
     ) -> Vec<QueryRow> {
-        let mut out = Vec::new();
-        for base in self.matched_file_rows(index, source) {
+        let base_rows = self.collect_matched_file_rows(index, source);
+        let capacity = base_rows
+            .iter()
+            .filter_map(QueryRow::note)
+            .flat_map(Note::lists)
+            .filter(|item| is_wanted(item))
+            .count();
+        let mut out = Vec::with_capacity(capacity);
+        for base in base_rows {
             let Some(note) = base.note() else {
                 continue;
             };
@@ -418,7 +468,6 @@ mod tests {
         QueryService::new("class")
             .run(index, QueryBuilder::tasks(source.clone()))
     }
-
     fn query_lists(
         index: &Arc<WorkspaceIndex>,
         source: &SourceSelector,

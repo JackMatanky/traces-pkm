@@ -285,10 +285,10 @@ longer exists; interval comparison is in `timestamp.c`). DuckDB's interval docs 
 3. **MySQL's rule for ambiguous/nonexistent local times** during named-zone conversion — the
    docs discuss DST only via `CONVERT_TZ` test examples, no stated preference (earlier vs
    later) for the repeated/missing hour.
-4. **Dataview's null-greatest sort convention** (referenced by the spec): no null-ordering
-   statement found in the fetched Dataview documentation pages (`queries/data-commands/`,
-   `queries/differences-to-sql/`, `api/data-array/`) — possibly in JS-rendered or
-   repo-wiki content not retrieved.
+4. **Dataview's null-greatest sort convention** (an earlier spec premise, now removed): no
+   null-ordering statement found in the fetched Dataview documentation pages
+   (`queries/data-commands/`, `queries/differences-to-sql/`, `api/data-array/`) — possibly in
+   JS-rendered or repo-wiki content not retrieved.
 5. **BigQuery physical storage of `TIMESTAMP`** (UTC): the docs define it semantically as an
    absolute point independent of zones; the literal "stored in UTC" sentence was not
    captured from the page.

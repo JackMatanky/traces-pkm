@@ -141,7 +141,7 @@ job on exit 2.
 Existing stack: strict clippy (`[lints.clippy]` in
 [Cargo.toml](../../Cargo.toml) —
 `complexity`/`correctness`/`perf`/`suspicious` denied, `pedantic`/`style` warn,
-plus ~30 individually denied lints), `cargo-crap` + `cargo-tarpaulin`,
+plus ~30 individually denied lints), `cargo-crap` + `cargo-llvm-cov`,
 `cargo-mutants`, `cargo-deny`/`cargo-audit`/`gitleaks`, `nextest`, all behind
 mise tasks and `hk` gates ([mise.toml](../../mise.toml),
 [hk.pkl](../../hk.pkl)).

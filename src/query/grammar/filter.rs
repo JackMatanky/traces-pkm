@@ -608,6 +608,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::TzGuard;
 
         #[rstest]
         #[case::greater_than("rating > 5", &["high"])]
@@ -766,7 +767,13 @@ mod tests {
         }
 
         #[test]
-        fn evaluates_date_only_literal_at_midnight_utc() {
+        fn evaluates_a_date_only_literal_at_local_midnight() {
+            // A naive literal means the reader's zone: the boundaries here
+            // are local midnight in the pinned UTC+2 zone (2025-12-31T22:00Z
+            // through 2026-01-01T22:00Z), which still separates the two
+            // fixture instants.
+            TzGuard::set("Etc/GMT-2");
+
             let temp = tempfile::tempdir().expect("create temp dir");
             let p1 = temp.path().join("jan1.md");
             let p2 = temp.path().join("jan2.md");
@@ -810,6 +817,10 @@ mod tests {
 
         #[test]
         fn matches_calendar_days_via_mdate() {
+            // `mdate` is the mtime's local calendar date, so the expectation
+            // only holds in the pinned zone.
+            TzGuard::set("UTC");
+
             let temp = tempfile::tempdir().expect("create temp dir");
             let p1 = temp.path().join("jan1.md");
             let p2 = temp.path().join("jan2.md");

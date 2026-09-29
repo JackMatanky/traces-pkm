@@ -63,6 +63,14 @@ impl InlinkMap {
     /// Resolves note outlinks and non-note attachment targets. Multiple
     /// outlinks from the same source note to the same target collapse into one
     /// edge.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "part of the InlinkMap test/bench introspection surface, \
+                      gated the same as InlinkMap's own export"
+        )
+    )]
     #[inline]
     #[must_use]
     pub fn new(notes: &[Note], files: &[FileMeta]) -> Self {
@@ -124,6 +132,14 @@ impl InlinkMap {
     }
 
     /// Consumes the map into an iterator of owned `(target, sources)` pairs.
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "part of the InlinkMap test/bench introspection surface, \
+                      gated the same as InlinkMap's own export"
+        )
+    )]
     #[inline]
     pub fn into_entries(
         self,

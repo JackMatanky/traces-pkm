@@ -63,7 +63,14 @@ use common::{
 //                     Fixtures & Helpers                      //
 // ----------------------------------------------------------- //
 
-const SORT_STRESS_FILE_COUNTS: &[usize] = &[1_000, 5_000, 20_000, 40_000];
+/// Six log-spaced points spanning 1,000 to 40,000 notes, matching the 2x-step
+/// convention now used by `common::WORKSPACE_FILE_COUNTS` (criterion book,
+/// "Benchmarking With A Range Of Values"). The two largest former gaps
+/// (1K-5K, 5K-20K) are bisected at their geometric means. Clears
+/// `bench/model`'s `MIN_POINTS_FOR_TRUSTED_FIT=6` and `MIN_RESIDUAL_DOF=3`
+/// (the `COMBINED` model has 3 parameters) with zero slack, by design.
+const SORT_STRESS_FILE_COUNTS: &[usize] =
+    &[1_000, 2_000, 5_000, 10_000, 20_000, 40_000];
 const TOPK_LIMITS: &[i64] = &[10, 1_000];
 
 /// Replica of `SortKey::cmp`'s Number-vs-Number match arm, extracted to keep
@@ -135,9 +142,9 @@ fn shuffled_ratings(n: usize) -> Vec<f64> {
 /// isolate source-row construction, followed by `sort_only` (`rating`
 /// ascending) and `sort_only_desc`.
 ///
-/// Subtraction formula:
-/// - `sort_only - pages_unsorted`: Isolates key extraction, comparison, and row
-///   permutation from base query scan and row construction.
+/// Relative anchor:
+/// - Compare `sort_only` with `pages_unsorted` to estimate key extraction,
+///   comparison, and row permutation overhead above base row construction.
 ///
 /// Expected outcomes:
 /// - `pages_unsorted` scales linearly with row count.

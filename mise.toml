@@ -9,7 +9,9 @@
 rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
   "clippy",
   "rustfmt",
+  "llvm-tools-preview",
 ] }
+# Keep every `install_env.RUSTUP_TOOLCHAIN` below in sync with this version and rust-toolchain.toml.
 hk = "2.0.0"
 cargo-binstall = "latest"
 
@@ -25,7 +27,7 @@ cargo-deny = "latest"
 
 # -- Testing & Quality --
 "github:nextest-rs/nextest" = "latest"
-"cargo:cargo-tarpaulin" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:https://github.com/quality-gates/messrust" = { version = "tag:v0.1.15" }
 "cargo:mutarust" = "0.1.10"
@@ -37,6 +39,7 @@ cargo-deny = "latest"
 # -- Dev Experience --
 "cargo:cargo-watch" = "latest"
 "cargo:cargo-sweep" = "latest"
+"cargo:cargo-modules" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
 
 # -- Docs & ADRs --
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
@@ -52,6 +55,12 @@ experimental = true
 [env]
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
+# Coverage filename-exclusion regex, consumed by `coverage:lcov`/`coverage:html`
+# as cargo-llvm-cov's --ignore-filename-regex. Ported from the deleted
+# tarpaulin.toml exclude-files; keep in sync with .cargo/mutants.toml's
+# exclude globs. POSIX ERE only: no lookahead, no (?:...), no \d \w \s —
+# an invalid regex silently disables ALL exclusions (defaults included).
+COVERAGE_IGNORE_REGEX = 'src/main\.rs$|src/cli($|/)|src/(.*/)?error\.rs$'
 
 [task_config]
 global_inputs = ["mise.toml", "Cargo.lock", "clippy.toml"]
@@ -126,6 +135,141 @@ outputs = []
 cache = { enabled = false }
 run = "cargo watch -x check -x test"
 
+[tasks."modules:tree"]
+description = "Print the crate's module tree (`cargo modules structure`)"
+sources = ["@group:rust"]
+outputs = []
+cache = { enabled = false }
+env = { NO_COLOR = "1" }
+usage = '''
+flag "-d --depth <n>" help="Max depth from the crate root (`--max-depth`)"
+flag "-m --mod <module>" {
+  help "Focus the tree on one top-level module (`--focus-on`)"
+  long_help "Passes `--focus-on <module>`. Relative paths are auto-prefixed with `crate::` because cargo-modules 0.27 rejects unqualified paths: `-m index` and `-m index::codec` work as written; `crate::…`/`traces_pkm::…` paths pass through unchanged."
+}
+// `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+flag "--cfg-test" help="Analyze with #[cfg(test)] enabled"
+arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules structure` (e.g. `--sort-by kind`, `--no-fns`)"
+'''
+run = '''
+#!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
+set -euo pipefail
+# `--lib` is required: the package has both [lib] and [[bin]], and
+# cargo-modules errors with "Multiple targets present in package" otherwise.
+declare -a cmd=(cargo modules structure --lib)
+[[ -n "${usage_depth:-}" ]] && cmd+=(--max-depth "${usage_depth}")
+# cargo-modules 0.27 rejects any path that isn't crate-absolute:
+# `-m index` -> `Error: no items found matching use tree "index"`.
+# Qualify unless already absolute (`crate::` or the package name); a leading
+# `::` is stripped because upstream's sanitizer never trims it (utils.rs:19).
+pkg="$(sed -n 's/^name = "\(.*\)"$/\1/p' Cargo.toml | head -1 | tr '-' '_')"
+focus="${usage_mod:-}"
+if [[ -n "$focus" ]]; then
+  focus="${focus#::}"
+  case "$focus" in
+    crate::*|"${pkg}"::*) ;;
+    *) focus="crate::${focus}" ;;
+  esac
+fi
+[[ -n "$focus" ]] && cmd+=(--focus-on "$focus")
+[[ "${usage_cfg_test:-false}" == "true" ]] && cmd+=(--cfg-test)
+declare -a extra=()
+# usage_args is shell-quoted (var=#true arg); eval parses it into the extra array.
+eval "extra=(${usage_args:-})"
+cmd+=("${extra[@]+"${extra[@]}"}")
+exec "${cmd[@]}"
+'''
+
+[tasks."modules:orphans"]
+description = "Detect source files not wired into the module tree (`cargo modules orphans`); exits non-zero when orphans are found"
+sources = ["@group:rust"]
+outputs = []
+cache = { enabled = false }
+env = { NO_COLOR = "1" }
+usage = '''
+flag "--cfg-test" help="Analyze with #[cfg(test)] enabled"
+arg "[args]" var=#true help="Extra arguments forwarded to `cargo modules orphans` (`--lib`/`--deny` are applied automatically — don't repeat them)"
+'''
+run = '''
+#!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
+set -euo pipefail
+# `--lib` required (same multi-target rule as modules:tree); `--deny` always on
+# so this task doubles as a check: non-zero exit when orphans exist.
+declare -a cmd=(cargo modules orphans --lib --deny)
+[[ "${usage_cfg_test:-false}" == "true" ]] && cmd+=(--cfg-test)
+declare -a extra=()
+# usage_args is shell-quoted (var=#true arg); eval parses it into the extra array.
+eval "extra=(${usage_args:-})"
+cmd+=("${extra[@]+"${extra[@]}"}")
+exec "${cmd[@]}"
+'''
+
+[tasks."modules:deps"]
+description = "Print the module dependency graph as DOT (`cargo modules dependencies`)"
+sources = ["@group:rust"]
+outputs = []
+cache = { enabled = false }
+env = { NO_COLOR = "1" }
+usage = '''
+flag "-d --depth <n>" help="Max depth from the crate root (`--max-depth`)"
+flag "-m --mod <module>" {
+  help "Focus the graph on one module (`--focus-on`)"
+  long_help "Passes `--focus-on <module>`. Relative paths are auto-prefixed with `crate::` (see modules:tree): `-m index` and `-m index::codec` work as written. Conflicts with `--acyclic`."
+}
+// `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+flag "--acyclic" {
+  help "Run cargo-modules graph cycle check (conflicts with -m)"
+  long_help """
+  Runs cargo-modules' rust-analyzer graph-model cycle check and conflicts with `-m`. cargo-modules currently reports at least one struct/impl graph-model cycle in this crate, not a real traces-pkm code cycle; it is informational and MUST NOT be used as a gate.
+  """
+}
+arg "[args]" var=#true {
+  help "Extra arguments for `cargo modules dependencies` (`--lib` is already applied; do not repeat it)"
+  long_help """
+  `--lib` is already applied and must not be repeated. Forwards options such as `--no-externs`, `--no-uses`, and `--layout dot`.
+
+  cargo-modules 0.27 panics if a consumer closes DOT stdout early (for example, `mise run modules:deps | head`). For previewing or inspection, capture first:
+    mise run modules:deps > module-deps.dot
+    head -5 module-deps.dot
+
+  This does not apply to full consumers such as Graphviz.
+  """
+}
+'''
+run = '''
+#!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
+set -euo pipefail
+# `--lib` is required: the package has both [lib] and [[bin]] (same rule as
+# modules:tree / modules:orphans).
+declare -a cmd=(cargo modules dependencies --lib)
+[[ -n "${usage_depth:-}" ]] && cmd+=(--max-depth "${usage_depth}")
+# same focus qualification as modules:tree (see above)
+pkg="$(sed -n 's/^name = "\(.*\)"$/\1/p' Cargo.toml | head -1 | tr '-' '_')"
+focus="${usage_mod:-}"
+if [[ -n "$focus" ]]; then
+  focus="${focus#::}"
+  case "$focus" in
+    crate::*|"${pkg}"::*) ;;
+    *) focus="crate::${focus}" ;;
+  esac
+fi
+[[ -n "$focus" ]] && cmd+=(--focus-on "$focus")
+[[ "${usage_acyclic:-false}" == "true" ]] && cmd+=(--acyclic)
+declare -a extra=()
+# usage_args is shell-quoted (var=#true arg); eval parses it into the extra array.
+eval "extra=(${usage_args:-})"
+cmd+=("${extra[@]+"${extra[@]}"}")
+exec "${cmd[@]}"
+'''
+
 # ------------------------------------------------------------- #
 #                     Formatting & Linting                      #
 # ------------------------------------------------------------- #
@@ -179,19 +323,25 @@ run = [{ tasks = ["audit:deny", "audit:sec"] }]
 
 [tasks."coverage:lcov"]
 description = "Generate LCOV coverage report for CRAP analysis"
-sources = ["@group:rust", "tarpaulin.toml"]
+sources = ["@group:rust"]
 outputs = ["lcov.info"]
-run = "cargo tarpaulin --workspace --out lcov"
+# TOML single quotes are consumed by TOML; the task runs under `sh -c`, so the
+# shell expands "$COVERAGE_IGNORE_REGEX". `--lcov` conflicts with `--html`, so
+# this stays a separate run from coverage:html. Do NOT add --no-clean: stale
+# *.profraw from prior runs would merge into the report.
+run = 'cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"'
 
 [tasks."coverage:html"]
 description = "Generate HTML coverage report"
-sources = ["@group:rust", "tarpaulin.toml"]
-outputs = ["tarpaulin-report.html"]
+sources = ["@group:rust"]
+outputs = ["target/llvm-cov/html"]
 usage = '''
 flag "-m --mod <module>" {
   help "Run coverage for a specific module only"
   long_help """
-  Scopes Tarpaulin coverage to files under `src/<module>/**` (e.g. `-m index`).
+  Scopes coverage to files under `src/<module>/**` (e.g. `-m index`);
+  every other path under `src/` is excluded from the report.
+  Globally ignored paths (see COVERAGE_IGNORE_REGEX) remain excluded.
   """
 }
 // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
@@ -199,16 +349,46 @@ complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
 '''
 run = '''
 #!/bin/bash
+# usage_* vars are injected by mise from the `usage` spec above.
+# shellcheck disable=SC2154
 set -euo pipefail
-declare -a args=(--workspace --out html)
+
+# Start from the shared static exclusions; cargo-llvm-cov appends its default
+# ignores (rustc/registry/target/tests...) to whatever we pass here.
+regex="${COVERAGE_IGNORE_REGEX:?}"
+
 if [[ -n "${usage_mod:-}" ]]; then
   if [[ ! -d "src/${usage_mod}" ]]; then
     echo "coverage: unknown module: ${usage_mod}" >&2
     exit 2
   fi
-  args=(--include-files "src/${usage_mod}/**" --out html)
+  # Globally ignored modules (COVERAGE_IGNORE_REGEX) can never produce a
+  # report — reject instead of silently emitting an empty one. grep -E shares
+  # the POSIX ERE flavor of the llvm-cov regex.
+  if printf 'src/%s\n' "${usage_mod}" | grep -Eq "${COVERAGE_IGNORE_REGEX}"; then
+    echo "coverage: module is excluded from coverage by COVERAGE_IGNORE_REGEX: ${usage_mod}" >&2
+    exit 2
+  fi
+  # llvm-cov has no include-file flag, so scope TO the module by excluding
+  # every sibling directory under src/ plus all src-root .rs files.
+  # POSIX ERE only: no lookahead — enumerate exclusions positively.
+  declare -a exclude=()
+  for entry in src/*; do
+    [[ -d "${entry}" ]] || continue
+    name="${entry#src/}"
+    [[ "${name}" == "${usage_mod}" ]] && continue
+    exclude+=("src/${name}"'($|/)')
+  done
+  exclude+=('src/[^/]+\.rs$')
+  # exclude must stay non-empty: bash 3.2 + set -u rejects expanding "${exclude[*]}" on an empty array
+  regex="$(IFS='|'; echo "${exclude[*]}")|${regex}"
 fi
-cargo tarpaulin "${args[@]}"
+
+# `--html` writes to the default target/llvm-cov/html/ (rm -rf'd each run, so
+# directory-output freshness settles). `--lcov` and `--html` conflict.
+cargo llvm-cov nextest --workspace --all-features \
+  --html \
+  --ignore-filename-regex "${regex}"
 '''
 
 [tasks.coverage]
@@ -218,7 +398,9 @@ depends = ["coverage:html"]
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
 depends = ["coverage:lcov"]
-sources = ["@group:rust", "tarpaulin.toml"]
+# `.cargo-crap.toml` changes CRAP output (threshold/excludes) and must be a
+# declared input for cache correctness; bare paths resolve from the repo root.
+sources = ["@group:rust", ".cargo-crap.toml"]
 outputs = ["lcov.info"]
 run = "cargo crap --lcov lcov.info"
 

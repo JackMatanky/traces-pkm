@@ -47,8 +47,9 @@ mod common;
 
 use common::{
     PROFILE_CONTRAST_COUNTS, WORKSPACE_FILE_COUNTS,
+    cache::{drop_page_cache, index_db_path},
     content::ProjectShape,
-    project::{build_index, setup_persisted_project},
+    project::{build_index, create_project, setup_persisted_project},
 };
 
 // ----------------------------------------------------------- //
@@ -148,6 +149,43 @@ fn bench_index_persist(c: &mut Criterion) {
     }
     group.finish();
 }
+/// Measures synthetic project fixture construction cost in isolation.
+///
+/// Parameters: varies note count across [`WORKSPACE_FILE_COUNTS`]; reports note
+/// throughput. Timed work creates a fresh temporary project tree and writes all
+/// generated note files. Index building and persistence are intentionally not
+/// included.
+///
+/// Expected outcomes:
+/// - Cost scales roughly linearly with generated file count.
+///
+/// Unexpected outcomes:
+/// - Super-linear growth at large tiers, indicating fixture generation or
+///   filesystem setup is dominating filesystem-backed benchmark runtime.
+fn bench_create_project(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fixtures/create_project");
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
+    );
+    for &n in WORKSPACE_FILE_COUNTS {
+        if n >= 5_000 {
+            group.measurement_time(Duration::from_secs(2));
+            group.sample_size(10);
+        }
+        group.throughput(Throughput::Elements(
+            u64::try_from(n).expect("note count fits u64"),
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            b.iter_with_large_drop(|| {
+                let temp = create_project(n, ProjectShape::Plain);
+                black_box(temp.path());
+                temp
+            });
+        });
+    }
+    group.finish();
+}
+
 /// Measures full persistence cost across contrasting note shapes.
 ///
 /// Parameters: varies note shape across [`PERSIST_CONTRAST_SHAPES`] and size
@@ -158,12 +196,11 @@ fn bench_index_persist(c: &mut Criterion) {
 /// frontmatter, and list items across [`PROFILE_CONTRAST_COUNTS`].
 ///
 /// Expected outcomes:
-/// - Persistence time scales with the total number of table rows (lists, links,
-///   notes) inserted into redb.
+/// - Higher constant factors for dense/rich/list-heavy shapes, but scaling
+///   stays near-linear.
 ///
 /// Unexpected outcomes:
-/// - List-heavy or dense link profiles growing super-linearly, indicating table
-///   lock contention or disproportionate index serialization overhead.
+/// - Shape-specific super-linear growth or unusually high constant factors.
 fn bench_index_persist_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("WorkspaceIndex::persist/profiles");
     group.plot_config(
@@ -290,8 +327,9 @@ fn bench_load_list_heavy(c: &mut Criterion) {
         PlotConfiguration::default().summary_scale(AxisScale::Logarithmic),
     );
     for &n in PROFILE_CONTRAST_COUNTS {
-        let (_temp, indexer) =
+        let (temp, indexer) =
             setup_persisted_project(n, ProjectShape::ListHeavy);
+        let db_path = index_db_path(temp.path());
         let list_rows = n.saturating_mul(20);
         group.throughput(Throughput::Elements(
             u64::try_from(list_rows).expect("list row count fits u64"),
@@ -301,17 +339,21 @@ fn bench_load_list_heavy(c: &mut Criterion) {
             group.sample_size(15);
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter_with_large_drop(|| {
-                let index = indexer.load().expect("load index");
-                let count: usize = index
-                    .entries()
-                    .iter()
-                    .filter_map(traces_pkm::FileEntry::note)
-                    .map(|note| note.lists().len())
-                    .sum();
-                black_box(count);
-                black_box(index)
-            });
+            b.iter_batched(
+                || drop_page_cache(&db_path).expect("drop index db page cache"),
+                |()| {
+                    let index = indexer.load().expect("load index");
+                    let count: usize = index
+                        .entries()
+                        .iter()
+                        .filter_map(traces_pkm::FileEntry::note)
+                        .map(|note| note.lists().len())
+                        .sum();
+                    black_box(count);
+                    black_box(index)
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
     group.finish();
@@ -360,7 +402,8 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = common::criterion_config();
-    targets = bench_index_persist, bench_index_persist_profiles,
-        bench_index_load, bench_load_list_heavy, bench_concurrent_operations
+    targets = bench_index_persist, bench_create_project,
+        bench_index_persist_profiles, bench_index_load, bench_load_list_heavy,
+        bench_concurrent_operations
 }
 criterion_main!(benches);

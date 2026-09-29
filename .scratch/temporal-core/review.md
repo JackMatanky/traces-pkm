@@ -253,3 +253,9 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 - `research/rust-temporal-ecosystem.md` — chrono/time/jiff/Arrow/DataFusion; backs: `MappedLocalTime` semantics + gap/error conflation, chrono `Days`/`Months` vs `TimeDelta` regime split, Arrow Duration-vs-Interval, chrono strftime as the de-facto Rust dialect, known chrono critiques (RUSTSEC, serde history).
 
 **Post-v4 evolution:** the DST-ambiguity policy (the one open item below) is now **settled** — ambiguous → `.earliest()`, nonexistent → shift forward (see §4 B1) — and null ordering is **decided** (keep current behavior + ADR, §3). Everything else is decided. Post-v4: external prior-art research (`research/`) and the chrono-API audit added the local-wall-clock calendar frame, day-as-calendar, the gap-verified resolver, and the chrono format/week delegation mandates (spec 'Implementation Decisions').
+
+**Post-v4 decisions (defined in `spec.md`):**
+- **D12** — calendar frame = local wall clock: day/month/year application round-trips `DateTime<Utc>` → local naive → UTC through the resolver; sub-day units remain exact on the instant.
+- **D13** — day is a calendar application unit; identity stays seconds-based (`1d == 24h` as values, may shift differently across DST).
+- **D14** — gap-verified `MappedLocalTime` resolver: ambiguous → earliest, true gap → shift forward, tz-data/OS `None` → error.
+- **Serde channel** — `Serialize` emits explicit RFC3339 `…Z` via `to_rfc3339_opts(SecondsFormat::Secs, use_z=true)`; human `Display` remains local-naive. The local→UTC rule therefore applies only to naive user-authored input, while serialized instants round-trip exactly.
