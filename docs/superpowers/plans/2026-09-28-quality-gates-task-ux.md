@@ -717,9 +717,10 @@ Expected: `2`, `0`, then the current minimal usage. Preserve both rc values afte
 - [ ] **Step 2: Replace the `usage = '…'` line (mise.toml line 228) with a multiline TOML basic-string spec**
 
 ```toml
-usage = 'arg "[args]" var=#true {
+usage = """
+arg "[args]" var=#true {
   help "Extra arguments forwarded to messrust (e.g. --strict, --only Rule, --reportfile f.json)"
-  long_help """
+  long_help \"""
   Advisory static analysis with messrust — manual, never wired into verify/hk/CI.
 
   Workflow:
@@ -734,8 +735,9 @@ usage = 'arg "[args]" var=#true {
   --reportfile FILE, --ignore-tests (task always passes it),
   --ignore-violations-on-exit / --ignore-errors-on-exit (scripting escapes),
   --minimumpriority/--maximumpriority N, --suffixes ext, --color, --verbose
-  """
-}'
+  \"""
+}
+"""
 ```
 
 If mise rejects the multiline spec (`invalid usage spec` warning or `--help` failing), fall back to keeping the original one-line `usage` and moving the workflow text into Task 5's doc section only — then note the fallback in the commit message.
