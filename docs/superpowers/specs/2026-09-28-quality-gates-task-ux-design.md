@@ -212,3 +212,26 @@ Parse-level cases are free (no cargo). Full matrix:
 - **mise version drift**: spike results are pinned to 2026.9.15; a mise
   upgrade that changes usage semantics would surface in the parse-level
   matrix first.
+
+---
+
+## Post-implementation corrections (2026-09-29)
+
+Append-only addendum recorded while implementing plan
+`2026-09-28-quality-gates-task-ux.md` (all seven tasks landed, matrix
+34/34, `mise run verify` green). The approved text above stands as
+written; where execution disproved or amended a claim, the correction is
+below. Full deviation record lives in the plan's deviation notes.
+
+| Spec claim | Correction (as implemented) |
+| --- | --- |
+| A1 declares `--package <pkg>` and `--workspace` | mutarust has no such flags — cargo concepts forwarded via `--test-flags`/`--test-recursive`; both intentionally absent from the declared surface (reconciliation noted at spec→plan conversion) |
+| A2 `--test-flags` keeps "existing tailored text" | Reworded with the passthrough concept retired: `mutants: task owns --test-flags; drop it from the command line` |
+| A3 matrix rows | Two tightening rows added beyond this table (tightening needs no sign-off per A3): `--timeout`⊥`--exec-timeout` (cli.md:237–238 alias; preserves the old cascade) and `--silent`⊥`--no-silent` (cli.md:65–66 cannot-combine; both orders matrix-tested) |
+| A3 `--git-diff-base` = `requires="--git-diff"` alone | Insufficient in mise 2026.9.15: a declared `default` satisfies `requires`, and *any* explicit value (including `--no-git-diff`) satisfies it. Implemented as no-`default` on `--git-diff` (absence → rc 1) plus a script backstop in `reject_bad_targets` (explicit `--no-git-diff` + base → rc 2, old cascade message) |
+| A3 inspect conflicts in "block form, one selector per line, ≤80 cols" | KDL node arguments cannot wrap; implemented as single-line 34-selector lists, validated by the help render + matrix. `--no-git-diff` added to both inspect lists per the negate rule below A3 |
+| A3 negate rule "reject in either spelling" for `--silent`/`--no-silent` | Held only at mutarust rc 3 before; now declared as a bidirectional `conflicts` pair (rc 1) |
+| A4 scan case: "`-- --workers 4`" → rc 2 | Void: mise strips `--` before usage parsing, so a declared flag after `--` parses normally → rc 0 (bounded matrix case). Undeclared post-`--` tokens still exit 2 via the scan; a *second* `--` also leaves following tokens in scan range (matrix case) |
+| A4 generic message `flag-like token in target list: <tok> …` | Implemented as `unknown or misplaced flag: <tok> (declared flags go before --; see 'mise run mutants --help')` — same intent, clearer text |
+| A4 implies a bare `--` can appear in the token scan | It cannot (mise strips every separator before the script runs — verified incl. the double-`--` edge); the scan's `--)` arm was dead code and was removed post-review |
+| A5 keep/delete function names (`build_static_target_flags`, `build_mutarust_args`, `run_inspect_mode`, `run_count_mode`, …) | Partially fictional — they do not exist in the file; implementation followed the actual structure (`main` → `build_inspect_args` \| `build_static_flags` + `build_target_flags` + `build_gate_flags` + `build_declared_flags`) |
