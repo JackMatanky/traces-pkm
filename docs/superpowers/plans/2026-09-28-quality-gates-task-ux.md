@@ -571,6 +571,11 @@ check 2 mutants -- -- -- --dry-run -f src/lib.rs --match __zz_no_match__
 # tokens still exit 2 via the scan (covered above).
 check 0 mutants --list-files src/lib.rs
 check 0 mutants -- --workers 4 -f src/lib.rs --match __zz_no_match__
+# equals-form value parsing on the happy path (spec §Verification 3)
+check 0 mutants --workers=4 -f src/lib.rs --match __zz_no_match__
+# sibling inspect flags pair legally (excluded from both conflict lists);
+# list-files wins, mutarust accepts the pair
+check 0 mutants --list-files --print-ast -f src/lib.rs
 # summary
 if [[ ${#fails[@]} -eq 0 ]]; then echo "MATRIX: ALL PASS ($count cases)"; else
   printf 'MATRIX FAILURES:\n'; printf '  %s\n' "${fails[@]}"; fi
@@ -580,7 +585,7 @@ if [[ -n "$(git status --porcelain mutarust-baseline.json)" ]]; then
 fi
 ```
 
-Expected: `MATRIX: ALL PASS (35 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
+Expected: `MATRIX: ALL PASS (37 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
 
 - [x] **Step 12: `hk` on the edited file + commit**
 
