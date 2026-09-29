@@ -40,10 +40,10 @@ The desired process is:
 
 ```text
 behaviour
-  → provisional decomposition
-  → coherent knowledge becomes visible
-  → latent concept
-  → deliberate consolidation behind a seam
+→ provisional decomposition
+→ coherent knowledge becomes visible
+→ latent concept
+→ deliberate consolidation behind a seam
 ```
 
 If decomposition reveals no independent concept and does not improve knowledge
@@ -121,8 +121,8 @@ policy that gives it meaning.
 Prefer designs where the code enforcing an invariant has direct authority over
 the state involved.
 
-A utility location is weak ownership when behaviour actually belongs to a
-domain concept elsewhere.
+A utility location is weak ownership when behaviour actually belongs to a domain
+concept elsewhere.
 
 ## Model an implicit concept
 
@@ -212,6 +212,51 @@ the parent.
 A locally elegant child that leaves its parent equally complicated may not earn
 an independent seam.
 
+## Compare the transformation
+
+For a substantial redesign, use the metrics selected during discovery from
+[`METRICS.md`](METRICS.md).
+
+Typical relationships are:
+
+```text
+deeper child seam
+→ parent IKL decreases
+→ KC becomes positive
+
+implementation detail contained
+→ L decreases
+
+seam repaired
+→ BR decreases
+
+change localized
+→ PD decreases for the frozen scenario
+
+fragmented architecture replaced
+→ DD records superseded structure
+```
+
+Do not require every redesign to affect every metric.
+
+The design claim determines the evidence required.
+
+A transformation that introduces a regression can still be correct. Make the
+trade-off explicit instead of hiding it inside an aggregate score.
+
+For example:
+
+```text
+ITE: 1.0 → 0.0
+IKL:   3 → 5
+```
+
+may be justified when eliminating dangerous transitions is worth two additional
+caller-visible concepts.
+
+The comparison should explain whether the same benefit could be obtained with
+less interface burden.
+
 ## Protect sibling isolation
 
 When a parent contains several child modules, inspect whether their knowledge is
@@ -243,10 +288,10 @@ A seam earns its existence partly by containing such knowledge.
 
 ## Validate during the transformation
 
-Validation is part of each deepening decision rather than a final independent
-phase.
+Validation protects the design claim; it does not independently define quality.
 
-Use [`TOOLING.md`](TOOLING.md) when mechanical evidence can answer a question.
+Use [`METRICS.md`](METRICS.md) for the comparison and [`TOOLING.md`](TOOLING.md)
+for mechanical evidence.
 
 Check, as appropriate:
 
@@ -336,5 +381,5 @@ A candidate is resolved when the resulting design explains:
 - what was consolidated, replaced, relocated, or removed
 - what deletion dividend was realized or intentionally deferred
 - what Rust representation is justified
-- what validation evidence supports the result
+- what before/after evidence supports the result
 - what trade-offs remain

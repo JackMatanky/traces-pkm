@@ -27,6 +27,41 @@ Before choosing a construct, state:
 
 Then compare Rust representations.
 
+## Use metrics selectively
+
+Some representation decisions admit stronger comparisons. Their definitions live
+in [`METRICS.md`](METRICS.md).
+
+Use them only when they test the actual design claim:
+
+```text
+enum / closed-state redesign
+→ ISR
+
+typestate or state-machine redesign
+→ ITE + IKL
+
+trait seam
+→ V + IKL
+
+generic abstraction propagated through parents
+→ GPD
+
+visibility redesign
+→ VE
+
+new child abstraction
+→ IKL + KC
+
+error redesign
+→ IKL error atoms + L
+```
+
+A type-system improvement is strongest when it removes invalid states or caller
+knowledge without exporting equivalent complexity elsewhere.
+
+Do not introduce an elaborate representation merely to improve a metric.
+
 ## Ordinary function
 
 Prefer an ordinary function when:
@@ -68,8 +103,8 @@ Prefer moving validity to construction when:
 - repeated runtime checks can disappear
 - invalid values should not enter the deeper module
 
-Keep external parsing or transport representation outside the validated
-domain type where that preserves a cleaner seam.
+Keep external parsing or transport representation outside the validated domain
+type where that preserves a cleaner seam.
 
 ## Struct
 
@@ -96,13 +131,13 @@ Enums are especially useful when they replace:
 Make variants represent semantic alternatives rather than incidental execution
 steps.
 
+Where the state space is exactly countable, compare `ISR` before and after.
+
 ## Typestate
 
-Consult `rust-skills` typestate guidance when legal operations materially
-depend on state and invalid transitions are both meaningful and worth preventing
-at compile time.
-
-Evaluate the caller cost carefully.
+Consult `rust-skills` typestate guidance when legal operations materially depend
+on state and invalid transitions are both meaningful and worth preventing at
+compile time.
 
 Typestate is strongest when:
 
@@ -115,8 +150,9 @@ Prefer an ordinary enum or validated runtime state when typestate would spread
 generic parameters, marker types, or conversion ceremony through unrelated
 callers.
 
-Compile-time safety that makes the parent interface substantially harder to use
-can reduce depth.
+Where transitions are exactly enumerable, compare `ITE`. Compare the gain
+against `IKL` so compile-time safety is not purchased with disproportionate
+caller complexity.
 
 ## Trait
 
@@ -144,6 +180,10 @@ Consult `rust-skills` for:
 
 Keep trait vocabulary at the lowest level that needs the variation.
 
+Record `V` when variation is part of the justification. A test double counts
+only when the dependency category makes that seam meaningful under
+`codebase-design`.
+
 ## Generics
 
 Use generics where callers genuinely need parametric variation or static
@@ -159,6 +199,9 @@ A generic abstraction is weak when:
 - callers must understand implementation variation they do not care about
 
 Prefer concrete types until variation produces actual leverage.
+
+Use `GPD` when a generic parameter appears to leak implementation variation
+through architectural levels that do not semantically use it.
 
 ## Ownership and borrowing
 
@@ -195,6 +238,9 @@ Use re-exports intentionally to present the chosen interface.
 
 Broadening visibility to make an internal decomposition convenient is evidence
 that ownership or seam placement may be wrong.
+
+Use `VE` when unnecessarily broad visibility is part of the suspected seam
+problem.
 
 ## Errors
 
@@ -251,7 +297,7 @@ For non-trivial choices, compare alternatives against:
 - semantic precision
 - invalid states prevented
 - caller knowledge
-- seam size
+- seam depth
 - parent simplification
 - ownership clarity
 - error clarity

@@ -133,7 +133,7 @@ Signals include:
 - repeated validation of the same value
 - boolean or `Option` combinations representing closed states
 - invalid states representable in ordinary data
-- repeated state transition conditionals
+- repeated state-transition conditionals
 - operations acting on the same conceptual subset of state
 - repeated conversions around one semantic boundary
 - data and operations jointly enforcing one invariant
@@ -235,21 +235,66 @@ many tiny modules
 → do they hide distinct knowledge, or fragment one responsibility?
 ```
 
+## Establish a comparison basis
+
+Measure only after a candidate has a concrete design hypothesis.
+
+Use [`METRICS.md`](METRICS.md) to choose the dimensions that correspond to that
+hypothesis.
+
+Examples:
+
+```text
+"Freshness details leak into Refresh"
+→ IKL, L
+
+"Callers bypass Index to reach storage"
+→ BR
+
+"Changing serialization modifies several parent layers"
+→ PD for a frozen serialization-change scenario
+
+"These wrappers may be one shallow concern"
+→ deletion test + DD
+
+"This boolean state representation permits impossible combinations"
+→ ISR
+
+"This typestate proposal prevents invalid transitions"
+→ ITE + IKL
+
+"This storage type propagates through unrelated generic parents"
+→ GPD
+```
+
+Do not gather values merely because they are available.
+
+For scenario-based metrics, define the scenario before designing the
+replacement. Keep the scenario identical when comparing alternatives.
+
 ## Candidate record
 
 For each material candidate, record:
 
-- **scope** — where it appears
-- **evidence** — observed behaviour or relationship
-- **knowledge** — invariant, policy, state, mechanism, or vocabulary involved
-- **current seam** — who must know that knowledge now
-- **direction** — decompose, consolidate, collapse, redesign, relocate, model,
-  replace, or remove
-- **parent effect** — what should become simpler above it
-- **deletion dividend** — what may cease to exist
-- **uncertainty** — what remains to inspect
+```text
+scope:
+evidence:
+knowledge:
+current seam:
+direction:
+parent effect:
+deletion dividend hypothesis:
+uncertainty:
 
-Do not choose a Rust pattern merely to complete the record.
+comparison:
+  applicable metrics:
+  baseline:
+  frozen scenarios:
+```
+
+Leave `comparison` empty when measurement would not clarify the decision.
+
+The record describes the design problem before selecting a Rust pattern.
 
 ## Completion criterion
 
