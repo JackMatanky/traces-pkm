@@ -113,9 +113,9 @@ impl<'a> InlineValueParser<'a> {
 
     /// Parses a double-quoted string atom at `pos`.
     ///
-    /// A backslash escapes the following character verbatim, so `\"` includes
-    /// a literal quote. Returns `None` if `pos` is not a `"` or the string has
-    /// no closing, unescaped `"`.
+    /// A backslash escapes the following character verbatim, so `\"` includes a
+    /// literal quote. Returns `None` if `pos` is not a `"` or the string has no
+    /// closing, unescaped `"`.
     fn parse_quoted_string_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('"')?;
         let mut value = String::new();

@@ -18,8 +18,8 @@ static DEFAULT_FRONTMATTER_CONFIG: std::sync::LazyLock<FrontmatterConfig> =
 
 /// Borrowed input container for [`super::parse_markdown`].
 ///
-/// Pairs the source text, path, and configuration settings so parsing can
-/// run without allocating or cloning configuration tables.
+/// Pairs the source text, path, and configuration settings so parsing can run
+/// without allocating or cloning configuration tables.
 #[derive(Clone, Debug)]
 pub struct MarkdownParserInput<'a> {
     /// Project-relative path of the note being parsed.

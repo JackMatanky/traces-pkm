@@ -19,10 +19,10 @@ use crate::{DateValue, DelimiterType, FieldKey, Tag, note::NoteFieldValue};
 
 /// Extracts inline fields and tags from a parser scan buffer.
 ///
-/// `has_marker` controls whether [`Self::extract_fields`] recognizes task
-/// emoji shorthand fields (dates, priority); [`Self::extract_tags`] is
-/// unconditional on it. Both methods return flat token lists in encounter
-/// order; the caller aggregates them into an `IndexMap`.
+/// `has_marker` controls whether [`Self::extract_fields`] recognizes task emoji
+/// shorthand fields (dates, priority); [`Self::extract_tags`] is unconditional
+/// on it. Both methods return flat token lists in encounter order; the caller
+/// aggregates them into an `IndexMap`.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct InlineTokenLexer {
     has_marker: bool,

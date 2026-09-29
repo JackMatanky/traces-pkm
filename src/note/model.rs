@@ -15,9 +15,9 @@ use crate::{FieldKey, FieldKeyRef, Tag};
 
 /// A parsed Markdown note.
 ///
-/// Stores page-level frontmatter, list items in document order, outgoing
-/// links, inline fields, and tags. [`Self::tasks`] filters stored list items
-/// to tasks instead of duplicating them.
+/// Stores page-level frontmatter, list items in document order, outgoing links,
+/// inline fields, and tags. [`Self::tasks`] filters stored list items to tasks
+/// instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {
     #[serde(with = "crate::path::codec")]
