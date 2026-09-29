@@ -637,7 +637,7 @@ Expected: rc 0 — the branch changes touch no `src/` lines, so mutarust selects
 out=$(mise run --skip-deps mutants --list-mutators 2>&1); echo "rc=$?"; printf '%s\n' "$out" | grep -c 'statement/'
 ```
 
-Expected: rc 0, count > 10 (mutator names listed).
+Expected: rc 0, count = 4 (`statement/*` — mutarust 0.1.10 has only 4 statement mutators; 33 names total. Verified: raw `mutarust --list-mutators` also returns 4, so this is taxonomy, not task fallout. Original `> 10` expectation was a plan-text error, corrected after the Task 2 run).
 
 - [ ] **Step 5: Commit any fallout fixes (or skip when clean)**
 
