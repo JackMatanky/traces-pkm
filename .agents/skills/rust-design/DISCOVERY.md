@@ -153,7 +153,7 @@ Look for:
 - parents coordinating child ordering requirements
 - storage, serialization, hashing, protocol, or framework types escaping upward
 - child-specific failures leaking through unrelated parent interfaces
-- external callers importing descendants directly
+- callers bypassing an intended seam through descendant imports
 - broad visibility compensating for unclear ownership
 - tests manipulating internals across the intended seam
 - sibling modules coupled through implementation state
@@ -174,9 +174,13 @@ Look for:
 - traits or generic parameters without meaningful variation
 - conversions whose source or destination can disappear
 - wrappers preserved after earlier redesigns
-- unreachable or bypassed code
+- apparently unreachable or bypassed code
 - dependencies used only by obsolete structure
 - duplicated configuration or policy
+
+Confirm reachability across `cfg` and feature combinations, macro-generated uses,
+and public downstream callers before proposing removal. A direct descendant import
+may be legitimate when it is itself an intended entry point.
 
 Removal is a candidate transformation, not deferred cleanup.
 
@@ -235,77 +239,38 @@ many tiny modules
 → do they hide distinct knowledge, or fragment one responsibility?
 ```
 
-## Establish a comparison basis
+## Evidence for a candidate
 
-Measure only after a candidate has a concrete design hypothesis.
-
-Use [`METRICS.md`](METRICS.md) to choose the dimensions that correspond to that
-hypothesis.
-
-Examples:
-
-```text
-"Freshness details leak into Refresh"
-→ IKL, L
-
-"Callers bypass Index to reach storage"
-→ BR
-
-"Changing serialization modifies several parent layers"
-→ PD for a frozen serialization-change scenario
-
-"These wrappers may be one shallow concern"
-→ deletion test + DD
-
-"This boolean state representation permits impossible combinations"
-→ ISR
-
-"This typestate proposal prevents invalid transitions"
-→ ITE + IKL
-
-"This storage type propagates through unrelated generic parents"
-→ GPD
-```
-
-Do not gather values merely because they are available.
-
-For scenario-based metrics, define the scenario before designing the
-replacement. Keep the scenario identical when comparing alternatives.
+First record the concrete caller knowledge, leaked representation, misplaced
+policy, or change path behind the concern. Use [`METRICS.md`](METRICS.md) only
+if a comparison could change the design decision. Freeze any representative
+change scenario before comparing alternatives, and preserve the same basis when
+an implementation is later measured.
 
 ## Candidate record
 
-For each material candidate, record:
+For each consequential candidate found in the inspected region, record:
 
 ```text
-scope:
-evidence:
-knowledge:
-current seam:
-direction:
-parent effect:
-deletion dividend hypothesis:
+scope and inspected neighbours:
+evidence and current seam:
+knowledge or responsibility at issue:
+proposed direction and parent effect (if a parent exists):
+what could become removable (if anything):
 uncertainty:
-
-comparison:
-  applicable metrics:
-  baseline:
-  frozen scenarios:
+optional comparison (current evidence, frozen scenario, counting basis):
 ```
 
-Leave `comparison` empty when measurement would not clarify the decision.
-
-The record describes the design problem before selecting a Rust pattern.
+A review records expected effects as predictions. An implementation may later
+add observations using the same comparison basis. Describe the design problem
+before selecting a Rust pattern.
 
 ## Completion criterion
 
-Discovery is complete for the investigated scope when every material candidate
-has either:
-
-- been carried forward with concrete evidence and enough context to reason about
-  its seam, or
-- been dismissed because the apparent smell does not correspond to a design
-  problem
-
-and both expansion and compression/removal candidates have been considered.
+Discovery is complete for the inspected region when consequential candidates
+found there are carried forward with evidence or dismissed with a reason, both
+expansion and compression/removal have been considered, and the adjacent callers
+or owners checked are named. Expand the region when evidence crosses its
+boundary. Record unresolved questions and uninspected adjacent regions.
 
 The number of findings is not a success measure.

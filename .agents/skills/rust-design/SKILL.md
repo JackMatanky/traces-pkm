@@ -1,11 +1,8 @@
 ---
 name: rust-design
 description: >
-  Rust design and deepening. Use when reviewing or redesigning a Rust
-  codebase, crate, module, file, type, function, or coupled cluster; finding
-  design candidates or technical debt; discovering latent concepts and seams;
-  consolidating shallow abstractions; or when another skill needs Rust-specific
-  structural design.
+  Review or redesign Rust responsibilities and module seams, or model an
+  established structural design in Rust.
 ---
 
 # Rust Design
@@ -45,8 +42,9 @@ structure.
 
 ## Scope
 
-The requested scope is a **starting search region**, not an assumed
-architectural boundary.
+For discovery or redesign, the requested scope is a **starting search region**,
+not an assumed architectural boundary. A modeling-only task starts from its
+established seam instead.
 
 It may be a:
 
@@ -106,167 +104,123 @@ A large cohesive implementation may be correctly shaped. Several smaller,
 clearly named cohesive files may be better when they represent genuinely
 distinct responsibilities. Size and count never decide between them.
 
-When comparing a concrete redesign, read [`METRICS.md`](METRICS.md). Baseline
-only the metrics corresponding to the candidate's design claim. Freeze any
-scenario used for comparison before changing the design.
+For a concrete design claim, read [`METRICS.md`](METRICS.md) when a comparison
+would clarify the decision. Record current evidence and freeze any change
+scenario before comparing alternatives. An unimplemented proposal predicts
+possible effects; only an implemented change has observed after-state evidence.
 
-Prefer explicit before/after evidence and semantic trade-offs over claims such
-as "cleaner", "simpler", or "more modular".
+Prefer specific caller knowledge and semantic trade-offs to claims such as
+"cleaner", "simpler", or "more modular".
 
 ## Process
 
+For discovery or redesign, steps 1–4 and 6 apply to reviews and implementations;
+an implementation also performs step 5. When the responsibility and seam are
+already established, confirm their current contract and enter step 4 directly,
+then perform step 5 if code changes. Reviews label expected effects as
+predictions.
+
 ### 1. Establish the current design
 
-Map the target's:
+Map the target's responsibility, callers, interface, dependencies, important
+state, invariants, policy, visibility, tests, and parent/child relationships
+where they exist.
 
-- observable responsibility
-- callers
-- interface
-- dependencies
-- important state
-- invariants and policy
-- visibility
-- tests and test seams
-- parent and child relationships
+Trace important control and data flows far enough to locate knowledge ownership.
+For broad scopes, narrow candidate regions before inspecting implementations.
 
-Trace important control and data flows far enough to locate where knowledge
-actually lives.
-
-For broad scopes, use structural tooling to narrow the search before inspecting
-individual implementations.
-
-**Complete when:** the target can be explained in terms of responsibilities,
-seams, knowledge ownership, and important relationships without treating the
-filesystem layout as the design.
+**Complete when:** the inspected region and adjacent callers or owners are
+named, and the target's responsibilities, seams, and important relationships can
+be explained without mistaking filesystem layout for design.
 
 ### 2. Discover candidates
 
-Read [`DISCOVERY.md`](DISCOVERY.md).
+Read [`DISCOVERY.md`](DISCOVERY.md). Search both **expansion** (latent concerns
+within one scope) and **compression** (fragmented, redundant, misplaced, or
+obsolete abstractions). Use [`TOOLING.md`](TOOLING.md) for structural mapping
+when it answers a specific question.
 
-Search both directions:
+For a concrete hypothesis, select evidence that could change the decision. Use
+[`METRICS.md`](METRICS.md) when a comparison helps; freeze any representative
+change scenario before comparing alternatives.
 
-- **expansion** — behaviour that must be separated provisionally to expose
-  latent concerns
-- **compression** — fragmented, redundant, misplaced, or obsolete abstractions
-  that should be consolidated, collapsed, relocated, replaced, or removed
-
-Include implicit domain concepts, leaked implementation knowledge, misplaced
-seams, duplicated policy, invalid representable states, and technical debt that
-a deeper design could eliminate.
-
-Use [`TOOLING.md`](TOOLING.md) to offload structural mapping and mechanical
-analysis where useful.
-
-Once a candidate has a concrete design hypothesis, use
-[`METRICS.md`](METRICS.md) to choose only the dimensions that can clarify that
-hypothesis. Record their baseline and freeze any representative change scenario
-before proposing the redesign.
-
-**Complete when:** every material candidate in the investigated scope has
-concrete evidence, a design concern, a plausible transformation direction,
-enough surrounding context to judge its architectural level, and—where
-comparison will be used—a stable baseline.
+**Complete when:** consequential candidates in the inspected region have
+evidence and a plausible direction or a reason for dismissal; both directions
+were considered; and unresolved questions are recorded. Expand when evidence
+crosses the region's boundary. If none is supported, report the inspected
+boundary and reasons, then stop without inventing a redesign.
 
 ### 3. Deepen candidates
 
-Read [`DEEPENING.md`](DEEPENING.md).
+Read [`DEEPENING.md`](DEEPENING.md). Choose the transformation from the concern.
+Treat pieces exposed by decomposition as provisional until they justify their
+own responsibility or seam.
 
-Choose the transformation from the concern. Treat pieces exposed by
-decomposition as provisional until they prove they deserve independent
-responsibility or a seam.
+Use `codebase-design`'s **Design It Twice** when the user requests alternative
+interface designs. Otherwise, compare viable choices locally and explain a
+rejected alternative only when it changes the decision.
 
-For consequential interface choices, use `codebase-design`'s **Design It Twice**
-process.
-
-Evaluate:
-
-- **local depth** — what meaningful knowledge the candidate hides from its
-  immediate callers
-- **depth propagation** — what lower-level knowledge disappears from its parent
-  and higher levels
-- **deletion dividend** — what existing complexity becomes unnecessary if the
-  design is correct
-
-For substantial redesigns, use the comparative gate in
-[`METRICS.md`](METRICS.md). A design need not improve every applicable metric,
-but every material regression requires an explicit semantic or correctness
-trade-off.
+Evaluate local depth, simplification of parents and higher levels where they
+exist, and complexity the design makes removable, if any. Explain material
+trade-offs without requiring every proposal to produce a numeric result.
 
 **Complete when:** the proposal explains what belongs together or apart, what
-each seam hides, how the parent becomes simpler, what becomes removable, and how
-the relevant evidence supports the redesign or exposes its trade-offs.
+each seam hides, the effect on its callers and any parent, what becomes
+removable or why nothing does, and which claims are supported by current
+evidence versus still predicted.
 
 ### 4. Model the design in Rust
 
-Read [`MODELING.md`](MODELING.md).
+Read [`MODELING.md`](MODELING.md), then consult relevant portions of
+`rust-skills`. Choose Rust constructs from the discovered or established
+semantics. Include type-system complexity in interface cost: compile-time
+guarantees are useful when they justify what callers must learn.
 
-Now consult the relevant portions of `rust-skills`.
+**Complete when:** proposed types, ownership, errors, traits, and visibility
+serve the intended seams; each abstraction has a semantic responsibility and
+each generic or trait has a demonstrated need.
 
-Choose Rust constructs from the semantics already discovered. Treat type-system
-complexity as part of the interface cost: compile-time guarantees are valuable
-only when their leverage justifies what callers must learn.
+### 5. Verify an implementation
 
-**Complete when:** every introduced Rust abstraction has a semantic
-responsibility, every trait or generic abstraction has demonstrated need, and
-the type, ownership, error, and visibility design implements the intended seams.
+When code was changed, verify required behaviour through the intended seam.
+Follow `codebase-design`'s interface-as-test-surface and replace-don't-layer
+rules when a deeper interface supersedes shallow ones. Use project checks from
+[`TOOLING.md`](TOOLING.md).
 
-### 5. Verify and compare
+Compare observed results and recompute any selected gauges from
+[`METRICS.md`](METRICS.md) using the same counting basis and frozen scenarios.
+Explain material regressions and account for obsolete functions, modules, types,
+traits, conversions, tests, dependencies, and compatibility scaffolding. Keep
+necessary behavior even when a design metric worsens; do not claim success from
+a vanity measure alone.
 
-Use the smallest useful set of tools from [`TOOLING.md`](TOOLING.md).
+**Complete when:** intended behaviour has been exercised, claimed improvements
+have observed evidence, trade-offs are explicit, and superseded structure has
+been accounted for.
 
-Verify behaviour through the deepest meaningful seam. When deeper modules
-replace shallow ones, apply `codebase-design`'s interface-as-test-surface and
-replace-don't-layer rules.
+### 6. Reconsider the boundary
 
-Recompute the applicable values from [`METRICS.md`](METRICS.md) using the same
-counting basis and frozen scenarios.
-
-Apply the comparative gate:
-
-- required behaviour and correctness are preserved
-- at least one claimed design dimension materially improves
-- every material regression is explicitly justified
-- superseded structure is accounted for
-- no claimed improvement depends only on a vanity measure
-
-Account for obsolete functions, modules, types, traits, conversions, tests,
-dependencies, configuration, and compatibility scaffolding as appropriate. These
-are things to account for, not quantities to minimize.
-
-**Complete when:** the redesign's claims are supported by comparable evidence,
-its trade-offs are explicit, intended behaviour remains verified, and no
-material regression in depth, locality, or correctness remains unexplained.
-
-### 6. Recurse
-
-Inspect both directions after each meaningful deepening.
-
-**Downward:** does the implementation still contain coherent knowledge that
-deserves discovery?
-
-**Upward:** has hiding lower-level knowledge exposed a simpler design for the
-parent or its siblings?
-
-Continue while further work can meaningfully improve knowledge placement.
-
-**Complete when:** remaining seams correspond to coherent responsibility or real
-variation, further decomposition exposes no useful concept, further
-consolidation would merge independently changing knowledge, and remaining
-complexity is intrinsic to the responsibility that owns it.
+After a meaningful proposal or implementation, inspect downward for a newly
+visible coherent concept and upward for a simpler parent or sibling design where
+one exists. Revisit discovery only if this exposes a consequential new
+candidate. Stop when another pass yields no material change to the candidate set
+or design decision; report any remaining uncertainty and uninspected adjacent
+regions.
 
 ## Output
 
-When reviewing rather than implementing, report:
+For a review, report the current responsibility and seam map, evidence-backed
+candidates or why none qualified, proposed transformations where applicable,
+relevant alternatives, predicted effects on callers and any parent, justified
+Rust modeling where needed, trade-offs, and uncertainty. State the inspected
+boundary. Report current baselines or frozen scenarios only when useful; label
+every unimplemented effect as a prediction.
 
-1. the current responsibility and seam map at the relevant scale
-2. evidence-backed candidates
-3. applicable baseline metrics or scenarios where useful
-4. proposed transformations and alternatives considered
-5. resulting module and seam relationships
-6. what becomes simpler, private, consolidated, replaced, or removable
-7. justified Rust modeling decisions
-8. before/after evidence and explicit trade-offs
-9. remaining uncertainty
+For modeling-only work, report the established seam, chosen Rust representation,
+trade-offs, and verification if code changed.
 
-Prioritize candidates by expected leverage, locality, correctness, and misplaced
-knowledge—not by vanity measures or aggregate scores.
+For an implementation, also report changed seams and behavior, verification
+through those seams, comparable observed effects, and superseded structure.
+
+Prioritize by expected leverage, locality, correctness, and misplaced knowledge,
+not by vanity measures or aggregate scores.

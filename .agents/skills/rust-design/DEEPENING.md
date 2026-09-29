@@ -72,8 +72,8 @@ deepening.
 
 ## Collapse shallow seams
 
-Collapse a seam whose interface costs roughly as much knowledge as the
-behaviour it hides.
+Collapse a seam whose interface costs roughly as much knowledge as the behaviour
+it hides.
 
 Typical candidates include:
 
@@ -108,10 +108,12 @@ A redesign may:
 - relocate dependency injection
 - present domain failures instead of child implementation failures
 
-For consequential interfaces, use `codebase-design`'s Design It Twice process.
+Use `codebase-design`'s Design It Twice process when the user requests
+alternative interface designs. Otherwise, compare remaining viable choices
+locally; explain a rejected choice only when it changes the decision.
 
-Compare alternatives by depth, locality, seam placement, caller knowledge, and
-how well they compose upward.
+Compare by depth, locality, caller knowledge, and upward composition where
+a parent exists.
 
 ## Relocate ownership
 
@@ -194,7 +196,7 @@ Method count, source lines, and file count do not measure it.
 
 ## Evaluate depth propagation
 
-Then inspect the parent.
+For a lower-level candidate with a parent, inspect that parent.
 
 Ask what disappeared from the parent's required knowledge:
 
@@ -214,48 +216,16 @@ an independent seam.
 
 ## Compare the transformation
 
-For a substantial redesign, use the metrics selected during discovery from
-[`METRICS.md`](METRICS.md).
+For a concrete design claim, compare current caller knowledge and change paths
+with the proposed seam. Ask which facts leave callers or a parent, which policy
+finds an owner, and what becomes removable, if anything. Use
+[`METRICS.md`](METRICS.md) when a repeatable measure clarifies the choice;
+keep any frozen scenario identical across alternatives and later implementation.
 
-Typical relationships are:
-
-```text
-deeper child seam
-→ parent IKL decreases
-→ KC becomes positive
-
-implementation detail contained
-→ L decreases
-
-seam repaired
-→ BR decreases
-
-change localized
-→ PD decreases for the frozen scenario
-
-fragmented architecture replaced
-→ DD records superseded structure
-```
-
-Do not require every redesign to affect every metric.
-
-The design claim determines the evidence required.
-
-A transformation that introduces a regression can still be correct. Make the
-trade-off explicit instead of hiding it inside an aggregate score.
-
-For example:
-
-```text
-ITE: 1.0 → 0.0
-IKL:   3 → 5
-```
-
-may be justified when eliminating dangerous transitions is worth two additional
-caller-visible concepts.
-
-The comparison should explain whether the same benefit could be obtained with
-less interface burden.
+For a review, state expected effects as predictions. For an implementation,
+compare observed results against current evidence. Explain material trade-offs,
+including additional caller burden accepted to eliminate invalid transitions.
+No design has to improve every applicable dimension.
 
 ## Protect sibling isolation
 
@@ -286,31 +256,14 @@ Look for lower-level knowledge escaping upward:
 
 A seam earns its existence partly by containing such knowledge.
 
-## Validate during the transformation
+## Validate an implemented transformation
 
-Validation protects the design claim; it does not independently define quality.
-
-Use [`METRICS.md`](METRICS.md) for the comparison and [`TOOLING.md`](TOOLING.md)
-for mechanical evidence.
-
-Check, as appropriate:
-
-- behaviour through the intended seam
-- dependency direction
-- visibility
-- sibling coupling
-- vertical leakage
-- caller simplification
-- coverage of moved behaviour
-- mutation strength for important policy
-- public API compatibility
-- obsolete files and dependencies
-
-When a deeper interface supersedes shallow ones, follow `codebase-design`'s
-replace-don't-layer testing rule.
-
-Retain lower-level tests only when the lower-level module has an independent
-behavioural contract worth preserving.
+When code changes, verify behaviour through the intended seam and check the
+dependency direction, visibility, parent simplification, and superseded
+structure relevant to the design claim. Select evidence with
+[`TOOLING.md`](TOOLING.md). Follow `codebase-design`'s replace-don't-layer
+testing rule when a deeper interface supersedes shallow ones. Retain lower-level
+tests when they protect an independent behavioural contract.
 
 ## Size is an indicator, never a verdict
 
@@ -328,58 +281,22 @@ responsibilities exist.
 
 Prefer the shape implied by knowledge ownership and seams.
 
-## Recurse
+## Reconsider the boundary
 
-After each meaningful transformation:
+After a meaningful proposal or transformation, inspect downward for a newly
+visible coherent concern and upward for a simpler parent or sibling where one
+exists. Revisit discovery when that inspection exposes a consequential new
+candidate.
 
-### Downward
-
-Inspect whether the new implementation still contains another coherent concept
-whose knowledge deserves containment.
-
-### Upward
-
-Reconsider the parent now that lower-level knowledge has disappeared.
-
-The parent may now:
-
-- collapse operations
-- expose a smaller semantic interface
-- consolidate with a sibling
-- shed dependencies
-- reveal another concept
-- become unnecessary
-
-Recursive deepening moves in both directions.
-
-## Stop conditions
-
-Stop deepening a region when:
-
-- further decomposition reveals no independently meaningful knowledge
-- further consolidation would merge responsibilities that should evolve
-  independently
-- another seam would expose as much knowledge as it hides
-- another type would add representation without semantic leverage
-- a trait or generic abstraction has no demonstrated need
-- a child abstraction does not simplify its caller or protect an invariant
-- remaining complexity is intrinsic to the responsibility that owns it
-- behaviour is tested through meaningful seams
-- lower-level implementation knowledge no longer leaks upward materially
-
-Mechanical extractability is not a reason to continue.
+Stop a pass when it adds no material candidate or changes no design decision.
+Record what was inspected and what remains uncertain; a review need not prove
+there is no further improvement elsewhere.
 
 ## Completion criterion
 
-A candidate is resolved when the resulting design explains:
-
-- why each responsibility belongs where it does
-- what each seam requires callers to know
-- what knowledge it hides
-- what no longer leaks upward
-- how its parent becomes simpler or more coherent
-- what was consolidated, replaced, relocated, or removed
-- what deletion dividend was realized or intentionally deferred
-- what Rust representation is justified
-- what before/after evidence supports the result
-- what trade-offs remain
+A candidate is resolved when the proposed or implemented design explains why
+responsibilities belong where they do, what each seam hides and asks callers
+to know, how any parent changes, what becomes removable or why nothing does,
+and which trade-offs remain. A review separates observed current evidence from
+predicted effects; an implementation additionally verifies behaviour and
+observes the claimed effects.

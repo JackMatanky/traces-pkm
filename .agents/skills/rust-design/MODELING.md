@@ -2,8 +2,9 @@
 
 Translate discovered concepts and seams into Rust.
 
-This step begins **after** discovery and structural deepening have established
-what semantic responsibility should exist.
+Normally start after discovery and deepening establish the responsibility and
+seam. If these are already established, confirm their contract and model them
+directly.
 
 Use `rust-skills` as the Rust-specific reference. Load only the categories
 relevant to the current candidate.
@@ -27,40 +28,10 @@ Before choosing a construct, state:
 
 Then compare Rust representations.
 
-## Use metrics selectively
-
-Some representation decisions admit stronger comparisons. Their definitions live
-in [`METRICS.md`](METRICS.md).
-
-Use them only when they test the actual design claim:
-
-```text
-enum / closed-state redesign
-→ ISR
-
-typestate or state-machine redesign
-→ ITE + IKL
-
-trait seam
-→ V + IKL
-
-generic abstraction propagated through parents
-→ GPD
-
-visibility redesign
-→ VE
-
-new child abstraction
-→ IKL + KC
-
-error redesign
-→ IKL error atoms + L
-```
-
 A type-system improvement is strongest when it removes invalid states or caller
-knowledge without exporting equivalent complexity elsewhere.
-
-Do not introduce an elaborate representation merely to improve a metric.
+knowledge without exporting equivalent complexity elsewhere. Compare concrete
+state spaces and caller obligations with [`METRICS.md`](METRICS.md) only when
+that evidence clarifies a design decision.
 
 ## Ordinary function
 
@@ -104,7 +75,9 @@ Prefer moving validity to construction when:
 - invalid values should not enter the deeper module
 
 Keep external parsing or transport representation outside the validated domain
-type where that preserves a cleaner seam.
+type where that preserves a cleaner seam. Check that every safe construction,
+deserialization, and mutation path preserves the invariant; private fields
+alone do not help if a public conversion or deserializer bypasses validation.
 
 ## Struct
 
@@ -131,7 +104,9 @@ Enums are especially useful when they replace:
 Make variants represent semantic alternatives rather than incidental execution
 steps.
 
-Where the state space is exactly countable, compare `ISR` before and after.
+Where the state space is exactly enumerable, compare valid and representable
+states. A review can enumerate proposed variants but labels their effect a
+prediction; an implementation checks the actual public construction paths.
 
 ## Typestate
 
@@ -150,9 +125,9 @@ Prefer an ordinary enum or validated runtime state when typestate would spread
 generic parameters, marker types, or conversion ceremony through unrelated
 callers.
 
-Where transitions are exactly enumerable, compare `ITE`. Compare the gain
-against `IKL` so compile-time safety is not purchased with disproportionate
-caller complexity.
+Where transitions are exactly enumerable, compare which illegal operations
+callers can express. Balance the gain against the knowledge and ceremony the new
+interface demands.
 
 ## Trait
 
@@ -200,8 +175,8 @@ A generic abstraction is weak when:
 
 Prefer concrete types until variation produces actual leverage.
 
-Use `GPD` when a generic parameter appears to leak implementation variation
-through architectural levels that do not semantically use it.
+Trace a generic through parent interfaces when implementation variation appears
+to leak through levels that do not semantically use it.
 
 ## Ownership and borrowing
 
@@ -227,20 +202,17 @@ Rust visibility should implement the intended seam.
 
 Consult `rust-skills` project-structure and visibility guidance.
 
-Prefer the narrowest visibility consistent with the real caller set:
+Check the modules that legitimately call an item and the paths that expose it.
+Rust also supports scoped visibility such as `pub(in crate::ancestor)` in
+addition to `pub(super)` and `pub(crate)`. A `pub` item can be re-exported from
+a private module, but a restricted item cannot be publicly re-exported merely to
+widen its visibility. Evaluate the reachable public path as well as the item's
+declaration. Choose visibility from the module tree and intended API, not a
+numeric ranking.
 
-- private
-- `pub(super)`
-- `pub(crate)`
-- public
-
-Use re-exports intentionally to present the chosen interface.
-
-Broadening visibility to make an internal decomposition convenient is evidence
-that ownership or seam placement may be wrong.
-
-Use `VE` when unnecessarily broad visibility is part of the suspected seam
-problem.
+Broadening visibility to make internal decomposition convenient may indicate
+misplaced ownership. [`METRICS.md`](METRICS.md) describes how to inspect
+effective reachability.
 
 ## Errors
 
@@ -298,7 +270,7 @@ For non-trivial choices, compare alternatives against:
 - invalid states prevented
 - caller knowledge
 - seam depth
-- parent simplification
+- caller and parent simplification where applicable
 - ownership clarity
 - error clarity
 - compile-time and runtime cost
@@ -311,14 +283,12 @@ and depth.
 
 ## Completion criterion
 
-Modeling is complete when:
+For a proposal, explain how each proposed abstraction represents established
+semantics, whether invalid states need prevention and at what cost, why traits
+and generics serve real variation or a seam, and how ownership, visibility, and
+errors fit the intended callers. State how implementation representation remains
+private where possible and how callers or an existing parent become simpler.
+Label unimplemented guarantees as predictions.
 
-- every introduced abstraction corresponds to discovered semantics
-- invalid states are prevented at the cheapest useful level
-- traits and generics correspond to real variation or seam requirements
-- ownership matches responsibility
-- visibility matches intended callers
-- errors match the seam's abstraction level
-- implementation representation remains private where possible
-- the resulting Rust design makes the parent easier, not merely the child more
-  sophisticated
+For implemented code, verify these claims against its actual constructors,
+public paths, operations, and callers.

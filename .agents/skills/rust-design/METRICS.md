@@ -11,24 +11,34 @@ Never combine these metrics into an aggregate architecture score.
 
 ## Measurement discipline
 
-Before comparing a redesign:
+For a concrete design claim, choose only gauges that could clarify the choice.
+Keep the underlying caller facts, paths, or state sets beside each count. A
+metric supports the semantic explanation; it does not define design quality. If
+two reviewers cannot agree on its counting basis, compare the underlying
+evidence instead of presenting a precise-looking number.
 
-1. define the responsibility and intended seam
-2. select only metrics that test the design claim
-3. define the counting basis for each selected metric
-4. record the baseline
-5. freeze any scenario used for comparison
-6. perform or model the redesign
-7. recompute the same metrics under the same interpretation
-8. explain every material regression
+```text
+responsibility and intended seam:
+claim and current evidence:
+selected gauge and counting basis (if useful):
+frozen scenario (if applicable):
+proposed effect (prediction until implemented):
+observed effect (only after implementation):
+trade-offs and uncertainty:
+```
 
-Mark an inapplicable metric as `N/A`, not `0`.
+Freeze representative scenarios before comparing alternatives. Record available
+current baselines. A review may estimate effects but labels them predictions;
+only an implemented redesign yields observed after-state values. For an
+implementation, recompute applicable gauges for equivalent callers under the
+same counting basis and scenario. Account for new or removed callers separately,
+then explain material regressions.
 
-Counts refer to semantic or architectural units unless explicitly stated
-otherwise.
-
-Source lines, file counts, module counts, function counts, and similar size
-properties are indicators only. They never enter an architectural equation.
+Use `N/A` for an inapplicable gauge or a zero denominator, `not measured` for
+missing evidence, and `0` only for an observed zero. Counts refer to semantic or
+architectural units unless specified otherwise. Source lines, file counts,
+module counts, function counts, and similar size properties are indicators, not
+architectural equations.
 
 ## Knowledge atoms
 
@@ -50,7 +60,9 @@ Classify atoms as:
 Two facts are separate atoms when a caller can satisfy one while violating or
 remaining ignorant of the other.
 
-Count a fact once per seam, not once per caller.
+Assign each atom to one category and count it once per seam, not once per
+caller. Classify an exposed implementation representation as `leak` rather than
+also counting it as `type`; retain its name in the atom list.
 
 When Rust makes an invariant impossible to violate, stop counting that invariant
 atom. The caller-visible type or state concept may still count as a `type` atom
@@ -116,7 +128,9 @@ KC = 0   no knowledge compression
 KC < 0   parent burden increased
 ```
 
-Use `KC` only when `K_before` and `K_after` count the same responsibility.
+Use `KC` only when `K_before > 0` and both counts cover the same responsibility.
+When `K_before = 0`, `KC` is `N/A`; the absolute `PS` below and the underlying
+parent-knowledge list still show any new burden.
 
 ### Parent Simplification — `PS`
 
@@ -128,7 +142,9 @@ PS(C → P) = K_before − K_after
 
 `KC` captures proportional compression.
 
-`PS` captures how many knowledge atoms actually disappeared from the parent.
+`PS` is a signed net change: positive means fewer parent knowledge atoms, zero
+means unchanged burden, and negative means new parent burden. Preserve the
+before/after lists even if the counts cancel.
 
 ## Cross-Seam Leakage — `L`
 
@@ -170,13 +186,18 @@ semantics.
 
 ## Seam Bypass Ratio — `BR`
 
-For intended seam `S`, define:
+For intended seam `S`, freeze its external caller cohort, entry points, module
+boundary, and edge unit before measurement. Count each distinct external
+caller-to-item access path once, recording resolved target and any re-export. An
+access through an intended re-export is not a bypass simply because its target
+lives in a descendant. Define:
 
-- `E_bypass` — external dependency edges entering descendants without crossing
-  an intended entry point
-- `E_in` — all external dependency edges entering the module subtree
+- `E_bypass`: recorded paths entering descendants without an intended entry
+  point
+- `E_in`: all recorded paths entering the subtree, including intended paths
 
-Then, when `E_in > 0`:
+Use the same edge unit and equivalent caller cohort after redesign; account for
+new or removed callers separately. When `E_in > 0`:
 
 ```text
 BR(S) = E_bypass / E_in
@@ -191,6 +212,9 @@ BR > 0   some external access bypasses it
 
 Define the intended entry points before calculating `BR`. Do not redraw the seam
 after seeing the result.
+
+When `E_in = 0`, `BR` is `N/A`; report that the seam has no incoming external
+edges instead of treating it as a perfect boundary.
 
 A bypass may be legitimate; if so, the intended seam description was incomplete
 or the relationship deserves its own seam.
@@ -240,9 +264,9 @@ where:
 - `C` = duplicated coordination or policy sites
 - `D` = dependencies required only by superseded design
 
-Keep `DD` as a vector.
-
-Do not sum or weight its dimensions.
+Keep `DD` as a vector; do not sum or weight its dimensions. For a proposal,
+record anticipated deletions as predictions. For implemented code, count only
+removed or actually superseded structure, not planned future cleanup.
 
 A zero deletion dividend does not invalidate genuinely new capability, but a
 deepening redesign that only adds structure deserves scrutiny.
@@ -265,37 +289,20 @@ Do not create artificial adapters to increase `V`.
 A test adapter counts only when the underlying dependency category justifies a
 real substitutable seam.
 
-## Visibility Excess — `VE`
+## Visibility Reachability — `VE`
 
-For Rust item `x`, use these architectural visibility levels:
+For Rust item `x`, compare legitimate callers with actual reachability through
+declared visibility and re-exports in a named workspace and relevant
+`cfg`/feature configuration. Include `pub(in crate::ancestor)`, private
+descendants, `pub(super)`, and `pub(crate)`. A `pub` item re-exported from a
+private module can still be publicly reachable; restricted items cannot be
+publicly re-exported simply to widen visibility.
 
-```text
-private      0
-pub(super)   1
-pub(crate)   2
-pub          3
-```
-
-Let:
-
-- `V_actual(x)` = declared visibility level
-- `V_needed(x)` = narrowest level containing all legitimate callers
-
-Then:
-
-```text
-VE(x) = max(0, V_actual(x) − V_needed(x))
-```
-
-Interpretation:
-
-```text
-VE = 0   visibility is no broader than needed
-VE > 0   investigate why the seam is exposed this widely
-```
-
-This is evidence about seam exposure, not a mandate to minimize visibility
-blindly.
+`VE(x)` is the set of unnecessarily reachable modules within that bounded scope,
+plus an external-public-exposure category when the item is reachable outside the
+workspace. Record paths and callers, rather than a numeric rank. If legitimate
+callers cannot reach the item, record a separate interface defect. An intended
+public contract can justify exposure beyond known current call sites.
 
 ## Generic Propagation Depth — `GPD`
 
@@ -307,8 +314,9 @@ GPD(g) =
   without semantic use
 ```
 
-A level semantically uses `g` when its own behaviour, storage, dispatch, or
-contract depends on that variation.
+A level semantically uses `g` when its own behaviour, invariant, dispatch, or
+caller-facing contract depends on that variation. Merely carrying `g` in a field
+or signature to pass it to a child does not establish semantic use.
 
 High `GPD` is evidence that implementation variation may be leaking upward.
 
@@ -327,7 +335,7 @@ Let:
 Then:
 
 ```text
-ISR = (R − V) / R
+ISR = (R − V) / R   when R > 0
 ```
 
 Interpretation:
@@ -345,16 +353,20 @@ Use this when comparing:
 - validated types
 - similar finite state representations
 
-Do not estimate `R` when the state space cannot be counted meaningfully.
+When `R = 0`, `ISR` is `N/A`. Do not estimate `R` when the state space cannot be
+counted meaningfully.
 
 ## Illegal-Transition Expressibility — `ITE`
 
-Use when the design contains a finite semantic state machine.
+Use when the design contains a finite semantic state machine. Fix the universe
+of relevant source states and semantic operations or events before comparison;
+each state-operation pair is one possible transition. Compare equivalent
+semantic operations before and after, and assess new capability separately.
 
 Let:
 
-- `T_illegal` = number of semantically illegal transitions
-- `T_expressible` = illegal transitions callable through the interface
+- `T_illegal` = number of pairs prohibited by the domain semantics
+- `T_expressible` = those illegal pairs callable through the interface
 
 When `T_illegal > 0`:
 
@@ -362,84 +374,62 @@ When `T_illegal > 0`:
 ITE = T_expressible / T_illegal
 ```
 
-Interpretation:
-
-```text
-ITE = 0   the interface cannot express an illegal transition
-ITE > 0   some illegal transitions remain callable
-```
-
-Compare improvements in `ITE` against `IKL`.
-
-Eliminating illegal transitions does not automatically justify a substantially
+`ITE = 0` means no illegal pair can be expressed; a positive value means some
+can. When `T_illegal = 0`, `ITE` is `N/A`; report that the chosen universe has
+no illegal transitions, not a zero rate. Compare gains in `ITE` against `IKL`:
+eliminating illegal transitions does not automatically justify a substantially
 harder caller interface.
 
 ## Test Reach-Through — `TR`
 
-For module `M`:
+Define the population as tests intended to verify `M`'s responsibility,
+including integration tests. Count each test once. The numerator is the subset
+that depends on descendants past `M`'s intended seam:
 
 ```text
-TR(M) =
-  tests for M that depend on descendants past M's intended seam
-  ─────────────────────────────────────────────────────────────
-                    tests exercising M
+TR(M) = reach-through tests for M / tests verifying M
 ```
 
-Independent child-module tests are not reach-through.
-
-Use `TR` to detect parent-level tests coupled to internal representation or
-implementation structure.
-
-The goal is appropriate test seams, not blindly driving `TR` to zero.
+Independent child-module tests are outside both numerator and denominator.
+When no tests verify `M`, `TR` is `N/A`; report the verification gap.
+Use `TR` to detect tests coupled to internal representation, not to drive
+the ratio blindly to zero.
 
 ## Seam Mutation Adequacy — `MA`
 
-Where scoped mutation testing is useful:
+Use scoped mutation testing when the design claim needs verification strength.
+Define the policy owned by `M`, including relevant descendants behind its
+seam, and fix the semantic fault classes being probed. Count only compiled,
+executed, behavior-changing mutants in the denominator. The numerator is the
+subset killed by tests through `M`'s seam:
 
 ```text
-MA(M) =
-  behavior-changing mutants killed through M's seam
-  ────────────────────────────────────────────────
-         behavior-changing mutants tested in M
+MA(M) = behavior-changing mutants killed through M's seam
+        / behavior-changing mutants tested in M's responsibility
 ```
 
-Use `MA` to evaluate whether interface-level tests detect incorrect behaviour
-hidden by the module.
-
-Mutation adequacy measures verification strength, not architectural depth.
+Record equivalent, uncompilable, skipped, and timed-out mutants separately
+with reasons. Without a mutation run, `MA` is `not measured`; if a run
+yields no qualifying mutants, it is `N/A`, not zero. If a redesign changes
+mutation sites, compare equivalent semantic fault classes or mark numeric
+before/after comparison unavailable. Mutation adequacy measures verification
+strength, not architectural depth.
 
 ## Comparative acceptance gate
 
-Required behaviour and correctness come first.
+Required behaviour and correctness come first. Compare only gauges selected for
+the claim. For a review, distinguish current measurements from predicted effects
+and state what would verify the prediction. For an implementation, compare
+observed values against the frozen baseline and scenario. Favor a design when
+its required new capability or relevant improvement is evidenced, material
+regressions have explicit semantic or correctness trade-offs, and any
+superseded structure is accounted for. No proxy count alone establishes
+architectural success.
 
-Then compare only the metrics applicable to the design claim.
-
-Prefer a redesign when:
-
-1. at least one relevant architectural dimension materially improves
-2. no relevant dimension materially regresses without an explicit trade-off
-3. the claimed improvement concerns responsibility, knowledge containment,
-   correctness, or locality rather than a proxy count
-4. superseded structure has been accounted for
-
-Do not sum improvements and regressions into a weighted score.
-
-When a metric regresses, record:
-
-```text
-Regression:
-  <metric>: <before> → <after>
-
-Benefit:
-  <semantic or correctness gain requiring the regression>
-
-Alternatives:
-  <whether the same benefit could be obtained without the regression>
-```
-
-A justified trade-off is allowed.
-
-An unexplained regression is not.
+Record a material regression with its before and after evidence, the benefit
+requiring it, and whether an alternative achieves that benefit at lower cost. A
+justified trade-off is allowed; an unexplained regression is not. Never sum
+improvements and regressions into an aggregate score.
 
 ## Natural targets
 
@@ -451,7 +441,7 @@ Examples:
 BR  = 0   no unintended seam bypass
 ISR = 0   no invalid representable finite states
 ITE = 0   no expressible illegal transitions
-VE  = 0   no unnecessarily broad visibility
+VE  = ∅   no unnecessarily reachable modules
 ```
 
 Most metrics are comparative rather than target-seeking.
@@ -487,13 +477,9 @@ The semantic explanation remains authoritative.
 
 ## Completion criterion
 
-Measurement is complete when:
-
-- every metric used in a decision has a stated counting basis
-- before and after use the same interpretation
-- scenarios are frozen before comparison
-- inapplicable metrics remain `N/A`
-- atom or concept lists accompany ambiguous counts
-- no size or count vanity measure has become a design objective
-- no aggregate score hides a trade-off
-- every material regression is explained
+Evidence is ready for a design decision when every used gauge has its raw
+evidence and counting basis, scenarios were frozen before comparison, and `N/A`,
+`not measured`, and observed zero are distinguished. An implementation uses the
+same interpretation before and after and explains material regressions. A review
+labels proposed effects as predictions and records what remains to be measured.
+Neither optimizes a vanity count or hides a trade-off in an aggregate score.
