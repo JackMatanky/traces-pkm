@@ -88,17 +88,16 @@ mod yaml;
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use config::{Config, ConfigService, TaskConfig, TrustRequest};
-pub use date::DateValue;
-pub(crate) use date::{
-    DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue,
-};
+pub(crate) use date::{DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT};
+pub use date::{DateError, DateTimeValue, DateValue};
 pub(crate) use delimiter::DelimiterType;
 pub use dialog::{
     DialogError, DialogProvider, DialogResult, PresetDialogProvider,
     TerminalDialogProvider,
 };
 pub(crate) use dirtree::{DirNode, DirTree, DirTreeError};
-pub(crate) use duration::{DurationSeconds, DurationUnit, DurationValue};
+pub use duration::{DurationError, DurationValue};
+pub(crate) use duration::{DurationSeconds, DurationUnit};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };

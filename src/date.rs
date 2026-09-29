@@ -13,10 +13,13 @@
 //! - [`DateTimeFormat`] - Format grammar for date-time recognition.
 //! - [`DateError`] - Error type for parse and formatting failures.
 
-use std::{fmt, str::FromStr, time::SystemTime};
+use std::{borrow::Cow, fmt, str::FromStr, time::SystemTime};
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::{
+    DateTime, NaiveDate, NaiveDateTime, NaiveTime, SecondsFormat, TimeDelta,
+    Utc,
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::duration::DurationValue;
 
@@ -152,18 +155,7 @@ impl DateTimeFormat {
 /// All four-digit years are accepted; two-digit years
 /// are rejected to prevent chrono's silent century misinterpretation.
 #[repr(transparent)]
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateValue(NaiveDate);
 
 impl DateValue {
@@ -302,24 +294,40 @@ impl FromStr for DateValue {
     }
 }
 
+/// Serializes as the canonical `YYYY-MM-DD` string (the crate-internal
+/// `to_date_string` formatter).
+impl Serialize for DateValue {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_date_string())
+    }
+}
+
+/// Deserializes via the crate-internal `parse_iso` parser, so the
+/// four-digit-year rule and `YYYY-MM` acceptance apply identically to
+/// inline and deserialized dates.
+impl<'de> Deserialize<'de> for DateValue {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::parse_iso(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Parsed UTC date-time instant.
 ///
 /// Wraps [`DateTime<Utc>`] as a newtype, enforcing ISO-8601/RFC-3339
-/// recognition through [`DateTimeValue::parse_iso`]. All values are
-/// UTC-normalized; offset-bearing input is converted to UTC at parse time.
+/// recognition through its crate-internal `parse_iso` parser. All values
+/// are UTC-normalized; offset-bearing input is converted to UTC at parse
+/// time.
 #[repr(transparent)]
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Deserialize,
-    Serialize,
-)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateTimeValue(DateTime<Utc>);
 
 impl DateTimeValue {
@@ -599,18 +607,50 @@ impl FromStr for DateTimeValue {
     }
 }
 
+/// Serializes as an explicit RFC 3339 `…Z` interop spelling via
+/// [`DateTime::to_rfc3339_opts`], independent of [`Display`](fmt::Display)'s
+/// local-naive rendering.
+impl Serialize for DateTimeValue {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer
+            .serialize_str(&self.0.to_rfc3339_opts(SecondsFormat::Secs, true))
+    }
+}
+
+/// Deserializes via the crate-internal `parse_iso` parser, so the
+/// four-digit-year rule and every accepted shape (including the `…Z`
+/// interop spelling) apply identically to inline and deserialized
+/// date-times.
+impl<'de> Deserialize<'de> for DateTimeValue {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::parse_iso(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Error type for date/date-time parse and formatting failures.
 ///
-/// Returned by [`DateValue::parse_iso`], [`DateTimeValue::parse_iso`],
-/// [`DateValue::format_with`], and [`DateTimeValue::format_with`].
+/// Returned by [`DateValue`]'s and [`DateTimeValue`]'s crate-internal
+/// `parse_iso` and `format_with` methods.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum DateError {
     /// No accepted date/time shape matched `input`.
     ///
     /// Wraps the last-attempted format's [`chrono::ParseError`].
     #[error("`{input}` is not a recognized date/time: {source}")]
     Unparseable {
+        /// The raw input that failed to parse.
         input: Box<str>,
+        /// The last-attempted format's underlying parse failure.
         #[source]
         source: chrono::ParseError,
     },
@@ -619,11 +659,13 @@ pub enum DateError {
     /// chrono's `%Y` accepts fewer digits, silently misreading the year.
     #[error("`{input}` does not have a 4-digit year")]
     InvalidYearDigits {
+        /// The raw input that failed to parse.
         input: Box<str>,
     },
     /// `pattern` is not a valid strftime specifier.
     #[error("`{pattern}` is not a valid format pattern")]
     InvalidPattern {
+        /// The pattern that failed to render.
         pattern: Box<str>,
     },
 }
@@ -1145,6 +1187,15 @@ mod tests {
         }
 
         #[test]
+        fn exposes_the_chrono_source_for_an_unparseable_error() {
+            use std::error::Error as _;
+            let err = DateValue::parse_iso("2026/08/22")
+                .expect_err("unrecognized shape");
+            let source = err.source().expect("chrono parse error is chained");
+            assert_eq!(source.to_string(), "input contains invalid characters");
+        }
+
+        #[test]
         fn round_trips_a_date_value_through_json() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             let json = serde_json::to_string(&date).expect("serializable");
@@ -1163,12 +1214,99 @@ mod tests {
         }
 
         #[test]
+        fn serializes_datetime_value_with_the_explicit_rfc3339_z_suffix() {
+            let json =
+                serde_json::to_string(&fixed_datetime()).expect("serializable");
+            assert_eq!(json, "\"2026-07-29T14:30:05Z\"");
+        }
+
+        #[test]
+        fn deserializes_year_month_precision_date_through_json() {
+            let restored: DateValue =
+                serde_json::from_str("\"2026-07\"").expect("deserializable");
+            assert_eq!(
+                restored,
+                DateValue::parse_iso("2026-07-01").expect("valid date")
+            );
+        }
+
+        #[test]
+        fn rejects_a_two_digit_year_through_json_deserialization() {
+            let err = serde_json::from_str::<DateValue>("\"26-08-22\"")
+                .expect_err("short year rejected");
+            assert!(err.to_string().contains("does not have a 4-digit year"));
+        }
+
+        #[test]
         fn is_usable_as_a_hash_set_key() {
             let mut set = std::collections::HashSet::new();
             set.insert(DateValue::parse_iso("2026-07-29").expect("valid date"));
             set.insert(DateValue::parse_iso("2026-07-29").expect("valid date"));
             set.insert(DateValue::parse_iso("2026-07-30").expect("valid date"));
             assert_eq!(set.len(), 2);
+        }
+    }
+
+    mod hostile_yaml_note {
+        use pretty_assertions::{assert_eq, assert_ne};
+
+        use super::*;
+
+        #[derive(Deserialize)]
+        struct HostileNote {
+            duration_extreme: DurationValue,
+            duration_zero: DurationValue,
+            date: DateValue,
+            datetime: DateTimeValue,
+        }
+
+        #[test]
+        fn parses_round_trips_and_displays_without_panic_or_lying() {
+            let extreme_digits = "9".repeat(50);
+            let yaml = format!(
+                "duration_extreme: {extreme_digits}y\nduration_zero: \
+                 \"-0m\"\ndate: \"2026-07\"\ndatetime: \
+                 \"2026-07-29T14:30:00Z\"\n"
+            );
+
+            let note = noyalib::from_str::<HostileNote>(&yaml)
+                .expect("hostile note deserializes without panicking");
+
+            // Extreme-magnitude duration: a value synthesized back from its
+            // parsed seconds (as arithmetic/formatting code does, having no
+            // original spelling to echo) renders honestly in scientific
+            // notation, never a silently truncated "0s".
+            let synthesized =
+                DurationValue::from_seconds(note.duration_extreme.to_seconds());
+            let rendered_extreme = synthesized.to_string();
+            assert_ne!(rendered_extreme, "0s");
+            assert!(rendered_extreme.contains('e'));
+
+            // "-0m": equals and orders as zero, not a hidden negative.
+            assert_eq!(
+                note.duration_zero,
+                DurationValue::parse("0m").expect("valid duration")
+            );
+            assert!(note.duration_zero >= DurationValue::parse("0m").unwrap());
+
+            // "YYYY-MM" date: precision defaults to day 1, matches inline
+            // parsing exactly.
+            assert_eq!(
+                note.date,
+                DateValue::parse_iso("2026-07-01").expect("valid date")
+            );
+
+            // "…Z" datetime: parses to the same instant as the equivalent
+            // inline ISO string and re-serializes with the same spelling.
+            assert_eq!(
+                note.datetime,
+                DateTimeValue::parse_iso("2026-07-29T14:30:00")
+                    .expect("valid datetime")
+            );
+            assert_eq!(
+                serde_json::to_string(&note.datetime).expect("serializable"),
+                "\"2026-07-29T14:30:00Z\""
+            );
         }
     }
 }

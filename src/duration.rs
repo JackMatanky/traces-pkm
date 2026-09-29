@@ -29,9 +29,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// A validated duration expression with its total seconds and original source
 /// spelling.
 ///
-/// Constructed exclusively via [`DurationValue::parse`],
-/// [`DurationValue::parse_prefix`], [`DurationValue::from_seconds`], or the
-/// [`FromStr`] implementation. The stored seconds value is always finite.
+/// Constructed exclusively via its crate-internal `parse`, `parse_prefix`,
+/// and `from_seconds` constructors, or the [`FromStr`] implementation. The
+/// stored seconds value is always finite.
 #[derive(Clone, Debug)]
 pub struct DurationValue {
     raw: Box<str>,
@@ -52,18 +52,23 @@ impl DurationValue {
     ///
     /// - [`Empty`] if the input is empty or contains only separators.
     /// - [`MissingNumber`] if a unit appears without a preceding number.
-    /// - [`InvalidNumber`] if the number portion could not be parsed, or a part
-    ///   after the first carries an explicit `-` sign.
+    /// - [`InvalidNumber`] if a `+`/`-` sign is not immediately followed by a
+    ///   digit or by `.` and a digit, or a part after the first carries an
+    ///   explicit `-` sign.
+    /// - [`MalformedNumber`] if the number portion is not valid float syntax.
     /// - [`MissingUnit`] if a number appears without a trailing unit.
     /// - [`UnknownUnit`] if the unit string is not recognized.
+    /// - [`NonFiniteNumber`] if a single part's number overflows to infinity.
     /// - [`NonFiniteSeconds`] if the parsed total cannot be represented as a
     ///   finite seconds value.
     ///
     /// [`Empty`]: DurationError::Empty
     /// [`MissingNumber`]: DurationError::MissingNumber
     /// [`InvalidNumber`]: DurationError::InvalidNumber
+    /// [`MalformedNumber`]: DurationError::MalformedNumber
     /// [`MissingUnit`]: DurationError::MissingUnit
     /// [`UnknownUnit`]: DurationError::UnknownUnit
+    /// [`NonFiniteNumber`]: DurationError::NonFiniteNumber
     /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
     #[expect(
         clippy::suboptimal_flops,
@@ -211,7 +216,11 @@ impl DurationValue {
     /// Greedily decomposes `seconds.0.abs()` into Weeks (604,800s), Days
     /// (86,400s), Hours (3,600s), Minutes (60s), Seconds (1s), and Milliseconds
     /// (0.001s). If `seconds.0 == 0.0`, produces `"0s"`. Negative durations
-    /// have a leading `"-"`.
+    /// have a leading `"-"`. When the millisecond decomposition can't
+    /// represent a nonzero magnitude (rounds a sub-millisecond remainder to
+    /// zero, or overflows `u64` at the other extreme), falls back to
+    /// [`DurationSeconds`]'s own [`Display`](fmt::Display) so the result
+    /// never lies as `"0s"`.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "part of DurationValue surface")
@@ -251,8 +260,14 @@ impl DurationValue {
             }
         }
 
+        // Millisecond decomposition can't represent every magnitude: it
+        // rounds a sub-millisecond remainder to zero, and overflows `u64`
+        // for a large enough magnitude (silently read back as 0 above).
+        // Either way `parts` comes back empty for a nonzero `total_secs`
+        // here; fall back to the honest `DurationSeconds` dialect instead
+        // of lying with `"0s"`.
         let raw: Box<str> = if parts.is_empty() {
-            "0s".into()
+            format!("{}s", DurationSeconds(total_secs)).into_boxed_str()
         } else {
             let combined = parts.join(" ");
             if is_negative {
@@ -386,12 +401,11 @@ impl DurationValue {
                 break;
             }
         }
-        Self::parsed_number(bytes, num_start, pos, input)
+        Self::parsed_number(num_start, pos, input)
     }
 
     /// Validates and converts a parsed number byte span into `f64`.
     fn parsed_number(
-        bytes: &[u8],
         start: usize,
         end: usize,
         input: &str,
@@ -401,21 +415,21 @@ impl DurationValue {
                 input: input.to_owned(),
             });
         }
-        let Some(num_slice) = bytes.get(start..end) else {
+        // `start`/`end` are byte offsets produced by scanning only
+        // single-byte ASCII (`+`/`-`/`.`/digit), so they always land on
+        // char boundaries within `input`: a direct `str` slice can't fail.
+        let Some(text) = input.get(start..end) else {
             return Err(DurationError::MissingNumber {
                 input: input.to_owned(),
             });
         };
-        let number: f64 = core::str::from_utf8(num_slice)
-            .map_err(|_| DurationError::InvalidNumber {
+        let number: f64 =
+            text.parse().map_err(|source| DurationError::MalformedNumber {
                 input: input.to_owned(),
-            })?
-            .parse()
-            .map_err(|_| DurationError::InvalidNumber {
-                input: input.to_owned(),
+                source,
             })?;
         if !number.is_finite() {
-            return Err(DurationError::InvalidNumber {
+            return Err(DurationError::NonFiniteNumber {
                 input: input.to_owned(),
             });
         }
@@ -475,6 +489,7 @@ impl DurationValue {
 impl FromStr for DurationValue {
     type Err = DurationError;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
     }
@@ -509,8 +524,8 @@ impl fmt::Display for DurationValue {
     }
 }
 
-/// Compares by parsed [`DurationSeconds`], not raw spelling: `"1h 30m"` and
-/// `"90m"` are equal.
+/// Compares by parsed seconds, not raw spelling: `"1h 30m"` and `"90m"` are
+/// equal.
 impl PartialEq for DurationValue {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -520,7 +535,7 @@ impl PartialEq for DurationValue {
 
 impl Eq for DurationValue {}
 
-/// Orders by parsed [`DurationSeconds`], not raw spelling, consistent with
+/// Orders by parsed seconds, not raw spelling, consistent with
 /// [`PartialEq`].
 impl PartialOrd for DurationValue {
     #[inline]
@@ -536,7 +551,7 @@ impl Ord for DurationValue {
     }
 }
 
-/// Hashes the parsed [`DurationSeconds`], not raw spelling, so equal values per
+/// Hashes the parsed seconds, not raw spelling, so equal values per
 /// [`PartialEq`] always hash identically.
 impl Hash for DurationValue {
     #[inline]
@@ -548,6 +563,7 @@ impl Hash for DurationValue {
 /// Serializes as the original raw spelling, not a canonical form: two equal
 /// values (e.g. `"1h 30m"` and `"90m"`) can serialize to different strings.
 impl Serialize for DurationValue {
+    #[inline]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -556,9 +572,10 @@ impl Serialize for DurationValue {
     }
 }
 
-/// Deserializes via [`Self::parse`], so an unparseable string is a hard
-/// deserialization error rather than a lossy fallback.
+/// Deserializes via the same parser as [`FromStr`], so an unparseable string
+/// is a hard deserialization error rather than a lossy fallback.
 impl<'de> Deserialize<'de> for DurationValue {
+    #[inline]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -676,18 +693,45 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 
 /// A duration measured in seconds.
 ///
-/// Wraps `f64` with NaN-safe ordering and arithmetic. Always finite when
-/// constructed through [`DurationValue::to_seconds`] or
-/// [`DurationSeconds::try_from`].
+/// Wraps `f64` with NaN-safe ordering and arithmetic; the arithmetic
+/// operators do not re-validate finiteness, so an operation that overflows
+/// can yield a non-finite result. Always finite when constructed through
+/// [`DurationValue::to_seconds`] or [`DurationSeconds::try_from`]. A signed
+/// zero is normalized to positive zero at construction, so `"-0m"` and
+/// `"0m"` compare, order, and hash identically.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(f64);
+
+/// At or above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
+/// switches to scientific notation.
+const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
+
+/// Below this magnitude (excluding exact zero), [`DurationSeconds`]'s
+/// [`Display`](fmt::Display) switches to scientific notation.
+const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
+
+impl DurationSeconds {
+    /// Constructs from a raw `f64`, normalizing a signed zero to positive
+    /// zero so the type's invariant (see the type docs) holds everywhere,
+    /// not just at parse time.
+    #[inline]
+    fn normalized(value: f64) -> Self {
+        Self(if value == 0.0 {
+            0.0
+        } else {
+            value
+        })
+    }
+}
 
 impl TryFrom<f64> for DurationSeconds {
     type Error = DurationError;
 
+    /// Normalizes a signed zero to positive zero (see the type docs).
+    #[inline]
     fn try_from(secs: f64) -> Result<Self, Self::Error> {
         secs.is_finite()
-            .then_some(Self(secs))
+            .then(|| Self::normalized(secs))
             .ok_or(DurationError::NonFiniteSeconds)
     }
 }
@@ -734,9 +778,21 @@ impl Ord for DurationSeconds {
     }
 }
 
+/// Renders in scientific notation once the magnitude reaches or clears
+/// [`DISPLAY_EXPONENT_UPPER`] or falls below [`DISPLAY_EXPONENT_LOWER`]
+/// (exact zero excluded), so an extreme magnitude never dumps a
+/// hundreds-of-digits decimal literal.
 impl fmt::Display for DurationSeconds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        let value = self.0;
+        let abs = value.abs();
+        if abs != 0.0
+            && !(DISPLAY_EXPONENT_LOWER..DISPLAY_EXPONENT_UPPER).contains(&abs)
+        {
+            write!(f, "{value:e}")
+        } else {
+            write!(f, "{value}")
+        }
     }
 }
 
@@ -750,7 +806,7 @@ impl Add for DurationSeconds {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
-        Self(self.0 + rhs.0)
+        Self::normalized(self.0 + rhs.0)
     }
 }
 
@@ -758,7 +814,7 @@ impl Sub for DurationSeconds {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
-        Self(self.0 - rhs.0)
+        Self::normalized(self.0 - rhs.0)
     }
 }
 
@@ -766,7 +822,7 @@ impl Mul<f64> for DurationSeconds {
     type Output = Self;
 
     fn mul(self, rhs: f64) -> Self {
-        Self(self.0 * rhs)
+        Self::normalized(self.0 * rhs)
     }
 }
 
@@ -775,16 +831,17 @@ impl Mul<DurationSeconds> for f64 {
 
     #[inline]
     fn mul(self, rhs: DurationSeconds) -> DurationSeconds {
-        DurationSeconds(self * rhs.0)
+        DurationSeconds::normalized(self * rhs.0)
     }
 }
 
 /// Error returned when a duration operation fails.
 ///
 /// Covers two failure domains: parsing human-readable duration text (via
-/// [`DurationValue::parse`]) and converting raw seconds into a
-/// [`DurationSeconds`].
+/// [`DurationValue`]'s crate-internal parser) and converting raw seconds
+/// into a validated seconds value.
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum DurationError {
     /// Input is empty or contains only separators.
     #[error("duration is empty")]
@@ -797,11 +854,22 @@ pub enum DurationError {
         input: String,
     },
 
-    /// The number portion could not be parsed (e.g., `"1.2.3h"`).
+    /// The number portion has a malformed sign (e.g., `"+h"`), or a part
+    /// after the first carries an explicit `-` (e.g., `"1h -30m"`).
     #[error("invalid number in `{input}`")]
     InvalidNumber {
         /// The raw input that failed to parse.
         input: String,
+    },
+
+    /// The number portion is not valid float syntax (e.g., a bare `"."`).
+    #[error("invalid number syntax in `{input}`: {source}")]
+    MalformedNumber {
+        /// The raw input that failed to parse.
+        input: String,
+        /// The underlying float-parse failure.
+        #[source]
+        source: std::num::ParseFloatError,
     },
 
     /// A number appears without a trailing unit (e.g., `"1"` or `"42"`).
@@ -814,6 +882,14 @@ pub enum DurationError {
     /// The unit string is not recognized (e.g., `"1x"`).
     #[error("unknown unit in `{input}`")]
     UnknownUnit {
+        /// The raw input that failed to parse.
+        input: String,
+    },
+
+    /// A single part's number overflows to infinity (e.g., a 400-digit
+    /// literal).
+    #[error("number overflows to infinity in `{input}`")]
+    NonFiniteNumber {
         /// The raw input that failed to parse.
         input: String,
     },
@@ -861,6 +937,14 @@ mod tests {
                 assert_eq!(
                     DurationValue::parse(input).unwrap().to_seconds(),
                     DurationSeconds::try_from(5_400.0).unwrap()
+                );
+            }
+
+            #[test]
+            fn applies_the_leading_sign_to_the_whole_duration() {
+                assert_eq!(
+                    DurationValue::parse("-1h 30m").unwrap().to_seconds(),
+                    DurationSeconds::try_from(-5_400.0).unwrap()
                 );
             }
 
@@ -934,6 +1018,29 @@ mod tests {
                 fn rejects_negative_on_non_leading_part() {
                     let err = DurationValue::parse("1h -30m").unwrap_err();
                     assert!(matches!(err, DurationError::InvalidNumber { .. }));
+                }
+
+                #[test]
+                fn rejects_malformed_number_syntax_with_a_chained_source() {
+                    use std::error::Error as _;
+                    let err = DurationValue::parse(".h").unwrap_err();
+                    assert!(matches!(
+                        err,
+                        DurationError::MalformedNumber { .. }
+                    ));
+                    assert!(err.source().is_some());
+                }
+
+                #[test]
+                fn treats_a_single_part_overflowing_to_infinity_as_non_finite()
+                {
+                    let overflowing = format!("1{}h", "0".repeat(400));
+                    let err = DurationValue::parse(&overflowing).unwrap_err();
+                    assert!(matches!(
+                        &err,
+                        DurationError::NonFiniteNumber { input }
+                        if input == &overflowing
+                    ));
                 }
 
                 #[rstest]
@@ -1090,6 +1197,8 @@ mod tests {
         }
 
         mod equality {
+            use pretty_assertions::{assert_eq, assert_ne};
+
             use super::*;
 
             #[test]
@@ -1104,6 +1213,13 @@ mod tests {
                 let a = DurationValue::parse("1h").unwrap();
                 let b = DurationValue::parse("2h").unwrap();
                 assert_ne!(a, b);
+            }
+
+            #[test]
+            fn treats_negative_zero_as_equal_to_positive_zero() {
+                let neg = DurationValue::parse("-0m").unwrap();
+                let pos = DurationValue::parse("0m").unwrap();
+                assert_eq!(neg, pos);
             }
         }
 
@@ -1125,6 +1241,14 @@ mod tests {
                 let pos = DurationValue::parse("+15m").unwrap();
                 assert!(neg < zero);
                 assert!(zero < pos);
+            }
+
+            #[test]
+            fn orders_negative_zero_as_greater_than_or_equal_to_positive_zero()
+            {
+                let neg_zero = DurationValue::parse("-0m").unwrap();
+                let zero = DurationValue::parse("0m").unwrap();
+                assert!(neg_zero >= zero);
             }
         }
 
@@ -1181,6 +1305,7 @@ mod tests {
 
         mod formatting {
             use pretty_assertions::assert_eq;
+            use rstest::rstest;
 
             use super::*;
 
@@ -1200,6 +1325,39 @@ mod tests {
                 assert_eq!(
                     DurationSeconds::try_from(0.5).unwrap().to_string(),
                     "0.5"
+                );
+            }
+
+            #[rstest]
+            #[case::huge_positive(1e300, "1e300")]
+            #[case::huge_negative(-1e300, "-1e300")]
+            #[case::tiny_positive(1e-300, "1e-300")]
+            #[case::at_upper_threshold(DISPLAY_EXPONENT_UPPER, "1e15")]
+            #[case::just_below_upper_threshold(1e14, "100000000000000")]
+            #[case::at_lower_threshold(DISPLAY_EXPONENT_LOWER, "0.000001")]
+            #[case::just_above_lower_threshold(0.0004, "0.0004")]
+            fn seconds_display_switches_dialect_by_magnitude(
+                #[case] value: f64,
+                #[case] expected: &str,
+            ) {
+                assert_eq!(
+                    DurationSeconds::try_from(value).unwrap().to_string(),
+                    expected
+                );
+            }
+
+            #[rstest]
+            #[case::huge_positive(1e300, "1e300s")]
+            #[case::huge_negative(-1e300, "-1e300s")]
+            #[case::tiny_positive(0.0004, "0.0004s")]
+            fn from_seconds_never_lies_about_a_nonzero_magnitude(
+                #[case] value: f64,
+                #[case] expected: &str,
+            ) {
+                let seconds = DurationSeconds::try_from(value).unwrap();
+                assert_eq!(
+                    DurationValue::from_seconds(seconds).as_str(),
+                    expected
                 );
             }
         }
@@ -1393,9 +1551,20 @@ mod tests {
                 assert_eq!(a * 3.0, DurationSeconds::try_from(300.0).unwrap());
                 assert_eq!(3.0 * a, DurationSeconds::try_from(300.0).unwrap());
             }
+
+            #[test]
+            fn mul_normalizes_a_resulting_signed_zero_from_either_operand_order()
+             {
+                let zero = DurationSeconds::try_from(0.0).unwrap();
+                assert_eq!(zero * -1.0, zero);
+                assert_eq!(-1.0 * zero, zero);
+                assert!(zero * -1.0 >= zero);
+            }
         }
 
         mod ordering {
+            use pretty_assertions::assert_eq;
+
             use super::*;
 
             #[test]
@@ -1405,6 +1574,14 @@ mod tests {
                 assert!(a < b);
                 assert!(b > a);
                 assert_eq!(a, DurationSeconds::try_from(100.0).unwrap());
+            }
+
+            #[test]
+            fn treats_negative_zero_as_equal_to_positive_zero() {
+                let neg = DurationSeconds::try_from(-0.0).unwrap();
+                let pos = DurationSeconds::try_from(0.0).unwrap();
+                assert_eq!(neg, pos);
+                assert!(neg >= pos && pos >= neg);
             }
         }
 
