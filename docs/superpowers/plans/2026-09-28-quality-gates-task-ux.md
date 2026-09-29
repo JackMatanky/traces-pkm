@@ -110,10 +110,10 @@ Expected: `rc=2` both, with `mutants:` messages (`--update-baseline cannot be co
 #USAGE   conflicts "--min-msi" "--min-covered-msi" "--fail-on-escaped" "--update-baseline" "--baseline" "--blacklist" "--git-diff" "--no-git-diff" "--git-diff-base" "--git-diff-lines" "--dry-run" "--timeout" "--timeout-coefficient" "--exec-timeout" "--workers" "--run-mutant-id" "--coverage" "--per-test" "--test-recursive" "--do-not-remove-tmp-folder" "--match" "--no-diffs" "--silent" "--no-silent" "--output-statuses" "--quiet" "--verbose" "--debug" "--html-output" "--logger-agentic-json" "--logger-github" "--logger-gitlab" "--logger-summary-json" "--ignore-msi-with-no-mutations"
 #USAGE }
 #USAGE flag "--no-diffs" help="Hide escaped-mutant unified diffs in output"
-#USAGE flag "--silent" help="No per-mutant output (overrides --output-statuses)"
-#USAGE flag "--no-silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
-#USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/c/x; overrides --quiet)"
-#USAGE flag "--quiet" help="Counts and summary only (overridden by --output-statuses)"
+#USAGE flag "--silent" conflicts="--no-silent" help="No per-mutant output (overrides --output-statuses)"
+#USAGE flag "--no-silent" conflicts="--silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
+#USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/n/x; overrides --quiet)"
+#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses)"
 #USAGE flag "--verbose" help="Print file/line/worker/mutator/test-command detail"
 #USAGE flag "--debug" help="Maximum mutarust diagnostics"
 #USAGE flag "--html-output" help="Write mutarust-report.html (task config already enables it)"
@@ -163,11 +163,13 @@ Notes: multi-selector `conflicts` uses node-args form only (space-separated attr
 Spec deviations recorded at conversion (report again in Task 7 Step 4):
 
 - **`--timeout ⊥ --exec-timeout` (new row beyond spec A3):** cli.md:237–238 says `--timeout` is an **alias** of `--exec-timeout`, and the old cascade refused the pair (declared `--timeout` + passthrough `--exec-timeout`, lines 176–181). Declaring the conflict preserves today's behavior; tightening needs no sign-off (only loosening does, per spec A3).
+- **`--silent ⊥ --no-silent` (new row beyond spec A3):** cli.md:65–66 says the pair "cannot be used together"; without it both reach mutarust → rc 3. Declared bidirectionally so the pair exits 1 like every other known-invalid combination (tightening — no sign-off needed); matrix covers both orders.
 - **Inspect conflict selectors are single-line:** spec A3 asked for block form ≤80 cols, but KDL node arguments cannot wrap across lines (unverified otherwise); the 34-selector lines are parsed and validated by Step 10's help render + Step 11's matrix.
 - **`--no-git-diff` added to both inspect conflict lists:** spec A3's "negate spellings reject in either spelling" rule, applied to the inspect row.
 - **Spec A5's `build_static_target_flags`/`build_mutarust_args`/`run_inspect_mode`/`run_count_mode` do not exist in the file** — the plan follows the actual structure (`main` → `build_inspect_args` | `build_static_flags` + `build_target_flags` + `build_gate_flags`).
 - **`--git-diff-base` requires needs a script backstop (beyond spec A3's parse-time `requires`):** mise satisfies `requires` with a declared `default` *and* with any explicit value (`--no-git-diff`). Fix: no `default` on `--git-diff` (absence → rc 1) + `reject_bad_targets` guard (explicit `--no-git-diff` + base → rc 2, old cascade message). Both paths matrix-verified.
 - **Spec A4's "declared flags after `--`" claim is void:** mise strips `--` before usage parsing, so `-- --workers 4` parses as `--workers 4` → rc 0 (bounded run), not rc 2. Undeclared post-`--` tokens still exit 2 via the scan. Matrix case updated accordingly; spec text left as-is (correction recorded here).
+- **Two refusal-message rewordings (review nit):** spec A2 says the `--test-flags` refusal keeps the existing tailored text, but "drop it from passthrough" became "drop it from the command line" (passthrough no longer exists); spec A4's generic shape `flag-like token in target list: …` is implemented as `unknown or misplaced flag: … (declared flags go before --; …)`. Same intent, clearer text; spec left as-is.
 
 - [ ] **Step 3: Script — header, arrays, parse + scan (replaces lines 70–143 and `parse_passthrough_tokens`/`passthrough_has_token`/`has_fixed_timeout`)**
 
@@ -219,7 +221,8 @@ parse_targets() {
 # Outputs:
 #   Diagnostic on STDERR for a rejected token.
 # Returns:
-#   Exits 2 on a refused/unknown flag-like token; 0 otherwise.
+#   Exits 2 on a refused/unknown token or --git-diff-base without
+#   --git-diff; 0 otherwise.
 ########################################
 reject_bad_targets() {
   local t
@@ -539,6 +542,8 @@ check 1 mutants --timeout-coefficient 3 --exec-timeout 30 -f src/lib.rs --match 
 check 1 mutants --timeout 5 --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
 check 1 mutants --update-baseline --run-mutant-id deadbeef -f src/lib.rs --match __zz_no_match__
 check 1 mutants --coverage --per-test -f src/lib.rs --match __zz_no_match__
+check 1 mutants --silent --no-silent -f src/lib.rs --match __zz_no_match__
+check 1 mutants --no-silent --silent -f src/lib.rs --match __zz_no_match__
 # requires fires only because --git-diff has no default (a default would
 # satisfy `requires` — see ground rules); message = `mise ERROR`
 check 1 mutants --git-diff-base origin/main -f src/lib.rs --match __zz_no_match__
@@ -573,7 +578,7 @@ if [[ -n "$(git status --porcelain mutarust-baseline.json)" ]]; then
 fi
 ```
 
-Expected: `MATRIX: ALL PASS (31 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
+Expected: `MATRIX: ALL PASS (33 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
 
 - [ ] **Step 12: `hk` on the edited file + commit**
 
@@ -920,7 +925,7 @@ Expected: clean tree; the five task commits (Tasks 1, 3, 4, 5, 6 — plus any Ta
 | --- | --- |
 | A1 declared surface (+ cli.md reconciliation note on `--package`/`--workspace`) | Task 1 Step 2 |
 | A2 refusal set + tailored messages | Task 1 Step 3 (`reject_bad_targets`), long_help |
-| A3 conflict matrix (dry-run ×9, timeout pairs incl. the `--timeout`⊥`--exec-timeout` extension, update-baseline pair, coverage⊥per-test, git-diff-base requires, exclusive, inspect ×34 selectors incl. `--no-git-diff`) | Task 1 Step 2, notes, matrix Step 11 |
+| A3 conflict matrix (dry-run ×9, timeout pairs incl. the `--timeout`⊥`--exec-timeout` extension, update-baseline pair, coverage⊥per-test, silent⊥no-silent both orders, git-diff-base requires, exclusive, inspect ×34 selectors incl. `--no-git-diff`) | Task 1 Step 2, notes, matrix Step 11 |
 | A4 target scan (`-`-prefixed → exit 2, tailored vs generic, `--` dropped) + git-diff-base requires backstop; spec's declared-flag-after-`--` claim void (see deviation notes) | Task 1 Step 3, matrix Step 11 |
 | A5 deletions (`reject_conflicting_flags`, `reject_declared_in_inspect`, `passthrough_has_token`, `passthrough_has_positional`, `has_fixed_timeout`, passthrough forwarding; spec A5's other function names don't exist in the file — see Step 2 notes) | Task 1 Steps 3–9 |
 | A6 exit-code contract 1/2 + help rewrite | Task 1 Step 2 long_help, Step 10, matrix Step 11 |
