@@ -19,6 +19,10 @@
 #USAGE }
 #USAGE flag "--baseline <file>" help="Alternate accepted-escapes baseline path (default mutarust-baseline.json)"
 #USAGE flag "--blacklist <file>" help="Read accepted mutation checksums from FILE"
+#USAGE // no `default` on --git-diff: a default satisfies --git-diff-base's
+#USAGE // `requires` (mise treats the default as a value); absence must fire
+#USAGE // the requires, and the script backstop covers an explicit
+#USAGE // `--no-git-diff` (mise `requires` accepts any explicit value).
 #USAGE flag "--git-diff" negate="--no-git-diff" {
 #USAGE   help "Mutate only lines changed vs origin/HEAD (falls back to current branch; untracked files are invisible — stage new files first)"
 #USAGE }
@@ -51,10 +55,10 @@
 #USAGE   conflicts "--min-msi" "--min-covered-msi" "--fail-on-escaped" "--update-baseline" "--baseline" "--blacklist" "--git-diff" "--no-git-diff" "--git-diff-base" "--git-diff-lines" "--dry-run" "--timeout" "--timeout-coefficient" "--exec-timeout" "--workers" "--run-mutant-id" "--coverage" "--per-test" "--test-recursive" "--do-not-remove-tmp-folder" "--match" "--no-diffs" "--silent" "--no-silent" "--output-statuses" "--quiet" "--verbose" "--debug" "--html-output" "--logger-agentic-json" "--logger-github" "--logger-gitlab" "--logger-summary-json" "--ignore-msi-with-no-mutations"
 #USAGE }
 #USAGE flag "--no-diffs" help="Hide escaped-mutant unified diffs in output"
-#USAGE flag "--silent" help="No per-mutant output (overrides --output-statuses)"
-#USAGE flag "--no-silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
-#USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/c/x; overrides --quiet)"
-#USAGE flag "--quiet" help="Counts and summary only (overridden by --output-statuses)"
+#USAGE flag "--silent" conflicts="--no-silent" help="No per-mutant output (overrides --output-statuses)"
+#USAGE flag "--no-silent" conflicts="--silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
+#USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/n/x; overrides --quiet)"
+#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses)"
 #USAGE flag "--verbose" help="Print file/line/worker/mutator/test-command detail"
 #USAGE flag "--debug" help="Maximum mutarust diagnostics"
 #USAGE flag "--html-output" help="Write mutarust-report.html (task config already enables it)"
@@ -146,9 +150,8 @@ parse_targets() {
 # strict-unknown-flag backstop. Refusals keep the tailored messages from the
 # retired cascades; everything else flag-like gets the generic diagnostic.
 # Also backstops the --git-diff-base requires: mise's `requires` is satisfied
-# by any value, including an explicit `--no-git-diff`, and a declared flag's
-# default satisfies it too, so the parse-time check alone does not cover
-# every path (verified).
+# by any explicit value (e.g. `--no-git-diff`) and by a declared default, so
+# the parse-time check alone does not cover every path (verified).
 # Globals:
 #   targets
 #   usage_git_diff
@@ -158,7 +161,8 @@ parse_targets() {
 # Outputs:
 #   Diagnostic on STDERR for a rejected token.
 # Returns:
-#   Exits 2 on a refused/unknown flag-like token; 0 otherwise.
+#   Exits 2 on a refused/unknown token or --git-diff-base without
+#   --git-diff; 0 otherwise.
 ########################################
 reject_bad_targets() {
   local t
@@ -305,9 +309,7 @@ build_static_flags() {
 # bare `mise run mutants` scoped to production code. It applies only when
 # neither -f/-m nor a user-supplied `targets` entry is present: a bare
 # positional invocation like `mise run mutants src/cli/x.rs` scopes to
-# the user's target. Value-like tokens such as `4` in `--workers 4`
-# suppress the append too, which is harmless — mutarust's own no-target
-# default selects the same production tree today (counts 3820 == 3820).
+# the user's target.
 # Globals:
 #   usage_file
 #   usage_mod
