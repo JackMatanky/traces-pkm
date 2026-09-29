@@ -236,7 +236,7 @@ test runner, `--iterate`, glob/regex-based exclusions, the existing
 `mutants.out/missed.txt` → `mutants-report.md` pipeline
 (`.mise/tasks/mutants/report`, deleted in ffb725d6), the
 module-scoped task UX with `-m/-f/--check` flags
-([.mise/tasks/mutants/_default](../../.mise/tasks/mutants/_default)),
+([.mise/tasks/test/mutants](../../.mise/tasks/test/mutants)),
 and `--profile mutants` / `--cap-lints` build tuning.
 
 **Direct comparison on this workspace:** cannot be run — this is a
@@ -305,7 +305,7 @@ Caveats:
 ## 5. How it would slot into this repo's gates
 
 - **Where mutation currently lives:** file task
-  `.mise/tasks/mutants/_default` (extends `[task_templates.mutants]`,
+  `.mise/tasks/test/mutants` (extends `[task_templates.mutants]`,
   `timeout = "1h"`, cache off, depends on `test`, post-runs
   `mutants:report`). `hk.pkl` contains **no mutation step** (grep: zero
   matches), and `verify` = `fmt` → `check`/`lint`/`test` — mutation is
@@ -567,7 +567,7 @@ in CI), coexisting with the cargo-mutants setup. Primary sources: upstream
   its score counts errored+skipped as non-escapes (§2.1) — not comparable
   with cargo-mutants numbers.
 - **A/B pilot:** run `mise run mutarust -m <mod>` against
-  `mise run mutants -m <mod>` on the same module; compare escape sets,
+  `mise run test:mutants -m <mod>` on the same module; compare escape sets,
   wall-clock, and report ergonomics before deciding coexistence vs
   replacement (§3: steady-state double-running is not the goal).
 - **nextest:** start with default `cargo test`. Do **not** hand-roll

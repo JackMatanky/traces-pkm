@@ -27,7 +27,7 @@ measures whether assertions would *notice* the change.
 
 1. **`mutarust`** — the mutation engine. Installed via `mise` in
    `mise.toml` `[tools]` (`"cargo:mutarust" = "0.1.10"`), wrapped by the
-   **tool-agnostic `mutants` task** (`.mise/tasks/mutants/_default`) — the
+   **tool-agnostic `test:mutants` task** (`.mise/tasks/test/mutants`) — the
    entrypoint name predates the engine and outlives it.
 2. **`cargo-nextest`** — still used by the `mise run test` task for its
    parallel runner. Mutation runs themselves use plain
@@ -49,14 +49,14 @@ Config lives in two committed files (per-tool convention, like
 ## 3. The `mutants` mise task
 
 ```bash
-mise run mutants                 # full scope (./src...), score-reporting
-mise run mutants -m index        # one module (src/index/ recursively)
-mise run mutants -f src/hash.rs  # one file
-mise run mutants --dry-run       # count mutants, no test runs
-mise run mutants --git-diff      # only changed tracked lines (stage new files!)
+mise run test:mutants                 # full scope (./src...), score-reporting
+mise run test:mutants -m index        # one module (src/index/ recursively)
+mise run test:mutants -f src/hash.rs  # one file
+mise run test:mutants --dry-run       # count mutants, no test runs
+mise run test:mutants --git-diff      # only changed tracked lines (stage new files!)
 ```
 
-Selected declared flags (the task declares mutarust's full surface minus its owned flags — see `mise run mutants --help` for the complete contract):
+Selected declared flags (the task declares mutarust's full surface minus its owned flags — see `mise run test:mutants --help` for the complete contract):
 
 | Flag | Meaning |
 | --- | --- |
@@ -91,9 +91,9 @@ failure worth retrying with a narrower scope.** Any zero-mutant scope with
 ### Scoping / performance knobs
 
 ```bash
-mise run mutants --git-diff          # cheapest meaningful local run
-mise run mutants -m query            # bounded scope while iterating
-mise run mutants --workers 4        # cap parallel workers
+mise run test:mutants --git-diff          # cheapest meaningful local run
+mise run test:mutants -m query            # bounded scope while iterating
+mise run test:mutants --workers 4        # cap parallel workers
 ```
 Workers × cargo `-j` share the CPUs; results always print in plan order.
 There is no `--iterate`: rerun cost is controlled by *scoping*, and the
@@ -105,23 +105,23 @@ baseline only changes what **fails**, not what runs.
 
 ```bash
 # 1. Full scored run
-mise run mutants
+mise run test:mutants
 
 # 2. Accept every current escape as policy
-mise run mutants --update-baseline
+mise run test:mutants --update-baseline
 git add mutarust-baseline.json && git commit -m "chore: commit mutarust baseline"
 
 # 3. Day-to-day gate: only NEW escapes fail
-mise run mutants --fail-on-escaped        # rc=0 → no regressions
+mise run test:mutants --fail-on-escaped        # rc=0 → no regressions
 
 # 4. Kill a new escape (agent loop)
 jq '.mutants[0]' mutarust-agentic.json     # id, diff, context_lines, kill_hint
 #    pick an id NOT already in mutarust-baseline.json (.mutants[0] may be
 #    an accepted escape; the agentic report carries all escapes of the run)
 #    ...write a targeted assertion in the nearby test file...
-mise run mutants --run-mutant-id <id>  # re-run just that mutant → killed?
+mise run test:mutants --run-mutant-id <id>  # re-run just that mutant → killed?
 # 5. Accept any remaining intentional escapes
-mise run mutants --update-baseline
+mise run test:mutants --update-baseline
 ```
 
 `mutarust-agentic.json` (written by every scored run; `--update-baseline`
@@ -147,7 +147,7 @@ If a mutation job is ever added, scope it to the change set:
   uses: jdx/mise-action@v2
 
 - name: Mutation test changed lines
-  run: mise run mutants --git-diff --min-msi 60 --fail-on-escaped
+  run: mise run test:mutants --git-diff --min-msi 60 --fail-on-escaped
 ```
 
 Caveats that make this safe: untracked files are invisible to
