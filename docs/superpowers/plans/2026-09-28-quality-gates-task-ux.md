@@ -17,7 +17,7 @@
 - **Worktree:** `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates` (branch `quality-gates`). Never touch the main checkout.
 - **No multi-hour runs.** Every mutarust invocation is scoped (`-m strsim`, `--list-*`, `--git-diff` on a src-unchanged branch) and prefixed `nice -n 10`. Bash tool timeouts ≥ `900000` for cargo-touching commands.
 - **Verification lives in the repo, not /tmp.** Usage-constraint enforcement was nondeterministic outside this project (settings drift); inside the worktree it was stable across repeat runs. All probes below run from the worktree root.
-- **Pipeline gotchas:** never pipe `mise run mutants` into `head` (SIGPIPE); capture rc with `out=$(cmd 2>&1); rc=$?` — never `cmd | tail; echo $?`; zsh aborts unquoted `echo ===x===` (`=` expansion); no `timeout` binary on macOS.
+- **Pipeline gotchas:** never pipe `mise run test:mutants` into `head` (SIGPIPE); capture rc with `out=$(cmd 2>&1); rc=$?` — never `cmd | tail; echo $?`; zsh aborts unquoted `echo ===x===` (`=` expansion); no `timeout` binary on macOS.
 - **Caching quirks (spike-verified, mise 2026.9.15):**
   - `mise run --force` bypasses task freshness/replay; `mise run --skip-deps` skips `depends=["test"]` (saves ~10 s per probe — use it for every parse-level case).
   - `conflicts="--a --b"` (space-separated in one attribute) is a **silent no-op**. Multi-selector conflicts MUST use node-args form: `conflicts "--a" "--b"`.
@@ -126,15 +126,15 @@ Expected: `rc=2` both, with `mutants:` messages (`--update-baseline cannot be co
 #USAGE   help "Target paths (files/dirs/`./src...`); flags are declared above — never pass them after `--`"
 #USAGE   long_help """
 #USAGE   Examples:
-#USAGE   - `mise run mutants -m index` - mutate module `index`
-#USAGE   - `mise run mutants -m index --dry-run` - count only for one module
-#USAGE   - `mise run mutants --min-msi 60 --fail-on-escaped` - gate on new escapes only
-#USAGE   - `mise run mutants --git-diff` - only changed lines (tracked; stage new files first)
-#USAGE   - `mise run mutants --workers 4` - cap parallel workers
-#USAGE   - `mise run mutants --list-mutators` - list built-in mutators
-#USAGE   - `mise run mutants --list-files` - print selected files (NOTE: ignores exclude_dirs)
-#USAGE   - `mise run mutants src/cli/error.rs` - explicit target positional (skips the default)
-#USAGE   - `mise run mutants --run-mutant-id <id>` - re-run one mutant to verify a kill
+#USAGE   - `mise run test:mutants -m index` - mutate module `index`
+#USAGE   - `mise run test:mutants -m index --dry-run` - count only for one module
+#USAGE   - `mise run test:mutants --min-msi 60 --fail-on-escaped` - gate on new escapes only
+#USAGE   - `mise run test:mutants --git-diff` - only changed lines (tracked; stage new files first)
+#USAGE   - `mise run test:mutants --workers 4` - cap parallel workers
+#USAGE   - `mise run test:mutants --list-mutators` - list built-in mutators
+#USAGE   - `mise run test:mutants --list-files` - print selected files (NOTE: ignores exclude_dirs)
+#USAGE   - `mise run test:mutants src/cli/error.rs` - explicit target positional (skips the default)
+#USAGE   - `mise run test:mutants --run-mutant-id <id>` - re-run one mutant to verify a kill
 #USAGE   Every mutarust flag is declared. The task refuses only its owned flags
 #USAGE   (--config, --test-flags, --exec/--no-exec, --features) and unknown or
 #USAGE   misplaced flag-like tokens in target position — exit 2, `mutants:` message.
@@ -154,6 +154,8 @@ Expected: `rc=2` both, with `mutants:` messages (`--update-baseline cannot be co
 #USAGE   were caught/unviable printers; mutarust -V is --version!); --json →
 #USAGE   report.json (on via this task's config); --jobs → --workers N;
 #USAGE   --no-config → never pass (task owns --config).
+#USAGE   Alias: `mutants` remains a supported alias (`mise run mutants`) —
+#USAGE   same task, hidden from `mise tasks`.
 #USAGE   """
 #USAGE }
 ```
@@ -250,7 +252,7 @@ reject_bad_targets() {
         exit 2
         ;;
       -*)
-        echo "mutants: unknown or misplaced flag: ${t} (declared flags go before --; see 'mise run mutants --help')" >&2
+        echo "mutants: unknown or misplaced flag: ${t} (declared flags go before --; see 'mise run test:mutants --help')" >&2
         exit 2
         ;;
     esac
@@ -500,7 +502,7 @@ Also fix docblocks that still list `passthrough` as a global (`build_inspect_arg
 
 ```bash
 bash -n .mise/tasks/mutants/_default && echo SYNTAX_OK
-out=$(mise run mutants --help 2>&1); echo "rc=$?"
+out=$(mise run test:mutants --help 2>&1); echo "rc=$?"
 printf '%s\n' "$out" | grep -q "exits 1 for usage-validation" && echo HELP_OK
 printf '%s\n' "$out" | grep -q -- "--workers 4" && echo EXAMPLES_OK
 ```
@@ -526,56 +528,59 @@ check() { # $1 expected rc, rest = mise run args
 # mutarust arg error) instead of a full-project mutation run. Inspect cases
 # fail fast on their own (inspect output only). Never remove the bounds.
 # usage validation → rc 1 (mise ERROR)
-check 1 mutants --dry-run --update-baseline -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --timeout 5 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --workers 2 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --timeout-coefficient 3 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --coverage -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --per-test -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --test-recursive -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --do-not-remove-tmp-folder -f src/lib.rs --match __zz_no_match__
-check 1 mutants --timeout-coefficient 3 --timeout 5 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --timeout-coefficient 3 --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --timeout 5 --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --update-baseline --run-mutant-id deadbeef -f src/lib.rs --match __zz_no_match__
-check 1 mutants --coverage --per-test -f src/lib.rs --match __zz_no_match__
-check 1 mutants --silent --no-silent -f src/lib.rs --match __zz_no_match__
-check 1 mutants --no-silent --silent -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --update-baseline -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --timeout 5 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --workers 2 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --timeout-coefficient 3 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --coverage -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --per-test -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --test-recursive -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --do-not-remove-tmp-folder -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --timeout-coefficient 3 --timeout 5 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --timeout-coefficient 3 --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --timeout 5 --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --update-baseline --run-mutant-id deadbeef -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --coverage --per-test -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --silent --no-silent -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --no-silent --silent -f src/lib.rs --match __zz_no_match__
 # requires fires only because --git-diff has no default (a default would
 # satisfy `requires` — see ground rules); message = `mise ERROR`
-check 1 mutants --git-diff-base origin/main -f src/lib.rs --match __zz_no_match__
-check 1 mutants --dry-run --workers=4 -f src/lib.rs --match __zz_no_match__
-check 1 mutants --list-mutators --verbose
-check 1 mutants --list-mutators ./src...
-check 1 mutants --list-mutators -m index
-check 1 mutants --list-files --min-msi 50
-check 1 mutants --list-files --verbose
-check 1 mutants --print-ast --dry-run
+check 1 test:mutants --git-diff-base origin/main -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --dry-run --workers=4 -f src/lib.rs --match __zz_no_match__
+check 1 test:mutants --list-mutators --verbose
+check 1 test:mutants --list-mutators ./src...
+check 1 test:mutants --list-mutators -m index
+check 1 test:mutants --list-files --min-msi 50
+check 1 test:mutants --list-files --verbose
+check 1 test:mutants --print-ast --dry-run
 # target scan → rc 2 (bounds are inert here: the scan exits before mutarust)
-check 2 mutants --config mutarust.yml -f src/lib.rs --match __zz_no_match__
-check 2 mutants -- --config mutarust.yml -f src/lib.rs --match __zz_no_match__
-check 2 mutants --test-flags "--features x" -f src/lib.rs --match __zz_no_match__
-check 2 mutants --exec -f src/lib.rs --match __zz_no_match__
-check 2 mutants --features x -f src/lib.rs --match __zz_no_match__
-check 2 mutants --bogus -f src/lib.rs --match __zz_no_match__
-check 2 mutants -x -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants --config mutarust.yml -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants -- --config mutarust.yml -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants --test-flags "--features x" -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants --exec -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants --features x -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants --bogus -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants -x -f src/lib.rs --match __zz_no_match__
 # a second `--` still lands following declared flags in scan range
-check 2 mutants -- -- --dry-run -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants -- -- --dry-run -f src/lib.rs --match __zz_no_match__
 # a third `--` survives into the scan itself (generic arm names the token)
-check 2 mutants -- -- -- --dry-run -f src/lib.rs --match __zz_no_match__
+check 2 test:mutants -- -- -- --dry-run -f src/lib.rs --match __zz_no_match__
 # happy parse path → rc 0 (inspect is the only fast rc-0 path; dry-run
 # happy paths are Task 2's Steps 1/1b). `-- --workers 4` parses as
 # `--workers 4`: mise strips `--` before usage parsing, so a DECLARED flag
 # after `--` is just the flag (bounded run → 0); undeclared post-`--`
 # tokens still exit 2 via the scan (covered above).
-check 0 mutants --list-files src/lib.rs
-check 0 mutants -- --workers 4 -f src/lib.rs --match __zz_no_match__
+check 0 test:mutants --list-files src/lib.rs
+check 0 test:mutants -- --workers 4 -f src/lib.rs --match __zz_no_match__
 # equals-form value parsing on the happy path (spec §Verification 3)
-check 0 mutants --workers=4 -f src/lib.rs --match __zz_no_match__
+check 0 test:mutants --workers=4 -f src/lib.rs --match __zz_no_match__
 # sibling inspect flags pair legally (excluded from both conflict lists);
 # list-files wins, mutarust accepts the pair
-check 0 mutants --list-files --print-ast -f src/lib.rs
+check 0 test:mutants --list-files --print-ast -f src/lib.rs
+# alias regression: the legacy `mutants` name resolves to this same task
+# (kept via `#MISE aliases`, hidden from `mise tasks`)
+check 0 mutants --list-mutators
 # summary
 if [[ ${#fails[@]} -eq 0 ]]; then echo "MATRIX: ALL PASS ($count cases)"; else
   printf 'MATRIX FAILURES:\n'; printf '  %s\n' "${fails[@]}"; fi
@@ -585,7 +590,7 @@ if [[ -n "$(git status --porcelain mutarust-baseline.json)" ]]; then
 fi
 ```
 
-Expected: `MATRIX: ALL PASS (37 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
+Expected: `MATRIX: ALL PASS (38 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
 
 - [x] **Step 12: `hk` on the edited file + commit**
 

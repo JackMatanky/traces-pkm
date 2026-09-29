@@ -152,7 +152,7 @@ git commit -m "refactor(tasks): rename mutants task to test:mutants"
 
 Expected: commit lands (rename + edits), hooks green, no other files staged, tree otherwise clean.
 
-- [ ] **Step 8: Alias probes — in place (guarded socket move)**
+- [x] **Step 8: Alias probes — in place (guarded socket move)**
 
 **Why in place now:** the worktree retired mid-plan (Incidents I1); this
 checkout IS the repo root on `quality-gates`, so the old `.mise/tasks/mutants/`
@@ -281,7 +281,7 @@ Expected: commit lands; hooks green.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-09-28-quality-gates-task-ux.md`
 
-- [ ] **Step 1: Replace runnable invocations; revert the `Line N` records**
+- [x] **Step 1: Replace runnable invocations; revert the `Line N` records**
 
 ```bash
 p=docs/superpowers/plans/2026-09-28-quality-gates-task-ux.md
@@ -294,7 +294,7 @@ rg -o 'mise run mutants' "$p" | wc -l        # 6 (the historical Line N records 
 
 Expected: `12` then `6`. The 12 = ground-rules gotcha (:20), the 9 Step 2 block examples, the Step 3 block refusal message, and the Step 10 help probe. The 6 = the Task 6 `Line 59/92/118 before/after:` edit records — those quotes are history and must keep the pre-rename name.
 
-- [ ] **Step 2: Rename the 37 matrix checks**
+- [x] **Step 2: Rename the 37 matrix checks**
 
 ```bash
 sed -i '' -E 's/^(check [0-9]+) mutants /\1 test:mutants /' "$p"
@@ -304,7 +304,7 @@ rg -o 'check [0-9]+ mutants ' "$p" | wc -l         # 0
 
 Expected: `37` then `0`.
 
-- [ ] **Step 3: Insert matrix case 38 (alias regression)**
+- [x] **Step 3: Insert matrix case 38 (alias regression)**
 
 Immediately before the `# summary` line at the end of the matrix block, the current text is:
 
@@ -323,7 +323,7 @@ check 0 mutants --list-mutators
 # summary
 ```
 
-- [ ] **Step 4: Bump the expected count**
+- [x] **Step 4: Bump the expected count**
 
 ```bash
 sed -i '' 's/MATRIX: ALL PASS (37 cases)/MATRIX: ALL PASS (38 cases)/' "$p"
@@ -332,7 +332,7 @@ rg -o 'MATRIX: ALL PASS (38 cases)' "$p" | wc -l   # 1
 
 Expected: `1`.
 
-- [ ] **Step 5: Sync the alias sentence into the plan's Step 2 block + verify byte-identity**
+- [x] **Step 5: Sync the alias sentence into the plan's Step 2 block + verify byte-identity**
 
 The Step 2 block mirrors the task file's `#USAGE` section. Apply the same tail edit as Task 1 Step 4 inside the plan's Step 2 block (the unique context is):
 
@@ -366,7 +366,7 @@ diff /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/plan_s2.sh <(sed 
 
 Expected: `STEP2_IDENTICAL`.
 
-- [ ] **Step 6: Extract the matrix and run it (38 cases) — clone as runner**
+- [x] **Step 6: Extract the matrix and run it (38 cases) — clone as runner**
 
 **Why a clone (runner only):** the matrix invokes mutarust ~38× and the main
 checkout's live `.codegraph/daemon.sock` makes every mutarust run abort (Ground
@@ -402,7 +402,7 @@ from the guard), empty baseline status in both checkouts, back in the main
 checkout. (If the clone HEAD predates the rename commits — a stale clone — the
 run will mass-fail on `test:mutants` unknown-task errors; delete and re-clone.)
 
-- [ ] **Step 7: hk + commit**
+- [x] **Step 7: hk + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true
