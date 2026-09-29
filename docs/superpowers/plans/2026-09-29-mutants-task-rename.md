@@ -120,7 +120,10 @@ printf '%s' "$out" | grep -o 'test:mutants' | wc -l      # 9 (the examples)
 printf '%s' "$out" | grep -o 'mise run mutants' | wc -l  # 1 (the alias sentence)
 ```
 
-Expected: `SYNTAX_OK`, `help_rc=0`, `9`, `1`.
+Expected: `SYNTAX_OK`, `help_rc=0`, `10`, `1`. The `10` = the auto-generated
+usage line `Usage: test:mutants …` (1) + the 9 example mentions (an earlier
+draft said 9 — it forgot the usage line; `grep -o 'test:mutants' help` was
+verified to be exactly those 10 lines).
 
 - [ ] **Step 6: Refusal message probe**
 
@@ -132,18 +135,7 @@ echo "rc=$rc"; printf '%s\n' "$out" | grep -m1 'unknown or misplaced'
 Expected: `rc=2` and the line
 `mutants: unknown or misplaced flag: --bogus (declared flags go before --; see 'mise run test:mutants --help')`.
 
-- [ ] **Step 7: Alias probes**
-
-```bash
-out=$(mise run --skip-deps mutants -f src/lib.rs --match __zz_no_match__ 2>&1); rc=$?
-echo "alias_rc=$rc"
-mise tasks | grep -c '^mutants'
-mise tasks | grep -c 'mutants:report'
-```
-
-Expected: `alias_rc=0` (alias resolves; bounds keep the run inert), then `0` (alias hidden from the listing), then `0` (ancestor checkout's old `report` does not leak in).
-
-- [ ] **Step 8: hk + commit**
+- [ ] **Step 7: hk + commit**
 
 ```bash
 hk fix --safe --no-stage --unstaged 2>/dev/null || true
@@ -153,6 +145,34 @@ git commit -m "refactor(tasks): rename mutants task to test:mutants"
 ```
 
 Expected: commit lands (rename + edits), hooks green, no other files staged, tree otherwise clean.
+
+- [ ] **Step 8: Alias probes — in a clean clone (NOT the worktree)**
+
+**Why a clone:** the worktree is nested inside the main checkout, which still
+ships the *old* `.mise/tasks/mutants/_default` (main has not been updated —
+that happens when this branch merges). `mise run mutants` inside the worktree
+therefore resolves to main's ancestor task and shadows the new alias (observed:
+it executed `~/Documents/41_personal/traces-pkm/.mise/tasks/mutants/_default`,
+rc=1; `mise tasks` listed `mutants` with main's `cargo-mutants` description).
+The ancestor disappears on merge, so a fresh clone of this branch *is* the
+post-merge environment. Never touch the main checkout to work around this.
+
+```bash
+clone=/var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/rename-alias-clone
+rm -rf "$clone"
+git clone -q /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates "$clone"
+git -C "$clone" rev-parse --abbrev-ref HEAD          # quality-gates
+cd "$clone"
+out=$(mise run --skip-deps mutants -f src/lib.rs --match __zz_no_match__ 2>&1); rc=$?
+echo "alias_rc=$rc"                                   # 0 — resolves via #MISE aliases → test:mutants
+printf '%s' "$out" | grep -c 'test:mutants' || true   # >0 — ran the NEW task
+mise tasks | grep -c '^mutants'                       # 0 — alias hidden from listing
+mise tasks | grep -c 'mutants:report'                 # 0 — no report task
+cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
+```
+
+Expected: `quality-gates`, `alias_rc=0`, a nonzero `test:mutants` hit (the new
+task's output), `0`, `0`.
 
 ---
 
@@ -339,19 +359,37 @@ diff /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/plan_s2.sh <(sed 
 
 Expected: `STEP2_IDENTICAL`.
 
-- [ ] **Step 6: Extract and run the matrix (38 cases)**
+- [ ] **Step 6: Extract the matrix and run it (38 cases) — in a clean clone**
+
+**Why a clone:** case 38 invokes the bare `mutants` alias; inside the worktree
+that name is shadowed by main's not-yet-updated old task (see Task 1 Step 8),
+so case 38 can only pass in the post-merge environment, which a fresh clone of
+this branch reproduces. The 37 `test:mutants` cases pass anywhere; running the
+whole block in the clone keeps one authoritative ALL-PASS run. Extraction
+stays in the worktree (the edited plan lives there); execution `cd`s to the
+clone. Requires Tasks 1+2 committed (clone = HEAD).
 
 ```bash
+cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
+p=docs/superpowers/plans/2026-09-28-quality-gates-task-ux.md
 start=$(rg -n 'declare -a fails=\(\)' "$p" | cut -d: -f1)
 rel=$(sed -n "$start,$((start+95))p" "$p" | grep -n '^```$' | head -1 | cut -d: -f1)
 end=$((start+rel-2))
 sed -n "${start},${end}p" "$p" > /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/matrix.sh
 bash -n /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/matrix.sh
-bash /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/matrix.sh
+clone=/var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/rename-matrix-clone
+rm -rf "$clone"
+git clone -q /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates "$clone"
+git -C "$clone" rev-parse --abbrev-ref HEAD           # quality-gates (must include T1+T2 commits)
+cd "$clone" && bash /var/folders/9w/3qn47_qj3m9b27gkxwr5_k9m0000gn/T/opencode/matrix.sh
 git status --porcelain mutarust-baseline.json
+cd /Users/jack/Documents/41_personal/traces-pkm/.worktrees/quality-gates
 ```
 
-Expected: `MATRIX: ALL PASS (38 cases)` (plus possibly `BASELINE_RESTORED` from the guard), and empty `git status` for the baseline.
+Expected: `MATRIX: ALL PASS (38 cases)` (plus possibly `BASELINE_RESTORED` from
+the guard), empty `git status` for the baseline, and back in the worktree.
+(If the clone HEAD predates the rename commits — a stale clone — the run will
+mass-fail on `test:mutants` unknown-task errors; delete and re-clone.)
 
 - [ ] **Step 7: hk + commit**
 
