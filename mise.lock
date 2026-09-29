@@ -114,11 +114,6 @@ version = "0.27.0"
 backend = "cargo:cargo-modules"
 specifiers = ["latest"]
 
-[[tools."cargo:cargo-mutants"]]
-version = "27.1.0"
-backend = "cargo:cargo-mutants"
-specifiers = ["latest"]
-
 [[tools."cargo:cargo-sweep"]]
 version = "0.8.0"
 backend = "cargo:cargo-sweep"
@@ -134,6 +129,11 @@ version = "0.1.8"
 backend = "cargo:critcmp"
 specifiers = ["latest"]
 
+[[tools."cargo:https://github.com/quality-gates/messrust"]]
+version = "tag:v0.1.15"
+backend = "cargo:https://github.com/quality-gates/messrust"
+specifiers = ["tag:v0.1.15"]
+
 [[tools."cargo:https://github.com/snowmead/rust-docs-mcp"]]
 version = "branch:main"
 backend = "cargo:https://github.com/snowmead/rust-docs-mcp"
@@ -141,6 +141,11 @@ specifiers = ["branch:main"]
 
 [tools."cargo:https://github.com/snowmead/rust-docs-mcp".options]
 crate = "rust-docs-mcp"
+
+[[tools."cargo:mutarust"]]
+version = "0.1.10"
+backend = "cargo:mutarust"
+specifiers = ["0.1.10"]
 
 [[tools."cargo:ryl"]]
 version = "0.22.0"

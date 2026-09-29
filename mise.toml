@@ -29,7 +29,8 @@ cargo-deny = "latest"
 "github:nextest-rs/nextest" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-crap" = "latest"
-"cargo:cargo-mutants" = "latest"
+"cargo:https://github.com/quality-gates/messrust" = { version = "tag:v0.1.15" }
+"cargo:mutarust" = "0.1.10"
 
 # -- Benchmarking --
 # Top-level `[tools]` keeps `critcmp` on `PATH` for `bench --compare` tab-completion.
@@ -402,6 +403,41 @@ depends = ["coverage:lcov"]
 sources = ["@group:rust", ".cargo-crap.toml"]
 outputs = ["lcov.info"]
 run = "cargo crap --lcov lcov.info"
+
+[tasks.mess]
+description = "Static mess detection with `messrust` (advisory)"
+extends = "gate:never-skip"
+usage = """
+arg "[args]" var=#true {
+  help "Extra arguments forwarded to messrust (e.g. --strict, --only Rule, --reportfile f.json)"
+  long_help \"""
+  Advisory static analysis with messrust — manual, never wired into verify/hk/CI.
+
+  Workflow:
+  1. Run after big refactors or before opening a PR: `mise run mess`
+  2. Exit 0 = clean; exit 2 = findings (the normal advisory signal); exit 1 = tool error
+  3. To triage machine-readably: `mise run mess -- --reportfile /tmp/mess.json --ignore-violations-on-exit` (exit 0, report kept)
+  4. Tune policy in `messrust.xml` (rule refs, thresholds like reportLevel); history in docs/refs/quality_gates_messrust.md (§7–§9)
+  5. Act: fix, or record why a finding stays; re-run
+
+  Flag cheatsheet (forwarded verbatim after `--`, full reference docs/refs/messrust/docs/usage.md):
+  --only Rule, --enable/--disable ruleset, --exclude path, --strict,
+  --reportfile FILE, --ignore-tests (task always passes it),
+  --ignore-violations-on-exit / --ignore-errors-on-exit (scripting escapes),
+  --minimumpriority/--maximumpriority N, --suffixes ext, --color, --verbose
+  \"""
+}
+"""
+run = '''
+#!/bin/bash
+# usage_args is shell-quoted (var=#true arg); mise documents eval-into-array
+# as the pattern for variadic args — intentional despite Google style §6.6.
+# shellcheck disable=SC2154
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+messrust src text messrust.xml --ignore-tests "${extra[@]+"${extra[@]}"}"
+'''
 
 # ------------------------------------------------------------- #
 #                    Release & Verification                     #

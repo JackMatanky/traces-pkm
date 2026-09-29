@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- messrust.xml — messrust policy for traces-pkm (sibling: mutarust.yml).
+     Run via `mise run mess`; advisory only: findings exit 2 (the exit
+     status contract), never wired into hk/verify/CI. Created fail-first
+     per the quality-gates plan (missing policy file errors with rc=1,
+     then this loadable policy). -->
+<ruleset name="traces-pkm policy" xmlns="http://pmd.sf.net/ruleset/1.0.0">
+  <description>traces-pkm: rust preset minus rules already denied by
+  clippy/rustc, minus rules with open upstream FP bugs.</description>
+  <rule ref="rust">
+    <!-- Dup of rustc non_snake_case/non_camel_case_types (already -D warnings)
+         + upstream FP bug #184 (raw identifiers) -->
+    <exclude name="CamelCaseClassName"/>
+    <exclude name="CamelCaseMethodName"/>
+    <exclude name="CamelCaseParameterName"/>
+    <exclude name="CamelCasePropertyName"/>
+    <exclude name="CamelCaseVariableName"/>
+    <!-- Dup of rustc unused_variables/dead_code + upstream FP bug #183 -->
+    <exclude name="UnusedLocalVariable"/>
+    <exclude name="UnusedPrivateField"/>
+    <exclude name="UnusedPrivateMethod"/>
+    <!-- Dup of clippy::too_many_lines (denied) -->
+    <exclude name="ExcessiveMethodLength"/>
+    <!-- Upstream: quiet compatibility rule that never reports -->
+    <exclude name="GotoStatement"/>
+    <!-- pending upstream #160 (pub(crate) counted as public; this repo leans
+         on pub(crate) heavily) -->
+    <exclude name="ExcessivePublicCount"/>
+    <exclude name="TooManyPublicMethods"/>
+    <!-- redundant with clippy::too_many_arguments (threshold 5 < 10),
+         dup of rustc non_upper_case_globals, ~18 intentional-output sites -->
+    <exclude name="ExcessiveParameterList"/>
+    <exclude name="ConstantNamingConventions"/>
+    <exclude name="DevelopmentCodeFragment"/>
+  </rule>
+  <!-- Later refs override properties of rules already loaded via `rust`. -->
+  <rule ref="naming/ShortMethodName">
+    <properties>
+      <property name="exceptions" value="at,of,or,eq"/>
+    </properties>
+  </rule>
+  <!-- explicitness stays opt-in: run
+       `messrust src text messrust.xml,explicitness` plus the ignore-tests
+       flag for deep passes instead of loading it here (§8.10 of
+       quality_gates_messrust). -->
+  <!-- reportLevel 10 → 12: default fired on 50 fns; 12 is upstream's own
+       tuning example (docs/codesize.md), re-run → 26 — details §9 of
+       quality_gates_messrust -->
+  <rule ref="codesize/CyclomaticComplexity">
+    <properties>
+      <property name="reportLevel" value="12"/>
+    </properties>
+  </rule>
+</ruleset>

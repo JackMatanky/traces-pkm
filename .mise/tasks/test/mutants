@@ -1,0 +1,474 @@
+#!/bin/bash
+#MISE description="Run mutation testing (engine: `mutarust`)"
+#MISE sources=["@group:rust"]
+#MISE extends="mutants"
+#MISE depends=["test"]
+#MISE aliases=["mutants"]
+#USAGE flag "-f --file <file>" {
+#USAGE   help "Mutate one file only (e.g. -f src/config/service.rs)"
+#USAGE }
+#USAGE flag "-m --mod <module>" {
+#USAGE   help "Mutate one module only (target src/<module>/ recursively)"
+#USAGE }
+#USAGE // `complete "module"` completes the value after `-m`/`--mod`, not the flag name.
+#USAGE complete "module" run="sed -nE 's/^(pub )?mod ([a-z_]+);$/\\2/p' src/lib.rs"
+#USAGE flag "--min-msi <n>" help="Fail (exit 4) if total mutation score < n"
+#USAGE flag "--min-covered-msi <n>" help="Fail (exit 4) if covered-file score < n (a positive value needs --coverage)"
+#USAGE flag "--fail-on-escaped" help="Fail (exit 4) only on escapes absent from mutarust-baseline.json"
+#USAGE flag "--update-baseline" conflicts="--run-mutant-id" {
+#USAGE   help "Accept current escapes into mutarust-baseline.json (writes NO reports, exits 0)"
+#USAGE }
+#USAGE flag "--baseline <file>" help="Alternate accepted-escapes baseline path (default mutarust-baseline.json)"
+#USAGE flag "--blacklist <file>" help="Read accepted mutation checksums from FILE"
+#USAGE // no `default` on --git-diff: a default satisfies --git-diff-base's
+#USAGE // `requires` (mise treats the default as a value); absence must fire
+#USAGE // the requires, and the script backstop covers an explicit
+#USAGE // `--no-git-diff` (mise `requires` accepts any explicit value).
+#USAGE flag "--git-diff" negate="--no-git-diff" {
+#USAGE   help "Mutate only lines changed vs origin/HEAD (falls back to current branch; untracked files are invisible — stage new files first)"
+#USAGE }
+#USAGE flag "--git-diff-base <ref>" requires="--git-diff" help="Base REF for --git-diff line selection"
+#USAGE flag "--git-diff-lines" help="Scope to changed lines (the task emits this under --git-diff)"
+#USAGE flag "--dry-run" {
+#USAGE   help "Count mutants only; omits --test-flags and timeout/workers/coverage controls"
+#USAGE   conflicts "--update-baseline" "--timeout" "--timeout-coefficient" "--workers" "--coverage" "--per-test" "--test-recursive" "--exec-timeout" "--do-not-remove-tmp-folder"
+#USAGE }
+#USAGE flag "--timeout <secs>" conflicts="--exec-timeout" help="Fixed test timeout in seconds (alias of --exec-timeout; suppresses the default --timeout-coefficient)"
+#USAGE flag "--timeout-coefficient <n>" {
+#USAGE   help "Adaptive per-test timeout multiplier (task default 5)"
+#USAGE   conflicts "--timeout" "--exec-timeout"
+#USAGE }
+#USAGE flag "--exec-timeout <secs>" help="Fixed test timeout in seconds (alias --timeout; suppresses the default --timeout-coefficient)"
+#USAGE flag "--workers <n>" help="Parallel mutation workers (mutarust default: one per logical CPU)"
+#USAGE flag "--run-mutant-id <id>" help="Run one mutant by stable ID (bypasses score gates)"
+#USAGE flag "--coverage" conflicts="--per-test" help="Collect coverage (required by a positive --min-covered-msi; cannot combine with --per-test)"
+#USAGE flag "--per-test" help="Per-test mutation mode (cannot combine with --coverage)"
+#USAGE flag "--test-recursive" help="Pass --workspace to Cargo and test every package"
+#USAGE flag "--do-not-remove-tmp-folder" help="Keep the temporary mutated workspace for debugging"
+#USAGE flag "--match <regexp>" help="Limit mutations to functions with matching names"
+#USAGE flag "--list-mutators" exclusive=#true help="Print built-in mutator names and exit (no flags, no targets)"
+#USAGE flag "--list-files" {
+#USAGE   help "Print selected files (NOTE: ignores exclude_dirs)"
+#USAGE   conflicts "--min-msi" "--min-covered-msi" "--fail-on-escaped" "--update-baseline" "--baseline" "--blacklist" "--git-diff" "--no-git-diff" "--git-diff-base" "--git-diff-lines" "--dry-run" "--timeout" "--timeout-coefficient" "--exec-timeout" "--workers" "--run-mutant-id" "--coverage" "--per-test" "--test-recursive" "--do-not-remove-tmp-folder" "--match" "--no-diffs" "--silent" "--no-silent" "--output-statuses" "--quiet" "--verbose" "--debug" "--html-output" "--logger-agentic-json" "--logger-github" "--logger-gitlab" "--logger-summary-json" "--ignore-msi-with-no-mutations"
+#USAGE }
+#USAGE flag "--print-ast" {
+#USAGE   help "Print the parsed AST and exit (no flags, no targets besides -f/-m scope)"
+#USAGE   conflicts "--min-msi" "--min-covered-msi" "--fail-on-escaped" "--update-baseline" "--baseline" "--blacklist" "--git-diff" "--no-git-diff" "--git-diff-base" "--git-diff-lines" "--dry-run" "--timeout" "--timeout-coefficient" "--exec-timeout" "--workers" "--run-mutant-id" "--coverage" "--per-test" "--test-recursive" "--do-not-remove-tmp-folder" "--match" "--no-diffs" "--silent" "--no-silent" "--output-statuses" "--quiet" "--verbose" "--debug" "--html-output" "--logger-agentic-json" "--logger-github" "--logger-gitlab" "--logger-summary-json" "--ignore-msi-with-no-mutations"
+#USAGE }
+#USAGE flag "--no-diffs" help="Hide escaped-mutant unified diffs in output"
+#USAGE flag "--silent" conflicts="--no-silent" help="No per-mutant output (overrides --output-statuses)"
+#USAGE flag "--no-silent" conflicts="--silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
+#USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/n/x; overrides --quiet)"
+#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses; --silent overrides --quiet)"
+#USAGE flag "--verbose" help="Print file/line/worker/mutator/test-command detail"
+#USAGE flag "--debug" help="Maximum mutarust diagnostics"
+#USAGE flag "--html-output" help="Write mutarust-report.html (task config already enables it)"
+#USAGE flag "--logger-github" help="GitHub-Actions annotations on STDOUT (in addition to the task's agentic logger)"
+#USAGE flag "--logger-gitlab" help="CodeQuality-report lines on STDOUT (in addition to the task's agentic logger)"
+#USAGE flag "--logger-summary-json" help="Summary JSON lines on STDOUT (in addition to the task's agentic logger)"
+#USAGE flag "--logger-agentic-json" help="Agentic JSON lines (the task always enables this; passing it is a no-op)"
+#USAGE flag "--ignore-msi-with-no-mutations" help="Pass score gates when the run has no mutants (auto-paired with --git-diff --min-msi)"
+#USAGE arg "[targets]" var=#true {
+#USAGE   help "Target paths (files/dirs/`./src...`); flags are declared above — never pass them after `--`"
+#USAGE   long_help """
+#USAGE   Examples:
+#USAGE   - `mise run test:mutants -m index` - mutate module `index`
+#USAGE   - `mise run test:mutants -m index --dry-run` - count only for one module
+#USAGE   - `mise run test:mutants --min-msi 60 --fail-on-escaped` - gate on new escapes only
+#USAGE   - `mise run test:mutants --git-diff` - only changed lines (tracked; stage new files first)
+#USAGE   - `mise run test:mutants --workers 4` - cap parallel workers
+#USAGE   - `mise run test:mutants --list-mutators` - list built-in mutators
+#USAGE   - `mise run test:mutants --list-files` - print selected files (NOTE: ignores exclude_dirs)
+#USAGE   - `mise run test:mutants src/cli/error.rs` - explicit target positional (skips the default)
+#USAGE   - `mise run test:mutants --run-mutant-id <id>` - re-run one mutant to verify a kill
+#USAGE   Every mutarust flag is declared. The task refuses only its owned flags
+#USAGE   (--config, --test-flags, --exec/--no-exec, --features) and unknown or
+#USAGE   misplaced flag-like tokens in target position — exit 2, `mutants:` message.
+#USAGE   Inspect modes (--list-mutators/--list-files/--print-ast) run WITHOUT
+#USAGE   --config or task flags (mutarust rejects them there).
+#USAGE   Exit codes: THIS TASK exits 1 for usage-validation failures (conflicts,
+#USAGE   exclusive, requires, bad values — `mise ERROR` message) and 2 for
+#USAGE   scope/target-scan errors (bad -m/-f, refused/unknown flags — `mutants:`
+#USAGE   message). mutarust directly: 0 pass · 1 tool error · 2 bash completion
+#USAGE   (not a run) · 3 config/parse error · 4 quality gate (min_msi,
+#USAGE   min_covered_msi, or --fail-on-escaped; --run-mutant-id bypasses gates).
+#USAGE   A zero-mutant scope with --min-msi exits 4 (score is 0); only --git-diff
+#USAGE   auto-pairs --ignore-msi-with-no-mutations. Retry 4s with narrower scope.
+#USAGE   Migration from the previous engine: --exclude → config exclude_dirs /
+#USAGE   -f / -m; --check → none (drop); --iterate → none (baseline +
+#USAGE   --fail-on-escaped); -L/--all-logs → --verbose / --debug (the old -v/-V
+#USAGE   were caught/unviable printers; mutarust -V is --version!); --json →
+#USAGE   report.json (on via this task's config); --jobs → --workers N;
+#USAGE   --no-config → never pass (task owns --config).
+#USAGE   Alias: `mutants` remains a supported alias (`mise run mutants`) —
+#USAGE   same task, hidden from `mise tasks`.
+#USAGE   """
+#USAGE }
+
+# Optional cap-lints: Task 10 P3 A/B completed — inconclusive at n=1, so it
+# stays off by default. Hypothesis: quality_gates_mise_adoption.md §10.2 row
+# 2; observed result: §11 P3. Also affects depends=["test"] and invalidates
+# build caches.
+# #MISE env={ RUSTFLAGS = "--cap-lints=allow" }
+
+# File description (Google style §4.1) — placed after the #MISE/#USAGE block
+# because mise requires its headers at the top of the file.
+# The `mutants` task: stable, tool-agnostic entrypoint for mutation testing.
+# Engine: mutarust. All conditional builders end in `return 0` (set -e trap).
+
+# shellcheck disable=SC2154  # usage_* are injected by mise
+set -euo pipefail
+
+declare -a mutarust_args=()
+declare -a targets=()
+
+# `--profile mutants` accepted in Task 10 P2 (see
+# quality_gates_mise_adoption.md §11).
+TEST_FLAGS="--features test-utils --all-targets --profile mutants"
+TIMEOUT_COEFFICIENT=5
+DEFAULT_TARGET="./src..."
+
+########################################
+# Parses variadic positional targets into an array.
+# Globals:
+#   usage_targets
+#   targets
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+########################################
+parse_targets() {
+  # usage_targets arrives shell-quoted; mise documents eval-into-array as the
+  # pattern for variadic args — intentional (mise_tasks 06_arguments.md).
+  eval "targets=(${usage_targets:-})"
+  return 0
+}
+
+########################################
+# Rejects target-list tokens the task owns or does not know. mise's variadic
+# positional absorbs unknown flag-like tokens (verified), so this scan is the
+# strict-unknown-flag backstop. Refusals keep the tailored messages from the
+# retired cascades; everything else flag-like gets the generic diagnostic.
+# Also backstops the --git-diff-base requires: mise's `requires` is satisfied
+# by any explicit value (e.g. `--no-git-diff`) and by a declared default, so
+# the parse-time check alone does not cover every path (verified).
+# Globals:
+#   targets
+#   usage_git_diff
+#   usage_git_diff_base
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for a rejected token.
+# Returns:
+#   Exits 2 on a refused/unknown token or --git-diff-base without
+#   --git-diff; 0 otherwise.
+########################################
+reject_bad_targets() {
+  local t
+  if [[ -n "${usage_git_diff_base:-}" &&
+    "${usage_git_diff:-false}" != "true" ]]; then
+    echo "mutants: --git-diff-base requires the --git-diff flag" >&2
+    exit 2
+  fi
+  for t in "${targets[@]+"${targets[@]}"}"; do
+    case "${t}" in
+      --config | --config=*)
+        echo "mutants: task owns --config; policy lives in mutarust.yml" >&2
+        exit 2
+        ;;
+      --test-flags | --test-flags=*)
+        echo "mutants: task owns --test-flags; drop it from the command line" >&2
+        exit 2
+        ;;
+      --exec | --no-exec)
+        echo "mutants: ${t} conflicts with task-owned --test-flags" >&2
+        exit 2
+        ;;
+      --features | --features=*)
+        echo "mutants: task owns --features via TEST_FLAGS; drop it from the command line" >&2
+        exit 2
+        ;;
+      -*)
+        echo "mutants: unknown or misplaced flag: ${t} (declared flags go before --; see 'mise run test:mutants --help')" >&2
+        exit 2
+        ;;
+    esac
+  done
+  return 0
+}
+
+########################################
+# True when a declared list/inspect flag was given. mutarust rejects all
+# configuration and mutation options there (verified live on 0.1.10: even
+# --verbose and loggers are refused), so main() bypasses every task-owned
+# flag; the flag-level `conflicts` lists enforce that at parse time.
+# Globals:
+#   usage_list_mutators
+#   usage_list_files
+#   usage_print_ast
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 in a list/inspect mode, 1 otherwise.
+########################################
+is_inspect_mode() {
+  [[ "${usage_list_mutators:-false}" == "true" ||
+    "${usage_list_files:-false}" == "true" ||
+    "${usage_print_ast:-false}" == "true" ]]
+}
+
+########################################
+# Assembles arguments for list/inspect modes. Task-owned flags are omitted
+# (mutarust forbids them there; parse-time conflicts reject run flags), so
+# only the mode flag, the -f/-m scope (or user targets, else DEFAULT_TARGET)
+# is emitted. --list-mutators takes no target — `exclusive` already refused
+# any flag or target alongside it, so the branch just emits the flag.
+# Globals:
+#   usage_list_mutators
+#   usage_list_files
+#   usage_print_ast
+#   usage_file
+#   usage_mod
+#   targets
+#   DEFAULT_TARGET
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+########################################
+build_inspect_args() {
+  if [[ "${usage_list_mutators:-false}" == "true" ]]; then
+    mutarust_args+=(--list-mutators)
+    return 0
+  fi
+  if [[ "${usage_list_files:-false}" == "true" ]]; then
+    mutarust_args+=(--list-files)
+  else
+    mutarust_args+=(--print-ast)
+  fi
+  if [[ -n "${usage_file:-}" || -n "${usage_mod:-}" ]]; then
+    build_target_flags
+  elif [[ "${#targets[@]}" -eq 0 ]]; then
+    mutarust_args+=("${DEFAULT_TARGET}")
+  else
+    mutarust_args+=("${targets[@]}")
+  fi
+  return 0
+}
+
+########################################
+# Appends policy and logging flags, then the Cargo test controls — omitted
+# entirely under --dry-run (mutarust: dry-run ⊥ test/timeout controls; the
+# flag-level conflicts guarantee no fixed/coefficient pair can arrive).
+# Globals:
+#   usage_dry_run
+#   usage_timeout
+#   usage_timeout_coefficient
+#   usage_exec_timeout
+#   TEST_FLAGS
+#   TIMEOUT_COEFFICIENT
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+########################################
+build_static_flags() {
+  mutarust_args+=(--config mutarust.yml --logger-agentic-json)
+  if [[ "${usage_dry_run:-false}" != "true" ]]; then
+    mutarust_args+=(--test-flags "${TEST_FLAGS}")
+    if [[ -n "${usage_timeout:-}" ]]; then
+      mutarust_args+=(--timeout "${usage_timeout}")
+    elif [[ -n "${usage_timeout_coefficient:-}" ]]; then
+      mutarust_args+=(--timeout-coefficient "${usage_timeout_coefficient}")
+    elif [[ -z "${usage_exec_timeout:-}" ]]; then
+      # --exec-timeout present → mutarust runs with its own fixed default;
+      # emitting the task's adaptive coefficient would pair with it and be
+      # rejected (cli.md:246). This preserves the old has_fixed_timeout guard.
+      mutarust_args+=(--timeout-coefficient "${TIMEOUT_COEFFICIENT}")
+    fi
+    if [[ -n "${usage_exec_timeout:-}" ]]; then
+      mutarust_args+=(--exec-timeout "${usage_exec_timeout}")
+    fi
+  fi
+  return 0
+}
+
+########################################
+# Maps -f / -m to mutarust TARGET positionals; the default target keeps a
+# bare `mise run test:mutants` scoped to production code. It applies only when
+# neither -f/-m nor a user-supplied `targets` entry is present: a bare
+# positional invocation like `mise run test:mutants src/cli/x.rs` scopes to
+# the user's target.
+# Globals:
+#   usage_file
+#   usage_mod
+#   targets
+#   DEFAULT_TARGET
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   Diagnostic on STDERR for an unknown file/module.
+# Returns:
+#   Exits 2 on a bad scope; 0 on success.
+########################################
+build_target_flags() {
+  if [[ -n "${usage_file:-}" ]]; then
+    if [[ ! -f "${usage_file}" ]]; then
+      echo "mutants: no such file: ${usage_file}" >&2
+      exit 2
+    fi
+    mutarust_args+=("${usage_file}")
+  fi
+  if [[ -n "${usage_mod:-}" ]]; then
+    if [[ -d "src/${usage_mod}" ]]; then
+      mutarust_args+=("./src/${usage_mod}...")
+    elif [[ -f "src/${usage_mod}.rs" ]]; then
+      mutarust_args+=("./src/${usage_mod}.rs")
+    else
+      echo "mutants: unknown module: ${usage_mod}" >&2
+      exit 2
+    fi
+  fi
+  if [[ -z "${usage_file:-}" && -z "${usage_mod:-}" &&
+    "${#targets[@]}" -eq 0 ]]; then
+    mutarust_args+=("${DEFAULT_TARGET}")
+  fi
+  return 0
+}
+
+########################################
+# Gate flags. An empty --git-diff-lines run must not trip a min-msi gate
+# (cli.md pairs --ignore-msi-with-no-mutations with the score gate).
+# Globals:
+#   usage_min_msi
+#   usage_fail_on_escaped
+#   usage_update_baseline
+#   usage_git_diff
+#   usage_git_diff_base
+#   usage_dry_run
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+########################################
+build_gate_flags() {
+  [[ -n "${usage_min_msi:-}" ]] && mutarust_args+=(--min-msi "${usage_min_msi}")
+  [[ "${usage_fail_on_escaped:-false}" == "true" ]] &&
+    mutarust_args+=(--fail-on-escaped)
+  [[ "${usage_update_baseline:-false}" == "true" ]] &&
+    mutarust_args+=(--update-baseline)
+  if [[ "${usage_git_diff:-false}" == "true" ]]; then
+    mutarust_args+=(--git-diff-lines)
+    if [[ -n "${usage_git_diff_base:-}" ]]; then
+      mutarust_args+=(--git-diff-base "${usage_git_diff_base}")
+    fi
+    if [[ -n "${usage_min_msi:-}" ]]; then
+      mutarust_args+=(--ignore-msi-with-no-mutations)
+    fi
+  fi
+  [[ "${usage_dry_run:-false}" == "true" ]] && mutarust_args+=(--dry-run)
+  return 0
+}
+
+########################################
+# Emits declared run/display/input flags the user supplied. Task-owned flags
+# (--config, --test-flags, --exec/--no-exec, --features) never reach here —
+# reject_bad_targets refuses them. `--logger-agentic-json` is statically on
+# (build_static_flags) and deliberately not re-emitted. Auto-paired flags
+# (--git-diff-lines, --ignore-msi-with-no-mutations) are skipped when the
+# gate builder already emits them, so no flag appears twice.
+# Globals:
+#   usage_*
+#   mutarust_args
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0 on success.
+########################################
+build_declared_flags() {
+  [[ -n "${usage_workers:-}" ]] && mutarust_args+=(--workers "${usage_workers}")
+  [[ -n "${usage_match:-}" ]] && mutarust_args+=(--match "${usage_match}")
+  [[ -n "${usage_output_statuses:-}" ]] &&
+    mutarust_args+=(--output-statuses "${usage_output_statuses}")
+  [[ -n "${usage_baseline:-}" ]] && mutarust_args+=(--baseline "${usage_baseline}")
+  [[ -n "${usage_blacklist:-}" ]] && mutarust_args+=(--blacklist "${usage_blacklist}")
+  [[ -n "${usage_run_mutant_id:-}" ]] &&
+    mutarust_args+=(--run-mutant-id "${usage_run_mutant_id}")
+  [[ -n "${usage_min_covered_msi:-}" ]] &&
+    mutarust_args+=(--min-covered-msi "${usage_min_covered_msi}")
+  [[ "${usage_coverage:-false}" == "true" ]] && mutarust_args+=(--coverage)
+  [[ "${usage_per_test:-false}" == "true" ]] && mutarust_args+=(--per-test)
+  [[ "${usage_test_recursive:-false}" == "true" ]] && mutarust_args+=(--test-recursive)
+  [[ "${usage_do_not_remove_tmp_folder:-false}" == "true" ]] &&
+    mutarust_args+=(--do-not-remove-tmp-folder)
+  [[ "${usage_verbose:-false}" == "true" ]] && mutarust_args+=(--verbose)
+  [[ "${usage_debug:-false}" == "true" ]] && mutarust_args+=(--debug)
+  [[ "${usage_quiet:-false}" == "true" ]] && mutarust_args+=(--quiet)
+  [[ "${usage_no_diffs:-false}" == "true" ]] && mutarust_args+=(--no-diffs)
+  [[ "${usage_silent:-false}" == "true" ]] && mutarust_args+=(--silent)
+  [[ "${usage_no_silent:-false}" == "true" ]] && mutarust_args+=(--no-silent)
+  [[ "${usage_html_output:-false}" == "true" ]] && mutarust_args+=(--html-output)
+  [[ "${usage_logger_github:-false}" == "true" ]] && mutarust_args+=(--logger-github)
+  [[ "${usage_logger_gitlab:-false}" == "true" ]] && mutarust_args+=(--logger-gitlab)
+  [[ "${usage_logger_summary_json:-false}" == "true" ]] &&
+    mutarust_args+=(--logger-summary-json)
+  if [[ "${usage_git_diff_lines:-false}" == "true" &&
+    "${usage_git_diff:-false}" != "true" ]]; then
+    mutarust_args+=(--git-diff-lines)
+  fi
+  if [[ "${usage_ignore_msi_with_no_mutations:-false}" == "true" ]] &&
+    ! { [[ "${usage_git_diff:-false}" == "true" && -n "${usage_min_msi:-}" ]]; }; then
+    mutarust_args+=(--ignore-msi-with-no-mutations)
+  fi
+  return 0
+}
+
+########################################
+# Assembles the argument list and executes mutarust.
+# Globals:
+#   mutarust_args
+#   targets
+# Arguments:
+#   CLI arguments vector (unused; usage_* carries the parsed values).
+# Outputs:
+#   mutarust output to STDOUT/STDERR.
+# Returns:
+#   Status of mutarust.
+########################################
+main() {
+  parse_targets
+  reject_bad_targets
+  if is_inspect_mode; then
+    build_inspect_args
+  else
+    build_static_flags
+    build_target_flags
+    build_gate_flags
+    build_declared_flags
+    if [[ "${#targets[@]}" -gt 0 ]]; then
+      mutarust_args+=("${targets[@]}")
+    fi
+  fi
+
+  mutarust "${mutarust_args[@]+"${mutarust_args[@]}"}"
+}
+
+main "$@"
