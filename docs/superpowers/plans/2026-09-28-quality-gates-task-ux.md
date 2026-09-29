@@ -22,6 +22,8 @@
   - `mise run --force` bypasses task freshness/replay; `mise run --skip-deps` skips `depends=["test"]` (saves ~10 s per probe — use it for every parse-level case).
   - `conflicts="--a --b"` (space-separated in one attribute) is a **silent no-op**. Multi-selector conflicts MUST use node-args form: `conflicts "--a" "--b"`.
   - `exclusive`/`requires` must be **attributes** on the flag node (child form = invalid spec); `choices` is a child; unknown flags are absorbed by the variadic positional (rc 0) — that is exactly what the target scan catches.
+  - A declared flag's `default` **satisfies another flag's `requires`** (verified: `--git-diff` with `default=#false` made `requires="--git-diff"` on `--git-diff-base` never fire). Fix: no `default` on `--git-diff` so `requires` fires on absence, **plus** a script backstop — mise `requires` is satisfied by *any* explicit value, including `--no-git-diff`, which would otherwise slip through to a run.
+  - mise strips `--` **before** usage parsing: declared flags after `--` still parse as flags (verified: `-- --workers 4` behaves as `--workers 4` → rc 0). Undeclared post-`--` tokens still hit the target scan (rc 2), so the scan stays.
 - Commits: conventional (hk enforces), one per task, no `--no-verify`.
 
 ## File structure
@@ -72,7 +74,11 @@ Expected: `rc=2` both, with `mutants:` messages (`--update-baseline cannot be co
 #USAGE }
 #USAGE flag "--baseline <file>" help="Alternate accepted-escapes baseline path (default mutarust-baseline.json)"
 #USAGE flag "--blacklist <file>" help="Read accepted mutation checksums from FILE"
-#USAGE flag "--git-diff" negate="--no-git-diff" default=#false {
+#USAGE // no `default` on --git-diff: a default satisfies --git-diff-base's
+#USAGE // `requires` (mise treats the default as a value); absence must fire
+#USAGE // the requires, and the script backstop covers an explicit
+#USAGE // `--no-git-diff` (mise `requires` accepts any explicit value).
+#USAGE flag "--git-diff" negate="--no-git-diff" {
 #USAGE   help "Mutate only lines changed vs origin/HEAD (falls back to current branch; untracked files are invisible — stage new files first)"
 #USAGE }
 #USAGE flag "--git-diff-base <ref>" requires="--git-diff" help="Base REF for --git-diff line selection"
@@ -160,6 +166,8 @@ Spec deviations recorded at conversion (report again in Task 7 Step 4):
 - **Inspect conflict selectors are single-line:** spec A3 asked for block form ≤80 cols, but KDL node arguments cannot wrap across lines (unverified otherwise); the 34-selector lines are parsed and validated by Step 10's help render + Step 11's matrix.
 - **`--no-git-diff` added to both inspect conflict lists:** spec A3's "negate spellings reject in either spelling" rule, applied to the inspect row.
 - **Spec A5's `build_static_target_flags`/`build_mutarust_args`/`run_inspect_mode`/`run_count_mode` do not exist in the file** — the plan follows the actual structure (`main` → `build_inspect_args` | `build_static_flags` + `build_target_flags` + `build_gate_flags`).
+- **`--git-diff-base` requires needs a script backstop (beyond spec A3's parse-time `requires`):** mise satisfies `requires` with a declared `default` *and* with any explicit value (`--no-git-diff`). Fix: no `default` on `--git-diff` (absence → rc 1) + `reject_bad_targets` guard (explicit `--no-git-diff` + base → rc 2, old cascade message). Both paths matrix-verified.
+- **Spec A4's "declared flags after `--`" claim is void:** mise strips `--` before usage parsing, so `-- --workers 4` parses as `--workers 4` → rc 0 (bounded run), not rc 2. Undeclared post-`--` tokens still exit 2 via the scan. Matrix case updated accordingly; spec text left as-is (correction recorded here).
 
 - [ ] **Step 3: Script — header, arrays, parse + scan (replaces lines 70–143 and `parse_passthrough_tokens`/`passthrough_has_token`/`has_fixed_timeout`)**
 
@@ -199,8 +207,13 @@ parse_targets() {
 # positional absorbs unknown flag-like tokens (verified), so this scan is the
 # strict-unknown-flag backstop. Refusals keep the tailored messages from the
 # retired cascades; everything else flag-like gets the generic diagnostic.
+# Also backstops the --git-diff-base requires: mise's `requires` is satisfied
+# by any explicit value (e.g. `--no-git-diff`) and by a declared default, so
+# the parse-time check alone does not cover every path (verified).
 # Globals:
 #   targets
+#   usage_git_diff
+#   usage_git_diff_base
 # Arguments:
 #   None
 # Outputs:
@@ -210,6 +223,11 @@ parse_targets() {
 ########################################
 reject_bad_targets() {
   local t
+  if [[ -n "${usage_git_diff_base:-}" &&
+    "${usage_git_diff:-false}" != "true" ]]; then
+    echo "mutants: --git-diff-base requires the --git-diff flag" >&2
+    exit 2
+  fi
   for t in "${targets[@]+"${targets[@]}"}"; do
     case "${t}" in
       --)
@@ -521,6 +539,8 @@ check 1 mutants --timeout-coefficient 3 --exec-timeout 30 -f src/lib.rs --match 
 check 1 mutants --timeout 5 --exec-timeout 30 -f src/lib.rs --match __zz_no_match__
 check 1 mutants --update-baseline --run-mutant-id deadbeef -f src/lib.rs --match __zz_no_match__
 check 1 mutants --coverage --per-test -f src/lib.rs --match __zz_no_match__
+# requires fires only because --git-diff has no default (a default would
+# satisfy `requires` — see ground rules); message = `mise ERROR`
 check 1 mutants --git-diff-base origin/main -f src/lib.rs --match __zz_no_match__
 check 1 mutants --dry-run --workers=4 -f src/lib.rs --match __zz_no_match__
 check 1 mutants --list-mutators --verbose
@@ -536,11 +556,14 @@ check 2 mutants --test-flags "--features x" -f src/lib.rs --match __zz_no_match_
 check 2 mutants --exec -f src/lib.rs --match __zz_no_match__
 check 2 mutants --features x -f src/lib.rs --match __zz_no_match__
 check 2 mutants --bogus -f src/lib.rs --match __zz_no_match__
-check 2 mutants -- --workers 4 -f src/lib.rs --match __zz_no_match__
 check 2 mutants -x -f src/lib.rs --match __zz_no_match__
 # happy parse path → rc 0 (inspect is the only fast rc-0 path; dry-run
-# happy paths are Task 2's Steps 1/1b)
+# happy paths are Task 2's Steps 1/1b). `-- --workers 4` parses as
+# `--workers 4`: mise strips `--` before usage parsing, so a DECLARED flag
+# after `--` is just the flag (bounded run → 0); undeclared post-`--`
+# tokens still exit 2 via the scan (covered above).
 check 0 mutants --list-files src/lib.rs
+check 0 mutants -- --workers 4 -f src/lib.rs --match __zz_no_match__
 # summary
 if [[ ${#fails[@]} -eq 0 ]]; then echo "MATRIX: ALL PASS ($count cases)"; else
   printf 'MATRIX FAILURES:\n'; printf '  %s\n' "${fails[@]}"; fi
@@ -898,7 +921,7 @@ Expected: clean tree; the five task commits (Tasks 1, 3, 4, 5, 6 — plus any Ta
 | A1 declared surface (+ cli.md reconciliation note on `--package`/`--workspace`) | Task 1 Step 2 |
 | A2 refusal set + tailored messages | Task 1 Step 3 (`reject_bad_targets`), long_help |
 | A3 conflict matrix (dry-run ×9, timeout pairs incl. the `--timeout`⊥`--exec-timeout` extension, update-baseline pair, coverage⊥per-test, git-diff-base requires, exclusive, inspect ×34 selectors incl. `--no-git-diff`) | Task 1 Step 2, notes, matrix Step 11 |
-| A4 target scan (`-`-prefixed → exit 2, tailored vs generic, `--` dropped) | Task 1 Step 3 |
+| A4 target scan (`-`-prefixed → exit 2, tailored vs generic, `--` dropped) + git-diff-base requires backstop; spec's declared-flag-after-`--` claim void (see deviation notes) | Task 1 Step 3, matrix Step 11 |
 | A5 deletions (`reject_conflicting_flags`, `reject_declared_in_inspect`, `passthrough_has_token`, `passthrough_has_positional`, `has_fixed_timeout`, passthrough forwarding; spec A5's other function names don't exist in the file — see Step 2 notes) | Task 1 Steps 3–9 |
 | A6 exit-code contract 1/2 + help rewrite | Task 1 Step 2 long_help, Step 10, matrix Step 11 |
 | B registry + long_help | Task 3 |
