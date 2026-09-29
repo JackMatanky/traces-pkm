@@ -58,9 +58,9 @@ impl DurationValue {
     /// - [`MalformedNumber`] if the number portion is not valid float syntax.
     /// - [`MissingUnit`] if a number appears without a trailing unit.
     /// - [`UnknownUnit`] if the unit string is not recognized.
-    /// - [`NonFiniteSeconds`] if a single part's number overflows to infinity,
-    ///   or if the parsed total cannot be represented as a finite seconds
-    ///   value.
+    /// - [`NonFiniteNumber`] if a single part's number overflows to infinity.
+    /// - [`NonFiniteSeconds`] if the parsed total cannot be represented as a
+    ///   finite seconds value.
     ///
     /// [`Empty`]: DurationError::Empty
     /// [`MissingNumber`]: DurationError::MissingNumber
@@ -68,6 +68,7 @@ impl DurationValue {
     /// [`MalformedNumber`]: DurationError::MalformedNumber
     /// [`MissingUnit`]: DurationError::MissingUnit
     /// [`UnknownUnit`]: DurationError::UnknownUnit
+    /// [`NonFiniteNumber`]: DurationError::NonFiniteNumber
     /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
     #[expect(
         clippy::suboptimal_flops,
@@ -400,12 +401,11 @@ impl DurationValue {
                 break;
             }
         }
-        Self::parsed_number(bytes, num_start, pos, input)
+        Self::parsed_number(num_start, pos, input)
     }
 
     /// Validates and converts a parsed number byte span into `f64`.
     fn parsed_number(
-        bytes: &[u8],
         start: usize,
         end: usize,
         input: &str,
@@ -415,23 +415,23 @@ impl DurationValue {
                 input: input.to_owned(),
             });
         }
-        let Some(num_slice) = bytes.get(start..end) else {
+        // `start`/`end` are byte offsets produced by scanning only
+        // single-byte ASCII (`+`/`-`/`.`/digit), so they always land on
+        // char boundaries within `input`: a direct `str` slice can't fail.
+        let Some(text) = input.get(start..end) else {
             return Err(DurationError::MissingNumber {
                 input: input.to_owned(),
             });
         };
-        let text = core::str::from_utf8(num_slice).map_err(|_utf8_error| {
-            DurationError::InvalidNumber {
-                input: input.to_owned(),
-            }
-        })?;
         let number: f64 =
             text.parse().map_err(|source| DurationError::MalformedNumber {
                 input: input.to_owned(),
                 source,
             })?;
         if !number.is_finite() {
-            return Err(DurationError::NonFiniteSeconds);
+            return Err(DurationError::NonFiniteNumber {
+                input: input.to_owned(),
+            });
         }
         Ok((number, end))
     }
@@ -884,6 +884,14 @@ pub enum DurationError {
         input: String,
     },
 
+    /// A single part's number overflows to infinity (e.g., a 400-digit
+    /// literal).
+    #[error("number overflows to infinity in `{input}`")]
+    NonFiniteNumber {
+        /// The raw input that failed to parse.
+        input: String,
+    },
+
     /// A raw seconds value is `NaN` or infinite.
     #[error("duration seconds must be finite")]
     NonFiniteSeconds,
@@ -1026,7 +1034,11 @@ mod tests {
                 {
                     let overflowing = format!("1{}h", "0".repeat(400));
                     let err = DurationValue::parse(&overflowing).unwrap_err();
-                    assert!(matches!(err, DurationError::NonFiniteSeconds));
+                    assert!(matches!(
+                        &err,
+                        DurationError::NonFiniteNumber { input }
+                        if input == &overflowing
+                    ));
                 }
 
                 #[rstest]
