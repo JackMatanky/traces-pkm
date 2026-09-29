@@ -233,8 +233,6 @@ reject_bad_targets() {
   fi
   for t in "${targets[@]+"${targets[@]}"}"; do
     case "${t}" in
-      --)
-        ;;
       --config | --config=*)
         echo "mutants: task owns --config; policy lives in mutarust.yml" >&2
         exit 2
@@ -562,6 +560,8 @@ check 2 mutants --exec -f src/lib.rs --match __zz_no_match__
 check 2 mutants --features x -f src/lib.rs --match __zz_no_match__
 check 2 mutants --bogus -f src/lib.rs --match __zz_no_match__
 check 2 mutants -x -f src/lib.rs --match __zz_no_match__
+# a second `--` still lands following declared flags in scan range
+check 2 mutants -- -- --dry-run -f src/lib.rs --match __zz_no_match__
 # happy parse path → rc 0 (inspect is the only fast rc-0 path; dry-run
 # happy paths are Task 2's Steps 1/1b). `-- --workers 4` parses as
 # `--workers 4`: mise strips `--` before usage parsing, so a DECLARED flag
@@ -578,7 +578,7 @@ if [[ -n "$(git status --porcelain mutarust-baseline.json)" ]]; then
 fi
 ```
 
-Expected: `MATRIX: ALL PASS (33 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
+Expected: `MATRIX: ALL PASS (34 cases)`, then either no output or `BASELINE_RESTORED` from the baseline guard. If any `rc 1`/`rc 2` case returns `0`: run it again with `mise run --force --skip-deps …`; if it still returns 0, stop and report (mise usage-validation bug/setting drift — do not paper over with script code). If `mutarust-baseline.json` was rewritten, the guard restores it — never commit a matrix-touched baseline.
 
 - [x] **Step 12: `hk` on the edited file + commit**
 
