@@ -246,6 +246,12 @@ impl NoteFieldValueRef<'_> {
     /// Kinds compare by rank except where a pair has an explicit arm below
     /// (same-kind comparisons, and the Date/DateTime cross-kind case, which
     /// share one rank).
+    ///
+    /// A bare [`Date`](Self::Date) promotes to a [`DateTime`](Self::DateTime)
+    /// at local-zone midnight for the cross-kind comparison (see
+    /// [`DateTimeValue`]'s promotion from [`DateValue`]), so a `Date`'s exact
+    /// ordering against a same-day `DateTime` depends on the process's local
+    /// zone.
     #[inline]
     #[must_use]
     pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
@@ -867,6 +873,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::TzGuard;
 
         fn date(s: &str) -> DateValue {
             DateValue::parse_iso(s).expect("valid date")
@@ -979,6 +986,24 @@ mod tests {
                 NoteFieldValueRef::DateTime(dt)
                     .compare(&NoteFieldValueRef::Date(d)),
                 Ordering::Greater
+            );
+        }
+
+        #[test]
+        fn a_bare_date_promotes_to_local_zone_midnight_for_ordering() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            let d = date("2026-07-29");
+            // 23:00Z on the 28th falls between the date's local-zone
+            // midnight (22:00Z in UTC+2) and a UTC-midnight promotion
+            // (00:00Z on the 29th); this ordering holds only under the
+            // local-zone promotion, pinning it against a regression to pure
+            // UTC midnight.
+            let dt = datetime("2026-07-28T23:00:00Z");
+            assert_eq!(
+                NoteFieldValueRef::Date(d)
+                    .compare(&NoteFieldValueRef::DateTime(dt)),
+                Ordering::Less
             );
         }
 

@@ -1,10 +1,15 @@
 //! Deterministic `TZ` injection for local-zone tests.
 //!
 //! chrono's `Local` reads `TZ` per call through `std::env::var` (serialized
-//! by std's environment lock, so concurrent reads are memory-safe), and the
-//! test harness runs each test on its own thread. A test that swaps `TZ`
-//! before its first local-clock read therefore observes its zone
-//! deterministically. [`TzGuard`] performs that swap and holds a shared
+//! by std's environment lock, so concurrent reads are memory-safe); it also
+//! caches the resolved offset in a thread-local for up to one second
+//! (chrono's internal `local::unix::Cache`), re-reading `TZ` only on that
+//! thread's first lookup or once the cache goes stale. The test harness runs
+//! each test on its own thread, so the first lookup on a fresh thread always
+//! happens after `TzGuard::set` has already swapped `TZ`, keeping the
+//! per-thread cache in step with the swap. A test that swaps `TZ` before its
+//! first local-clock read therefore observes its zone deterministically.
+//! [`TzGuard`] performs that swap and holds a shared
 //! mutex so concurrent tests never interleave reads of one zone with writes
 //! of another; the edition-2024 `unsafe` on the write exists for non-Rust
 //! `getenv` readers, of which this dependency tree has none during tests.

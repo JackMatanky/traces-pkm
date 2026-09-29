@@ -393,6 +393,11 @@ fn shift_date(
 /// `unit` defaults to `"days"` and accepts `"years"`, `"months"`, `"days"`,
 /// `"hours"`, `"minutes"`, and `"seconds"`.
 ///
+/// `"years"`/`"months"`/`"days"` preserve the civil wall clock across a DST
+/// transition; the remaining units shift the exact instant, so the wall
+/// clock can land earlier or later than a naive `n`-unit shift (see
+/// [`date_shift_unit`]).
+///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
@@ -437,6 +442,21 @@ fn date_sub(
         unit,
     )
 }
+
+/// Shifts `value` by `n` `unit`s, applying calendar or fixed-duration
+/// semantics per `unit`.
+///
+/// `"years"`, `"months"`, and `"days"` shift the civil wall clock (calendar
+/// application), preserving the clock reading across a DST transition; the
+/// remaining fixed units shift the stored instant exactly, so the wall clock
+/// can land earlier or later than a naive `n`-unit shift across a
+/// transition. A date-only input stays civil for every unit: a zone-free
+/// date has no instant to shift.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable, `unit` has no
+///   whole-second value, or the shift overflows chrono's representable range.
 fn date_shift_unit(
     value: &str,
     n: i64,
@@ -489,23 +509,8 @@ fn shift_wall(
     unit: DurationUnit,
 ) -> Option<NaiveDateTime> {
     match unit {
-        DurationUnit::Year => {
-            let months = n.checked_mul(12)?;
-            let months_u32 = u32::try_from(months.abs()).ok()?;
-            if months >= 0 {
-                wall.checked_add_months(Months::new(months_u32))
-            } else {
-                wall.checked_sub_months(Months::new(months_u32))
-            }
-        }
-        DurationUnit::Month => {
-            let months_u32 = u32::try_from(n.abs()).ok()?;
-            if n >= 0 {
-                wall.checked_add_months(Months::new(months_u32))
-            } else {
-                wall.checked_sub_months(Months::new(months_u32))
-            }
-        }
+        DurationUnit::Year => shift_months(wall, n.checked_mul(12)?),
+        DurationUnit::Month => shift_months(wall, n),
         DurationUnit::Day => {
             let days_u64 = u64::try_from(n.abs()).ok()?;
             if n >= 0 {
@@ -520,6 +525,19 @@ fn shift_wall(
         u => wall.checked_add_signed(chrono::Duration::try_seconds(
             u.seconds_i64()?.checked_mul(n)?,
         )?),
+    }
+}
+
+/// Shifts `wall` by `months` calendar months, positive or negative.
+///
+/// Returns `None` when `months` doesn't fit a `u32` after taking its
+/// absolute value or the arithmetic overflows chrono's representable range.
+fn shift_months(wall: NaiveDateTime, months: i64) -> Option<NaiveDateTime> {
+    let months_u32 = u32::try_from(months.abs()).ok()?;
+    if months >= 0 {
+        wall.checked_add_months(Months::new(months_u32))
+    } else {
+        wall.checked_sub_months(Months::new(months_u32))
     }
 }
 
@@ -1568,6 +1586,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::TzGuard;
 
         #[test]
         fn returns_an_integer_day_count_when_neither_input_has_time() {
@@ -1723,6 +1742,31 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered, "5");
+        }
+
+        #[rstest]
+        #[case::naive_input("2026-07-29T14:30:00")]
+        #[case::explicit_offset_input("2026-07-29T12:30:00Z")]
+        fn truncates_to_a_whole_hour_count_for_a_mixed_date_and_datetime_pair(
+            #[case] other: &str,
+        ) {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            // Regression: the mixed-precision branch previously subtracted
+            // whichever naive representations the two parsers happened to
+            // produce; it must subtract civil wall clocks under the pinned
+            // zone instead. A naive 14:30 local input and its 12:30Z
+            // explicit-offset equivalent both resolve to the same 14:30
+            // local wall clock, so both land on the same 14-hour truncated
+            // difference (the mixed branch is i64, not f64).
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-07-29" | date_diff(other, unit="hours") }}"#,
+                    minijinja::context! { other },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "14");
         }
     }
 

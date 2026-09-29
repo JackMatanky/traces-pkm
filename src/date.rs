@@ -185,9 +185,7 @@ impl DateTimeFormat {
 /// [`Disambiguation::Compatible`]:
 ///     https://docs.rs/jiff/latest/jiff/tz/enum.Disambiguation.html
 /// [chrono#1701]: https://github.com/chronotope/chrono/issues/1701
-pub(crate) fn local_naive_to_utc(
-    wall: NaiveDateTime,
-) -> Result<DateTime<Utc>, DateError> {
+fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
     let zone_lookup = || DateError::LocalZoneLookup {
         input: wall.to_string().into(),
     };
