@@ -58,7 +58,7 @@
 #USAGE flag "--silent" conflicts="--no-silent" help="No per-mutant output (overrides --output-statuses)"
 #USAGE flag "--no-silent" conflicts="--silent" help="Emit per-mutant output (task default; overrides a config silent_mode)"
 #USAGE flag "--output-statuses <letters>" help="Show only chosen mutant states (k/e/s/n/x; overrides --quiet)"
-#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses)"
+#USAGE flag "--quiet" help="Escaped-mutant result lines only (hides killed/errored/not-covered/skipped; overridden by --output-statuses; --silent overrides --quiet)"
 #USAGE flag "--verbose" help="Print file/line/worker/mutator/test-command detail"
 #USAGE flag "--debug" help="Maximum mutarust diagnostics"
 #USAGE flag "--html-output" help="Write mutarust-report.html (task config already enables it)"
