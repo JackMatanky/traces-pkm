@@ -35,8 +35,7 @@
 use std::{fmt::Write as _, sync::Arc};
 
 use chrono::{
-    DateTime, Datelike as _, Days, Local, Months, NaiveDate, NaiveDateTime,
-    TimeZone as _, Utc,
+    DateTime, Datelike as _, Days, Local, Months, NaiveDate, NaiveDateTime, Utc,
 };
 use minijinja::{
     Environment, Error, ErrorKind,
@@ -145,8 +144,9 @@ impl Object for DateOps {
                             )
                         })?;
                     // Display is human-facing: the local wall clock of the
-                    // instant (`.naive_utc()` would show the UTC clock).
-                    let local = Local.from_utc_datetime(&utc.naive_utc());
+                    // instant, via the crate's canonical conversion
+                    // (`.naive_utc()` would show the UTC clock instead).
+                    let local = DateTimeValue::from(utc).wall_or_utc();
                     format_with(local.format(format), format)
                 },
             )),
@@ -205,32 +205,39 @@ impl ParsedDate {
     /// - [`ErrorKind::InvalidOperation`] if the local wall clock of a parsed
     ///   instant overflows [`NaiveDateTime`]'s range.
     fn parse(s: &str) -> TemplateEngineResult<Self> {
-        if let Ok(value) = DateTimeValue::parse_iso(s) {
-            let instant = value.into_inner();
-            let wall = DateTimeValue::from(instant)
-                .local_wall()
-                .ok_or_else(date_out_of_range_error)?;
-            return Ok(Self {
-                wall,
-                instant,
-                precision: DatePrecision::DateTime,
-            });
-        }
-        match DateValue::parse_iso(s) {
+        match DateTimeValue::parse_iso(s) {
             Ok(value) => {
-                let Some(wall) = value.into_inner().and_hms_opt(0, 0, 0) else {
-                    return Err(date_out_of_range_error());
-                };
-                let instant = DateTimeValue::from(value).into_inner();
+                let instant = value.into_inner();
+                let wall = DateTimeValue::from(instant)
+                    .local_wall()
+                    .ok_or_else(date_out_of_range_error)?;
                 Ok(Self {
                     wall,
                     instant,
-                    precision: DatePrecision::Date,
+                    precision: DatePrecision::DateTime,
                 })
             }
-            Err(source) => {
-                Err(invalid_operation(format!("invalid date {s:?}"), source))
-            }
+            // `s` didn't parse as a date-time; try it as a bare date. If
+            // that also fails, `datetime_source` (from the first, more
+            // specific attempt) is the more useful diagnostic to surface.
+            Err(datetime_source) => match DateValue::parse_iso(s) {
+                Ok(value) => {
+                    let Some(wall) = value.into_inner().and_hms_opt(0, 0, 0)
+                    else {
+                        return Err(date_out_of_range_error());
+                    };
+                    let instant = DateTimeValue::from(value).into_inner();
+                    Ok(Self {
+                        wall,
+                        instant,
+                        precision: DatePrecision::Date,
+                    })
+                }
+                Err(_date_source) => Err(invalid_operation(
+                    format!("invalid date {s:?}"),
+                    datetime_source,
+                )),
+            },
         }
     }
 }
@@ -1233,6 +1240,37 @@ mod tests {
             assert!(
                 source.downcast_ref::<DateError>().is_some(),
                 "source chain must retain the core DateError, got {source:?}"
+            );
+        }
+
+        /// Regression: for a datetime-shaped input that fails for a
+        /// datetime-specific reason, `ParsedDate::parse` used to try
+        /// [`DateTimeValue::parse_iso`] first, discard its error
+        /// unconditionally, then surface [`DateValue::parse_iso`]'s
+        /// unrelated shape-mismatch error instead, hiding the more specific
+        /// cause (spec N4).
+        #[test]
+        fn surfaces_the_datetime_parsers_error_not_the_date_only_fallbacks() {
+            use std::error::Error as _;
+
+            let input = "2026-07-29T99:99:99"; // datetime-shaped, invalid time
+            let datetime_error = DateTimeValue::parse_iso(input)
+                .expect_err("datetime parser rejects an invalid time");
+
+            let error = env()
+                .render_str(
+                    r#"{{ value | date_format("%Y") }}"#,
+                    minijinja::context! { value => input },
+                )
+                .expect_err("unparseable datetime fails cleanly");
+
+            let source =
+                error.source().expect("render error carries its source");
+            assert_eq!(
+                source.to_string(),
+                datetime_error.to_string(),
+                "the surfaced source must be the datetime parser's own error, \
+                 not the date-only fallback's unrelated shape-mismatch error"
             );
         }
 

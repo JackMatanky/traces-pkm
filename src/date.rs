@@ -230,9 +230,11 @@ pub(crate) fn local_naive_to_utc(
 /// Finds the offset in effect just before a DST gap by stepping back one
 /// hour at a time from `wall` (the widest recorded gap is 24 hours).
 ///
-/// Returns [`DateError::LocalZoneLookup`] when no nearby local time
-/// resolves, which indicates a broken tz-data/OS lookup rather than a gap,
-/// never a silent shift.
+/// # Errors
+///
+/// - [`DateError::LocalZoneLookup`] if no nearby local time resolves within the
+///   25-hour backward search, indicating a broken tz-data/OS lookup rather than
+///   a gap; never a silent shift.
 fn resolve_gap_offset(
     wall: NaiveDateTime,
     zone_lookup: &impl Fn() -> DateError,
@@ -589,7 +591,7 @@ impl DateTimeValue {
     /// the local offset cannot be applied (see [`Self::local_wall`]).
     #[inline]
     #[must_use]
-    fn wall_or_utc(self) -> NaiveDateTime {
+    pub(crate) fn wall_or_utc(self) -> NaiveDateTime {
         self.local_wall().unwrap_or_else(|| self.0.naive_utc())
     }
 
