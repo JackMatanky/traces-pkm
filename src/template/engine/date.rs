@@ -21,11 +21,22 @@
 //! date (`YYYY-MM-DD` or reduced-precision `YYYY-MM`) at midnight. Arithmetic
 //! filters re-serialize at the input's original precision via
 //! [`format_precise`].
+//!
+//! # Clock doctrine
+//!
+//! A naive datetime input means the reader's local wall clock: it parses to a
+//! UTC instant through the core date module's DST resolver, while a date-only
+//! input stays a zone-free civil date. Human-facing filters render the local
+//! wall clock; `timestamp`, `is_past`, `is_future`, and fixed-unit
+//! [`date_diff`] measure the stored UTC instant. `date.now()`,
+//! `date.today()`, `date.tomorrow()`, `date.yesterday()`, and
+//! `date.from_timestamp()` read or render the local clock for display.
 
 use std::{fmt::Write as _, sync::Arc};
 
 use chrono::{
-    Datelike as _, Days, Local, Months, NaiveDate, NaiveDateTime, Utc,
+    DateTime, Datelike as _, Days, Local, Months, NaiveDate, NaiveDateTime,
+    TimeZone as _, Utc,
 };
 use minijinja::{
     Environment, Error, ErrorKind,
@@ -33,7 +44,7 @@ use minijinja::{
 };
 use num_traits::ToPrimitive as _;
 
-use super::error::TemplateEngineResult;
+use super::error::{TemplateEngineResult, invalid_operation};
 use crate::{
     DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
     DurationUnit,
@@ -126,15 +137,17 @@ impl Object for DateOps {
                  kwargs: Kwargs|
                  -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
-                    let datetime = chrono::DateTime::from_timestamp(unix_ts, 0)
+                    let utc = chrono::DateTime::from_timestamp(unix_ts, 0)
                         .ok_or_else(|| {
                             Error::new(
                                 ErrorKind::InvalidOperation,
                                 format!("timestamp {unix_ts} is out of range"),
                             )
-                        })?
-                        .naive_utc();
-                    format_with(datetime.format(format), format)
+                        })?;
+                    // Display is human-facing: the local wall clock of the
+                    // instant (`.naive_utc()` would show the UTC clock).
+                    let local = Local.from_utc_datetime(&utc.naive_utc());
+                    format_with(local.format(format), format)
                 },
             )),
             _ => None,
@@ -164,11 +177,15 @@ impl DatePrecision {
 
 /// A successfully parsed date/time string.
 ///
-/// Stores the [`NaiveDateTime`] plus the original input precision. Every
-/// arithmetic filter re-serializes at the same precision via
+/// `wall` is the human-facing civil datetime: the local wall clock of
+/// `instant` for a datetime input, or the zone-free civil date at midnight
+/// for a date-only input. `instant` is the stored UTC instant used for
+/// storage, comparison, and fixed-duration arithmetic. Every arithmetic
+/// filter re-serializes `wall` at the original precision via
 /// [`format_precise`].
 struct ParsedDate {
-    datetime: NaiveDateTime,
+    wall: NaiveDateTime,
+    instant: DateTime<Utc>,
     precision: DatePrecision,
 }
 
@@ -176,29 +193,45 @@ impl ParsedDate {
     /// Parses `s` as a date/time string via [`DateTimeValue::parse_iso`],
     /// falling back to [`DateValue::parse_iso`] at midnight.
     ///
+    /// A naive datetime resolves through the core module's local-zone DST
+    /// resolver; an explicit-offset input converts directly to its instant; a
+    /// date-only input stays civil, its instant being local-zone midnight.
+    ///
     /// # Errors
     ///
-    /// - [`ErrorKind::InvalidOperation`] if `s` matches neither parser.
+    /// - [`ErrorKind::InvalidOperation`] if `s` matches neither parser. The
+    ///   underlying [`DateError`] is attached as the error's source so render
+    ///   diagnostics keep the full parse-failure chain.
+    /// - [`ErrorKind::InvalidOperation`] if the local wall clock of a parsed
+    ///   instant overflows [`NaiveDateTime`]'s range.
     fn parse(s: &str) -> TemplateEngineResult<Self> {
         if let Ok(value) = DateTimeValue::parse_iso(s) {
+            let instant = value.into_inner();
+            let wall = DateTimeValue::from(instant)
+                .local_wall()
+                .ok_or_else(date_out_of_range_error)?;
             return Ok(Self {
-                datetime: value.into_inner().naive_utc(),
+                wall,
+                instant,
                 precision: DatePrecision::DateTime,
             });
         }
-        DateValue::parse_iso(s)
-            .ok()
-            .and_then(|value| value.into_inner().and_hms_opt(0, 0, 0))
-            .map(|datetime| Self {
-                datetime,
-                precision: DatePrecision::Date,
-            })
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorKind::InvalidOperation,
-                    format!("invalid date {s:?}"),
-                )
-            })
+        match DateValue::parse_iso(s) {
+            Ok(value) => {
+                let Some(wall) = value.into_inner().and_hms_opt(0, 0, 0) else {
+                    return Err(date_out_of_range_error());
+                };
+                let instant = DateTimeValue::from(value).into_inner();
+                Ok(Self {
+                    wall,
+                    instant,
+                    precision: DatePrecision::Date,
+                })
+            }
+            Err(source) => {
+                Err(invalid_operation(format!("invalid date {s:?}"), source))
+            }
+        }
     }
 }
 
@@ -286,16 +319,17 @@ fn format_precise(
     format_with(dt.format(precision.format()), precision.format())
 }
 
-/// The shared date/time string parser every filter and test besides
-/// [`date_diff`] uses. See [`ParsedDate::parse`] for the accepted formats and
-/// fallback behavior.
+/// The shared date/time string parser for filters that work on the human
+/// wall clock (`date_format`, `weekday`, `is_leap_year`); instant-facing
+/// filters parse via [`ParsedDate`] directly. See [`ParsedDate::parse`] for
+/// the accepted formats.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `s` is not a parseable date/time
 ///   string.
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
-    ParsedDate::parse(s).map(|parsed| parsed.datetime)
+    ParsedDate::parse(s).map(|parsed| parsed.wall)
 }
 
 /// `{{ value | date_format(format_string) }}` re-formats a piped date/time
@@ -315,15 +349,19 @@ fn date_format(value: &str, format: &str) -> TemplateEngineResult<String> {
     format_with(datetime.format(format), format)
 }
 
-/// `{{ value | timestamp }}` converts a piped date/time string to Unix seconds,
-/// treating a naive (timezone-less) input as UTC.
+/// `{{ value | timestamp }}` converts a piped date/time string to Unix
+/// seconds.
+///
+/// A naive input means the reader's local zone, so it compares correctly
+/// against file timestamps; an explicit-offset input converts directly; a
+/// date-only input resolves at local-zone midnight.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`parse_date`].
+///   string; see [`ParsedDate::parse`].
 fn timestamp(value: &str) -> TemplateEngineResult<i64> {
-    Ok(parse_date(value)?.and_utc().timestamp())
+    Ok(ParsedDate::parse(value)?.instant.timestamp())
 }
 
 /// Parses `value` as a date/time string, transforms `datetime` via `op`, and
@@ -339,7 +377,7 @@ fn shift_date(
     op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
 ) -> TemplateEngineResult<String> {
     let parsed = ParsedDate::parse(value)?;
-    let shifted = op(parsed.datetime).ok_or_else(date_out_of_range_error)?;
+    let shifted = op(parsed.wall).ok_or_else(date_out_of_range_error)?;
     format_precise(shifted, parsed.precision)
 }
 
@@ -398,42 +436,85 @@ fn date_shift_unit(
     n: i64,
     unit: DurationUnit,
 ) -> TemplateEngineResult<String> {
-    shift_date(value, |dt| match unit {
+    let parsed = ParsedDate::parse(value)?;
+    // Day, month, and year units shift the civil wall clock (calendar
+    // application); sub-day units shift the stored instant exactly, which a
+    // DST transition then exposes in the local wall clock. A date-only input
+    // stays civil for every unit: a zone-free date has no instant to shift.
+    let wall = match (parsed.precision, unit) {
+        (DatePrecision::Date, _)
+        | (
+            DatePrecision::DateTime,
+            DurationUnit::Year | DurationUnit::Month | DurationUnit::Day,
+        ) => shift_wall(parsed.wall, n, unit)
+            .ok_or_else(date_out_of_range_error)?,
+        (DatePrecision::DateTime, _) => {
+            let delta = match unit {
+                DurationUnit::Millisecond => {
+                    chrono::Duration::try_milliseconds(n)
+                }
+                u => chrono::Duration::try_seconds(
+                    u.seconds_i64()
+                        .ok_or_else(date_out_of_range_error)?
+                        .checked_mul(n)
+                        .ok_or_else(date_out_of_range_error)?,
+                ),
+            }
+            .ok_or_else(date_out_of_range_error)?;
+            let instant = parsed
+                .instant
+                .checked_add_signed(delta)
+                .ok_or_else(date_out_of_range_error)?;
+            DateTimeValue::from(instant)
+                .local_wall()
+                .ok_or_else(date_out_of_range_error)?
+        }
+    };
+    format_precise(wall, parsed.precision)
+}
+
+/// Shifts a civil wall-clock datetime by `n` `unit`s.
+///
+/// Returns `None` when the unit has no whole-second value or the arithmetic
+/// overflows chrono's representable range.
+fn shift_wall(
+    wall: NaiveDateTime,
+    n: i64,
+    unit: DurationUnit,
+) -> Option<NaiveDateTime> {
+    match unit {
         DurationUnit::Year => {
             let months = n.checked_mul(12)?;
             let months_u32 = u32::try_from(months.abs()).ok()?;
             if months >= 0 {
-                dt.checked_add_months(Months::new(months_u32))
+                wall.checked_add_months(Months::new(months_u32))
             } else {
-                dt.checked_sub_months(Months::new(months_u32))
+                wall.checked_sub_months(Months::new(months_u32))
             }
         }
         DurationUnit::Month => {
             let months_u32 = u32::try_from(n.abs()).ok()?;
             if n >= 0 {
-                dt.checked_add_months(Months::new(months_u32))
+                wall.checked_add_months(Months::new(months_u32))
             } else {
-                dt.checked_sub_months(Months::new(months_u32))
+                wall.checked_sub_months(Months::new(months_u32))
             }
         }
         DurationUnit::Day => {
             let days_u64 = u64::try_from(n.abs()).ok()?;
             if n >= 0 {
-                dt.checked_add_days(Days::new(days_u64))
+                wall.checked_add_days(Days::new(days_u64))
             } else {
-                dt.checked_sub_days(Days::new(days_u64))
+                wall.checked_sub_days(Days::new(days_u64))
             }
         }
         DurationUnit::Millisecond => {
-            dt.checked_add_signed(chrono::Duration::try_milliseconds(n)?)
+            wall.checked_add_signed(chrono::Duration::try_milliseconds(n)?)
         }
-        u => {
-            let secs = u.seconds_i64()?;
-            dt.checked_add_signed(chrono::Duration::seconds(
-                secs.checked_mul(n)?,
-            ))
-        }
-    })
+        u => wall.checked_add_signed(chrono::Duration::try_seconds(
+            u.seconds_i64()?.checked_mul(n)?,
+        )?),
+    }
 }
 
 /// `{{ value | add_days(n) }}` is a convenience shortcut for
@@ -638,20 +719,27 @@ fn date_diff(
 
     match unit {
         DurationUnit::Year => Ok(Value::from(signed_years_since(
-            from.datetime.date(),
-            to.datetime.date(),
+            from.wall.date(),
+            to.wall.date(),
         ))),
         DurationUnit::Month => Ok(Value::from(signed_months_since(
-            from.datetime.date(),
-            to.datetime.date(),
+            from.wall.date(),
+            to.wall.date(),
         ))),
         u => {
             let unit_secs = u.seconds();
-            let delta = to.datetime.signed_duration_since(from.datetime);
+            // Fixed units measure elapsed time between the stored instants
+            // when both inputs carry a time component; a date-only input
+            // stays zone-free, so any such pair subtracts civil wall clocks.
+            let both_datetimes = from.precision == DatePrecision::DateTime
+                && to.precision == DatePrecision::DateTime;
+            let delta = if both_datetimes {
+                to.instant.signed_duration_since(from.instant)
+            } else {
+                to.wall.signed_duration_since(from.wall)
+            };
 
-            if from.precision == DatePrecision::DateTime
-                && to.precision == DatePrecision::DateTime
-            {
+            if both_datetimes {
                 let whole_seconds =
                     delta.num_seconds().to_f64().ok_or_else(|| {
                         Error::new(
@@ -689,14 +777,15 @@ fn date_diff(
 /// `{% if value is is_past %}` returns `true` when the piped date/time string
 /// is before now.
 ///
-/// A naive input is treated as UTC, matching [`timestamp`].
+/// A naive input is interpreted in the reader's local zone (see
+/// [`ParsedDate::parse`]), so it compares correctly against file timestamps.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`parse_date`].
+///   string; see [`ParsedDate::parse`].
 fn is_past(value: &str) -> TemplateEngineResult<bool> {
-    Ok(parse_date(value)?.and_utc() < Utc::now())
+    Ok(ParsedDate::parse(value)?.instant < Utc::now())
 }
 
 /// `{% if value is is_future %}` mirrors [`is_past`] for future instants.
@@ -704,9 +793,9 @@ fn is_past(value: &str) -> TemplateEngineResult<bool> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`parse_date`].
+///   string; see [`ParsedDate::parse`].
 fn is_future(value: &str) -> TemplateEngineResult<bool> {
-    Ok(parse_date(value)?.and_utc() > Utc::now())
+    Ok(ParsedDate::parse(value)?.instant > Utc::now())
 }
 
 /// `{% if value is is_leap_year %}` accepts either an integer year (`2024 is
@@ -776,8 +865,12 @@ fn unknown_unit_error(unit: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TzGuard;
 
     fn env() -> Environment<'static> {
+        // Every date filter reads the local zone through the core parser, so
+        // the render below must own `TZ` against concurrent tests.
+        TzGuard::keep();
         let mut env = Environment::new();
         DateOps.register(&mut env);
         env
@@ -960,6 +1053,8 @@ mod tests {
 
         #[test]
         fn formats_the_unix_epoch_with_the_default_format() {
+            TzGuard::set("UTC");
+
             let rendered = env()
                 .render_str(
                     "{{ date.from_timestamp(0) }}",
@@ -972,6 +1067,8 @@ mod tests {
 
         #[test]
         fn accepts_an_explicit_format_kwarg() {
+            TzGuard::set("UTC");
+
             let rendered = env()
                 .render_str(
                     r#"{{ date.from_timestamp(0, format="%H:%M") }}"#,
@@ -980,6 +1077,21 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered, "00:00");
+        }
+
+        #[test]
+        fn formats_in_the_local_wall_clock() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            // Midnight UTC reads as 02:00 local on the same calendar day.
+            let rendered = env()
+                .render_str(
+                    r#"{{ date.from_timestamp(0, format="%H:%M") }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "02:00");
         }
 
         #[test]
@@ -1024,6 +1136,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::DateError;
 
         #[rstest]
         #[case::date_only("2026-07-23", "%d/%m/%Y", "23/07/2026")]
@@ -1045,6 +1158,8 @@ mod tests {
             #[case] format: &str,
             #[case] expected: &str,
         ) {
+            TzGuard::set("UTC");
+
             let rendered = env()
                 .render_str(
                     &format!(r#"{{{{ value | date_format("{format}") }}}}"#),
@@ -1053,6 +1168,38 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn renders_an_explicit_offset_input_in_the_local_wall_clock() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            // The everyday spelling is the reader's wall clock: 14:30Z is
+            // 16:30 local, not the UTC 12:30 the old behavior printed.
+            let rendered = env()
+                .render_str(
+                    r#"{{ value | date_format("%H:%M") }}"#,
+                    minijinja::context! { value => "2026-07-29T14:30:00Z" },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "16:30");
+        }
+
+        #[test]
+        fn reformats_a_naive_input_to_its_own_wall_clock() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            // A naive datetime means the reader's wall clock, so displaying
+            // it back yields the written time in any zone.
+            let rendered = env()
+                .render_str(
+                    r#"{{ value | date_format("%H:%M") }}"#,
+                    minijinja::context! { value => "2026-07-29 14:30" },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "14:30");
         }
 
         #[test]
@@ -1065,6 +1212,28 @@ mod tests {
                 .expect_err("unparseable date fails cleanly");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        /// Regression: `ParsedDate::parse` discarded the underlying
+        /// [`DateError`], leaving template render errors with an empty source
+        /// chain.
+        #[test]
+        fn rejects_an_unparseable_date_preserving_the_parse_error_source() {
+            use std::error::Error as _;
+
+            let error = env()
+                .render_str(
+                    r#"{{ "not a date" | date_format("%Y") }}"#,
+                    minijinja::context!(),
+                )
+                .expect_err("unparseable date fails cleanly");
+
+            let source =
+                error.source().expect("render error carries its source");
+            assert!(
+                source.downcast_ref::<DateError>().is_some(),
+                "source chain must retain the core DateError, got {source:?}"
+            );
         }
 
         #[test]
@@ -1093,6 +1262,8 @@ mod tests {
             #[case] input: &str,
             #[case] expected: i64,
         ) {
+            TzGuard::set("UTC");
+
             let rendered = env()
                 .render_str(
                     "{{ value | timestamp }}",
@@ -1101,6 +1272,54 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered, expected.to_string());
+        }
+
+        #[test]
+        fn interprets_a_naive_datetime_in_the_local_zone() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-07-29 14:30:00" | timestamp
+                        - "2026-07-29T12:30:00Z" | timestamp }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            // Local 14:30 in UTC+2 is the same instant as 12:30Z.
+            assert_eq!(rendered, "0");
+        }
+
+        #[test]
+        fn resolves_a_date_only_input_at_local_midnight() {
+            TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
+
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-07-29" | timestamp
+                        - "2026-07-29T00:00:00" | timestamp }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "0");
+        }
+
+        #[test]
+        fn resolves_a_spring_forward_gap_input_instead_of_failing() {
+            TzGuard::set("America/New_York");
+
+            // 02:30 does not exist on 2026-03-08; the adopted 'compatible'
+            // policy shifts it forward by the gap to 03:30 EDT (07:30Z).
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-03-08 02:30:00" | timestamp
+                        - "2026-03-08T07:30:00Z" | timestamp }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "0");
         }
 
         #[test]
@@ -1521,6 +1740,39 @@ mod tests {
                 .expect_err("unknown unit fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        /// Regression: `1e16` seconds fits `i64` (so the `checked_mul` guard
+        /// passes) but overflows chrono's `TimeDelta` millisecond range, where
+        /// `chrono::Duration::seconds` panics instead of returning `None`.
+        #[test]
+        fn date_add_returns_an_error_for_an_out_of_range_second_magnitude() {
+            let error = env()
+                .render_str(
+                    r"{{ '2026-07-26' | date_add(10000000000000000, unit='seconds') }}",
+                    minijinja::context!(),
+                )
+                .expect_err("out-of-range shift magnitude fails cleanly");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        /// Pins the declared split between calendar and exact units: a day
+        /// unit shifts the civil wall clock across the 2026-03-08 gap, while
+        /// 24 hours shifts the instant and lands an hour later on the clock.
+        #[test]
+        fn a_day_unit_preserves_the_wall_clock_across_a_dst_gap_while_hours_do_not()
+         {
+            TzGuard::set("America/New_York");
+
+            let rendered = env()
+                .render_str(
+                    r"{{ '2026-03-07 17:00:00' | date_add(1, unit='days') }}-{{ '2026-03-07 17:00:00' | date_add(24, unit='hours') }}",
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "2026-03-08T17:00:00-2026-03-08T18:00:00");
         }
     }
     mod is_past_and_is_future {

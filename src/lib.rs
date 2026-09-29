@@ -82,6 +82,8 @@ mod strsim;
 mod tag;
 mod task;
 mod template;
+#[cfg(test)]
+mod tz_guard;
 mod yaml;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -157,21 +159,24 @@ pub use test_support::{
     parse_note, parse_note_str, parse_tag, resolve_safe_path, write_note,
     write_schema, write_template,
 };
-
-/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and, under
-/// the `test-utils` feature, for external `tests/`/`benches/` consumers.
+/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
+/// under the `test-utils` feature, for external `tests/`/`benches/`
+/// consumers.
 ///
-/// - [`TestProject`] encapsulates an isolated workspace fixture managing paths,
-///   configuration, trust records, schemas, templates, and on-disk index
-///   persistence.
+/// - [`TestProject`] encapsulates an isolated workspace fixture managing
+///   paths, configuration, trust records, schemas, templates, and on-disk
+///   index persistence.
 /// - [`fixture_service`] returns a [`ConfigService`] backed by temporary
 ///   directories.
 /// - [`create_trusted_project`] writes a minimal config and trusts it.
-/// - [`write_note`], [`write_template`], and [`write_schema`] write fixture
-///   files.
-/// - [`parse_note`], [`parse_note_str`], and [`build_test_index`] construct
-///   in-memory notes and indexes with zero disk I/O.
+/// - [`write_note`], [`write_template`], and [`write_schema`] write
+///   fixture files.
+/// - [`parse_note`], [`parse_note_str`], and [`build_test_index`]
+///   construct in-memory notes and indexes with zero disk I/O.
 /// - [`parse_tag`] parses tag string slices for fixture data.
+#[cfg(test)]
+pub(crate) use tz_guard::TzGuard;
+
 #[cfg(any(test, feature = "test-utils"))]
 mod test_support {
     #![expect(
