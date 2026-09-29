@@ -218,3 +218,36 @@ Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `con
     display (civil wall result is the D14 date-only guarantee), so a
     wall shifted into a gap displays civilly until the calendar owner
     lands.
+
+- **2026-09-29 (agent, adversarial rs-review-spec pass, commit
+  `b6e6f63b`):** Full-diff review (`b2662ffc..6a065411`) against spec
+  D9/D12/D14 and the ticket checklist, cross-checked with `review.md`
+  and `spec.md` to confirm D12's full calendar-shift-through-resolver
+  requirement is correctly out of scope here (owned by ticket 03's
+  calendar owner, confirmed by `review.md` line 17 and the open
+  checkbox at `03-duration-semantics-owner.md`). Two real findings,
+  both fixed:
+  1. **N4 only half-delivered**: `ParsedDate::parse` discarded
+     `DateTimeValue::parse_iso`'s error unconditionally on any
+     failure — including the ticket's own new `LocalZoneLookup`
+     variant — and always surfaced `DateValue::parse_iso`'s unrelated
+     shape-mismatch error instead. Reproduced live (probe test, then
+     reverted): for a datetime-shaped invalid input, the surfaced
+     source read "trailing input" (the date-only fallback's
+     complaint) instead of "invalid characters" (the datetime
+     parser's actual complaint). Fixed: the fallback path now only
+     replaces the primary error when both parsers fail, attaching the
+     more specific (datetime) one. Regression test:
+     `surfaces_the_datetime_parsers_error_not_the_date_only_fallbacks`.
+  2. **`date.from_timestamp` bypassed the crate's own doctrine seam**:
+     reimplemented instant→local-wall-clock rendering via a raw
+     `Local.from_utc_datetime` call instead of `DateTimeValue`'s own
+     `local_wall`/`wall_or_utc`, giving it different overflow-fallback
+     semantics than every other display site and undermining D9's
+     "one doctrine, not an accidental mix" goal. Fixed: widened
+     `wall_or_utc` to `pub(crate)` and reused it.
+  Minor doc fix alongside: `resolve_gap_offset`'s error condition
+  moved from prose into a `# Errors` heading, matching every other
+  `Result`-returning function in the module. `mise run verify` green:
+  2985 tests + 53 doctests, fmt/lint/check clean;
+  `cargo doc --all-features` (`RUSTDOCFLAGS=-D warnings`) clean.

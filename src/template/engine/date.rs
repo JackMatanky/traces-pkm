@@ -217,9 +217,9 @@ impl ParsedDate {
                     precision: DatePrecision::DateTime,
                 })
             }
-            // `s` didn't parse as a date-time; try it as a bare date. If
-            // that also fails, `datetime_source` (from the first, more
-            // specific attempt) is the more useful diagnostic to surface.
+            // `s` didn't parse as a date-time; try it as a bare date. If that
+            // also fails, `datetime_source` (from the first, more specific
+            // attempt) is the more useful diagnostic to surface.
             Err(datetime_source) => match DateValue::parse_iso(s) {
                 Ok(value) => {
                     let Some(wall) = value.into_inner().and_hms_opt(0, 0, 0)
@@ -326,10 +326,10 @@ fn format_precise(
     format_with(dt.format(precision.format()), precision.format())
 }
 
-/// The shared date/time string parser for filters that work on the human
-/// wall clock (`date_format`, `weekday`, `is_leap_year`); instant-facing
-/// filters parse via [`ParsedDate`] directly. See [`ParsedDate::parse`] for
-/// the accepted formats.
+/// The shared date/time string parser for filters that work on the human wall
+/// clock (`date_format`, `weekday`, `is_leap_year`); instant-facing filters
+/// parse via [`ParsedDate`] directly. See [`ParsedDate::parse`] for the
+/// accepted formats.
 ///
 /// # Errors
 ///
@@ -356,8 +356,7 @@ fn date_format(value: &str, format: &str) -> TemplateEngineResult<String> {
     format_with(datetime.format(format), format)
 }
 
-/// `{{ value | timestamp }}` converts a piped date/time string to Unix
-/// seconds.
+/// `{{ value | timestamp }}` converts a piped date/time string to Unix seconds.
 ///
 /// A naive input means the reader's local zone, so it compares correctly
 /// against file timestamps; an explicit-offset input converts directly; a
@@ -445,9 +444,9 @@ fn date_shift_unit(
 ) -> TemplateEngineResult<String> {
     let parsed = ParsedDate::parse(value)?;
     // Day, month, and year units shift the civil wall clock (calendar
-    // application); sub-day units shift the stored instant exactly, which a
-    // DST transition then exposes in the local wall clock. A date-only input
-    // stays civil for every unit: a zone-free date has no instant to shift.
+    // application); sub-day units shift the stored instant exactly, which a DST
+    // transition then exposes in the local wall clock. A date-only input stays
+    // civil for every unit: a zone-free date has no instant to shift.
     let wall = match (parsed.precision, unit) {
         (DatePrecision::Date, _)
         | (
@@ -735,9 +734,9 @@ fn date_diff(
         ))),
         u => {
             let unit_secs = u.seconds();
-            // Fixed units measure elapsed time between the stored instants
-            // when both inputs carry a time component; a date-only input
-            // stays zone-free, so any such pair subtracts civil wall clocks.
+            // Fixed units measure elapsed time between the stored instants when
+            // both inputs carry a time component; a date-only input stays
+            // zone-free, so any such pair subtracts civil wall clocks.
             let both_datetimes = from.precision == DatePrecision::DateTime
                 && to.precision == DatePrecision::DateTime;
             let delta = if both_datetimes {
@@ -951,8 +950,8 @@ mod tests {
 
         /// Regression: Chrono's `DelayedFormat::fmt` returns `Err` for an
         /// invalid specifier like `%Q`, and `String::to_string()`'s blanket
-        /// impl panics on that `Err`. Writing through `fmt::Write`
-        /// directly instead must surface it as a normal render error.
+        /// impl panics on that `Err`. Writing through `fmt::Write` directly
+        /// instead must surface it as a normal render error.
         #[test]
         fn now_returns_an_error_instead_of_panicking_on_an_invalid_format() {
             let error = env()
@@ -1181,8 +1180,8 @@ mod tests {
         fn renders_an_explicit_offset_input_in_the_local_wall_clock() {
             TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
 
-            // The everyday spelling is the reader's wall clock: 14:30Z is
-            // 16:30 local, not the UTC 12:30 the old behavior printed.
+            // The everyday spelling is the reader's wall clock: 14:30Z is 16:30
+            // local, not the UTC 12:30 the old behavior printed.
             let rendered = env()
                 .render_str(
                     r#"{{ value | date_format("%H:%M") }}"#,
@@ -1197,8 +1196,8 @@ mod tests {
         fn reformats_a_naive_input_to_its_own_wall_clock() {
             TzGuard::set("Etc/GMT-2"); // UTC+02:00, no DST
 
-            // A naive datetime means the reader's wall clock, so displaying
-            // it back yields the written time in any zone.
+            // A naive datetime means the reader's wall clock, so displaying it
+            // back yields the written time in any zone.
             let rendered = env()
                 .render_str(
                     r#"{{ value | date_format("%H:%M") }}"#,
@@ -1246,9 +1245,9 @@ mod tests {
         /// Regression: for a datetime-shaped input that fails for a
         /// datetime-specific reason, `ParsedDate::parse` used to try
         /// [`DateTimeValue::parse_iso`] first, discard its error
-        /// unconditionally, then surface [`DateValue::parse_iso`]'s
-        /// unrelated shape-mismatch error instead, hiding the more specific
-        /// cause (spec N4).
+        /// unconditionally, then surface [`DateValue::parse_iso`]'s unrelated
+        /// shape-mismatch error instead, hiding the more specific cause (spec
+        /// N4).
         #[test]
         fn surfaces_the_datetime_parsers_error_not_the_date_only_fallbacks() {
             use std::error::Error as _;
@@ -1795,9 +1794,9 @@ mod tests {
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
 
-        /// Pins the declared split between calendar and exact units: a day
-        /// unit shifts the civil wall clock across the 2026-03-08 gap, while
-        /// 24 hours shifts the instant and lands an hour later on the clock.
+        /// Pins the declared split between calendar and exact units: a day unit
+        /// shifts the civil wall clock across the 2026-03-08 gap, while 24
+        /// hours shifts the instant and lands an hour later on the clock.
         #[test]
         fn a_day_unit_preserves_the_wall_clock_across_a_dst_gap_while_hours_do_not()
          {
