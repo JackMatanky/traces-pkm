@@ -39,8 +39,8 @@ Config lives in two committed files (per-tool convention, like
 
 - `mutarust.yml` — policy (exclusions, mutators, outputs, score gate).
   mutarust has **no config auto-discovery**: mutation runs always pass
-  `--config mutarust.yml`; list/inspect passthrough runs (`--list-mutators`,
-  `--list-files`, `--print-ast`) run without it.
+  `--config mutarust.yml`; inspect runs (`--list-mutators`, `--list-files`,
+  `--print-ast` — declared task flags, no `--` needed) run without it.
 - `mutarust-baseline.json` — the accepted-escapes baseline, written by
   `--update-baseline` and meant to be committed like a lockfile.
 
@@ -56,7 +56,7 @@ mise run mutants --dry-run       # count mutants, no test runs
 mise run mutants --git-diff      # only changed tracked lines (stage new files!)
 ```
 
-Declared flags (see `mise run mutants --help` for the full contract):
+Selected declared flags (the task declares mutarust's full surface minus its owned flags — see `mise run mutants --help` for the complete contract):
 
 | Flag | Meaning |
 | --- | --- |
@@ -67,15 +67,19 @@ Declared flags (see `mise run mutants --help` for the full contract):
 | `--git-diff` | scope to lines changed vs `origin/HEAD` (falls back to the current branch) |
 | `--dry-run` | count only (omits `--test-flags`/timeout flags) |
 | `--timeout <secs>` | fixed per-test timeout (suppresses `--timeout-coefficient`) |
-| `[args]` | passthrough after `--` (e.g. `--list-mutators`, `--workers 4`) |
+| `[targets]` | positional target paths (flags are declared above; never passed after `--`) |
 
 Static behavior of the task: `--config mutarust.yml --logger-agentic-json
 --test-flags "--features test-utils --all-targets --profile mutants"
 --timeout-coefficient 5`, `depends = ["test"]`, 1 h template timeout.
 Conflicting flag combinations (e.g. `--update-baseline --dry-run`) are
-rejected at the task level with exit 2 and a `mutants:` message.
+rejected by usage validation with exit 1 and a `mise ERROR` message; refused
+(`--config`, `--test-flags`, `--exec`/`--no-exec`, `--features`) or unknown
+flag-like tokens in target position are rejected by the task's target scan
+with exit 2 and a `mutants:` message.
 
-**Exit codes:** task usage errors exit `2`. mutarust itself: `0` pass ·
+**Exit codes:** task argument-validation errors exit `1`, task
+scope/target-scan errors exit `2`. mutarust itself: `0` pass ·
 `1` tool error · `2` bash completion (not a run) · `3` config/parse/
 annotation error · `4` quality gate red (`min_msi`, `min_covered_msi`, or
 `--fail-on-escaped`; `--run-mutant-id` bypasses gates). **Four is the only
@@ -89,7 +93,7 @@ failure worth retrying with a narrower scope.** Any zero-mutant scope with
 ```bash
 mise run mutants --git-diff          # cheapest meaningful local run
 mise run mutants -m query            # bounded scope while iterating
-mise run mutants -- --workers 4      # cap parallel workers
+mise run mutants --workers 4        # cap parallel workers
 ```
 Workers × cargo `-j` share the CPUs; results always print in plan order.
 There is no `--iterate`: rerun cost is controlled by *scoping*, and the
@@ -115,7 +119,7 @@ jq '.mutants[0]' mutarust-agentic.json     # id, diff, context_lines, kill_hint
 #    pick an id NOT already in mutarust-baseline.json (.mutants[0] may be
 #    an accepted escape; the agentic report carries all escapes of the run)
 #    ...write a targeted assertion in the nearby test file...
-mise run mutants -- --run-mutant-id <id>  # re-run just that mutant → killed?
+mise run mutants --run-mutant-id <id>  # re-run just that mutant → killed?
 # 5. Accept any remaining intentional escapes
 mise run mutants --update-baseline
 ```
