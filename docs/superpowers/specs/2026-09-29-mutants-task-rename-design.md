@@ -55,14 +55,18 @@ Verified during brainstorm:
    After the edit the file contains exactly one `run mutants` occurrence —
    the intentional alias sentence.
 4. **Live docs**:
-   - `docs/refs/mutation_testing.md` — 15 occurrences → `test:mutants`.
-   - `docs/refs/quality_gates_mutarust.md:570` — 1 occurrence (current
-     workflow advice) → `test:mutants`.
+   - `docs/refs/mutation_testing.md` — 15 invocations → `test:mutants`, plus
+     the current-behavior mention at :30 (`tool-agnostic mutants task` and
+     its path). The deleted-`report` mention at :130 stays historical.
+   - `docs/refs/quality_gates_mutarust.md` — :570 invocation, :239 relative
+     link (text + href), :308 current-state path. Lines citing the deleted
+     `mutants/report` task (including its historical `mutants:report`
+     mentions) stay untouched.
    - Plan `2026-09-28-quality-gates-task-ux.md` — **runnable lines only**: the
      37 matrix `check N mutants …` lines become `check N test:mutants …`, plus
      one new alias case (below), plus `mise run mutants …` in step commands
-     and expected outputs. Historical path prose (`.mise/tasks/mutants/_default`
-     in File-structure/task text) stays as recorded history.
+     and expected outputs. The `Line N before/after:` edit records and
+     `.mise/tasks/mutants/_default` path prose stay as recorded history.
    - Plan `2026-09-27-quality-gates-messrust-mutarust.md` — untouched
      (completed historical record).
    - Spec `2026-09-28-quality-gates-task-ux-design.md` — one new addendum row
