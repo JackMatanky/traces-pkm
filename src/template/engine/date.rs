@@ -35,7 +35,7 @@
 use std::{fmt::Write as _, sync::Arc};
 
 use chrono::{
-    DateTime, Datelike as _, Days, Local, Months, NaiveDate, NaiveDateTime, Utc,
+    DateTime, Datelike as _, Days, Months, NaiveDate, NaiveDateTime, Utc,
 };
 use minijinja::{
     Environment, Error, ErrorKind,
@@ -87,6 +87,17 @@ impl DateOps {
     }
 }
 
+/// Returns the current instant's local wall-clock date-time.
+///
+/// Goes through the crate's canonical UTC-to-local conversion (see
+/// [`DateTimeValue::wall_or_utc`]) rather than [`chrono::Local::now`]
+/// directly, so `date.now()`/`.today()`/`.tomorrow()`/`.yesterday()` share
+/// the exact zone-resolution path every other human-facing filter in this
+/// module uses.
+fn local_now() -> NaiveDateTime {
+    DateTimeValue::from(Utc::now()).wall_or_utc()
+}
+
 impl Object for DateOps {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
@@ -99,23 +110,20 @@ impl Object for DateOps {
                     // `Display::fmt`, and Chrono's `DelayedFormat` returns
                     // `Err`, not a panic of its own, for an invalid specifier
                     // such as `%Q`.
-                    format_with(Local::now().format(format), format)
+                    format_with(local_now().format(format), format)
                 },
             )),
             "today" => Some(Value::from_function(
                 |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
-                    format_with(
-                        Local::now().date_naive().format(format),
-                        format,
-                    )
+                    format_with(local_now().date().format(format), format)
                 },
             )),
             "tomorrow" => Some(Value::from_function(
                 |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
-                    let date = Local::now()
-                        .date_naive()
+                    let date = local_now()
+                        .date()
                         .succ_opt()
                         .ok_or_else(date_out_of_range_error)?;
                     format_with(date.format(format), format)
@@ -124,8 +132,8 @@ impl Object for DateOps {
             "yesterday" => Some(Value::from_function(
                 |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
-                    let date = Local::now()
-                        .date_naive()
+                    let date = local_now()
+                        .date()
                         .pred_opt()
                         .ok_or_else(date_out_of_range_error)?;
                     format_with(date.format(format), format)
