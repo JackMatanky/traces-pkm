@@ -4,7 +4,7 @@ Companion to `spec.md` (the tracker feature `temporal-core`): the full findings/
 
 **Status:** decisions A2′, B1+local-naive, D-b(scoped), and D11-doc-widening are **accepted**. This document is the full findings/analysis/deepening record. No implementation performed.
 
-**Post-v4 evolutions (settled at spec time, marked inline below):** DST policy = ambiguous → `.earliest()`, nonexistent → shift forward (was the single open item); null ordering = keep current behavior, ADR replaces the code comment; the three test seams confirmed (value types / `FilterFunction` registry / template filters); calendar frame = local wall clock for day/month/year application (chrono `checked_add_*` + local round-trip; Temporal/Luxon/PG parity), sub-hour units exact, incoherence extended to `1d` vs `24h` across DST (pinned by test); one gap-verified local→UTC resolver (`MappedLocalTime` exhaustive match; tz-data errors must not shift; rustdoc cited to Temporal `'compatible'`/RFC 5545 and jiff `Compatible`; wasm caveat chrono #1701 out-of-scope); format grammar formally bound to `chrono::format::strftime` (intra-doc link, no parallel invalid-pattern validator, `%+` forbidden, interop `…Z` via `to_rfc3339_opts(Secs, use_z=true)`), week bucketing mandated to `iso_week()`/`from_isoywd_opt`; external prior-art research completed (see `research/`), backing the divergence register.
+**Post-v4 evolutions (settled at spec time, marked inline below):** DST policy = ambiguous → `.earliest()`, nonexistent → shift forward (was the single open item); null ordering = keep current behavior, ADR replaces the code comment; the three test seams confirmed (value types / `FilterFunction` registry / template filters); calendar frame = local wall clock for day/week/month/year application (chrono `checked_add_*` + local round-trip; Temporal/Luxon/PG parity), sub-hour units exact, incoherence extended to `1d` vs `24h` across DST (pinned by test); week joins day as a calendar application unit (≡ 7 wall-days; moment/Temporal parity — research items 24–25); one gap-verified local→UTC resolver (`MappedLocalTime` exhaustive match; tz-data errors must not shift; rustdoc cited to Temporal `'compatible'`/RFC 5545 and jiff `Compatible`; wasm caveat chrono #1701 out-of-scope); format grammar formally bound to `chrono::format::strftime` (intra-doc link, no parallel invalid-pattern validator, `%+` forbidden, interop `…Z` via `to_rfc3339_opts(Secs, use_z=true)`), week bucketing mandated to `iso_week()`/`from_isoywd_opt`; external prior-art research completed (see `research/`), backing the divergence register.
 
 ---
 
@@ -128,8 +128,10 @@ Deletion test: every value type earns its keep (grammar + registry + error taxon
 DurationValue { raw: Box<str>, seconds: DurationSeconds, parts: Option<Box<[(f64, DurationUnit)]>> }
 ```
 - **Sole identity = `seconds`** (Eq/Ord/Hash unchanged). `parts` is the parsed *shape*, `None` for synthesized values (`from_seconds` can't know Month/Year — and its ms-round means exact-parts claims would be false anyway; N14 class stays honest as `None`).
-- **Invariant by construction:** `parse` is the only path filling `Some`, and computes `seconds` by summing exactly those parts in one statement — no state where they disagree. `api-parse-dont-validate` satisfied without runtime checks.
-- **`parts` doubles as the regime witness:** `Some` containing `Month|Year` ⇒ calendar application; else fixed. `None` ⇒ always fixed (correct). No extra enum; the state is data, matched exhaustively.
+- **Invariant by construction:** `parse` computes `seconds` by a single left-to-right fold over exactly the parts it stores — no state where they disagree; duration arithmetic preserves Σ by construction too (below). `api-parse-dont-validate` satisfied without runtime checks.
+- **`parts` doubles as the regime witness:** `Some` containing `Day|Week|Month|Year` ⇒ calendar application; else fixed. `None` ⇒ always fixed (correct). No extra enum; the state is data, matched exhaustively.
+- **Signed entries:** parse stores each entry with the whole-duration sign applied (N15b), so Σ is one left-to-right fold.
+- **Exactly two filling paths:** `parse` and duration arithmetic. `Add` concatenates when both `Some`; `Sub` concatenates with each rhs entry negated (Σ survives); `Mul` scales entries; **either side `None` ⇒ `None`** — Σ forces it, and the regime then honestly reads `None` ⇒ fixed.
 - Rejected: deriving `seconds` on demand (dies on `None`, O(k) Eq for nothing); always-`Some` with approximations (violates Σ invariant = representable invalid state).
 
 ### 5.2 Declared regimes
@@ -163,7 +165,7 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 - **N18:** delete ms-table; derive greedy units from one registry `const`; document Month/Year omission (un-synthesizable from magnitude).
 - **N21:** private `render_pattern(display, pattern) -> Result<String, ()>` in `date.rs`; three call sites map its error to their own type.
 - **N20/D1:** `DateFormat::parse_any` / `DateTimeFormat::parse_any` own the cascade loop → adding a shape = variant + `ALL` + `pattern()`, one file.
-- **B18:** `Add`/`Sub` for `DurationValue` (seconds add, parts concat when both `Some`, `-0.0` normalized); `Mul<f64>` scales both; Eq remains seconds-only.
+- **B18:** `Add`/`Sub` for `DurationValue` (seconds add; `Sub` = add of negated rhs; parts concat when both `Some`, rhs entries negated on `Sub`; either side `None` ⇒ `None` — Σ forces it; `-0.0` normalized; result `raw` re-synthesized via `from_seconds`); `Mul<f64>` scales both — non-finite scalar/overflow leaves `seconds` non-finite, declared in the type docs and rejected by consuming conversions (`NonFiniteSeconds`), never panics; Eq remains seconds-only.
 - **N19:** choose a rendering dialect for `DurationSeconds` Display (short/general, exponent above threshold) — user-facing once `durationformat` surfaces it.
 
 ### 5.7 Considered and rejected (`anti-over-abstraction`)
@@ -214,6 +216,7 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 | `conv-tryfrom-fallible`                   | ✅ `TryFrom<DurationValue> for TimeDelta`                   |
 | `anti-over-abstraction`                   | ✅ §5.7 rejection list                                    |
 | `proj-pub-crate-internal`                 | ⚠ N17                                                     |
+| `num-float-compare` (S1/S2) | ➕ bit-exact Σ fold + `Mul` non-finite, pinned by ticket 03 |
 
 ---
 
@@ -255,7 +258,7 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 **Post-v4 evolution:** the DST-ambiguity policy (the one open item below) is now **settled** — ambiguous → `.earliest()`, nonexistent → shift forward (see §4 B1) — and null ordering is **decided** (keep current behavior + ADR, §3). Everything else is decided. Post-v4: external prior-art research (`research/`) and the chrono-API audit added the local-wall-clock calendar frame, day-as-calendar, the gap-verified resolver, and the chrono format/week delegation mandates (spec 'Implementation Decisions').
 
 **Post-v4 decisions (defined in `spec.md`):**
-- **D12** — calendar frame = local wall clock: day/month/year application round-trips `DateTime<Utc>` → local naive → UTC through the resolver; sub-day units remain exact on the instant.
+- **D12** — calendar frame = local wall clock: day/week/month/year application round-trips `DateTime<Utc>` → local naive → UTC through the resolver; sub-day units remain exact on the instant.
 - **D13** — day is a calendar application unit; identity stays seconds-based (`1d == 24h` as values, may shift differently across DST).
 - **D14** — gap-verified `MappedLocalTime` resolver: ambiguous → earliest, true gap → shift forward, tz-data/OS `None` → error.
 - **Serde channel** — `Serialize` emits explicit RFC3339 `…Z` via `to_rfc3339_opts(SecondsFormat::Secs, use_z=true)`; human `Display` remains local-naive. The local→UTC rule therefore applies only to naive user-authored input, while serialized instants round-trip exactly.
