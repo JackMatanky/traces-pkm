@@ -6,7 +6,7 @@
 #              workspace to prioritize refactoring and test coverage efforts.
 # -----------------------------------------------------------------------------
 
-threshold = 20.0
+threshold = 15.0
 fail-above = false
 missing = "pessimistic"
 exclude = [
