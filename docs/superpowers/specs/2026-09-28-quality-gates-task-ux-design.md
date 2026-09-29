@@ -219,7 +219,7 @@ Parse-level cases are free (no cargo). Full matrix:
 
 Append-only addendum recorded while implementing plan
 `2026-09-28-quality-gates-task-ux.md` (all seven tasks landed, matrix
-35/35, `mise run verify` green). The approved text above stands as
+37/37, `mise run verify` green). The approved text above stands as
 written; where execution disproved or amended a claim, the correction is
 below. Full deviation record lives in the plan's deviation notes.
 
@@ -235,3 +235,5 @@ below. Full deviation record lives in the plan's deviation notes.
 | A4 generic message `flag-like token in target list: <tok> …` | Implemented as `unknown or misplaced flag: <tok> (declared flags go before --; see 'mise run mutants --help')` — same intent, clearer text |
 | A4 implies a bare `--` can appear in the token scan | One separator is stripped before the script runs (single-`--` cases, matrix-verified), but with extra separators a literal `--` can survive into `targets` (triple-`--` case: rc 2, `unknown or misplaced flag: --`). Removing the old silent `--) ;;` arm is behavior-compatible: same rc, the generic arm now names the token — both edges matrix-cased |
 | A5 keep/delete function names (`build_static_target_flags`, `build_mutarust_args`, `run_inspect_mode`, `run_count_mode`, …) | Partially fictional — they do not exist in the file; implementation followed the actual structure (`main` → `build_inspect_args` \| `build_static_flags` + `build_target_flags` + `build_gate_flags` + `build_declared_flags`) |
+| A1 short help states "these are paths / package names" | Help says paths only — package names are not a mutarust surface concept (row 1: `--package`/`--workspace` never existed; cargo packages move via `--test-flags`/`--test-recursive`) |
+| A3 inspect conflicts: "every other declared flag except `-f`/`-m` and the sibling inspect flag" | Implemented literally, with two clarifications: `--list-mutators` is not in the two 34-selector lists — its `exclusive` refuses any companion anyway (same rc 1, matrix-cased); sibling inspect flags pair legally and both were probed (`--list-files --print-ast` → rc 0, list-files wins — now matrix-cased) |
