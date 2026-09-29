@@ -11,28 +11,32 @@ Never combine these metrics into an aggregate architecture score.
 
 ## Measurement discipline
 
-For a concrete design claim, choose only gauges that could clarify the choice.
-Keep the underlying caller facts, paths, or state sets beside each count. A
-metric supports the semantic explanation; it does not define design quality. If
-two reviewers cannot agree on its counting basis, compare the underlying
-evidence instead of presenting a precise-looking number.
+For each consequential design claim, screen the gauge families against its
+semantics, select applicable gauges, and gather current raw inputs from
+available source or tool evidence. Calculate the current baseline where the
+gauge defines one; for post-change measures such as `DD`, inventory existing
+candidate structure and label the projected dividend as a prediction. If no
+gauge applies, state why. Keep caller facts, paths, or state sets and counting
+basis beside each count. If evidence cannot be obtained or its cost outweighs
+the decision, record the attempt or reason before marking `not measured`.
+When units are disputed, compare raw evidence instead of inventing a number.
 
 ```text
 responsibility and intended seam:
-claim and current evidence:
-selected gauge and counting basis (if useful):
+claim, current raw evidence, and source/tool observation:
+selected gauges and counting basis, or reason none apply:
 frozen scenario (if applicable):
 proposed effect (prediction until implemented):
 observed effect (only after implementation):
 trade-offs and uncertainty:
 ```
 
-Freeze representative scenarios before comparing alternatives. Record available
-current baselines. A review may estimate effects but labels them predictions;
-only an implemented redesign yields observed after-state values. For an
-implementation, recompute applicable gauges for equivalent callers under the
-same counting basis and scenario. Account for new or removed callers separately,
-then explain material regressions.
+Freeze representative scenarios before comparing alternatives. A review may
+estimate proposed effects but labels them predictions; only an implemented
+redesign yields observed after-state values. For an implementation, recompute
+applicable gauges for equivalent callers under the same counting basis and
+scenario. Account for new or removed callers separately, then explain material
+regressions.
 
 Use `N/A` for an inapplicable gauge or a zero denominator, `not measured` for
 missing evidence, and `0` only for an observed zero. Counts refer to semantic or
@@ -409,11 +413,15 @@ MA(M) = behavior-changing mutants killed through M's seam
 ```
 
 Record equivalent, uncompilable, skipped, and timed-out mutants separately
-with reasons. Without a mutation run, `MA` is `not measured`; if a run
-yields no qualifying mutants, it is `N/A`, not zero. If a redesign changes
-mutation sites, compare equivalent semantic fault classes or mark numeric
-before/after comparison unavailable. Mutation adequacy measures verification
-strength, not architectural depth.
+with reasons. Attribute kills to tests through `M`'s seam, such as by running
+the seam tests alone against the mutant; a tool score that does not identify
+the killing test does not establish the numerator, and such a run reports
+`MA` as `not measured` with the unattributed score beside it. Without a
+mutation run, `MA` is `not measured`; if a run yields no qualifying mutants,
+it is `N/A`, not zero. If a redesign changes mutation sites, compare
+equivalent semantic fault classes or mark numeric before/after comparison
+unavailable. Mutation adequacy measures verification strength, not
+architectural depth.
 
 ## Comparative acceptance gate
 
@@ -477,9 +485,11 @@ The semantic explanation remains authoritative.
 
 ## Completion criterion
 
-Evidence is ready for a design decision when every used gauge has its raw
-evidence and counting basis, scenarios were frozen before comparison, and `N/A`,
-`not measured`, and observed zero are distinguished. An implementation uses the
-same interpretation before and after and explains material regressions. A review
-labels proposed effects as predictions and records what remains to be measured.
-Neither optimizes a vanity count or hides a trade-off in an aggregate score.
+Evidence is ready for a design decision when every consequential claim has a
+gauge disposition, each selected gauge has a current baseline where defined or
+recorded current-state inputs for its predicted effects, and scenarios were
+frozen before comparison. Missing evidence needs a recorded attempt or reason;
+`N/A`, `not measured`, and observed zero stay distinct. An implementation
+uses the same interpretation before and after and explains material regressions.
+A review labels proposed effects as predictions, without optimizing a vanity
+count or hiding a trade-off in an aggregate score.

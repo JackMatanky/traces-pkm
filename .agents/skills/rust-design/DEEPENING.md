@@ -218,14 +218,15 @@ an independent seam.
 
 For a concrete design claim, compare current caller knowledge and change paths
 with the proposed seam. Ask which facts leave callers or a parent, which policy
-finds an owner, and what becomes removable, if anything. Use
-[`METRICS.md`](METRICS.md) when a repeatable measure clarifies the choice;
-keep any frozen scenario identical across alternatives and later implementation.
+finds an owner, and what becomes removable, if anything. Carry forward the
+gauges, raw evidence, and frozen scenario selected in discovery; when a new
+claim arises, screen it with [`METRICS.md`](METRICS.md) and select an
+evidence source from [`TOOLING.md`](TOOLING.md).
 
 For a review, state expected effects as predictions. For an implementation,
-compare observed results against current evidence. Explain material trade-offs,
-including additional caller burden accepted to eliminate invalid transitions.
-No design has to improve every applicable dimension.
+compare observed results against the same current evidence. Explain material
+trade-offs, including additional caller burden accepted to eliminate invalid
+transitions. No design has to improve every applicable dimension.
 
 ## Protect sibling isolation
 
@@ -294,9 +295,11 @@ there is no further improvement elsewhere.
 
 ## Completion criterion
 
-A candidate is resolved when the proposed or implemented design explains why
+A candidate is resolved when current and proposed caller knowledge or change
+paths are compared using the selected evidence, and the design explains why
 responsibilities belong where they do, what each seam hides and asks callers
 to know, how any parent changes, what becomes removable or why nothing does,
-and which trade-offs remain. A review separates observed current evidence from
-predicted effects; an implementation additionally verifies behaviour and
-observes the claimed effects.
+and which trade-offs remain. Record each selected gauge or reason it is
+inapplicable or not measured. A review separates observed current evidence
+from predicted effects; an implementation additionally verifies behaviour
+and observes the claimed effects.

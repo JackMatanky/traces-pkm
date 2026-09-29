@@ -12,7 +12,10 @@ the evidence requires.
 
 ### Workspace or repository
 
-Map the coarse structure first:
+For an audit, inventory every in-scope coarse responsibility or seam; start
+at crate/module boundaries and split distinct ownership clusters. Use configured
+module tree/dependency views and caller/test entry paths from
+[`TOOLING.md`](TOOLING.md) to map:
 
 - crates and dependency direction
 - major external and internal seams
@@ -24,9 +27,8 @@ Map the coarse structure first:
 - major test surfaces
 - broad structural hotspots
 
-Use [`TOOLING.md`](TOOLING.md) to offload this map where possible.
-
-Narrow to candidate regions before reading individual implementations deeply.
+Probe each inventory unit before concluding; read candidate implementations
+deeply rather than treating a tool graph as the design.
 
 ### Crate or module
 
@@ -42,7 +44,9 @@ Inspect:
 - tests and their entry points
 - policy distributed across children or callers
 
-Descend only where these relationships need lower-level explanation.
+Descend where relationships need lower-level explanation. For an audit, keep
+distinct state or policy clusters with different callers or contracts as
+separate inventory entries, even when they share a file or module.
 
 ### File, type, or `impl`
 
@@ -241,24 +245,33 @@ many tiny modules
 
 ## Evidence for a candidate
 
-First record the concrete caller knowledge, leaked representation, misplaced
-policy, or change path behind the concern. Use [`METRICS.md`](METRICS.md) only
-if a comparison could change the design decision. Freeze any representative
-change scenario before comparing alternatives, and preserve the same basis when
-an implementation is later measured.
+Record the concrete caller knowledge, leaked representation, misplaced policy,
+or change path behind the concern. Screen the gauge families in
+[`TOOLING.md`](TOOLING.md) for each consequential candidate and use
+[`METRICS.md`](METRICS.md) for selected definitions. Keep raw observations
+beside any count. Freeze a representative change scenario before comparing
+alternatives; preserve its basis if implementation is later measured.
 
-## Candidate record
+## Search and candidate record
 
-For each consequential candidate found in the inspected region, record:
+For each audit inventory unit, or the inspected region of a focused review,
+record adjacent callers or owners and both expansion and compression/removal
+probes with their tool/source, observation, and outcome. Account for units with
+no candidate as well as those with one; list any uninspected unit as a coverage
+gap rather than a negative result. Group material tool findings (hotspots,
+clones, orphans, suspicious dependency edges) under their inventory unit, and
+mark each investigated, dismissed with a reason, or deferred as a named gap;
+a production/test location classification accompanies duplication findings.
+
+For each consequential candidate, record:
 
 ```text
-scope and inspected neighbours:
-evidence and current seam:
-knowledge or responsibility at issue:
+current seam and caller knowledge at issue:
 proposed direction and parent effect (if a parent exists):
 what could become removable (if anything):
+selected gauges, raw evidence, and counting basis:
+plausible inapplicable or not-measured gauges and reasons:
 uncertainty:
-optional comparison (current evidence, frozen scenario, counting basis):
 ```
 
 A review records expected effects as predictions. An implementation may later
@@ -267,10 +280,12 @@ before selecting a Rust pattern.
 
 ## Completion criterion
 
-Discovery is complete for the inspected region when consequential candidates
-found there are carried forward with evidence or dismissed with a reason, both
-expansion and compression/removal have been considered, and the adjacent callers
-or owners checked are named. Expand the region when evidence crosses its
-boundary. Record unresolved questions and uninspected adjacent regions.
+Discovery is complete for a focused review when consequential candidates
+found in the inspected region are carried forward with evidence or dismissed
+with a reason, both probes have observed results, and adjacent callers or
+owners checked are named. For an audit, those conditions apply to every
+in-scope inventory unit and every material tool finding carries its
+disposition. Expand investigation when evidence crosses the boundary; record
+unresolved questions and uninspected adjacent regions.
 
 The number of findings is not a success measure.
