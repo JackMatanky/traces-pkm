@@ -30,7 +30,7 @@ This supersedes an earlier draft of this Answer that put an `Option<Range<ByteOf
 
 **Guidance for implementation:**
 
-- `Spanned<T> { value: T, span: Range<ByteOffset> }`, `pub(crate)`, with `value()`/`into_value()`/`span()` accessors (explicit methods, not `Deref` — matches this codebase's existing accessor style on `Tag`/`Link` rather than introducing `Deref`-based ergonomics for the first time).
+- `Spanned<T> { value: T, span: Range<ByteOffset> }` lives in `src/position.rs`, alongside `ByteOffset`/`SourceLine`/`ByteTracker` — that module's own doc comment scopes it as "source-position primitives... shared across text-parsing domains," and `Spanned<T>` depends only on `ByteOffset` from that module, nothing from `note::`. `pub(crate)`, with `value()`/`into_value()`/`span()` accessors (explicit methods, not `Deref` — matches this codebase's existing accessor style on `Tag`/`Link` rather than introducing `Deref`-based ergonomics for the first time).
 - `#[serde(skip, default = "...")]` on `Spanned::span` (`Range<ByteOffset>` has no `Default` impl in std, unlike `Option`, so this needs one small free function, e.g. returning `ByteOffset::default()..ByteOffset::default()` — `ByteOffset` itself does derive `Default` per ticket 01's implementation). One function covers every instantiation.
 - `Note::outlinks() -> &[Spanned<Link>]`; `Link` itself unchanged (still bare inside `NoteFieldValue::Link`).
 - A new `Note` accessor for body-tag occurrences (name is the implementer's call — e.g. `tag_occurrences()`), returning `&[Spanned<Tag>]`, additive alongside the existing `tags() -> &[Tag]`; `Tag` itself unchanged.
@@ -55,7 +55,7 @@ This supersedes an earlier draft of this Answer that put an `Option<Range<ByteOf
 7. No behavior changes for any other AST element (lists, tasks, footnotes, callouts, frontmatter, the existing unified tag list) and no existing test assertion needs updating for values that don't inspect spans.
 
 **Key interfaces:**
-- A `Spanned<T>` value type pairing `T` with a mandatory `Range<ByteOffset>`; accessors for the wrapped value and the span; equality/hashing/ordering delegate to the wrapped value only.
+- A `Spanned<T>` value type (`src/position.rs`, alongside `ByteOffset`/`SourceLine`) pairing `T` with a mandatory `Range<ByteOffset>`; accessors for the wrapped value and the span; equality/hashing/ordering delegate to the wrapped value only.
 - `Note::outlinks()`'s element type carries a span (`Spanned<Link>` or equivalent); the link-value type used elsewhere (frontmatter/inline field values) is unaffected.
 - A new `Note` accessor exposing body-parsed tag occurrences with spans, distinct from and additive to the existing unified `tags()` accessor.
 - `Note`'s inline-field entry storage pairs each `NoteFieldValue` with its own span.
