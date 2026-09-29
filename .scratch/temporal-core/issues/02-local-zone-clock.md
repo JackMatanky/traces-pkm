@@ -4,19 +4,19 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** implemented — pending merge (branch `02-local-zone-clock`)
 
 Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `conv-tryfrom-fallible`, `err-source-chain` (N4); `MappedLocalTime` (not the old name `LocalResult`) is the resolver's type; zone conversions are named and direction-explicit — local→UTC via `and_utc()`/`naive_utc()`; UTC→local wall clock for calendar application (spec D12) via offset-based checked arithmetic (`Local.offset_from_utc_datetime(&naive_utc)` then `naive_utc.checked_add_offset(offset.fix())`, `None` → out-of-range error — panic-safe because `checked_add_offset` returns `Option` where `naive_local()` would `expect`); never `.naive_local()` (documented `# Panics` when the offset overflows `NaiveDateTime` — chrono `datetime/mod.rs` `expect("Local time out of range…")`) and never `.naive_utc()` where the local wall clock is wanted (wrong frame); doctrine = data + docs, no `Clock`/`TimeZone` traits (review §5.7). Design record: `../review.md` §4 (B1 + DST), §2.1 (D9, N4).
 
-- [ ] Naive datetime input parses in the local zone → stored UTC; date-only input attaches no zone
-- [ ] DST policy implemented and pinned: ambiguous fall-back → earliest occurrence; spring-forward gap → shifted forward by the gap; no invalid-input failure — ambiguity and DST gaps never fail to parse, only a tz-data/OS lookup failure may error (spec D14)
-- [ ] Clock reads follow the doctrine: `now`/`today`/file-stat display from local clock, storage always UTC; engine's mixed clock sites unified (D9)
-- [ ] Error source chains preserved across engine parse paths (N4)
-- [ ] Engine out-of-range shift magnitudes return an error instead of panicking — `chrono::Duration::seconds` → `try_seconds` at `src/template/engine/date.rs:432` (N1)
-- [ ] Tests inject `TZ` per test (fresh fixtures, no shared/global time); ambiguity, gap, and offset assertions all run deterministically
-- [ ] One named local→UTC resolver: exhaustive `MappedLocalTime::{Single, Ambiguous, None}` match — ambiguous → earliest, true gap → shift forward by the gap, and `None` caused by tz-data/OS error surfaces as an error (gap verified by probing adjacent local times), never a silent shift (spec D14)
-- [ ] Resolver rustdoc cites Temporal `'compatible'` (RFC 5545) and jiff `Disambiguation::Compatible` as the adopted convention; wasm caveat (chrono #1701, `Local` returns only `Single` on wasm) documented as out-of-scope
-- [ ] `mise run verify` green
+- [x] Naive datetime input parses in the local zone → stored UTC; date-only input attaches no zone
+- [x] DST policy implemented and pinned: ambiguous fall-back → earliest occurrence; spring-forward gap → shifted forward by the gap; no invalid-input failure — ambiguity and DST gaps never fail to parse, only a tz-data/OS lookup failure may error (spec D14)
+- [x] Clock reads follow the doctrine: `now`/`today`/file-stat display from local clock, storage always UTC; engine's mixed clock sites unified (D9)
+- [x] Error source chains preserved across engine parse paths (N4)
+- [x] Engine out-of-range shift magnitudes return an error instead of panicking — `chrono::Duration::seconds` → `try_seconds` at `src/template/engine/date.rs:432` (N1)
+- [x] Tests inject `TZ` per test (fresh fixtures, no shared/global time); ambiguity, gap, and offset assertions all run deterministically
+- [x] One named local→UTC resolver: exhaustive `MappedLocalTime::{Single, Ambiguous, None}` match — ambiguous → earliest, true gap → shift forward by the gap, and `None` caused by tz-data/OS error surfaces as an error (gap verified by probing adjacent local times), never a silent shift (spec D14)
+- [x] Resolver rustdoc cites Temporal `'compatible'` (RFC 5545) and jiff `Disambiguation::Compatible` as the adopted convention; wasm caveat (chrono #1701, `Local` returns only `Single` on wasm) documented as out-of-scope
+- [x] `mise run verify` green
 
 ## Comments
 
@@ -39,3 +39,215 @@ Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `con
   1. `src/template/engine/date.rs:319` — the `timestamp` filter's "treated as UTC" rustdoc must be rewritten when naive parse becomes local-zone.
   2. `src/template/engine/date.rs:136` — `from_timestamp` formats via `.naive_utc()`; per the ticket's own "never `.naive_utc()` where the local wall clock is wanted" rule this display path is a candidate, but the checklist names only `now`/`today`/file-stat — clarify whether it's in scope.
 - **Rust-skills rules cited all exist** (`num-overflow-explicit`, `conv-tryfrom-fallible`, `err-source-chain`); additionally applicable: `err-result-over-panic` (N1), `anti-over-abstraction` (no `Clock`/`TimeZone` traits, review §5.7).
+- **2026-09-29 (agent, branch `02-local-zone-clock`, worktree
+  `.worktrees/02-local-zone-clock`):** Implemented per spec. Commit
+  `6a065411` (6 files, +854 −98). Core: `src/date.rs` gains the named
+  `local_naive_to_utc` resolver (exhaustive `MappedLocalTime` match:
+  ambiguous → earliest occurrence picked by largest offset, since chrono
+  orders `Ambiguous` by offset value on the tzfile path and by transition
+  side on the POSIX-rule path; true gap → hourly backward probe to the
+  pre-transition offset, ≤25h; probe exhaustion → new
+  `DateError::LocalZoneLookup`, never a silent shift) with the Temporal
+  `'compatible'`/jiff `Compatible`/wasm-caveat rustdoc. `parse_iso`
+  separates shape matching from resolution so a resolution failure cannot
+  be retried against later formats; `Display`/`date()`/`format_with`
+  render the local wall clock via the prescribed checked
+  `offset_from_utc_datetime` + `checked_add_offset` pattern
+  (`DateTimeValue::local_wall`, UTC fallback at the `NaiveDateTime` edge);
+  `From<DateValue>` promotes at local-zone midnight; `From<SystemTime>`
+  for `DateValue` yields the local date (file-stat D9). Engine:
+  `ParsedDate` carries wall + instant; `timestamp`/`is_past`/`is_future`
+  and both-datetime `date_diff` measure the instant, human filters render
+  the wall; `date_shift_unit` splits day/month/year (civil wall) from
+  sub-day units (exact instant) — pinned across the 2026-03-08 New York
+  gap; `from_timestamp` displays local (triage scope note 2 resolved as
+  in-scope: display path); timestamp-filter rustdoc rewritten (scope
+  note 1). N1 `try_seconds`, N4 `invalid_operation(msg, DateError)`.
+  Tests inject `TZ` via `src/tz_guard.rs` (`TzGuard`, std-env-lock-backed
+  writes serialized by `TZ_LOCK`); zone-sensitive tests elsewhere (query
+  mtime/mdate boundaries) pinned to UTC. Adversarial two-axis review
+  (standards + spec) findings all addressed: stale `src/CONTEXT.md`
+  Date-Time clause updated; `wall_or_utc` dedup; `resolve_gap_offset`
+  extraction; guard SAFETY-contract correction; doctrine-pinning of the
+  misnamed `evaluates_date_only_literal_at_midnight_utc` test. `mise run
+  verify` green: 2984 tests + 58 doctests, fmt/lint/check clean;
+  `mise run doc --all-features` clean. Ready for merge.
+- **2026-09-29 (agent, implementation details, same branch/commit
+  `6a065411`):** File-by-file map of what landed, for reviewers and the
+  ticket 03/04 implementers.
+
+  **`src/date.rs` (core, single owner)**
+
+  - `pub(crate) fn local_naive_to_utc(NaiveDateTime)
+    -> Result<DateTime<Utc>, DateError>` — the one local→UTC resolver.
+    Exhaustive `MappedLocalTime` match:
+    - `Single(offset)` → `wall.checked_sub_offset(offset)` (checked, never
+      `wall - offset`: `arithmetic_side_effects` is denied crate-wide).
+    - `Ambiguous(a, b)` → earliest occurrence = the larger offset
+      (`instant = wall - offset`, so larger offset = earlier instant).
+      chrono orders the pair by offset value on the tzfile path
+      (`timezone.rs` sorts `prev`/`after`) and by transition side on the
+      POSIX-rule path (`rule.rs` returns `Ambiguous(dst, std)` for
+      northern fall-back) — selecting by offset value is correct under
+      both representations, which is why the first implementation
+      (taking element 0 as "earliest") was nondeterministic across
+      zone-data paths.
+    - `None` → `resolve_gap_offset`: a gap spans the whole skipped span,
+      so a 1-second probe stays inside it (verified empirically:
+      `02:30 - 1s = 02:29:59` still maps `None` in `America/New_York`).
+      The probe steps back 1 hour at a time, ≤25 iterations (widest
+      recorded gap: Pacific/Apia's 24h day skip), and the first resolving
+      neighbor supplies the pre-transition offset; interpreting the wall
+      with it shifts the gap time forward by exactly the gap (Temporal
+      `'compatible'`/jiff `Compatible`). Exhausting the search →
+      `DateError::LocalZoneLookup` (new `#[non_exhaustive]` variant) —
+      reachable only on a broken tz-data/OS environment; chrono itself
+      silently falls back to UTC in that case, so the error arm is
+      defensive and untestable without fault injection (no injection
+      seam: `Clock`/`TimeZone` traits are rejected by review §5.7).
+    - Rustdoc cites Temporal `'compatible'` (RFC 5545), jiff
+      `Disambiguation::Compatible`, and the wasm caveat (chrono #1701).
+  - `DateTimeFormat::parse` reverted to shape-only
+    (`Result<DateTime<Utc>, chrono::ParseError>`, naive arm attaches UTC
+    as a placeholder); `DateTimeValue::parse_iso` now tracks which format
+    matched and resolves through the resolver once, after the cascade.
+    This split is load-bearing: folding resolution into the per-format
+    parse made the cascade's retry-on-Err overwrite a `LocalZoneLookup`
+    with a later format's `TooLong` (found by the red test).
+  - `DateTimeValue::local_wall(self) -> Option<NaiveDateTime>` — the
+    prescribed UTC→local pattern (`Local.offset_from_utc_datetime` +
+    `checked_add_offset(offset.fix())`); `.naive_local()` would
+    `expect`-panic there. `wall_or_utc` is the private fallback used by
+    `Display`, `to_time_string`, `date()`, and `format_with`: local wall
+    clock, UTC wall clock only when the offset cannot be applied (beyond
+    `NaiveDateTime`'s range; unreachable from 4-digit-year parse input).
+  - `From<DateValue> for DateTimeValue` promotes at local-zone midnight
+    through the resolver (a zone-free civil date has no instant until a
+    reader's zone supplies one); lookup failure falls back to UTC
+    midnight, matching chrono's own silent fallback — strict callers
+    (`ParsedDate`) resolve directly to surface the error. This shifts
+    `cmp_date`/`is_equal_to_date` (note field `Date` vs `DateTime`
+    equality) to local-midnight semantics.
+  - `From<SystemTime> for DateValue` → local calendar date (file `mdate`).
+  - Doctrine doc block added to the module docs; `timestamp`-filter
+    rustdoc's "treated as UTC" wording removed (triage scope note 1).
+
+  **`src/template/engine/date.rs` (engine adapters)**
+
+  - `ParsedDate { wall, instant, precision }`: `wall` is the human civil
+    datetime (local wall of the instant; civil midnight for date-only),
+    `instant` the stored UTC instant. Doctrine at every call site:
+    `date_format`/`weekday`/`start_of_month`/`end_of_month` and
+    day/month/year shifts use `wall`; `timestamp`/`is_past`/`is_future`
+    and both-datetime fixed-unit `date_diff` use `instant`; a date-only
+    operand in `date_diff` keeps civil wall arithmetic (zone-free, per
+    D14 "adding days never shifts across a transition").
+  - `date_shift_unit` + `shift_wall`: `(precision, unit)` match —
+    date-only stays civil for every unit; datetime-precision
+    year/month/day shift the wall; sub-day units add `TimeDelta` to the
+    instant and re-derive the wall via `local_wall`. This is the
+    A2′/D13 split arriving at the engine seam: `+1 day` keeps 17:00
+    across the 2026-03-08 gap while `+24h` lands 18:00 (pinned).
+  - N1: `chrono::Duration::try_seconds(secs.checked_mul(n)?)` — the red
+    test used `1e16` seconds, which passes the `i64` `checked_mul` guard
+    but overflows `TimeDelta`'s millisecond range where `Duration::
+    seconds` panics.
+  - N4: `ParsedDate::parse` maps the `DateValue::parse_iso` error through
+    `super::error::invalid_operation(format!("invalid date {s:?}"),
+    source)`, so minijinja render errors carry
+    `DateError → chrono::ParseError`; asserted by downcasting
+    `Error::source()`. (Re-parse with `expect_err` was rejected:
+    `expect_used` is denied and the re-parse was waste.)
+  - `from_timestamp` renders `Local.from_utc_datetime(..)` (triage scope
+    note 2 resolved as in-scope: display path, never `.naive_utc()`).
+  - `now`/`today`/`tomorrow`/`yesterday` were already local-clock
+    displays and stay as-is; the "unification" is doctrine conformance,
+    documented in the new `# Clock doctrine` module block.
+
+  **`src/tz_guard.rs` (new, `#[cfg(test)]`, wired in `lib.rs`)**
+
+  - `TzGuard::set(zone)` / `TzGuard::keep()` install into a thread-local
+    cell and hold `TZ_LOCK`; writes restore the previous `TZ` on drop.
+    Works under both runners: libtest gives each test its own thread
+    (chrono's `TZ_INFO` cache is thread-local) and nextest gives each
+    test its own process. `std::env::set_var` is unsafe in edition 2024
+    and `unsafe_code` is denied workspace-wide, so the two one-op helpers
+    carry narrowly scoped `#[expect(unsafe_code, reason = …)]` + SAFETY
+    comments; the documented contract is std's env lock for in-process
+    readers and no non-Rust `getenv` reader in the dependency tree.
+  - Zone-sensitive tests outside the date modules were found and pinned
+    during the spec review: `query/grammar/filter.rs`'s mtime boundary
+    test (renamed from `evaluates_date_only_literal_at_midnight_utc` —
+    it pinned the old UTC-midnight semantics — to
+    `evaluates_a_date_only_literal_at_local_midnight`, `TZ=Etc/GMT-2`)
+    and the mtime/mdate fixture tests (`TZ=UTC`); `mdate` is now the
+    mtime's local calendar date, so unguarded process-zone runs would
+    fail on a UTC-negative machine.
+
+  **`src/CONTEXT.md`** — Date-Time clause rewritten: "stored UTC and
+  rendered as the reader's local wall clock; a naive input means the
+  local zone (DST ambiguities and gaps resolve deterministically)";
+  Date coercion now reads "midnight in the local zone". (Full glossary
+  expansion remains ticket 08's; this only un-staled the clause this
+  ticket's behavior change made contradictory.)
+
+  **Test inventory (all `#[cfg(test)]`, `pretty_assertions`, TZ-injected)**
+  - `date.rs::local_zone`: naive-local→UTC, ambiguous→earliest, gap
+    shift, adjacent-times-resolve, local-midnight promotion (5 tests).
+  - `date.rs` updates: UTC-pinned rendering/comparison/conversion tests
+    (the old UTC-wall expectations), `truncates_to_local_midnight_in_
+    start_of_day` rename, `extracts_the_local_calendar_date_of_the_
+    instant`, `converts_from_system_time_to_the_local_date`,
+    `displays_the_local_wall_clock_of_the_instant`.
+  - `engine/date.rs`: `formats_in_the_local_wall_clock`,
+    `interprets_a_naive_datetime_in_the_local_zone`,
+    `resolves_a_date_only_input_at_local_midnight`,
+    `resolves_a_spring_forward_gap_input_instead_of_failing`,
+    `renders_an_explicit_offset_input_in_the_local_wall_clock`,
+    `reformats_a_naive_input_to_its_own_wall_clock`,
+    `a_day_unit_preserves_the_wall_clock_across_a_dst_gap_while_hours_
+    do_not`, `date_add_returns_an_error_for_an_out_of_range_second_
+    magnitude` (N1, was a chrono panic),
+    `rejects_an_unparseable_date_preserving_the_parse_error_source`
+    (N4, was an empty chain). `env()` installs `TzGuard::keep()` so
+    every render owns `TZ`.
+  - Design notes for ticket 03/04: `ParsedDate.wall`/`.instant` is the
+    engine's doctrine-as-data seam; the calendar owner (S1) should
+    absorb `shift_wall` and the regime split; the engine deliberately
+    does NOT resolve day-unit shifts back through the resolver for
+    display (civil wall result is the D14 date-only guarantee), so a
+    wall shifted into a gap displays civilly until the calendar owner
+    lands.
+
+- **2026-09-29 (agent, adversarial rs-review-spec pass, commit
+  `b6e6f63b`):** Full-diff review (`b2662ffc..6a065411`) against spec
+  D9/D12/D14 and the ticket checklist, cross-checked with `review.md`
+  and `spec.md` to confirm D12's full calendar-shift-through-resolver
+  requirement is correctly out of scope here (owned by ticket 03's
+  calendar owner, confirmed by `review.md` line 17 and the open
+  checkbox at `03-duration-semantics-owner.md`). Two real findings,
+  both fixed:
+  1. **N4 only half-delivered**: `ParsedDate::parse` discarded
+     `DateTimeValue::parse_iso`'s error unconditionally on any
+     failure — including the ticket's own new `LocalZoneLookup`
+     variant — and always surfaced `DateValue::parse_iso`'s unrelated
+     shape-mismatch error instead. Reproduced live (probe test, then
+     reverted): for a datetime-shaped invalid input, the surfaced
+     source read "trailing input" (the date-only fallback's
+     complaint) instead of "invalid characters" (the datetime
+     parser's actual complaint). Fixed: the fallback path now only
+     replaces the primary error when both parsers fail, attaching the
+     more specific (datetime) one. Regression test:
+     `surfaces_the_datetime_parsers_error_not_the_date_only_fallbacks`.
+  2. **`date.from_timestamp` bypassed the crate's own doctrine seam**:
+     reimplemented instant→local-wall-clock rendering via a raw
+     `Local.from_utc_datetime` call instead of `DateTimeValue`'s own
+     `local_wall`/`wall_or_utc`, giving it different overflow-fallback
+     semantics than every other display site and undermining D9's
+     "one doctrine, not an accidental mix" goal. Fixed: widened
+     `wall_or_utc` to `pub(crate)` and reused it.
+  Minor doc fix alongside: `resolve_gap_offset`'s error condition
+  moved from prose into a `# Errors` heading, matching every other
+  `Result`-returning function in the module. `mise run verify` green:
+  2985 tests + 53 doctests, fmt/lint/check clean;
+  `cargo doc --all-features` (`RUSTDOCFLAGS=-D warnings`) clean.

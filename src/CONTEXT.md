@@ -47,8 +47,10 @@ every date-shaped string funnels through it.
 
 #### Date-Time
 
-A parsed, always UTC-normalized date-time instant. Shares `src/date.rs`'s
-parser with Date and compares across it by coercing a Date to midnight UTC.
+A parsed date-time instant, stored UTC and rendered as the reader's local wall
+clock. Shares `src/date.rs`'s parser with Date, where a naive input means the
+local zone (DST ambiguities and gaps resolve deterministically), and compares
+across it by coercing a Date to midnight in the local zone.
 *Avoid*: Timestamp, instant
 
 #### Duration
