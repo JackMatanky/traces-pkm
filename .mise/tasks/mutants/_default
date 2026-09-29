@@ -173,8 +173,6 @@ reject_bad_targets() {
   fi
   for t in "${targets[@]+"${targets[@]}"}"; do
     case "${t}" in
-      --)
-        ;;
       --config | --config=*)
         echo "mutants: task owns --config; policy lives in mutarust.yml" >&2
         exit 2
