@@ -693,15 +693,16 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 
 /// A duration measured in seconds.
 ///
-/// Wraps `f64` with NaN-safe ordering and arithmetic. Always finite when
-/// constructed through [`DurationValue::to_seconds`] or
-/// [`DurationSeconds::try_from`]. A signed zero is normalized to positive
-/// zero at construction, so `"-0m"` and `"0m"` compare, order, and hash
-/// identically.
+/// Wraps `f64` with NaN-safe ordering and arithmetic; the arithmetic
+/// operators do not re-validate finiteness, so an operation that overflows
+/// can yield a non-finite result. Always finite when constructed through
+/// [`DurationValue::to_seconds`] or [`DurationSeconds::try_from`]. A signed
+/// zero is normalized to positive zero at construction, so `"-0m"` and
+/// `"0m"` compare, order, and hash identically.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(f64);
 
-/// Above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
+/// At or above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
 /// switches to scientific notation.
 const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
 
@@ -709,15 +710,17 @@ const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
 /// [`Display`](fmt::Display) switches to scientific notation.
 const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
 
-/// Normalizes a signed zero to positive zero: every [`DurationSeconds`]
-/// constructor (fallible or infallible) routes its result through this so
-/// the invariant in the type docs holds everywhere, not just at parse time.
-#[inline]
-fn normalize_zero(value: f64) -> f64 {
-    if value == 0.0 {
-        0.0
-    } else {
-        value
+impl DurationSeconds {
+    /// Constructs from a raw `f64`, normalizing a signed zero to positive
+    /// zero so the type's invariant (see the type docs) holds everywhere,
+    /// not just at parse time.
+    #[inline]
+    fn normalized(value: f64) -> Self {
+        Self(if value == 0.0 {
+            0.0
+        } else {
+            value
+        })
     }
 }
 
@@ -728,8 +731,7 @@ impl TryFrom<f64> for DurationSeconds {
     #[inline]
     fn try_from(secs: f64) -> Result<Self, Self::Error> {
         secs.is_finite()
-            .then_some(normalize_zero(secs))
-            .map(Self)
+            .then(|| Self::normalized(secs))
             .ok_or(DurationError::NonFiniteSeconds)
     }
 }
@@ -776,7 +778,7 @@ impl Ord for DurationSeconds {
     }
 }
 
-/// Renders in scientific notation once the magnitude clears
+/// Renders in scientific notation once the magnitude reaches or clears
 /// [`DISPLAY_EXPONENT_UPPER`] or falls below [`DISPLAY_EXPONENT_LOWER`]
 /// (exact zero excluded), so an extreme magnitude never dumps a
 /// hundreds-of-digits decimal literal.
@@ -804,7 +806,7 @@ impl Add for DurationSeconds {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
-        Self(normalize_zero(self.0 + rhs.0))
+        Self::normalized(self.0 + rhs.0)
     }
 }
 
@@ -812,7 +814,7 @@ impl Sub for DurationSeconds {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
-        Self(normalize_zero(self.0 - rhs.0))
+        Self::normalized(self.0 - rhs.0)
     }
 }
 
@@ -820,7 +822,7 @@ impl Mul<f64> for DurationSeconds {
     type Output = Self;
 
     fn mul(self, rhs: f64) -> Self {
-        Self(normalize_zero(self.0 * rhs))
+        Self::normalized(self.0 * rhs)
     }
 }
 
@@ -829,7 +831,7 @@ impl Mul<DurationSeconds> for f64 {
 
     #[inline]
     fn mul(self, rhs: DurationSeconds) -> DurationSeconds {
-        DurationSeconds(normalize_zero(self * rhs.0))
+        DurationSeconds::normalized(self * rhs.0)
     }
 }
 
@@ -1303,6 +1305,7 @@ mod tests {
 
         mod formatting {
             use pretty_assertions::assert_eq;
+            use rstest::rstest;
 
             use super::*;
 
@@ -1325,56 +1328,36 @@ mod tests {
                 );
             }
 
-            #[test]
-            fn seconds_switches_to_scientific_notation_beyond_the_exponent_threshold()
-             {
+            #[rstest]
+            #[case::huge_positive(1e300, "1e300")]
+            #[case::huge_negative(-1e300, "-1e300")]
+            #[case::tiny_positive(1e-300, "1e-300")]
+            #[case::at_upper_threshold(DISPLAY_EXPONENT_UPPER, "1e15")]
+            #[case::just_below_upper_threshold(1e14, "100000000000000")]
+            #[case::at_lower_threshold(DISPLAY_EXPONENT_LOWER, "0.000001")]
+            #[case::just_above_lower_threshold(0.0004, "0.0004")]
+            fn seconds_display_switches_dialect_by_magnitude(
+                #[case] value: f64,
+                #[case] expected: &str,
+            ) {
                 assert_eq!(
-                    DurationSeconds::try_from(1e300).unwrap().to_string(),
-                    "1e300"
-                );
-                assert_eq!(
-                    DurationSeconds::try_from(-1e300).unwrap().to_string(),
-                    "-1e300"
-                );
-                assert_eq!(
-                    DurationSeconds::try_from(1e-300).unwrap().to_string(),
-                    "1e-300"
-                );
-            }
-
-            #[test]
-            fn seconds_stays_decimal_within_the_exponent_threshold() {
-                assert_eq!(
-                    DurationSeconds::try_from(1e14).unwrap().to_string(),
-                    "100000000000000"
-                );
-                assert_eq!(
-                    DurationSeconds::try_from(0.0004).unwrap().to_string(),
-                    "0.0004"
+                    DurationSeconds::try_from(value).unwrap().to_string(),
+                    expected
                 );
             }
 
-            #[test]
-            fn from_seconds_never_renders_a_nonzero_value_as_zero_seconds() {
-                let huge = DurationSeconds::try_from(1e300).unwrap();
+            #[rstest]
+            #[case::huge_positive(1e300, "1e300s")]
+            #[case::huge_negative(-1e300, "-1e300s")]
+            #[case::tiny_positive(0.0004, "0.0004s")]
+            fn from_seconds_never_lies_about_a_nonzero_magnitude(
+                #[case] value: f64,
+                #[case] expected: &str,
+            ) {
+                let seconds = DurationSeconds::try_from(value).unwrap();
                 assert_eq!(
-                    DurationValue::from_seconds(huge).as_str(),
-                    "1e300s"
-                );
-
-                let tiny = DurationSeconds::try_from(0.0004).unwrap();
-                assert_eq!(
-                    DurationValue::from_seconds(tiny).as_str(),
-                    "0.0004s"
-                );
-            }
-
-            #[test]
-            fn from_seconds_preserves_sign_in_the_honest_fallback() {
-                let huge_negative = DurationSeconds::try_from(-1e300).unwrap();
-                assert_eq!(
-                    DurationValue::from_seconds(huge_negative).as_str(),
-                    "-1e300s"
+                    DurationValue::from_seconds(seconds).as_str(),
+                    expected
                 );
             }
         }

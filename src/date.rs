@@ -1248,7 +1248,7 @@ mod tests {
     }
 
     mod hostile_yaml_note {
-        use pretty_assertions::assert_eq;
+        use pretty_assertions::{assert_eq, assert_ne};
 
         use super::*;
 
