@@ -1180,3 +1180,30 @@ these results. Example locations for rules that did fire:
   src/query/grammar/source.rs:425, src/schema/fields/select.rs:359
 - `EmptyCatchBlock`: src/file_tracker.rs:179, src/file_tracker.rs:292
 - `TooManyMethods`: src/index/store.rs:135
+
+---
+
+## 10. Workflow
+
+Advisory contract (unchanged by this section): `mise run mess` is manual and
+never wired into `verify`, `hk`, or CI. Exit codes: `0` clean · `2` findings
+(normal signal) · `1` tool error. Upstream CI treats exit 2 as failure; this
+repo treats it as a to-triage list.
+
+1. **Run** — `mise run mess` after refactors or before a PR (task always adds
+   `--ignore-tests`; output is `text` on stdout).
+2. **Read** — findings print as `file:line<tab>Rule<tab>message`. The §9 table
+   is the triage history; counts > 25 per rule warrant an exclusion decision,
+   `CyclomaticComplexity`/`NPathComplexity` counts warrant threshold retunes.
+3. **Act** — fix the finding, or keep it with a recorded reason (threshold
+   rationale lives in `messrust.xml`; decision history in §7/§9).
+4. **Re-run** — until exit 0 or the remaining set is accepted signal.
+
+Machine-readable triage:
+
+```bash
+mise run mess -- --reportfile /tmp/mess.json --ignore-violations-on-exit  # exit 0
+```
+
+Flag reference: `docs/refs/messrust/docs/usage.md` (all 16 flags; the task
+forwards everything verbatim after `--`). Policy file: `messrust.xml`.
