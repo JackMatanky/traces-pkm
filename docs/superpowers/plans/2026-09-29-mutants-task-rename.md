@@ -465,7 +465,7 @@ Expected: commit lands; hooks green.
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Stale-name audit over the live set**
+- [x] **Step 1: Stale-name audit over the live set**
 
 ```bash
 rg -o 'mise run mutants' .mise/tasks/test/mutants | wc -l                            # 1 (alias sentence)
@@ -479,7 +479,7 @@ Expected: `1`, `12`, `0`, and line numbers `418`/`431`/`427` only (the
 adoption, the 2026-09-27 plan, approved spec bodies, and `.scratch/` also
 excluded by design).
 
-- [ ] **Step 2: Merge `main` into `quality-gates` (before verify)**
+- [x] **Step 2: Merge `main` into `quality-gates` (before verify)**
 
 Gates must run on the merged result (branch is 67/76 apart; both sides touched
 `.gitignore`, `messrust.md`, `mutarust.md`, `mise.toml`, `mise.lock`,
@@ -498,7 +498,7 @@ test -f .mise/tasks/test/mutants && test ! -e .mise/tasks/mutants && echo RENAME
 Expected: merge lands, rename intact, working tree clean (user's three
 untracked plan files are fine).
 
-- [ ] **Step 3: Completion gate**
+- [x] **Step 3: Completion gate**
 
 ```bash
 mise run verify; echo "verify_rc=$?"
@@ -508,7 +508,7 @@ Expected: `verify_rc=0` (fmt → check/lint/test; docs+task-file changes only,
 so this is the standard warm run; verify does not invoke mutarust, so the
 socket policy does not apply).
 
-- [ ] **Step 4: hk gate**
+- [x] **Step 4: hk gate**
 
 ```bash
 hk check --safe --skip-step gitleaks --format json 2>/dev/null | jq -r '.status'
@@ -516,7 +516,7 @@ hk check --safe --skip-step gitleaks --format json 2>/dev/null | jq -r '.status'
 
 Expected: `passed`.
 
-- [ ] **Step 5: Tick the plan + final commit**
+- [x] **Step 5: Tick the plan + final commit**
 
 ```bash
 sed -i '' 's/^- \[ \] \*\*Step/- [x] **Step/' docs/superpowers/plans/2026-09-29-mutants-task-rename.md
@@ -549,3 +549,16 @@ temp clones).
   probe-verified useless — residue reverted). Mitigated per Ground rules
   socket policy; durable fix = upstream issue against
   `quality-gates/mutarust` (skip non-regular entries when copying), Phase 5.
+- **I3 — hk's stash step clears MERGE_HEAD (probable F3 root cause,
+  2026-09-29).** During the Task 5 merge commit, hk's pre-commit stash
+  (which stashes untracked files too — it grabbed the user's 3 untracked
+  plan files on every prior commit) ran `git stash` while a merge was in
+  progress; `git stash` drops `MERGE_HEAD`, so `git commit` then failed with
+  `fatal: could not open '.git/MERGE_HEAD'` even though all conflicts were
+  resolved and staged. Fix: temporarily move untracked files out of the
+  repo, rewrite `MERGE_HEAD` (`git rev-parse main > .git/MERGE_HEAD`),
+  commit — merge landed with both parents (`8413178f`), files restored.
+  **Rule for future merges: stage everything + clear untracked before the
+  merge commit, or expect the same failure.** This stash/restore cycle is
+  also the most likely explanation for the worktree file anomalies (F3):
+  every commit stashed and re-created working-tree files around probes.
