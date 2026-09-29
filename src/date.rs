@@ -1187,7 +1187,7 @@ mod tests {
         }
 
         #[test]
-        fn unparseable_error_exposes_the_chrono_source_via_error_trait() {
+        fn exposes_the_chrono_source_for_an_unparseable_error() {
             use std::error::Error as _;
             let err = DateValue::parse_iso("2026/08/22")
                 .expect_err("unrecognized shape");
@@ -1231,7 +1231,7 @@ mod tests {
         }
 
         #[test]
-        fn deserialization_rejects_a_two_digit_year_through_json() {
+        fn rejects_a_two_digit_year_through_json_deserialization() {
             let err = serde_json::from_str::<DateValue>("\"26-08-22\"")
                 .expect_err("short year rejected");
             assert!(err.to_string().contains("does not have a 4-digit year"));

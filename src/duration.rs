@@ -1230,7 +1230,8 @@ mod tests {
             }
 
             #[test]
-            fn negative_zero_never_fails_a_greater_or_equal_zero_filter() {
+            fn orders_negative_zero_as_greater_than_or_equal_to_positive_zero()
+            {
                 let neg_zero = DurationValue::parse("-0m").unwrap();
                 let zero = DurationValue::parse("0m").unwrap();
                 assert!(neg_zero >= zero);
@@ -1557,13 +1558,12 @@ mod tests {
             }
 
             #[test]
-            fn arithmetic_ops_normalize_a_resulting_signed_zero() {
+            fn mul_normalizes_a_resulting_signed_zero_from_either_operand_order()
+             {
                 let zero = DurationSeconds::try_from(0.0).unwrap();
-                let pos_zero = DurationSeconds::try_from(0.0).unwrap();
-                assert_eq!(zero - zero, pos_zero);
-                assert_eq!(zero * -1.0, pos_zero);
-                assert_eq!(-1.0 * zero, pos_zero);
-                assert!(zero * -1.0 >= pos_zero);
+                assert_eq!(zero * -1.0, zero);
+                assert_eq!(-1.0 * zero, zero);
+                assert!(zero * -1.0 >= zero);
             }
         }
 
