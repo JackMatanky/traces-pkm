@@ -3,6 +3,7 @@
 #MISE sources=["@group:rust"]
 #MISE extends="mutants"
 #MISE depends=["test"]
+#MISE aliases=["mutants"]
 #USAGE flag "-f --file <file>" {
 #USAGE   help "Mutate one file only (e.g. -f src/config/service.rs)"
 #USAGE }
@@ -71,15 +72,15 @@
 #USAGE   help "Target paths (files/dirs/`./src...`); flags are declared above — never pass them after `--`"
 #USAGE   long_help """
 #USAGE   Examples:
-#USAGE   - `mise run mutants -m index` - mutate module `index`
-#USAGE   - `mise run mutants -m index --dry-run` - count only for one module
-#USAGE   - `mise run mutants --min-msi 60 --fail-on-escaped` - gate on new escapes only
-#USAGE   - `mise run mutants --git-diff` - only changed lines (tracked; stage new files first)
-#USAGE   - `mise run mutants --workers 4` - cap parallel workers
-#USAGE   - `mise run mutants --list-mutators` - list built-in mutators
-#USAGE   - `mise run mutants --list-files` - print selected files (NOTE: ignores exclude_dirs)
-#USAGE   - `mise run mutants src/cli/error.rs` - explicit target positional (skips the default)
-#USAGE   - `mise run mutants --run-mutant-id <id>` - re-run one mutant to verify a kill
+#USAGE   - `mise run test:mutants -m index` - mutate module `index`
+#USAGE   - `mise run test:mutants -m index --dry-run` - count only for one module
+#USAGE   - `mise run test:mutants --min-msi 60 --fail-on-escaped` - gate on new escapes only
+#USAGE   - `mise run test:mutants --git-diff` - only changed lines (tracked; stage new files first)
+#USAGE   - `mise run test:mutants --workers 4` - cap parallel workers
+#USAGE   - `mise run test:mutants --list-mutators` - list built-in mutators
+#USAGE   - `mise run test:mutants --list-files` - print selected files (NOTE: ignores exclude_dirs)
+#USAGE   - `mise run test:mutants src/cli/error.rs` - explicit target positional (skips the default)
+#USAGE   - `mise run test:mutants --run-mutant-id <id>` - re-run one mutant to verify a kill
 #USAGE   Every mutarust flag is declared. The task refuses only its owned flags
 #USAGE   (--config, --test-flags, --exec/--no-exec, --features) and unknown or
 #USAGE   misplaced flag-like tokens in target position — exit 2, `mutants:` message.
@@ -99,6 +100,8 @@
 #USAGE   were caught/unviable printers; mutarust -V is --version!); --json →
 #USAGE   report.json (on via this task's config); --jobs → --workers N;
 #USAGE   --no-config → never pass (task owns --config).
+#USAGE   Alias: `mutants` remains a supported alias (`mise run mutants`) —
+#USAGE   same task, hidden from `mise tasks`.
 #USAGE   """
 #USAGE }
 
@@ -190,7 +193,7 @@ reject_bad_targets() {
         exit 2
         ;;
       -*)
-        echo "mutants: unknown or misplaced flag: ${t} (declared flags go before --; see 'mise run mutants --help')" >&2
+        echo "mutants: unknown or misplaced flag: ${t} (declared flags go before --; see 'mise run test:mutants --help')" >&2
         exit 2
         ;;
     esac
@@ -304,9 +307,9 @@ build_static_flags() {
 
 ########################################
 # Maps -f / -m to mutarust TARGET positionals; the default target keeps a
-# bare `mise run mutants` scoped to production code. It applies only when
+# bare `mise run test:mutants` scoped to production code. It applies only when
 # neither -f/-m nor a user-supplied `targets` entry is present: a bare
-# positional invocation like `mise run mutants src/cli/x.rs` scopes to
+# positional invocation like `mise run test:mutants src/cli/x.rs` scopes to
 # the user's target.
 # Globals:
 #   usage_file
