@@ -1,7 +1,7 @@
 # Design: quality-gates task UX hardening (strict mutants args, clean registry, mess workflow)
 
 Date: 2026-09-28
-Status: approved (design brainstorm), spec awaiting user review
+Status: approved (design brainstorm + user review "proceed", 2026-09-28)
 
 ## Context
 
