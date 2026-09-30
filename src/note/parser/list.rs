@@ -29,18 +29,16 @@ pub(super) struct ListTracker {
 }
 
 impl ListTracker {
-    /// Starts a nested text block inside the active item.
+    /// Starts a block-level child inside the active item.
     ///
-    /// Separates it from prior scan-buffer content with a newline. Returns
-    /// `false` if no list item is active, allowing the caller to treat the
-    /// block as top-level text.
-    pub(super) fn start_nested_text_block(&mut self) -> bool {
+    /// Separates it from prior buffer content with a newline (never doubled).
+    /// Returns `false` if no list item is active, allowing the caller to treat
+    /// the block as top-level text.
+    pub(super) fn start_nested_block(&mut self) -> bool {
         let Some(item) = self.item_stack.last_mut() else {
             return false;
         };
-        if !item.buffers.scan.is_empty() {
-            item.buffers.scan.push('\n');
-        }
+        item.buffers.separate_block();
         true
     }
 
@@ -368,6 +366,21 @@ impl ItemBuffers {
         self.scan.push_str(text);
     }
 
+    /// Separates a block-level child from prior content in both buffers.
+    ///
+    /// Writes a newline unless the buffer is empty or already newline-
+    /// terminated, so nested block starts (a blockquote's inner paragraph, for
+    /// example) never double-separate. While `MarkerAccumulator` is buffering,
+    /// both buffers are empty, so a separator can never precede withheld
+    /// marker bytes.
+    fn separate_block(&mut self) {
+        for buffer in [&mut self.text, &mut self.scan] {
+            if !buffer.is_empty() && !buffer.ends_with('\n') {
+                buffer.push('\n');
+            }
+        }
+    }
+
     /// Writes the line terminator to both buffers.
     fn push_break(&mut self) {
         self.text.push('\n');
@@ -500,22 +513,22 @@ mod tests {
         }
 
         #[test]
-        fn start_nested_text_block_returns_false_when_no_item() {
+        fn start_nested_block_returns_false_when_no_item() {
             let mut tracker = ListTracker::default();
             assert!(
-                !tracker.start_nested_text_block(),
-                "start_nested_text_block must return false with no item"
+                !tracker.start_nested_block(),
+                "start_nested_block must return false with no item"
             );
         }
 
         #[test]
-        fn start_nested_text_block_returns_true_with_active_item() {
+        fn start_nested_block_returns_true_with_active_item() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
             tracker.start_item(SourceLine::new(1).expect("non-zero"));
             assert!(
-                tracker.start_nested_text_block(),
-                "start_nested_text_block must return true with active item"
+                tracker.start_nested_block(),
+                "start_nested_block must return true with active item"
             );
         }
 

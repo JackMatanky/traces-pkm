@@ -280,6 +280,13 @@ impl<'a> ParserContext<'a> {
             Event::End(TagEnd::Item) => self.end_item(),
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
+            // A blockquote inside an item is a block-level child: resolve the
+            // pending marker exactly as the catch-all did, then separate the
+            // quote from prior buffer content.
+            Event::Start(CmarkTag::BlockQuote(_)) => {
+                self.list_nesting.resolve_pending_marker();
+                self.list_nesting.start_nested_block();
+            }
             // Inline markup occupying an item's leading slot means the task
             // marker is not at the content start, mirroring pulldown-cmark,
             // which scans for the marker before parsing any inline content.
@@ -374,7 +381,8 @@ impl<'a> ParserContext<'a> {
         }
     }
 
-    const fn start_code_block(&mut self) {
+    fn start_code_block(&mut self) {
+        self.list_nesting.start_nested_block();
         self.block = BlockContext::CodeBlock;
     }
 
@@ -385,10 +393,10 @@ impl<'a> ParserContext<'a> {
     /// Starts a paragraph or heading text block.
     ///
     /// Top-level text fills `body_buffer`. Text within list items is separated
-    /// by newlines in the active item's scan buffer.
+    /// by newlines in the active item's buffers.
     fn start_text_block(&mut self) {
         self.block = BlockContext::Text;
-        if !self.list_nesting.start_nested_text_block() {
+        if !self.list_nesting.start_nested_block() {
             self.body_buffer.clear();
         }
     }
@@ -948,6 +956,60 @@ mod tests {
             assert!(
                 keys.contains(&"Author"),
                 "second paragraph field must be extracted, got: {keys:?}"
+            );
+        }
+
+        #[rstest]
+        #[case::loose_paragraph(
+            "- Task line\n\n  Status:: Draft",
+            "Task line\nStatus:: Draft"
+        )]
+        #[case::after_nested_list(
+            "- Task line\n  - nested\n\n  after para",
+            "Task line\nafter para"
+        )]
+        #[case::blockquote("- alpha\n\n  > quoted", "alpha\nquoted")]
+        #[case::code_fence("- alpha\n\n  ```\n  code\n  ```", "alpha\ncode\n")]
+        #[case::heading("- alpha\n\n  ## sub", "alpha\nsub")]
+        fn separates_block_children_in_item_text(
+            #[case] input: &str,
+            #[case] expected: &str,
+        ) {
+            let note = parse(input);
+
+            let text = note.lists().first().map(ListItem::raw_text);
+
+            assert_eq!(text, Some(expected));
+        }
+
+        #[test]
+        fn captures_field_after_blockquote_inside_item() {
+            // Bare fields are line-start-gated in the scan buffer; a
+            // block-level child before them must end the prior line or the
+            // field is invisible to the lexer.
+            let note = parse("- alpha\n\n  > Status:: Draft");
+
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
+
+            assert!(
+                keys.contains(&"Status"),
+                "field after blockquote must be captured, got: {keys:?}"
+            );
+        }
+
+        #[test]
+        fn keeps_code_fence_content_out_of_field_scan() {
+            // The scan buffer excludes code text: a bare field inside a fence
+            // must never be extracted, even after block separation.
+            let note = parse("- alpha\n\n  ```\n  Status:: Draft\n  ```");
+
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
+
+            assert!(
+                !keys.contains(&"Status"),
+                "field inside fence must stay hidden from scan, got: {keys:?}"
             );
         }
 
