@@ -114,7 +114,6 @@ pub(super) fn clean_task_text(
                     remove_spans.push((span.start, span.end));
                 }
             }
-            ItemToken::Ignored => {}
         }
     }
 

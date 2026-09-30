@@ -11,17 +11,16 @@ use crate::Tag;
 
 /// Token stream for Markdown tags in free-form text.
 ///
-/// - [`Self::Tag`] carries an emitted [`Tag`].
-/// - [`Self::Ignored`] skips ordinary text.
+/// [`Self::Tag`] carries an emitted [`Tag`]; ordinary text is skipped by the
+/// tokenizer's `skip` directive.
 ///
 /// [`tag_callback`] returns logos' `Filter::Skip` to reject non-tag `#`
 /// characters without swallowing the rest of the text.
 #[derive(Clone, Debug, PartialEq, Logos)]
+#[logos(skip(r"[\s\S]", priority = 0))]
 enum TagToken {
     #[token("#", tag_callback)]
     Tag(Tag),
-    #[regex(r"[\s\S]", priority = 0)]
-    Ignored,
 }
 
 /// Extracts Markdown tags from `text` in encounter order.

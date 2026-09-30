@@ -26,15 +26,12 @@ pub(super) fn scan_fields(
     for token in tokenize_item_text(text, shorthands) {
         match token.into_value() {
             ItemToken::Field((key, value, _)) => fields.push((key, value)),
-            ItemToken::Date(date) if shorthands.is_included() => {
+            ItemToken::Date(date) => {
                 if let Ok(key) = FieldKey::try_new(date.kind().as_str()) {
                     fields.push((key, NoteFieldValue::Date(date.date())));
                 }
             }
-            ItemToken::Tag(_)
-            | ItemToken::Date(_)
-            | ItemToken::Priority(_)
-            | ItemToken::Ignored => {}
+            ItemToken::Tag(_) | ItemToken::Priority(_) => {}
         }
     }
     fields
@@ -48,13 +45,9 @@ pub(super) fn tokenize_item_text(
 ) -> Vec<Spanned<ItemToken>> {
     let mut lexer = ItemToken::lexer_with_extras(text, shorthands);
     let mut tokens = Vec::new();
-    while let Some(result) = lexer.next() {
+    while let Some(Ok(token)) = lexer.next() {
         let span = lexer.span();
-        if let Ok(token) = result
-            && !matches!(token, ItemToken::Ignored)
-        {
-            tokens.push(Spanned::new(token, span));
-        }
+        tokens.push(Spanned::new(token, span));
     }
     tokens
 }
@@ -109,7 +102,7 @@ pub(super) enum FieldForm {
 
 /// Token stream for item components in free-form Markdown text.
 #[derive(Debug, PartialEq, Logos)]
-#[logos(extras = TaskShorthands)]
+#[logos(extras = TaskShorthands, skip(r"[\s\S]", priority = 0))]
 pub(super) enum ItemToken {
     // 1. Priority emojis
     #[token("\u{1F53A}\u{FE0F}", |_| TaskPriority::Highest)]
@@ -151,9 +144,6 @@ pub(super) enum ItemToken {
     #[token("[", |lex| wrapped_field_callback(lex, DelimiterType::Bracket))]
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
     Field((FieldKey, NoteFieldValue, FieldForm)),
-
-    #[regex(r"[\s\S]", priority = 0)]
-    Ignored,
 }
 
 /// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix already

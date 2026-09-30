@@ -21,6 +21,7 @@ const CLOSE_BRACKET: char = match DelimiterType::Bracket.close_char() {
     Some(ch) => ch,
     None => ']',
 };
+
 /// A recognized item-leading task marker.
 ///
 /// `symbol` is the character inside `[<symbol>]`; `remainder` is the scanned

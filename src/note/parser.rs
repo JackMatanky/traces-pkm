@@ -139,7 +139,7 @@ enum BlockContext {
 }
 
 /// Inline fields list flushed from a list item.
-pub(super) type FlushedFieldsList = Vec<(FieldKey, NoteFieldValue)>;
+type FlushedFieldsList = Vec<(FieldKey, NoteFieldValue)>;
 
 /// Metadata flushed from a closed list item's scan buffer.
 #[derive(Clone, Debug, PartialEq)]
