@@ -14,7 +14,8 @@
 //!   text, and configuration references for parsing.
 //! - [`lexer`]: [`lexer::scan_fields`] extracts `Key:: Value`, `[Key:: Value]`,
 //!   and `(Key:: Value)` inline fields and task emoji shorthands from
-//!   plain-text scan buffers using [`logos`].
+//!   plain-text scan buffers using [`logos`]; all other text is skipped by a
+//!   derive-level `skip` directive.
 //! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
 //!   nested Markdown never recurses through the call stack, driving the
 //!   item-leading marker state machine, tag filter classification, and flushing

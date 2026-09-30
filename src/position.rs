@@ -17,7 +17,7 @@
 //! resolves any offset with an O(log n) lookup; only the choice of when to
 //! build a tracker stays local to each parser.
 
-use std::{fmt, num::NonZeroU32};
+use std::{cmp::Ordering, fmt, num::NonZeroU32, ops::Range};
 
 use serde::{Deserialize, Serialize};
 
@@ -252,14 +252,14 @@ pub struct SourceLineError;
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct Spanned<T> {
     value: T,
-    span: std::ops::Range<usize>,
+    span: Range<usize>,
 }
 
 impl<T> Spanned<T> {
     /// Pairs `value` with its byte `span`.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(value: T, span: std::ops::Range<usize>) -> Self {
+    pub(crate) const fn new(value: T, span: Range<usize>) -> Self {
         Self {
             value,
             span,
@@ -276,7 +276,7 @@ impl<T> Spanned<T> {
     /// Returns the half-open byte range in source text.
     #[inline]
     #[must_use]
-    pub(crate) fn span(&self) -> std::ops::Range<usize> {
+    pub(crate) fn span(&self) -> Range<usize> {
         self.span.clone()
     }
 
@@ -290,11 +290,11 @@ impl<T> Spanned<T> {
 
 impl<T: PartialOrd> PartialOrd for Spanned<T> {
     #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match self.value.partial_cmp(&other.value) {
-            Some(std::cmp::Ordering::Equal) => {
+            Some(Ordering::Equal) => {
                 match self.span.start.partial_cmp(&other.span.start) {
-                    Some(std::cmp::Ordering::Equal) => {
+                    Some(Ordering::Equal) => {
                         self.span.end.partial_cmp(&other.span.end)
                     }
                     ord => ord,
@@ -307,7 +307,7 @@ impl<T: PartialOrd> PartialOrd for Spanned<T> {
 
 impl<T: Ord> Ord for Spanned<T> {
     #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.value.cmp(&other.value).then_with(|| {
             self.span
                 .start

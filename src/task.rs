@@ -264,6 +264,18 @@ impl TaskStatusType {
             }
         }
     }
+
+    /// Derives the boolean completion rollup for this status type.
+    ///
+    /// The subtask-aggregation form of [`Self::completed`]: `false` only for
+    /// statuses that are known-incomplete (`Some(false)`); cancelled items
+    /// roll up as complete, exactly as the tri-state `!= Some(false)`
+    /// comparison treats them. The query layer keeps the tri-state form.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn is_complete(self) -> bool {
+        !matches!(self.completed(), Some(false))
+    }
 }
 
 /// The marker character inside `[<char>]`, e.g. `' '`, `'x'`, `'/'`, `'-'`.

@@ -211,7 +211,7 @@ impl ListTracker {
             let text = ListText::new(item_frame.buffers.text, clean);
             let (is_task, is_complete) = match &item_type {
                 ListItemType::Task(task) => {
-                    (true, task.status().kind().completed() != Some(false))
+                    (true, task.status().kind().is_complete())
                 }
                 _ => (false, true),
             };
