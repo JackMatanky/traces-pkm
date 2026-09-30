@@ -80,8 +80,8 @@ impl DelimiterStack {
     /// Checks for a double-bracket closer `]]`.
     ///
     /// Returns `Some(true)` if the root double bracket was cleanly closed,
-    /// `Some(false)` if an inner double bracket was closed, or `None` if
-    /// `rest` does not start with `]]` matching an active double bracket.
+    /// `Some(false)` if an inner double bracket was closed, or `None` if `rest`
+    /// does not start with `]]` matching an active double bracket.
     #[inline]
     fn check_double_bracket_close(&mut self, rest: &str) -> Option<bool> {
         if self.current_kind() == Some(DelimiterType::DoubleBracket)
@@ -189,8 +189,8 @@ impl DelimiterType {
         )
     }
 
-    /// Returns the single opening character for single-character delimiters,
-    /// or `None` for multi-character delimiters (e.g. [`Self::DoubleBracket`]).
+    /// Returns the single opening character for single-character delimiters, or
+    /// `None` for multi-character delimiters (e.g. [`Self::DoubleBracket`]).
     #[inline]
     #[must_use]
     pub(crate) const fn open_char(self) -> Option<char> {
@@ -202,8 +202,8 @@ impl DelimiterType {
         }
     }
 
-    /// Returns the single closing character for single-character delimiters,
-    /// or `None` for multi-character delimiters (e.g. [`Self::DoubleBracket`]).
+    /// Returns the single closing character for single-character delimiters, or
+    /// `None` for multi-character delimiters (e.g. [`Self::DoubleBracket`]).
     #[inline]
     #[must_use]
     pub(crate) const fn close_char(self) -> Option<char> {
