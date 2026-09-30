@@ -200,7 +200,7 @@ fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
 ///
 /// Expects `raw_text` to already have any leading task marker prefix removed.
 pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
-    let mut remove_spans: Vec<(usize, usize)> = Vec::new();
+    let mut remove_spans: Vec<(usize, usize)> = Vec::with_capacity(4);
 
     // 1. Tag filters (only if configured)
     if !tag_filters.is_empty() {
@@ -227,23 +227,38 @@ pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
     // Sort spans by start offset
     remove_spans.sort_unstable_by_key(|&(start, _)| start);
 
-    // Merge overlapping spans
-    let mut merged: Vec<(usize, usize)> =
-        Vec::with_capacity(remove_spans.len());
-    for (start, end) in remove_spans {
-        if let Some(last) = merged.last_mut()
-            && start <= last.1
-        {
-            last.1 = last.1.max(end);
+    // Merge overlapping spans in-place without secondary heap allocation
+    let mut write_idx: usize = 0;
+    for i in 0..remove_spans.len() {
+        let Some((start, end)) = remove_spans.get(i).copied() else {
             continue;
+        };
+        let prev_end = if write_idx > 0 {
+            remove_spans.get(write_idx.saturating_sub(1)).map(|&(_, e)| e)
+        } else {
+            None
+        };
+        if let Some(prev_end_val) = prev_end
+            && start <= prev_end_val
+        {
+            if let Some(prev) =
+                remove_spans.get_mut(write_idx.saturating_sub(1))
+            {
+                prev.1 = prev.1.max(end);
+            }
+        } else {
+            if let Some(slot) = remove_spans.get_mut(write_idx) {
+                *slot = (start, end);
+            }
+            write_idx = write_idx.saturating_add(1);
         }
-        merged.push((start, end));
     }
+    remove_spans.truncate(write_idx);
 
     // Extract unremoved slices
     let mut cleaned = String::with_capacity(raw_text.len());
     let mut current_idx = 0;
-    for (start, end) in merged {
+    for (start, end) in remove_spans {
         if start > current_idx
             && let Some(slice) = raw_text.get(current_idx..start)
         {
@@ -298,7 +313,7 @@ fn scan_inline_task_field(
     let key = remainder.get(..sep_pos)?.trim();
     if key.is_empty()
         || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
-        || !is_task_field_key(key)
+        || !TaskDateType::is_field_key(key)
     {
         return None;
     }
@@ -312,19 +327,6 @@ fn scan_inline_task_field(
             .saturating_add(close_offset)
             .saturating_add(kind.close_len()),
     )
-}
-
-/// Returns `true` if `key` matches a recognized task metadata field name.
-///
-/// Derives the allowlist from [`TaskDateType::field_keys`] plus `priority`, so
-/// the date aliases have a single source of truth. `key` is expected to be
-/// already trimmed.
-fn is_task_field_key(key: &str) -> bool {
-    TaskDateType::ALL
-        .iter()
-        .flat_map(|kind| kind.field_keys().iter().copied())
-        .chain(std::iter::once("priority"))
-        .any(|candidate| key.eq_ignore_ascii_case(candidate))
 }
 
 /// Collapses consecutive whitespace in `text` while preserving newlines.
@@ -355,24 +357,27 @@ mod tests {
 
     mod scan_date_after {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn parses_iso_date_with_and_without_variation_selector() {
-            let with_vs = "Task 📅\u{FE0F} 2025-01-15";
-            let without_vs = "Task 📅 2025-01-15";
+        #[rstest]
+        #[case::with_variation_selector(
+            "Task 📅\u{FE0F} 2025-01-15",
+            "📅\u{FE0F} 2025-01-15"
+        )]
+        #[case::without_variation_selector(
+            "Task 📅 2025-01-15",
+            "📅 2025-01-15"
+        )]
+        fn parses_iso_date_with_optional_variation_selector(
+            #[case] input: &str,
+            #[case] expected_span: &str,
+        ) {
             let expected_date = DateValue::parse_iso("2025-01-15").unwrap();
-
-            let (range1, d1) =
-                scan_date_after(with_vs, 0, "\u{1F4C5}").unwrap();
-            assert_eq!(d1, expected_date);
-            assert_eq!(&with_vs[range1], "📅\u{FE0F} 2025-01-15");
-
-            let (range2, d2) =
-                scan_date_after(without_vs, 0, "\u{1F4C5}").unwrap();
-            assert_eq!(d2, expected_date);
-            assert_eq!(&without_vs[range2], "📅 2025-01-15");
+            let (range, date) = scan_date_after(input, 0, "\u{1F4C5}").unwrap();
+            assert_eq!(date, expected_date);
+            assert_eq!(&input[range], expected_span);
         }
 
         #[test]
@@ -528,15 +533,15 @@ mod tests {
 
         #[test]
         fn recognizes_task_field_keys_case_insensitively() {
-            assert!(is_task_field_key("Due"));
-            assert!(is_task_field_key("COMPLETION"));
-            assert!(is_task_field_key("priority"));
+            assert!(TaskDateType::is_field_key("Due"));
+            assert!(TaskDateType::is_field_key("COMPLETION"));
+            assert!(TaskDateType::is_field_key("priority"));
         }
 
         #[test]
         fn rejects_keys_outside_the_task_field_allowlist() {
-            assert!(!is_task_field_key("store"));
-            assert!(!is_task_field_key(""));
+            assert!(!TaskDateType::is_field_key("store"));
+            assert!(!TaskDateType::is_field_key(""));
         }
     }
 }

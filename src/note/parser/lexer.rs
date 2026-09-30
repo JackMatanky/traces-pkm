@@ -29,8 +29,8 @@ pub(super) fn scan_fields(
 /// Returns the character immediately before the current match.
 ///
 /// Returns `None` if the match starts at the beginning of the source. Shared by
-/// [`body_field_callback`] and [`tag_callback`], both of which need a
-/// look-behind check that logos' regex dialect cannot express.
+/// [`body_field_callback`] and `tag_callback`, both of which need a look-behind
+/// check that logos' regex dialect cannot express.
 pub(super) fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
 where
     T: Logos<'source, Source = str>,

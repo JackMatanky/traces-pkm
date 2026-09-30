@@ -491,10 +491,69 @@ impl TaskDateSet {
     /// assert_eq!(kinds, vec![TaskDateType::Created, TaskDateType::Due]);
     /// ```
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = TaskDate> + '_ {
-        TaskDateType::ALL.into_iter().filter_map(|kind| {
-            self.get(kind).map(|date| TaskDate::new(kind, date))
-        })
+    #[must_use]
+    pub fn iter(&self) -> TaskDateSetIter {
+        self.into_iter()
+    }
+}
+
+/// An iterator over the occupied lifecycle dates in a [`TaskDateSet`].
+///
+/// Yields [`TaskDate`] elements in declaration order:
+/// [`TaskDateType::Created`], [`TaskDateType::Scheduled`],
+/// [`TaskDateType::Start`], [`TaskDateType::Due`], [`TaskDateType::Done`], and
+/// [`TaskDateType::Cancelled`].
+#[derive(Clone, Debug)]
+pub struct TaskDateSetIter {
+    set: TaskDateSet,
+    index: usize,
+}
+
+impl Iterator for TaskDateSetIter {
+    type Item = TaskDate;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < TaskDateType::ALL.len() {
+            let Some(&kind) = TaskDateType::ALL.get(self.index) else {
+                break;
+            };
+            self.index = self.index.saturating_add(1);
+            if let Some(date) = self.set.get(kind) {
+                return Some(TaskDate::new(kind, date));
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining_slots =
+            TaskDateType::ALL.len().saturating_sub(self.index);
+        (0, Some(remaining_slots))
+    }
+}
+
+impl IntoIterator for TaskDateSet {
+    type IntoIter = TaskDateSetIter;
+    type Item = TaskDate;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        TaskDateSetIter {
+            set: self,
+            index: 0,
+        }
+    }
+}
+
+impl IntoIterator for &TaskDateSet {
+    type IntoIter = TaskDateSetIter;
+    type Item = TaskDate;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        (*self).into_iter()
     }
 }
 
@@ -532,7 +591,7 @@ impl Extend<TaskDate> for TaskDateSet {
 /// assert_eq!(task_date.kind(), TaskDateType::Due);
 /// assert_eq!(task_date.date(), date_val);
 /// ```
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TaskDate {
     kind: TaskDateType,
     date: DateValue,
@@ -590,7 +649,7 @@ impl TaskDate {
 /// assert_eq!(TaskDateType::from_emoji("📅"), Some(TaskDateType::Due));
 /// assert_eq!(TaskDateType::Due.field_keys(), &["due"]);
 /// ```
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TaskDateType {
     /// Date the task was created (`➕` or `[created::]`).
     Created,
@@ -691,6 +750,85 @@ impl TaskDateType {
             Self::Done => &["done", "completion"],
             Self::Cancelled => &["cancelled"],
         }
+    }
+
+    /// Returns the canonical lowercase string representation of this slot.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateType;
+    ///
+    /// assert_eq!(TaskDateType::Due.as_str(), "due");
+    /// assert_eq!(TaskDateType::Created.as_str(), "created");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Scheduled => "scheduled",
+            Self::Start => "start",
+            Self::Due => "due",
+            Self::Done => "done",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Returns `true` if `key` matches a recognized task metadata field name
+    /// (any lifecycle date alias or `"priority"`), ignoring ASCII case.
+    ///
+    /// Expects `key` to be already trimmed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateType;
+    ///
+    /// assert!(TaskDateType::is_field_key("due"));
+    /// assert!(TaskDateType::is_field_key("COMPLETION"));
+    /// assert!(TaskDateType::is_field_key("priority"));
+    /// assert!(!TaskDateType::is_field_key("other"));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_field_key(key: &str) -> bool {
+        Self::ALL
+            .iter()
+            .flat_map(|kind| kind.field_keys().iter().copied())
+            .chain(std::iter::once("priority"))
+            .any(|candidate| key.eq_ignore_ascii_case(candidate))
+    }
+}
+
+impl std::fmt::Display for TaskDateType {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TaskDateType {
+    type Err = TaskError;
+
+    /// Parses a task date slot from its canonical name (e.g. `"due"`),
+    /// case-insensitively.
+    ///
+    /// # Errors
+    ///
+    /// - [`TaskError::InvalidDateType`] if `s` is not a recognized date slot
+    ///   name.
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let trimmed = s.trim();
+        for kind in Self::ALL {
+            if trimmed.eq_ignore_ascii_case(kind.as_str()) {
+                return Ok(kind);
+            }
+        }
+        Err(TaskError::InvalidDateType {
+            input: s.to_owned(),
+        })
     }
 }
 
@@ -897,6 +1035,12 @@ pub enum TaskError {
     /// No task priority name or emoji matched `input`.
     #[error("unrecognized task priority: {input:?}")]
     InvalidPriority {
+        /// The unrecognized input.
+        input: String,
+    },
+    /// No task lifecycle date slot matched `input`.
+    #[error("unrecognized task date slot: {input:?}")]
+    InvalidDateType {
         /// The unrecognized input.
         input: String,
     },
@@ -1299,7 +1443,7 @@ mod tests {
         }
     }
 
-    mod date_set {
+    mod task_date_set {
         use chrono::NaiveDate;
         use pretty_assertions::assert_eq;
 
@@ -1357,6 +1501,59 @@ mod tests {
                 TaskDate::new(TaskDateType::Created, d1),
                 TaskDate::new(TaskDateType::Cancelled, d2),
             ]);
+        }
+
+        #[test]
+        fn into_iter_yields_occupied_slots_in_declaration_order() {
+            let mut set = TaskDateSet::default();
+            let d1 = NaiveDate::from_ymd_opt(2025, 1, 1)
+                .map(DateValue::from)
+                .unwrap();
+            let d2 = NaiveDate::from_ymd_opt(2025, 1, 6)
+                .map(DateValue::from)
+                .unwrap();
+            set.insert(TaskDate::new(TaskDateType::Cancelled, d2));
+            set.insert(TaskDate::new(TaskDateType::Created, d1));
+            let mut count: usize = 0;
+            for date in set {
+                match count {
+                    0 => assert_eq!(
+                        date,
+                        TaskDate::new(TaskDateType::Created, d1)
+                    ),
+                    1 => assert_eq!(
+                        date,
+                        TaskDate::new(TaskDateType::Cancelled, d2)
+                    ),
+                    _ => break,
+                }
+                count = count.saturating_add(1);
+            }
+            assert_eq!(count, 2);
+        }
+
+        #[test]
+        fn borrowed_into_iter_yields_occupied_slots() {
+            let mut set = TaskDateSet::default();
+            let d = NaiveDate::from_ymd_opt(2025, 1, 10)
+                .map(DateValue::from)
+                .unwrap();
+            set.insert(TaskDate::new(TaskDateType::Due, d));
+            let collected: Vec<_> = (&set).into_iter().collect();
+            assert_eq!(collected, vec![TaskDate::new(TaskDateType::Due, d)]);
+        }
+
+        #[test]
+        fn iter_size_hint_tracks_remaining_slots() {
+            let mut set = TaskDateSet::default();
+            let d = NaiveDate::from_ymd_opt(2025, 1, 10)
+                .map(DateValue::from)
+                .unwrap();
+            set.insert(TaskDate::new(TaskDateType::Due, d));
+            let mut iter = set.iter();
+            assert_eq!(iter.size_hint(), (0, Some(6)));
+            let _ = iter.next();
+            assert!(iter.size_hint().1.unwrap() <= 5);
         }
 
         #[test]
@@ -1452,7 +1649,8 @@ mod tests {
             );
         }
     }
-    mod date_type {
+    mod task_date_type {
+        use chrono::NaiveDate;
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
@@ -1501,6 +1699,82 @@ mod tests {
             #[case] expected: &[&str],
         ) {
             assert_eq!(kind.field_keys(), expected);
+        }
+
+        #[rstest]
+        #[case::created(TaskDateType::Created, "created")]
+        #[case::scheduled(TaskDateType::Scheduled, "scheduled")]
+        #[case::start(TaskDateType::Start, "start")]
+        #[case::due(TaskDateType::Due, "due")]
+        #[case::done(TaskDateType::Done, "done")]
+        #[case::cancelled(TaskDateType::Cancelled, "cancelled")]
+        fn as_str_and_display_match_canonical_name(
+            #[case] kind: TaskDateType,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(kind.as_str(), expected);
+            assert_eq!(format!("{kind}"), expected);
+        }
+
+        #[rstest]
+        #[case("created", Ok(TaskDateType::Created))]
+        #[case("SCHEDULED", Ok(TaskDateType::Scheduled))]
+        #[case("Start", Ok(TaskDateType::Start))]
+        #[case("due", Ok(TaskDateType::Due))]
+        #[case("Done", Ok(TaskDateType::Done))]
+        #[case("cancelled", Ok(TaskDateType::Cancelled))]
+        #[case(
+            "unknown",
+            Err(TaskError::InvalidDateType {
+                input: "unknown".to_owned(),
+            })
+        )]
+        fn from_str_parses_case_insensitively(
+            #[case] input: &str,
+            #[case] expected: Result<TaskDateType, TaskError>,
+        ) {
+            assert_eq!(input.parse::<TaskDateType>(), expected);
+        }
+
+        #[test]
+        fn orders_lifecycle_dates_by_declaration_order() {
+            assert!(TaskDateType::Created < TaskDateType::Scheduled);
+            assert!(TaskDateType::Scheduled < TaskDateType::Start);
+            assert!(TaskDateType::Start < TaskDateType::Due);
+            assert!(TaskDateType::Due < TaskDateType::Done);
+            assert!(TaskDateType::Done < TaskDateType::Cancelled);
+        }
+
+        #[test]
+        fn task_date_supports_hash_and_ordering() {
+            let d1 = NaiveDate::from_ymd_opt(2025, 1, 1)
+                .map(DateValue::from)
+                .unwrap();
+            let d2 = NaiveDate::from_ymd_opt(2025, 1, 2)
+                .map(DateValue::from)
+                .unwrap();
+            let td1 = TaskDate::new(TaskDateType::Created, d1);
+            let td2 = TaskDate::new(TaskDateType::Due, d2);
+            let td1_dup = TaskDate::new(TaskDateType::Created, d1);
+
+            let mut set = std::collections::HashSet::new();
+            set.insert(td1);
+            set.insert(td2);
+            set.insert(td1_dup);
+            assert_eq!(set.len(), 2);
+            assert!(td1 < td2);
+        }
+
+        #[test]
+        fn is_field_key_recognizes_aliases_and_priority() {
+            assert!(TaskDateType::is_field_key("due"));
+            assert!(TaskDateType::is_field_key("DUE"));
+            assert!(TaskDateType::is_field_key("done"));
+            assert!(TaskDateType::is_field_key("completion"));
+            assert!(TaskDateType::is_field_key("priority"));
+            assert!(TaskDateType::is_field_key("PRIORITY"));
+            assert!(!TaskDateType::is_field_key("unknown"));
+            assert!(!TaskDateType::is_field_key(""));
         }
     }
 }

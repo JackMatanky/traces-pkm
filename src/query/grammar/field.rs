@@ -249,14 +249,8 @@ impl TaskField {
             "status_symbol" => Some(Self::StatusSymbol),
             "completed" => Some(Self::Completed),
             "priority" => Some(Self::Priority),
-            "due" => Some(Self::Date(crate::TaskDateType::Due)),
-            "done" => Some(Self::Date(crate::TaskDateType::Done)),
-            "created" => Some(Self::Date(crate::TaskDateType::Created)),
-            "start" => Some(Self::Date(crate::TaskDateType::Start)),
-            "scheduled" => Some(Self::Date(crate::TaskDateType::Scheduled)),
-            "cancelled" => Some(Self::Date(crate::TaskDateType::Cancelled)),
             "fully_complete" => Some(Self::FullyComplete),
-            _ => None,
+            _ => name.parse::<TaskDateType>().ok().map(Self::Date),
         }
     }
 }
