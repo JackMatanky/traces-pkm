@@ -17,43 +17,46 @@ use crate::{
 /// [`DateValue`].
 pub(super) fn scan_date_after(
     text: &str,
-    from: usize,
+    mut from: usize,
     emoji: &str,
 ) -> Option<(Range<usize>, DateValue)> {
-    let sub = text.get(from..)?;
-    let pos = sub.find(emoji)?;
-    let match_start = from.saturating_add(pos);
-    let emoji_end = match_start.saturating_add(emoji.len());
-    let after_emoji = text.get(emoji_end..)?;
-    let var_len = if after_emoji.starts_with('\u{FE0F}') {
-        '\u{FE0F}'.len_utf8()
-    } else {
-        0
-    };
-    let after_var = &after_emoji[var_len..];
-    let ws_len = after_var
-        .char_indices()
-        .find(|&(_, c)| c != ' ' && c != '\t')
-        .map_or(after_var.len(), |(offset, _)| offset);
-    let after_ws = &after_var[ws_len..];
-    if after_ws.len() >= 10 {
-        let candidate = &after_ws[..10];
-        let next_char_valid = after_ws[10..]
-            .chars()
-            .next()
-            .is_none_or(|ch| !ch.is_alphanumeric());
-        if next_char_valid
-            && DateValue::is_iso_shape(candidate)
-            && let Ok(date) = DateValue::parse_iso(candidate)
-        {
-            let span_end = emoji_end
-                .saturating_add(var_len)
-                .saturating_add(ws_len)
-                .saturating_add(10);
-            return Some((match_start..span_end, date));
+    while from < text.len() {
+        let sub = text.get(from..)?;
+        let pos = sub.find(emoji)?;
+        let match_start = from.saturating_add(pos);
+        let emoji_end = match_start.saturating_add(emoji.len());
+        let after_emoji = text.get(emoji_end..)?;
+        let var_len = if after_emoji.starts_with('\u{FE0F}') {
+            '\u{FE0F}'.len_utf8()
+        } else {
+            0
+        };
+        let after_var = &after_emoji[var_len..];
+        let ws_len = after_var
+            .char_indices()
+            .find(|&(_, c)| c != ' ' && c != '\t')
+            .map_or(after_var.len(), |(offset, _)| offset);
+        let after_ws = &after_var[ws_len..];
+        if after_ws.len() >= 10 {
+            let candidate = &after_ws[..10];
+            let next_char_valid = after_ws[10..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_alphanumeric());
+            if next_char_valid
+                && DateValue::is_iso_shape(candidate)
+                && let Ok(date) = DateValue::parse_iso(candidate)
+            {
+                let span_end = emoji_end
+                    .saturating_add(var_len)
+                    .saturating_add(ws_len)
+                    .saturating_add(10);
+                return Some((match_start..span_end, date));
+            }
         }
+        from = emoji_end.saturating_add(var_len);
     }
-    scan_date_after(text, emoji_end.saturating_add(var_len), emoji)
+    None
 }
 
 /// Extracts task lifecycle dates from emoji shorthands and inline task fields.
@@ -198,9 +201,10 @@ fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
     }
 }
 
-/// Computes normalized clean list text by stripping task marker prefix,
-/// configured task tag filters, date syntax, priority emojis, and inline task
-/// fields.
+/// Computes normalized clean list text by stripping configured task tag
+/// filters, date syntax, priority emojis, and inline task fields.
+///
+/// Expects `raw_text` to already have any leading task marker prefix removed.
 pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
     let mut remove_spans: Vec<(usize, usize)> = Vec::new();
 
@@ -482,6 +486,13 @@ mod tests {
         fn preserves_unparsed_invalid_dates() {
             let cleaned = clean_task_text("Task 📅 2026-13-45 keep", &[]);
             assert_eq!(cleaned, "Task 📅 2026-13-45 keep");
+        }
+
+        #[test]
+        fn strips_priority_emoji_with_variation_selector() {
+            let cleaned =
+                clean_task_text("Task 🔺\u{FE0F} remaining text", &[]);
+            assert_eq!(cleaned, "Task remaining text");
         }
     }
 }

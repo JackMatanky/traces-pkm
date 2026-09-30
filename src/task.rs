@@ -378,6 +378,19 @@ fn normalize_name(name: &str) -> String {
 ///
 /// Stores at most one calendar date per [`TaskDateType`] slot. Preserves an
 /// unversioned, deterministic postcard memory layout.
+///
+/// # Examples
+///
+/// ```rust
+/// use chrono::NaiveDate;
+/// use traces_pkm::{DateValue, TaskDate, TaskDateSet, TaskDateType};
+///
+/// let due =
+///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+/// let dates = TaskDateSet::from_iter([TaskDate::new(TaskDateType::Due, due)]);
+/// assert_eq!(dates.get(TaskDateType::Due), Some(due));
+/// assert!(!dates.is_empty());
+/// ```
 #[derive(
     Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
 )]
@@ -411,6 +424,19 @@ impl TaskDateSet {
     }
 
     /// Returns the date value for `kind`, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDate, TaskDateSet, TaskDateType};
+    ///
+    /// let due =
+    ///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+    /// let dates = TaskDateSet::from_iter([TaskDate::new(TaskDateType::Due, due)]);
+    /// assert_eq!(dates.get(TaskDateType::Due), Some(due));
+    /// assert_eq!(dates.get(TaskDateType::Start), None);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn get(&self, kind: TaskDateType) -> Option<DateValue> {
@@ -425,6 +451,15 @@ impl TaskDateSet {
     }
 
     /// Returns `true` if no lifecycle dates are populated.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateSet;
+    ///
+    /// let dates = TaskDateSet::default();
+    /// assert!(dates.is_empty());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -438,6 +473,22 @@ impl TaskDateSet {
 
     /// Returns an iterator over all occupied lifecycle dates in declaration
     /// order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDate, TaskDateSet, TaskDateType};
+    ///
+    /// let d1 = NaiveDate::from_ymd_opt(2025, 1, 1).map(DateValue::from).unwrap();
+    /// let d2 = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+    /// let dates = TaskDateSet::from_iter([
+    ///     TaskDate::new(TaskDateType::Due, d2),
+    ///     TaskDate::new(TaskDateType::Created, d1),
+    /// ]);
+    /// let kinds: Vec<_> = dates.iter().map(|d| d.kind()).collect();
+    /// assert_eq!(kinds, vec![TaskDateType::Created, TaskDateType::Due]);
+    /// ```
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = TaskDate> + '_ {
         TaskDateType::ALL.into_iter().filter_map(|kind| {
@@ -467,6 +518,19 @@ impl Extend<TaskDate> for TaskDateSet {
 }
 
 /// A single task lifecycle date occurrence paired with its slot.
+///
+/// # Examples
+///
+/// ```rust
+/// use chrono::NaiveDate;
+/// use traces_pkm::{DateValue, TaskDate, TaskDateType};
+///
+/// let date_val =
+///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+/// let task_date = TaskDate::new(TaskDateType::Due, date_val);
+/// assert_eq!(task_date.kind(), TaskDateType::Due);
+/// assert_eq!(task_date.date(), date_val);
+/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct TaskDate {
     kind: TaskDateType,
@@ -476,6 +540,18 @@ pub struct TaskDate {
 impl TaskDate {
     /// Creates a new [`TaskDate`] pairing a lifecycle slot with its calendar
     /// date.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDate, TaskDateType};
+    ///
+    /// let date_val =
+    ///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+    /// let task_date = TaskDate::new(TaskDateType::Due, date_val);
+    /// assert_eq!(task_date.kind(), TaskDateType::Due);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn new(kind: TaskDateType, date: DateValue) -> Self {
@@ -486,6 +562,18 @@ impl TaskDate {
     }
 
     /// Returns the lifecycle slot for this date.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDate, TaskDateType};
+    ///
+    /// let date_val =
+    ///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+    /// let task_date = TaskDate::new(TaskDateType::Due, date_val);
+    /// assert_eq!(task_date.kind(), TaskDateType::Due);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn kind(&self) -> TaskDateType {
@@ -493,6 +581,18 @@ impl TaskDate {
     }
 
     /// Returns the calendar date value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use traces_pkm::{DateValue, TaskDate, TaskDateType};
+    ///
+    /// let date_val =
+    ///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
+    /// let task_date = TaskDate::new(TaskDateType::Due, date_val);
+    /// assert_eq!(task_date.date(), date_val);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn date(&self) -> DateValue {
@@ -504,6 +604,15 @@ impl TaskDate {
 ///
 /// Represents the six recognized task lifecycle calendar dates supported by
 /// Obsidian Tasks syntax and Dataview inline fields.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::TaskDateType;
+///
+/// assert_eq!(TaskDateType::from_emoji("📅"), Some(TaskDateType::Due));
+/// assert_eq!(TaskDateType::Due.field_keys(), &["due"]);
+/// ```
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum TaskDateType {
     /// Date the task was created (`➕` or `[created::]`).
@@ -523,6 +632,15 @@ pub enum TaskDateType {
 impl TaskDateType {
     /// Declaration order array defining deterministic iteration order for
     /// [`TaskDateSet::iter`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateType;
+    ///
+    /// assert_eq!(TaskDateType::ALL.len(), 6);
+    /// assert_eq!(TaskDateType::ALL[0], TaskDateType::Created);
+    /// ```
     pub const ALL: [Self; 6] = [
         Self::Created,
         Self::Scheduled,
@@ -532,6 +650,14 @@ impl TaskDateType {
         Self::Cancelled,
     ];
     /// Base emoji spellings in precedence order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateType;
+    ///
+    /// assert_eq!(TaskDateType::EMOJIS[3], ("\u{1F4C5}", TaskDateType::Due));
+    /// ```
     pub const EMOJIS: &'static [(&'static str, Self)] = &[
         ("\u{2795}", Self::Created),
         ("\u{23F3}", Self::Scheduled),
@@ -544,6 +670,16 @@ impl TaskDateType {
 
     /// Resolves a lifecycle slot from an emoji, ignoring trailing variation
     /// selectors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateType;
+    ///
+    /// assert_eq!(TaskDateType::from_emoji("📅"), Some(TaskDateType::Due));
+    /// assert_eq!(TaskDateType::from_emoji("📅\u{FE0F}"), Some(TaskDateType::Due));
+    /// assert_eq!(TaskDateType::from_emoji("invalid"), None);
+    /// ```
     #[inline]
     #[must_use]
     pub fn from_emoji(emoji: &str) -> Option<Self> {
@@ -558,6 +694,15 @@ impl TaskDateType {
     }
 
     /// Returns canonical inline field aliases for this lifecycle slot.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskDateType;
+    ///
+    /// assert_eq!(TaskDateType::Due.field_keys(), &["due"]);
+    /// assert_eq!(TaskDateType::Done.field_keys(), &["done", "completion"]);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn field_keys(self) -> &'static [&'static str] {
@@ -617,27 +762,15 @@ pub enum TaskPriority {
 }
 
 impl TaskPriority {
-    /// Parses a priority from an emoji, with or without variation selector 16
-    /// (`\u{FE0F}`).
-    ///
-    /// | Emoji | Priority |
-    /// | ----- | -------- |
-    /// | 🔺    | highest  |
-    /// | ⏫    | high     |
-    /// | 🔼    | medium   |
-    /// | 🔽    | low      |
-    /// | ⏬    | lowest   |
+    /// Base priority emoji spellings in severity order.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use traces_pkm::TaskPriority;
     ///
-    /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
-    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
-    /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
+    /// assert_eq!(TaskPriority::EMOJIS[0], ("\u{1F53A}", TaskPriority::Highest));
     /// ```
-    /// Base priority emoji spellings in severity order.
     pub const EMOJIS: &'static [(&'static str, Self)] = &[
         ("\u{1F53A}", Self::Highest),
         ("\u{23EB}", Self::High),
@@ -689,7 +822,16 @@ impl TaskPriority {
         }
     }
 
-    /// Resolves priority from an emoji, ignoring trailing variation selectors.
+    /// Parses a priority from an emoji, with or without variation selector 16
+    /// (`\u{FE0F}`).
+    ///
+    /// | Emoji | Priority |
+    /// | ----- | -------- |
+    /// | 🔺    | highest  |
+    /// | ⏫    | high     |
+    /// | 🔼    | medium   |
+    /// | 🔽    | low      |
+    /// | ⏬    | lowest   |
     ///
     /// # Examples
     ///
@@ -697,6 +839,7 @@ impl TaskPriority {
     /// use traces_pkm::TaskPriority;
     ///
     /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
+    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
     /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
     /// ```
     #[inline]
@@ -1321,6 +1464,80 @@ mod tests {
                 decoded.get(TaskDateType::Cancelled),
                 NaiveDate::from_ymd_opt(2025, 1, 6).map(DateValue::from)
             );
+        }
+    }
+    mod task_date_type {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[test]
+        fn all_contains_all_six_variants_in_order() {
+            assert_eq!(TaskDateType::ALL, [
+                TaskDateType::Created,
+                TaskDateType::Scheduled,
+                TaskDateType::Start,
+                TaskDateType::Due,
+                TaskDateType::Done,
+                TaskDateType::Cancelled,
+            ]);
+        }
+
+        #[rstest]
+        #[case::created("➕", TaskDateType::Created)]
+        #[case::scheduled("⏳", TaskDateType::Scheduled)]
+        #[case::start("🛫", TaskDateType::Start)]
+        #[case::due_calendar("📅", TaskDateType::Due)]
+        #[case::due_spiral("🗓", TaskDateType::Due)]
+        #[case::done("✅", TaskDateType::Done)]
+        #[case::cancelled("❌", TaskDateType::Cancelled)]
+        fn from_emoji_resolves_all_base_emojis(
+            #[case] emoji: &str,
+            #[case] expected: TaskDateType,
+        ) {
+            assert_eq!(TaskDateType::from_emoji(emoji), Some(expected));
+        }
+
+        #[rstest]
+        #[case::due_calendar_vs("📅\u{FE0F}", TaskDateType::Due)]
+        #[case::due_spiral_vs("🗓\u{FE0F}", TaskDateType::Due)]
+        fn from_emoji_strips_variation_selector(
+            #[case] emoji: &str,
+            #[case] expected: TaskDateType,
+        ) {
+            assert_eq!(TaskDateType::from_emoji(emoji), Some(expected));
+        }
+
+        #[test]
+        fn from_emoji_rejects_unknown_strings() {
+            assert_eq!(TaskDateType::from_emoji("unknown"), None);
+            assert_eq!(TaskDateType::from_emoji(""), None);
+        }
+
+        #[rstest]
+        #[case::created(TaskDateType::Created, &["created"])]
+        #[case::scheduled(TaskDateType::Scheduled, &["scheduled"])]
+        #[case::start(TaskDateType::Start, &["start"])]
+        #[case::due(TaskDateType::Due, &["due"])]
+        #[case::done(TaskDateType::Done, &["done", "completion"])]
+        #[case::cancelled(TaskDateType::Cancelled, &["cancelled"])]
+        fn field_keys_returns_expected_aliases(
+            #[case] kind: TaskDateType,
+            #[case] expected: &[&str],
+        ) {
+            assert_eq!(kind.field_keys(), expected);
+        }
+
+        #[test]
+        fn task_date_constructs_and_reads_accessors() {
+            use chrono::NaiveDate;
+            let d = NaiveDate::from_ymd_opt(2025, 1, 15)
+                .map(DateValue::from)
+                .unwrap();
+            let td = TaskDate::new(TaskDateType::Due, d);
+            assert_eq!(td.kind(), TaskDateType::Due);
+            assert_eq!(td.date(), d);
         }
     }
 }
