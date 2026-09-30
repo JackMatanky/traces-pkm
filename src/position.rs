@@ -250,7 +250,7 @@ pub struct SourceLineError;
 
 /// A value paired with its half-open `[start..end)` byte range in source text.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Spanned<T> {
+pub(crate) struct Spanned<T> {
     value: T,
     span: std::ops::Range<usize>,
 }
@@ -259,7 +259,7 @@ impl<T> Spanned<T> {
     /// Pairs `value` with its byte `span`.
     #[inline]
     #[must_use]
-    pub const fn new(value: T, span: std::ops::Range<usize>) -> Self {
+    pub(crate) const fn new(value: T, span: std::ops::Range<usize>) -> Self {
         Self {
             value,
             span,
@@ -269,64 +269,22 @@ impl<T> Spanned<T> {
     /// Returns a reference to the inner value.
     #[inline]
     #[must_use]
-    pub const fn value(&self) -> &T {
+    pub(crate) const fn value(&self) -> &T {
         &self.value
     }
 
     /// Returns the half-open byte range in source text.
     #[inline]
     #[must_use]
-    pub fn span(&self) -> std::ops::Range<usize> {
+    pub(crate) fn span(&self) -> std::ops::Range<usize> {
         self.span.clone()
-    }
-
-    /// Returns the starting byte offset.
-    #[inline]
-    #[must_use]
-    pub const fn start(&self) -> usize {
-        self.span.start
-    }
-
-    /// Returns the exclusive ending byte offset.
-    #[inline]
-    #[must_use]
-    pub const fn end(&self) -> usize {
-        self.span.end
-    }
-
-    /// Returns the byte length of the span.
-    #[inline]
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.span.end.saturating_sub(self.span.start)
-    }
-
-    /// Returns `true` if the span covers zero bytes.
-    #[inline]
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.span.start >= self.span.end
     }
 
     /// Consumes the wrapper, returning the inner value.
     #[inline]
     #[must_use]
-    pub fn into_value(self) -> T {
+    pub(crate) fn into_value(self) -> T {
         self.value
-    }
-
-    /// Decomposes the wrapper into value and span.
-    #[inline]
-    #[must_use]
-    pub fn into_parts(self) -> (T, std::ops::Range<usize>) {
-        (self.value, self.span)
-    }
-}
-
-impl<T> AsRef<T> for Spanned<T> {
-    #[inline]
-    fn as_ref(&self) -> &T {
-        &self.value
     }
 }
 
@@ -587,37 +545,10 @@ mod tests {
         use super::*;
 
         #[test]
-        fn creates_and_accesses_properties() {
+        fn carries_its_value_with_its_span() {
             let spanned = Spanned::new("token", 4..9);
             assert_eq!(*spanned.value(), "token");
-            assert_eq!(spanned.as_ref(), &"token");
             assert_eq!(spanned.span(), 4..9);
-            assert_eq!(spanned.start(), 4);
-            assert_eq!(spanned.end(), 9);
-            assert_eq!(spanned.len(), 5);
-            assert!(!spanned.is_empty());
-        }
-
-        #[test]
-        #[expect(
-            clippy::reversed_empty_ranges,
-            reason = "tests inverted range handling"
-        )]
-        fn empty_span_behavior() {
-            let spanned = Spanned::new(123, 10..10);
-            assert_eq!(spanned.len(), 0);
-            assert!(spanned.is_empty());
-
-            let inverted = Spanned::new(123, 15..10);
-            assert_eq!(inverted.len(), 0);
-            assert!(inverted.is_empty());
-        }
-
-        #[test]
-        fn into_value_and_parts() {
-            let spanned = Spanned::new("abc".to_owned(), 0..3);
-            assert_eq!(spanned.clone().into_value(), "abc");
-            assert_eq!(spanned.into_parts(), ("abc".to_owned(), 0..3));
         }
 
         #[test]

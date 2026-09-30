@@ -37,9 +37,11 @@ pub(super) fn parse_inline_value(raw: &str) -> NoteFieldValue {
 
 /// Recursive-descent parser for inline-field value text.
 ///
-/// [`Self::parse`] is the entry point: it tries a comma-separated list of
-/// atoms, then a single atom spanning the whole value, falling back to a raw
-/// [`NoteFieldValue::String`] when neither matches.
+/// [`Self::parse`] is the entry point: it parses the first atom once, returning
+/// it when it spans the whole value. When the atom is followed by a comma, it
+/// continues via [`Self::parse_comma_list_from`]. It falls back to a raw
+/// [`NoteFieldValue::String`] when neither matches, and parses empty text as
+/// [`NoteFieldValue::Null`].
 struct InlineValueParser<'a> {
     text: &'a str,
     source: SourceText<'a>,

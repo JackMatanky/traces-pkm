@@ -81,6 +81,10 @@ impl ListTracker {
     /// Returns the inline fields and tags yielded by that buffer, or `None` if
     /// no item is active or the buffer is empty. Called before nested lists
     /// start and when an item closes, both to preserve document-order metadata.
+    ///
+    /// The scan buffer excludes code text and flushes incrementally; the full
+    /// text buffer is tokenized separately, once, in [`Self::end_item`], which
+    /// also extracts dates, priority, and clean text from those tokens.
     fn flush_active_item_scan_buffer(&mut self) -> Option<FlushedMetadata> {
         // The marker state must be decided before `has_marker` is read: a
         // pending `- [x]` item flushes when a nested list starts, with no
@@ -329,14 +333,6 @@ impl SubTaskCompletion {
     }
 }
 
-impl Default for SubTaskCompletion {
-    /// Conservative fallback: unknown/default completion state is fail-closed.
-    #[inline]
-    fn default() -> Self {
-        Self::HasIncomplete
-    }
-}
-
 /// An active list item frame on the parser stack.
 struct ItemFrame {
     text_buffer: String,
@@ -542,11 +538,15 @@ mod tests {
 
         use super::*;
         #[test]
-        fn subtask_completion_accessors() {
-            let mut stc = SubTaskCompletion::initial();
-            assert!(stc.is_fully_complete());
-            stc.observe_child(true, false, SubTaskCompletion::AllComplete);
-            assert!(!stc.is_fully_complete());
+        fn starts_fully_complete_until_an_incomplete_child_is_observed() {
+            let mut completion = SubTaskCompletion::initial();
+            assert!(completion.is_fully_complete());
+            completion.observe_child(
+                true,
+                false,
+                SubTaskCompletion::AllComplete,
+            );
+            assert!(!completion.is_fully_complete());
         }
 
         #[rstest]

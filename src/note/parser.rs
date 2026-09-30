@@ -142,7 +142,7 @@ enum BlockContext {
 pub(super) type FlushedFieldsList = Vec<(FieldKey, NoteFieldValue)>;
 
 /// Metadata flushed from a closed list item's scan buffer.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct FlushedMetadata {
     fields: FlushedFieldsList,
     tags: Vec<Tag>,
@@ -1592,13 +1592,6 @@ mod tests {
                 ]);
 
             assert_eq!(metadata.into_parts(), (vec![(key, val)], vec![tag]));
-        }
-
-        #[test]
-        fn default_decomposes_to_empty_collections() {
-            let metadata = FlushedMetadata::default();
-
-            assert_eq!(metadata.into_parts(), (vec![], vec![]));
         }
     }
 }

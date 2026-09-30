@@ -1,8 +1,7 @@
-//! Scan plain-text buffers for inline fields.
+//! Single-pass [`ItemToken`] tokenizer for list item text.
 //!
-//! Operates on text already filtered by the Markdown parser: fenced code
-//! blocks, indented code blocks, and inline code spans are excluded before
-//! scanning runs.
+//! One logos pass yields inline fields, task date shorthands, priority emojis,
+//! and tags, together with the callbacks and look-behind helpers they share.
 
 use logos::{Filter, Lexer, Logos};
 
@@ -26,7 +25,7 @@ pub(super) fn scan_fields(
     let mut fields = Vec::new();
     for token in tokenize_item_text(text, shorthands) {
         match token.into_value() {
-            ItemToken::Field(field) => fields.push(field),
+            ItemToken::Field((key, value, _)) => fields.push((key, value)),
             ItemToken::Date(date) if shorthands.is_included() => {
                 if let Ok(key) = FieldKey::try_new(date.kind().as_str()) {
                     fields.push((key, NoteFieldValue::Date(date.date())));
@@ -65,7 +64,7 @@ pub(super) fn tokenize_item_text(
 /// Returns `None` if the match starts at the beginning of the source. Shared by
 /// [`body_field_callback`] and `tag_callback`, both of which need a look-behind
 /// check that logos' regex dialect cannot express.
-pub(super) fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
+fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
 where
     T: Logos<'source, Source = str>,
 {
@@ -99,8 +98,17 @@ impl TaskShorthands {
     }
 }
 
+/// Syntactic form of a scanned inline field token.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FieldForm {
+    /// `Key:: Value` occupying the start of a line.
+    Bare,
+    /// `[Key:: Value]` or `(Key:: Value)` embedded in running text.
+    Wrapped,
+}
+
 /// Token stream for item components in free-form Markdown text.
-#[derive(Clone, Debug, PartialEq, Logos)]
+#[derive(Debug, PartialEq, Logos)]
 #[logos(extras = TaskShorthands)]
 pub(super) enum ItemToken {
     // 1. Priority emojis
@@ -120,15 +128,21 @@ pub(super) enum ItemToken {
     #[token("#", tag_callback)]
     Tag(Tag),
 
-    // 3. Date emojis (when shorthands enabled)
+    // 3. Date emojis (when shorthands enabled); each emoji accepts an
+    // optional VS16 so the variation selector never leaks into the value scan
     #[token("\u{1F4C5}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Due))]
     #[token("\u{1F4C5}", |lex| task_date_callback(lex, TaskDateType::Due))]
     #[token("\u{1F5D3}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Due))]
     #[token("\u{1F5D3}", |lex| task_date_callback(lex, TaskDateType::Due))]
+    #[token("\u{2795}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Created))]
     #[token("\u{2795}", |lex| task_date_callback(lex, TaskDateType::Created))]
+    #[token("\u{1F6EB}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Start))]
     #[token("\u{1F6EB}", |lex| task_date_callback(lex, TaskDateType::Start))]
+    #[token("\u{23F3}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Scheduled))]
     #[token("\u{23F3}", |lex| task_date_callback(lex, TaskDateType::Scheduled))]
+    #[token("\u{2705}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Done))]
     #[token("\u{2705}", |lex| task_date_callback(lex, TaskDateType::Done))]
+    #[token("\u{274C}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Cancelled))]
     #[token("\u{274C}", |lex| task_date_callback(lex, TaskDateType::Cancelled))]
     Date(TaskDate),
 
@@ -136,7 +150,7 @@ pub(super) enum ItemToken {
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
     #[token("[", |lex| wrapped_field_callback(lex, DelimiterType::Bracket))]
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
-    Field((FieldKey, NoteFieldValue)),
+    Field((FieldKey, NoteFieldValue, FieldForm)),
 
     #[regex(r"[\s\S]", priority = 0)]
     Ignored,
@@ -153,7 +167,7 @@ pub(super) enum ItemToken {
 /// newline or at the start of the text.
 fn body_field_callback(
     lex: &mut Lexer<'_, ItemToken>,
-) -> Filter<(FieldKey, NoteFieldValue)> {
+) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
         return Filter::Skip;
@@ -167,7 +181,7 @@ fn body_field_callback(
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    let field = (key, parse_inline_value(value));
+    let field = (key, parse_inline_value(value), FieldForm::Bare);
     lex.bump(value_end);
     Filter::Emit(field)
 }
@@ -183,7 +197,7 @@ fn body_field_callback(
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, ItemToken>,
     kind: DelimiterType,
-) -> Filter<(FieldKey, NoteFieldValue)> {
+) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
     let remainder = lex.remainder();
     let Some(sep) = remainder.find("::") else {
         return Filter::Skip;
@@ -207,7 +221,7 @@ fn wrapped_field_callback(
         .saturating_add(close)
         .saturating_add(kind.close_len());
     lex.bump(consumed);
-    Filter::Emit((key, parse_inline_value(value)))
+    Filter::Emit((key, parse_inline_value(value), FieldForm::Wrapped))
 }
 
 /// Parses a task emoji shorthand into an inline field.
@@ -225,17 +239,11 @@ fn task_date_callback(
         return Filter::Skip;
     }
     let remainder = lex.remainder();
-    let var_len = if remainder.starts_with('\u{FE0F}') {
-        '\u{FE0F}'.len_utf8()
-    } else {
-        0
-    };
-    let after_var = remainder.get(var_len..).unwrap_or_default();
-    let ws_end = after_var
+    let ws_end = remainder
         .char_indices()
         .find(|&(_, ch)| !matches!(ch, ' ' | '\t'))
-        .map_or(after_var.len(), |(offset, _)| offset);
-    let after_ws = after_var.get(ws_end..).unwrap_or_default();
+        .map_or(remainder.len(), |(offset, _)| offset);
+    let after_ws = remainder.get(ws_end..).unwrap_or_default();
     let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
         return Filter::Skip;
     };
@@ -252,7 +260,7 @@ fn task_date_callback(
     {
         return Filter::Skip;
     }
-    lex.bump(var_len.saturating_add(ws_end).saturating_add(ISO_DATE_LEN));
+    lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
     Filter::Emit(TaskDate::new(date_type, value))
 }
 
@@ -711,7 +719,8 @@ mod tests {
                 tokens.get(3).expect("token 3").value(),
                 &ItemToken::Field((
                     key,
-                    NoteFieldValue::String("high".to_owned())
+                    NoteFieldValue::String("high".to_owned()),
+                    FieldForm::Wrapped
                 ))
             );
         }

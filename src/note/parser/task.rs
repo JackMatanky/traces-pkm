@@ -2,7 +2,7 @@
 
 use indexmap::IndexMap;
 
-use super::lexer::ItemToken;
+use super::lexer::{FieldForm, ItemToken};
 use crate::{
     DateValue, FieldKey, FieldKeyRef, Spanned, Tag, TaskDate, TaskDateSet,
     TaskDateType, TaskPriority, note::NoteFieldValue,
@@ -74,25 +74,14 @@ pub(super) fn extract_task_priority(
         }
     }
 
-    for (key, values) in fields {
-        if !key.is_canonical_match("priority") {
-            continue;
-        }
-        for val in values {
-            let Some(s) = val.as_str() else {
-                continue;
-            };
-            if let Ok(p) = s.parse::<TaskPriority>() {
-                return if matches!(p, TaskPriority::Normal) {
-                    None
-                } else {
-                    Some(p)
-                };
-            }
-        }
+    let value =
+        fields.get(&FieldKeyRef::new("priority"))?.iter().find_map(|val| {
+            val.as_str().and_then(|s| s.parse::<TaskPriority>().ok())
+        })?;
+    if matches!(value, TaskPriority::Normal) {
+        return None;
     }
-
-    None
+    Some(value)
 }
 
 /// Computes normalized clean list text by stripping configured task tag
@@ -118,11 +107,10 @@ pub(super) fn clean_task_text(
                     remove_spans.push((span.start, span.end));
                 }
             }
-            ItemToken::Field((key, _)) => {
-                let bytes = raw_text.as_bytes();
-                let is_wrapped = bytes.get(span.start) == Some(&b'[')
-                    || bytes.get(span.start) == Some(&b'(');
-                if is_wrapped && TaskDateType::is_field_key(key.canonical()) {
+            ItemToken::Field((key, _, form)) => {
+                if matches!(form, FieldForm::Wrapped)
+                    && TaskDateType::is_field_key(key.canonical())
+                {
                     remove_spans.push((span.start, span.end));
                 }
             }
@@ -130,41 +118,8 @@ pub(super) fn clean_task_text(
         }
     }
 
-    if remove_spans.is_empty() {
-        return normalize_whitespace(raw_text);
-    }
-
-    remove_spans.sort_unstable_by_key(|&(start, _)| start);
-
-    // Merge overlapping spans in-place without secondary heap allocation
-    let mut write_idx: usize = 0;
-    for i in 0..remove_spans.len() {
-        let Some((start, end)) = remove_spans.get(i).copied() else {
-            continue;
-        };
-        let prev_end = if write_idx > 0 {
-            remove_spans.get(write_idx.saturating_sub(1)).map(|&(_, e)| e)
-        } else {
-            None
-        };
-        if let Some(prev_end_val) = prev_end
-            && start <= prev_end_val
-        {
-            if let Some(prev) =
-                remove_spans.get_mut(write_idx.saturating_sub(1))
-            {
-                prev.1 = prev.1.max(end);
-            }
-        } else {
-            if let Some(slot) = remove_spans.get_mut(write_idx) {
-                *slot = (start, end);
-            }
-            write_idx = write_idx.saturating_add(1);
-        }
-    }
-    remove_spans.truncate(write_idx);
-
-    // Extract unremoved slices
+    // Token spans from a single logos pass are disjoint and ordered, so no
+    // merge step is required; `current_idx.max(end)` tolerates adjacency.
     let mut cleaned = String::with_capacity(raw_text.len());
     let mut current_idx = 0;
     for (start, end) in remove_spans {
@@ -273,6 +228,19 @@ mod tests {
         }
 
         #[test]
+        fn gives_precedence_to_emoji_over_inline_field() {
+            let text = "Task 🔺";
+            let mut fields = IndexMap::new();
+            fields.insert(FieldKey::try_from("priority").unwrap(), vec![
+                NoteFieldValue::String("low".to_owned()),
+            ]);
+
+            let priority = extract_task_priority(&tokens(text), &fields);
+
+            assert_eq!(priority, Some(TaskPriority::Highest));
+        }
+
+        #[test]
         fn collapses_normal_field_to_none() {
             let text = "Task";
             let mut fields = IndexMap::new();
@@ -296,6 +264,14 @@ mod tests {
                        [created:: 2024-12-01]";
             let cleaned = clean_task_text(raw, &tokens(raw), &filters);
             assert_eq!(cleaned, "Task [custom:: value]");
+        }
+
+        #[test]
+        fn preserves_tags_outside_the_filter_set() {
+            let filters = [Tag::parse("#task").unwrap()];
+            let raw = "Task #other 🔺";
+            let cleaned = clean_task_text(raw, &tokens(raw), &filters);
+            assert_eq!(cleaned, "Task #other");
         }
 
         #[test]

@@ -1,10 +1,11 @@
 //! Custom item-leading task marker scanner.
 //!
-//! The functions here are the sole source of truth for task marker identity.
-//! They mirror `pulldown-cmark`'s `scan_task_list_marker` first-pass gating:
-//! the marker is only valid at a list item's content start, followed by one
-//! ASCII whitespace character. Because that whitespace is frequently the item's
-//! line terminator (which never reaches the parser as a
+//! This module is the sole source of truth for task marker identity, from
+//! prefix classification ([`scan_marker_prefix`]) to the zero-drain
+//! [`MarkerAccumulator`]. It mirrors `pulldown-cmark`'s `scan_task_list_marker`
+//! first-pass gating: the marker is only valid at a list item's content start,
+//! followed by one ASCII whitespace character. Because that whitespace is
+//! frequently the item's line terminator (which never reaches the parser as a
 //! [`pulldown_cmark::Event::Text`] chunk), [`scan_marker_at_line_end`] treats
 //! end-of-input as the trailing whitespace.
 use crate::DelimiterType;
@@ -248,10 +249,9 @@ impl MarkerAccumulator {
     }
 
     /// Buffers incoming text while the leading marker is still undecided.
-    // The three expects below assert scan-buffer invariants that are upheld by
-    // construction (`take_bytes` is bounded by both the text and the buffer's
-    // remaining space); a violation is an implementation bug, not
-    // input-dependent.
+    // The remaining expect asserts an invariant upheld by construction
+    // (`take_bytes` is bounded by the 8-byte buffer's remaining space); a
+    // violation is an implementation bug, not input-dependent.
     #[expect(
         clippy::expect_used,
         reason = "invariant violations indicate bugs, not degraded scanning"
@@ -295,25 +295,18 @@ impl MarkerAccumulator {
             return;
         }
 
-        let next_len = current_len.saturating_add(take_bytes);
-        // `take_bytes` never exceeds `remaining`, so the slice always fits in
-        // the 8-byte buffer; a violation is a bug, not degraded scanning.
-        let target = buf
-            .get_mut(current_len..next_len)
-            .expect("take_bytes is bounded by the buffer's remaining space");
-        let src = text
-            .as_bytes()
-            .get(..take_bytes)
-            .expect("take_bytes is bounded by text.len()");
-        target.copy_from_slice(src);
+        for (slot, byte) in buf
+            .iter_mut()
+            .skip(current_len)
+            .zip(text.as_bytes().iter().take(take_bytes))
+        {
+            *slot = *byte;
+        }
         *len = len.saturating_add(u8::try_from(take_bytes).expect(
             "take_bytes is bounded by the 8-byte buffer's remaining space",
         ));
 
-        let candidate = buf
-            .get(..usize::from(*len))
-            .and_then(|slice| std::str::from_utf8(slice).ok())
-            .unwrap_or_default();
+        let candidate = Self::buffered_str(buf, *len);
         match scan_marker_prefix(candidate) {
             MarkerPrefix::Complete(scan) => {
                 let symbol = scan.symbol();
@@ -354,6 +347,24 @@ impl MarkerAccumulator {
         }
     }
 
+    /// Returns the buffered marker bytes as a string slice.
+    // Both expects assert invariants upheld by construction: `len` is bounded
+    // by the 8-byte buffer, and the bytes originate from `&str` slices split
+    // only at char boundaries. Violations are implementation bugs, not
+    // input-dependent.
+    #[expect(
+        clippy::expect_used,
+        reason = "invariant violations indicate bugs, not degraded scanning"
+    )]
+    fn buffered_str(buf: &[u8; 8], len: u8) -> &str {
+        let slice = buf
+            .get(..usize::from(len))
+            .expect("len is bounded by the 8-byte buffer");
+        std::str::from_utf8(slice).expect(
+            "buffered bytes originate from &str slices at char boundaries",
+        )
+    }
+
     /// Flushes buffered bytes plus `trailing` to both buffers and records the
     /// item as plain text.
     fn flush_and_decide_plain(
@@ -368,38 +379,26 @@ impl MarkerAccumulator {
             len,
         } = self
         {
-            if let Some(slice) = buf.get(..usize::from(*len))
-                && let Ok(buffered_str) = std::str::from_utf8(slice)
-            {
-                text_buffer.push_str(buffered_str);
-                scan_buffer.push_str(buffered_str);
-            }
-            append_buffers(trailing, text_buffer, scan_buffer, in_code_block);
-            *self = Self::Decided(ItemMarker::Plain);
+            let buffered = Self::buffered_str(buf, *len);
+            text_buffer.push_str(buffered);
+            scan_buffer.push_str(buffered);
         }
+        append_buffers(trailing, text_buffer, scan_buffer, in_code_block);
+        *self = Self::Decided(ItemMarker::Plain);
     }
 
     /// Rejects any pending marker, flushing buffered bytes to `text_buffer` and
     /// `scan_buffer`.
+    ///
+    /// While buffering, no code-block text can have been appended: any text not
+    /// starting with `[` decides the accumulator as plain immediately, and a
+    /// code fence never starts with `[`.
     pub(super) fn reject(
         &mut self,
         text_buffer: &mut String,
         scan_buffer: &mut String,
     ) {
-        if let Self::Buffering {
-            buf,
-            len,
-        } = self
-        {
-            if *len > 0
-                && let Some(slice) = buf.get(..usize::from(*len))
-                && let Ok(buffered_str) = std::str::from_utf8(slice)
-            {
-                text_buffer.push_str(buffered_str);
-                scan_buffer.push_str(buffered_str);
-            }
-            *self = Self::Decided(ItemMarker::Plain);
-        }
+        self.flush_and_decide_plain("", text_buffer, scan_buffer, false);
     }
 
     /// Resolves any pending marker using line-end semantics.
@@ -408,34 +407,21 @@ impl MarkerAccumulator {
         text_buffer: &mut String,
         scan_buffer: &mut String,
     ) {
-        if let Self::Buffering {
+        let Self::Buffering {
             buf,
             len,
         } = self
-        {
-            if *len == 0 {
-                *self = Self::Decided(ItemMarker::Plain);
-                return;
-            }
-            if let Some(slice) = buf.get(..usize::from(*len))
-                && let Ok(buffered_str) = std::str::from_utf8(slice)
-            {
-                if let Some(scan) = scan_marker_at_line_end(buffered_str) {
-                    *self = Self::Decided(ItemMarker::Marked(scan.symbol()));
-                    return;
-                }
-                text_buffer.push_str(buffered_str);
-                scan_buffer.push_str(buffered_str);
-            }
-            *self = Self::Decided(ItemMarker::Plain);
+        else {
+            return;
+        };
+        let buffered = Self::buffered_str(buf, *len);
+        if let Some(scan) = scan_marker_at_line_end(buffered) {
+            *self = Self::Decided(ItemMarker::Marked(scan.symbol()));
+            return;
         }
-    }
-}
-
-impl Default for MarkerAccumulator {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
+        text_buffer.push_str(buffered);
+        scan_buffer.push_str(buffered);
+        *self = Self::Decided(ItemMarker::Plain);
     }
 }
 
