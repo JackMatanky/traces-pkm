@@ -1,46 +1,146 @@
-//! Task date, priority, inline task field, and text cleaning logic.
+//! Task text scanning: one tokenization pass paired with the text it came
+//! from, plus date, priority, and clean-text extraction over those tokens.
 
 use indexmap::IndexMap;
 
-use super::lexer::{FieldForm, ItemToken};
+use super::lexer::{FieldForm, ItemToken, TaskShorthands, tokenize_item_text};
 use crate::{
     DateValue, FieldKey, FieldKeyRef, Spanned, Tag, TaskDate, TaskDateSet,
     TaskDateType, TaskPriority, note::NoteFieldValue,
 };
 
-/// Extracts task lifecycle dates from emoji shorthands and inline task fields.
+/// An item's raw display text paired with the tokens tokenized from it.
 ///
-/// Emoji dates take precedence over inline fields. When duplicate dates appear
-/// for the same lifecycle slot, first-wins semantics apply.
-pub(super) fn extract_task_dates(
-    tokens: &[Spanned<ItemToken>],
-    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
-) -> TaskDateSet {
-    let mut set = TaskDateSet::default();
+/// [`super::list::ListTracker::end_item`] tokenizes the text once with task
+/// shorthands enabled; dates, priority, and clean text all read from this one
+/// scan, so the tokens can never drift out of sync with the text they
+/// describe.
+pub(super) struct TaskScan<'a> {
+    raw: &'a str,
+    tokens: Vec<Spanned<ItemToken>>,
+}
 
-    // 1. Emoji dates (first-wins per slot)
-    for token in tokens {
-        if let ItemToken::Date(task_date) = token.value()
-            && set.get(task_date.kind()).is_none()
-        {
-            set.insert(*task_date);
+impl<'a> TaskScan<'a> {
+    /// Tokenizes `raw` in a single pass with task shorthands enabled.
+    pub(super) fn scan(raw: &'a str) -> Self {
+        Self {
+            raw,
+            tokens: tokenize_item_text(raw, TaskShorthands::Include),
         }
     }
 
-    // 2. Inline fields fallback
-    for kind in TaskDateType::ALL {
-        if set.get(kind).is_some() {
-            continue;
-        }
-        for key_name in kind.field_keys() {
-            if let Some(date) = first_date_in_field(fields, key_name) {
-                set.insert(TaskDate::new(kind, date));
-                break;
+    /// Extracts task lifecycle dates from emoji shorthands and inline task
+    /// fields.
+    ///
+    /// Emoji dates take precedence over inline fields. When duplicate dates
+    /// appear for the same lifecycle slot, first-wins semantics apply.
+    pub(super) fn dates(
+        &self,
+        fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    ) -> TaskDateSet {
+        let mut set = TaskDateSet::default();
+
+        // 1. Emoji dates (first-wins per slot)
+        for token in &self.tokens {
+            if let ItemToken::Date(task_date) = token.value()
+                && set.get(task_date.kind()).is_none()
+            {
+                set.insert(*task_date);
             }
         }
+
+        // 2. Inline fields fallback
+        for kind in TaskDateType::ALL {
+            if set.get(kind).is_some() {
+                continue;
+            }
+            for key_name in kind.field_keys() {
+                if let Some(date) = first_date_in_field(fields, key_name) {
+                    set.insert(TaskDate::new(kind, date));
+                    break;
+                }
+            }
+        }
+
+        set
     }
 
-    set
+    /// Extracts task priority from text emojis or an inline
+    /// `[priority:: <level>]` field.
+    ///
+    /// Priority emojis take precedence over inline fields. When multiple
+    /// priority emojis are present, the first one in document order wins.
+    /// Returns [`None`] if no priority is specified or if priority resolves to
+    /// [`TaskPriority::Normal`].
+    pub(super) fn priority(
+        &self,
+        fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    ) -> Option<TaskPriority> {
+        for token in &self.tokens {
+            if let ItemToken::Priority(priority) = token.value() {
+                return Some(*priority);
+            }
+        }
+
+        let value =
+            fields.get(&FieldKeyRef::new("priority"))?.iter().find_map(
+                |val| val.as_str().and_then(|s| s.parse::<TaskPriority>().ok()),
+            )?;
+        if matches!(value, TaskPriority::Normal) {
+            return None;
+        }
+        Some(value)
+    }
+
+    /// Computes normalized clean list text by stripping configured task tag
+    /// filters, date syntax, priority emojis, and inline task fields.
+    ///
+    /// Expects `raw` to already have any leading task marker prefix removed.
+    pub(super) fn clean_text(&self, tag_filters: &[Tag]) -> String {
+        let mut remove_spans: Vec<(usize, usize)> =
+            Vec::with_capacity(self.tokens.len());
+
+        for token in &self.tokens {
+            let span = token.span();
+            match token.value() {
+                ItemToken::Priority(_) | ItemToken::Date(_) => {
+                    remove_spans.push((span.start, span.end));
+                }
+                ItemToken::Tag(tag) => {
+                    if tag_filters.contains(tag) {
+                        remove_spans.push((span.start, span.end));
+                    }
+                }
+                ItemToken::Field((key, _, form)) => {
+                    if matches!(form, FieldForm::Wrapped)
+                        && TaskDateType::is_field_key(key.canonical())
+                    {
+                        remove_spans.push((span.start, span.end));
+                    }
+                }
+            }
+        }
+
+        // Token spans from a single logos pass are disjoint and ordered, so no
+        // merge step is required; `current_idx.max(end)` tolerates adjacency.
+        let mut cleaned = String::with_capacity(self.raw.len());
+        let mut current_idx = 0;
+        for (start, end) in remove_spans {
+            if start > current_idx
+                && let Some(slice) = self.raw.get(current_idx..start)
+            {
+                cleaned.push_str(slice);
+            }
+            current_idx = current_idx.max(end);
+        }
+        if current_idx < self.raw.len()
+            && let Some(slice) = self.raw.get(current_idx..)
+        {
+            cleaned.push_str(slice);
+        }
+
+        normalize_whitespace(&cleaned)
+    }
 }
 
 /// Returns the first date value matching `key_name` across `fields`.
@@ -55,87 +155,6 @@ fn first_date_in_field(
         .get(&FieldKeyRef::new(key_name))?
         .iter()
         .find_map(|val| val.as_date().map(Into::into))
-}
-
-/// Extracts task priority from text emojis or an inline `[priority:: <level>]`
-/// field.
-///
-/// Priority emojis take precedence over inline fields. When multiple priority
-/// emojis are present, the first one in document order wins. Returns [`None`]
-/// if no priority is specified or if priority resolves to
-/// [`TaskPriority::Normal`].
-pub(super) fn extract_task_priority(
-    tokens: &[Spanned<ItemToken>],
-    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
-) -> Option<TaskPriority> {
-    for token in tokens {
-        if let ItemToken::Priority(priority) = token.value() {
-            return Some(*priority);
-        }
-    }
-
-    let value =
-        fields.get(&FieldKeyRef::new("priority"))?.iter().find_map(|val| {
-            val.as_str().and_then(|s| s.parse::<TaskPriority>().ok())
-        })?;
-    if matches!(value, TaskPriority::Normal) {
-        return None;
-    }
-    Some(value)
-}
-
-/// Computes normalized clean list text by stripping configured task tag
-/// filters, date syntax, priority emojis, and inline task fields.
-///
-/// Expects `raw_text` to already have any leading task marker prefix removed.
-pub(super) fn clean_task_text(
-    raw_text: &str,
-    tokens: &[Spanned<ItemToken>],
-    tag_filters: &[Tag],
-) -> String {
-    let mut remove_spans: Vec<(usize, usize)> =
-        Vec::with_capacity(tokens.len());
-
-    for token in tokens {
-        let span = token.span();
-        match token.value() {
-            ItemToken::Priority(_) | ItemToken::Date(_) => {
-                remove_spans.push((span.start, span.end));
-            }
-            ItemToken::Tag(tag) => {
-                if tag_filters.contains(tag) {
-                    remove_spans.push((span.start, span.end));
-                }
-            }
-            ItemToken::Field((key, _, form)) => {
-                if matches!(form, FieldForm::Wrapped)
-                    && TaskDateType::is_field_key(key.canonical())
-                {
-                    remove_spans.push((span.start, span.end));
-                }
-            }
-        }
-    }
-
-    // Token spans from a single logos pass are disjoint and ordered, so no
-    // merge step is required; `current_idx.max(end)` tolerates adjacency.
-    let mut cleaned = String::with_capacity(raw_text.len());
-    let mut current_idx = 0;
-    for (start, end) in remove_spans {
-        if start > current_idx
-            && let Some(slice) = raw_text.get(current_idx..start)
-        {
-            cleaned.push_str(slice);
-        }
-        current_idx = current_idx.max(end);
-    }
-    if current_idx < raw_text.len()
-        && let Some(slice) = raw_text.get(current_idx..)
-    {
-        cleaned.push_str(slice);
-    }
-
-    normalize_whitespace(&cleaned)
 }
 
 /// Collapses consecutive whitespace in `text` while preserving newlines.
@@ -163,14 +182,8 @@ fn normalize_whitespace(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::note::parser::lexer::{TaskShorthands, tokenize_item_text};
 
-    /// Tokenizes `text` the way `ListTracker::end_item` does before extraction.
-    fn tokens(text: &str) -> Vec<Spanned<ItemToken>> {
-        tokenize_item_text(text, TaskShorthands::Include)
-    }
-
-    mod extract_task_dates {
+    mod dates {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -184,7 +197,7 @@ mod tests {
                     DateValue::parse_iso("2025-02-02").unwrap(),
                 ),
             ]);
-            let set = extract_task_dates(&tokens(text), &fields);
+            let set = TaskScan::scan(text).dates(&fields);
             assert_eq!(
                 set.get(TaskDateType::Due),
                 Some(DateValue::parse_iso("2025-01-01").unwrap())
@@ -205,7 +218,7 @@ mod tests {
                     DateValue::parse_iso("2025-02-02").unwrap(),
                 ),
             ]);
-            let set = extract_task_dates(&tokens(text), &fields);
+            let set = TaskScan::scan(text).dates(&fields);
             assert_eq!(
                 set.get(TaskDateType::Done),
                 Some(DateValue::parse_iso("2025-01-01").unwrap())
@@ -213,7 +226,7 @@ mod tests {
         }
     }
 
-    mod extract_task_priority {
+    mod priority {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -222,7 +235,7 @@ mod tests {
         fn selects_first_in_document_order() {
             let text = "Task 🔺 and 🔽";
             let fields = IndexMap::new();
-            let priority = extract_task_priority(&tokens(text), &fields);
+            let priority = TaskScan::scan(text).priority(&fields);
             assert_eq!(priority, Some(TaskPriority::Highest));
         }
 
@@ -234,7 +247,7 @@ mod tests {
                 NoteFieldValue::String("low".to_owned()),
             ]);
 
-            let priority = extract_task_priority(&tokens(text), &fields);
+            let priority = TaskScan::scan(text).priority(&fields);
 
             assert_eq!(priority, Some(TaskPriority::Highest));
         }
@@ -246,12 +259,12 @@ mod tests {
             fields.insert(FieldKey::try_from("priority").unwrap(), vec![
                 NoteFieldValue::String("normal".to_owned()),
             ]);
-            let priority = extract_task_priority(&tokens(text), &fields);
+            let priority = TaskScan::scan(text).priority(&fields);
             assert_eq!(priority, None);
         }
     }
 
-    mod clean_task_text {
+    mod clean_text {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -261,7 +274,7 @@ mod tests {
             let filters = [Tag::parse("#task").unwrap()];
             let raw = "Task #task 🔺 📅 2025-01-01 [custom:: value] \
                        [created:: 2024-12-01]";
-            let cleaned = clean_task_text(raw, &tokens(raw), &filters);
+            let cleaned = TaskScan::scan(raw).clean_text(&filters);
             assert_eq!(cleaned, "Task [custom:: value]");
         }
 
@@ -269,21 +282,21 @@ mod tests {
         fn preserves_tags_outside_the_filter_set() {
             let filters = [Tag::parse("#task").unwrap()];
             let raw = "Task #other 🔺";
-            let cleaned = clean_task_text(raw, &tokens(raw), &filters);
+            let cleaned = TaskScan::scan(raw).clean_text(&filters);
             assert_eq!(cleaned, "Task #other");
         }
 
         #[test]
         fn preserves_unparsed_invalid_dates() {
             let raw = "Task 📅 2026-13-45 keep";
-            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
+            let cleaned = TaskScan::scan(raw).clean_text(&[]);
             assert_eq!(cleaned, "Task 📅 2026-13-45 keep");
         }
 
         #[test]
         fn strips_priority_emoji_with_variation_selector() {
             let raw = "Task 🔺\u{FE0F} remaining text";
-            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
+            let cleaned = TaskScan::scan(raw).clean_text(&[]);
             assert_eq!(cleaned, "Task remaining text");
         }
 
@@ -291,14 +304,14 @@ mod tests {
         fn strips_inline_fields_with_nested_delimiters_and_wikilinks() {
             let raw = "Task [due:: [[2025-01-15]]] and (scheduled:: \
                        2025-01-01 (tentative)) remaining";
-            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
+            let cleaned = TaskScan::scan(raw).clean_text(&[]);
             assert_eq!(cleaned, "Task and remaining");
         }
 
         #[test]
         fn strips_inline_fields_with_quoted_bracket_content() {
             let raw = r#"Task [due:: "meeting [sync]"] remaining"#;
-            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
+            let cleaned = TaskScan::scan(raw).clean_text(&[]);
             assert_eq!(cleaned, "Task remaining");
         }
     }

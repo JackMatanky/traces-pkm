@@ -181,17 +181,10 @@ impl ListTracker {
             let fully_complete =
                 item_frame.subtask_completion.is_fully_complete();
             // One tokenization pass feeds priority, date, and clean-text
-            // extraction.
-            let tokens = super::lexer::tokenize_item_text(
-                &item_frame.buffers.text,
-                super::lexer::TaskShorthands::Include,
-            );
-            let clean = super::task::clean_task_text(
-                &item_frame.buffers.text,
-                &tokens,
-                tag_filters,
-            );
-            let text = ListText::new(item_frame.buffers.text, clean);
+            // extraction. Extraction reads must precede the move of the raw
+            // text into `ListText` (NLL-enforced).
+            let scan = super::task::TaskScan::scan(&item_frame.buffers.text);
+            let clean = scan.clean_text(tag_filters);
             let item_type = match item_frame.marker.marker_symbol() {
                 Some(symbol) => {
                     let status = statuses.resolve(symbol);
@@ -201,14 +194,8 @@ impl ListTracker {
                             .iter()
                             .any(|tag| tag_filters.contains(tag))
                     {
-                        let priority = super::task::extract_task_priority(
-                            &tokens,
-                            &item_frame.fields,
-                        );
-                        let dates = super::task::extract_task_dates(
-                            &tokens,
-                            &item_frame.fields,
-                        );
+                        let priority = scan.priority(&item_frame.fields);
+                        let dates = scan.dates(&item_frame.fields);
                         ListItemType::Task(TaskListItem::new(
                             dates,
                             priority,
@@ -221,6 +208,7 @@ impl ListTracker {
                 }
                 None => ListItemType::Plain,
             };
+            let text = ListText::new(item_frame.buffers.text, clean);
             let (is_task, is_complete) = match &item_type {
                 ListItemType::Task(task) => {
                     (true, task.status().kind().completed() != Some(false))

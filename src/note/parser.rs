@@ -24,9 +24,9 @@
 //!   whitespace rules.
 //! - [`tag`]: [`tag::scan_tags`] extracts Markdown tags from text buffers,
 //!   including tags inside inline field values.
-//! - [`task`]: [`task::extract_task_dates`], [`task::extract_task_priority`],
-//!   and [`task::clean_task_text`] handle task shorthand dates, priorities, and
-//!   display text normalization.
+//! - [`task`]: [`task::TaskScan`] pairs an item's raw text with the tokens
+//!   tokenized from it and extracts task shorthand dates, priorities, and
+//!   normalized display text from that single scan.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
 //! specialized handlers and assembles the final [`Note`]. List-item line
